@@ -1,0 +1,13 @@
+- horizontal mode still not working properly
+- sessions to save settings
+- reimplement context menu - open file location
+- sorting
+
+
+v2:
+- autoscroll
+- performance tuning - set max number of buffered clips etc
+
+v3:
+- tagging, star ratings etc - need to work out how best to make this work. perhaps best way would be to save as metadata, as long as that doesnt break comfy metadata?
+- details pane showing this information for selected clip. Also checks metadata for comfy UI prompts to display prompts (may be a challenge with some workflows depending how the prompt is input), similar with loras (again will probably not work on all workflows easily)

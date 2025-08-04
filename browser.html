@@ -114,13 +114,6 @@
             cursor: pointer;
         }
 
-        .status {
-            padding: 1rem 2rem;
-            background: #262626;
-            color: #aaa;
-            font-size: 0.9rem;
-        }
-
         .drop-zone {
             margin: 2rem;
             padding: 4rem;
@@ -144,40 +137,35 @@
             transition: all 0.3s ease;
         }
 
-        /* Masonry layout modes */
         .video-grid.masonry-vertical {
             display: block;
             column-count: auto;
             column-width: 250px;
-            column-gap: 4px;
+            column-gap: 8px;
             padding: 1rem;
         }
 
         .video-grid.masonry-horizontal {
-            display: flex;
-            flex-direction: column;
-            flex-wrap: wrap;
-            align-content: flex-start;
-            height: 100vh;
-            overflow-x: auto;
-            overflow-y: hidden;
+            display: block;
+            column-count: auto;
+            column-width: 350px;
+            column-gap: 8px;
             padding: 1rem;
         }
 
-        /* Video item adjustments for masonry */
-        .video-grid.masonry-vertical .video-item {
+        .video-grid.masonry-vertical .video-item,
+        .video-grid.masonry-horizontal .video-item {
             display: inline-block;
             width: 100%;
-            margin-bottom: 4px;
+            margin-bottom: 8px;
             break-inside: avoid;
-            height: auto;
+            transition: transform 0.2s ease;
         }
 
-        .video-grid.masonry-horizontal .video-item {
-            flex: none;
-            margin-right: 4px;
-            margin-bottom: 4px;
-            height: auto;
+        .video-grid.masonry-vertical .video-item:hover,
+        .video-grid.masonry-horizontal .video-item:hover {
+            transform: scale(1.02);
+            z-index: 10;
         }
 
         .video-item {
@@ -185,7 +173,7 @@
             background: #2d2d2d;
             border-radius: 8px;
             overflow: hidden;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             cursor: pointer;
             border: 2px solid transparent;
         }
@@ -207,36 +195,56 @@
             background: rgba(255, 68, 68, 0.1);
         }
 
+        .video-item.loading {
+            border-color: #ffa500;
+            background: rgba(255, 165, 0, 0.1);
+        }
+
         .video-element {
             width: 100%;
             height: 140px;
             object-fit: cover;
             display: block;
             transition: opacity 0.3s ease;
+            background: #2d2d2d;
         }
 
-        /* Aspect ratio preserved video elements */
-        .video-element.aspect-ratio {
+        .video-grid.masonry-vertical .video-element,
+        .video-grid.masonry-horizontal .video-element {
             width: 100%;
             height: auto;
             object-fit: contain;
+            display: block;
+        }
+
+        .video-grid.masonry-horizontal .video-element {
+            aspect-ratio: 21/9;
+            object-fit: cover;
         }
 
         .video-placeholder {
             width: 100%;
-            height: 140px;
             background: #2d2d2d;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             color: #666;
             font-size: 0.8rem;
+            transition: all 0.3s ease;
+            min-height: 140px;
+            cursor: pointer;
         }
 
-        .video-placeholder.aspect-ratio {
-            width: 100%;
+        .video-grid.masonry-vertical .video-placeholder {
             height: auto;
             aspect-ratio: 16/9;
+            min-height: 100px;
+        }
+
+        .video-grid.masonry-horizontal .video-placeholder {
+            height: auto;
+            aspect-ratio: 21/9;
             min-height: 100px;
         }
 
@@ -255,23 +263,21 @@
             white-space: nowrap;
         }
 
-        .loading-indicator {
+        .loading-indicator,
+        .error-indicator,
+        .unsupported-indicator {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            color: #007acc;
-        }
-
-        .error-indicator {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #ff4444;
             text-align: center;
             font-size: 0.8rem;
+            z-index: 2;
         }
+
+        .loading-indicator { color: #007acc; }
+        .error-indicator { color: #ff4444; }
+        .unsupported-indicator { color: #ffa500; }
 
         .context-menu {
             position: fixed;
@@ -302,26 +308,45 @@
             margin: 0.5rem 0;
         }
 
-        /* Responsive design */
+        .selection-info {
+            background: #007acc;
+            color: white;
+            padding: 0.3rem 0.8rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Zoom levels */
+        .video-grid.zoom-small { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+        .video-grid.zoom-medium { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+        .video-grid.zoom-large { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+        .video-grid.zoom-xlarge { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+
+        .video-grid.zoom-small.masonry-vertical { column-width: 180px; }
+        .video-grid.zoom-medium.masonry-vertical { column-width: 250px; }
+        .video-grid.zoom-large.masonry-vertical { column-width: 350px; }
+        .video-grid.zoom-xlarge.masonry-vertical { column-width: 500px; }
+
+        .video-grid.zoom-small.masonry-horizontal { column-width: 280px; }
+        .video-grid.zoom-medium.masonry-horizontal { column-width: 350px; }
+        .video-grid.zoom-large.masonry-horizontal { column-width: 450px; }
+        .video-grid.zoom-xlarge.masonry-horizontal { column-width: 600px; }
+
         @media (max-width: 768px) {
             .video-grid {
                 grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
                 gap: 1px;
                 padding: 0.5rem;
             }
-
             .header {
                 padding: 1rem;
                 flex-wrap: wrap;
             }
         }
 
-        /* Smooth scrolling */
-        html {
-            scroll-behavior: smooth;
-        }
+        html { scroll-behavior: smooth; }
 
-        /* Loading animation */
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -332,74 +357,57 @@
             font-size: 1.2rem;
         }
 
-        /* Selection counter */
-        .selection-info {
+        /* Video state indicators */
+        .video-item::after {
+            content: '';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+            opacity: 0.7;
+            z-index: 3;
+        }
+
+        .video-item.playing::after {
+            background: #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        .video-item.paused::after {
+            background: #ffa500;
+        }
+
+        .video-item.error::after {
+            background: #ff4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+
+        .retry-button {
             background: #007acc;
             color: white;
-            padding: 0.3rem 0.8rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 500;
+            border: none;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            margin-top: 0.5rem;
         }
 
-        /* Zoom levels - adjusted for masonry */
-        .video-grid.zoom-small {
-            --item-width: 180px;
-        }
-        .video-grid.zoom-medium {
-            --item-width: 250px;
-        }
-        .video-grid.zoom-large {
-            --item-width: 350px;
-        }
-        .video-grid.zoom-xlarge {
-            --item-width: 500px;
-        }
-
-        .video-grid.zoom-small.masonry-vertical {
-            column-width: 180px;
-        }
-        .video-grid.zoom-medium.masonry-vertical {
-            column-width: 250px;
-        }
-        .video-grid.zoom-large.masonry-vertical {
-            column-width: 350px;
-        }
-        .video-grid.zoom-xlarge.masonry-vertical {
-            column-width: 500px;
-        }
-
-        .video-grid.zoom-small.masonry-horizontal .video-item {
-            width: 180px;
-        }
-        .video-grid.zoom-medium.masonry-horizontal .video-item {
-            width: 250px;
-        }
-        .video-grid.zoom-large.masonry-horizontal .video-item {
-            width: 350px;
-        }
-        .video-grid.zoom-xlarge.masonry-horizontal .video-item {
-            width: 500px;
-        }
-
-        /* Grid mode zoom (original behavior) */
-        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-small {
-            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-        }
-        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-medium {
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        }
-        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-large {
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        }
-        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-xlarge {
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+        .retry-button:hover {
+            background: #0066a3;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.5</span></h1>
+        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v3.5</span></h1>
 
         <div class="file-input-wrapper">
             <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
@@ -415,6 +423,7 @@
         </div>
 
         <div class="controls">
+            <button id="sortToggle" class="toggle-button">📶 Sort: None</button>
             <button id="layoutToggle" class="toggle-button">📐 Aspect Ratio</button>
             <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
 
@@ -426,27 +435,23 @@
         </div>
     </div>
 
-    <div class="status" id="status" style="display: none;">
-        Ready - Select a folder to browse videos
-    </div>
-
     <div class="drop-zone" id="dropZone">
         <h2>Drop video files here</h2>
         <p>Or use the "Open Folder" button above</p>
         <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
-            Supports: MP4, MOV, AVI, MKV, WebM, M4V
+            Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
         </p>
     </div>
 
     <div class="video-grid" id="videoGrid"></div>
 
-    <!-- Context Menu -->
     <div class="context-menu" id="contextMenu">
         <div class="context-menu-item" data-action="show-folder">📁 Show in File Manager</div>
         <div class="context-menu-item" data-action="copy-path">📋 Copy File Path</div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-item" data-action="copy">📄 Copy</div>
         <div class="context-menu-item" data-action="delete">🗑️ Delete</div>
+        <div class="context-menu-item" data-action="retry">🔄 Retry Load</div>
     </div>
 
     <script>
@@ -465,84 +470,188 @@
                 this.layoutMode = 'grid';
                 this.aspectRatioCache = new Map();
 
-                // Performance management
-                this.maxConcurrentPlaying = 30;
-                this.maxConcurrentLoading = 6;
-                this.maxLoadedVideos = 80;
-                this.unloadDistance = 800;
+                // Sorting
+                this.sortMode = 'none';
+                this.originalOrder = [];
+
+                // Performance management - Conservative settings
+                this.maxConcurrentPlaying = 15;
+                this.maxConcurrentLoading = 2;
+                this.maxLoadedVideos = 40;
                 this.visibleVideos = new Set();
                 this.playingVideos = new Set();
                 this.loadedVideos = new Map();
                 this.loadQueue = [];
                 this.isProcessingQueue = false;
-                this.unloadQueue = [];
+                this.failedVideos = new Set();
 
-                // Intersection observer
+                // Video state tracking with better management
+                this.videoStates = new Map();
+                this.retryCount = new Map();
+                this.maxRetries = 2;
+
+                // Loop management
+                this.loopManagers = new Map();
+
+                // Intersection observer with more conservative settings
                 this.intersectionObserver = new IntersectionObserver(
                     this.handleIntersection.bind(this),
                     {
-                        rootMargin: '400px',
-                        threshold: [0, 0.1, 1.0]
+                        rootMargin: '200px',
+                        threshold: [0, 0.5, 1.0]
                     }
                 );
 
                 this.unloadObserver = new IntersectionObserver(
                     this.handleUnloadIntersection.bind(this),
                     {
-                        rootMargin: '-800px',
+                        rootMargin: '-400px',
                         threshold: 0
                     }
                 );
 
                 this.initializeEventListeners();
                 this.startPerformanceMonitoring();
-                this.setupScrollBackup();
+                this.setupMaintenanceLoop();
             }
 
-            setupScrollBackup() {
+            setupMaintenanceLoop() {
+                // More aggressive maintenance for loop issues
                 setInterval(() => {
-                    this.checkAndFixStuckPlaceholders();
-                }, 3000);
+                    this.checkAndFixLoops();
+                    this.checkVideoStates();
+                }, 2000);
 
+                // Viewport change handling
                 let scrollTimeout;
                 window.addEventListener('scroll', () => {
                     clearTimeout(scrollTimeout);
                     scrollTimeout = setTimeout(() => {
-                        this.checkAndFixStuckPlaceholders();
-                    }, 500);
+                        this.checkViewportVideos();
+                    }, 200);
                 });
             }
 
-            checkAndFixStuckPlaceholders() {
-                const viewportTop = window.scrollY;
-                const viewportBottom = viewportTop + window.innerHeight;
-                const buffer = 200;
+            checkAndFixLoops() {
+                this.videoElements.forEach((video, videoItem) => {
+                    if (this.visibleVideos.has(videoItem) && this.autoplayEnabled) {
+                        // Check if video should be playing but isn't
+                        if (video.readyState >= 2 && video.paused && this.canPlayMoreVideos()) {
+                            console.log(`Fixing stuck video: ${videoItem.dataset.filename}`);
+                            this.playVideoSafely(video, videoItem);
+                        }
 
-                this.videos.forEach(videoItem => {
-                    if (videoItem.dataset.loaded === 'false') {
-                        const rect = videoItem.getBoundingClientRect();
-                        const elementTop = rect.top + window.scrollY;
-                        const elementBottom = elementTop + rect.height;
+                        // Check if video ended but didn't restart
+                        if (video.ended && video.loop) {
+                            console.log(`Restarting ended video: ${videoItem.dataset.filename}`);
+                            video.currentTime = 0;
+                            this.playVideoSafely(video, videoItem);
+                        }
 
-                        const inExtendedViewport = elementBottom >= (viewportTop - buffer) &&
-                                                 elementTop <= (viewportBottom + buffer);
-
-                        if (inExtendedViewport && !this.loadQueue.includes(videoItem)) {
-                            console.log(`Fixing stuck placeholder: ${videoItem.dataset.filename}`);
-                            this.visibleVideos.add(videoItem);
-                            this.loadQueue.push(videoItem);
-
-                            const placeholder = videoItem.querySelector('.video-placeholder');
-                            if (placeholder) {
-                                placeholder.textContent = '📼 Loading...';
-                                placeholder.style.background = '#2a4a2a';
-                            }
+                        // Check for very short videos that might get stuck
+                        if (video.duration > 0 && video.duration < 2 && video.currentTime >= video.duration - 0.1) {
+                            video.currentTime = 0;
                         }
                     }
                 });
+            }
 
-                if (!this.isProcessingQueue && this.loadQueue.length > 0) {
-                    this.processLoadQueue();
+            checkVideoStates() {
+                this.videoElements.forEach((video, videoItem) => {
+                    const shouldBePlaying = this.visibleVideos.has(videoItem) &&
+                                          this.autoplayEnabled &&
+                                          this.canPlayMoreVideos();
+
+                    const currentState = this.getVideoState(videoItem);
+
+                    if (shouldBePlaying && currentState !== 'playing' && video.readyState >= 2) {
+                        if (video.paused) {
+                            this.playVideoSafely(video, videoItem);
+                        }
+                    } else if (!shouldBePlaying && currentState === 'playing') {
+                        video.pause();
+                        this.setVideoState(videoItem, 'paused');
+                        this.playingVideos.delete(video);
+                    }
+                });
+            }
+
+            checkViewportVideos() {
+                const viewportTop = window.scrollY;
+                const viewportBottom = viewportTop + window.innerHeight;
+                const buffer = 150;
+
+                this.videos.forEach(videoItem => {
+                    const rect = videoItem.getBoundingClientRect();
+                    const elementTop = rect.top + window.scrollY;
+                    const elementBottom = elementTop + rect.height;
+
+                    const inExtendedViewport = elementBottom >= (viewportTop - buffer) &&
+                                             elementTop <= (viewportBottom + buffer);
+
+                    if (inExtendedViewport && videoItem.dataset.loaded === 'false' &&
+                        !this.loadingVideos.has(videoItem) &&
+                        !this.loadQueue.includes(videoItem) &&
+                        !this.failedVideos.has(videoItem)) {
+
+                        this.visibleVideos.add(videoItem);
+                        this.loadQueue.push(videoItem);
+                        this.updatePlaceholderStatus(videoItem, 'queued');
+                    }
+                });
+            }
+
+            getVideoState(videoItem) {
+                return this.videoStates.get(videoItem) || 'unknown';
+            }
+
+            setVideoState(videoItem, state) {
+                this.videoStates.set(videoItem, state);
+
+                // Update visual indicators
+                videoItem.classList.remove('playing', 'paused', 'loading', 'error');
+                if (state !== 'unknown') {
+                    videoItem.classList.add(state);
+                }
+            }
+
+            updatePlaceholderStatus(videoItem, status) {
+                const placeholder = videoItem.querySelector('.video-placeholder');
+                if (!placeholder) return;
+
+                const statusMessages = {
+                    'loading': '📼 Loading...',
+                    'queued': '📼 Queued...',
+                    'failed': '❌ Failed to load',
+                    'unsupported': '⚠️ Format issue',
+                    'retry': '🔄 Click to retry',
+                    'corrupted': '💥 File may be corrupted'
+                };
+
+                placeholder.innerHTML = `
+                    <div>${statusMessages[status] || '📼 Ready'}</div>
+                    ${(status === 'failed' || status === 'unsupported' || status === 'corrupted') ?
+                        '<button class="retry-button">Retry</button>' : ''}
+                `;
+
+                const statusColors = {
+                    'loading': '#2a4a2a',
+                    'queued': '#2a3a4a',
+                    'failed': '#4a2a2a',
+                    'unsupported': '#4a3a2a',
+                    'retry': '#3a2a4a',
+                    'corrupted': '#5a1a1a'
+                };
+
+                placeholder.style.background = statusColors[status] || '#2d2d2d';
+
+                // Add retry button functionality
+                const retryButton = placeholder.querySelector('.retry-button');
+                if (retryButton) {
+                    retryButton.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.retryVideoLoad(videoItem);
+                    });
                 }
             }
 
@@ -565,6 +674,13 @@
                 if (layoutToggle) {
                     layoutToggle.addEventListener('click', () => {
                         this.toggleLayout();
+                    });
+                }
+
+                const sortToggle = document.getElementById('sortToggle');
+                if (sortToggle) {
+                    sortToggle.addEventListener('click', () => {
+                        this.toggleSort();
                     });
                 }
 
@@ -653,12 +769,17 @@
                 this.hideDropZone();
                 this.clearVideos();
 
+                this.originalOrder = [...videoFiles];
+
                 videoFiles.forEach((file) => {
                     this.createVideoItem(file);
                 });
 
                 this.updateDebugInfo();
-                this.processLoadQueue();
+                this.applySorting();
+
+                // Start loading after a brief delay
+                setTimeout(() => this.processLoadQueue(), 200);
             }
 
             createVideoItem(file) {
@@ -670,7 +791,15 @@
                 const placeholder = document.createElement('div');
                 placeholder.className = 'video-placeholder';
                 this.updatePlaceholderForLayout(placeholder);
-                placeholder.textContent = '📼 Loading...';
+                this.updatePlaceholderStatus(videoItem, 'queued');
+
+                // Make placeholder clickable for retry
+                placeholder.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.failedVideos.has(videoItem)) {
+                        this.retryVideoLoad(videoItem);
+                    }
+                });
 
                 const filename = document.createElement('div');
                 filename.className = 'video-filename';
@@ -693,6 +822,7 @@
                 videoItem.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     this.currentContextVideo = file;
+                    this.currentContextVideoItem = videoItem;
                     this.showContextMenu(e.pageX, e.pageY);
                 });
 
@@ -700,10 +830,14 @@
                 if (videoGrid) {
                     videoGrid.appendChild(videoItem);
                 }
+
                 this.videos.add(videoItem);
                 this.intersectionObserver.observe(videoItem);
                 this.unloadObserver.observe(videoItem);
+                this.setVideoState(videoItem, 'unknown');
+                this.retryCount.set(videoItem, 0);
 
+                // Animate entrance
                 requestAnimationFrame(() => {
                     videoItem.style.opacity = '0';
                     videoItem.style.transform = 'scale(0.8)';
@@ -717,41 +851,122 @@
                 return videoItem;
             }
 
+            retryVideoLoad(videoItem) {
+                console.log(`Retrying load for: ${videoItem.dataset.filename}`);
+
+                const currentRetries = this.retryCount.get(videoItem) || 0;
+                if (currentRetries >= this.maxRetries) {
+                    this.updatePlaceholderStatus(videoItem, 'corrupted');
+                    return;
+                }
+
+                this.retryCount.set(videoItem, currentRetries + 1);
+                this.failedVideos.delete(videoItem);
+                videoItem.classList.remove('error');
+
+                // Clean up any existing error indicators
+                const indicators = videoItem.querySelectorAll('.error-indicator, .unsupported-indicator');
+                indicators.forEach(indicator => indicator.remove());
+
+                // Add back placeholder if needed
+                if (!videoItem.querySelector('.video-placeholder')) {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'video-placeholder';
+                    this.updatePlaceholderForLayout(placeholder);
+                    const filename = videoItem.querySelector('.video-filename');
+                    videoItem.insertBefore(placeholder, filename);
+                }
+
+                this.updatePlaceholderStatus(videoItem, 'queued');
+                this.loadQueue.push(videoItem);
+
+                if (!this.isProcessingQueue) {
+                    this.processLoadQueue();
+                }
+            }
+
             updatePlaceholderForLayout(placeholder) {
                 if (this.layoutMode === 'grid') {
-                    placeholder.className = 'video-placeholder';
                     placeholder.style.cssText = `
                         width: 100%;
                         height: 140px;
                         background: #2d2d2d;
                         display: flex;
+                        flex-direction: column;
                         align-items: center;
                         justify-content: center;
                         color: #666;
                         font-size: 0.8rem;
+                        cursor: pointer;
                     `;
                 } else {
-                    placeholder.className = 'video-placeholder aspect-ratio';
                     placeholder.style.cssText = `
                         width: 100%;
-                        height: auto;
-                        aspect-ratio: 16/9;
                         background: #2d2d2d;
                         display: flex;
+                        flex-direction: column;
                         align-items: center;
                         justify-content: center;
                         color: #666;
                         font-size: 0.8rem;
-                        min-height: 100px;
+                        cursor: pointer;
                     `;
                 }
             }
 
+            toggleSort() {
+                const sortButton = document.getElementById('sortToggle');
+                if (!sortButton) return;
+
+                const modes = ['none', 'name-asc', 'name-desc'];
+                const currentIndex = modes.indexOf(this.sortMode);
+                const nextIndex = (currentIndex + 1) % modes.length;
+                this.sortMode = modes[nextIndex];
+
+                const buttonTexts = {
+                    'none': '📶 Sort: None',
+                    'name-asc': '📶 Name ↑',
+                    'name-desc': '📶 Name ↓'
+                };
+                sortButton.textContent = buttonTexts[this.sortMode];
+
+                this.applySorting();
+            }
+
+            applySorting() {
+                const grid = document.getElementById('videoGrid');
+                if (!grid) return;
+
+                const videoItems = Array.from(this.videos);
+
+                if (this.sortMode === 'none') {
+                    videoItems.sort((a, b) => {
+                        const aIndex = this.originalOrder.findIndex(file => file.name === a.dataset.filename);
+                        const bIndex = this.originalOrder.findIndex(file => file.name === b.dataset.filename);
+                        return aIndex - bIndex;
+                    });
+                } else if (this.sortMode === 'name-asc') {
+                    videoItems.sort((a, b) => a.dataset.filename.localeCompare(b.dataset.filename));
+                } else if (this.sortMode === 'name-desc') {
+                    videoItems.sort((a, b) => b.dataset.filename.localeCompare(a.dataset.filename));
+                }
+
+                videoItems.forEach(item => {
+                    grid.appendChild(item);
+                });
+            }
+
             async loadVideoContent(videoItem) {
-                if (videoItem.dataset.loaded === 'true') return;
+                if (videoItem.dataset.loaded === 'true' || this.loadingVideos.has(videoItem)) {
+                    return;
+                }
 
                 const file = videoItem._file;
                 if (!file) return;
+
+                this.loadingVideos.add(videoItem);
+                this.setVideoState(videoItem, 'loading');
+                this.updatePlaceholderStatus(videoItem, 'loading');
 
                 return new Promise((resolve, reject) => {
                     const video = document.createElement('video');
@@ -760,30 +975,59 @@
                     video.loop = true;
                     video.preload = 'metadata';
                     video.playsInline = true;
-                    video.autoplay = true;
+                    video.setAttribute('playsinline', '');
+                    video.setAttribute('webkit-playsinline', '');
+
+                    // More robust video settings
+                    video.crossOrigin = 'anonymous';
+                    video.controls = false;
 
                     let hasLoaded = false;
                     let hasErrored = false;
+                    let loadTimeout;
+                    let objectUrl = null;
 
                     const cleanup = () => {
                         this.loadingVideos.delete(videoItem);
+                        clearTimeout(loadTimeout);
                         const placeholder = videoItem.querySelector('.video-placeholder');
-                        if (placeholder) placeholder.remove();
+                        if (placeholder && hasLoaded) placeholder.remove();
                     };
 
                     const onError = (error) => {
                         if (hasErrored) return;
                         hasErrored = true;
 
-                        console.error(`Video load error for ${file.name}:`, error);
+                        console.warn(`Video load error for ${file.name}:`, error);
                         cleanup();
 
-                        videoItem.classList.add('error');
-                        const errorIndicator = document.createElement('div');
-                        errorIndicator.className = 'error-indicator';
-                        errorIndicator.innerHTML = '❌<br>Load Error';
-                        videoItem.appendChild(errorIndicator);
+                        // Clean up object URL on error
+                        if (objectUrl) {
+                            URL.revokeObjectURL(objectUrl);
+                            objectUrl = null;
+                        }
 
+                        this.failedVideos.add(videoItem);
+                        this.setVideoState(videoItem, 'error');
+
+                        // Determine error type
+                        let errorType = 'failed';
+                        let errorMessage = '❌ Load Error';
+
+                        if (error && error.message) {
+                            if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
+                                error.message.includes('no supported streams') ||
+                                error.message.includes('FORMAT_ERROR')) {
+                                errorType = 'unsupported';
+                                errorMessage = '⚠️ Format Issue';
+                            } else if (error.message.includes('NETWORK_ERROR') ||
+                                     error.message.includes('DECODE_ERROR')) {
+                                errorType = 'corrupted';
+                                errorMessage = '💥 File Issue';
+                            }
+                        }
+
+                        this.updatePlaceholderStatus(videoItem, errorType);
                         reject(error);
                     };
 
@@ -794,19 +1038,23 @@
                         cleanup();
                         videoItem.dataset.loaded = 'true';
 
-                        // Cache aspect ratio for layout calculations
+                        // Validate video
+                        if (!video.videoWidth || !video.videoHeight || video.duration === 0) {
+                            onError(new Error('Invalid video properties'));
+                            return;
+                        }
+
+                        // Cache aspect ratio
                         const aspectRatio = video.videoWidth / video.videoHeight;
                         this.aspectRatioCache.set(videoItem, aspectRatio);
 
-                        // Apply aspect ratio styling based on layout mode
-                        if (this.layoutMode !== 'grid') {
-                            video.className = 'video-element aspect-ratio';
-                            video.style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
-                        } else {
-                            video.className = 'video-element';
-                            video.style.aspectRatio = '';
-                        }
+                        // Apply layout-specific styling
+                        this.applyVideoStyling(video, videoItem);
 
+                        // Set up enhanced loop management
+                        this.setupLoopManager(video, videoItem);
+
+                        // Replace placeholder with video
                         const placeholder = videoItem.querySelector('.video-placeholder');
                         if (placeholder) {
                             videoItem.replaceChild(video, placeholder);
@@ -816,35 +1064,195 @@
 
                         this.videoElements.set(videoItem, video);
                         this.loadedVideos.set(videoItem, Date.now());
+                        this.setVideoState(videoItem, 'paused');
 
-                        if (this.visibleVideos.has(videoItem) && this.canPlayMoreVideos()) {
+                        // Auto-play if visible and autoplay enabled
+                        if (this.visibleVideos.has(videoItem) && this.autoplayEnabled && this.canPlayMoreVideos()) {
                             setTimeout(() => {
-                                this.playVideo(video);
+                                this.playVideoSafely(video, videoItem);
                             }, Math.random() * 500);
                         }
 
                         resolve();
                     };
 
-                    video.addEventListener('loadedmetadata', onLoad);
-                    video.addEventListener('canplay', onLoad);
-                    video.addEventListener('error', (e) => onError(e.target.error));
-
-                    const timeoutId = setTimeout(() => {
+                    // Set up timeout
+                    loadTimeout = setTimeout(() => {
                         if (!hasLoaded && !hasErrored) {
                             onError(new Error('Loading timeout'));
                         }
-                    }, 15000);
+                    }, 8000);
 
-                    video.addEventListener('loadedmetadata', () => clearTimeout(timeoutId));
+                    // Enhanced event listeners
+                    video.addEventListener('loadedmetadata', () => {
+                        if (video.videoWidth && video.videoHeight) {
+                            onLoad();
+                        }
+                    });
+
+                    video.addEventListener('canplay', onLoad);
+
+                    video.addEventListener('error', (e) => {
+                        const mediaError = e.target.error;
+                        onError(mediaError || new Error('Unknown video error'));
+                    });
+
+                    // Handle stalled loading
+                    video.addEventListener('stalled', () => {
+                        console.warn(`Video stalled: ${file.name}`);
+                        if (!hasLoaded && !hasErrored) {
+                            setTimeout(() => {
+                                if (!hasLoaded && !hasErrored) {
+                                    onError(new Error('Video loading stalled'));
+                                }
+                            }, 3000);
+                        }
+                    });
+
+                    // Handle abort
+                    video.addEventListener('abort', () => {
+                        if (!hasLoaded && !hasErrored) {
+                            onError(new Error('Video loading aborted'));
+                        }
+                    });
 
                     try {
-                        video.src = URL.createObjectURL(file);
-                        this.loadingVideos.add(videoItem);
+                        // Create object URL with error handling
+                        objectUrl = URL.createObjectURL(file);
+                        video._objectUrl = objectUrl;
+                        video.src = objectUrl;
+                        video.load();
                     } catch (error) {
                         onError(error);
                     }
                 });
+            }
+
+            setupLoopManager(video, videoItem) {
+                // Enhanced loop management to prevent freezing
+                const loopManager = {
+                    video: video,
+                    videoItem: videoItem,
+                    isManaging: false,
+                    lastCurrentTime: 0,
+                    stuckCount: 0
+                };
+
+                // Set up event handlers with better loop management
+                video.addEventListener('play', () => {
+                    this.setVideoState(videoItem, 'playing');
+                    this.playingVideos.add(video);
+                    loopManager.isManaging = true;
+                    loopManager.stuckCount = 0;
+                });
+
+                video.addEventListener('pause', () => {
+                    this.setVideoState(videoItem, 'paused');
+                    this.playingVideos.delete(video);
+                    loopManager.isManaging = false;
+                });
+
+                video.addEventListener('ended', () => {
+                    if (video.loop && this.visibleVideos.has(videoItem) && this.autoplayEnabled) {
+                        // Force restart for reliable looping
+                        video.currentTime = 0;
+                        setTimeout(() => {
+                            this.playVideoSafely(video, videoItem);
+                        }, 50);
+                    }
+                });
+
+                // Monitor for stuck videos
+                video.addEventListener('timeupdate', () => {
+                    if (loopManager.isManaging) {
+                        const currentTime = video.currentTime;
+
+                        // Check if video is stuck
+                        if (Math.abs(currentTime - loopManager.lastCurrentTime) < 0.1) {
+                            loopManager.stuckCount++;
+
+                            // If stuck for too long, restart
+                            if (loopManager.stuckCount > 10) {
+                                console.log(`Restarting stuck video: ${videoItem.dataset.filename}`);
+                                video.currentTime = 0;
+                                loopManager.stuckCount = 0;
+                            }
+                        } else {
+                            loopManager.stuckCount = 0;
+                        }
+
+                        loopManager.lastCurrentTime = currentTime;
+
+                        // Handle near-end looping for very short videos
+                        if (video.duration > 0 && video.duration < 3 &&
+                            currentTime >= video.duration - 0.2) {
+                            video.currentTime = 0;
+                        }
+                    }
+                });
+
+                // Handle seeking issues
+                video.addEventListener('seeking', () => {
+                    loopManager.stuckCount = 0;
+                });
+
+                video.addEventListener('seeked', () => {
+                    loopManager.lastCurrentTime = video.currentTime;
+                });
+
+                this.loopManagers.set(videoItem, loopManager);
+            }
+
+            playVideoSafely(video, videoItem) {
+                if (!video || !videoItem) return;
+
+                if (video.readyState >= 2 && this.canPlayMoreVideos() && this.autoplayEnabled) {
+                    // Ensure video is ready for playback
+                    if (video.currentTime >= video.duration && video.duration > 0) {
+                        video.currentTime = 0;
+                    }
+
+                    video.play().then(() => {
+                        this.playingVideos.add(video);
+                        this.setVideoState(videoItem, 'playing');
+                        console.log(`Playing: ${videoItem.dataset.filename}`);
+                    }).catch(error => {
+                        console.debug(`Autoplay failed for ${videoItem.dataset.filename}:`, error);
+                        this.setVideoState(videoItem, 'paused');
+
+                        // Retry with exponential backoff
+                        const retryDelay = Math.min(1000 * Math.pow(2, (this.retryCount.get(videoItem) || 0)), 5000);
+                        setTimeout(() => {
+                            if (video.readyState >= 2 && this.autoplayEnabled &&
+                                this.visibleVideos.has(videoItem) && this.canPlayMoreVideos()) {
+                                this.playVideoSafely(video, videoItem);
+                            }
+                        }, retryDelay);
+                    });
+                }
+            }
+
+            applyVideoStyling(video, videoItem) {
+                if (this.layoutMode === 'masonry-horizontal') {
+                    video.style.aspectRatio = '21/9';
+                    video.style.objectFit = 'cover';
+                    video.style.width = '100%';
+                    video.style.height = 'auto';
+                } else if (this.layoutMode === 'masonry-vertical') {
+                    const aspectRatio = this.aspectRatioCache.get(videoItem);
+                    if (aspectRatio) {
+                        video.style.aspectRatio = `${aspectRatio}`;
+                    }
+                    video.style.objectFit = 'contain';
+                    video.style.width = '100%';
+                    video.style.height = 'auto';
+                } else {
+                    // Grid mode
+                    video.style.aspectRatio = '';
+                    video.style.objectFit = 'cover';
+                    video.style.width = '100%';
+                    video.style.height = '140px';
+                }
             }
 
             handleIntersection(entries) {
@@ -854,39 +1262,41 @@
                     if (entry.isIntersecting) {
                         this.visibleVideos.add(videoItem);
 
-                        if (videoItem.dataset.loaded === 'false') {
-                            if (!this.loadQueue.includes(videoItem)) {
-                                this.loadQueue.push(videoItem);
-                            }
-
-                            const placeholder = videoItem.querySelector('.video-placeholder');
-                            if (placeholder && placeholder.textContent.includes('reload')) {
-                                placeholder.textContent = '📼 Loading...';
-                                placeholder.style.background = '#2a4a2a';
-                            }
+                        // Queue for loading if needed
+                        if (videoItem.dataset.loaded === 'false' &&
+                            !this.loadingVideos.has(videoItem) &&
+                            !this.loadQueue.includes(videoItem) &&
+                            !this.failedVideos.has(videoItem)) {
+                            this.loadQueue.push(videoItem);
+                            this.updatePlaceholderStatus(videoItem, 'queued');
                         }
 
+                        // Try to play if loaded
                         const video = this.videoElements.get(videoItem);
-                        if (video && this.canPlayMoreVideos()) {
-                            this.playVideo(video);
+                        if (video && this.autoplayEnabled && this.canPlayMoreVideos()) {
+                            this.playVideoSafely(video, videoItem);
                         }
                     } else {
-                        if (entry.intersectionRatio < 0.01) {
+                        if (entry.intersectionRatio < 0.1) {
                             this.visibleVideos.delete(videoItem);
 
+                            // Pause video when out of view
                             const video = this.videoElements.get(videoItem);
-                            if (video) {
+                            if (video && !video.paused) {
                                 video.pause();
+                                this.setVideoState(videoItem, 'paused');
                                 this.playingVideos.delete(video);
                             }
                         }
                     }
                 });
 
+                // Process load queue
                 if (!this.isProcessingQueue && this.loadQueue.length > 0) {
                     this.processLoadQueue();
                 }
 
+                // Memory management
                 if (this.loadedVideos.size > this.maxLoadedVideos * 1.2) {
                     this.aggressiveCleanup();
                 }
@@ -908,7 +1318,7 @@
                             Math.abs(rect.top - viewportHeight)
                         );
 
-                        if (distanceFromViewport > viewportHeight * 3) {
+                        if (distanceFromViewport > viewportHeight * 1.5) {
                             this.unloadVideoContent(videoItem);
                         }
                     }
@@ -920,38 +1330,45 @@
                 this.isProcessingQueue = true;
 
                 let processed = 0;
+                const maxBatchSize = 2; // Reduced batch size
+
                 while (this.loadQueue.length > 0 &&
                        this.loadingVideos.size < this.maxConcurrentLoading &&
-                       processed < 5) {
+                       processed < maxBatchSize) {
 
                     const videoItem = this.loadQueue.shift();
 
-                    if (videoItem.dataset.loaded === 'false') {
+                    if (videoItem.dataset.loaded === 'false' && !this.loadingVideos.has(videoItem)) {
+                        // Check if still in viewport
                         const rect = videoItem.getBoundingClientRect();
-                        const inExtendedViewport = rect.bottom >= -600 && rect.top <= window.innerHeight + 600;
+                        const inExtendedViewport = rect.bottom >= -300 && rect.top <= window.innerHeight + 300;
 
                         if (inExtendedViewport || this.visibleVideos.has(videoItem)) {
                             try {
                                 await this.loadVideoContent(videoItem);
                                 processed++;
                             } catch (error) {
-                                console.warn('Failed to load video:', error);
+                                console.warn(`Failed to load video ${videoItem.dataset.filename}:`, error);
                             }
-                        } else {
-                            console.log(`Skipping load for ${videoItem.dataset.filename} - out of viewport`);
+
+                            // Delay between loads
+                            if (processed < maxBatchSize && this.loadQueue.length > 0) {
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                            }
                         }
                     }
                 }
 
                 this.isProcessingQueue = false;
 
+                // Continue processing if needed
                 if (this.loadQueue.length > 0 && this.loadingVideos.size < this.maxConcurrentLoading) {
-                    setTimeout(() => this.processLoadQueue(), 100);
+                    setTimeout(() => this.processLoadQueue(), 300);
                 }
             }
 
             aggressiveCleanup() {
-                console.log(`Starting aggressive cleanup. Currently loaded: ${this.loadedVideos.size}`);
+                console.log(`Starting cleanup. Currently loaded: ${this.loadedVideos.size}`);
 
                 const candidatesForUnload = [];
                 this.loadedVideos.forEach((timestamp, videoItem) => {
@@ -967,13 +1384,12 @@
 
                 candidatesForUnload
                     .sort((a, b) => b.distance - a.distance)
+                    .slice(0, Math.max(3, candidatesForUnload.length * 0.4))
                     .forEach(({ videoItem }) => {
-                        if (this.loadedVideos.size > this.maxLoadedVideos * 0.7) {
-                            this.unloadVideoContent(videoItem);
-                        }
+                        this.unloadVideoContent(videoItem);
                     });
 
-                console.log(`Aggressive cleanup complete. Now loaded: ${this.loadedVideos.size}`);
+                console.log(`Cleanup complete. Now loaded: ${this.loadedVideos.size}`);
             }
 
             unloadVideoContent(videoItem) {
@@ -982,38 +1398,50 @@
 
                 console.log(`Unloading video: ${videoItem.dataset.filename}`);
 
+                // Clean up loop manager
+                this.loopManagers.delete(videoItem);
+
+                // Pause and clean up video
                 video.pause();
+                this.playingVideos.delete(video);
+                this.setVideoState(videoItem, 'unknown');
+
+                // Clean up object URL
+                if (video._objectUrl) {
+                    URL.revokeObjectURL(video._objectUrl);
+                    delete video._objectUrl;
+                }
+
                 video.removeAttribute('src');
                 video.load();
 
-                if (video.src && video.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(video.src);
-                }
-
+                // Remove from tracking
                 this.videoElements.delete(videoItem);
                 this.loadedVideos.delete(videoItem);
-                this.playingVideos.delete(video);
                 this.loadingVideos.delete(videoItem);
 
+                // Remove from queue if present
                 const queueIndex = this.loadQueue.indexOf(videoItem);
                 if (queueIndex > -1) {
                     this.loadQueue.splice(queueIndex, 1);
                 }
 
+                // Create new placeholder
                 const placeholder = document.createElement('div');
                 placeholder.className = 'video-placeholder';
                 this.updatePlaceholderForLayout(placeholder);
-                placeholder.textContent = '📼 Scroll to reload...';
+                this.updatePlaceholderStatus(videoItem, 'retry');
 
-                placeholder.addEventListener('click', () => {
-                    if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
-                        placeholder.textContent = '📼 Loading...';
-                        placeholder.style.background = '#2a4a2a';
+                placeholder.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (!this.loadQueue.includes(videoItem)) {
+                        this.updatePlaceholderStatus(videoItem, 'queued');
                         this.loadQueue.push(videoItem);
                         this.processLoadQueue();
                     }
                 });
 
+                // Replace video with placeholder
                 const filename = videoItem.querySelector('.video-filename');
                 videoItem.innerHTML = '';
                 videoItem.appendChild(placeholder);
@@ -1021,8 +1449,9 @@
 
                 videoItem.dataset.loaded = 'false';
 
+                // Force garbage collection if available
                 if (window.gc) {
-                    window.gc();
+                    setTimeout(() => window.gc(), 100);
                 }
             }
 
@@ -1055,30 +1484,15 @@
                 if (this.layoutMode !== 'grid') {
                     grid.classList.add(this.layoutMode);
                 }
-
-                requestAnimationFrame(() => {
-                    if (this.layoutMode === 'masonry-horizontal') {
-                        grid.style.height = '100vh';
-                    } else {
-                        grid.style.height = '';
-                    }
-                });
             }
 
             updateVideosForLayout() {
+                // Update existing videos
                 this.videoElements.forEach((video, videoItem) => {
-                    if (this.layoutMode === 'grid') {
-                        video.className = 'video-element';
-                        video.style.aspectRatio = '';
-                    } else {
-                        video.className = 'video-element aspect-ratio';
-                        const aspectRatio = this.aspectRatioCache.get(videoItem);
-                        if (aspectRatio) {
-                            video.style.aspectRatio = aspectRatio;
-                        }
-                    }
+                    this.applyVideoStyling(video, videoItem);
                 });
 
+                // Update placeholders
                 this.videos.forEach(videoItem => {
                     if (videoItem.dataset.loaded === 'false') {
                         const placeholder = videoItem.querySelector('.video-placeholder');
@@ -1098,22 +1512,22 @@
                     if (performance.memory) {
                         const memoryRatio = performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
 
-                        if (memoryRatio > 0.7) {
-                            this.maxConcurrentPlaying = Math.max(5, this.maxConcurrentPlaying - 5);
-                            this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
+                        if (memoryRatio > 0.8) {
+                            this.maxConcurrentPlaying = Math.max(2, this.maxConcurrentPlaying - 3);
+                            this.maxLoadedVideos = Math.max(10, this.maxLoadedVideos - 10);
                             this.emergencyCleanup();
-                        } else if (memoryRatio > 0.5) {
-                            this.maxConcurrentPlaying = Math.max(10, this.maxConcurrentPlaying - 2);
-                            this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
+                        } else if (memoryRatio > 0.6) {
+                            this.maxConcurrentPlaying = Math.max(5, this.maxConcurrentPlaying - 2);
+                            this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 5);
                             this.aggressiveCleanup();
-                        } else if (memoryRatio < 0.3) {
-                            this.maxConcurrentPlaying = Math.min(30, this.maxConcurrentPlaying + 1);
-                            this.maxLoadedVideos = Math.min(80, this.maxLoadedVideos + 2);
+                        } else if (memoryRatio < 0.4) {
+                            this.maxConcurrentPlaying = Math.min(15, this.maxConcurrentPlaying + 1);
+                            this.maxLoadedVideos = Math.min(40, this.maxLoadedVideos + 2);
                         }
                     }
 
                     this.updateDebugInfo();
-                }, 2000);
+                }, 4000);
             }
 
             emergencyCleanup() {
@@ -1142,10 +1556,13 @@
                 const memoryInfo = performance.memory ?
                     ` | ${Math.round(performance.memory.usedJSHeapSize / 1024 / 1024)}MB` : '';
 
+                const errorCount = this.failedVideos.size;
+                const errorInfo = errorCount > 0 ? ` | ❌ ${errorCount}` : '';
+
                 debugInfo.textContent =
                     `▶️ ${this.playingVideos.size}/${this.maxConcurrentPlaying} | ` +
                     `📼 ${this.loadedVideos.size}/${this.maxLoadedVideos} | ` +
-                    `📁 ${this.videos.size}${memoryInfo}`;
+                    `📁 ${this.videos.size}${errorInfo}${memoryInfo}`;
             }
 
             toggleAutoplay() {
@@ -1165,30 +1582,24 @@
             }
 
             startAllVideos() {
-                this.videoElements.forEach((video) => {
-                    if (this.visibleVideos.has(Array.from(this.videoElements.entries()).find(([item, vid]) => vid === video)?.[0])) {
-                        this.playVideo(video);
+                this.videoElements.forEach((video, videoItem) => {
+                    if (this.visibleVideos.has(videoItem) && this.canPlayMoreVideos()) {
+                        this.playVideoSafely(video, videoItem);
                     }
                 });
             }
 
             pauseAllVideos() {
-                this.videoElements.forEach((video) => {
-                    video.pause();
-                    this.playingVideos.delete(video);
+                this.videoElements.forEach((video, videoItem) => {
+                    if (!video.paused) {
+                        video.pause();
+                        this.setVideoState(videoItem, 'paused');
+                        this.playingVideos.delete(video);
+                    }
                 });
             }
 
-            playVideo(video) {
-                if (video.readyState >= 3 && this.canPlayMoreVideos()) {
-                    video.play().then(() => {
-                        this.playingVideos.add(video);
-                    }).catch(error => {
-                        console.debug('Autoplay prevented:', error);
-                    });
-                }
-            }
-
+            // Selection and UI methods
             selectVideo(videoItem) {
                 videoItem.classList.add('selected');
                 this.selectedVideos.add(videoItem);
@@ -1276,23 +1687,33 @@
                     case 'delete':
                         this.deleteSelected();
                         break;
+                    case 'retry':
+                        if (this.currentContextVideoItem) {
+                            this.retryVideoLoad(this.currentContextVideoItem);
+                        }
+                        break;
                 }
             }
 
             showInFileManager() {
-                alert(`Would open file manager for: ${this.currentContextVideo?.name}`);
+                if (this.currentContextVideo) {
+                    alert(`Would open file manager for: ${this.currentContextVideo.name}`);
+                }
             }
 
             copyFilePath() {
                 if (this.currentContextVideo) {
-                    navigator.clipboard.writeText(this.currentContextVideo.name);
-                    this.updateDebugInfo();
+                    navigator.clipboard.writeText(this.currentContextVideo.name).then(() => {
+                        console.log('Filename copied to clipboard');
+                    });
                 }
             }
 
             copySelected() {
                 const count = this.selectedVideos.size;
-                this.updateDebugInfo();
+                if (count > 0) {
+                    console.log(`Would copy ${count} selected videos`);
+                }
             }
 
             deleteSelected() {
@@ -1302,13 +1723,31 @@
                 if (confirm(`Delete ${count} selected video(s)?`)) {
                     this.selectedVideos.forEach(item => {
                         const video = this.videoElements.get(item);
-                        if (video && video.src) {
-                            URL.revokeObjectURL(video.src);
+                        if (video) {
+                            if (video._objectUrl) {
+                                URL.revokeObjectURL(video._objectUrl);
+                            }
+                            video.pause();
+                            this.playingVideos.delete(video);
                         }
+
+                        // Clean up all references
                         this.videoElements.delete(item);
+                        this.loadedVideos.delete(item);
+                        this.loadingVideos.delete(item);
+                        this.failedVideos.delete(item);
+                        this.visibleVideos.delete(item);
+                        this.videoStates.delete(item);
+                        this.retryCount.delete(item);
+                        this.loopManagers.delete(item);
+
+                        this.intersectionObserver.unobserve(item);
+                        this.unloadObserver.unobserve(item);
+
                         item.remove();
                         this.videos.delete(item);
                     });
+
                     this.selectedVideos.clear();
                     this.updateSelectionInfo();
                     this.updateDebugInfo();
@@ -1316,21 +1755,25 @@
             }
 
             clearVideos() {
+                // Clean up all videos
                 this.videos.forEach(videoItem => {
                     this.intersectionObserver.unobserve(videoItem);
                     this.unloadObserver.unobserve(videoItem);
                 });
 
                 this.videoElements.forEach((video, videoItem) => {
-                    if (video && video.src && video.src.startsWith('blob:')) {
-                        URL.revokeObjectURL(video.src);
+                    if (video) {
+                        video.pause();
+                        if (video._objectUrl) {
+                            URL.revokeObjectURL(video._objectUrl);
+                        }
+                        video.removeAttribute('src');
+                        video.load();
                     }
-                    video.pause();
-                    video.removeAttribute('src');
-                    video.load();
                     videoItem.remove();
                 });
 
+                // Clear all tracking sets and maps
                 this.videos.clear();
                 this.videoElements.clear();
                 this.selectedVideos.clear();
@@ -1338,9 +1781,13 @@
                 this.visibleVideos.clear();
                 this.playingVideos.clear();
                 this.loadedVideos.clear();
-                this.loadQueue = [];
-                this.unloadQueue = [];
+                this.failedVideos.clear();
+                this.videoStates.clear();
                 this.aspectRatioCache.clear();
+                this.retryCount.clear();
+                this.loopManagers.clear();
+                this.loadQueue = [];
+
                 this.updateSelectionInfo();
                 this.updateDebugInfo();
             }
@@ -1348,38 +1795,6 @@
             hideDropZone() {
                 const dropZone = document.getElementById('dropZone');
                 if (dropZone) dropZone.style.display = 'none';
-            }
-
-            updateStatus(message) {
-                this.updateDebugInfo();
-            }
-
-            pauseExcessVideos() {
-                const excessCount = this.playingVideos.size - this.maxConcurrentPlaying;
-                if (excessCount <= 0) return;
-
-                const viewportCenter = window.innerHeight / 2;
-                const playingArray = Array.from(this.playingVideos);
-
-                const videosWithDistance = playingArray.map(video => {
-                    const videoItem = Array.from(this.videoElements.entries())
-                        .find(([item, vid]) => vid === video)?.[0];
-
-                    if (videoItem) {
-                        const rect = videoItem.getBoundingClientRect();
-                        const distance = Math.abs(rect.top + rect.height / 2 - viewportCenter);
-                        return { video, distance };
-                    }
-                    return { video, distance: Infinity };
-                });
-
-                videosWithDistance
-                    .sort((a, b) => b.distance - a.distance)
-                    .slice(0, excessCount)
-                    .forEach(({ video }) => {
-                        video.pause();
-                        this.playingVideos.delete(video);
-                    });
             }
         }
 
