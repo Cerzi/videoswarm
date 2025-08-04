@@ -144,6 +144,42 @@
             transition: all 0.3s ease;
         }
 
+        /* Masonry layout modes */
+        .video-grid.masonry-vertical {
+            display: block;
+            column-count: auto;
+            column-width: 250px;
+            column-gap: 4px;
+            padding: 1rem;
+        }
+
+        .video-grid.masonry-horizontal {
+            display: flex;
+            flex-direction: column;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            height: 100vh;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 1rem;
+        }
+
+        /* Video item adjustments for masonry */
+        .video-grid.masonry-vertical .video-item {
+            display: inline-block;
+            width: 100%;
+            margin-bottom: 4px;
+            break-inside: avoid;
+            height: auto;
+        }
+
+        .video-grid.masonry-horizontal .video-item {
+            flex: none;
+            margin-right: 4px;
+            margin-bottom: 4px;
+            height: auto;
+        }
+
         .video-item {
             position: relative;
             background: #2d2d2d;
@@ -177,6 +213,31 @@
             object-fit: cover;
             display: block;
             transition: opacity 0.3s ease;
+        }
+
+        /* Aspect ratio preserved video elements */
+        .video-element.aspect-ratio {
+            width: 100%;
+            height: auto;
+            object-fit: contain;
+        }
+
+        .video-placeholder {
+            width: 100%;
+            height: 140px;
+            background: #2d2d2d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 0.8rem;
+        }
+
+        .video-placeholder.aspect-ratio {
+            width: 100%;
+            height: auto;
+            aspect-ratio: 16/9;
+            min-height: 100px;
         }
 
         .video-filename {
@@ -281,16 +342,64 @@
             font-weight: 500;
         }
 
-        /* Zoom levels */
-        .video-grid.zoom-small .video-item { max-width: 120px; }
-        .video-grid.zoom-medium .video-item { max-width: 200px; }
-        .video-grid.zoom-large .video-item { max-width: 280px; }
-        .video-grid.zoom-xlarge .video-item { max-width: 400px; }
+        /* Zoom levels - adjusted for masonry */
+        .video-grid.zoom-small {
+            --item-width: 180px;
+        }
+        .video-grid.zoom-medium {
+            --item-width: 250px;
+        }
+        .video-grid.zoom-large {
+            --item-width: 350px;
+        }
+        .video-grid.zoom-xlarge {
+            --item-width: 500px;
+        }
+
+        .video-grid.zoom-small.masonry-vertical {
+            column-width: 180px;
+        }
+        .video-grid.zoom-medium.masonry-vertical {
+            column-width: 250px;
+        }
+        .video-grid.zoom-large.masonry-vertical {
+            column-width: 350px;
+        }
+        .video-grid.zoom-xlarge.masonry-vertical {
+            column-width: 500px;
+        }
+
+        .video-grid.zoom-small.masonry-horizontal .video-item {
+            width: 180px;
+        }
+        .video-grid.zoom-medium.masonry-horizontal .video-item {
+            width: 250px;
+        }
+        .video-grid.zoom-large.masonry-horizontal .video-item {
+            width: 350px;
+        }
+        .video-grid.zoom-xlarge.masonry-horizontal .video-item {
+            width: 500px;
+        }
+
+        /* Grid mode zoom (original behavior) */
+        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-small {
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        }
+        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-medium {
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        }
+        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-large {
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        }
+        .video-grid:not(.masonry-vertical):not(.masonry-horizontal).zoom-xlarge {
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.4</span></h1>
+        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.5</span></h1>
 
         <div class="file-input-wrapper">
             <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
@@ -306,6 +415,7 @@
         </div>
 
         <div class="controls">
+            <button id="layoutToggle" class="toggle-button">📐 Aspect Ratio</button>
             <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
 
             <div class="zoom-control">
@@ -350,6 +460,10 @@
                 this.currentContextVideo = null;
                 this.autoplayEnabled = true;
                 this.loadingVideos = new Set();
+
+                // Layout modes
+                this.layoutMode = 'grid';
+                this.aspectRatioCache = new Map();
 
                 // Performance management
                 this.maxConcurrentPlaying = 30;
@@ -444,6 +558,13 @@
                 if (autoplayToggle) {
                     autoplayToggle.addEventListener('click', () => {
                         this.toggleAutoplay();
+                    });
+                }
+
+                const layoutToggle = document.getElementById('layoutToggle');
+                if (layoutToggle) {
+                    layoutToggle.addEventListener('click', () => {
+                        this.toggleLayout();
                     });
                 }
 
@@ -548,16 +669,7 @@
 
                 const placeholder = document.createElement('div');
                 placeholder.className = 'video-placeholder';
-                placeholder.style.cssText = `
-                    width: 100%;
-                    height: 140px;
-                    background: #2d2d2d;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: #666;
-                    font-size: 0.8rem;
-                `;
+                this.updatePlaceholderForLayout(placeholder);
                 placeholder.textContent = '📼 Loading...';
 
                 const filename = document.createElement('div');
@@ -603,6 +715,36 @@
                 });
 
                 return videoItem;
+            }
+
+            updatePlaceholderForLayout(placeholder) {
+                if (this.layoutMode === 'grid') {
+                    placeholder.className = 'video-placeholder';
+                    placeholder.style.cssText = `
+                        width: 100%;
+                        height: 140px;
+                        background: #2d2d2d;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: #666;
+                        font-size: 0.8rem;
+                    `;
+                } else {
+                    placeholder.className = 'video-placeholder aspect-ratio';
+                    placeholder.style.cssText = `
+                        width: 100%;
+                        height: auto;
+                        aspect-ratio: 16/9;
+                        background: #2d2d2d;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: #666;
+                        font-size: 0.8rem;
+                        min-height: 100px;
+                    `;
+                }
             }
 
             async loadVideoContent(videoItem) {
@@ -651,6 +793,19 @@
 
                         cleanup();
                         videoItem.dataset.loaded = 'true';
+
+                        // Cache aspect ratio for layout calculations
+                        const aspectRatio = video.videoWidth / video.videoHeight;
+                        this.aspectRatioCache.set(videoItem, aspectRatio);
+
+                        // Apply aspect ratio styling based on layout mode
+                        if (this.layoutMode !== 'grid') {
+                            video.className = 'video-element aspect-ratio';
+                            video.style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
+                        } else {
+                            video.className = 'video-element';
+                            video.style.aspectRatio = '';
+                        }
 
                         const placeholder = videoItem.querySelector('.video-placeholder');
                         if (placeholder) {
@@ -847,18 +1002,7 @@
 
                 const placeholder = document.createElement('div');
                 placeholder.className = 'video-placeholder';
-                placeholder.style.cssText = `
-                    width: 100%;
-                    height: 140px;
-                    background: #2d2d2d;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: #888;
-                    font-size: 0.8rem;
-                    border: 1px dashed #444;
-                    cursor: pointer;
-                `;
+                this.updatePlaceholderForLayout(placeholder);
                 placeholder.textContent = '📼 Scroll to reload...';
 
                 placeholder.addEventListener('click', () => {
@@ -880,6 +1024,69 @@
                 if (window.gc) {
                     window.gc();
                 }
+            }
+
+            toggleLayout() {
+                const layoutButton = document.getElementById('layoutToggle');
+                if (!layoutButton) return;
+
+                const modes = ['grid', 'masonry-vertical', 'masonry-horizontal'];
+                const currentIndex = modes.indexOf(this.layoutMode);
+                const nextIndex = (currentIndex + 1) % modes.length;
+                this.layoutMode = modes[nextIndex];
+
+                const buttonTexts = {
+                    'grid': '📐 Aspect Ratio',
+                    'masonry-vertical': '📐 Vertical',
+                    'masonry-horizontal': '📐 Horizontal'
+                };
+                layoutButton.textContent = buttonTexts[this.layoutMode];
+
+                this.applyLayout();
+                this.updateVideosForLayout();
+            }
+
+            applyLayout() {
+                const grid = document.getElementById('videoGrid');
+                if (!grid) return;
+
+                grid.classList.remove('masonry-vertical', 'masonry-horizontal');
+
+                if (this.layoutMode !== 'grid') {
+                    grid.classList.add(this.layoutMode);
+                }
+
+                requestAnimationFrame(() => {
+                    if (this.layoutMode === 'masonry-horizontal') {
+                        grid.style.height = '100vh';
+                    } else {
+                        grid.style.height = '';
+                    }
+                });
+            }
+
+            updateVideosForLayout() {
+                this.videoElements.forEach((video, videoItem) => {
+                    if (this.layoutMode === 'grid') {
+                        video.className = 'video-element';
+                        video.style.aspectRatio = '';
+                    } else {
+                        video.className = 'video-element aspect-ratio';
+                        const aspectRatio = this.aspectRatioCache.get(videoItem);
+                        if (aspectRatio) {
+                            video.style.aspectRatio = aspectRatio;
+                        }
+                    }
+                });
+
+                this.videos.forEach(videoItem => {
+                    if (videoItem.dataset.loaded === 'false') {
+                        const placeholder = videoItem.querySelector('.video-placeholder');
+                        if (placeholder) {
+                            this.updatePlaceholderForLayout(placeholder);
+                        }
+                    }
+                });
             }
 
             canPlayMoreVideos() {
@@ -1133,6 +1340,7 @@
                 this.loadedVideos.clear();
                 this.loadQueue = [];
                 this.unloadQueue = [];
+                this.aspectRatioCache.clear();
                 this.updateSelectionInfo();
                 this.updateDebugInfo();
             }
