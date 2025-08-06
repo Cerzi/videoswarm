@@ -90,6 +90,39 @@
             background: #0066a3;
         }
 
+        .video-limit-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .video-limit-control input[type="range"] {
+            width: 100px;
+            height: 4px;
+            background: #404040;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .video-limit-control input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #00cc66;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .video-limit-control input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #00cc66;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
         .zoom-control {
             display: flex;
             align-items: center;
@@ -271,6 +304,9 @@
             color: #ff4444;
             text-align: center;
             font-size: 0.8rem;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 0.5rem;
+            border-radius: 4px;
         }
 
         .context-menu {
@@ -399,7 +435,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.5</span></h1>
+        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.7</span></h1>
 
         <div class="file-input-wrapper">
             <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
@@ -418,6 +454,12 @@
             <button id="layoutToggle" class="toggle-button">📐 Aspect Ratio</button>
             <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
 
+            <div class="video-limit-control" style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="font-size: 0.9rem;">📹</span>
+                <input type="range" id="videoLimitSlider" class="zoom-slider" min="10" max="100" value="30" step="5" style="width: 100px;">
+                <span id="videoLimitLabel" style="font-size: 0.8rem; min-width: 30px;">30</span>
+            </div>
+
             <div class="zoom-control">
                 <span>🔍</span>
                 <input type="range" id="zoomSlider" class="zoom-slider" min="0" max="3" value="1" step="1">
@@ -434,7 +476,7 @@
         <h2>Drop video files here</h2>
         <p>Or use the "Open Folder" button above</p>
         <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
-            Supports: MP4, MOV, AVI, MKV, WebM, M4V
+            Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
         </p>
     </div>
 
@@ -460,6 +502,7 @@
                 this.currentContextVideo = null;
                 this.autoplayEnabled = true;
                 this.loadingVideos = new Set();
+                this.failedVideos = new Map(); // Track failed videos and their error types
 
                 // Layout modes
                 this.layoutMode = 'grid';
@@ -469,6 +512,8 @@
                 this.maxConcurrentPlaying = 30;
                 this.maxConcurrentLoading = 6;
                 this.maxLoadedVideos = 80;
+                this.minConcurrentPlaying = 10; // Minimum allowed
+                this.maxConcurrentPlayingLimit = 100; // Maximum allowed
                 this.unloadDistance = 800;
                 this.visibleVideos = new Set();
                 this.playingVideos = new Set();
@@ -508,10 +553,58 @@
                 window.addEventListener('scroll', () => {
                     clearTimeout(scrollTimeout);
                     scrollTimeout = setTimeout(() => {
-                        this.checkAndFixStuckPlaceholders();
-                    }, 500);
+                        this.videoElements.set(videoItem, video);
+                        this.loadedVideos.set(videoItem, Date.now());
+
+                        if (this.visibleVideos.has(videoItem) && this.canPlayMoreVideos()) {
+                            setTimeout(() => {
+                                this.playVideo(video);
+                            }, Math.random() * 500);
+                        }
+
+                        resolve();
+                    });
+
+                    video.addEventListener('loadedmetadata', onLoad);
+                    video.addEventListener('canplay', onLoad);
+                    video.addEventListener('error', (e) => onError(e.target.error));
+
+                    const timeoutId = setTimeout(() => {
+                        if (!hasLoaded && !hasErrored) {
+                            onError(new Error('Loading timeout'));
+                        }
+                    }, 15000);
+
+                    video.addEventListener('loadedmetadata', () => clearTimeout(timeoutId));
+
+                    try {
+                        video.src = URL.createObjectURL(file);
+                        this.loadingVideos.add(videoItem);
+                    } catch (error) {
+                        onError(error);
+                    }
                 });
             }
+
+            updateErrorStats() {
+                // Count error types
+                const errorCounts = {};
+                this.failedVideos.forEach((type) => {
+                    errorCounts[type] = (errorCounts[type] || 0) + 1;
+                });
+
+                // Update status if many codec errors
+                if (errorCounts.codec >= 3) {
+                    const status = document.getElementById('status');
+                    if (status && !status.dataset.codecWarningShown) {
+                        status.style.display = 'block';
+                        status.style.background = '#4a0000';
+                        status.style.color = '#ff6666';
+                        status.innerHTML = `⚠️ <strong>${errorCounts.codec} videos failed due to unsupported codec (H.265/HEVC)</strong>. These require Safari or video conversion to H.264.`;
+                        status.dataset.codecWarningShown = 'true';
+                    }
+                }
+            };
 
             checkAndFixStuckPlaceholders() {
                 const viewportTop = window.scrollY;
@@ -596,6 +689,16 @@
                     });
                 }
 
+                const videoLimitSlider = document.getElementById('videoLimitSlider');
+                if (videoLimitSlider) {
+                    videoLimitSlider.addEventListener('input', (e) => {
+                        this.setVideoLimit(parseInt(e.target.value));
+                    });
+
+                    // Add tooltip on hover
+                    videoLimitSlider.title = 'Adjust max concurrent videos (increase if your system can handle it)';
+                }
+
                 const videoGrid = document.getElementById('videoGrid');
                 if (videoGrid) {
                     videoGrid.addEventListener('wheel', (e) => {
@@ -653,12 +756,36 @@
                 this.hideDropZone();
                 this.clearVideos();
 
+                // Show codec warning if needed
+                this.showCodecWarning();
+
                 videoFiles.forEach((file) => {
                     this.createVideoItem(file);
                 });
 
                 this.updateDebugInfo();
                 this.processLoadQueue();
+            }
+
+            showCodecWarning() {
+                const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+                const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
+                const isEdge = navigator.userAgent.indexOf('Edg') > -1;
+
+                if (isChrome || isFirefox || isEdge) {
+                    const status = document.getElementById('status');
+                    if (status) {
+                        status.style.display = 'block';
+                        status.style.background = '#3a2f00';
+                        status.style.color = '#ffcc00';
+                        status.innerHTML = '⚠️ <strong>Codec Warning:</strong> H.265/HEVC videos are not supported in this browser. Only H.264 videos will play. Consider using Safari or converting HEVC videos to H.264.';
+
+                        // Auto-hide after 10 seconds
+                        setTimeout(() => {
+                            status.style.display = 'none';
+                        }, 10000);
+                    }
+                }
             }
 
             createVideoItem(file) {
@@ -771,6 +898,7 @@
                         if (placeholder) placeholder.remove();
                     };
 
+                    // THIS IS THE onError FUNCTION - properly handles codec errors
                     const onError = (error) => {
                         if (hasErrored) return;
                         hasErrored = true;
@@ -781,8 +909,36 @@
                         videoItem.classList.add('error');
                         const errorIndicator = document.createElement('div');
                         errorIndicator.className = 'error-indicator';
-                        errorIndicator.innerHTML = '❌<br>Load Error';
+
+                        // Provide more helpful error messages
+                        let errorMessage = '❌<br>';
+                        let errorType = 'unknown';
+
+                        if (error && error.message) {
+                            if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
+                                error.message.includes('no supported streams')) {
+                                errorMessage += 'Codec Not Supported<br><small>Likely H.265/HEVC</small>';
+                                errorType = 'codec';
+                            } else if (error.message.includes('DEMUXER_ERROR')) {
+                                errorMessage += 'Format Error';
+                                errorType = 'format';
+                            } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
+                                errorMessage += 'Media Error';
+                                errorType = 'media';
+                            } else {
+                                errorMessage += 'Load Error';
+                                errorType = 'load';
+                            }
+                        } else {
+                            errorMessage += 'Load Error';
+                        }
+
+                        errorIndicator.innerHTML = errorMessage;
                         videoItem.appendChild(errorIndicator);
+
+                        // Track the error for statistics
+                        this.failedVideos.set(file.name, errorType);
+                        this.updateErrorStats();
 
                         reject(error);
                     };
