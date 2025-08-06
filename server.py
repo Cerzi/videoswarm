@@ -36,7 +36,11 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
                 post_data = self.rfile.read(content_length)
                 
                 # Parse multipart form data (simplified)
-                boundary = self.headers['Content-Type'].split('boundary=')[1]
+                content_type = self.headers.get('Content-Type', '')
+                if 'boundary=' not in content_type:
+                    raise ValueError("No boundary found in Content-Type")
+                
+                boundary = content_type.split('boundary=')[1]
                 parts = post_data.split(f'--{boundary}'.encode())
                 
                 uploaded_files = []
@@ -45,31 +49,44 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
                     if b'Content-Disposition' in part:
                         # Extract filename
                         header_end = part.find(b'\r\n\r\n')
-                        headers = part[:header_end].decode('utf-8')
+                        if header_end == -1:
+                            continue
+                            
+                        headers = part[:header_end].decode('utf-8', errors='ignore')
                         file_data = part[header_end + 4:]
                         
                         # Remove trailing \r\n
                         if file_data.endswith(b'\r\n'):
                             file_data = file_data[:-2]
                         
-                        # Extract filename from headers
-                        filename_start = headers.find('filename="') + 10
-                        filename_end = headers.find('"', filename_start)
-                        filename = headers[filename_start:filename_end]
+                        # Extract filename from headers - more robust parsing
+                        filename = None
+                        if 'filename="' in headers:
+                            filename_start = headers.find('filename="') + 10
+                            filename_end = headers.find('"', filename_start)
+                            if filename_end > filename_start:
+                                filename = headers[filename_start:filename_end]
                         
-                        if filename and file_data:
-                            # Create temp directory if it doesn't exist
-                            if not hasattr(self.server, 'temp_dir'):
-                                self.server.temp_dir = tempfile.mkdtemp(prefix='video_browser_')
-                            
-                            # Save file to temp directory
-                            file_path = os.path.join(self.server.temp_dir, filename)
-                            with open(file_path, 'wb') as f:
-                                f.write(file_data)
-                            
-                            # Store in uploaded_videos mapping
-                            self.server.uploaded_videos[filename] = file_path
-                            uploaded_files.append(filename)
+                        # Skip if no filename or no file data
+                        if not filename or not file_data or len(file_data) == 0:
+                            continue
+                        
+                        # Create temp directory if it doesn't exist
+                        if not hasattr(self.server, 'temp_dir') or not self.server.temp_dir:
+                            self.server.temp_dir = tempfile.mkdtemp(prefix='video_browser_')
+                        
+                        # Save file to temp directory
+                        file_path = os.path.join(self.server.temp_dir, filename)
+                        with open(file_path, 'wb') as f:
+                            f.write(file_data)
+                        
+                        # Store in uploaded_videos mapping
+                        if not hasattr(self.server, 'uploaded_videos'):
+                            self.server.uploaded_videos = {}
+                        self.server.uploaded_videos[filename] = file_path
+                        uploaded_files.append(filename)
+                        
+                        print(f"✅ Uploaded: {filename} ({len(file_data)} bytes)")
                 
                 # Send success response
                 self.send_response(200)
@@ -78,7 +95,12 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
                 response = json.dumps({'success': True, 'files': uploaded_files})
                 self.wfile.write(response.encode())
                 
+                print(f"📤 Upload complete: {len(uploaded_files)} files")
+                
             except Exception as e:
+                print(f"❌ Upload error: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 self.send_error(500, f"Upload failed: {str(e)}")
             return
         
