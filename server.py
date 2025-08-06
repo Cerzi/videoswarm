@@ -24,10 +24,25 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Headers', '*')
         super().end_headers()
 
+def find_available_port(start_port=8347, max_attempts=10):
+    """Find an available port starting from start_port"""
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socketserver.TCPServer(("", port), None) as test_server:
+                return port
+        except OSError:
+            continue
+    return None
+
 def main():
-    PORT = 8000
+    # Try to find an available port starting from 8347
+    PORT = find_available_port()
     
-    # Check if port is already in use
+    if PORT is None:
+        print("❌ Could not find an available port!")
+        print("💡 Try closing other applications or specify a different port range")
+        sys.exit(1)
+    
     try:
         with socketserver.TCPServer(("", PORT), VideoServerHandler) as httpd:
             print(f"🎬 Video Browser Server starting...")
@@ -43,12 +58,8 @@ def main():
             httpd.serve_forever()
             
     except OSError as e:
-        if e.errno == 48:  # Address already in use
-            print(f"❌ Port {PORT} is already in use!")
-            print(f"💡 Try: lsof -ti:{PORT} | xargs kill")
-            sys.exit(1)
-        else:
-            raise
+        print(f"❌ Server error: {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         print(f"\n🛑 Server stopped by user")
         sys.exit(0)
