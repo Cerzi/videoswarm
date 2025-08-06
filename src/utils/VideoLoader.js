@@ -77,61 +77,51 @@ export class VideoLoader {
         const file = videoItem._file;
         if (!file) return;
 
-        return new Promise((resolve, reject) => {
+        // Quick format check - skip obviously problematic files
+        if (this.isLikelyProblematicFile(file)) {
+            this.eventBus.emit('video:loadError', {
+                videoItem,
+                file,
+                error: { code: 4, message: 'Likely unsupported format' },
+                errorType: 'codec'
+            });
+            return;
+        }
+
+        return new Promise((resolve) => {
             const video = document.createElement('video');
             video.className = 'video-element';
             video.muted = true;
             video.loop = true;
-            video.preload = 'none'; // Disable preload to avoid range requests
+            video.preload = 'metadata'; // Try metadata first
             video.playsInline = true;
-            video.autoplay = false; // Start with autoplay off
+            video.autoplay = false;
 
             let hasLoaded = false;
             let hasErrored = false;
+            let timeoutId;
 
             const cleanup = () => {
                 this.loadingVideos.delete(videoItem);
-                const placeholder = videoItem.querySelector('.video-placeholder');
-                if (placeholder) placeholder.remove();
+                if (timeoutId) clearTimeout(timeoutId);
+                if (video.src && video.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(video.src);
+                }
             };
 
             const onError = (error) => {
                 if (hasErrored) return;
                 hasErrored = true;
 
-                console.warn(`Video load error for ${file.name}:`, error);
                 cleanup();
 
-                let errorType = 'unknown';
-                if (error) {
-                    // Check error code first (more reliable than message)
+                let errorType = 'codec'; // Default to codec since that's most common
+                if (error && error.code) {
                     switch (error.code) {
-                        case 1: // MEDIA_ERR_ABORTED
-                            errorType = 'aborted';
-                            break;
-                        case 2: // MEDIA_ERR_NETWORK
-                            errorType = 'network';
-                            break;
-                        case 3: // MEDIA_ERR_DECODE
-                            errorType = 'codec';
-                            break;
-                        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
-                            errorType = 'codec';
-                            break;
-                        default:
-                            // Fall back to message checking
-                            if (error.message) {
-                                if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
-                                    error.message.includes('no supported streams')) {
-                                    errorType = 'codec';
-                                } else if (error.message.includes('DEMUXER_ERROR')) {
-                                    errorType = 'format';
-                                } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
-                                    errorType = 'media';
-                                } else if (error.message.includes('timeout')) {
-                                    errorType = 'timeout';
-                                }
-                            }
+                        case 1: errorType = 'aborted'; break;
+                        case 2: errorType = 'network'; break;
+                        case 3: errorType = 'codec'; break;
+                        case 4: errorType = 'codec'; break;
                     }
                 }
 
@@ -142,48 +132,66 @@ export class VideoLoader {
                     errorType
                 });
 
-                resolve(); // Don't reject - just continue processing
+                resolve(); // Always resolve to continue processing
             };
 
-            const onLoad = () => {
+            const onSuccess = () => {
                 if (hasLoaded || hasErrored) return;
                 hasLoaded = true;
 
                 cleanup();
 
-                // Start playing once loaded
-                video.play().catch(e => {
-                    console.warn('Autoplay failed:', e);
-                });
+                // Only try to play if we have valid dimensions
+                if (video.videoWidth > 0 && video.videoHeight > 0) {
+                    video.play().catch(() => {
+                        // Autoplay failed, but that's ok
+                    });
 
-                // Apply layout-specific styling
-                this.eventBus.emit('video:loadSuccess', {
-                    videoItem,
-                    video,
-                    aspectRatio: video.videoWidth / video.videoHeight
-                });
+                    this.eventBus.emit('video:loadSuccess', {
+                        videoItem,
+                        video,
+                        aspectRatio: video.videoWidth / video.videoHeight
+                    });
+                } else {
+                    // No valid video dimensions - treat as error
+                    onError({ code: 4, message: 'Invalid video dimensions' });
+                    return;
+                }
 
                 resolve();
             };
 
-            video.addEventListener('loadeddata', onLoad);
+            // Set up event listeners
+            video.addEventListener('loadedmetadata', onSuccess);
             video.addEventListener('error', (e) => onError(e.target.error));
 
-            const timeoutId = setTimeout(() => {
+            // Shorter timeout for faster failure detection
+            timeoutId = setTimeout(() => {
                 if (!hasLoaded && !hasErrored) {
-                    onError(new Error('Loading timeout'));
+                    onError({ code: 4, message: 'Loading timeout' });
                 }
-            }, 15000);
-
-            video.addEventListener('loadedmetadata', () => clearTimeout(timeoutId));
+            }, 5000); // Reduced from 15s to 5s
 
             try {
-                video.src = URL.createObjectURL(file);
                 this.loadingVideos.add(videoItem);
+                video.src = URL.createObjectURL(file);
             } catch (error) {
                 onError(error);
             }
         });
+    }
+
+    isLikelyProblematicFile(file) {
+        // Skip files that are likely to cause issues
+        const name = file.name.toLowerCase();
+        
+        // Very small files are likely corrupted
+        if (file.size < 1000) return true;
+        
+        // Files with certain patterns that we've seen fail
+        if (name.includes('_preview') && file.size < 100000) return true;
+        
+        return false;
     }
 
     unloadVideo(videoItem) {
