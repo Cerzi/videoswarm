@@ -104,26 +104,50 @@ export class VideoItem {
         const errorIndicator = document.createElement('div');
         errorIndicator.className = 'error-indicator';
         
-        let displayMessage = '❌<br>';
+        let displayMessage = '⚠️<br>';
         
         switch (errorType) {
             case 'codec':
-                displayMessage += 'Codec Not Supported<br><small>Likely H.265/HEVC</small>';
+                displayMessage += 'Unsupported Format<br><small>H.265/HEVC or corrupted</small>';
                 break;
             case 'format':
-                displayMessage += 'Format Error';
+                displayMessage += 'Format Error<br><small>File may be corrupted</small>';
                 break;
             case 'media':
-                displayMessage += 'Media Error';
+                displayMessage += 'Media Error<br><small>Playback issue</small>';
+                break;
+            case 'network':
+                displayMessage += 'Network Error<br><small>Loading failed</small>';
+                break;
+            case 'aborted':
+                displayMessage += 'Load Aborted<br><small>Cancelled</small>';
                 break;
             case 'timeout':
-                displayMessage += 'Loading Timeout';
+                displayMessage += 'Loading Timeout<br><small>File too large?</small>';
                 break;
             default:
-                displayMessage += 'Load Error';
+                displayMessage += 'Load Error<br><small>Unknown issue</small>';
         }
         
         errorIndicator.innerHTML = displayMessage;
+        
+        // Add click to retry functionality
+        errorIndicator.style.cursor = 'pointer';
+        errorIndicator.title = 'Click to retry loading';
+        errorIndicator.addEventListener('click', () => {
+            this.element.classList.remove('error');
+            errorIndicator.remove();
+            
+            // Add placeholder back
+            const placeholder = this.createPlaceholder();
+            const filename = this.element.querySelector('.video-filename');
+            this.element.insertBefore(placeholder, filename);
+            
+            // Reset state and retry
+            this.element.dataset.loaded = 'false';
+            this.eventBus.emit('video:load', this.element);
+        });
+        
         this.element.appendChild(errorIndicator);
 
         // Remove placeholder

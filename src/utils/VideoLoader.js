@@ -99,20 +99,39 @@ export class VideoLoader {
                 if (hasErrored) return;
                 hasErrored = true;
 
-                console.error(`Video load error for ${file.name}:`, error);
+                console.warn(`Video load error for ${file.name}:`, error);
                 cleanup();
 
                 let errorType = 'unknown';
-                if (error && error.message) {
-                    if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
-                        error.message.includes('no supported streams')) {
-                        errorType = 'codec';
-                    } else if (error.message.includes('DEMUXER_ERROR')) {
-                        errorType = 'format';
-                    } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
-                        errorType = 'media';
-                    } else if (error.message.includes('timeout')) {
-                        errorType = 'timeout';
+                if (error) {
+                    // Check error code first (more reliable than message)
+                    switch (error.code) {
+                        case 1: // MEDIA_ERR_ABORTED
+                            errorType = 'aborted';
+                            break;
+                        case 2: // MEDIA_ERR_NETWORK
+                            errorType = 'network';
+                            break;
+                        case 3: // MEDIA_ERR_DECODE
+                            errorType = 'codec';
+                            break;
+                        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+                            errorType = 'codec';
+                            break;
+                        default:
+                            // Fall back to message checking
+                            if (error.message) {
+                                if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
+                                    error.message.includes('no supported streams')) {
+                                    errorType = 'codec';
+                                } else if (error.message.includes('DEMUXER_ERROR')) {
+                                    errorType = 'format';
+                                } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
+                                    errorType = 'media';
+                                } else if (error.message.includes('timeout')) {
+                                    errorType = 'timeout';
+                                }
+                            }
                     }
                 }
 
@@ -123,7 +142,7 @@ export class VideoLoader {
                     errorType
                 });
 
-                reject(error);
+                resolve(); // Don't reject - just continue processing
             };
 
             const onLoad = () => {
