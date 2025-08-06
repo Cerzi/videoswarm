@@ -1,0 +1,99 @@
+# Dependency directories
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+out/
+
+# Electron build artifacts
+*.dmg
+*.exe
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.tar.gz
+*.zip
+
+# Electron builder cache
+.electron-builder-cache/
+
+# Platform-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Log files
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Temporary folders
+tmp/
+temp/
+
+# Auto-generated app icons (if you generate them)
+build/icon.*
+assets/icon.*
+
+# Development database files (if you add any)
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+
+# System files
+*.tmp
+*.temp
+
+# Auto-generated files
+package-lock.json  # Optional: some prefer to commit this
+yarn.lock         # Optional: some prefer to commit this
