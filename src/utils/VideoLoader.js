@@ -32,7 +32,7 @@ export class VideoLoader {
         }
 
         this.loadQueue.push(videoItem);
-        
+
         if (!this.isProcessingQueue) {
             this.processLoadQueue();
         }
@@ -88,25 +88,12 @@ export class VideoLoader {
             return;
         }
 
-        // First, upload the file to the server if not already uploaded
-        try {
-            await this.ensureFileUploaded(file);
-        } catch (error) {
-            this.eventBus.emit('video:loadError', {
-                videoItem,
-                file,
-                error: { code: 2, message: 'Upload failed' },
-                errorType: 'network'
-            });
-            return;
-        }
-
         return new Promise((resolve) => {
             const video = document.createElement('video');
             video.className = 'video-element';
             video.muted = true;
             video.loop = true;
-            video.preload = 'metadata'; // Try metadata first
+            video.preload = 'metadata';
             video.playsInline = true;
             video.autoplay = false;
 
@@ -117,123 +104,94 @@ export class VideoLoader {
             const cleanup = () => {
                 this.loadingVideos.delete(videoItem);
                 if (timeoutId) clearTimeout(timeoutId);
-                // No need to revoke URLs since we're using server paths
+                const placeholder = videoItem.querySelector('.video-placeholder');
+                if (placeholder) placeholder.remove();
             };
 
             const onError = (error) => {
                 if (hasErrored) return;
                 hasErrored = true;
 
+                console.error(`Video load error for ${file.name}:`, error);
                 cleanup();
 
-                let errorType = 'codec'; // Default to codec since that's most common
-                if (error && error.code) {
-                    switch (error.code) {
-                        case 1: errorType = 'aborted'; break;
-                        case 2: errorType = 'network'; break;
-                        case 3: errorType = 'codec'; break;
-                        case 4: errorType = 'codec'; break;
-                    }
-                }
+                videoItem.classList.add('error');
+                const errorIndicator = document.createElement('div');
+                errorIndicator.className = 'error-indicator';
+                errorIndicator.innerHTML = '❌<br>Load Error';
+                videoItem.appendChild(errorIndicator);
 
                 this.eventBus.emit('video:loadError', {
                     videoItem,
                     file,
                     error,
-                    errorType
+                    errorType: 'codec'
                 });
 
                 resolve(); // Always resolve to continue processing
             };
 
             const onSuccess = () => {
+                console.log(`Video loaded: ${file.name}, dimensions: ${video.videoWidth}x${video.videoHeight}, aspectRatio: ${aspectRatio}`);
+
                 if (hasLoaded || hasErrored) return;
                 hasLoaded = true;
 
                 cleanup();
+                videoItem.dataset.loaded = 'true';
 
-                // Only try to play if we have valid dimensions
-                if (video.videoWidth > 0 && video.videoHeight > 0) {
-                    video.play().catch(() => {
-                        // Autoplay failed, but that's ok
-                    });
+                // Cache aspect ratio
+                const aspectRatio = video.videoWidth / video.videoHeight;
 
-                    this.eventBus.emit('video:loadSuccess', {
-                        videoItem,
-                        video,
-                        aspectRatio: video.videoWidth / video.videoHeight
-                    });
+                // Replace placeholder with video
+                const placeholder = videoItem.querySelector('.video-placeholder');
+                if (placeholder) {
+                    videoItem.replaceChild(video, placeholder);
                 } else {
-                    // No valid video dimensions - treat as error
-                    onError({ code: 4, message: 'Invalid video dimensions' });
-                    return;
+                    videoItem.insertBefore(video, videoItem.querySelector('.video-filename'));
                 }
+
+                this.eventBus.emit('video:loadSuccess', {
+                    videoItem,
+                    video,
+                    aspectRatio
+                });
 
                 resolve();
             };
 
             // Set up event listeners
             video.addEventListener('loadedmetadata', onSuccess);
+            video.addEventListener('canplay', onSuccess);
             video.addEventListener('error', (e) => onError(e.target.error));
 
-            // Shorter timeout for faster failure detection
+            // Timeout for loading
             timeoutId = setTimeout(() => {
                 if (!hasLoaded && !hasErrored) {
                     onError({ code: 4, message: 'Loading timeout' });
                 }
-            }, 5000); // Reduced from 15s to 5s
+            }, 15000);
 
             try {
                 this.loadingVideos.add(videoItem);
-                // Use server URL instead of blob URL
-                video.src = `/videos/${encodeURIComponent(file.name)}`;
+                // Use blob URL for local files (no server upload needed)
+                video.src = URL.createObjectURL(file);
             } catch (error) {
                 onError(error);
             }
         });
     }
 
-    async ensureFileUploaded(file) {
-        // Check if file is already uploaded (simple cache based on filename)
-        if (!this.uploadedFiles) {
-            this.uploadedFiles = new Set();
-        }
-
-        if (this.uploadedFiles.has(file.name)) {
-            return; // Already uploaded
-        }
-
-        // Upload the file
-        const formData = new FormData();
-        formData.append('video', file);
-
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            throw new Error(`Upload failed: ${response.status}`);
-        }
-
-        const result = await response.json();
-        if (result.success) {
-            this.uploadedFiles.add(file.name);
-        } else {
-            throw new Error('Upload failed');
-        }
-    }
-
     isLikelyProblematicFile(file) {
         // Skip files that are likely to cause issues
         const name = file.name.toLowerCase();
-        
+
         // Very small files are likely corrupted
         if (file.size < 1000) return true;
-        
+
         // Files with certain patterns that we've seen fail
         if (name.includes('_preview') && file.size < 100000) return true;
-        
+
         return false;
     }
 
@@ -244,10 +202,14 @@ export class VideoLoader {
         console.log(`Unloading video: ${videoItem.dataset.filename}`);
 
         video.pause();
+
+        // Revoke blob URL to free memory
+        if (video.src && video.src.startsWith('blob:')) {
+            URL.revokeObjectURL(video.src);
+        }
+
         video.removeAttribute('src');
         video.load();
-
-        // No need to revoke URLs since we're using server paths
 
         this.loadingVideos.delete(videoItem);
 
@@ -282,7 +244,7 @@ export class VideoLoader {
 
     performCleanup(options = {}) {
         const { maxLoaded = 80, aggressive = false } = options;
-        
+
         console.log(`Starting ${aggressive ? 'aggressive' : 'normal'} cleanup`);
 
         const allVideoItems = document.querySelectorAll('.video-item[data-loaded="true"]');
