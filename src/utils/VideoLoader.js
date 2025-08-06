@@ -82,9 +82,9 @@ export class VideoLoader {
             video.className = 'video-element';
             video.muted = true;
             video.loop = true;
-            video.preload = 'metadata';
+            video.preload = 'none'; // Disable preload to avoid range requests
             video.playsInline = true;
-            video.autoplay = true;
+            video.autoplay = false; // Start with autoplay off
 
             let hasLoaded = false;
             let hasErrored = false;
@@ -132,6 +132,11 @@ export class VideoLoader {
 
                 cleanup();
 
+                // Start playing once loaded
+                video.play().catch(e => {
+                    console.warn('Autoplay failed:', e);
+                });
+
                 // Apply layout-specific styling
                 this.eventBus.emit('video:loadSuccess', {
                     videoItem,
@@ -142,8 +147,7 @@ export class VideoLoader {
                 resolve();
             };
 
-            video.addEventListener('loadedmetadata', onLoad);
-            video.addEventListener('canplay', onLoad);
+            video.addEventListener('loadeddata', onLoad);
             video.addEventListener('error', (e) => onError(e.target.error));
 
             const timeoutId = setTimeout(() => {
