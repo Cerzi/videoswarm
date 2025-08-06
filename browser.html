@@ -435,7 +435,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.7</span></h1>
+        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.9</span></h1>
 
         <div class="file-input-wrapper">
             <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
@@ -522,6 +522,11 @@
                 this.isProcessingQueue = false;
                 this.unloadQueue = [];
 
+                // Masonry-specific loading control
+                this.masonryLoadingPaused = false;
+                this.masonryStableHeight = 0;
+                this.masonryHeightCheckCount = 0;
+
                 // Intersection observer
                 this.intersectionObserver = new IntersectionObserver(
                     this.handleIntersection.bind(this),
@@ -552,7 +557,172 @@
                 let scrollTimeout;
                 window.addEventListener('scroll', () => {
                     clearTimeout(scrollTimeout);
+
+                    // For masonry mode, pause loading briefly when scrolling to avoid cascade effects
+                    if (this.layoutMode === 'masonry-vertical') {
+                        this.masonryLoadingPaused = true;
+                        clearTimeout(this.masonryResumeTimeout);
+                        this.masonryResumeTimeout = setTimeout(() => {
+                            this.masonryLoadingPaused = false;
+                            if (this.loadQueue.length > 0) {
+                                this.processLoadQueue();
+                            }
+                        }, 200);
+                    }
+
                     scrollTimeout = setTimeout(() => {
+                        // Additional stability check for masonry
+                        if (this.layoutMode === 'masonry-vertical') {
+                            this.checkMasonryStability();
+                        }
+                    }, 500);
+                });
+            }
+
+            // Check if masonry layout has stabilized to prevent cascade loading
+            checkMasonryStability() {
+                if (this.layoutMode !== 'masonry-vertical') return;
+
+                const grid = document.getElementById('videoGrid');
+                if (!grid) return;
+
+                const currentHeight = grid.scrollHeight;
+
+                if (Math.abs(currentHeight - this.masonryStableHeight) < 50) {
+                    this.masonryHeightCheckCount++;
+                    if (this.masonryHeightCheckCount >= 3) {
+                        // Height has been stable, resume normal loading
+                        this.masonryLoadingPaused = false;
+                        if (this.loadQueue.length > 0) {
+                            this.processLoadQueue();
+                        }
+                    }
+                } else {
+                    this.masonryStableHeight = currentHeight;
+                    this.masonryHeightCheckCount = 0;
+                }
+            }
+
+            // Add the missing setVideoLimit function
+            setVideoLimit(limit) {
+                this.maxConcurrentPlaying = Math.max(this.minConcurrentPlaying,
+                                                   Math.min(this.maxConcurrentPlayingLimit, limit));
+
+                // Store the user-set limit to prevent auto-adjustment from overriding it
+                this.userSetVideoLimit = this.maxConcurrentPlaying;
+
+                // Update the label
+                const label = document.getElementById('videoLimitLabel');
+                if (label) {
+                    label.textContent = this.maxConcurrentPlaying.toString();
+                }
+
+                // If we're now over the limit, pause excess videos
+                if (this.playingVideos.size > this.maxConcurrentPlaying) {
+                    this.pauseExcessVideos();
+                }
+
+                // Update debug info to reflect new limit
+                this.updateDebugInfo();
+
+                console.log(`Video limit set to: ${this.maxConcurrentPlaying} (user-set: ${this.userSetVideoLimit})`);
+            }
+
+            async loadVideoContent(videoItem) {
+                if (videoItem.dataset.loaded === 'true') return;
+
+                const file = videoItem._file;
+                if (!file) return;
+
+                return new Promise((resolve, reject) => {
+                    const video = document.createElement('video');
+                    video.className = 'video-element';
+                    video.muted = true;
+                    video.loop = true;
+                    video.preload = 'metadata';
+                    video.playsInline = true;
+                    video.autoplay = true;
+
+                    let hasLoaded = false;
+                    let hasErrored = false;
+
+                    const cleanup = () => {
+                        this.loadingVideos.delete(videoItem);
+                        const placeholder = videoItem.querySelector('.video-placeholder');
+                        if (placeholder) placeholder.remove();
+                    };
+
+                    const onError = (error) => {
+                        if (hasErrored) return;
+                        hasErrored = true;
+
+                        console.error(`Video load error for ${file.name}:`, error);
+                        cleanup();
+
+                        videoItem.classList.add('error');
+                        const errorIndicator = document.createElement('div');
+                        errorIndicator.className = 'error-indicator';
+
+                        // Provide more helpful error messages
+                        let errorMessage = '❌<br>';
+                        let errorType = 'unknown';
+
+                        if (error && error.message) {
+                            if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
+                                error.message.includes('no supported streams')) {
+                                errorMessage += 'Codec Not Supported<br><small>Likely H.265/HEVC</small>';
+                                errorType = 'codec';
+                            } else if (error.message.includes('DEMUXER_ERROR')) {
+                                errorMessage += 'Format Error';
+                                errorType = 'format';
+                            } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
+                                errorMessage += 'Media Error';
+                                errorType = 'media';
+                            } else {
+                                errorMessage += 'Load Error';
+                                errorType = 'load';
+                            }
+                        } else {
+                            errorMessage += 'Load Error';
+                        }
+
+                        errorIndicator.innerHTML = errorMessage;
+                        videoItem.appendChild(errorIndicator);
+
+                        // Track the error for statistics
+                        this.failedVideos.set(file.name, errorType);
+                        this.updateErrorStats();
+
+                        reject(error);
+                    };
+
+                    const onLoad = () => {
+                        if (hasLoaded || hasErrored) return;
+                        hasLoaded = true;
+
+                        cleanup();
+                        videoItem.dataset.loaded = 'true';
+
+                        // Cache aspect ratio for layout calculations
+                        const aspectRatio = video.videoWidth / video.videoHeight;
+                        this.aspectRatioCache.set(videoItem, aspectRatio);
+
+                        // Apply aspect ratio styling based on layout mode
+                        if (this.layoutMode !== 'grid') {
+                            video.className = 'video-element aspect-ratio';
+                            video.style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
+                        } else {
+                            video.className = 'video-element';
+                            video.style.aspectRatio = '';
+                        }
+
+                        const placeholder = videoItem.querySelector('.video-placeholder');
+                        if (placeholder) {
+                            videoItem.replaceChild(video, placeholder);
+                        } else {
+                            videoItem.insertBefore(video, videoItem.querySelector('.video-filename'));
+                        }
+
                         this.videoElements.set(videoItem, video);
                         this.loadedVideos.set(videoItem, Date.now());
 
@@ -563,7 +733,7 @@
                         }
 
                         resolve();
-                    });
+                    };
 
                     video.addEventListener('loadedmetadata', onLoad);
                     video.addEventListener('canplay', onLoad);
@@ -604,7 +774,7 @@
                         status.dataset.codecWarningShown = 'true';
                     }
                 }
-            };
+            }
 
             checkAndFixStuckPlaceholders() {
                 const viewportTop = window.scrollY;
@@ -634,7 +804,7 @@
                     }
                 });
 
-                if (!this.isProcessingQueue && this.loadQueue.length > 0) {
+                if (!this.isProcessingQueue && this.loadQueue.length > 0 && !this.masonryLoadingPaused) {
                     this.processLoadQueue();
                 }
             }
@@ -874,135 +1044,6 @@
                 }
             }
 
-            async loadVideoContent(videoItem) {
-                if (videoItem.dataset.loaded === 'true') return;
-
-                const file = videoItem._file;
-                if (!file) return;
-
-                return new Promise((resolve, reject) => {
-                    const video = document.createElement('video');
-                    video.className = 'video-element';
-                    video.muted = true;
-                    video.loop = true;
-                    video.preload = 'metadata';
-                    video.playsInline = true;
-                    video.autoplay = true;
-
-                    let hasLoaded = false;
-                    let hasErrored = false;
-
-                    const cleanup = () => {
-                        this.loadingVideos.delete(videoItem);
-                        const placeholder = videoItem.querySelector('.video-placeholder');
-                        if (placeholder) placeholder.remove();
-                    };
-
-                    // THIS IS THE onError FUNCTION - properly handles codec errors
-                    const onError = (error) => {
-                        if (hasErrored) return;
-                        hasErrored = true;
-
-                        console.error(`Video load error for ${file.name}:`, error);
-                        cleanup();
-
-                        videoItem.classList.add('error');
-                        const errorIndicator = document.createElement('div');
-                        errorIndicator.className = 'error-indicator';
-
-                        // Provide more helpful error messages
-                        let errorMessage = '❌<br>';
-                        let errorType = 'unknown';
-
-                        if (error && error.message) {
-                            if (error.message.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') ||
-                                error.message.includes('no supported streams')) {
-                                errorMessage += 'Codec Not Supported<br><small>Likely H.265/HEVC</small>';
-                                errorType = 'codec';
-                            } else if (error.message.includes('DEMUXER_ERROR')) {
-                                errorMessage += 'Format Error';
-                                errorType = 'format';
-                            } else if (error.message.includes('MEDIA_ELEMENT_ERROR')) {
-                                errorMessage += 'Media Error';
-                                errorType = 'media';
-                            } else {
-                                errorMessage += 'Load Error';
-                                errorType = 'load';
-                            }
-                        } else {
-                            errorMessage += 'Load Error';
-                        }
-
-                        errorIndicator.innerHTML = errorMessage;
-                        videoItem.appendChild(errorIndicator);
-
-                        // Track the error for statistics
-                        this.failedVideos.set(file.name, errorType);
-                        this.updateErrorStats();
-
-                        reject(error);
-                    };
-
-                    const onLoad = () => {
-                        if (hasLoaded || hasErrored) return;
-                        hasLoaded = true;
-
-                        cleanup();
-                        videoItem.dataset.loaded = 'true';
-
-                        // Cache aspect ratio for layout calculations
-                        const aspectRatio = video.videoWidth / video.videoHeight;
-                        this.aspectRatioCache.set(videoItem, aspectRatio);
-
-                        // Apply aspect ratio styling based on layout mode
-                        if (this.layoutMode !== 'grid') {
-                            video.className = 'video-element aspect-ratio';
-                            video.style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
-                        } else {
-                            video.className = 'video-element';
-                            video.style.aspectRatio = '';
-                        }
-
-                        const placeholder = videoItem.querySelector('.video-placeholder');
-                        if (placeholder) {
-                            videoItem.replaceChild(video, placeholder);
-                        } else {
-                            videoItem.insertBefore(video, videoItem.querySelector('.video-filename'));
-                        }
-
-                        this.videoElements.set(videoItem, video);
-                        this.loadedVideos.set(videoItem, Date.now());
-
-                        if (this.visibleVideos.has(videoItem) && this.canPlayMoreVideos()) {
-                            setTimeout(() => {
-                                this.playVideo(video);
-                            }, Math.random() * 500);
-                        }
-
-                        resolve();
-                    };
-
-                    video.addEventListener('loadedmetadata', onLoad);
-                    video.addEventListener('canplay', onLoad);
-                    video.addEventListener('error', (e) => onError(e.target.error));
-
-                    const timeoutId = setTimeout(() => {
-                        if (!hasLoaded && !hasErrored) {
-                            onError(new Error('Loading timeout'));
-                        }
-                    }, 15000);
-
-                    video.addEventListener('loadedmetadata', () => clearTimeout(timeoutId));
-
-                    try {
-                        video.src = URL.createObjectURL(file);
-                        this.loadingVideos.add(videoItem);
-                    } catch (error) {
-                        onError(error);
-                    }
-                });
-            }
-
             handleIntersection(entries) {
                 entries.forEach(entry => {
                     const videoItem = entry.target;
@@ -1011,8 +1052,19 @@
                         this.visibleVideos.add(videoItem);
 
                         if (videoItem.dataset.loaded === 'false') {
-                            if (!this.loadQueue.includes(videoItem)) {
-                                this.loadQueue.push(videoItem);
+                            // For masonry mode, be more conservative about loading
+                            if (this.layoutMode === 'masonry-vertical') {
+                                // Only load if we're not in a loading cascade and item is clearly visible
+                                if (!this.masonryLoadingPaused && entry.intersectionRatio > 0.1) {
+                                    if (!this.loadQueue.includes(videoItem)) {
+                                        this.loadQueue.push(videoItem);
+                                    }
+                                }
+                            } else {
+                                // Normal loading for grid mode
+                                if (!this.loadQueue.includes(videoItem)) {
+                                    this.loadQueue.push(videoItem);
+                                }
                             }
 
                             const placeholder = videoItem.querySelector('.video-placeholder');
@@ -1039,7 +1091,8 @@
                     }
                 });
 
-                if (!this.isProcessingQueue && this.loadQueue.length > 0) {
+                // Only process load queue if not in masonry loading pause
+                if (!this.isProcessingQueue && this.loadQueue.length > 0 && !this.masonryLoadingPaused) {
                     this.processLoadQueue();
                 }
 
@@ -1073,12 +1126,20 @@
 
             async processLoadQueue() {
                 if (this.isProcessingQueue) return;
+
+                // Skip processing if masonry loading is paused
+                if (this.layoutMode === 'masonry-vertical' && this.masonryLoadingPaused) {
+                    return;
+                }
+
                 this.isProcessingQueue = true;
 
                 let processed = 0;
+                const batchSize = this.layoutMode === 'masonry-vertical' ? 2 : 5; // Smaller batches for masonry
+
                 while (this.loadQueue.length > 0 &&
                        this.loadingVideos.size < this.maxConcurrentLoading &&
-                       processed < 5) {
+                       processed < batchSize) {
 
                     const videoItem = this.loadQueue.shift();
 
@@ -1090,6 +1151,11 @@
                             try {
                                 await this.loadVideoContent(videoItem);
                                 processed++;
+
+                                // For masonry, add a small delay between loads to prevent cascade
+                                if (this.layoutMode === 'masonry-vertical' && processed < batchSize) {
+                                    await new Promise(resolve => setTimeout(resolve, 100));
+                                }
                             } catch (error) {
                                 console.warn('Failed to load video:', error);
                             }
@@ -1101,8 +1167,10 @@
 
                 this.isProcessingQueue = false;
 
+                // Continue processing with a delay for masonry mode
                 if (this.loadQueue.length > 0 && this.loadingVideos.size < this.maxConcurrentLoading) {
-                    setTimeout(() => this.processLoadQueue(), 100);
+                    const delay = this.layoutMode === 'masonry-vertical' ? 300 : 100;
+                    setTimeout(() => this.processLoadQueue(), delay);
                 }
             }
 
@@ -1198,6 +1266,11 @@
                 };
                 layoutButton.textContent = buttonTexts[this.layoutMode];
 
+                // Reset masonry loading controls
+                this.masonryLoadingPaused = false;
+                this.masonryStableHeight = 0;
+                this.masonryHeightCheckCount = 0;
+
                 this.applyLayout();
                 this.updateVideosForLayout();
             }
@@ -1254,17 +1327,29 @@
                     if (performance.memory) {
                         const memoryRatio = performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
 
-                        if (memoryRatio > 0.7) {
-                            this.maxConcurrentPlaying = Math.max(5, this.maxConcurrentPlaying - 5);
-                            this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
-                            this.emergencyCleanup();
-                        } else if (memoryRatio > 0.5) {
-                            this.maxConcurrentPlaying = Math.max(10, this.maxConcurrentPlaying - 2);
-                            this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
-                            this.aggressiveCleanup();
-                        } else if (memoryRatio < 0.3) {
-                            this.maxConcurrentPlaying = Math.min(30, this.maxConcurrentPlaying + 1);
-                            this.maxLoadedVideos = Math.min(80, this.maxLoadedVideos + 2);
+                        // Only auto-adjust if user hasn't manually set a limit
+                        if (!this.userSetVideoLimit) {
+                            if (memoryRatio > 0.7) {
+                                this.maxConcurrentPlaying = Math.max(5, this.maxConcurrentPlaying - 5);
+                                this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
+                                this.emergencyCleanup();
+                            } else if (memoryRatio > 0.5) {
+                                this.maxConcurrentPlaying = Math.max(10, this.maxConcurrentPlaying - 2);
+                                this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
+                                this.aggressiveCleanup();
+                            } else if (memoryRatio < 0.3) {
+                                this.maxConcurrentPlaying = Math.min(30, this.maxConcurrentPlaying + 1);
+                                this.maxLoadedVideos = Math.min(80, this.maxLoadedVideos + 2);
+                            }
+                        } else {
+                            // Still do cleanup if needed, but don't adjust playing limit
+                            if (memoryRatio > 0.7) {
+                                this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
+                                this.emergencyCleanup();
+                            } else if (memoryRatio > 0.5) {
+                                this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
+                                this.aggressiveCleanup();
+                            }
                         }
                     }
 
@@ -1436,7 +1521,148 @@
             }
 
             showInFileManager() {
-                alert(`Would open file manager for: ${this.currentContextVideo?.name}`);
+                if (!this.currentContextVideo) return;
+
+                const fileName = this.currentContextVideo.name;
+                const filePath = this.currentContextVideo.webkitRelativePath || fileName;
+
+                // Check if we're in an Electron app or have access to file system APIs
+                if (window.electronAPI?.showItemInFolder) {
+                    // Electron app - can actually open file manager
+                    window.electronAPI.showItemInFolder(filePath);
+                } else if (window.showDirectoryPicker) {
+                    // File System Access API (limited browser support)
+                    this.showFileSystemAccessDialog();
+                } else {
+                    // Fallback: Show file path dialog with copy functionality
+                    this.showFilePathDialog(fileName, filePath);
+                }
+            }
+
+            showFileSystemAccessDialog() {
+                const message = `File System Access API detected but cannot directly open file manager.\n\nFile: ${this.currentContextVideo.name}\n\nWould you like to copy the file name to clipboard instead?`;
+
+                if (confirm(message)) {
+                    navigator.clipboard.writeText(this.currentContextVideo.name).then(() => {
+                        this.showTemporaryMessage('File name copied to clipboard!');
+                    });
+                }
+            }
+
+            showFilePathDialog(fileName, filePath) {
+                // Create a modal dialog showing the file information
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.8);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                `;
+
+                const dialog = document.createElement('div');
+                dialog.style.cssText = `
+                    background: #2d2d2d;
+                    border: 1px solid #404040;
+                    border-radius: 8px;
+                    padding: 2rem;
+                    max-width: 600px;
+                    width: 90%;
+                    color: white;
+                    font-family: inherit;
+                `;
+
+                dialog.innerHTML = `
+                    <h3 style="margin: 0 0 1rem 0; color: #007acc;">📁 File Location</h3>
+                    <p style="margin: 0 0 1rem 0; color: #ccc;">Cannot directly open file manager from web browser due to security restrictions.</p>
+                    <div style="background: #1a1a1a; padding: 1rem; border-radius: 4px; margin: 1rem 0; font-family: monospace; word-break: break-all;">
+                        <strong>File:</strong> ${fileName}<br>
+                        ${filePath !== fileName ? `<strong>Path:</strong> ${filePath}` : ''}
+                    </div>
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                        <button id="copyFileNameBtn" style="background: #007acc; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            📋 Copy File Name
+                        </button>
+                        ${filePath !== fileName ? `
+                        <button id="copyFilePathBtn" style="background: #404040; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            📋 Copy Full Path
+                        </button>
+                        ` : ''}
+                        <button id="closeModalBtn" style="background: #666; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            Close
+                        </button>
+                    </div>
+                `;
+
+                modal.appendChild(dialog);
+                document.body.appendChild(modal);
+
+                // Add event listeners
+                const copyFileNameBtn = dialog.querySelector('#copyFileNameBtn');
+                const copyFilePathBtn = dialog.querySelector('#copyFilePathBtn');
+                const closeModalBtn = dialog.querySelector('#closeModalBtn');
+
+                copyFileNameBtn?.addEventListener('click', () => {
+                    navigator.clipboard.writeText(fileName).then(() => {
+                        copyFileNameBtn.textContent = '✅ Copied!';
+                        setTimeout(() => {
+                            copyFileNameBtn.textContent = '📋 Copy File Name';
+                        }, 2000);
+                    });
+                });
+
+                copyFilePathBtn?.addEventListener('click', () => {
+                    navigator.clipboard.writeText(filePath).then(() => {
+                        copyFilePathBtn.textContent = '✅ Copied!';
+                        setTimeout(() => {
+                            copyFilePathBtn.textContent = '📋 Copy Full Path';
+                        }, 2000);
+                    });
+                });
+
+                const closeModal = () => {
+                    document.body.removeChild(modal);
+                };
+
+                closeModalBtn.addEventListener('click', closeModal);
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) closeModal();
+                });
+
+                // Close on Escape key
+                const handleKeydown = (e) => {
+                    if (e.key === 'Escape') {
+                        closeModal();
+                        document.removeEventListener('keydown', handleKeydown);
+                    }
+                };
+                document.addEventListener('keydown', handleKeydown);
+            }
+
+            showTemporaryMessage(message) {
+                const toast = document.createElement('div');
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: #007acc;
+                    color: white;
+                    padding: 1rem;
+                    border-radius: 4px;
+                    z-index: 10001;
+                    font-family: inherit;
+                `;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+
+                setTimeout(() => {
+                    document.body.removeChild(toast);
+                }, 3000);
             }
 
             copyFilePath() {

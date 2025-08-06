@@ -1,4 +1,0 @@
-Please help fix this code- a recent change causing this console error
-browser.html:566 Uncaught SyntaxError: missing ) after argument list
-
-Please check the whole file for similar issues
