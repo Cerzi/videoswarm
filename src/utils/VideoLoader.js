@@ -104,9 +104,7 @@ export class VideoLoader {
             const cleanup = () => {
                 this.loadingVideos.delete(videoItem);
                 if (timeoutId) clearTimeout(timeoutId);
-                if (video.src && video.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(video.src);
-                }
+                // No need to revoke URLs since we're using server paths
             };
 
             const onError = (error) => {
@@ -174,7 +172,8 @@ export class VideoLoader {
 
             try {
                 this.loadingVideos.add(videoItem);
-                video.src = URL.createObjectURL(file);
+                // Use server URL instead of blob URL
+                video.src = `/videos/${encodeURIComponent(file.name)}`;
             } catch (error) {
                 onError(error);
             }
@@ -204,9 +203,7 @@ export class VideoLoader {
         video.removeAttribute('src');
         video.load();
 
-        if (video.src && video.src.startsWith('blob:')) {
-            URL.revokeObjectURL(video.src);
-        }
+        // No need to revoke URLs since we're using server paths
 
         this.loadingVideos.delete(videoItem);
 

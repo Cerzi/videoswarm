@@ -26,6 +26,27 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
     
     def do_GET(self):
         """Handle GET requests with proper range support for video files"""
+        # Handle video requests from /videos/ path
+        if self.path.startswith('/videos/'):
+            video_filename = self.path[8:]  # Remove '/videos/' prefix
+            video_filename = video_filename.split('?')[0]  # Remove query params
+            
+            # Find the video file in uploaded videos
+            if hasattr(self.server, 'uploaded_videos') and video_filename in self.server.uploaded_videos:
+                file_path = self.server.uploaded_videos[video_filename]
+                
+                if os.path.exists(file_path):
+                    range_header = self.headers.get('Range')
+                    if range_header:
+                        return self.handle_range_request(file_path, range_header)
+                    else:
+                        return self.handle_full_request(file_path)
+            
+            # Video not found
+            self.send_error(404, "Video not found")
+            return
+        
+        # Handle regular file requests
         path = self.translate_path(self.path)
         
         # Check if file exists
@@ -124,6 +145,9 @@ def main():
     
     try:
         with socketserver.TCPServer(("", PORT), VideoServerHandler) as httpd:
+            # Initialize uploaded videos storage
+            httpd.uploaded_videos = {}
+            
             print(f"🎬 Video Browser Server starting...")
             print(f"📡 Serving at http://localhost:{PORT}")
             print(f"📁 Directory: {Path.cwd()}")
