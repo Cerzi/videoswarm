@@ -77,6 +77,10 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
                         
                         # Save file to temp directory
                         file_path = os.path.join(self.server.temp_dir, filename)
+                        
+                        # Create subdirectories if they don't exist
+                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                        
                         with open(file_path, 'wb') as f:
                             f.write(file_data)
                         
