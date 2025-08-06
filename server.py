@@ -9,7 +9,11 @@ import socketserver
 import webbrowser
 import os
 import sys
+import json
+import tempfile
+import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
     """Custom handler with proper MIME types and range request support for video files"""
@@ -24,11 +28,68 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Headers', '*')
         super().end_headers()
     
+    def do_POST(self):
+        """Handle POST requests for file uploads"""
+        if self.path == '/upload':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                
+                # Parse multipart form data (simplified)
+                boundary = self.headers['Content-Type'].split('boundary=')[1]
+                parts = post_data.split(f'--{boundary}'.encode())
+                
+                uploaded_files = []
+                
+                for part in parts[1:-1]:  # Skip first empty part and last closing part
+                    if b'Content-Disposition' in part:
+                        # Extract filename
+                        header_end = part.find(b'\r\n\r\n')
+                        headers = part[:header_end].decode('utf-8')
+                        file_data = part[header_end + 4:]
+                        
+                        # Remove trailing \r\n
+                        if file_data.endswith(b'\r\n'):
+                            file_data = file_data[:-2]
+                        
+                        # Extract filename from headers
+                        filename_start = headers.find('filename="') + 10
+                        filename_end = headers.find('"', filename_start)
+                        filename = headers[filename_start:filename_end]
+                        
+                        if filename and file_data:
+                            # Create temp directory if it doesn't exist
+                            if not hasattr(self.server, 'temp_dir'):
+                                self.server.temp_dir = tempfile.mkdtemp(prefix='video_browser_')
+                            
+                            # Save file to temp directory
+                            file_path = os.path.join(self.server.temp_dir, filename)
+                            with open(file_path, 'wb') as f:
+                                f.write(file_data)
+                            
+                            # Store in uploaded_videos mapping
+                            self.server.uploaded_videos[filename] = file_path
+                            uploaded_files.append(filename)
+                
+                # Send success response
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                response = json.dumps({'success': True, 'files': uploaded_files})
+                self.wfile.write(response.encode())
+                
+            except Exception as e:
+                self.send_error(500, f"Upload failed: {str(e)}")
+            return
+        
+        # Handle other POST requests
+        self.send_error(404, "Not found")
+
     def do_GET(self):
         """Handle GET requests with proper range support for video files"""
         # Handle video requests from /videos/ path
         if self.path.startswith('/videos/'):
-            video_filename = self.path[8:]  # Remove '/videos/' prefix
+            video_filename = unquote(self.path[8:])  # Remove '/videos/' prefix and decode URL
             video_filename = video_filename.split('?')[0]  # Remove query params
             
             # Find the video file in uploaded videos
@@ -43,7 +104,7 @@ class VideoServerHandler(http.server.SimpleHTTPRequestHandler):
                         return self.handle_full_request(file_path)
             
             # Video not found
-            self.send_error(404, "Video not found")
+            self.send_error(404, f"Video not found: {video_filename}")
             return
         
         # Handle regular file requests
@@ -147,6 +208,7 @@ def main():
         with socketserver.TCPServer(("", PORT), VideoServerHandler) as httpd:
             # Initialize uploaded videos storage
             httpd.uploaded_videos = {}
+            httpd.temp_dir = None
             
             print(f"🎬 Video Browser Server starting...")
             print(f"📡 Serving at http://localhost:{PORT}")
@@ -157,8 +219,14 @@ def main():
             # Open browser automatically
             webbrowser.open(f"http://localhost:{PORT}")
             
-            # Start serving
-            httpd.serve_forever()
+            try:
+                # Start serving
+                httpd.serve_forever()
+            finally:
+                # Cleanup temp directory on shutdown
+                if hasattr(httpd, 'temp_dir') and httpd.temp_dir and os.path.exists(httpd.temp_dir):
+                    shutil.rmtree(httpd.temp_dir)
+                    print(f"🧹 Cleaned up temporary files")
             
     except OSError as e:
         print(f"❌ Server error: {e}")

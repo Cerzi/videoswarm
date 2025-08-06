@@ -88,6 +88,19 @@ export class VideoLoader {
             return;
         }
 
+        // First, upload the file to the server if not already uploaded
+        try {
+            await this.ensureFileUploaded(file);
+        } catch (error) {
+            this.eventBus.emit('video:loadError', {
+                videoItem,
+                file,
+                error: { code: 2, message: 'Upload failed' },
+                errorType: 'network'
+            });
+            return;
+        }
+
         return new Promise((resolve) => {
             const video = document.createElement('video');
             video.className = 'video-element';
@@ -178,6 +191,37 @@ export class VideoLoader {
                 onError(error);
             }
         });
+    }
+
+    async ensureFileUploaded(file) {
+        // Check if file is already uploaded (simple cache based on filename)
+        if (!this.uploadedFiles) {
+            this.uploadedFiles = new Set();
+        }
+
+        if (this.uploadedFiles.has(file.name)) {
+            return; // Already uploaded
+        }
+
+        // Upload the file
+        const formData = new FormData();
+        formData.append('video', file);
+
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (result.success) {
+            this.uploadedFiles.add(file.name);
+        } else {
+            throw new Error('Upload failed');
+        }
     }
 
     isLikelyProblematicFile(file) {
