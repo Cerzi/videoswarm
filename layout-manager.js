@@ -242,8 +242,8 @@ class LayoutManager {
             
             // Get the item's natural height
             const itemHeight = this.calculateItemHeight(videoItem);
-            // Calculate row span - CSS Grid handles gaps automatically
-            const rowSpan = Math.ceil(itemHeight / (rowHeight + verticalGap));
+            // Calculate row span - let CSS Grid handle gaps naturally
+            const rowSpan = Math.ceil(itemHeight / rowHeight);
             
             // Find the earliest available row for this column
             let startRow = columnNextRow[targetColumn];
