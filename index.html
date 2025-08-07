@@ -435,7 +435,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.9</span></h1>
+        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.10</span></h1>
 
         <div class="file-input-wrapper">
             <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
@@ -526,12 +526,14 @@
                 this.masonryLoadingPaused = false;
                 this.masonryStableHeight = 0;
                 this.masonryHeightCheckCount = 0;
+                this.masonryScrollTimeout = null;
+                this.masonryBatchProcessing = false;
 
                 // Intersection observer
                 this.intersectionObserver = new IntersectionObserver(
                     this.handleIntersection.bind(this),
                     {
-                        rootMargin: '400px',
+                        rootMargin: this.layoutMode === 'masonry-vertical' ? '1200px' : '400px',
                         threshold: [0, 0.1, 1.0]
                     }
                 );
@@ -539,7 +541,7 @@
                 this.unloadObserver = new IntersectionObserver(
                     this.handleUnloadIntersection.bind(this),
                     {
-                        rootMargin: '-800px',
+                        rootMargin: this.layoutMode === 'masonry-vertical' ? '-1200px' : '-800px',
                         threshold: 0
                     }
                 );
@@ -554,29 +556,37 @@
                     this.checkAndFixStuckPlaceholders();
                 }, 3000);
 
-                let scrollTimeout;
                 window.addEventListener('scroll', () => {
-                    clearTimeout(scrollTimeout);
-
-                    // For masonry mode, pause loading briefly when scrolling to avoid cascade effects
+                    // Enhanced masonry scroll handling
                     if (this.layoutMode === 'masonry-vertical') {
-                        this.masonryLoadingPaused = true;
-                        clearTimeout(this.masonryResumeTimeout);
-                        this.masonryResumeTimeout = setTimeout(() => {
-                            this.masonryLoadingPaused = false;
-                            if (this.loadQueue.length > 0) {
-                                this.processLoadQueue();
-                            }
-                        }, 200);
+                        this.handleMasonryScroll();
                     }
 
+                    // Original scroll timeout logic for other modes
+                    let scrollTimeout;
+                    clearTimeout(scrollTimeout);
                     scrollTimeout = setTimeout(() => {
-                        // Additional stability check for masonry
                         if (this.layoutMode === 'masonry-vertical') {
                             this.checkMasonryStability();
                         }
                     }, 500);
                 });
+            }
+
+            handleMasonryScroll() {
+                // Pause loading immediately on scroll
+                this.masonryLoadingPaused = true;
+
+                // Clear any existing timeout
+                clearTimeout(this.masonryScrollTimeout);
+
+                // Resume loading after scroll stops, with longer delay
+                this.masonryScrollTimeout = setTimeout(() => {
+                    this.masonryLoadingPaused = false;
+                    if (this.loadQueue.length > 0 && !this.masonryBatchProcessing) {
+                        this.processMasonryLoadQueue();
+                    }
+                }, 300);
             }
 
             // Check if masonry layout has stabilized to prevent cascade loading
@@ -805,7 +815,11 @@
                 });
 
                 if (!this.isProcessingQueue && this.loadQueue.length > 0 && !this.masonryLoadingPaused) {
-                    this.processLoadQueue();
+                    if (this.layoutMode === 'masonry-vertical') {
+                        this.processMasonryLoadQueue();
+                    } else {
+                        this.processLoadQueue();
+                    }
                 }
             }
 
@@ -1052,13 +1066,10 @@
                         this.visibleVideos.add(videoItem);
 
                         if (videoItem.dataset.loaded === 'false') {
-                            // For masonry mode, be more conservative about loading
                             if (this.layoutMode === 'masonry-vertical') {
-                                // Only load if we're not in a loading cascade and item is clearly visible
-                                if (!this.masonryLoadingPaused && entry.intersectionRatio > 0.1) {
-                                    if (!this.loadQueue.includes(videoItem)) {
-                                        this.loadQueue.push(videoItem);
-                                    }
+                                // Enhanced masonry loading logic
+                                if (!this.masonryLoadingPaused && entry.intersectionRatio > 0.05) {
+                                    this.addToMasonryQueue(videoItem, entry);
                                 }
                             } else {
                                 // Normal loading for grid mode
@@ -1091,13 +1102,114 @@
                     }
                 });
 
-                // Only process load queue if not in masonry loading pause
-                if (!this.isProcessingQueue && this.loadQueue.length > 0 && !this.masonryLoadingPaused) {
-                    this.processLoadQueue();
+                // Process queues based on layout mode
+                if (!this.isProcessingQueue && this.loadQueue.length > 0) {
+                    if (this.layoutMode === 'masonry-vertical') {
+                        if (!this.masonryLoadingPaused && !this.masonryBatchProcessing) {
+                            this.processMasonryLoadQueue();
+                        }
+                    } else {
+                        this.processLoadQueue();
+                    }
                 }
 
                 if (this.loadedVideos.size > this.maxLoadedVideos * 1.2) {
                     this.aggressiveCleanup();
+                }
+            }
+
+            // Enhanced masonry queue management
+            addToMasonryQueue(videoItem, entry) {
+                if (this.loadQueue.includes(videoItem)) return;
+
+                // Calculate priority based on viewport position
+                const rect = videoItem.getBoundingClientRect();
+                const viewportCenter = window.innerHeight / 2;
+                const itemCenter = rect.top + rect.height / 2;
+                const distanceFromCenter = Math.abs(itemCenter - viewportCenter);
+
+                // Add priority data
+                videoItem._masonryPriority = {
+                    distanceFromCenter,
+                    intersectionRatio: entry.intersectionRatio,
+                    timestamp: Date.now()
+                };
+
+                this.loadQueue.push(videoItem);
+
+                // Sort queue by priority (closer to center = higher priority)
+                this.loadQueue.sort((a, b) => {
+                    const aPriority = a._masonryPriority;
+                    const bPriority = b._masonryPriority;
+
+                    if (!aPriority) return 1;
+                    if (!bPriority) return -1;
+
+                    // Primary: distance from viewport center
+                    const distanceDiff = aPriority.distanceFromCenter - bPriority.distanceFromCenter;
+                    if (Math.abs(distanceDiff) > 50) return distanceDiff;
+
+                    // Secondary: intersection ratio (more visible = higher priority)
+                    return bPriority.intersectionRatio - aPriority.intersectionRatio;
+                });
+            }
+
+            // Specialized masonry load queue processor
+            async processMasonryLoadQueue() {
+                if (this.masonryBatchProcessing || this.masonryLoadingPaused) return;
+
+                this.masonryBatchProcessing = true;
+
+                let processed = 0;
+                const batchSize = 2; // Very small batches for masonry
+                const maxConcurrentForMasonry = Math.min(this.maxConcurrentLoading, 3);
+
+                while (this.loadQueue.length > 0 &&
+                       this.loadingVideos.size < maxConcurrentForMasonry &&
+                       processed < batchSize &&
+                       !this.masonryLoadingPaused) {
+
+                    const videoItem = this.loadQueue.shift();
+
+                    if (videoItem.dataset.loaded === 'false') {
+                        // Double-check viewport visibility for masonry
+                        const rect = videoItem.getBoundingClientRect();
+                        const extendedViewport = rect.bottom >= -1200 && rect.top <= window.innerHeight + 1200;
+
+                        if (extendedViewport || this.visibleVideos.has(videoItem)) {
+                            try {
+                                await this.loadVideoContent(videoItem);
+                                processed++;
+
+                                // Longer delay between masonry loads to prevent cascade
+                                if (processed < batchSize && this.loadQueue.length > 0) {
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                }
+                            } catch (error) {
+                                console.warn('Failed to load video:', error);
+                            }
+                        }
+                    }
+
+                    // Clean up priority data
+                    if (videoItem._masonryPriority) {
+                        delete videoItem._masonryPriority;
+                    }
+                }
+
+                this.masonryBatchProcessing = false;
+
+                // Continue processing if queue has items and we're not paused
+                if (this.loadQueue.length > 0 &&
+                    !this.masonryLoadingPaused &&
+                    this.loadingVideos.size < maxConcurrentForMasonry) {
+
+                    // Longer delay between batches for masonry stability
+                    setTimeout(() => {
+                        if (!this.masonryLoadingPaused) {
+                            this.processMasonryLoadQueue();
+                        }
+                    }, 400);
                 }
             }
 
@@ -1270,9 +1382,47 @@
                 this.masonryLoadingPaused = false;
                 this.masonryStableHeight = 0;
                 this.masonryHeightCheckCount = 0;
+                this.masonryBatchProcessing = false;
+                clearTimeout(this.masonryScrollTimeout);
+
+                // Update intersection observer margins for new layout
+                this.updateIntersectionObservers();
 
                 this.applyLayout();
                 this.updateVideosForLayout();
+            }
+
+            // Update intersection observers when layout changes
+            updateIntersectionObservers() {
+                // Disconnect existing observers
+                this.intersectionObserver.disconnect();
+                this.unloadObserver.disconnect();
+
+                // Create new observers with appropriate margins
+                const rootMargin = this.layoutMode === 'masonry-vertical' ? '1200px' : '400px';
+                const unloadMargin = this.layoutMode === 'masonry-vertical' ? '-1200px' : '-800px';
+
+                this.intersectionObserver = new IntersectionObserver(
+                    this.handleIntersection.bind(this),
+                    {
+                        rootMargin: rootMargin,
+                        threshold: [0, 0.1, 1.0]
+                    }
+                );
+
+                this.unloadObserver = new IntersectionObserver(
+                    this.handleUnloadIntersection.bind(this),
+                    {
+                        rootMargin: unloadMargin,
+                        threshold: 0
+                    }
+                );
+
+                // Re-observe all video items
+                this.videos.forEach(videoItem => {
+                    this.intersectionObserver.observe(videoItem);
+                    this.unloadObserver.observe(videoItem);
+                });
             }
 
             applyLayout() {
