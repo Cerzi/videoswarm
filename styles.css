@@ -1,3 +1,86 @@
+/* SIMPLE WORKING MASONRY LAYOUT - Based on proven CSS-Tricks approach */
+.video-grid.masonry-vertical {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    /* SIMPLE APPROACH: 0px rows with 1px gap for precise control */
+    grid-auto-rows: 0px;
+    row-gap: 1px;
+    column-gap: 4px;
+    padding: 1rem;
+    align-items: start;
+}
+
+/* Support for native CSS masonry when available */
+@supports (grid-template-rows: masonry) {
+    .video-grid.masonry-vertical {
+        grid-template-rows: masonry;
+        grid-auto-rows: auto;
+        gap: 4px; /* Native masonry can use uniform gap */
+    }
+}
+
+/* Video items in masonry - ensure they don't have unexpected margins */
+.video-grid.masonry-vertical .video-item {
+    width: 100%;
+    height: auto;
+    margin: 0; /* Remove any default margins */
+    /* ANTI-THRASHING: Prevent margin collapse and contain layout */
+    overflow: hidden;
+    contain: layout;
+    /* ANTI-THRASHING: Disable transitions during layout to prevent flashing */
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* ANTI-THRASHING: Prevent layout shifts during hover */
+    will-change: transform, border-color, box-shadow;
+}
+
+/* Ensure video elements and placeholders fit precisely */
+.video-grid.masonry-vertical .video-element.aspect-ratio,
+.video-grid.masonry-vertical .video-placeholder.aspect-ratio {
+    display: block;
+    margin: 0;
+    padding: 0;
+    /* Prevent subpixel issues */
+    border-radius: 8px;
+    /* Ensure precise rendering */
+    image-rendering: optimizeQuality;
+}
+
+/* Fix for filename overlay - ensure it doesn't add extra height */
+.video-grid.masonry-vertical .video-filename {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    color: white;
+    padding: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* THE KEY FIX: Ensure overlay doesn't affect item height calculation */
+    height: 30px;
+    box-sizing: border-box;
+}
+
+/* Updated zoom levels for simple masonry */
+.video-grid.zoom-small.masonry-vertical {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.video-grid.zoom-medium.masonry-vertical {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+.video-grid.zoom-large.masonry-vertical {
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+}
+.video-grid.zoom-xlarge.masonry-vertical {
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+}
+
+/* Rest of the original CSS remains the same */
 * {
     margin: 0;
     padding: 0;
@@ -170,32 +253,6 @@ body {
     transition: all 0.3s ease;
 }
 
-/* Enhanced masonry layout with proper row ordering */
-.video-grid.masonry-vertical {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    grid-auto-rows: 5px; /* Small rows for precise masonry positioning */
-    gap: 1px 4px; /* Minimal vertical gap, 4px horizontal */
-    padding: 1rem;
-    align-items: start;
-}
-
-/* Support for native CSS masonry when available */
-@supports (grid-template-rows: masonry) {
-    .video-grid.masonry-vertical {
-        grid-template-rows: masonry;
-        grid-auto-rows: auto;
-        gap: 4px; /* Native masonry can use uniform gap */
-    }
-}
-
-/* Video items in masonry should span appropriate rows */
-.video-grid.masonry-vertical .video-item {
-    width: 100%;
-    height: auto;
-    /* Will be dynamically set by JavaScript */
-}
-
 .video-grid.masonry-horizontal {
     display: flex;
     flex-direction: column;
@@ -208,11 +265,6 @@ body {
 }
 
 /* Video item adjustments for masonry */
-.video-grid.masonry-vertical .video-item {
-    width: 100%;
-    height: auto;
-}
-
 .video-grid.masonry-horizontal .video-item {
     flex: none;
     margin-right: 4px;
@@ -385,33 +437,7 @@ html {
     font-weight: 500;
 }
 
-/* Zoom levels - adjusted for masonry */
-.video-grid.zoom-small {
-    --item-width: 180px;
-}
-.video-grid.zoom-medium {
-    --item-width: 250px;
-}
-.video-grid.zoom-large {
-    --item-width: 350px;
-}
-.video-grid.zoom-xlarge {
-    --item-width: 500px;
-}
-
-.video-grid.zoom-small.masonry-vertical {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-.video-grid.zoom-medium.masonry-vertical {
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-}
-.video-grid.zoom-large.masonry-vertical {
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-}
-.video-grid.zoom-xlarge.masonry-vertical {
-    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-}
-
+/* Horizontal masonry zoom levels */
 .video-grid.zoom-small.masonry-horizontal .video-item {
     width: 180px;
 }
