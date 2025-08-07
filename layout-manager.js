@@ -8,12 +8,12 @@ class LayoutManager {
         this.masonryLayoutTimeout = null;
 
         // Set up resize observer for responsive masonry
-        this.resizeObserver = new ResizeObserver(() => {
+        this.resizeObserver = new ResizeObserver((entries) => {
             if (this.layoutMode === 'masonry-vertical') {
                 clearTimeout(this.masonryLayoutTimeout);
                 this.masonryLayoutTimeout = setTimeout(() => {
-                    this.layoutMasonryItems();
-                }, 150);
+                    this.refreshMasonryLayout();
+                }, 100);
             }
         });
 
@@ -213,12 +213,12 @@ class LayoutManager {
         // Get grid properties
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const rowHeight = parseInt(computedStyle.gridAutoRows) || 1; // Use 1px rows
-        const gapValue = computedStyle.gap || '2px 4px';
+        const rowHeight = parseInt(computedStyle.gridAutoRows) || 1;
         
-        // Parse gap - could be "2px 4px" or just "4px"
+        // Parse gap - handle "0px 4px" format
+        const gapValue = computedStyle.gap || '0px 4px';
         const gaps = gapValue.split(' ');
-        const verticalGap = parseInt(gaps[0]) || 2;
+        const verticalGap = parseInt(gaps[0]) || 0; // Should be 0
         const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
 
         // Track the next available row for each column
@@ -233,15 +233,16 @@ class LayoutManager {
             
             // Get the item's natural height
             const itemHeight = this.calculateItemHeight(videoItem);
-            const rowSpan = Math.ceil((itemHeight + verticalGap) / (rowHeight + verticalGap));
+            // With 0 vertical gap, we can pack items tightly
+            const rowSpan = Math.ceil(itemHeight / rowHeight);
             
-            // Find the earliest available row across all columns up to target column
-            let startRow = Math.max(...columnNextRow.slice(0, targetColumn + 1));
+            // Find the earliest available row for this column
+            let startRow = columnNextRow[targetColumn];
             
-            // If this would create a gap, try to fill it
+            // Try to fill gaps in earlier columns if this would create a large gap
             if (targetColumn > 0) {
                 const minRowInRange = Math.min(...columnNextRow.slice(0, targetColumn + 1));
-                if (startRow - minRowInRange > 2) { // Reduced gap tolerance
+                if (startRow - minRowInRange > 1) { // Very tight gap tolerance
                     startRow = minRowInRange;
                     // Find which column has this row available
                     for (let col = 0; col <= targetColumn; col++) {
@@ -280,22 +281,45 @@ class LayoutManager {
             }
         }
         
-        // Calculate height based on grid column width
+        // Calculate height based on actual grid column width
         const grid = document.getElementById('videoGrid');
-        const gridWidth = grid.offsetWidth;
+        const gridRect = grid.getBoundingClientRect();
+        const gridWidth = gridRect.width;
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
         
         // Parse gap for horizontal spacing
-        const gapValue = computedStyle.gap || '2px 4px';
+        const gapValue = computedStyle.gap || '0px 4px';
         const gaps = gapValue.split(' ');
         const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
         
-        const columnWidth = (gridWidth - (horizontalGap * (columnCount - 1))) / columnCount;
+        // Calculate actual column width
+        const totalGapWidth = horizontalGap * (columnCount - 1);
+        const columnWidth = (gridWidth - totalGapWidth) / columnCount;
+        
+        // Calculate proportional height
         const itemHeight = (columnWidth * height) / width;
         
         // Add minimal padding for filename overlay
-        return itemHeight + 25; // Reduced from 30 to 25
+        return itemHeight + 20; // Reduced further for tighter packing
+    }
+
+    refreshMasonryLayout() {
+        if (this.layoutMode === 'masonry-vertical') {
+            // Clear existing positioning
+            this.videoBrowser.videos.forEach(videoItem => {
+                videoItem.style.gridRowStart = '';
+                videoItem.style.gridRowEnd = '';
+                videoItem.style.gridColumnStart = '';
+            });
+            
+            // Re-layout after a brief delay to ensure grid has recalculated
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.layoutMasonryItems();
+                });
+            });
+        }
     }
 }
 
