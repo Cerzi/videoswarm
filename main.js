@@ -1,5 +1,6 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs').promises;
 
 let mainWindow;
 
@@ -13,21 +14,20 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      webSecurity: false // Needed for local file access
+      webSecurity: false
     },
-    icon: path.join(__dirname, 'icon.png'), // Optional: add your icon
+    icon: path.join(__dirname, 'icon.png'),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default'
   });
 
   mainWindow.loadFile('index.html');
 
-  // Open DevTools in development
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
 }
 
-// Create application menu
+// Create application menu with folder selection
 function createMenu() {
   const template = [
     {
@@ -38,9 +38,10 @@ function createMenu() {
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
             const result = await dialog.showOpenDialog(mainWindow, {
-              properties: ['openDirectory']
+              properties: ['openDirectory'],
+              title: 'Select Video Folder'
             });
-            if (!result.canceled) {
+            if (!result.canceled && result.filePaths.length > 0) {
               mainWindow.webContents.send('folder-selected', result.filePaths[0]);
             }
           }
@@ -66,13 +67,6 @@ function createMenu() {
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'close' }
-      ]
     }
   ];
 
@@ -97,10 +91,28 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+ipcMain.handle('select-folder', async (event) => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Video Folder'
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      return { success: true, folderPath: result.filePaths[0] };
+    } else {
+      return { success: false, canceled: true };
+    }
+  } catch (error) {
+    console.error('Error showing folder dialog:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Handle file manager opening
 ipcMain.handle('show-item-in-folder', async (event, filePath) => {
   try {
-    // For files selected through webkitdirectory, we need to construct the full path
+    console.log('Attempting to show in folder:', filePath);
     shell.showItemInFolder(filePath);
     return { success: true };
   } catch (error) {
@@ -109,10 +121,95 @@ ipcMain.handle('show-item-in-folder', async (event, filePath) => {
   }
 });
 
-// Handle opening external links
-ipcMain.handle('open-external', async (event, url) => {
-  shell.openExternal(url);
+// Read directory and return video files
+ipcMain.handle('read-directory', async (event, folderPath) => {
+  try {
+    const files = await fs.readdir(folderPath, { withFileTypes: true });
+    const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp', '.ogv'];
+
+    const videoFiles = [];
+
+    for (const file of files) {
+      if (file.isFile()) {
+        const ext = path.extname(file.name).toLowerCase();
+        if (videoExtensions.includes(ext)) {
+          videoFiles.push(path.join(folderPath, file.name));
+        }
+      }
+    }
+
+    console.log(`Found ${videoFiles.length} video files in ${folderPath}`);
+    return videoFiles;
+  } catch (error) {
+    console.error('Error reading directory:', error);
+    throw error;
+  }
 });
+
+// Get file info
+ipcMain.handle('get-file-info', async (event, filePath) => {
+  try {
+    const stats = await fs.stat(filePath);
+    return {
+      name: path.basename(filePath),
+      size: stats.size,
+      isFile: stats.isFile(),
+      path: filePath
+    };
+  } catch (error) {
+    console.error('Error getting file info:', error);
+    return null;
+  }
+});
+
+ipcMain.handle('delete-file', async (event, filePath) => {
+  try {
+    await fs.unlink(filePath);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Move file to trash (safer than permanent deletion)
+ipcMain.handle('move-to-trash', async (event, filePath) => {
+  try {
+    const result = await shell.trashItem(filePath);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to move to trash:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('copy-file', async (event, sourcePath, destPath) => {
+  try {
+    await fs.copyFile(sourcePath, destPath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-file-properties', async (event, filePath) => {
+  try {
+    const stats = await fs.stat(filePath);
+    return {
+      size: stats.size,
+      created: stats.birthtime,
+      modified: stats.mtime,
+      isDirectory: stats.isDirectory(),
+      permissions: stats.mode
+    };
+  } catch (error) {
+    return null;
+  }
+});
+
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('--no-sandbox');
+}
 
 app.whenReady().then(() => {
   createWindow();
@@ -129,12 +226,4 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
-});
-
-// Security: Prevent new window creation
-app.on('web-contents-created', (event, contents) => {
-  contents.on('new-window', (navigationEvent, url) => {
-    navigationEvent.preventDefault();
-    shell.openExternal(url);
-  });
 });

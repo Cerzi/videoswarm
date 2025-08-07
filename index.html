@@ -437,9 +437,15 @@
     <div class="header">
         <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.10</span></h1>
 
-        <div class="file-input-wrapper">
-            <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
-            <label for="fileInput" class="file-input-label">Open Folder</label>
+        <!-- Only show Electron folder button if in Electron, otherwise show web fallback -->
+        <div id="folderControls">
+            <button id="electronFolderBtn" class="file-input-label" style="display: none;">
+                📁 Select Folder
+            </button>
+            <div class="file-input-wrapper" id="webFallback" style="display: none;">
+                <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
+                <label for="fileInput" class="file-input-label">⚠️ Open Folder (Limited)</label>
+            </div>
         </div>
 
         <div class="selection-info" id="selectionInfo" style="display: none;">
@@ -473,11 +479,37 @@
     </div>
 
     <div class="drop-zone" id="dropZone">
-        <h2>Drop video files here</h2>
-        <p>Or use the "Open Folder" button above</p>
-        <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
-            Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
-        </p>
+        <div id="electronDropZone" style="display: none;">
+            <h2>🎬 Welcome to Video Browser</h2>
+            <p>Click "Select Folder" above to browse your video collection</p>
+            <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
+                Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
+            </p>
+            <div style="margin-top: 2rem; padding: 1rem; background: #2a4a00; border-radius: 8px; border-left: 4px solid #4CAF50;">
+                <div style="color: #4CAF50; font-weight: bold; margin-bottom: 0.5rem;">✨ Full Desktop Integration</div>
+                <ul style="color: #ccc; margin: 0; padding-left: 1.5rem; line-height: 1.6;">
+                    <li>Browse any folder on your computer</li>
+                    <li>Right-click to show files in file manager</li>
+                    <li>Delete files (moves to trash)</li>
+                    <li>Optimized performance for large collections</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="webDropZone" style="display: none;">
+            <h2>Drop video files here</h2>
+            <p>Or use the "Open Folder" button above</p>
+            <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
+                Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
+            </p>
+            <div style="margin-top: 2rem; padding: 1rem; background: #4a3000; border-radius: 8px; border-left: 4px solid #ff9800;">
+                <div style="color: #ff9800; font-weight: bold; margin-bottom: 0.5rem;">⚠️ Limited Web Mode</div>
+                <p style="color: #ccc; margin: 0; line-height: 1.6;">
+                    Running in web browser with reduced functionality. For full desktop integration,
+                    consider downloading the desktop app.
+                </p>
+            </div>
+        </div>
     </div>
 
     <div class="video-grid" id="videoGrid"></div>
@@ -503,6 +535,7 @@
                 this.autoplayEnabled = true;
                 this.loadingVideos = new Set();
                 this.failedVideos = new Map(); // Track failed videos and their error types
+                this.filePathMap = new Map(); // Track file paths for electron mode
 
                 // Layout modes
                 this.layoutMode = 'grid';
@@ -520,7 +553,6 @@
                 this.loadedVideos = new Map();
                 this.loadQueue = [];
                 this.isProcessingQueue = false;
-                this.unloadQueue = [];
 
                 // Masonry-specific loading control
                 this.masonryLoadingPaused = false;
@@ -571,6 +603,26 @@
                         }
                     }, 500);
                 });
+            }
+
+            updateErrorStats() {
+                // Count error types
+                const errorCounts = {};
+                this.failedVideos.forEach((type) => {
+                    errorCounts[type] = (errorCounts[type] || 0) + 1;
+                });
+
+                // Update status if many codec errors
+                if (errorCounts.codec >= 3) {
+                    const status = document.getElementById('status');
+                    if (status && !status.dataset.codecWarningShown) {
+                        status.style.display = 'block';
+                        status.style.background = '#4a0000';
+                        status.style.color = '#ff6666';
+                        status.innerHTML = `⚠️ <strong>${errorCounts.codec} videos failed due to unsupported codec (H.265/HEVC)</strong>. These require Safari or video conversion to H.264.`;
+                        status.dataset.codecWarningShown = 'true';
+                    }
+                }
             }
 
             handleMasonryScroll() {
@@ -641,8 +693,11 @@
             async loadVideoContent(videoItem) {
                 if (videoItem.dataset.loaded === 'true') return;
 
+                // Handle both File objects (browser) and file paths (Electron)
                 const file = videoItem._file;
-                if (!file) return;
+                const filePath = videoItem.dataset.fullPath;
+
+                if (!file && !filePath) return;
 
                 return new Promise((resolve, reject) => {
                     const video = document.createElement('video');
@@ -662,11 +717,13 @@
                         if (placeholder) placeholder.remove();
                     };
 
+                    const fileName = file ? file.name : videoItem.dataset.filename;
+
                     const onError = (error) => {
                         if (hasErrored) return;
                         hasErrored = true;
 
-                        console.error(`Video load error for ${file.name}:`, error);
+                        console.error(`Video load error for ${fileName}:`, error);
                         cleanup();
 
                         videoItem.classList.add('error');
@@ -700,7 +757,7 @@
                         videoItem.appendChild(errorIndicator);
 
                         // Track the error for statistics
-                        this.failedVideos.set(file.name, errorType);
+                        this.failedVideos.set(fileName, errorType);
                         this.updateErrorStats();
 
                         reject(error);
@@ -758,32 +815,19 @@
                     video.addEventListener('loadedmetadata', () => clearTimeout(timeoutId));
 
                     try {
-                        video.src = URL.createObjectURL(file);
+                        // Use file path for Electron, File object for browser
+                        if (filePath) {
+                            // Electron: Use file:// protocol for local files
+                            video.src = `file://${filePath}`;
+                        } else if (file) {
+                            // Browser: Use blob URL
+                            video.src = URL.createObjectURL(file);
+                        }
                         this.loadingVideos.add(videoItem);
                     } catch (error) {
                         onError(error);
                     }
                 });
-            }
-
-            updateErrorStats() {
-                // Count error types
-                const errorCounts = {};
-                this.failedVideos.forEach((type) => {
-                    errorCounts[type] = (errorCounts[type] || 0) + 1;
-                });
-
-                // Update status if many codec errors
-                if (errorCounts.codec >= 3) {
-                    const status = document.getElementById('status');
-                    if (status && !status.dataset.codecWarningShown) {
-                        status.style.display = 'block';
-                        status.style.background = '#4a0000';
-                        status.style.color = '#ff6666';
-                        status.innerHTML = `⚠️ <strong>${errorCounts.codec} videos failed due to unsupported codec (H.265/HEVC)</strong>. These require Safari or video conversion to H.264.`;
-                        status.dataset.codecWarningShown = 'true';
-                    }
-                }
             }
 
             checkAndFixStuckPlaceholders() {
@@ -824,10 +868,29 @@
             }
 
             initializeEventListeners() {
+                // Set up the correct interface based on environment
+                this.setupInterface();
+
+                // Electron folder selection button
+                const electronFolderBtn = document.getElementById('electronFolderBtn');
+                if (electronFolderBtn) {
+                    electronFolderBtn.addEventListener('click', () => {
+                        this.openElectronFolderDialog();
+                    });
+                }
+
+                // Web file input (fallback)
                 const fileInput = document.getElementById('fileInput');
                 if (fileInput) {
                     fileInput.addEventListener('change', (e) => {
                         this.handleFileSelection(e.target.files);
+                    });
+                }
+
+                // Listen for Electron folder selection (from menu)
+                if (window.electronAPI?.onFolderSelected) {
+                    window.electronAPI.onFolderSelected((folderPath) => {
+                        this.handleElectronFolderSelection(folderPath);
                     });
                 }
 
@@ -845,25 +908,9 @@
                     });
                 }
 
-                const dropZone = document.getElementById('dropZone');
-                if (dropZone) {
-                    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                        dropZone.addEventListener(eventName, this.preventDefaults, false);
-                        document.body.addEventListener(eventName, this.preventDefaults, false);
-                    });
-
-                    ['dragenter', 'dragover'].forEach(eventName => {
-                        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false);
-                    });
-
-                    ['dragleave', 'drop'].forEach(eventName => {
-                        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false);
-                    });
-
-                    dropZone.addEventListener('drop', (e) => {
-                        const files = Array.from(e.dataTransfer.files);
-                        this.handleFileSelection(files);
-                    }, false);
+                // Only set up drag & drop for web mode
+                if (!window.electronAPI?.isElectron) {
+                    this.setupDragAndDrop();
                 }
 
                 const zoomSlider = document.getElementById('zoomSlider');
@@ -920,6 +967,70 @@
                 });
             }
 
+            setupInterface() {
+                const isElectron = window.electronAPI?.isElectron;
+
+                // Show appropriate controls
+                const electronBtn = document.getElementById('electronFolderBtn');
+                const webFallback = document.getElementById('webFallback');
+                const electronDropZone = document.getElementById('electronDropZone');
+                const webDropZone = document.getElementById('webDropZone');
+
+                if (isElectron) {
+                    if (electronBtn) electronBtn.style.display = 'block';
+                    if (webFallback) webFallback.style.display = 'none';
+                    if (electronDropZone) electronDropZone.style.display = 'block';
+                    if (webDropZone) webDropZone.style.display = 'none';
+                } else {
+                    if (electronBtn) electronBtn.style.display = 'none';
+                    if (webFallback) webFallback.style.display = 'block';
+                    if (electronDropZone) electronDropZone.style.display = 'none';
+                    if (webDropZone) webDropZone.style.display = 'block';
+                }
+            }
+
+            async openElectronFolderDialog() {
+                if (!window.electronAPI) {
+                    console.error('Electron API not available');
+                    return;
+                }
+
+                try {
+                    // Trigger the same folder dialog as the menu
+                    // We'll add a new IPC handler for this
+                    const result = await window.electronAPI.selectFolder();
+                    if (result && result.folderPath) {
+                        await this.handleElectronFolderSelection(result.folderPath);
+                    }
+                } catch (error) {
+                    console.error('Error opening folder dialog:', error);
+                    this.showTemporaryMessage('Error opening folder dialog', 'error');
+                }
+            }
+
+            setupDragAndDrop() {
+                const dropZone = document.getElementById('dropZone');
+                if (!dropZone) return;
+
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, this.preventDefaults, false);
+                    document.body.addEventListener(eventName, this.preventDefaults, false);
+                });
+
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false);
+                });
+
+                ['dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false);
+                });
+
+                dropZone.addEventListener('drop', (e) => {
+                    const files = Array.from(e.dataTransfer.files);
+                    this.handleFileSelection(files);
+                }, false);
+            }
+
             preventDefaults(e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -937,6 +1048,16 @@
                     return;
                 }
 
+                // Store the base directory info if available
+                if (videoFiles.length > 0 && videoFiles[0].webkitRelativePath) {
+                    const firstPath = videoFiles[0].webkitRelativePath;
+                    const pathParts = firstPath.split('/');
+                    if (pathParts.length > 1) {
+                        this.baseDirectory = pathParts[0];
+                        console.log('Base directory detected:', this.baseDirectory);
+                    }
+                }
+
                 this.hideDropZone();
                 this.clearVideos();
 
@@ -949,6 +1070,110 @@
 
                 this.updateDebugInfo();
                 this.processLoadQueue();
+            }
+
+            // Handle folder selection from Electron's native dialog
+            async handleElectronFolderSelection(folderPath) {
+                if (!window.electronAPI?.readDirectory) {
+                    console.error('Electron readDirectory API not available');
+                    return;
+                }
+
+                try {
+                    this.hideDropZone();
+                    this.clearVideos();
+                    this.showCodecWarning();
+
+                    // Get all video files from the selected directory
+                    const videoFiles = await window.electronAPI.readDirectory(folderPath);
+
+                    console.log(`Found ${videoFiles.length} video files in ${folderPath}`);
+
+                    // Create video items with full paths
+                    for (const filePath of videoFiles) {
+                        await this.createVideoItemFromPath(filePath);
+                    }
+
+                    this.updateDebugInfo();
+                    this.processLoadQueue();
+                } catch (error) {
+                    console.error('Error reading directory:', error);
+                    alert(`Error reading directory: ${error.message}`);
+                }
+            }
+
+            // Create video item from full file path (Electron)
+            async createVideoItemFromPath(fullPath) {
+                if (!window.electronAPI?.getFileInfo) return;
+
+                try {
+                    const fileInfo = await window.electronAPI.getFileInfo(fullPath);
+                    if (!fileInfo) return;
+
+                    const videoItem = document.createElement('div');
+                    videoItem.className = 'video-item';
+                    videoItem.dataset.filename = fileInfo.name;
+                    videoItem.dataset.loaded = 'false';
+                    videoItem.dataset.fullPath = fullPath; // Store full path
+
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'video-placeholder';
+                    this.updatePlaceholderForLayout(placeholder);
+                    placeholder.textContent = '📼 Loading...';
+
+                    const filename = document.createElement('div');
+                    filename.className = 'video-filename';
+                    filename.textContent = fileInfo.name;
+
+                    videoItem.appendChild(placeholder);
+                    videoItem.appendChild(filename);
+
+                    // Store the full path for file manager opening
+                    this.filePathMap.set(videoItem, fullPath);
+
+                    videoItem.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (e.ctrlKey || e.metaKey) {
+                            this.toggleSelection(videoItem);
+                        } else {
+                            this.clearSelection();
+                            this.selectVideo(videoItem);
+                        }
+                    });
+
+                    videoItem.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        // Create a mock file object with the full path info
+                        this.currentContextVideo = {
+                            name: fileInfo.name,
+                            fullPath: fullPath,
+                            isElectronFile: true
+                        };
+                        this.showContextMenu(e.clientX, e.clientY);
+                    });
+
+                    const videoGrid = document.getElementById('videoGrid');
+                    if (videoGrid) {
+                        videoGrid.appendChild(videoItem);
+                    }
+                    this.videos.add(videoItem);
+                    this.intersectionObserver.observe(videoItem);
+                    this.unloadObserver.observe(videoItem);
+
+                    requestAnimationFrame(() => {
+                        videoItem.style.opacity = '0';
+                        videoItem.style.transform = 'scale(0.8)';
+                        requestAnimationFrame(() => {
+                            videoItem.style.transition = 'all 0.3s ease';
+                            videoItem.style.opacity = '1';
+                            videoItem.style.transform = 'scale(1)';
+                        });
+                    });
+
+                    return videoItem;
+                } catch (error) {
+                    console.error('Error creating video item from path:', error);
+                }
             }
 
             showCodecWarning() {
@@ -1004,7 +1229,7 @@
                 videoItem.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     this.currentContextVideo = file;
-                    this.showContextMenu(e.pageX, e.pageY);
+                    this.showContextMenu(e.clientX, e.clientY);
                 });
 
                 const videoGrid = document.getElementById('videoGrid');
@@ -1671,32 +1896,160 @@
             }
 
             showInFileManager() {
-                if (!this.currentContextVideo) return;
+                console.log('=== SHOW IN FILE MANAGER DEBUG ===');
+                console.log('currentContextVideo:', this.currentContextVideo);
+                console.log('electronAPI available:', !!window.electronAPI?.showItemInFolder);
+
+                if (!this.currentContextVideo) {
+                    console.error('No context video set!');
+                    return;
+                }
 
                 const fileName = this.currentContextVideo.name;
-                const filePath = this.currentContextVideo.webkitRelativePath || fileName;
+                console.log('fileName:', fileName);
+                console.log('currentContextVideo.isElectronFile:', this.currentContextVideo.isElectronFile);
+                console.log('currentContextVideo.fullPath:', this.currentContextVideo.fullPath);
+                console.log('currentContextVideo.webkitRelativePath:', this.currentContextVideo.webkitRelativePath);
 
-                // Check if we're in an Electron app or have access to file system APIs
                 if (window.electronAPI?.showItemInFolder) {
-                    // Electron app - can actually open file manager
-                    window.electronAPI.showItemInFolder(filePath);
-                } else if (window.showDirectoryPicker) {
-                    // File System Access API (limited browser support)
-                    this.showFileSystemAccessDialog();
+                    console.log('Using Electron API...');
+                    // Check if this is an Electron-loaded file with full path
+                    if (this.currentContextVideo.isElectronFile && this.currentContextVideo.fullPath) {
+                        console.log('Opening Electron file:', this.currentContextVideo.fullPath);
+                        window.electronAPI.showItemInFolder(this.currentContextVideo.fullPath).then(result => {
+                            console.log('showItemInFolder result:', result);
+                            if (!result.success) {
+                                console.error('Failed to open file manager:', result.error);
+                                this.showTemporaryMessage(`Error: ${result.error}`, 'error');
+                            } else {
+                                this.showTemporaryMessage('Opened in file manager!', 'success');
+                            }
+                        }).catch(error => {
+                            console.error('Error opening file manager:', error);
+                            this.showTemporaryMessage(`Error: ${error.message}`, 'error');
+                        });
+                    } else {
+                        console.log('Not an Electron file or no full path - showing browser dialog');
+                        console.log('Reason: isElectronFile =', this.currentContextVideo.isElectronFile, 'fullPath =', this.currentContextVideo.fullPath);
+                        // Browser-selected file - show explanation
+                        this.showPathResolutionDialog(fileName, this.currentContextVideo.webkitRelativePath);
+                    }
                 } else {
-                    // Fallback: Show file path dialog with copy functionality
-                    this.showFilePathDialog(fileName, filePath);
+                    console.error('Electron API not available - using browser fallback');
+                    // Fallback for non-Electron environment
+                    this.showFilePathDialog(fileName, this.currentContextVideo.webkitRelativePath || fileName);
                 }
             }
 
-            showFileSystemAccessDialog() {
-                const message = `File System Access API detected but cannot directly open file manager.\n\nFile: ${this.currentContextVideo.name}\n\nWould you like to copy the file name to clipboard instead?`;
+            showPathResolutionDialog(fileName, relativePath) {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.8);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                `;
 
-                if (confirm(message)) {
-                    navigator.clipboard.writeText(this.currentContextVideo.name).then(() => {
-                        this.showTemporaryMessage('File name copied to clipboard!');
+                const dialog = document.createElement('div');
+                dialog.style.cssText = `
+                    background: #2d2d2d;
+                    border: 1px solid #404040;
+                    border-radius: 8px;
+                    padding: 2rem;
+                    max-width: 600px;
+                    width: 90%;
+                    color: white;
+                    font-family: inherit;
+                `;
+
+                const pathInfo = relativePath ?
+                    `<div style="background: #1a1a1a; padding: 1rem; border-radius: 4px; margin: 1rem 0; font-family: monospace; word-break: break-all;">
+                        <strong>File:</strong> ${fileName}<br>
+                        <strong>Relative Path:</strong> ${relativePath}
+                    </div>` :
+                    `<div style="background: #1a1a1a; padding: 1rem; border-radius: 4px; margin: 1rem 0; font-family: monospace;">
+                        <strong>File:</strong> ${fileName}
+                    </div>`;
+
+                dialog.innerHTML = `
+                    <h3 style="margin: 0 0 1rem 0; color: #007acc;">📁 Cannot Open File Manager</h3>
+                    <p style="margin: 0 0 1rem 0; color: #ccc;">
+                        Due to browser security limitations, we cannot directly open the file manager with the exact file location.
+                        The browser only provides relative paths from the selected folder.
+                    </p>
+                    ${pathInfo}
+                    <div style="margin: 1rem 0; padding: 1rem; background: #2a4a00; border-radius: 4px; border-left: 4px solid #4CAF50;">
+                        <strong style="color: #4CAF50;">💡 Tip:</strong> To get full file manager integration, you can:
+                        <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                            <li>Drag & drop files directly from file manager into this app</li>
+                            <li>Use the file name to search in your file manager</li>
+                            <li>Remember the folder you selected originally</li>
+                        </ul>
+                    </div>
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                        <button id="copyFileNameBtn" style="background: #007acc; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            📋 Copy File Name
+                        </button>
+                        ${relativePath ? `
+                        <button id="copyRelativePathBtn" style="background: #404040; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            📋 Copy Relative Path
+                        </button>
+                        ` : ''}
+                        <button id="closeModalBtn" style="background: #666; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                            Close
+                        </button>
+                    </div>
+                `;
+
+                modal.appendChild(dialog);
+                document.body.appendChild(modal);
+
+                // Add event listeners
+                const copyFileNameBtn = dialog.querySelector('#copyFileNameBtn');
+                const copyRelativePathBtn = dialog.querySelector('#copyRelativePathBtn');
+                const closeModalBtn = dialog.querySelector('#closeModalBtn');
+
+                copyFileNameBtn?.addEventListener('click', () => {
+                    navigator.clipboard.writeText(fileName).then(() => {
+                        copyFileNameBtn.textContent = '✅ Copied!';
+                        setTimeout(() => {
+                            copyFileNameBtn.textContent = '📋 Copy File Name';
+                        }, 2000);
                     });
-                }
+                });
+
+                copyRelativePathBtn?.addEventListener('click', () => {
+                    navigator.clipboard.writeText(relativePath).then(() => {
+                        copyRelativePathBtn.textContent = '✅ Copied!';
+                        setTimeout(() => {
+                            copyRelativePathBtn.textContent = '📋 Copy Relative Path';
+                        }, 2000);
+                    });
+                });
+
+                const closeModal = () => {
+                    document.body.removeChild(modal);
+                };
+
+                closeModalBtn.addEventListener('click', closeModal);
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) closeModal();
+                });
+
+                // Close on Escape key
+                const handleKeydown = (e) => {
+                    if (e.key === 'Escape') {
+                        closeModal();
+                        document.removeEventListener('keydown', handleKeydown);
+                    }
+                };
+                document.addEventListener('keydown', handleKeydown);
             }
 
             showFilePathDialog(fileName, filePath) {
@@ -1794,31 +2147,42 @@
                 document.addEventListener('keydown', handleKeydown);
             }
 
-            showTemporaryMessage(message) {
+            showTemporaryMessage(message, type = 'info') {
                 const toast = document.createElement('div');
+                const bgColor = type === 'error' ? '#ff4444' : type === 'success' ? '#4CAF50' : '#007acc';
                 toast.style.cssText = `
                     position: fixed;
-                    top: 20px;
+                    top: 80px;
                     right: 20px;
-                    background: #007acc;
+                    background: ${bgColor};
                     color: white;
-                    padding: 1rem;
-                    border-radius: 4px;
+                    padding: 1rem 1.5rem;
+                    border-radius: 6px;
                     z-index: 10001;
                     font-family: inherit;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    max-width: 300px;
                 `;
                 toast.textContent = message;
                 document.body.appendChild(toast);
 
                 setTimeout(() => {
-                    document.body.removeChild(toast);
-                }, 3000);
+                    if (document.body.contains(toast)) {
+                        document.body.removeChild(toast);
+                    }
+                }, 4000);
             }
 
             copyFilePath() {
                 if (this.currentContextVideo) {
-                    navigator.clipboard.writeText(this.currentContextVideo.name);
-                    this.updateDebugInfo();
+                    const pathToCopy = this.currentContextVideo.isElectronFile
+                        ? this.currentContextVideo.fullPath
+                        : this.currentContextVideo.webkitRelativePath || this.currentContextVideo.name;
+
+                    navigator.clipboard.writeText(pathToCopy).then(() => {
+                        const pathType = this.currentContextVideo.isElectronFile ? 'Full path' : 'File name';
+                        this.showTemporaryMessage(`${pathType} copied to clipboard!`, 'success');
+                    });
                 }
             }
 
@@ -1827,23 +2191,68 @@
                 this.updateDebugInfo();
             }
 
-            deleteSelected() {
+            async deleteSelected() {
                 if (this.selectedVideos.size === 0) return;
 
                 const count = this.selectedVideos.size;
-                if (confirm(`Delete ${count} selected video(s)?`)) {
-                    this.selectedVideos.forEach(item => {
-                        const video = this.videoElements.get(item);
-                        if (video && video.src) {
-                            URL.revokeObjectURL(video.src);
+                const action = window.electronAPI?.moveToTrash ? 'move to trash' : 'delete';
+
+                if (confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${count} selected video(s)?`)) {
+                    const deletedItems = [];
+
+                    for (const item of this.selectedVideos) {
+                        try {
+                            // Try to delete/trash the actual file if in Electron
+                            if (window.electronAPI?.moveToTrash && item.dataset.fullPath) {
+                                const result = await window.electronAPI.moveToTrash(item.dataset.fullPath);
+                                if (!result.success) {
+                                    console.error('Failed to move to trash:', result.error);
+                                    this.showTemporaryMessage(`Failed to delete ${item.dataset.filename}`, 'error');
+                                    continue;
+                                }
+                            }
+
+                            // Clean up UI and memory
+                            const video = this.videoElements.get(item);
+                            if (video) {
+                                if (video.src && video.src.startsWith('blob:')) {
+                                    URL.revokeObjectURL(video.src);
+                                }
+                                video.pause();
+                                video.removeAttribute('src');
+                                video.load();
+                                this.videoElements.delete(item);
+                                this.playingVideos.delete(video);
+                            }
+
+                            // Remove from all tracking
+                            this.loadedVideos.delete(item);
+                            this.loadingVideos.delete(item);
+                            this.visibleVideos.delete(item);
+
+                            // Remove from observers
+                            this.intersectionObserver.unobserve(item);
+                            this.unloadObserver.unobserve(item);
+
+                            // Remove from DOM and sets
+                            item.remove();
+                            this.videos.delete(item);
+                            deletedItems.push(item);
+
+                        } catch (error) {
+                            console.error('Error deleting item:', error);
+                            this.showTemporaryMessage(`Failed to delete ${item.dataset.filename}`, 'error');
                         }
-                        this.videoElements.delete(item);
-                        item.remove();
-                        this.videos.delete(item);
-                    });
+                    }
+
                     this.selectedVideos.clear();
                     this.updateSelectionInfo();
                     this.updateDebugInfo();
+
+                    if (deletedItems.length > 0) {
+                        const actionText = window.electronAPI?.moveToTrash ? 'moved to trash' : 'deleted';
+                        this.showTemporaryMessage(`${deletedItems.length} files ${actionText}`, 'success');
+                    }
                 }
             }
 
@@ -1871,7 +2280,6 @@
                 this.playingVideos.clear();
                 this.loadedVideos.clear();
                 this.loadQueue = [];
-                this.unloadQueue = [];
                 this.aspectRatioCache.clear();
                 this.updateSelectionInfo();
                 this.updateDebugInfo();
