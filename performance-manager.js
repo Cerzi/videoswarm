@@ -165,8 +165,10 @@ class PerformanceManager {
                     this.viewportItems.add(videoItem);
                     this.nearViewportItems.add(videoItem);
 
-                    // Add to load queue if not loaded
-                    if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
+                    // CONSERVATIVE QUEUEING: Only add if queue is small
+                    if (videoItem.dataset.loaded === 'false' && 
+                        !this.loadQueue.includes(videoItem) && 
+                        this.loadQueue.length < 10) {
                         this.loadQueue.push(videoItem);
                     }
                 } else {
@@ -181,8 +183,8 @@ class PerformanceManager {
             }
         }, {
             root: null,
-            // INITIAL LOAD FIX: Always load content in and around viewport
-            rootMargin: '400px 0px 800px 0px',
+            // CONSERVATIVE MARGINS: Smaller margins to prevent mass loading
+            rootMargin: '100px 0px 200px 0px',
             threshold: [0, 0.1]
         });
 
@@ -228,20 +230,33 @@ class PerformanceManager {
         // Force viewport detection
         this.updateViewportItems();
 
-        // Only check first few screens of items - NOT ALL VIDEOS
+        // CONSERVATIVE INITIAL LOADING: Only load items that are actually in the current viewport
         const viewportHeight = window.innerHeight;
-        const maxInitialLoadDistance = viewportHeight * 2; // Only 2 screens worth
+        const viewportTop = window.scrollY;
+        const viewportBottom = viewportTop + viewportHeight;
+        
         let addedCount = 0;
-        const maxInitialItems = 20; // Cap initial queue size
+        const maxInitialItems = 8; // Very conservative - only first screen
+        
+        // Sort videos by their position to prioritize top items
+        const sortedVideos = Array.from(this.videoBrowser.videos).sort((a, b) => {
+            const rectA = a.getBoundingClientRect();
+            const rectB = b.getBoundingClientRect();
+            return rectA.top - rectB.top;
+        });
 
-        this.videoBrowser.videos.forEach(videoItem => {
+        for (const videoItem of sortedVideos) {
             // Stop if we've added enough items
-            if (addedCount >= maxInitialItems) return;
+            if (addedCount >= maxInitialItems) break;
 
             const rect = videoItem.getBoundingClientRect();
-
-            // Only add items that are actually near the initial viewport
-            if (rect.top < maxInitialLoadDistance && rect.bottom > -200) {
+            
+            // STRICT VIEWPORT CHECK: Only items actually visible in current viewport
+            // Don't use collapsed height - use position only
+            const itemTop = rect.top + window.scrollY;
+            const itemVisible = itemTop >= viewportTop && itemTop <= viewportBottom + 200; // Small buffer
+            
+            if (itemVisible) {
                 this.viewportItems.add(videoItem);
                 this.nearViewportItems.add(videoItem);
 
@@ -252,7 +267,7 @@ class PerformanceManager {
                     console.log(`Added to initial load queue: ${videoItem.dataset.filename}`);
                 }
             }
-        });
+        }
 
         // Force process the queue
         if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
@@ -262,31 +277,32 @@ class PerformanceManager {
     }
 
     updateViewportItems() {
-        // Fallback viewport detection (more efficient than before)
+        // Fallback viewport detection with collapsed item handling
         const viewportTop = window.scrollY;
         const viewportBottom = viewportTop + window.innerHeight;
-        const preloadBuffer = 400;
-        const nearBuffer = 800;
+        const preloadBuffer = 200; // Reduced buffer
+        const nearBuffer = 400;   // Reduced buffer
 
         let viewportCount = 0;
         let nearViewportCount = 0;
         let addedToQueue = 0;
-        const maxQueueAdditions = 10; // Prevent mass queueing
+        const maxQueueAdditions = 5; // Much more conservative
 
-        // Only check items that might have changed status
         this.videoBrowser.videos.forEach(videoItem => {
             // Stop adding to queue if we've hit the limit
             if (addedToQueue >= maxQueueAdditions) return;
 
-            // Quick position check using cached layout data when possible
             const rect = videoItem.getBoundingClientRect();
             const elementTop = rect.top + viewportTop;
-            const elementBottom = elementTop + rect.height;
+            
+            // COLLAPSED ITEM FIX: If height is very small (collapsed), use estimated height
+            const elementHeight = rect.height < 50 ? 200 : rect.height; // Assume 200px for collapsed items
+            const elementBottom = elementTop + elementHeight;
 
             const inViewport = elementBottom >= (viewportTop - preloadBuffer) &&
                               elementTop <= (viewportBottom + preloadBuffer);
             const nearViewport = elementBottom >= (viewportTop - nearBuffer) &&
-                                 elementTop <= (viewportBottom + nearBuffer);
+                                elementTop <= (viewportBottom + nearBuffer);
 
             if (inViewport) {
                 this.viewportItems.add(videoItem);
@@ -304,8 +320,10 @@ class PerformanceManager {
                 this.nearViewportItems.add(videoItem);
                 nearViewportCount++;
 
-                // Also add near-viewport items to queue for smoother scrolling
-                if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
+                // Only add near-viewport items if we have very few in queue
+                if (this.loadQueue.length < 3 && 
+                    videoItem.dataset.loaded === 'false' && 
+                    !this.loadQueue.includes(videoItem)) {
                     this.loadQueue.push(videoItem);
                     addedToQueue++;
                 }
