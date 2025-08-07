@@ -2,6 +2,8 @@ class UIManager {
     constructor(videoBrowser) {
         this.videoBrowser = videoBrowser;
         this.currentContextVideo = null;
+        this.lastDebugUpdate = 0;
+        this.debugUpdateThrottle = 500; // Update every 500ms max
     }
 
     setupInterface() {
@@ -370,13 +372,75 @@ class UIManager {
         const debugInfo = document.getElementById('debugInfo');
         if (!debugInfo) return;
 
-        const memoryInfo = performance.memory ?
-            ` | ${Math.round(performance.memory.usedJSHeapSize / 1024 / 1024)}MB` : '';
+        // Throttle updates for performance
+        const now = Date.now();
+        if (now - this.lastDebugUpdate < this.debugUpdateThrottle) {
+            return;
+        }
+        this.lastDebugUpdate = now;
 
-        debugInfo.textContent =
-            `▶️ ${this.videoBrowser.playingVideos.size}/${this.videoBrowser.maxConcurrentPlaying} | ` +
-            `📼 ${this.videoBrowser.loadedVideos.size}/${this.videoBrowser.performanceManager.maxLoadedVideos} | ` +
-            `📁 ${this.videoBrowser.videos.size}${memoryInfo}`;
+        // Get accurate counts
+        const playingCount = this.videoBrowser.playingVideos.size;
+        const maxPlaying = this.videoBrowser.maxConcurrentPlaying;
+        const loadedCount = this.videoBrowser.loadedVideos.size;
+        const maxLoaded = this.videoBrowser.performanceManager.maxLoadedVideos;
+        const totalVideos = this.videoBrowser.videos.size;
+        const visibleCount = this.videoBrowser.visibleVideos.size;
+        const loadingCount = this.videoBrowser.loadingVideos.size;
+        const queueCount = this.videoBrowser.performanceManager.loadQueue.length;
+
+        // Memory info with better formatting
+        let memoryInfo = '';
+        if (performance.memory) {
+            const usedMB = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
+            const totalMB = Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024);
+            const percentage = Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100);
+            memoryInfo = ` | 🧠 ${usedMB}MB (${percentage}%)`;
+        }
+
+        // Enhanced status with more detailed info
+        let statusText = `▶️ ${playingCount}/${maxPlaying} playing | 📼 ${loadedCount}/${maxLoaded} loaded | 📁 ${totalVideos} total`;
+
+        // Add additional info when relevant
+        if (visibleCount > 0) {
+            statusText += ` | 👁️ ${visibleCount} visible`;
+        }
+
+        if (loadingCount > 0) {
+            statusText += ` | ⏳ ${loadingCount} loading`;
+        }
+
+        if (queueCount > 0) {
+            statusText += ` | 📋 ${queueCount} queued`;
+        }
+
+        // Add layout mode indicator
+        const layoutMode = this.videoBrowser.layoutManager.layoutMode;
+        const layoutIcon = layoutMode === 'masonry-vertical' ? '🧱' :
+                          layoutMode === 'masonry-horizontal' ? '🔄' : '📐';
+        statusText += ` | ${layoutIcon} ${layoutMode}`;
+
+        statusText += memoryInfo;
+
+        debugInfo.textContent = statusText;
+
+        // Color coding based on memory usage
+        if (performance.memory) {
+            const memoryRatio = performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
+            if (memoryRatio > 0.8) {
+                debugInfo.style.color = '#ff6666'; // Red - high memory
+            } else if (memoryRatio > 0.6) {
+                debugInfo.style.color = '#ffcc00'; // Yellow - medium memory
+            } else {
+                debugInfo.style.color = '#aaa'; // Normal - low memory
+            }
+        }
+    }
+
+    // Force an immediate debug update (bypasses throttling)
+    forceDebugUpdate() {
+        this.lastDebugUpdate = 0;
+        this.updateDebugInfo();
     }
 }
 

@@ -25,27 +25,17 @@ class VideoBrowser {
         this.playingVideos = new Set();
         this.loadedVideos = new Map();
 
-        // Initialize managers
-        this.performanceManager = new PerformanceManager(this);
-        this.layoutManager = new LayoutManager(this);
+        // Initialize managers in correct order
+        this.layoutManager = new LayoutManager(this);  // CREATE FIRST
+        this.performanceManager = new PerformanceManager(this);  // THEN THIS
         this.uiManager = new UIManager(this);
 
-        // Intersection observer
-        this.intersectionObserver = new IntersectionObserver(
-            this.handleIntersection.bind(this),
-            {
-                rootMargin: this.layoutManager.layoutMode === 'masonry-vertical' ? '1200px' : '400px',
-                threshold: [0, 0.1, 1.0]
-            }
-        );
+        setTimeout(() => {
+            this.forcePlayVisibleVideos();
+        }, 2000);
 
-        this.unloadObserver = new IntersectionObserver(
-            this.handleUnloadIntersection.bind(this),
-            {
-                rootMargin: this.layoutManager.layoutMode === 'masonry-vertical' ? '-1200px' : '-800px',
-                threshold: 0
-            }
-        );
+        // START LAYOUT MONITORING
+        this.layoutManager.monitorLayoutCollapse();
 
         this.initializeEventListeners();
         this.loadSettings();
@@ -189,10 +179,13 @@ class VideoBrowser {
 
     setVideoLimit(limit) {
         this.maxConcurrentPlaying = Math.max(this.minConcurrentPlaying,
-                                           Math.min(this.maxConcurrentPlayingLimit, limit));
-
-        // Store the user-set limit to prevent auto-adjustment from overriding it
+                                        Math.min(this.maxConcurrentPlayingLimit, limit));
         this.userSetVideoLimit = this.maxConcurrentPlaying;
+
+        // UPDATE PERFORMANCE MANAGER LIMITS
+        if (this.performanceManager && this.performanceManager.updateLimitsForPlayingCount) {
+            this.performanceManager.updateLimitsForPlayingCount(this.maxConcurrentPlaying);
+        }
 
         this.updateVideoLimitSlider();
 
@@ -552,6 +545,22 @@ class VideoBrowser {
         this.performanceManager.processLoadQueue();
     }
 
+    forcePlayVisibleVideos() {
+        console.log('Forcing play of visible videos...');
+        let playedCount = 0;
+
+        this.visibleVideos.forEach(videoItem => {
+            const video = this.videoElements.get(videoItem);
+            if (video && this.canPlayMoreVideos() && this.autoplayEnabled) {
+                this.playVideo(video);
+                playedCount++;
+            }
+        });
+
+        console.log(`Attempted to play ${playedCount} visible videos`);
+        this.uiManager.updateDebugInfo();
+    }
+
     toggleRecursive() {
         this.recursiveMode = !this.recursiveMode;
         this.updateRecursiveButton();
@@ -684,8 +693,6 @@ class VideoBrowser {
                 videoGrid.appendChild(videoItem);
             }
             this.videos.add(videoItem);
-            this.intersectionObserver.observe(videoItem);
-            this.unloadObserver.observe(videoItem);
 
             requestAnimationFrame(() => {
                 videoItem.style.opacity = '0';
@@ -767,8 +774,6 @@ class VideoBrowser {
             videoGrid.appendChild(videoItem);
         }
         this.videos.add(videoItem);
-        this.intersectionObserver.observe(videoItem);
-        this.unloadObserver.observe(videoItem);
 
         requestAnimationFrame(() => {
             videoItem.style.opacity = '0';
@@ -787,86 +792,13 @@ class VideoBrowser {
     }
 
     handleIntersection(entries) {
-        entries.forEach(entry => {
-            const videoItem = entry.target;
-
-            if (entry.isIntersecting) {
-                this.visibleVideos.add(videoItem);
-
-                if (videoItem.dataset.loaded === 'false') {
-                    if (this.layoutManager.layoutMode === 'masonry-vertical') {
-                        // Enhanced masonry loading logic
-                        if (!this.performanceManager.masonryLoadingPaused && entry.intersectionRatio > 0.05) {
-                            this.performanceManager.addToMasonryQueue(videoItem, entry);
-                        }
-                    } else {
-                        // Normal loading for grid mode
-                        if (!this.performanceManager.loadQueue.includes(videoItem)) {
-                            this.performanceManager.loadQueue.push(videoItem);
-                        }
-                    }
-
-                    const placeholder = videoItem.querySelector('.video-placeholder');
-                    if (placeholder && placeholder.textContent.includes('reload')) {
-                        placeholder.textContent = '📼 Loading...';
-                        placeholder.style.background = '#2a4a2a';
-                    }
-                }
-
-                const video = this.videoElements.get(videoItem);
-                if (video && this.canPlayMoreVideos()) {
-                    this.playVideo(video);
-                }
-            } else {
-                if (entry.intersectionRatio < 0.01) {
-                    this.visibleVideos.delete(videoItem);
-
-                    const video = this.videoElements.get(videoItem);
-                    if (video) {
-                        video.pause();
-                        this.playingVideos.delete(video);
-                    }
-                }
-            }
-        });
-
-        // Process queues based on layout mode
-        if (!this.performanceManager.isProcessingQueue && this.performanceManager.loadQueue.length > 0) {
-            if (this.layoutManager.layoutMode === 'masonry-vertical') {
-                if (!this.performanceManager.masonryLoadingPaused && !this.performanceManager.masonryBatchProcessing) {
-                    this.performanceManager.processMasonryLoadQueue();
-                }
-            } else {
-                this.performanceManager.processLoadQueue();
-            }
-        }
-
-        if (this.loadedVideos.size > this.performanceManager.maxLoadedVideos * 1.2) {
-            this.performanceManager.smartCleanup();
-        }
+        // Either remove entirely or keep very simple version for play/pause only
+        console.warn('VideoBrowser handleIntersection called - PerformanceManager should handle this');
     }
 
     handleUnloadIntersection(entries) {
-        entries.forEach(entry => {
-            const videoItem = entry.target;
-
-            if (!entry.isIntersecting &&
-                !this.visibleVideos.has(videoItem) &&
-                videoItem.dataset.loaded === 'true' &&
-                this.loadedVideos.size > this.performanceManager.maxLoadedVideos) {
-
-                const rect = videoItem.getBoundingClientRect();
-                const viewportHeight = window.innerHeight;
-                const distanceFromViewport = Math.min(
-                    Math.abs(rect.bottom),
-                    Math.abs(rect.top - viewportHeight)
-                );
-
-                if (distanceFromViewport > viewportHeight * 3) {
-                    this.unloadVideoContent(videoItem);
-                }
-            }
-        });
+        // Either remove entirely
+        console.warn('VideoBrowser handleUnloadIntersection called - PerformanceManager should handle this');
     }
 
     unloadVideoContent(videoItem) {
@@ -888,9 +820,9 @@ class VideoBrowser {
         this.playingVideos.delete(video);
         this.loadingVideos.delete(videoItem);
 
-        const queueIndex = this.performanceManager.loadQueue.indexOf(videoItem);
-        if (queueIndex > -1) {
-            this.performanceManager.loadQueue.splice(queueIndex, 1);
+        // Let PerformanceManager handle queue cleanup
+        if (this.performanceManager && this.performanceManager.onVideoRemoved) {
+            this.performanceManager.onVideoRemoved(videoItem);
         }
 
         const placeholder = document.createElement('div');
@@ -898,12 +830,12 @@ class VideoBrowser {
         this.layoutManager.updatePlaceholderForLayout(placeholder);
         placeholder.textContent = '📼 Scroll to reload...';
 
+        // Simple click handler - no queue management
         placeholder.addEventListener('click', () => {
-            if (videoItem.dataset.loaded === 'false' && !this.performanceManager.loadQueue.includes(videoItem)) {
+            if (videoItem.dataset.loaded === 'false') {
                 placeholder.textContent = '📼 Loading...';
                 placeholder.style.background = '#2a4a2a';
-                this.performanceManager.loadQueue.push(videoItem);
-                this.performanceManager.processLoadQueue();
+                // PerformanceManager will pick this up automatically via its observers
             }
         });
 
@@ -988,11 +920,6 @@ class VideoBrowser {
     }
 
     clearVideos() {
-        this.videos.forEach(videoItem => {
-            this.intersectionObserver.unobserve(videoItem);
-            this.unloadObserver.unobserve(videoItem);
-        });
-
         this.videoElements.forEach((video, videoItem) => {
             if (video && video.src && video.src.startsWith('blob:')) {
                 URL.revokeObjectURL(video.src);
@@ -1010,7 +937,9 @@ class VideoBrowser {
         this.visibleVideos.clear();
         this.playingVideos.clear();
         this.loadedVideos.clear();
-        this.performanceManager.loadQueue = [];
+        if (this.performanceManager && this.performanceManager.clearQueues) {
+            this.performanceManager.clearQueues();
+        }
         this.layoutManager.aspectRatioCache.clear();
         this.uiManager.updateSelectionInfo();
         this.uiManager.updateDebugInfo();
@@ -1049,10 +978,19 @@ class VideoBrowser {
             });
     }
 
-    // Placeholder for delete functionality
-    deleteSelected() {
-        // This would need to be implemented based on your requirements
-        console.log('Delete selected videos - not implemented yet');
+    handleLayoutCollapse() {
+        console.log('Layout collapse detected - resetting performance manager');
+        this.performanceManager.clearQueues();
+
+        // Pause all videos to prevent layout thrashing
+        this.pauseAllVideos();
+
+        // Force layout recalculation
+        if (this.layoutManager) {
+            setTimeout(() => {
+                this.layoutManager.forceLayout();
+            }, 500);
+        }
     }
 }
 
