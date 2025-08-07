@@ -247,6 +247,10 @@ class LayoutManager {
             
             // Find the earliest available row for this column
             let startRow = columnNextRow[targetColumn];
+
+            if (index < 3) {
+                console.log(`Item ${index}: height=${itemHeight}, rowSpan=${rowSpan}, startRow=${startRow}`);
+            }
             
             // Try to fill gaps in earlier columns if this would create a large gap
             if (targetColumn > 0) {
