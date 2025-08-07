@@ -8,6 +8,7 @@ class LayoutManager {
         this.masonryLayoutTimeout = null;
         this.isLayouting = false;
         this.cachedGridMeasurements = null;
+        this.lastScrollTime = 0; // Track when user last scrolled
 
         // Simple debounced resize observer
         this.resizeObserver = new ResizeObserver((entries) => {
@@ -19,6 +20,11 @@ class LayoutManager {
                 }, 300);
             }
         });
+
+        // Track scroll events to prevent layout during scrolling
+        window.addEventListener('scroll', () => {
+            this.lastScrollTime = Date.now();
+        }, { passive: true });
 
         // Observe the grid container
         const grid = document.getElementById('videoGrid');
@@ -221,6 +227,14 @@ class LayoutManager {
         const grid = document.getElementById('videoGrid');
         if (!grid || this.layoutMode !== 'masonry-vertical') return;
 
+        // SCROLL PRESERVATION: Don't layout if user is actively scrolling
+        const now = Date.now();
+        if (this.lastScrollTime && (now - this.lastScrollTime < 500)) {
+            console.log('Delaying layout - user is scrolling');
+            setTimeout(() => this.layoutMasonryItems(), 200);
+            return;
+        }
+
         const computedStyle = window.getComputedStyle(grid);
         const columnGap = parseFloat(computedStyle.columnGap) || 4;
 
@@ -313,11 +327,22 @@ class LayoutManager {
         if (this.layoutMode !== 'masonry-vertical' || this.isLayouting) return;
 
         console.log('Refreshing masonry layout');
+
+        // SCROLL PRESERVATION: Save current scroll position
+        const savedScrollTop = window.scrollY;
+        const savedScrollLeft = window.scrollX;
+
         this.cachedGridMeasurements = null;
 
-        // Simple refresh - just re-run the layout
+        // Use the simple approach but preserve scroll position
         setTimeout(() => {
             this.initializeMasonryGrid();
+
+            // SCROLL PRESERVATION: Restore scroll position after layout
+            requestAnimationFrame(() => {
+                window.scrollTo(savedScrollLeft, savedScrollTop);
+                console.log(`Restored scroll position to ${savedScrollTop}px`);
+            });
         }, 100);
     }
 }

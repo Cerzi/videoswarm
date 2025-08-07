@@ -6,24 +6,35 @@ class PerformanceManager {
         this.unloadDistance = 800;
         this.loadQueue = [];
         this.isProcessingQueue = false;
-        
-        // Masonry-specific loading control
+
+        // Enhanced viewport tracking
+        this.viewportItems = new Set();
+        this.nearViewportItems = new Set();
+        this.lastViewportUpdate = 0;
+        this.viewportUpdateThrottle = 100; // ms
+
+        // Masonry-specific optimizations
         this.masonryLoadingPaused = false;
-        this.masonryStableHeight = 0;
-        this.masonryHeightCheckCount = 0;
         this.masonryScrollTimeout = null;
-        this.masonryBatchProcessing = false;
-        
+        this.lastScrollPosition = 0;
+        this.scrollDirection = 'down';
+        this.isScrollbarDragging = false; // Track scrollbar usage
+
+        // Performance monitoring
+        this.frameDrops = 0;
+        this.lastFrameTime = performance.now();
+
         this.startPerformanceMonitoring();
-        this.setupScrollBackup();
+        this.setupOptimizedScrollHandling();
+        this.startViewportTracking();
     }
 
     startPerformanceMonitoring() {
         setInterval(() => {
+            // Memory monitoring (existing logic)
             if (performance.memory) {
                 const memoryRatio = performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
 
-                // Only auto-adjust if user hasn't manually set a limit
                 if (!this.videoBrowser.userSetVideoLimit) {
                     if (memoryRatio > 0.7) {
                         this.videoBrowser.maxConcurrentPlaying = Math.max(5, this.videoBrowser.maxConcurrentPlaying - 5);
@@ -32,111 +43,213 @@ class PerformanceManager {
                     } else if (memoryRatio > 0.5) {
                         this.videoBrowser.maxConcurrentPlaying = Math.max(10, this.videoBrowser.maxConcurrentPlaying - 2);
                         this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
-                        this.aggressiveCleanup();
+                        this.smartCleanup();
                     } else if (memoryRatio < 0.3) {
                         this.videoBrowser.maxConcurrentPlaying = Math.min(30, this.videoBrowser.maxConcurrentPlaying + 1);
                         this.maxLoadedVideos = Math.min(80, this.maxLoadedVideos + 2);
                     }
                 } else {
-                    // Still do cleanup if needed, but don't adjust playing limit
                     if (memoryRatio > 0.7) {
                         this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
                         this.emergencyCleanup();
                     } else if (memoryRatio > 0.5) {
                         this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
-                        this.aggressiveCleanup();
+                        this.smartCleanup();
                     }
                 }
             }
+
+            // Frame rate monitoring
+            this.monitorFrameRate();
         }, 2000);
-    }
 
-    setupScrollBackup() {
+        // Periodic smart cleanup to keep only nearby items loaded
         setInterval(() => {
-            this.checkAndFixStuckPlaceholders();
-        }, 3000);
-
-        window.addEventListener('scroll', () => {
-            // Simple scroll handling for all modes
-            if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
-                this.handleMasonryScroll();
+            if (!this.isProcessingQueue) {
+                this.maintainOptimalLoadedItems();
             }
-
-            let scrollTimeout;
-            clearTimeout(scrollTimeout);
-            scrollTimeout = setTimeout(() => {
-                this.checkMasonryStability();
-            }, 500);
-        });
+        }, 5000);
     }
 
-    handleMasonryScroll() {
-        // Simplified scroll handling - just add a small delay
-        clearTimeout(this.masonryScrollTimeout);
-        this.masonryScrollTimeout = setTimeout(() => {
-            if (this.loadQueue.length > 0 && !this.isProcessingQueue && !this.videoBrowser.layoutManager.isLayouting) {
+    setupOptimizedScrollHandling() {
+        let ticking = false;
+        let scrollEndTimeout = null;
+
+        window.addEventListener('scroll', (e) => {
+            const currentScroll = window.scrollY;
+            this.scrollDirection = currentScroll > this.lastScrollPosition ? 'down' : 'up';
+            this.lastScrollPosition = currentScroll;
+
+            // SCROLLBAR FIX: Detect if scrolling via scrollbar vs wheel/key
+            const isScrollbarDrag = e.isTrusted && !e.detail && !e.deltaY;
+
+            if (isScrollbarDrag) {
+                // SCROLLBAR DRAG: Use more aggressive throttling to prevent layout breaks
+                clearTimeout(scrollEndTimeout);
+                scrollEndTimeout = setTimeout(() => {
+                    if (!ticking) {
+                        requestAnimationFrame(() => {
+                            this.handleOptimizedScroll();
+                            ticking = false;
+                        });
+                        ticking = true;
+                    }
+                }, 100); // Longer delay for scrollbar
+            } else {
+                // NORMAL SCROLL: Regular handling
+                if (!ticking) {
+                    requestAnimationFrame(() => {
+                        this.handleOptimizedScroll();
+                        ticking = false;
+                    });
+                    ticking = true;
+                }
+            }
+        }, { passive: true });
+    }
+
+    handleOptimizedScroll() {
+        const now = performance.now();
+        if (now - this.lastViewportUpdate < this.viewportUpdateThrottle) {
+            return;
+        }
+        this.lastViewportUpdate = now;
+
+        // Update viewport items efficiently
+        this.updateViewportItems();
+
+        // Handle masonry scroll if needed - with enhanced stability
+        if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
+            clearTimeout(this.masonryScrollTimeout);
+
+            // SCROLLBAR FIX: Longer delay to prevent rapid layout changes during scrollbar drag
+            const delay = this.isScrollbarDragging ? 300 : 150;
+
+            this.masonryScrollTimeout = setTimeout(() => {
+                if (!this.isProcessingQueue &&
+                    !this.videoBrowser.layoutManager.isLayouting &&
+                    !this.isScrollbarDragging) {
+                    this.processLoadQueue();
+                }
+            }, delay);
+        }
+    }
+
+    startViewportTracking() {
+        // Use IntersectionObserver for efficient viewport detection
+        this.viewportObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const videoItem = entry.target;
+
+                if (entry.isIntersecting) {
+                    this.viewportItems.add(videoItem);
+                    this.nearViewportItems.add(videoItem);
+
+                    // Add to load queue if not loaded
+                    if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
+                        this.loadQueue.push(videoItem);
+                    }
+                } else {
+                    this.viewportItems.delete(videoItem);
+                    // Keep in nearViewportItems for a bit longer
+                }
+            });
+
+            // Process load queue if items were added
+            if (!this.isProcessingQueue && this.loadQueue.length > 0) {
                 this.processLoadQueue();
             }
-        }, 200);
+        }, {
+            root: null,
+            // INITIAL LOAD FIX: Always load content in and around viewport
+            rootMargin: '400px 0px 800px 0px',
+            threshold: [0, 0.1]
+        });
+
+        // Extended observer for cleanup decisions
+        this.cleanupObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const videoItem = entry.target;
+
+                if (!entry.isIntersecting) {
+                    // Remove from near viewport after delay
+                    setTimeout(() => {
+                        this.nearViewportItems.delete(videoItem);
+                    }, 1000);
+                }
+            });
+        }, {
+            root: null,
+            rootMargin: '-1000px',
+            threshold: 0
+        });
+
+        // Observe all videos
+        this.videoBrowser.videos.forEach(videoItem => {
+            this.viewportObserver.observe(videoItem);
+            this.cleanupObserver.observe(videoItem);
+        });
+
+        // INITIAL LOAD FIX: Trigger initial viewport check
+        setTimeout(() => {
+            this.updateViewportItems();
+            if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+                this.processLoadQueue();
+            }
+        }, 100);
     }
 
-    checkMasonryStability() {
-        // Simplified stability check
-        if (this.loadQueue.length > 0 && !this.isProcessingQueue && !this.videoBrowser.layoutManager.isLayouting) {
-            this.processLoadQueue();
-        }
-    }
-
-    checkAndFixStuckPlaceholders() {
+    updateViewportItems() {
+        // Fallback viewport detection (more efficient than before)
         const viewportTop = window.scrollY;
         const viewportBottom = viewportTop + window.innerHeight;
-        const buffer = 200;
+        const preloadBuffer = 400;
+        const nearBuffer = 800;
 
+        let viewportCount = 0;
+        let nearViewportCount = 0;
+
+        // Only check items that might have changed status
         this.videoBrowser.videos.forEach(videoItem => {
-            if (videoItem.dataset.loaded === 'false') {
-                const rect = videoItem.getBoundingClientRect();
-                const elementTop = rect.top + window.scrollY;
-                const elementBottom = elementTop + rect.height;
+            // Quick position check using cached layout data when possible
+            const rect = videoItem.getBoundingClientRect();
+            const elementTop = rect.top + viewportTop;
+            const elementBottom = elementTop + rect.height;
 
-                const inExtendedViewport = elementBottom >= (viewportTop - buffer) &&
-                                         elementTop <= (viewportBottom + buffer);
+            const inViewport = elementBottom >= (viewportTop - preloadBuffer) &&
+                              elementTop <= (viewportBottom + preloadBuffer);
+            const nearViewport = elementBottom >= (viewportTop - nearBuffer) &&
+                                 elementTop <= (viewportBottom + nearBuffer);
 
-                if (inExtendedViewport && !this.loadQueue.includes(videoItem)) {
-                    console.log(`Fixing stuck placeholder: ${videoItem.dataset.filename}`);
-                    this.videoBrowser.visibleVideos.add(videoItem);
+            if (inViewport) {
+                this.viewportItems.add(videoItem);
+                this.nearViewportItems.add(videoItem);
+                viewportCount++;
+                nearViewportCount++;
+
+                // Add to load queue if not loaded
+                if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
                     this.loadQueue.push(videoItem);
-
-                    const placeholder = videoItem.querySelector('.video-placeholder');
-                    if (placeholder) {
-                        placeholder.textContent = '📼 Loading...';
-                        placeholder.style.background = '#2a4a2a';
-                    }
                 }
+            } else if (nearViewport) {
+                this.viewportItems.delete(videoItem);
+                this.nearViewportItems.add(videoItem);
+                nearViewportCount++;
+            } else {
+                this.viewportItems.delete(videoItem);
+                this.nearViewportItems.delete(videoItem);
             }
         });
 
-        if (!this.isProcessingQueue && this.loadQueue.length > 0) {
-            this.processLoadQueue();
-        }
-    }
-
-    addToMasonryQueue(videoItem, entry) {
-        if (this.loadQueue.includes(videoItem)) return;
-        this.loadQueue.push(videoItem);
-    }
-
-    async processMasonryLoadQueue() {
-        // Use the same logic as regular processLoadQueue
-        return this.processLoadQueue();
+        console.log(`Viewport items: ${viewportCount}, Near viewport: ${nearViewportCount}`);
     }
 
     async processLoadQueue() {
         if (this.isProcessingQueue) return;
-
         this.isProcessingQueue = true;
 
         let processed = 0;
-        const batchSize = 5;
+        const batchSize = 3; // Reduced batch size for smoother performance
 
         while (this.loadQueue.length > 0 &&
                this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading &&
@@ -144,20 +257,27 @@ class PerformanceManager {
 
             const videoItem = this.loadQueue.shift();
 
-            if (videoItem.dataset.loaded === 'false') {
-                // Simple check - if it's in visibleVideos or near viewport, load it
-                if (this.videoBrowser.visibleVideos.has(videoItem) || this.isNearViewport(videoItem)) {
-                    try {
-                        await this.videoBrowser.loadVideoContent(videoItem);
-                        processed++;
+            // PRIORITY LOADING: Viewport items first, then near-viewport
+            const isInViewport = this.viewportItems.has(videoItem);
+            const isNearViewport = this.nearViewportItems.has(videoItem);
 
-                        // Small delay between loads
-                        if (processed < batchSize && this.loadQueue.length > 0) {
-                            await new Promise(resolve => setTimeout(resolve, 50));
-                        }
-                    } catch (error) {
-                        console.warn('Failed to load video:', error);
+            if (videoItem.dataset.loaded === 'false' && (isInViewport || isNearViewport)) {
+                try {
+                    await this.videoBrowser.loadVideoContent(videoItem);
+                    processed++;
+
+                    // Smaller delay for viewport items, longer for near-viewport
+                    const delay = isInViewport ? 25 : 50;
+                    if (processed < batchSize && this.loadQueue.length > 0) {
+                        await new Promise(resolve => setTimeout(resolve, delay));
                     }
+
+                    // ANTI-THRASHING: Check if layout is stable after loading
+                    if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
+                        await this.ensureLayoutStability();
+                    }
+                } catch (error) {
+                    console.warn('Failed to load video:', error);
                 }
             }
         }
@@ -170,57 +290,189 @@ class PerformanceManager {
         }
     }
 
-    isNearViewport(videoItem) {
-        const rect = videoItem.getBoundingClientRect();
-        const viewportHeight = window.innerHeight;
-        const buffer = 800; // Load items within 800px of viewport
-        
-        return rect.bottom > -buffer && rect.top < viewportHeight + buffer;
+    async ensureLayoutStability() {
+        // Wait for masonry layout to be stable before loading next item
+        return new Promise(resolve => {
+            if (this.videoBrowser.layoutManager.isLayouting) {
+                const checkStability = () => {
+                    if (!this.videoBrowser.layoutManager.isLayouting) {
+                        resolve();
+                    } else {
+                        setTimeout(checkStability, 50);
+                    }
+                };
+                checkStability();
+            } else {
+                resolve();
+            }
+        });
+    }
+
+    maintainOptimalLoadedItems() {
+        const maxOptimalLoaded = Math.min(this.maxLoadedVideos, 50); // Cap for performance
+
+        if (this.videoBrowser.loadedVideos.size > maxOptimalLoaded) {
+            console.log(`Maintaining optimal loaded items: ${this.videoBrowser.loadedVideos.size} -> ${maxOptimalLoaded}`);
+            this.smartCleanup();
+        }
     }
 
     aggressiveCleanup() {
-        console.log(`Starting aggressive cleanup. Currently loaded: ${this.videoBrowser.loadedVideos.size}`);
+        // Renamed method - keeping old name for compatibility
+        this.smartCleanup();
+    }
+    smartCleanup() {
 
         const candidatesForUnload = [];
+
         this.videoBrowser.loadedVideos.forEach((timestamp, videoItem) => {
-            if (!this.videoBrowser.visibleVideos.has(videoItem)) {
-                const rect = videoItem.getBoundingClientRect();
-                const distance = Math.min(
-                    Math.abs(rect.bottom),
-                    Math.abs(rect.top - window.innerHeight)
-                );
-                candidatesForUnload.push({ videoItem, distance, timestamp });
+            // NEVER unload viewport or near-viewport items
+            if (this.viewportItems.has(videoItem) || this.nearViewportItems.has(videoItem)) {
+                return;
             }
+
+            // Calculate priority for unloading (further = higher priority to unload)
+            const rect = videoItem.getBoundingClientRect();
+            const distance = Math.min(
+                Math.abs(rect.bottom),
+                Math.abs(rect.top - window.innerHeight)
+            );
+
+            // Factor in how long it's been loaded
+            const age = Date.now() - timestamp;
+            const priority = distance + (age / 1000); // Distance + seconds loaded
+
+            candidatesForUnload.push({ videoItem, priority, distance });
         });
 
-        candidatesForUnload
-            .sort((a, b) => b.distance - a.distance)
-            .forEach(({ videoItem }) => {
-                if (this.videoBrowser.loadedVideos.size > this.maxLoadedVideos * 0.7) {
-                    this.videoBrowser.unloadVideoContent(videoItem);
-                }
-            });
+        // Sort by priority (highest priority = unload first)
+        candidatesForUnload.sort((a, b) => b.priority - a.priority);
 
-        console.log(`Aggressive cleanup complete. Now loaded: ${this.videoBrowser.loadedVideos.size}`);
+        // Unload items starting with furthest/oldest
+        const targetUnload = Math.min(candidatesForUnload.length,
+                                     this.videoBrowser.loadedVideos.size - Math.floor(this.maxLoadedVideos * 0.8));
+
+        for (let i = 0; i < targetUnload; i++) {
+            const { videoItem } = candidatesForUnload[i];
+            // MASONRY-SAFE: Only unload if not currently playing to avoid layout shifts
+            const video = this.videoBrowser.videoElements.get(videoItem);
+            if (!video || video.paused) {
+                this.videoBrowser.unloadVideoContent(videoItem);
+            }
+        }
+
+        console.log(`Smart cleanup complete. Unloaded ${targetUnload} items. Now loaded: ${this.videoBrowser.loadedVideos.size}`);
     }
 
     emergencyCleanup() {
         console.log('EMERGENCY CLEANUP - High memory usage detected');
 
+        // Pause all videos first to prevent layout shifts
         this.videoBrowser.pauseAllVideos();
 
         const toUnload = [];
         this.videoBrowser.loadedVideos.forEach((timestamp, videoItem) => {
-            if (!this.videoBrowser.visibleVideos.has(videoItem)) {
+            // Keep only viewport items during emergency
+            if (!this.viewportItems.has(videoItem)) {
                 toUnload.push(videoItem);
             }
         });
 
-        toUnload.forEach(videoItem => {
-            this.videoBrowser.unloadVideoContent(videoItem);
-        });
+        // Batch unload to reduce layout thrashing
+        const batchSize = 5;
+        for (let i = 0; i < toUnload.length; i += batchSize) {
+            const batch = toUnload.slice(i, i + batchSize);
+            batch.forEach(videoItem => {
+                this.videoBrowser.unloadVideoContent(videoItem);
+            });
+
+            // Small delay between batches to let DOM settle
+            if (i + batchSize < toUnload.length) {
+                setTimeout(() => {}, 16); // One frame
+            }
+        }
 
         console.log(`Emergency cleanup complete. Unloaded ${toUnload.length} videos`);
+    }
+
+    monitorFrameRate() {
+        const now = performance.now();
+        const frameDelta = now - this.lastFrameTime;
+
+        // Detect frame drops (> 20ms = below 50fps)
+        if (frameDelta > 20) {
+            this.frameDrops++;
+
+            // If we're dropping frames consistently, reduce concurrent operations
+            if (this.frameDrops > 10) {
+                this.maxConcurrentLoading = Math.max(2, this.maxConcurrentLoading - 1);
+                this.viewportUpdateThrottle = Math.min(200, this.viewportUpdateThrottle + 20);
+                console.log(`Performance degraded: Reduced concurrent loading to ${this.maxConcurrentLoading}`);
+                this.frameDrops = 0; // Reset counter
+            }
+        } else {
+            // Good performance, can increase limits slowly
+            if (this.frameDrops === 0 && this.maxConcurrentLoading < 6) {
+                this.maxConcurrentLoading = Math.min(6, this.maxConcurrentLoading + 1);
+                this.viewportUpdateThrottle = Math.max(50, this.viewportUpdateThrottle - 10);
+            }
+        }
+
+        this.lastFrameTime = now;
+    }
+
+    // PERFORMANCE: Optimized viewport checking
+    isNearViewport(videoItem) {
+        return this.nearViewportItems.has(videoItem);
+    }
+
+    // Legacy method for backward compatibility
+    addToMasonryQueue(videoItem, entry) {
+        if (this.loadQueue.includes(videoItem)) return;
+        this.loadQueue.push(videoItem);
+
+        // Process queue if not already processing
+        if (!this.isProcessingQueue) {
+            setTimeout(() => this.processLoadQueue(), 50);
+        }
+    }
+
+    // Legacy method for backward compatibility
+    processMasonryLoadQueue() {
+        return this.processLoadQueue();
+    }
+    onVideoAdded(videoItem) {
+        if (this.viewportObserver) {
+            this.viewportObserver.observe(videoItem);
+            this.cleanupObserver.observe(videoItem);
+        }
+    }
+
+    // Enhanced method for removing videos
+    onVideoRemoved(videoItem) {
+        if (this.viewportObserver) {
+            this.viewportObserver.unobserve(videoItem);
+            this.cleanupObserver.unobserve(videoItem);
+        }
+        this.viewportItems.delete(videoItem);
+        this.nearViewportItems.delete(videoItem);
+
+        // Remove from load queue if present
+        const queueIndex = this.loadQueue.indexOf(videoItem);
+        if (queueIndex > -1) {
+            this.loadQueue.splice(queueIndex, 1);
+        }
+    }
+
+    // Cleanup method
+    destroy() {
+        if (this.viewportObserver) {
+            this.viewportObserver.disconnect();
+        }
+        if (this.cleanupObserver) {
+            this.cleanupObserver.disconnect();
+        }
+        clearTimeout(this.masonryScrollTimeout);
     }
 }
 
