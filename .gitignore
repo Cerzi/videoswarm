@@ -97,3 +97,4 @@ assets/icon.*
 # Auto-generated files
 package-lock.json  # Optional: some prefer to commit this
 yarn.lock         # Optional: some prefer to commit this
+.aider*

@@ -1,0 +1,12 @@
+- double click expands to full screen for a better view of a specific video
+- fix vertical and horizontal masonary:
+    - vertical: sorting needs to still be in rows instead of columns, right now the sorting happens in columns
+    - horizontal: scroll bar becomes horizontal, need to continue to keep to a fixed width grid and expand downwards
+- add tagging/star rating system
+- consider allowing more direct file browsering instead of selecting a specific folder
+- sort by name, with subdirs grouped together (eg folder A sorted by name, then folder B sorted by name, etc)
+- refresh videos - click to reload all videos in the selected folder
+
+
+
+- metadata: try to search for prompts, loras, models etc in the metadata workflow to display in side bar
