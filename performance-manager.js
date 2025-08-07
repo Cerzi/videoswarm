@@ -27,6 +27,13 @@ class PerformanceManager {
         this.startPerformanceMonitoring();
         this.setupOptimizedScrollHandling();
         this.startViewportTracking();
+
+        // Initial debug info update
+        setTimeout(() => {
+            if (this.videoBrowser.uiManager) {
+                this.videoBrowser.uiManager.updateDebugInfo();
+            }
+        }, 100);
     }
 
     startPerformanceMonitoring() {
@@ -61,6 +68,11 @@ class PerformanceManager {
 
             // Frame rate monitoring
             this.monitorFrameRate();
+
+            // Update debug info in status bar
+            if (this.videoBrowser.uiManager) {
+                this.videoBrowser.uiManager.updateDebugInfo();
+            }
         }, 2000);
 
         // Periodic smart cleanup to keep only nearby items loaded
@@ -332,6 +344,11 @@ class PerformanceManager {
         }
 
         this.isProcessingQueue = false;
+
+        // Update debug info after processing
+        if (this.videoBrowser.uiManager) {
+            this.videoBrowser.uiManager.updateDebugInfo();
+        }
 
         // Continue processing if there are more items
         if (this.loadQueue.length > 0 && this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading) {
