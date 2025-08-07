@@ -222,12 +222,12 @@ class LayoutManager {
         // Get grid properties
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const rowHeight = parseInt(computedStyle.gridAutoRows) || 20; // Now 20px
+        const rowHeight = parseInt(computedStyle.gridAutoRows) || 5; // Much smaller for precise positioning
         
-        // Parse gap - handle "2px 4px" format
-        const gapValue = computedStyle.gap || '2px 4px';
+        // Parse gap - handle "1px 4px" format
+        const gapValue = computedStyle.gap || '1px 4px';
         const gaps = gapValue.split(' ');
-        const verticalGap = parseInt(gaps[0]) || 2;
+        const verticalGap = parseInt(gaps[0]) || 1;
         const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
 
         // Track the next available row for each column
@@ -242,8 +242,8 @@ class LayoutManager {
             
             // Get the item's natural height
             const itemHeight = this.calculateItemHeight(videoItem);
-            // Calculate row span - let CSS Grid handle gaps naturally
-            const rowSpan = Math.ceil(itemHeight / rowHeight);
+            // Calculate row span with proper gap handling for fine-grained rows
+            const rowSpan = Math.ceil((itemHeight + verticalGap) / (rowHeight + verticalGap));
             
             // Find the earliest available row for this column
             let startRow = columnNextRow[targetColumn];

@@ -174,8 +174,8 @@ body {
 .video-grid.masonry-vertical {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    grid-auto-rows: 20px; /* Increased from 1px to prevent tile memory issues */
-    gap: 2px 4px; /* Small vertical gap, 4px horizontal */
+    grid-auto-rows: 5px; /* Small rows for precise masonry positioning */
+    gap: 1px 4px; /* Minimal vertical gap, 4px horizontal */
     padding: 1rem;
     align-items: start;
 }
