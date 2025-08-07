@@ -228,21 +228,27 @@ class PerformanceManager {
         // Force viewport detection
         this.updateViewportItems();
 
-        // Also manually check first screen of items
+        // Only check first few screens of items - NOT ALL VIDEOS
         const viewportHeight = window.innerHeight;
-        const buffer = 200;
+        const maxInitialLoadDistance = viewportHeight * 2; // Only 2 screens worth
+        let addedCount = 0;
+        const maxInitialItems = 20; // Cap initial queue size
 
         this.videoBrowser.videos.forEach(videoItem => {
+            // Stop if we've added enough items
+            if (addedCount >= maxInitialItems) return;
+
             const rect = videoItem.getBoundingClientRect();
 
-            // If item is in initial viewport area
-            if (rect.top < viewportHeight + buffer && rect.bottom > -buffer) {
+            // Only add items that are actually near the initial viewport
+            if (rect.top < maxInitialLoadDistance && rect.bottom > -200) {
                 this.viewportItems.add(videoItem);
                 this.nearViewportItems.add(videoItem);
 
                 // Add to load queue if not loaded and not already queued
                 if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
                     this.loadQueue.push(videoItem);
+                    addedCount++;
                     console.log(`Added to initial load queue: ${videoItem.dataset.filename}`);
                 }
             }
@@ -265,9 +271,13 @@ class PerformanceManager {
         let viewportCount = 0;
         let nearViewportCount = 0;
         let addedToQueue = 0;
+        const maxQueueAdditions = 10; // Prevent mass queueing
 
         // Only check items that might have changed status
         this.videoBrowser.videos.forEach(videoItem => {
+            // Stop adding to queue if we've hit the limit
+            if (addedToQueue >= maxQueueAdditions) return;
+
             // Quick position check using cached layout data when possible
             const rect = videoItem.getBoundingClientRect();
             const elementTop = rect.top + viewportTop;
@@ -315,6 +325,19 @@ class PerformanceManager {
 
     async processLoadQueue() {
         if (this.isProcessingQueue) return;
+        
+        // ENFORCE LOADED LIMIT BEFORE PROCESSING
+        if (this.videoBrowser.loadedVideos.size >= this.maxLoadedVideos) {
+            console.log(`Loaded limit reached (${this.videoBrowser.loadedVideos.size}/${this.maxLoadedVideos}), cleaning up before loading more`);
+            this.smartCleanup();
+            
+            // If still at limit after cleanup, don't load more
+            if (this.videoBrowser.loadedVideos.size >= this.maxLoadedVideos) {
+                console.log('Still at loaded limit after cleanup, skipping queue processing');
+                return;
+            }
+        }
+        
         this.isProcessingQueue = true;
 
         let processed = 0;
@@ -322,6 +345,7 @@ class PerformanceManager {
 
         while (this.loadQueue.length > 0 &&
                this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading &&
+               this.videoBrowser.loadedVideos.size < this.maxLoadedVideos && // ADD THIS CHECK
                processed < batchSize) {
 
             const videoItem = this.loadQueue.shift();
@@ -334,6 +358,12 @@ class PerformanceManager {
                 try {
                     await this.videoBrowser.loadVideoContent(videoItem);
                     processed++;
+
+                    // Check if we've hit the loaded limit after each load
+                    if (this.videoBrowser.loadedVideos.size >= this.maxLoadedVideos) {
+                        console.log('Hit loaded limit during processing, stopping');
+                        break;
+                    }
 
                     // Smaller delay for viewport items, longer for near-viewport
                     const delay = isInViewport ? 25 : 50;
@@ -358,8 +388,10 @@ class PerformanceManager {
             this.videoBrowser.uiManager.updateDebugInfo();
         }
 
-        // Continue processing if there are more items
-        if (this.loadQueue.length > 0 && this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading) {
+        // Continue processing if there are more items AND we haven't hit limits
+        if (this.loadQueue.length > 0 && 
+            this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading &&
+            this.videoBrowser.loadedVideos.size < this.maxLoadedVideos) {
             setTimeout(() => this.processLoadQueue(), 100);
         }
     }
