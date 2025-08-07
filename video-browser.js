@@ -545,6 +545,9 @@ class VideoBrowser {
             this.createVideoItem(file);
         });
 
+        // INITIAL LOAD FIX: Trigger initial load after all videos are added
+        this.performanceManager.triggerInitialLoad();
+
         this.uiManager.updateDebugInfo();
         this.performanceManager.processLoadQueue();
     }
@@ -595,6 +598,9 @@ class VideoBrowser {
             for (const filePath of videoFiles) {
                 await this.createVideoItemFromPath(filePath);
             }
+
+            // INITIAL LOAD FIX: Trigger initial load after all videos are added
+            this.performanceManager.triggerInitialLoad();
 
             this.hideLoadingStatus();
             this.uiManager.updateDebugInfo();
@@ -691,6 +697,9 @@ class VideoBrowser {
                 });
             });
 
+            // INITIAL LOAD FIX: Notify performance manager about new video
+            this.performanceManager.onVideoAdded(videoItem);
+
             return videoItem;
         } catch (error) {
             console.error('Error creating video item from path:', error);
@@ -771,6 +780,9 @@ class VideoBrowser {
             });
         });
 
+        // INITIAL LOAD FIX: Notify performance manager about new video
+        this.performanceManager.onVideoAdded(videoItem);
+
         return videoItem;
     }
 
@@ -830,7 +842,7 @@ class VideoBrowser {
         }
 
         if (this.loadedVideos.size > this.performanceManager.maxLoadedVideos * 1.2) {
-            this.performanceManager.aggressiveCleanup();
+            this.performanceManager.smartCleanup();
         }
     }
 

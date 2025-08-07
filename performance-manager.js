@@ -190,13 +190,49 @@ class PerformanceManager {
             this.cleanupObserver.observe(videoItem);
         });
 
-        // INITIAL LOAD FIX: Trigger initial viewport check
-        setTimeout(() => {
-            this.updateViewportItems();
-            if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
-                this.processLoadQueue();
+        // INITIAL LOAD FIX: Trigger initial viewport check multiple times with different delays
+        // This ensures loading works regardless of when DOM settles
+        setTimeout(() => this.forceInitialLoad(), 50);
+        setTimeout(() => this.forceInitialLoad(), 200);
+        setTimeout(() => this.forceInitialLoad(), 500);
+
+        // Also trigger on next animation frame
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => this.forceInitialLoad());
+        });
+    }
+
+    forceInitialLoad() {
+        console.log('Forcing initial load check...');
+
+        // Force viewport detection
+        this.updateViewportItems();
+
+        // Also manually check first screen of items
+        const viewportHeight = window.innerHeight;
+        const buffer = 200;
+
+        this.videoBrowser.videos.forEach(videoItem => {
+            const rect = videoItem.getBoundingClientRect();
+
+            // If item is in initial viewport area
+            if (rect.top < viewportHeight + buffer && rect.bottom > -buffer) {
+                this.viewportItems.add(videoItem);
+                this.nearViewportItems.add(videoItem);
+
+                // Add to load queue if not loaded and not already queued
+                if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
+                    this.loadQueue.push(videoItem);
+                    console.log(`Added to initial load queue: ${videoItem.dataset.filename}`);
+                }
             }
-        }, 100);
+        });
+
+        // Force process the queue
+        if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+            console.log(`Processing initial load queue: ${this.loadQueue.length} items`);
+            this.processLoadQueue();
+        }
     }
 
     updateViewportItems() {
@@ -208,6 +244,7 @@ class PerformanceManager {
 
         let viewportCount = 0;
         let nearViewportCount = 0;
+        let addedToQueue = 0;
 
         // Only check items that might have changed status
         this.videoBrowser.videos.forEach(videoItem => {
@@ -230,18 +267,30 @@ class PerformanceManager {
                 // Add to load queue if not loaded
                 if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
                     this.loadQueue.push(videoItem);
+                    addedToQueue++;
                 }
             } else if (nearViewport) {
                 this.viewportItems.delete(videoItem);
                 this.nearViewportItems.add(videoItem);
                 nearViewportCount++;
+
+                // Also add near-viewport items to queue for smoother scrolling
+                if (videoItem.dataset.loaded === 'false' && !this.loadQueue.includes(videoItem)) {
+                    this.loadQueue.push(videoItem);
+                    addedToQueue++;
+                }
             } else {
                 this.viewportItems.delete(videoItem);
                 this.nearViewportItems.delete(videoItem);
             }
         });
 
-        console.log(`Viewport items: ${viewportCount}, Near viewport: ${nearViewportCount}`);
+        console.log(`Viewport update: ${viewportCount} viewport, ${nearViewportCount} near-viewport, ${addedToQueue} added to queue`);
+
+        // If we added items to queue, process it
+        if (addedToQueue > 0 && !this.isProcessingQueue) {
+            setTimeout(() => this.processLoadQueue(), 100);
+        }
     }
 
     async processLoadQueue() {
