@@ -5,6 +5,23 @@ class LayoutManager {
         this.aspectRatioCache = new Map();
         this.zoomLevels = ['zoom-small', 'zoom-medium', 'zoom-large', 'zoom-xlarge'];
         this.zoomLabels = ['75%', '100%', '150%', '200%'];
+        this.masonryLayoutTimeout = null;
+
+        // Set up resize observer for responsive masonry
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.layoutMode === 'masonry-vertical') {
+                clearTimeout(this.masonryLayoutTimeout);
+                this.masonryLayoutTimeout = setTimeout(() => {
+                    this.layoutMasonryItems();
+                }, 150);
+            }
+        });
+
+        // Observe the grid container
+        const grid = document.getElementById('videoGrid');
+        if (grid) {
+            this.resizeObserver.observe(grid);
+        }
     }
 
     toggleLayout() {
@@ -171,61 +188,105 @@ class LayoutManager {
         const grid = document.getElementById('videoGrid');
         if (!grid) return;
 
-        // Reset any previous masonry positioning
+        // Check if native masonry is supported
+        if (CSS.supports('grid-template-rows', 'masonry')) {
+            console.log('Using native CSS masonry');
+            return; // Let CSS handle it natively
+        }
+
+        // Reset any previous positioning
         this.videoBrowser.videos.forEach(videoItem => {
             videoItem.style.gridRowStart = '';
-            videoItem.style.gridColumnStart = '';
+            videoItem.style.gridRowEnd = '';
         });
 
-        // Let CSS Grid handle the initial layout
-        // Items will naturally flow left-to-right, top-to-bottom
+        // Use JavaScript masonry for better browser support
         requestAnimationFrame(() => {
-            this.optimizeMasonryLayout();
+            this.layoutMasonryItems();
         });
     }
 
-    optimizeMasonryLayout() {
+    layoutMasonryItems() {
         const grid = document.getElementById('videoGrid');
         if (!grid || this.layoutMode !== 'masonry-vertical') return;
 
-        // Get computed style to determine column count
+        // Get grid properties
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
+        const rowHeight = parseInt(computedStyle.gridAutoRows) || 10;
+        const gap = parseInt(computedStyle.gap) || 4;
+
+        // Track the next available row for each column
+        const columnNextRow = new Array(columnCount).fill(1);
         
-        // Track column heights for optimal placement
-        const columnHeights = new Array(columnCount).fill(0);
+        // Process items in DOM order (maintains row-based sorting)
+        const items = Array.from(this.videoBrowser.videos);
         
-        this.videoBrowser.videos.forEach((videoItem, index) => {
-            // Find the shortest column
-            const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+        items.forEach((videoItem, index) => {
+            // Determine which column this item should go in
+            let targetColumn = index % columnCount;
             
-            // Get the item's height (including aspect ratio)
-            const itemHeight = this.getItemHeight(videoItem);
+            // Get the item's natural height
+            const itemHeight = this.calculateItemHeight(videoItem);
+            const rowSpan = Math.ceil((itemHeight + gap) / (rowHeight + gap));
             
-            // Update column height
-            columnHeights[shortestColumnIndex] += itemHeight;
+            // Find the earliest available row across all columns up to target column
+            let startRow = Math.max(...columnNextRow.slice(0, targetColumn + 1));
             
-            // Position item in the shortest column
-            videoItem.style.gridColumnStart = shortestColumnIndex + 1;
+            // If this would create a gap, try to fill it
+            if (targetColumn > 0) {
+                const minRowInRange = Math.min(...columnNextRow.slice(0, targetColumn + 1));
+                if (startRow - minRowInRange > 3) { // Allow small gaps
+                    startRow = minRowInRange;
+                    // Find which column has this row available
+                    for (let col = 0; col <= targetColumn; col++) {
+                        if (columnNextRow[col] <= startRow) {
+                            targetColumn = col;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Position the item
+            videoItem.style.gridColumnStart = targetColumn + 1;
+            videoItem.style.gridRowStart = startRow;
+            videoItem.style.gridRowEnd = startRow + rowSpan;
+            
+            // Update the column's next available row
+            columnNextRow[targetColumn] = startRow + rowSpan;
         });
     }
 
-    getItemHeight(videoItem) {
+    calculateItemHeight(videoItem) {
         // Get cached aspect ratio or use default
-        const aspectRatio = this.aspectRatioCache.get(videoItem) || '16/9';
-        const [width, height] = aspectRatio.split('/').map(Number);
+        const aspectRatio = this.aspectRatioCache.get(videoItem);
+        let width = 16, height = 9; // default
         
-        // Calculate approximate height based on grid column width
+        if (aspectRatio) {
+            [width, height] = aspectRatio.split('/').map(Number);
+        } else {
+            // Try to get from video element if loaded
+            const video = this.videoBrowser.videoElements.get(videoItem);
+            if (video && video.videoWidth && video.videoHeight) {
+                width = video.videoWidth;
+                height = video.videoHeight;
+                this.aspectRatioCache.set(videoItem, `${width}/${height}`);
+            }
+        }
+        
+        // Calculate height based on grid column width
         const grid = document.getElementById('videoGrid');
         const gridWidth = grid.offsetWidth;
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const gap = parseInt(computedStyle.gap) || 10;
+        const gap = parseInt(computedStyle.gap) || 4;
         
         const columnWidth = (gridWidth - (gap * (columnCount - 1))) / columnCount;
         const itemHeight = (columnWidth * height) / width;
         
-        return itemHeight + gap; // Include gap in height calculation
+        // Add some padding for filename overlay
+        return itemHeight + 30;
     }
 }
 

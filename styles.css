@@ -170,14 +170,29 @@ body {
     transition: all 0.3s ease;
 }
 
-/* Masonry layout modes */
+/* Enhanced masonry layout with proper row ordering */
 .video-grid.masonry-vertical {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    grid-auto-rows: min-content;
+    grid-auto-rows: 10px; /* Small row height for fine-grained control */
     gap: 4px;
     padding: 1rem;
     align-items: start;
+}
+
+/* Support for native CSS masonry when available */
+@supports (grid-template-rows: masonry) {
+    .video-grid.masonry-vertical {
+        grid-template-rows: masonry;
+        grid-auto-rows: auto;
+    }
+}
+
+/* Video items in masonry should span appropriate rows */
+.video-grid.masonry-vertical .video-item {
+    width: 100%;
+    height: auto;
+    /* Will be dynamically set by JavaScript */
 }
 
 .video-grid.masonry-horizontal {

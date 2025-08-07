@@ -291,16 +291,25 @@ class VideoBrowser {
                 videoItem.dataset.loaded = 'true';
 
                 // Cache aspect ratio for layout calculations
-                const aspectRatio = video.videoWidth / video.videoHeight;
+                const aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
                 this.layoutManager.aspectRatioCache.set(videoItem, aspectRatio);
 
                 // Apply aspect ratio styling based on layout mode
                 if (this.layoutManager.layoutMode !== 'grid') {
                     video.className = 'video-element aspect-ratio';
-                    video.style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
+                    video.style.aspectRatio = aspectRatio;
                 } else {
                     video.className = 'video-element';
                     video.style.aspectRatio = '';
+                }
+
+                // Trigger masonry re-layout if in masonry mode
+                if (this.layoutManager.layoutMode === 'masonry-vertical') {
+                    // Debounce layout updates to avoid excessive recalculation
+                    clearTimeout(this.layoutManager.masonryLayoutTimeout);
+                    this.layoutManager.masonryLayoutTimeout = setTimeout(() => {
+                        this.layoutManager.layoutMasonryItems();
+                    }, 100);
                 }
 
                 const placeholder = videoItem.querySelector('.video-placeholder');
