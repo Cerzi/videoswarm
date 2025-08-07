@@ -1,13 +1,55 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+const defaultSettings = {
+  recursiveMode: false,
+  layoutMode: 'grid',
+  autoplayEnabled: true,
+  maxConcurrentPlaying: 30,
+  zoomLevel: 1,
+  windowBounds: {
+    width: 1400,
+    height: 900,
+    x: undefined,
+    y: undefined
+  }
+};
+
+
 
 let mainWindow;
 
-function createWindow() {
+async function loadSettings() {
+  try {
+    const data = await fs.readFile(settingsPath, 'utf8');
+    const settings = JSON.parse(data);
+    console.log('Settings loaded:', settings);
+    return { ...defaultSettings, ...settings };
+  } catch (error) {
+    console.log('No settings file found, using defaults');
+    return defaultSettings;
+  }
+}
+
+async function saveSettings(settings) {
+  try {
+    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    console.log('Settings saved:', settings);
+  } catch (error) {
+    console.error('Failed to save settings:', error);
+  }
+}
+
+async function createWindow() {
+  const settings = await loadSettings();
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: settings.windowBounds.width,
+    height: settings.windowBounds.height,
+    x: settings.windowBounds.x,
+    y: settings.windowBounds.y,
     minWidth: 800,
     minHeight: 600,
     webPreferences: {
@@ -21,6 +63,15 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
+
+  // Send settings to renderer after page loads
+  mainWindow.webContents.once('did-finish-load', () => {
+    mainWindow.webContents.send('settings-loaded', settings);
+  });
+
+  // Save window bounds when moved or resized
+  mainWindow.on('moved', saveWindowBounds);
+  mainWindow.on('resized', saveWindowBounds);
 
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
@@ -90,6 +141,43 @@ function createMenu() {
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
+
+function saveWindowBounds() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const bounds = mainWindow.getBounds();
+    const settings = {
+      windowBounds: bounds
+    };
+
+    // Don't wait for this async operation
+    saveSettingsPartial(settings).catch(console.error);
+  }
+}
+
+async function saveSettingsPartial(partialSettings) {
+  try {
+    const currentSettings = await loadSettings();
+    const newSettings = { ...currentSettings, ...partialSettings };
+    await saveSettings(newSettings);
+  } catch (error) {
+    console.error('Failed to save partial settings:', error);
+  }
+}
+
+ipcMain.handle('save-settings', async (event, settings) => {
+  await saveSettings(settings);
+  return { success: true };
+});
+
+ipcMain.handle('load-settings', async (event) => {
+  const settings = await loadSettings();
+  return settings;
+});
+
+ipcMain.handle('save-settings-partial', async (event, partialSettings) => {
+  await saveSettingsPartial(partialSettings);
+  return { success: true };
+});
 
 ipcMain.handle('select-folder', async (event) => {
   try {

@@ -28,6 +28,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
   },
 
+    saveSettings: async (settings) => {
+    return await ipcRenderer.invoke('save-settings', settings);
+  },
+
+  loadSettings: async () => {
+    return await ipcRenderer.invoke('load-settings');
+  },
+
+  saveSettingsPartial: async (partialSettings) => {
+    return await ipcRenderer.invoke('save-settings-partial', partialSettings);
+  },
+
   // Platform detection
   platform: process.platform,
   isElectron: true

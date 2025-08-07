@@ -532,11 +532,17 @@
                 this.currentContextVideo = null;
                 this.autoplayEnabled = true;
                 this.loadingVideos = new Set();
-                this.failedVideos = new Map(); // Track failed videos and their error types
-                this.filePathMap = new Map(); // Track file paths for electron mode
+                this.failedVideos = new Map();
+                this.filePathMap = new Map();
 
-                // Recursive loading option
-                this.recursiveMode = false;
+                // Settings that will be persisted
+                this.settings = {
+                    recursiveMode: false,
+                    layoutMode: 'grid',
+                    autoplayEnabled: true,
+                    maxConcurrentPlaying: 30,
+                    zoomLevel: 1
+                };
 
                 // Layout modes
                 this.layoutMode = 'grid';
@@ -546,8 +552,8 @@
                 this.maxConcurrentPlaying = 30;
                 this.maxConcurrentLoading = 6;
                 this.maxLoadedVideos = 80;
-                this.minConcurrentPlaying = 10; // Minimum allowed
-                this.maxConcurrentPlayingLimit = 100; // Maximum allowed
+                this.minConcurrentPlaying = 10;
+                this.maxConcurrentPlayingLimit = 100;
                 this.unloadDistance = 800;
                 this.visibleVideos = new Set();
                 this.playingVideos = new Set();
@@ -580,8 +586,137 @@
                 );
 
                 this.initializeEventListeners();
+                this.loadSettings();
                 this.startPerformanceMonitoring();
                 this.setupScrollBackup();
+            }
+
+            async loadSettings() {
+                if (window.electronAPI?.loadSettings) {
+                    try {
+                        const savedSettings = await window.electronAPI.loadSettings();
+                        this.applySettings(savedSettings);
+                        console.log('Settings loaded and applied:', savedSettings);
+                    } catch (error) {
+                        console.error('Failed to load settings:', error);
+                    }
+                } else {
+                    // Listen for settings from main process
+                    if (window.electronAPI?.onSettingsLoaded) {
+                        window.electronAPI.onSettingsLoaded((settings) => {
+                            this.applySettings(settings);
+                            console.log('Settings received from main process:', settings);
+                        });
+                    }
+                }
+            }
+
+            applySettings(savedSettings) {
+                // Update internal settings
+                this.settings = { ...this.settings, ...savedSettings };
+
+                // Apply each setting
+                if (savedSettings.recursiveMode !== undefined) {
+                    this.recursiveMode = savedSettings.recursiveMode;
+                    this.updateRecursiveButton();
+                }
+
+                if (savedSettings.layoutMode !== undefined) {
+                    this.layoutMode = savedSettings.layoutMode;
+                    this.updateLayoutButton();
+                    this.applyLayout();
+                }
+
+                if (savedSettings.autoplayEnabled !== undefined) {
+                    this.autoplayEnabled = savedSettings.autoplayEnabled;
+                    this.updateAutoplayButton();
+                }
+
+                if (savedSettings.maxConcurrentPlaying !== undefined) {
+                    this.maxConcurrentPlaying = savedSettings.maxConcurrentPlaying;
+                    this.userSetVideoLimit = this.maxConcurrentPlaying;
+                    this.updateVideoLimitSlider();
+                }
+
+                if (savedSettings.zoomLevel !== undefined) {
+                    this.updateZoomSlider(savedSettings.zoomLevel);
+                }
+            }
+
+            async saveSettings() {
+                if (!window.electronAPI?.saveSettingsPartial) return;
+
+                const settingsToSave = {
+                    recursiveMode: this.recursiveMode,
+                    layoutMode: this.layoutMode,
+                    autoplayEnabled: this.autoplayEnabled,
+                    maxConcurrentPlaying: this.maxConcurrentPlaying,
+                    zoomLevel: parseInt(document.getElementById('zoomSlider')?.value || 1)
+                };
+
+                try {
+                    await window.electronAPI.saveSettingsPartial(settingsToSave);
+                    this.settings = { ...this.settings, ...settingsToSave };
+                } catch (error) {
+                    console.error('Failed to save settings:', error);
+                }
+            }
+
+            updateRecursiveButton() {
+                const button = document.getElementById('recursiveToggle');
+                if (!button) return;
+
+                if (this.recursiveMode) {
+                    button.classList.add('active');
+                    button.textContent = '📂 Recursive ON';
+                } else {
+                    button.classList.remove('active');
+                    button.textContent = '📂 Recursive';
+                }
+
+                button.title = this.recursiveMode ?
+                    'Click to disable recursive folder scanning' :
+                    'Click to enable recursive folder scanning (includes subfolders)';
+            }
+
+            updateLayoutButton() {
+                const layoutButton = document.getElementById('layoutToggle');
+                if (!layoutButton) return;
+
+                const buttonTexts = {
+                    'grid': '📐 Aspect Ratio',
+                    'masonry-vertical': '📐 Vertical',
+                    'masonry-horizontal': '📐 Horizontal'
+                };
+                layoutButton.textContent = buttonTexts[this.layoutMode];
+            }
+
+            updateAutoplayButton() {
+                const button = document.getElementById('autoplayToggle');
+                if (!button) return;
+
+                if (this.autoplayEnabled) {
+                    button.textContent = '⏸️ Pause All';
+                    button.classList.add('active');
+                } else {
+                    button.textContent = '▶️ Resume All';
+                    button.classList.remove('active');
+                }
+            }
+
+            updateVideoLimitSlider() {
+                const slider = document.getElementById('videoLimitSlider');
+                const label = document.getElementById('videoLimitLabel');
+                if (slider) slider.value = this.maxConcurrentPlaying;
+                if (label) label.textContent = this.maxConcurrentPlaying.toString();
+            }
+
+            updateZoomSlider(zoomLevel) {
+                const slider = document.getElementById('zoomSlider');
+                if (slider) {
+                    slider.value = zoomLevel;
+                    this.setZoom(zoomLevel);
+                }
             }
 
             setupScrollBackup() {
@@ -674,11 +809,7 @@
                 // Store the user-set limit to prevent auto-adjustment from overriding it
                 this.userSetVideoLimit = this.maxConcurrentPlaying;
 
-                // Update the label
-                const label = document.getElementById('videoLimitLabel');
-                if (label) {
-                    label.textContent = this.maxConcurrentPlaying.toString();
-                }
+                this.updateVideoLimitSlider();
 
                 // If we're now over the limit, pause excess videos
                 if (this.playingVideos.size > this.maxConcurrentPlaying) {
@@ -687,6 +818,9 @@
 
                 // Update debug info to reflect new limit
                 this.updateDebugInfo();
+
+                // Save settings
+                this.saveSettings();
 
                 console.log(`Video limit set to: ${this.maxConcurrentPlaying} (user-set: ${this.userSetVideoLimit})`);
             }
@@ -1082,23 +1216,16 @@
 
             toggleRecursive() {
                 this.recursiveMode = !this.recursiveMode;
-                const button = document.getElementById('recursiveToggle');
-                if (!button) return;
+                this.updateRecursiveButton();
 
                 if (this.recursiveMode) {
-                    button.classList.add('active');
-                    button.textContent = '📂 Recursive ON';
                     this.showTemporaryMessage('Recursive mode enabled - will scan subfolders', 'info');
                 } else {
-                    button.classList.remove('active');
-                    button.textContent = '📂 Recursive';
                     this.showTemporaryMessage('Recursive mode disabled', 'info');
                 }
 
-                // Update tooltip
-                button.title = this.recursiveMode ?
-                    'Click to disable recursive folder scanning' :
-                    'Click to enable recursive folder scanning (includes subfolders)';
+                // Save settings
+                this.saveSettings();
             }
 
             // Handle folder selection from Electron's native dialog
@@ -1655,12 +1782,7 @@
                 const nextIndex = (currentIndex + 1) % modes.length;
                 this.layoutMode = modes[nextIndex];
 
-                const buttonTexts = {
-                    'grid': '📐 Aspect Ratio',
-                    'masonry-vertical': '📐 Vertical',
-                    'masonry-horizontal': '📐 Horizontal'
-                };
-                layoutButton.textContent = buttonTexts[this.layoutMode];
+                this.updateLayoutButton();
 
                 // Reset masonry loading controls
                 this.masonryLoadingPaused = false;
@@ -1674,6 +1796,9 @@
 
                 this.applyLayout();
                 this.updateVideosForLayout();
+
+                // Save settings
+                this.saveSettings();
             }
 
             // Update intersection observers when layout changes
@@ -1825,18 +1950,16 @@
 
             toggleAutoplay() {
                 this.autoplayEnabled = !this.autoplayEnabled;
-                const button = document.getElementById('autoplayToggle');
-                if (!button) return;
+                this.updateAutoplayButton();
 
                 if (this.autoplayEnabled) {
-                    button.textContent = '⏸️ Pause All';
-                    button.classList.add('active');
                     this.startAllVideos();
                 } else {
-                    button.textContent = '▶️ Resume All';
-                    button.classList.remove('active');
                     this.pauseAllVideos();
                 }
+
+                // Save settings
+                this.saveSettings();
             }
 
             startAllVideos() {
@@ -1911,6 +2034,12 @@
                 this.zoomLevels.forEach(cls => grid.classList.remove(cls));
                 grid.classList.add(this.zoomLevels[level]);
                 zoomLabel.textContent = this.zoomLabels[level];
+
+                // Save settings (with slight delay to avoid rapid saves during dragging)
+                clearTimeout(this.zoomSaveTimeout);
+                this.zoomSaveTimeout = setTimeout(() => {
+                    this.saveSettings();
+                }, 500);
             }
 
             showContextMenu(x, y) {
