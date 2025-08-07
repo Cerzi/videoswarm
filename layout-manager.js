@@ -52,9 +52,9 @@ class LayoutManager {
         this.videoBrowser.intersectionObserver.disconnect();
         this.videoBrowser.unloadObserver.disconnect();
 
-        // Create new observers with appropriate margins
-        const rootMargin = this.layoutMode === 'masonry-vertical' ? '1200px' : '400px';
-        const unloadMargin = this.layoutMode === 'masonry-vertical' ? '-1200px' : '-800px';
+        // Optimized margins for masonry
+        const rootMargin = this.layoutMode === 'masonry-vertical' ? '800px' : '400px';
+        const unloadMargin = this.layoutMode === 'masonry-vertical' ? '-600px' : '-800px';
 
         this.videoBrowser.intersectionObserver = new IntersectionObserver(
             this.videoBrowser.handleIntersection.bind(this.videoBrowser),
@@ -85,17 +85,16 @@ class LayoutManager {
 
         grid.classList.remove('masonry-vertical', 'masonry-horizontal');
 
-        if (this.layoutMode !== 'grid') {
-            grid.classList.add(this.layoutMode);
+        if (this.layoutMode === 'masonry-vertical') {
+            grid.classList.add('masonry-vertical');
+            // Use CSS Grid for proper masonry with left-to-right ordering
+            this.initializeMasonryGrid();
+        } else if (this.layoutMode === 'masonry-horizontal') {
+            grid.classList.add('masonry-horizontal');
+            grid.style.height = '100vh';
+        } else {
+            grid.style.height = '';
         }
-
-        requestAnimationFrame(() => {
-            if (this.layoutMode === 'masonry-horizontal') {
-                grid.style.height = '100vh';
-            } else {
-                grid.style.height = '';
-            }
-        });
     }
 
     updateVideosForLayout() {
@@ -166,6 +165,67 @@ class LayoutManager {
         this.videoBrowser.zoomSaveTimeout = setTimeout(() => {
             this.videoBrowser.saveSettings();
         }, 500);
+    }
+
+    initializeMasonryGrid() {
+        const grid = document.getElementById('videoGrid');
+        if (!grid) return;
+
+        // Reset any previous masonry positioning
+        this.videoBrowser.videos.forEach(videoItem => {
+            videoItem.style.gridRowStart = '';
+            videoItem.style.gridColumnStart = '';
+        });
+
+        // Let CSS Grid handle the initial layout
+        // Items will naturally flow left-to-right, top-to-bottom
+        requestAnimationFrame(() => {
+            this.optimizeMasonryLayout();
+        });
+    }
+
+    optimizeMasonryLayout() {
+        const grid = document.getElementById('videoGrid');
+        if (!grid || this.layoutMode !== 'masonry-vertical') return;
+
+        // Get computed style to determine column count
+        const computedStyle = window.getComputedStyle(grid);
+        const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
+        
+        // Track column heights for optimal placement
+        const columnHeights = new Array(columnCount).fill(0);
+        
+        this.videoBrowser.videos.forEach((videoItem, index) => {
+            // Find the shortest column
+            const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+            
+            // Get the item's height (including aspect ratio)
+            const itemHeight = this.getItemHeight(videoItem);
+            
+            // Update column height
+            columnHeights[shortestColumnIndex] += itemHeight;
+            
+            // Position item in the shortest column
+            videoItem.style.gridColumnStart = shortestColumnIndex + 1;
+        });
+    }
+
+    getItemHeight(videoItem) {
+        // Get cached aspect ratio or use default
+        const aspectRatio = this.aspectRatioCache.get(videoItem) || '16/9';
+        const [width, height] = aspectRatio.split('/').map(Number);
+        
+        // Calculate approximate height based on grid column width
+        const grid = document.getElementById('videoGrid');
+        const gridWidth = grid.offsetWidth;
+        const computedStyle = window.getComputedStyle(grid);
+        const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
+        const gap = parseInt(computedStyle.gap) || 10;
+        
+        const columnWidth = (gridWidth - (gap * (columnCount - 1))) / columnCount;
+        const itemHeight = (columnWidth * height) / width;
+        
+        return itemHeight + gap; // Include gap in height calculation
     }
 }
 
