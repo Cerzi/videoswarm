@@ -172,11 +172,12 @@ body {
 
 /* Masonry layout modes */
 .video-grid.masonry-vertical {
-    display: block;
-    column-count: auto;
-    column-width: 250px;
-    column-gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-auto-rows: min-content;
+    gap: 4px;
     padding: 1rem;
+    align-items: start;
 }
 
 .video-grid.masonry-horizontal {
@@ -192,10 +193,7 @@ body {
 
 /* Video item adjustments for masonry */
 .video-grid.masonry-vertical .video-item {
-    display: inline-block;
     width: 100%;
-    margin-bottom: 4px;
-    break-inside: avoid;
     height: auto;
 }
 
@@ -386,16 +384,16 @@ html {
 }
 
 .video-grid.zoom-small.masonry-vertical {
-    column-width: 180px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
 .video-grid.zoom-medium.masonry-vertical {
-    column-width: 250px;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
 }
 .video-grid.zoom-large.masonry-vertical {
-    column-width: 350px;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
 }
 .video-grid.zoom-xlarge.masonry-vertical {
-    column-width: 500px;
+    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
 }
 
 .video-grid.zoom-small.masonry-horizontal .video-item {
