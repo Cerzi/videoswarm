@@ -213,12 +213,12 @@ class LayoutManager {
         // Get grid properties
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const rowHeight = parseInt(computedStyle.gridAutoRows) || 1;
+        const rowHeight = parseInt(computedStyle.gridAutoRows) || 20; // Now 20px
         
-        // Parse gap - handle "0px 4px" format
-        const gapValue = computedStyle.gap || '0px 4px';
+        // Parse gap - handle "2px 4px" format
+        const gapValue = computedStyle.gap || '2px 4px';
         const gaps = gapValue.split(' ');
-        const verticalGap = parseInt(gaps[0]) || 0; // Should be 0
+        const verticalGap = parseInt(gaps[0]) || 2;
         const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
 
         // Track the next available row for each column
@@ -233,8 +233,8 @@ class LayoutManager {
             
             // Get the item's natural height
             const itemHeight = this.calculateItemHeight(videoItem);
-            // With 0 vertical gap, we can pack items tightly
-            const rowSpan = Math.ceil(itemHeight / rowHeight);
+            // Calculate row span with the larger row height
+            const rowSpan = Math.ceil((itemHeight + verticalGap) / (rowHeight + verticalGap));
             
             // Find the earliest available row for this column
             let startRow = columnNextRow[targetColumn];
@@ -242,7 +242,7 @@ class LayoutManager {
             // Try to fill gaps in earlier columns if this would create a large gap
             if (targetColumn > 0) {
                 const minRowInRange = Math.min(...columnNextRow.slice(0, targetColumn + 1));
-                if (startRow - minRowInRange > 1) { // Very tight gap tolerance
+                if (startRow - minRowInRange > 3) { // Adjusted gap tolerance
                     startRow = minRowInRange;
                     // Find which column has this row available
                     for (let col = 0; col <= targetColumn; col++) {
@@ -289,7 +289,7 @@ class LayoutManager {
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
         
         // Parse gap for horizontal spacing
-        const gapValue = computedStyle.gap || '0px 4px';
+        const gapValue = computedStyle.gap || '2px 4px';
         const gaps = gapValue.split(' ');
         const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
         
@@ -301,7 +301,7 @@ class LayoutManager {
         const itemHeight = (columnWidth * height) / width;
         
         // Add minimal padding for filename overlay
-        return itemHeight + 20; // Reduced further for tighter packing
+        return itemHeight + 25;
     }
 
     refreshMasonryLayout() {
