@@ -48,8 +48,6 @@ class PerformanceManager {
                     }
                 }
             }
-
-            this.videoBrowser.updateDebugInfo();
         }, 2000);
     }
 
