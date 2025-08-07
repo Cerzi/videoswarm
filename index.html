@@ -459,6 +459,7 @@
         <div class="controls">
             <button id="layoutToggle" class="toggle-button">📐 Aspect Ratio</button>
             <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
+            <button id="recursiveToggle" class="toggle-button">📂 Recursive</button>
 
             <div class="video-limit-control" style="display: flex; align-items: center; gap: 0.5rem;">
                 <span style="font-size: 0.9rem;">📹</span>
@@ -518,9 +519,6 @@
     <div class="context-menu" id="contextMenu">
         <div class="context-menu-item" data-action="show-folder">📁 Show in File Manager</div>
         <div class="context-menu-item" data-action="copy-path">📋 Copy File Path</div>
-        <div class="context-menu-separator"></div>
-        <div class="context-menu-item" data-action="copy">📄 Copy</div>
-        <div class="context-menu-item" data-action="delete">🗑️ Delete</div>
     </div>
 
     <script>
@@ -536,6 +534,9 @@
                 this.loadingVideos = new Set();
                 this.failedVideos = new Map(); // Track failed videos and their error types
                 this.filePathMap = new Map(); // Track file paths for electron mode
+
+                // Recursive loading option
+                this.recursiveMode = false;
 
                 // Layout modes
                 this.layoutMode = 'grid';
@@ -908,6 +909,13 @@
                     });
                 }
 
+                const recursiveToggle = document.getElementById('recursiveToggle');
+                if (recursiveToggle) {
+                    recursiveToggle.addEventListener('click', () => {
+                        this.toggleRecursive();
+                    });
+                }
+
                 // Only set up drag & drop for web mode
                 if (!window.electronAPI?.isElectron) {
                     this.setupDragAndDrop();
@@ -1072,6 +1080,27 @@
                 this.processLoadQueue();
             }
 
+            toggleRecursive() {
+                this.recursiveMode = !this.recursiveMode;
+                const button = document.getElementById('recursiveToggle');
+                if (!button) return;
+
+                if (this.recursiveMode) {
+                    button.classList.add('active');
+                    button.textContent = '📂 Recursive ON';
+                    this.showTemporaryMessage('Recursive mode enabled - will scan subfolders', 'info');
+                } else {
+                    button.classList.remove('active');
+                    button.textContent = '📂 Recursive';
+                    this.showTemporaryMessage('Recursive mode disabled', 'info');
+                }
+
+                // Update tooltip
+                button.title = this.recursiveMode ?
+                    'Click to disable recursive folder scanning' :
+                    'Click to enable recursive folder scanning (includes subfolders)';
+            }
+
             // Handle folder selection from Electron's native dialog
             async handleElectronFolderSelection(folderPath) {
                 if (!window.electronAPI?.readDirectory) {
@@ -1084,21 +1113,51 @@
                     this.clearVideos();
                     this.showCodecWarning();
 
-                    // Get all video files from the selected directory
-                    const videoFiles = await window.electronAPI.readDirectory(folderPath);
+                    // Show loading message with recursive info
+                    const recursiveText = this.recursiveMode ? ' (including subfolders)' : '';
+                    this.updateLoadingStatus(`Scanning ${folderPath}${recursiveText}...`);
 
-                    console.log(`Found ${videoFiles.length} video files in ${folderPath}`);
+                    // Get all video files from the selected directory
+                    const videoFiles = await window.electronAPI.readDirectory(folderPath, this.recursiveMode);
+
+                    console.log(`Found ${videoFiles.length} video files in ${folderPath} (recursive: ${this.recursiveMode})`);
+
+                    if (videoFiles.length === 0) {
+                        this.updateLoadingStatus(`No video files found in ${folderPath}${recursiveText}`);
+                        return;
+                    }
+
+                    this.updateLoadingStatus(`Loading ${videoFiles.length} videos...`);
 
                     // Create video items with full paths
                     for (const filePath of videoFiles) {
                         await this.createVideoItemFromPath(filePath);
                     }
 
+                    this.hideLoadingStatus();
                     this.updateDebugInfo();
                     this.processLoadQueue();
                 } catch (error) {
                     console.error('Error reading directory:', error);
-                    alert(`Error reading directory: ${error.message}`);
+                    this.updateLoadingStatus(`Error reading directory: ${error.message}`);
+                    setTimeout(() => this.hideLoadingStatus(), 5000);
+                }
+            }
+
+            updateLoadingStatus(message) {
+                const status = document.getElementById('status');
+                if (status) {
+                    status.style.display = 'block';
+                    status.style.background = '#2a4a00';
+                    status.style.color = '#4CAF50';
+                    status.innerHTML = `🔄 ${message}`;
+                }
+            }
+
+            hideLoadingStatus() {
+                const status = document.getElementById('status');
+                if (status) {
+                    status.style.display = 'none';
                 }
             }
 
@@ -1886,12 +1945,6 @@
                     case 'copy-path':
                         this.copyFilePath();
                         break;
-                    case 'copy':
-                        this.copySelected();
-                        break;
-                    case 'delete':
-                        this.deleteSelected();
-                        break;
                 }
             }
 
@@ -2183,76 +2236,6 @@
                         const pathType = this.currentContextVideo.isElectronFile ? 'Full path' : 'File name';
                         this.showTemporaryMessage(`${pathType} copied to clipboard!`, 'success');
                     });
-                }
-            }
-
-            copySelected() {
-                const count = this.selectedVideos.size;
-                this.updateDebugInfo();
-            }
-
-            async deleteSelected() {
-                if (this.selectedVideos.size === 0) return;
-
-                const count = this.selectedVideos.size;
-                const action = window.electronAPI?.moveToTrash ? 'move to trash' : 'delete';
-
-                if (confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${count} selected video(s)?`)) {
-                    const deletedItems = [];
-
-                    for (const item of this.selectedVideos) {
-                        try {
-                            // Try to delete/trash the actual file if in Electron
-                            if (window.electronAPI?.moveToTrash && item.dataset.fullPath) {
-                                const result = await window.electronAPI.moveToTrash(item.dataset.fullPath);
-                                if (!result.success) {
-                                    console.error('Failed to move to trash:', result.error);
-                                    this.showTemporaryMessage(`Failed to delete ${item.dataset.filename}`, 'error');
-                                    continue;
-                                }
-                            }
-
-                            // Clean up UI and memory
-                            const video = this.videoElements.get(item);
-                            if (video) {
-                                if (video.src && video.src.startsWith('blob:')) {
-                                    URL.revokeObjectURL(video.src);
-                                }
-                                video.pause();
-                                video.removeAttribute('src');
-                                video.load();
-                                this.videoElements.delete(item);
-                                this.playingVideos.delete(video);
-                            }
-
-                            // Remove from all tracking
-                            this.loadedVideos.delete(item);
-                            this.loadingVideos.delete(item);
-                            this.visibleVideos.delete(item);
-
-                            // Remove from observers
-                            this.intersectionObserver.unobserve(item);
-                            this.unloadObserver.unobserve(item);
-
-                            // Remove from DOM and sets
-                            item.remove();
-                            this.videos.delete(item);
-                            deletedItems.push(item);
-
-                        } catch (error) {
-                            console.error('Error deleting item:', error);
-                            this.showTemporaryMessage(`Failed to delete ${item.dataset.filename}`, 'error');
-                        }
-                    }
-
-                    this.selectedVideos.clear();
-                    this.updateSelectionInfo();
-                    this.updateDebugInfo();
-
-                    if (deletedItems.length > 0) {
-                        const actionText = window.electronAPI?.moveToTrash ? 'moved to trash' : 'deleted';
-                        this.showTemporaryMessage(`${deletedItems.length} files ${actionText}`, 'success');
-                    }
                 }
             }
 

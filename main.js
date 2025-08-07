@@ -122,24 +122,41 @@ ipcMain.handle('show-item-in-folder', async (event, filePath) => {
 });
 
 // Read directory and return video files
-ipcMain.handle('read-directory', async (event, folderPath) => {
+ipcMain.handle('read-directory', async (event, folderPath, recursive = false) => {
   try {
-    const files = await fs.readdir(folderPath, { withFileTypes: true });
+    console.log(`Reading directory: ${folderPath} (recursive: ${recursive})`);
     const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp', '.ogv'];
-
     const videoFiles = [];
 
-    for (const file of files) {
-      if (file.isFile()) {
-        const ext = path.extname(file.name).toLowerCase();
-        if (videoExtensions.includes(ext)) {
-          videoFiles.push(path.join(folderPath, file.name));
+    async function scanDirectory(dirPath, depth = 0) {
+      const files = await fs.readdir(dirPath, { withFileTypes: true });
+
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file.name);
+
+        if (file.isFile()) {
+          const ext = path.extname(file.name).toLowerCase();
+          if (videoExtensions.includes(ext)) {
+            videoFiles.push(fullPath);
+          }
+        } else if (file.isDirectory() && recursive && depth < 10) { // Limit depth to avoid infinite loops
+          // Skip hidden directories and common non-media folders
+          if (!file.name.startsWith('.') &&
+              !['node_modules', 'System Volume Information', '$RECYCLE.BIN', '.git'].includes(file.name)) {
+            try {
+              await scanDirectory(fullPath, depth + 1);
+            } catch (error) {
+              console.warn(`Skipping directory ${fullPath}: ${error.message}`);
+            }
+          }
         }
       }
     }
 
-    console.log(`Found ${videoFiles.length} video files in ${folderPath}`);
-    return videoFiles;
+    await scanDirectory(folderPath);
+
+    console.log(`Found ${videoFiles.length} video files in ${folderPath} (recursive: ${recursive})`);
+    return videoFiles.sort(); // Sort files alphabetically
   } catch (error) {
     console.error('Error reading directory:', error);
     throw error;

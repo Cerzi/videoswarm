@@ -7,8 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Directory reading
-  readDirectory: async (folderPath) => {
-    return await ipcRenderer.invoke('read-directory', folderPath);
+  readDirectory: async (folderPath, recursive = false) => {
+    return await ipcRenderer.invoke('read-directory', folderPath, recursive);
   },
 
   // Get file info
