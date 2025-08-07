@@ -213,8 +213,13 @@ class LayoutManager {
         // Get grid properties
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const rowHeight = parseInt(computedStyle.gridAutoRows) || 10;
-        const gap = parseInt(computedStyle.gap) || 4;
+        const rowHeight = parseInt(computedStyle.gridAutoRows) || 1; // Use 1px rows
+        const gapValue = computedStyle.gap || '2px 4px';
+        
+        // Parse gap - could be "2px 4px" or just "4px"
+        const gaps = gapValue.split(' ');
+        const verticalGap = parseInt(gaps[0]) || 2;
+        const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
 
         // Track the next available row for each column
         const columnNextRow = new Array(columnCount).fill(1);
@@ -228,7 +233,7 @@ class LayoutManager {
             
             // Get the item's natural height
             const itemHeight = this.calculateItemHeight(videoItem);
-            const rowSpan = Math.ceil((itemHeight + gap) / (rowHeight + gap));
+            const rowSpan = Math.ceil((itemHeight + verticalGap) / (rowHeight + verticalGap));
             
             // Find the earliest available row across all columns up to target column
             let startRow = Math.max(...columnNextRow.slice(0, targetColumn + 1));
@@ -236,7 +241,7 @@ class LayoutManager {
             // If this would create a gap, try to fill it
             if (targetColumn > 0) {
                 const minRowInRange = Math.min(...columnNextRow.slice(0, targetColumn + 1));
-                if (startRow - minRowInRange > 3) { // Allow small gaps
+                if (startRow - minRowInRange > 2) { // Reduced gap tolerance
                     startRow = minRowInRange;
                     // Find which column has this row available
                     for (let col = 0; col <= targetColumn; col++) {
@@ -280,13 +285,17 @@ class LayoutManager {
         const gridWidth = grid.offsetWidth;
         const computedStyle = window.getComputedStyle(grid);
         const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
-        const gap = parseInt(computedStyle.gap) || 4;
         
-        const columnWidth = (gridWidth - (gap * (columnCount - 1))) / columnCount;
+        // Parse gap for horizontal spacing
+        const gapValue = computedStyle.gap || '2px 4px';
+        const gaps = gapValue.split(' ');
+        const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
+        
+        const columnWidth = (gridWidth - (horizontalGap * (columnCount - 1))) / columnCount;
         const itemHeight = (columnWidth * height) / width;
         
-        // Add some padding for filename overlay
-        return itemHeight + 30;
+        // Add minimal padding for filename overlay
+        return itemHeight + 25; // Reduced from 30 to 25
     }
 }
 
