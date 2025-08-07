@@ -6,14 +6,17 @@ class LayoutManager {
         this.zoomLevels = ['zoom-small', 'zoom-medium', 'zoom-large', 'zoom-xlarge'];
         this.zoomLabels = ['75%', '100%', '150%', '200%'];
         this.masonryLayoutTimeout = null;
+        this.isLayouting = false;
+        this.cachedGridMeasurements = null;
 
         // Set up resize observer for responsive masonry
         this.resizeObserver = new ResizeObserver((entries) => {
-            if (this.layoutMode === 'masonry-vertical') {
+            if (this.layoutMode === 'masonry-vertical' && !this.isLayouting) {
                 clearTimeout(this.masonryLayoutTimeout);
                 this.masonryLayoutTimeout = setTimeout(() => {
+                    this.cachedGridMeasurements = null; // Invalidate cache on resize
                     this.refreshMasonryLayout();
-                }, 100);
+                }, 300);
             }
         });
 
@@ -99,6 +102,9 @@ class LayoutManager {
     applyLayout() {
         const grid = document.getElementById('videoGrid');
         if (!grid) return;
+
+        // Clear cached measurements when switching layouts
+        this.cachedGridMeasurements = null;
 
         grid.classList.remove('masonry-vertical', 'masonry-horizontal');
 
@@ -186,7 +192,7 @@ class LayoutManager {
 
     initializeMasonryGrid() {
         const grid = document.getElementById('videoGrid');
-        if (!grid) return;
+        if (!grid || this.isLayouting) return;
 
         // Check if native masonry is supported
         if (CSS.supports('grid-template-rows', 'masonry')) {
@@ -194,6 +200,8 @@ class LayoutManager {
             return; // Let CSS handle it natively
         }
 
+        this.isLayouting = true;
+        
         // Reset any previous positioning
         this.videoBrowser.videos.forEach(videoItem => {
             videoItem.style.gridRowStart = '';
@@ -203,6 +211,7 @@ class LayoutManager {
         // Use JavaScript masonry for better browser support
         requestAnimationFrame(() => {
             this.layoutMasonryItems();
+            this.isLayouting = false;
         });
     }
 
@@ -281,31 +290,39 @@ class LayoutManager {
             }
         }
         
-        // Calculate height based on actual grid column width
-        const grid = document.getElementById('videoGrid');
-        const gridRect = grid.getBoundingClientRect();
-        const gridWidth = gridRect.width;
-        const computedStyle = window.getComputedStyle(grid);
-        const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
+        // Use cached grid measurements to avoid layout thrashing
+        if (!this.cachedGridMeasurements) {
+            const grid = document.getElementById('videoGrid');
+            if (!grid) return 200; // fallback height
+            
+            const gridRect = grid.getBoundingClientRect();
+            const gridWidth = gridRect.width;
+            const computedStyle = window.getComputedStyle(grid);
+            const columnCount = computedStyle.gridTemplateColumns.split(' ').length;
+            
+            // Parse gap for horizontal spacing
+            const gapValue = computedStyle.gap || '2px 4px';
+            const gaps = gapValue.split(' ');
+            const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
+            
+            // Calculate actual column width
+            const totalGapWidth = horizontalGap * (columnCount - 1);
+            const columnWidth = (gridWidth - totalGapWidth) / columnCount;
+            
+            this.cachedGridMeasurements = { columnWidth, columnCount };
+        }
         
-        // Parse gap for horizontal spacing
-        const gapValue = computedStyle.gap || '2px 4px';
-        const gaps = gapValue.split(' ');
-        const horizontalGap = parseInt(gaps[1] || gaps[0]) || 4;
-        
-        // Calculate actual column width
-        const totalGapWidth = horizontalGap * (columnCount - 1);
-        const columnWidth = (gridWidth - totalGapWidth) / columnCount;
-        
-        // Calculate proportional height
-        const itemHeight = (columnWidth * height) / width;
+        // Calculate proportional height using cached measurements
+        const itemHeight = (this.cachedGridMeasurements.columnWidth * height) / width;
         
         // Add minimal padding for filename overlay
         return itemHeight + 25;
     }
 
     refreshMasonryLayout() {
-        if (this.layoutMode === 'masonry-vertical') {
+        if (this.layoutMode === 'masonry-vertical' && !this.isLayouting) {
+            this.isLayouting = true;
+            
             // Clear existing positioning
             this.videoBrowser.videos.forEach(videoItem => {
                 videoItem.style.gridRowStart = '';
@@ -317,6 +334,7 @@ class LayoutManager {
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     this.layoutMasonryItems();
+                    this.isLayouting = false;
                 });
             });
         }

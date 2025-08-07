@@ -74,15 +74,15 @@ class PerformanceManager {
         // Simplified scroll handling - just add a small delay
         clearTimeout(this.masonryScrollTimeout);
         this.masonryScrollTimeout = setTimeout(() => {
-            if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+            if (this.loadQueue.length > 0 && !this.isProcessingQueue && !this.videoBrowser.layoutManager.isLayouting) {
                 this.processLoadQueue();
             }
-        }, 150);
+        }, 200);
     }
 
     checkMasonryStability() {
         // Simplified stability check
-        if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+        if (this.loadQueue.length > 0 && !this.isProcessingQueue && !this.videoBrowser.layoutManager.isLayouting) {
             this.processLoadQueue();
         }
     }
