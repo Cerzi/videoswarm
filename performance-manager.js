@@ -59,58 +59,33 @@ class PerformanceManager {
         }, 3000);
 
         window.addEventListener('scroll', () => {
-            // Enhanced masonry scroll handling
+            // Simple scroll handling for all modes
             if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
                 this.handleMasonryScroll();
             }
 
-            // Original scroll timeout logic for other modes
             let scrollTimeout;
             clearTimeout(scrollTimeout);
             scrollTimeout = setTimeout(() => {
-                if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
-                    this.checkMasonryStability();
-                }
+                this.checkMasonryStability();
             }, 500);
         });
     }
 
     handleMasonryScroll() {
-        // Pause loading immediately on scroll
-        this.masonryLoadingPaused = true;
-
-        // Clear any existing timeout
+        // Simplified scroll handling - just add a small delay
         clearTimeout(this.masonryScrollTimeout);
-
-        // Resume loading after scroll stops, with longer delay
         this.masonryScrollTimeout = setTimeout(() => {
-            this.masonryLoadingPaused = false;
-            if (this.loadQueue.length > 0 && !this.masonryBatchProcessing) {
-                this.processMasonryLoadQueue();
+            if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+                this.processLoadQueue();
             }
-        }, 300);
+        }, 150);
     }
 
     checkMasonryStability() {
-        if (this.videoBrowser.layoutManager.layoutMode !== 'masonry-vertical') return;
-
-        const grid = document.getElementById('videoGrid');
-        if (!grid) return;
-
-        const currentHeight = grid.scrollHeight;
-
-        if (Math.abs(currentHeight - this.masonryStableHeight) < 50) {
-            this.masonryHeightCheckCount++;
-            if (this.masonryHeightCheckCount >= 3) {
-                // Height has been stable, resume normal loading
-                this.masonryLoadingPaused = false;
-                if (this.loadQueue.length > 0) {
-                    this.processLoadQueue();
-                }
-            }
-        } else {
-            this.masonryStableHeight = currentHeight;
-            this.masonryHeightCheckCount = 0;
+        // Simplified stability check
+        if (this.loadQueue.length > 0 && !this.isProcessingQueue) {
+            this.processLoadQueue();
         }
     }
 
@@ -142,120 +117,28 @@ class PerformanceManager {
             }
         });
 
-        if (!this.isProcessingQueue && this.loadQueue.length > 0 && !this.masonryLoadingPaused) {
-            if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical') {
-                this.processMasonryLoadQueue();
-            } else {
-                this.processLoadQueue();
-            }
+        if (!this.isProcessingQueue && this.loadQueue.length > 0) {
+            this.processLoadQueue();
         }
     }
 
     addToMasonryQueue(videoItem, entry) {
         if (this.loadQueue.includes(videoItem)) return;
-
-        // Calculate priority based on viewport position
-        const rect = videoItem.getBoundingClientRect();
-        const viewportCenter = window.innerHeight / 2;
-        const itemCenter = rect.top + rect.height / 2;
-        const distanceFromCenter = Math.abs(itemCenter - viewportCenter);
-
-        // Add priority data
-        videoItem._masonryPriority = {
-            distanceFromCenter,
-            intersectionRatio: entry.intersectionRatio,
-            timestamp: Date.now()
-        };
-
         this.loadQueue.push(videoItem);
-
-        // Sort queue by priority (closer to center = higher priority)
-        this.loadQueue.sort((a, b) => {
-            const aPriority = a._masonryPriority;
-            const bPriority = b._masonryPriority;
-
-            if (!aPriority) return 1;
-            if (!bPriority) return -1;
-
-            // Primary: distance from viewport center
-            const distanceDiff = aPriority.distanceFromCenter - bPriority.distanceFromCenter;
-            if (Math.abs(distanceDiff) > 50) return distanceDiff;
-
-            // Secondary: intersection ratio (more visible = higher priority)
-            return bPriority.intersectionRatio - aPriority.intersectionRatio;
-        });
     }
 
     async processMasonryLoadQueue() {
-        if (this.masonryBatchProcessing || this.masonryLoadingPaused) return;
-
-        this.masonryBatchProcessing = true;
-
-        let processed = 0;
-        const batchSize = 2; // Very small batches for masonry
-        const maxConcurrentForMasonry = Math.min(this.maxConcurrentLoading, 3);
-
-        while (this.loadQueue.length > 0 &&
-               this.videoBrowser.loadingVideos.size < maxConcurrentForMasonry &&
-               processed < batchSize &&
-               !this.masonryLoadingPaused) {
-
-            const videoItem = this.loadQueue.shift();
-
-            if (videoItem.dataset.loaded === 'false') {
-                // Double-check viewport visibility for masonry
-                const rect = videoItem.getBoundingClientRect();
-                const extendedViewport = rect.bottom >= -1200 && rect.top <= window.innerHeight + 1200;
-
-                if (extendedViewport || this.videoBrowser.visibleVideos.has(videoItem)) {
-                    try {
-                        await this.videoBrowser.loadVideoContent(videoItem);
-                        processed++;
-
-                        // Longer delay between masonry loads to prevent cascade
-                        if (processed < batchSize && this.loadQueue.length > 0) {
-                            await new Promise(resolve => setTimeout(resolve, 200));
-                        }
-                    } catch (error) {
-                        console.warn('Failed to load video:', error);
-                    }
-                }
-            }
-
-            // Clean up priority data
-            if (videoItem._masonryPriority) {
-                delete videoItem._masonryPriority;
-            }
-        }
-
-        this.masonryBatchProcessing = false;
-
-        // Continue processing if queue has items and we're not paused
-        if (this.loadQueue.length > 0 &&
-            !this.masonryLoadingPaused &&
-            this.videoBrowser.loadingVideos.size < maxConcurrentForMasonry) {
-
-            // Longer delay between batches for masonry stability
-            setTimeout(() => {
-                if (!this.masonryLoadingPaused) {
-                    this.processMasonryLoadQueue();
-                }
-            }, 400);
-        }
+        // Use the same logic as regular processLoadQueue
+        return this.processLoadQueue();
     }
 
     async processLoadQueue() {
         if (this.isProcessingQueue) return;
 
-        // Skip processing if masonry loading is paused
-        if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical' && this.masonryLoadingPaused) {
-            return;
-        }
-
         this.isProcessingQueue = true;
 
         let processed = 0;
-        const batchSize = this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical' ? 2 : 5; // Smaller batches for masonry
+        const batchSize = 5;
 
         while (this.loadQueue.length > 0 &&
                this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading &&
@@ -264,34 +147,37 @@ class PerformanceManager {
             const videoItem = this.loadQueue.shift();
 
             if (videoItem.dataset.loaded === 'false') {
-                const rect = videoItem.getBoundingClientRect();
-                const inExtendedViewport = rect.bottom >= -600 && rect.top <= window.innerHeight + 600;
-
-                if (inExtendedViewport || this.videoBrowser.visibleVideos.has(videoItem)) {
+                // Simple check - if it's in visibleVideos or near viewport, load it
+                if (this.videoBrowser.visibleVideos.has(videoItem) || this.isNearViewport(videoItem)) {
                     try {
                         await this.videoBrowser.loadVideoContent(videoItem);
                         processed++;
 
-                        // For masonry, add a small delay between loads to prevent cascade
-                        if (this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical' && processed < batchSize) {
-                            await new Promise(resolve => setTimeout(resolve, 100));
+                        // Small delay between loads
+                        if (processed < batchSize && this.loadQueue.length > 0) {
+                            await new Promise(resolve => setTimeout(resolve, 50));
                         }
                     } catch (error) {
                         console.warn('Failed to load video:', error);
                     }
-                } else {
-                    console.log(`Skipping load for ${videoItem.dataset.filename} - out of viewport`);
                 }
             }
         }
 
         this.isProcessingQueue = false;
 
-        // Continue processing with a delay for masonry mode
+        // Continue processing if there are more items
         if (this.loadQueue.length > 0 && this.videoBrowser.loadingVideos.size < this.maxConcurrentLoading) {
-            const delay = this.videoBrowser.layoutManager.layoutMode === 'masonry-vertical' ? 300 : 100;
-            setTimeout(() => this.processLoadQueue(), delay);
+            setTimeout(() => this.processLoadQueue(), 100);
         }
+    }
+
+    isNearViewport(videoItem) {
+        const rect = videoItem.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const buffer = 800; // Load items within 800px of viewport
+        
+        return rect.bottom > -buffer && rect.top < viewportHeight + buffer;
     }
 
     aggressiveCleanup() {
