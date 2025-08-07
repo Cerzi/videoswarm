@@ -47,10 +47,14 @@ class PerformanceManager {
                         this.videoBrowser.maxConcurrentPlaying = Math.max(5, this.videoBrowser.maxConcurrentPlaying - 5);
                         this.maxLoadedVideos = Math.max(20, this.maxLoadedVideos - 15);
                         this.emergencyCleanup();
+                        // ENFORCE THE NEW LIMITS IMMEDIATELY
+                        this.enforcePlayingLimit();
                     } else if (memoryRatio > 0.5) {
                         this.videoBrowser.maxConcurrentPlaying = Math.max(10, this.videoBrowser.maxConcurrentPlaying - 2);
                         this.maxLoadedVideos = Math.max(40, this.maxLoadedVideos - 5);
                         this.smartCleanup();
+                        // ENFORCE THE NEW LIMITS IMMEDIATELY
+                        this.enforcePlayingLimit();
                     } else if (memoryRatio < 0.3) {
                         this.videoBrowser.maxConcurrentPlaying = Math.min(30, this.videoBrowser.maxConcurrentPlaying + 1);
                         this.maxLoadedVideos = Math.min(80, this.maxLoadedVideos + 2);
@@ -68,6 +72,10 @@ class PerformanceManager {
 
             // Frame rate monitoring
             this.monitorFrameRate();
+
+            // ENFORCE LIMITS PERIODICALLY
+            this.enforcePlayingLimit();
+            this.enforceLoadedLimit();
 
             // Update debug info in status bar
             if (this.videoBrowser.uiManager) {
@@ -375,10 +383,24 @@ class PerformanceManager {
     }
 
     maintainOptimalLoadedItems() {
-        const maxOptimalLoaded = Math.min(this.maxLoadedVideos, 50); // Cap for performance
+        if (this.videoBrowser.loadedVideos.size > this.maxLoadedVideos) {
+            console.log(`Maintaining optimal loaded items: ${this.videoBrowser.loadedVideos.size} -> ${this.maxLoadedVideos}`);
+            this.smartCleanup();
+        }
+    }
 
-        if (this.videoBrowser.loadedVideos.size > maxOptimalLoaded) {
-            console.log(`Maintaining optimal loaded items: ${this.videoBrowser.loadedVideos.size} -> ${maxOptimalLoaded}`);
+    enforcePlayingLimit() {
+        const excessPlaying = this.videoBrowser.playingVideos.size - this.videoBrowser.maxConcurrentPlaying;
+        if (excessPlaying > 0) {
+            console.log(`Enforcing playing limit: pausing ${excessPlaying} excess videos`);
+            this.videoBrowser.pauseExcessVideos();
+        }
+    }
+
+    enforceLoadedLimit() {
+        const excessLoaded = this.videoBrowser.loadedVideos.size - this.maxLoadedVideos;
+        if (excessLoaded > 0) {
+            console.log(`Enforcing loaded limit: unloading ${excessLoaded} excess videos`);
             this.smartCleanup();
         }
     }
@@ -414,9 +436,9 @@ class PerformanceManager {
         // Sort by priority (highest priority = unload first)
         candidatesForUnload.sort((a, b) => b.priority - a.priority);
 
-        // Unload items starting with furthest/oldest
+        // Unload items starting with furthest/oldest - USE ACTUAL LIMIT
         const targetUnload = Math.min(candidatesForUnload.length,
-                                     this.videoBrowser.loadedVideos.size - Math.floor(this.maxLoadedVideos * 0.8));
+                                     this.videoBrowser.loadedVideos.size - this.maxLoadedVideos);
 
         for (let i = 0; i < targetUnload; i++) {
             const { videoItem } = candidatesForUnload[i];
