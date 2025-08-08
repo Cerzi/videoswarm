@@ -29,7 +29,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
   // Calculate positions for vertical masonry (fixed width, variable height)
   const calculateVerticalMasonry = useCallback(() => {
-    if (!gridConfig || !videos || videos.length === 0) return
+    if (!gridConfig || !videos || videos.length === 0 || !layoutMode) return
 
     const { columns, columnWidth, gap } = gridConfig
     const columnHeights = new Array(columns).fill(0)
@@ -58,11 +58,11 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
     setItemPositions(positions)
     setContainerHeight(Math.max(...columnHeights))
-  }, [videos, aspectRatios, gridConfig])
+  }, [videos, aspectRatios, gridConfig, layoutMode])
 
   // Calculate positions for horizontal masonry (fixed height, variable width)
   const calculateHorizontalMasonry = useCallback(() => {
-    if (!gridConfig || !videos || videos.length === 0) return
+    if (!gridConfig || !videos || videos.length === 0 || !layoutMode) return
 
     const { rowHeight, gap } = gridConfig
     const viewportHeight = window.innerHeight - 200 // Account for header
@@ -94,10 +94,12 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
     setItemPositions(positions)
     setContainerHeight(maxRows * (rowHeight + gap))
     setCalculatedWidth(Math.max(...rowWidths))
-  }, [videos, aspectRatios, gridConfig])
+  }, [videos, aspectRatios, gridConfig, layoutMode])
 
   // Calculate grid positions (CSS Grid fallback)
   const calculateGridLayout = useCallback(() => {
+    if (!videos || !layoutMode) return
+    
     const positions = videos.map((video) => ({
       id: video.id,
       x: null, // Let CSS Grid handle positioning
@@ -111,7 +113,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
     setItemPositions(positions)
     setContainerHeight(null) // Let CSS Grid handle height
     setCalculatedWidth(null)
-  }, [videos])
+  }, [videos, layoutMode])
 
   // Update aspect ratio when video loads
   const updateAspectRatio = useCallback((videoId, aspectRatio) => {
@@ -124,6 +126,8 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
   // Recalculate layout when dependencies change
   useEffect(() => {
+    if (!layoutMode) return
+    
     if (layoutMode === 'masonry-vertical') {
       calculateVerticalMasonry()
     } else if (layoutMode === 'masonry-horizontal') {
@@ -135,6 +139,8 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
   // Force recalculation (for external triggers like zoom changes)
   const recalculateLayout = useCallback(() => {
+    if (!layoutMode) return
+    
     // Small delay to ensure any DOM changes have been applied
     setTimeout(() => {
       if (layoutMode === 'masonry-vertical') {
@@ -153,6 +159,6 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
     containerWidth: calculatedWidth,
     updateAspectRatio,
     recalculateLayout,
-    isMasonry: layoutMode.startsWith('masonry')
+    isMasonry: layoutMode && layoutMode.startsWith('masonry')
   }
 }
