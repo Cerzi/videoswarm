@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) => {
   const [itemPositions, setItemPositions] = useState([])
   const [containerHeight, setContainerHeight] = useState(0)
-  const [containerWidth as number, setContainerWidth] = useState(0)
+  const [calculatedWidth, setCalculatedWidth] = useState(0)
   const [aspectRatios, setAspectRatios] = useState(new Map())
 
   // Calculate grid measurements based on zoom and container size
@@ -29,7 +29,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
   // Calculate positions for vertical masonry (fixed width, variable height)
   const calculateVerticalMasonry = useCallback(() => {
-    if (!gridConfig || videos.length === 0) return
+    if (!gridConfig || !videos || videos.length === 0) return
 
     const { columns, columnWidth, gap } = gridConfig
     const columnHeights = new Array(columns).fill(0)
@@ -62,7 +62,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
   // Calculate positions for horizontal masonry (fixed height, variable width)
   const calculateHorizontalMasonry = useCallback(() => {
-    if (!gridConfig || videos.length === 0) return
+    if (!gridConfig || !videos || videos.length === 0) return
 
     const { rowHeight, gap } = gridConfig
     const viewportHeight = window.innerHeight - 200 // Account for header
@@ -93,7 +93,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
     setItemPositions(positions)
     setContainerHeight(maxRows * (rowHeight + gap))
-    setContainerWidth(Math.max(...rowWidths))
+    setCalculatedWidth(Math.max(...rowWidths))
   }, [videos, aspectRatios, gridConfig])
 
   // Calculate grid positions (CSS Grid fallback)
@@ -110,7 +110,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
 
     setItemPositions(positions)
     setContainerHeight(null) // Let CSS Grid handle height
-    setContainerWidth(null)
+    setCalculatedWidth(null)
   }, [videos])
 
   // Update aspect ratio when video loads
@@ -150,7 +150,7 @@ export const useMasonryLayout = (videos, layoutMode, zoomLevel, containerWidth) 
   return {
     itemPositions,
     containerHeight,
-    containerWidth: containerWidth,
+    containerWidth: calculatedWidth,
     updateAspectRatio,
     recalculateLayout,
     isMasonry: layoutMode.startsWith('masonry')
