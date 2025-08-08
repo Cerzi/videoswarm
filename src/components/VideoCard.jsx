@@ -9,7 +9,8 @@ const VideoCard = ({
   onVideoPlay, 
   onVideoPause,
   onVideoLoad, // Callback to report aspect ratio
-  layoutMode // Current layout mode
+  layoutMode, // Current layout mode
+  showFilenames = true // NEW: Whether to show filenames
 }) => {
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -371,9 +372,11 @@ const VideoCard = ({
         getPlaceholderContent()
       )}
       
-      <div className="video-filename">
-        {video.name}
-      </div>
+      {showFilenames && (
+        <div className="video-filename">
+          {video.name}
+        </div>
+      )}
     </div>
   )
 }

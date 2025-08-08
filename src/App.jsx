@@ -8,6 +8,7 @@ function App() {
   const [selectedVideos, setSelectedVideos] = useState(new Set());
   const [autoplayEnabled, setAutoplayEnabled] = useState(true);
   const [recursiveMode, setRecursiveMode] = useState(false);
+  const [showFilenames, setShowFilenames] = useState(true); // NEW: Filename visibility setting
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [playingVideos, setPlayingVideos] = useState(new Set());
@@ -41,6 +42,7 @@ function App() {
           
           if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
           if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
+          if (settings.showFilenames !== undefined) setShowFilenames(settings.showFilenames);
           if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
           if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
           
@@ -63,6 +65,7 @@ function App() {
         console.log('Async settings received:', settings);
         if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
         if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
+        if (settings.showFilenames !== undefined) setShowFilenames(settings.showFilenames);
         if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
         if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
         setSettingsLoaded(true);
@@ -109,8 +112,9 @@ function App() {
       try {
         await window.electronAPI.saveSettingsPartial({
           recursiveMode,
-          layoutMode, // Now included in settings save
+          layoutMode,
           autoplayEnabled,
+          showFilenames, // Added to save filename visibility setting
           maxConcurrentPlaying,
           zoomLevel,
         });
@@ -118,7 +122,7 @@ function App() {
         console.error('Failed to save settings:', error);
       }
     }
-  }, [recursiveMode, layoutMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel]);
+  }, [recursiveMode, layoutMode, autoplayEnabled, showFilenames, maxConcurrentPlaying, zoomLevel]);
 
   const handleFolderSelect = async () => {
     if (!window.electronAPI?.selectFolder) {
@@ -206,6 +210,11 @@ function App() {
 
   const toggleRecursive = () => {
     setRecursiveMode(!recursiveMode);
+    saveSettings();
+  };
+
+  const toggleFilenames = () => {
+    setShowFilenames(!showFilenames);
     saveSettings();
   };
 
@@ -339,6 +348,13 @@ function App() {
                 {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
               </button>
 
+              <button
+                onClick={toggleFilenames}
+                className={`toggle-button ${showFilenames ? 'active' : ''}`}
+              >
+                {showFilenames ? '📝 Filenames ON' : '📝 Filenames'}
+              </button>
+
               <button onClick={handleLayoutToggle} className="toggle-button">
                 {getLayoutButtonText()}
               </button>
@@ -434,7 +450,7 @@ function App() {
           ) : (
             <div 
               ref={gridRef}
-              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]}`}
+              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
               {videos.map((video) => (
                 <VideoCard

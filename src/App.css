@@ -110,7 +110,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
   color: white;
   padding: 0.5rem;
   font-size: 0.75rem;
@@ -118,9 +118,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  height: 30px;
   display: flex;
   align-items: flex-end;
+  /* Remove fixed height - let it overlay naturally */
 }
 
 /* GRID LAYOUT - Fixed size video cards */
@@ -138,7 +138,7 @@
 .video-grid.grid .video-container,
 .video-grid.grid .video-placeholder,
 .video-grid.grid .error-indicator {
-  height: calc(100% - 30px); /* Account for filename */
+  height: 100%; /* Use full height since filenames now overlay */
 }
 
 /* VERTICAL MASONRY - Fixed width, dynamic height based on aspect ratio */
@@ -172,7 +172,7 @@
 .video-grid.masonry-horizontal .video-container,
 .video-grid.masonry-horizontal .video-placeholder,
 .video-grid.masonry-horizontal .error-indicator {
-  height: calc(100% - 30px); /* Account for filename */
+  height: 100%; /* Use full height since filenames now overlay */
 }
 
 /* ZOOM LEVELS */
@@ -291,9 +291,9 @@
   height: 140px; /* Default placeholder height */
 }
 
-.video-grid.masonry-horizontal .video-placeholder,
-.video-grid.masonry-horizontal .error-indicator {
-  height: calc(100% - 30px);
+/* Hide filenames when the hide-filenames class is present */
+.video-grid.hide-filenames .video-filename {
+  display: none;
 }
 
 /* Ensure video elements fill their containers properly */

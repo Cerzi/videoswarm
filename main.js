@@ -9,6 +9,7 @@ const defaultSettings = {
   autoplayEnabled: true,
   maxConcurrentPlaying: 30,
   zoomLevel: 1,
+  showFilenames: true, // NEW: Show/hide filenames setting
   windowBounds: {
     width: 1400,
     height: 900,

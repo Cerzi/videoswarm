@@ -124,8 +124,8 @@ export const useLayoutManager = (videos, zoomLevel) => {
       }
 
       // Calculate item height based on fixed width and aspect ratio
-      const contentHeight = Math.round(columnWidth / aspectRatio)
-      const itemHeight = contentHeight + 30 // Add space for filename
+      // No need to add filename height since filenames now overlay
+      const itemHeight = Math.round(columnWidth / aspectRatio)
 
       // Find column with minimum height
       const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights))
@@ -142,7 +142,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
       // Update the video container styling
       const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
       if (videoContainer) {
-        videoContainer.style.height = `${contentHeight}px`
+        videoContainer.style.height = `${itemHeight}px`
       }
 
       // Update column height
@@ -165,7 +165,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
     // Get the container width and fixed height
     const containerWidth = grid.clientWidth - 32 // Account for padding
     const fixedHeight = 200 // Base fixed height
-    const contentHeight = fixedHeight - 30 // Subtract filename space
+    const contentHeight = fixedHeight // Use full height since filenames overlay
     const gap = 4
     
     // Start laying out videos row by row
@@ -233,7 +233,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
         // Update the video container styling
         const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
         if (videoContainer) {
-          videoContainer.style.height = `${contentHeight}px`
+          videoContainer.style.height = `${fixedHeight}px`
         }
 
         currentX += width + gap
