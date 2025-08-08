@@ -148,7 +148,9 @@ class PerformanceManager {
     }
 
     startViewportTracking() {
-        // Conservative IntersectionObserver setup
+        console.log('Starting viewport tracking...');
+
+        // FIX: Single observer that handles BOTH loading AND visibility for play/pause
         this.viewportObserver = new IntersectionObserver((entries) => {
             if (!this.isLayoutStable) return;
 
@@ -156,26 +158,58 @@ class PerformanceManager {
                 const videoItem = entry.target;
 
                 if (entry.isIntersecting) {
+                    // Add to viewport tracking sets
                     this.viewportItems.add(videoItem);
                     this.nearViewportItems.add(videoItem);
+                    
+                    // FIX: Also update the main visibleVideos set for play/pause
+                    this.videoBrowser.visibleVideos.add(videoItem);
 
-                    // Only queue if we have real dimensions and queue isn't full
+                    // Queue for loading if needed
                     if (this.shouldQueueVideo(videoItem)) {
                         this.addToQueue(videoItem, 'priority');
                     }
+
+                    // FIX: Try to play if already loaded
+                    const video = this.videoBrowser.videoElements.get(videoItem);
+                    if (video && 
+                        video.readyState >= 3 && 
+                        this.videoBrowser.canPlayMoreVideos() && 
+                        this.videoBrowser.autoplayEnabled) {
+                        this.videoBrowser.playVideo(video);
+                    }
+
                 } else {
+                    // Remove from viewport tracking
                     this.viewportItems.delete(videoItem);
+                    
+                    // FIX: Also remove from main visibleVideos set
+                    this.videoBrowser.visibleVideos.delete(videoItem);
+
+                    // FIX: Pause video if it was playing
+                    const video = this.videoBrowser.videoElements.get(videoItem);
+                    if (video && this.videoBrowser.playingVideos.has(video)) {
+                        video.pause();
+                        this.videoBrowser.playingVideos.delete(video);
+                        console.log(`Paused video leaving viewport. Playing count: ${this.videoBrowser.playingVideos.size}`);
+                    }
                 }
             });
 
+            // Process loading queue
             this.processQueues();
+
+            // FIX: Update debug info after visibility changes
+            if (this.videoBrowser.uiManager) {
+                this.videoBrowser.uiManager.forceDebugUpdate();
+            }
         }, {
             root: null,
-            rootMargin: '50px 0px 100px 0px', // Much smaller margins
+            rootMargin: '50px 0px 100px 0px',
             threshold: [0, 0.1]
         });
 
-        // Extended observer for cleanup
+        // Extended observer for cleanup (unchanged)
         this.cleanupObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (!entry.isIntersecting) {
@@ -197,8 +231,119 @@ class PerformanceManager {
             this.cleanupObserver.observe(videoItem);
         });
 
-        // Conservative initial load
         this.performInitialLoad();
+    }
+
+    // NEW: Handle post-resize recovery
+    handlePostResize() {
+        console.log('PerformanceManager handling post-resize recovery...');
+        
+        // Clear stale visibility data
+        this.videoBrowser.visibleVideos.clear();
+        this.viewportItems.clear();
+        
+        // Force a manual visibility check since observers might be confused
+        this.manualVisibilityCheck();
+        
+        // Restart videos that should be playing
+        setTimeout(() => {
+            this.restartVisibleVideos();
+        }, 100);
+    }
+
+    // NEW: Manual visibility check (fallback for when observers are confused)
+    manualVisibilityCheck() {
+        const viewportTop = window.scrollY;
+        const viewportBottom = viewportTop + window.innerHeight;
+        const buffer = 100;
+
+        let visibleCount = 0;
+
+        this.videoBrowser.videos.forEach(videoItem => {
+            const rect = videoItem.getBoundingClientRect();
+            const absoluteTop = rect.top + window.scrollY;
+            const absoluteBottom = absoluteTop + rect.height;
+
+            const isVisible = absoluteBottom >= (viewportTop - buffer) &&
+                             absoluteTop <= (viewportBottom + buffer);
+
+            if (isVisible) {
+                this.videoBrowser.visibleVideos.add(videoItem);
+                this.viewportItems.add(videoItem);
+                visibleCount++;
+            } else {
+                this.videoBrowser.visibleVideos.delete(videoItem);
+                this.viewportItems.delete(videoItem);
+            }
+        });
+
+        console.log(`Manual visibility check found ${visibleCount} visible videos`);
+        
+        if (this.videoBrowser.uiManager) {
+            this.videoBrowser.uiManager.forceDebugUpdate();
+        }
+    }
+
+    // NEW: Restart videos that should be playing
+    restartVisibleVideos() {
+        console.log('Restarting visible videos after resize...');
+        
+        let restarted = 0;
+        
+        this.videoBrowser.visibleVideos.forEach(videoItem => {
+            const video = this.videoBrowser.videoElements.get(videoItem);
+            if (video && 
+                video.readyState >= 3 && 
+                this.videoBrowser.canPlayMoreVideos() && 
+                this.videoBrowser.autoplayEnabled) {
+                
+                // Clean restart
+                if (this.videoBrowser.playingVideos.has(video)) {
+                    video.pause();
+                    this.videoBrowser.playingVideos.delete(video);
+                }
+                
+                // Small delay then restart
+                setTimeout(() => {
+                    this.videoBrowser.playVideo(video);
+                }, 50 * restarted);
+                
+                restarted++;
+            }
+        });
+
+        console.log(`Attempted to restart ${restarted} videos after resize`);
+    }
+
+    // NEW: Refresh observers (called during layout changes)
+    refreshObservers() {
+        console.log('Refreshing intersection observers...');
+        
+        // Don't refresh during layout operations
+        if (this.isLayouting || this.layoutRefreshInProgress) {
+            console.log('Skipping observer refresh - layout operation in progress');
+            return;
+        }
+
+        // Disconnect and reconnect observers
+        if (this.viewportObserver) {
+            this.viewportObserver.disconnect();
+        }
+        if (this.cleanupObserver) {
+            this.cleanupObserver.disconnect();
+        }
+
+        // Brief delay then restart tracking
+        setTimeout(() => {
+            if (this.isLayoutStable) {
+                this.startViewportTracking();
+            } else {
+                // Wait for stability
+                this.waitForLayoutStability().then(() => {
+                    this.startViewportTracking();
+                });
+            }
+        }, 200);
     }
 
     shouldQueueVideo(videoItem) {
@@ -621,40 +766,21 @@ class PerformanceManager {
     onVideoRemoved(videoItem) {
         if (this.viewportObserver) {
             this.viewportObserver.unobserve(videoItem);
+        }
+        if (this.cleanupObserver) {
             this.cleanupObserver.unobserve(videoItem);
         }
 
         this.viewportItems.delete(videoItem);
         this.nearViewportItems.delete(videoItem);
+        
+        // FIX: Also clean up main visibility tracking
+        this.videoBrowser.visibleVideos.delete(videoItem);
 
         // Remove from all queues
         this.loadQueue = this.loadQueue.filter(v => v !== videoItem);
         this.priorityQueue = this.priorityQueue.filter(v => v !== videoItem);
         this.normalQueue = this.normalQueue.filter(v => v !== videoItem);
-    }
-
-    emergencyCleanup() {
-        console.log('EMERGENCY CLEANUP');
-
-        // Clear all queues
-        this.clearQueues();
-
-        // Pause all videos
-        this.videoBrowser.pauseAllVideos();
-
-        // Unload everything except viewport
-        const toUnload = [];
-        this.videoBrowser.loadedVideos.forEach((timestamp, videoItem) => {
-            if (!this.viewportItems.has(videoItem)) {
-                toUnload.push(videoItem);
-            }
-        });
-
-        toUnload.forEach(videoItem => {
-            this.videoBrowser.unloadVideoContent(videoItem);
-        });
-
-        console.log(`Emergency cleanup: unloaded ${toUnload.length} videos`);
     }
 
     destroy() {

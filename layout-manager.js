@@ -14,26 +14,27 @@ class LayoutManager {
 
         // Setup scroll detection
         this.setupScrollDetection();
+        this.setupResizeHandling();
+    }
 
-        // Conservative resize observer - less aggressive
-        this.resizeObserver = new ResizeObserver((entries) => {
-            // DISABLED temporarily to prevent layout loops
-            console.log('ResizeObserver triggered but disabled');
-            return;
+    setupResizeHandling() {
+        let resizeTimeout;
+        let isResizing = false;
 
-            if (this.layoutMode === 'masonry-vertical' &&
-                !this.isLayouting &&
-                !this.isUserScrolling &&
-                !this.layoutRefreshInProgress) {
-                // ... existing code
-            }
+        window.addEventListener('resize', () => {
+            // Don't do anything during resize - just mark that we're resizing
+            isResizing = true;
+            clearTimeout(resizeTimeout);
+
+            // Only handle resize AFTER user stops resizing for 1 second
+            resizeTimeout = setTimeout(() => {
+                isResizing = false;
+                this.handleResizeComplete();
+            }, 1000);
         });
 
-        // Observe the grid container
-        const grid = document.getElementById('videoGrid');
-        if (grid) {
-            this.resizeObserver.observe(grid);
-        }
+        // Store resize state for other methods to check
+        this.isResizing = () => isResizing;
     }
 
     setupScrollDetection() {
@@ -48,6 +49,29 @@ class LayoutManager {
                 this.isUserScrolling = false;
             }, 150);
         }, { passive: true });
+    }
+
+    handleResizeComplete() {
+        console.log('Window resize complete - updating layout');
+
+        // Clear cached measurements
+        this.cachedGridMeasurements = null;
+
+        // Only re-layout if we're in masonry mode and not doing other operations
+        if (this.layoutMode === 'masonry-vertical' &&
+            !this.isLayouting &&
+            !this.isUserScrolling) {
+
+            // Just update the layout quietly without triggering collapse detection
+            this.layoutMasonryItems();
+        }
+
+        // FIX: Let PerformanceManager handle post-resize video management
+        setTimeout(() => {
+            if (this.videoBrowser.performanceManager) {
+                this.videoBrowser.performanceManager.handlePostResize();
+            }
+        }, 300);
     }
 
     toggleLayout() {
@@ -90,12 +114,12 @@ class LayoutManager {
     }
 
     updateIntersectionObservers() {
-        // DON'T CREATE OBSERVERS - PerformanceManager handles this
-        console.log('LayoutManager: Skipping observer setup - PerformanceManager handles all observers');
-
-        // Just notify PerformanceManager about layout change
+        console.log('LayoutManager: Notifying PerformanceManager about layout change');
+        
+        // FIX: Just notify PerformanceManager to refresh its observers
         if (this.videoBrowser.performanceManager) {
             this.videoBrowser.performanceManager.clearQueues();
+            this.videoBrowser.performanceManager.refreshObservers();
         }
     }
 
@@ -210,7 +234,6 @@ class LayoutManager {
         }, 500);
     }
 
-    // FIX: Correct method name and implementation
     initializeMasonryGrid() {
         const grid = document.getElementById('videoGrid');
         if (!grid || this.isLayouting || this.isUserScrolling) return;
@@ -218,6 +241,12 @@ class LayoutManager {
         // Check if native masonry is supported
         if (CSS.supports('grid-template-rows', 'masonry')) {
             console.log('Using native CSS masonry');
+            return;
+        }
+
+        // Prevent layout loops
+        if (this.layoutRefreshInProgress) {
+            console.log('Skipping masonry init - refresh in progress');
             return;
         }
 
@@ -229,7 +258,7 @@ class LayoutManager {
         // Preserve scroll position
         const currentScrollY = window.scrollY;
 
-        // Reset positioning
+        // Reset positioning first
         this.videoBrowser.videos.forEach(videoItem => {
             videoItem.style.gridRowEnd = '';
         });
@@ -237,20 +266,26 @@ class LayoutManager {
         // Wait for DOM to settle, then apply layout
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-                if (this.layoutMode === 'masonry-vertical') {
+                if (this.layoutMode === 'masonry-vertical' && !this.isUserScrolling) {
                     this.layoutMasonryItems();
                 }
 
-                // Restore scroll position if it was preserved
+                // Restore scroll position ONLY if it was significant
                 if (currentScrollY > 100) {
                     setTimeout(() => {
-                        window.scrollTo(0, currentScrollY);
-                        console.log(`Restored scroll position to ${currentScrollY}px`);
-                    }, 50);
+                        if (!this.isUserScrolling) { // Don't restore if user is scrolling
+                            window.scrollTo(0, currentScrollY);
+                            console.log(`Restored scroll position to ${currentScrollY}px`);
+                        }
+                    }, 100); // Longer delay
                 }
 
                 this.isLayouting = false;
-                this.layoutRefreshInProgress = false;
+
+                // Longer delay before allowing refresh again
+                setTimeout(() => {
+                    this.layoutRefreshInProgress = false;
+                }, 500);
             });
         });
     }

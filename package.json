@@ -6,11 +6,12 @@
   "author": "Your Name",
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
+    "start": "electron . --no-sandbox",
+    "dev": "electron . --dev --no-sandbox",
     "build": "electron-builder",
     "dist": "electron-builder --publish=never",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "debug": "electron . --no-sandbox --inspect=9229"
   },
   "devDependencies": {
     "electron": "^28.0.0",

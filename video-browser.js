@@ -21,6 +21,8 @@ class VideoBrowser {
         this.maxConcurrentPlaying = 30;
         this.minConcurrentPlaying = 10;
         this.maxConcurrentPlayingLimit = 100;
+        
+        // FIX: Ensure visibleVideos is properly initialized
         this.visibleVideos = new Set();
         this.playingVideos = new Set();
         this.loadedVideos = new Map();
@@ -877,17 +879,35 @@ class VideoBrowser {
         });
     }
 
+    // FIX: Better state management in pause methods
     pauseAllVideos() {
+        let pausedCount = 0;
         this.videoElements.forEach((video) => {
-            video.pause();
+            if (!video.paused) {
+                video.pause();
+                pausedCount++;
+            }
             this.playingVideos.delete(video);
         });
+        
+        console.log(`Paused ${pausedCount} videos. Playing count reset to 0.`);
+        
+        if (this.uiManager) {
+            this.uiManager.forceDebugUpdate();
+        }
     }
 
+    // FIX: Enhanced playVideo with better logging
     playVideo(video) {
-        if (video.readyState >= 3 && this.canPlayMoreVideos()) {
+        if (video.readyState >= 3 && this.canPlayMoreVideos() && this.autoplayEnabled) {
             video.play().then(() => {
                 this.playingVideos.add(video);
+                console.log(`Video started playing. Total: ${this.playingVideos.size}/${this.maxConcurrentPlaying}`);
+                
+                // Update debug immediately
+                if (this.uiManager) {
+                    this.uiManager.forceDebugUpdate();
+                }
             }).catch(error => {
                 console.debug('Autoplay prevented:', error);
             });
@@ -969,14 +989,25 @@ class VideoBrowser {
             return { video, distance: Infinity };
         });
 
+        let pausedCount = 0;
         videosWithDistance
             .sort((a, b) => b.distance - a.distance)
             .slice(0, excessCount)
             .forEach(({ video }) => {
                 video.pause();
                 this.playingVideos.delete(video);
+                pausedCount++;
             });
+
+        console.log(`Paused ${pausedCount} excess videos. Now playing: ${this.playingVideos.size}`);
+        
+        if (this.uiManager) {
+            this.uiManager.forceDebugUpdate();
+        }
     }
+
+    // REMOVE: No longer needed - PerformanceManager handles resize
+    // restartVideosAfterResize() method removed
 
     handleLayoutCollapse() {
         console.log('Layout collapse detected - resetting performance manager');

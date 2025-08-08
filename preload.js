@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
   },
 
-    saveSettings: async (settings) => {
+  saveSettings: async (settings) => {
     return await ipcRenderer.invoke('save-settings', settings);
   },
 
@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   saveSettingsPartial: async (partialSettings) => {
     return await ipcRenderer.invoke('save-settings-partial', partialSettings);
+  },
+
+  onSettingsLoaded: (callback) => {
+    ipcRenderer.on('settings-loaded', (event, settings) => {
+      callback(settings);
+    });
   },
 
   // Platform detection
