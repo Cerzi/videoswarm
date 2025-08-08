@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Expose protected methods that allow the renderer process to use
+// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Platform detection
+  platform: process.platform,
+  isElectron: true,
+
   // File manager integration
   showItemInFolder: async (filePath) => {
     return await ipcRenderer.invoke('show-item-in-folder', filePath);
@@ -28,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
   },
 
+  // Settings management - existing methods
   saveSettings: async (settings) => {
     return await ipcRenderer.invoke('save-settings', settings);
   },
@@ -46,7 +53,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
   },
 
-  // Platform detection
-  platform: process.platform,
-  isElectron: true
+  // Settings management - NEW methods for faster loading
+  getSettings: async () => {
+    return await ipcRenderer.invoke('get-settings');
+  },
+
+  requestSettings: async () => {
+    return await ipcRenderer.invoke('request-settings');
+  },
+
+  // Additional file operations (from your main.js)
+  deleteFile: async (filePath) => {
+    return await ipcRenderer.invoke('delete-file', filePath);
+  },
+
+  moveToTrash: async (filePath) => {
+    return await ipcRenderer.invoke('move-to-trash', filePath);
+  },
+
+  copyFile: async (sourcePath, destPath) => {
+    return await ipcRenderer.invoke('copy-file', sourcePath, destPath);
+  },
+
+  getFileProperties: async (filePath) => {
+    return await ipcRenderer.invoke('get-file-properties', filePath);
+  }
 });

@@ -11,7 +11,9 @@ function App() {
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [playingVideos, setPlayingVideos] = useState(new Set());
+  const [videosWantingToPlay, setVideosWantingToPlay] = useState(new Set()); // Track all videos that want to play
   const [loadedVideos, setLoadedVideos] = useState(new Set());
+  const [settingsLoaded, setSettingsLoaded] = useState(false); // Track if settings are loaded
 
   // Use the layout manager hook
   const {
@@ -28,17 +30,42 @@ function App() {
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
 
-  // Load settings from Electron
+  // Synchronously load settings on mount to prevent flash of default values
   useEffect(() => {
+    const loadSettings = async () => {
+      if (window.electronAPI?.getSettings) {
+        try {
+          // Try to get settings synchronously
+          const settings = await window.electronAPI.getSettings();
+          console.log('Synchronously loaded settings:', settings);
+          
+          if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
+          if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
+          if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
+          if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
+          
+          setSettingsLoaded(true);
+        } catch (error) {
+          console.log('Could not load settings synchronously, using defaults');
+          setSettingsLoaded(true);
+        }
+      } else {
+        // No Electron API, use defaults
+        setSettingsLoaded(true);
+      }
+    };
+
+    loadSettings();
+
+    // Also set up the async listener as backup
     if (window.electronAPI?.onSettingsLoaded) {
       window.electronAPI.onSettingsLoaded((settings) => {
-        console.log('Settings received:', settings);
+        console.log('Async settings received:', settings);
         if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
         if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
-        if (settings.maxConcurrentPlaying !== undefined)
-          setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
+        if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
         if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
-        // Note: layoutMode is handled by useLayoutManager hook
+        setSettingsLoaded(true);
       });
     }
 
@@ -55,11 +82,22 @@ function App() {
   }, [playingVideos.size, maxConcurrentPlaying]);
 
   const handleVideoPlay = useCallback((videoId) => {
-    setPlayingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
+    setVideosWantingToPlay((prev) => new Set([...prev, videoId]));
+    
+    // Only actually play if under the limit
+    if (playingVideos.size < maxConcurrentPlaying) {
+      setPlayingVideos((prev) => new Set([...prev, videoId]));
+    }
+  }, [playingVideos.size, maxConcurrentPlaying]);
 
   const handleVideoPause = useCallback((videoId) => {
     setPlayingVideos((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(videoId);
+      return newSet;
+    });
+    
+    setVideosWantingToPlay((prev) => {
       const newSet = new Set(prev);
       newSet.delete(videoId);
       return newSet;
@@ -145,6 +183,7 @@ function App() {
     setVideos(videoObjects);
     setSelectedVideos(new Set());
     setPlayingVideos(new Set());
+    setVideosWantingToPlay(new Set());
     setLoadedVideos(new Set());
   };
 
@@ -153,10 +192,10 @@ function App() {
     setAutoplayEnabled(newAutoplay);
 
     if (!newAutoplay) {
+      // Pause all videos but remember they wanted to play
       setPlayingVideos(new Set());
+      // Keep videosWantingToPlay as-is so they can resume later
     }
-
-    saveSettings();
   };
 
   const handleLayoutToggle = () => {
@@ -173,13 +212,17 @@ function App() {
   const handleVideoLimitChange = (newLimit) => {
     setMaxConcurrentPlaying(newLimit);
 
+    // If we reduced the limit, pause excess videos
     if (playingVideos.size > newLimit) {
       const playingArray = Array.from(playingVideos);
-      const toKeep = playingArray.slice(0, newLimit);
-      setPlayingVideos(new Set(toKeep));
+      const toKeepPlaying = playingArray.slice(0, newLimit);
+      const toPause = playingArray.slice(newLimit);
+      
+      setPlayingVideos(new Set(toKeepPlaying));
+      
+      // The paused videos should still want to play
+      // (videosWantingToPlay already includes them)
     }
-
-    saveSettings();
   };
 
   const handleZoomChange = (newZoom) => {
@@ -225,181 +268,191 @@ function App() {
 
   return (
     <div className="app">
-      {/* Header */}
-      <div className="header">
-        <h1>
-          🎬 Video Browser{' '}
-          <span style={{ fontSize: '0.6rem', color: '#666', fontWeight: 'normal' }}>v2.10</span>
-        </h1>
-
-        <div id="folderControls">
-          {isElectron ? (
-            <button onClick={handleFolderSelect} className="file-input-label">
-              📁 Select Folder
-            </button>
-          ) : (
-            <div className="file-input-wrapper">
-              <input
-                type="file"
-                className="file-input"
-                webkitdirectory="true"
-                multiple
-                onChange={handleWebFileSelection}
-                style={{ display: 'none' }}
-                id="fileInput"
-              />
-              <label htmlFor="fileInput" className="file-input-label">
-                ⚠️ Open Folder (Limited)
-              </label>
-            </div>
-          )}
-        </div>
-
-        {selectedVideos.size > 0 && (
-          <div className="selection-info">{selectedVideos.size} selected</div>
-        )}
-
-        <div
-          className="debug-info"
-          style={{
-            fontSize: '0.75rem',
-            color: '#888',
-            background: '#1a1a1a',
-            padding: '0.3rem 0.8rem',
-            borderRadius: '4px',
-          }}
-        >
-          📁 {videos.length} videos | ▶️ {playingVideos.size}/{maxConcurrentPlaying} playing | ✅{' '}
-          {selectedVideos.size} selected | {getLayoutButtonText()}
-        </div>
-
-        <div className="controls">
-          <button
-            onClick={toggleAutoplay}
-            className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`}
-          >
-            {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
-          </button>
-
-          <button
-            onClick={toggleRecursive}
-            className={`toggle-button ${recursiveMode ? 'active' : ''}`}
-          >
-            {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
-          </button>
-
-          <button onClick={handleLayoutToggle} className="toggle-button">
-            {getLayoutButtonText()}
-          </button>
-
-          <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.9rem' }}>📹</span>
-            <input
-              type="range"
-              className="zoom-slider"
-              min="10"
-              max="100"
-              value={maxConcurrentPlaying}
-              step="5"
-              style={{ width: '100px' }}
-              onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))}
-            />
-            <span style={{ fontSize: '0.8rem', minWidth: '30px' }}>{maxConcurrentPlaying}</span>
-          </div>
-
-          <div className="zoom-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span>🔍</span>
-            <input
-              type="range"
-              className="zoom-slider"
-              min="0"
-              max="3"
-              value={zoomLevel}
-              step="1"
-              onChange={(e) => handleZoomChange(parseInt(e.target.value))}
-            />
-            <span>{getZoomLabel()}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main content area */}
-      {videos.length === 0 ? (
-        <div className="drop-zone">
-          {isElectron ? (
-            <div>
-              <h2>🎬 Welcome to Video Browser</h2>
-              <p>Click "Select Folder" above to browse your video collection</p>
-              <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
-                Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
-              </p>
-              <div
-                style={{
-                  marginTop: '2rem',
-                  padding: '1rem',
-                  background: '#2a4a00',
-                  borderRadius: '8px',
-                  borderLeft: '4px solid #4CAF50',
-                }}
-              >
-                <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                  ✨ Full Desktop Integration
-                </div>
-                <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
-                  <li>Browse any folder on your computer</li>
-                  <li>Right-click to show files in file manager</li>
-                  <li>Delete files (moves to trash)</li>
-                  <li>Optimized performance for large collections</li>
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <h2>Drop video files here</h2>
-              <p>Or use the "Open Folder" button above</p>
-              <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
-                Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
-              </p>
-              <div
-                style={{
-                  marginTop: '2rem',
-                  padding: '1rem',
-                  background: '#4a3000',
-                  borderRadius: '8px',
-                  borderLeft: '4px solid #ff9800',
-                }}
-              >
-                <div style={{ color: '#ff9800', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                  ⚠️ Limited Web Mode
-                </div>
-                <p style={{ color: '#ccc', margin: 0, lineHeight: 1.6 }}>
-                  Running in web browser with reduced functionality. For full desktop integration, consider
-                  downloading the desktop app.
-                </p>
-              </div>
-            </div>
-          )}
+      {/* Show loading until settings are loaded to prevent flash of wrong values */}
+      {!settingsLoaded ? (
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          height: '100vh',
+          color: '#888'
+        }}>
+          Loading settings...
         </div>
       ) : (
-        <div 
-          ref={gridRef}
-          className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]}`}
-        >
-          {videos.map((video) => (
-            <VideoCard
-              key={video.id}
-              video={video}
-              selected={selectedVideos.has(video.id)}
-              onSelect={handleVideoSelect}
-              autoplayEnabled={autoplayEnabled}
-              canPlayMoreVideos={canPlayMoreVideos}
-              onVideoPlay={handleVideoPlay}
-              onVideoPause={handleVideoPause}
-              onVideoLoad={handleVideoLoaded}
-              layoutMode={layoutMode}
-            />
-          ))}
-        </div>
+        <>
+          {/* Header */}
+          <div className="header">
+            <h1>
+              🎬 Video Browser{' '}
+              <span style={{ fontSize: '0.6rem', color: '#666', fontWeight: 'normal' }}>v2.10</span>
+            </h1>
+
+            <div id="folderControls">
+              {isElectron ? (
+                <button onClick={handleFolderSelect} className="file-input-label">
+                  📁 Select Folder
+                </button>
+              ) : (
+                <div className="file-input-wrapper">
+                  <input
+                    type="file"
+                    className="file-input"
+                    webkitdirectory="true"
+                    multiple
+                    onChange={handleWebFileSelection}
+                    style={{ display: 'none' }}
+                    id="fileInput"
+                  />
+                  <label htmlFor="fileInput" className="file-input-label">
+                    ⚠️ Open Folder (Limited)
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div
+              className="debug-info"
+              style={{
+                fontSize: '0.75rem',
+                color: '#888',
+                background: '#1a1a1a',
+                padding: '0.3rem 0.8rem',
+                borderRadius: '4px',
+              }}
+            >
+              📁 {videos.length} videos | ▶️ {playingVideos.size} playing {videosWantingToPlay.size > playingVideos.size && `(${videosWantingToPlay.size - playingVideos.size} waiting)`} | 📼 {loadedVideos.size} loaded
+            </div>
+
+            <div className="controls">
+              <button
+                onClick={toggleAutoplay}
+                className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`}
+              >
+                {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
+              </button>
+
+              <button
+                onClick={toggleRecursive}
+                className={`toggle-button ${recursiveMode ? 'active' : ''}`}
+              >
+                {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
+              </button>
+
+              <button onClick={handleLayoutToggle} className="toggle-button">
+                {getLayoutButtonText()}
+              </button>
+
+              <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.9rem' }}>📹</span>
+                <input
+                  type="range"
+                  className="zoom-slider"
+                  min="10"
+                  max="100"
+                  value={maxConcurrentPlaying}
+                  step="5"
+                  style={{ width: '100px' }}
+                  onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))}
+                />
+                <span style={{ fontSize: '0.8rem', minWidth: '30px' }}>{maxConcurrentPlaying}</span>
+              </div>
+
+              <div className="zoom-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>🔍</span>
+                <input
+                  type="range"
+                  className="zoom-slider"
+                  min="0"
+                  max="3"
+                  value={zoomLevel}
+                  step="1"
+                  onChange={(e) => handleZoomChange(parseInt(e.target.value))}
+                />
+                <span>{getZoomLabel()}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Main content area */}
+          {videos.length === 0 ? (
+            <div className="drop-zone">
+              {isElectron ? (
+                <div>
+                  <h2>🎬 Welcome to Video Browser</h2>
+                  <p>Click "Select Folder" above to browse your video collection</p>
+                  <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
+                    Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
+                  </p>
+                  <div
+                    style={{
+                      marginTop: '2rem',
+                      padding: '1rem',
+                      background: '#2a4a00',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid #4CAF50',
+                    }}
+                  >
+                    <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                      ✨ Full Desktop Integration
+                    </div>
+                    <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
+                      <li>Browse any folder on your computer</li>
+                      <li>Right-click to show files in file manager</li>
+                      <li>Delete files (moves to trash)</li>
+                      <li>Optimized performance for large collections</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h2>Drop video files here</h2>
+                  <p>Or use the "Open Folder" button above</p>
+                  <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
+                    Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
+                  </p>
+                  <div
+                    style={{
+                      marginTop: '2rem',
+                      padding: '1rem',
+                      background: '#4a3000',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid #ff9800',
+                    }}
+                  >
+                    <div style={{ color: '#ff9800', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                      ⚠️ Limited Web Mode
+                    </div>
+                    <p style={{ color: '#ccc', margin: 0, lineHeight: 1.6 }}>
+                      Running in web browser with reduced functionality. For full desktop integration, consider
+                      downloading the desktop app.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div 
+              ref={gridRef}
+              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]}`}
+            >
+              {videos.map((video) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  selected={selectedVideos.has(video.id)}
+                  onSelect={handleVideoSelect}
+                  autoplayEnabled={autoplayEnabled}
+                  canPlayMoreVideos={canPlayMoreVideos}
+                  onVideoPlay={handleVideoPlay}
+                  onVideoPause={handleVideoPause}
+                  onVideoLoad={handleVideoLoaded}
+                  layoutMode={layoutMode}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -18,15 +18,18 @@ const defaultSettings = {
 };
 
 let mainWindow;
+let currentSettings = null; // Cache settings in memory
 
 async function loadSettings() {
   try {
     const data = await fs.readFile(settingsPath, 'utf8');
     const settings = JSON.parse(data);
     console.log('Settings loaded:', settings);
-    return { ...defaultSettings, ...settings };
+    currentSettings = { ...defaultSettings, ...settings };
+    return currentSettings;
   } catch (error) {
     console.log('No settings file found, using defaults');
+    currentSettings = defaultSettings;
     return defaultSettings;
   }
 }
@@ -34,6 +37,7 @@ async function loadSettings() {
 async function saveSettings(settings) {
   try {
     await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    currentSettings = settings; // Update cache
     console.log('Settings saved:', settings);
   } catch (error) {
     console.error('Failed to save settings:', error);
@@ -67,23 +71,23 @@ async function createWindow() {
     // Development: load from Vite server
     console.log('Development mode: Loading from Vite server at http://localhost:5173');
     mainWindow.loadURL('http://localhost:5173');
-    
-    // Wait a bit longer for Vite to be ready, then send settings
-    mainWindow.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        mainWindow.webContents.send('settings-loaded', settings);
-      }, 1000);
-    });
   } else {
     // Production: load from built files
     console.log('Production mode: Loading from index.html');
     mainWindow.loadFile('index.html');
-    
-    // Send settings to renderer after page loads
-    mainWindow.webContents.once('did-finish-load', () => {
-      mainWindow.webContents.send('settings-loaded', settings);
-    });
   }
+
+  // Send settings immediately when page loads (both initial and refresh)
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('Page loaded, sending settings immediately');
+    mainWindow.webContents.send('settings-loaded', currentSettings);
+  });
+
+  // Also send settings when the DOM is ready (even faster)
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('DOM ready, sending settings');
+    mainWindow.webContents.send('settings-loaded', currentSettings);
+  });
 
   // Save window bounds when moved or resized
   mainWindow.on('moved', saveWindowBounds);
@@ -180,6 +184,7 @@ async function saveSettingsPartial(partialSettings) {
   }
 }
 
+// IPC Handlers
 ipcMain.handle('save-settings', async (event, settings) => {
   await saveSettings(settings);
   return { success: true };
@@ -188,6 +193,21 @@ ipcMain.handle('save-settings', async (event, settings) => {
 ipcMain.handle('load-settings', async (event) => {
   const settings = await loadSettings();
   return settings;
+});
+
+// NEW: Synchronous settings getter - returns cached settings immediately
+ipcMain.handle('get-settings', async (event) => {
+  console.log('get-settings called, returning:', currentSettings);
+  return currentSettings || defaultSettings;
+});
+
+// NEW: Request settings (for refresh scenarios)
+ipcMain.handle('request-settings', async (event) => {
+  console.log('request-settings called, sending settings via IPC');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('settings-loaded', currentSettings || defaultSettings);
+  }
+  return { success: true };
 });
 
 ipcMain.handle('save-settings-partial', async (event, partialSettings) => {

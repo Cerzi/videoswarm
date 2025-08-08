@@ -12,16 +12,25 @@ export const useLayoutManager = (videos, zoomLevel) => {
   const masonryLayoutTimeoutRef = useRef(null)
   const resizeTimeoutRef = useRef(null)
 
-  // Load layout mode from settings on mount
+  // Enhanced settings loading that works on both app start and refresh
   useEffect(() => {
-    if (window.electronAPI?.onSettingsLoaded) {
-      window.electronAPI.onSettingsLoaded((settings) => {
-        if (settings.layoutMode !== undefined) {
-          console.log('Loading layout mode from settings:', settings.layoutMode);
-          setLayoutMode(settings.layoutMode);
-        }
-      });
-    }
+    const loadLayoutSettings = () => {
+      if (window.electronAPI?.onSettingsLoaded) {
+        window.electronAPI.onSettingsLoaded((settings) => {
+          if (settings.layoutMode !== undefined) {
+            console.log('Loading layout mode from settings:', settings.layoutMode);
+            setLayoutMode(settings.layoutMode);
+          }
+        });
+      }
+
+      // Also try to request settings immediately in case we missed the initial load
+      if (window.electronAPI?.requestSettings) {
+        window.electronAPI.requestSettings();
+      }
+    };
+
+    loadLayoutSettings();
   }, []);
 
   // Setup scroll detection
