@@ -1,50 +1,29 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import VideoCard from './components/VideoCard';
-import MasonryContainer from './components/MasonryContainer';
-import { useMasonryLayout } from './hooks/useMasonryLayout';
+import { useLayoutManager } from './hooks/useLayoutManager';
 import './App.css';
 
 function App() {
   const [videos, setVideos] = useState([]);
   const [selectedVideos, setSelectedVideos] = useState(new Set());
   const [autoplayEnabled, setAutoplayEnabled] = useState(true);
-  const [layoutMode, setLayoutMode] = useState('grid');
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [playingVideos, setPlayingVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
 
-  // Measure container width
-  const containerRef = useRef(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-
-  useEffect(() => {
-    const updateContainerWidth = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth);
-      }
-    };
-
-    updateContainerWidth();
-    window.addEventListener('resize', updateContainerWidth);
-    return () => window.removeEventListener('resize', updateContainerWidth);
-  }, []);
-
-  // Use the masonry layout hook
+  // Use the layout manager hook
   const {
-    itemPositions,
-    containerHeight,
+    layoutMode,
+    gridRef,
+    toggleLayout,
+    refreshMasonryLayout,
+    forceLayout,
+    setZoom,
     updateAspectRatio,
-    recalculateLayout,
-    isMasonry,
-  } = useMasonryLayout(videos, layoutMode, zoomLevel, containerWidth, {
-    baseColumnWidth: 200,
-    gap: 4,
-    rowHeight: 200,
-    headerHeight: 200,
-    filenameOverlayHeight: 30,
-  });
+    manualVisibilityCheck
+  } = useLayoutManager(videos, zoomLevel);
 
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
@@ -55,7 +34,6 @@ function App() {
       window.electronAPI.onSettingsLoaded((settings) => {
         console.log('Settings received:', settings);
         if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
-        if (settings.layoutMode !== undefined) setLayoutMode(settings.layoutMode);
         if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
         if (settings.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
@@ -180,15 +158,9 @@ function App() {
     saveSettings();
   };
 
-  const toggleLayout = () => {
-    const modes = ['grid', 'masonry-vertical', 'masonry-horizontal'];
-    const currentIndex = modes.indexOf(layoutMode);
-    const nextIndex = (currentIndex + 1) % modes.length;
-    const newMode = modes[nextIndex];
-
-    setLayoutMode(newMode);
+  const handleLayoutToggle = () => {
+    const newMode = toggleLayout();
     saveSettings();
-    recalculateLayout(); // Ensure layout updates immediately
     return newMode;
   };
 
@@ -211,8 +183,8 @@ function App() {
 
   const handleZoomChange = (newZoom) => {
     setZoomLevel(newZoom);
+    setZoom(newZoom); // This applies the zoom through the layout manager
     saveSettings();
-    recalculateLayout(); // Ensure layout updates on zoom change
   };
 
   const getLayoutButtonText = () => {
@@ -246,13 +218,10 @@ function App() {
     setSelectedVideos(newSelected);
   };
 
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
-    },
-    [updateAspectRatio]
-  );
+  const handleVideoLoaded = useCallback((videoId, aspectRatio) => {
+    setLoadedVideos((prev) => new Set([...prev, videoId]));
+    updateAspectRatio(videoId, aspectRatio);
+  }, [updateAspectRatio]);
 
   return (
     <div className="app">
@@ -319,7 +288,7 @@ function App() {
             {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
           </button>
 
-          <button onClick={toggleLayout} className="toggle-button">
+          <button onClick={handleLayoutToggle} className="toggle-button">
             {getLayoutButtonText()}
           </button>
 
@@ -412,12 +381,8 @@ function App() {
           )}
         </div>
       ) : (
-        <MasonryContainer
-          ref={containerRef}
-          itemPositions={itemPositions}
-          containerHeight={containerHeight}
-          containerWidth={containerWidth}
-          isMasonry={isMasonry}
+        <div 
+          ref={gridRef}
           className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]}`}
         >
           {videos.map((video) => (
@@ -430,12 +395,11 @@ function App() {
               canPlayMoreVideos={canPlayMoreVideos}
               onVideoPlay={handleVideoPlay}
               onVideoPause={handleVideoPause}
-              onVideoLoaded={handleVideoLoaded}
+              onVideoLoad={handleVideoLoaded}
               layoutMode={layoutMode}
-              position={itemPositions.find((pos) => pos.id === video.id)}
             />
           ))}
-        </MasonryContainer>
+        </div>
       )}
     </div>
   );

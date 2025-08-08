@@ -8,10 +8,8 @@ const VideoCard = ({
   canPlayMoreVideos, 
   onVideoPlay, 
   onVideoPause,
-  onVideoLoad, // NEW: Callback to report aspect ratio
-  style, // NEW: Positioning from MasonryContainer
-  contentHeight, // NEW: Calculated content height
-  layoutMode // NEW: Current layout mode
+  onVideoLoad, // Callback to report aspect ratio
+  layoutMode // Current layout mode
 }) => {
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -84,9 +82,9 @@ const VideoCard = ({
       // Store video ID for performance tracking
       videoElement.dataset.videoId = videoId
       
-      // Better styling based on layout mode and content height
+      // Basic styling - let CSS handle layout-specific sizing
       videoElement.style.width = '100%'
-      videoElement.style.height = contentHeight ? `${contentHeight}px` : '100%'
+      videoElement.style.height = '100%'
       videoElement.style.objectFit = 'cover'
       videoElement.style.display = 'block'
 
@@ -126,7 +124,7 @@ const VideoCard = ({
         // Report aspect ratio to parent for layout calculations
         if (videoElement.videoWidth && videoElement.videoHeight) {
           const aspectRatio = videoElement.videoWidth / videoElement.videoHeight
-          onVideoLoad?.(aspectRatio)
+          onVideoLoad?.(videoId, aspectRatio)
         }
         
         // Better event handlers for loop management
@@ -180,7 +178,7 @@ const VideoCard = ({
       hasLoadedRef.current = false
       setError({ message: 'Setup Error', type: 'setup' })
     }
-  }, [video, loading, loaded, error, isVisible, autoplayEnabled, videoId, onVideoLoad, contentHeight])
+  }, [video, loading, loaded, error, isVisible, autoplayEnabled, videoId, onVideoLoad])
 
   const playVideo = useCallback(() => {
     if (!videoRef.current || isPlaying || !canPlayMoreVideos()) return
@@ -259,29 +257,27 @@ const VideoCard = ({
     console.log('Context menu for:', video.name)
   }
 
-  // Placeholder styling based on layout mode and content height
-  const getPlaceholderStyle = () => {
-    const baseStyle = {
-      width: '100%',
-      background: '#2d2d2d',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#666',
-      fontSize: '0.8rem'
-    }
-
-    if (contentHeight) {
-      return {
-        ...baseStyle,
-        height: `${contentHeight}px`
-      }
+  // Get placeholder content based on layout mode
+  const getPlaceholderContent = () => {
+    if (error) {
+      return (
+        <div className="error-indicator">
+          ❌<br />
+          {error.message}
+        </div>
+      )
+    } else if (loading) {
+      return (
+        <div className="video-placeholder">
+          📼 Loading...
+        </div>
+      )
     } else {
-      // Fallback for grid mode
-      return {
-        ...baseStyle,
-        height: '140px'
-      }
+      return (
+        <div className="video-placeholder">
+          📼 Scroll to load
+        </div>
+      )
     }
   }
 
@@ -289,22 +285,15 @@ const VideoCard = ({
     <div 
       ref={containerRef}
       className={`video-item ${selected ? 'selected' : ''} ${error ? 'error' : ''}`}
-      style={style} // Apply positioning from MasonryContainer
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
     >
-      {error ? (
-        <div className="error-indicator" style={getPlaceholderStyle()}>
-          ❌<br />
-          {error.message}
-        </div>
-      ) : loaded && videoRef.current ? (
+      {loaded && videoRef.current ? (
         <div 
           className="video-container"
-          style={{ width: '100%', height: contentHeight ? `${contentHeight}px` : '100%' }}
           ref={(container) => {
             if (container && videoRef.current && !container.contains(videoRef.current)) {
               container.appendChild(videoRef.current)
@@ -312,12 +301,7 @@ const VideoCard = ({
           }}
         />
       ) : (
-        <div 
-          className="video-placeholder"
-          style={getPlaceholderStyle()}
-        >
-          {loading ? '📼 Loading...' : '📼 Scroll to load'}
-        </div>
+        getPlaceholderContent()
       )}
       
       <div className="video-filename">

@@ -100,13 +100,11 @@ export const useLayoutManager = (videos, zoomLevel) => {
         } else {
           aspectRatio = 16 / 9 // Default
         }
-      } else if (typeof aspectRatio === 'string') {
-        const [width, height] = aspectRatio.split('/').map(Number)
-        aspectRatio = width / height
       }
 
       // Calculate item height based on fixed width and aspect ratio
-      const itemHeight = Math.round(columnWidth / aspectRatio) + 30 // Add space for filename
+      const contentHeight = Math.round(columnWidth / aspectRatio)
+      const itemHeight = contentHeight + 30 // Add space for filename
 
       // Find column with minimum height
       const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights))
@@ -120,12 +118,10 @@ export const useLayoutManager = (videos, zoomLevel) => {
       videoItem.style.width = `${columnWidth}px`
       videoItem.style.height = `${itemHeight}px`
 
-      // Update the video element styling for aspect ratio
-      const videoElement = videoItem.querySelector('video, .video-placeholder')
-      if (videoElement) {
-        videoElement.style.width = '100%'
-        videoElement.style.height = `${itemHeight - 30}px` // Subtract filename space
-        videoElement.style.objectFit = 'cover'
+      // Update the video container styling
+      const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
+      if (videoContainer) {
+        videoContainer.style.height = `${contentHeight}px`
       }
 
       // Update column height
@@ -145,21 +141,22 @@ export const useLayoutManager = (videos, zoomLevel) => {
 
     console.log('Laying out horizontal masonry (fixed height, variable width)')
 
-    // For horizontal masonry, we need a fixed row height
-    const fixedRowHeight = 200 // Base height
-    const rowGap = 4
+    // Get the container width and fixed height
+    const containerWidth = grid.clientWidth - 32 // Account for padding
+    const fixedHeight = 200 // Base fixed height
+    const contentHeight = fixedHeight - 30 // Subtract filename space
+    const gap = 4
     
-    // Calculate how many rows can fit in viewport
-    const viewportHeight = window.innerHeight - 200 // Account for header
-    const maxRows = Math.floor(viewportHeight / (fixedRowHeight + rowGap))
-    
-    // Initialize row widths array
-    const rowWidths = new Array(maxRows).fill(0)
+    // Start laying out videos row by row
+    let currentRowWidth = 0
+    let currentRowY = 0
+    let rowVideos = []
+    const allRows = []
     
     // Get all video items
-    const videoItems = grid.querySelectorAll('.video-item')
+    const videoItems = Array.from(grid.querySelectorAll('.video-item'))
     
-    videoItems.forEach((videoItem) => {
+    videoItems.forEach((videoItem, index) => {
       // Get or calculate aspect ratio
       const videoId = videoItem.dataset.videoId || videoItem.dataset.filename
       let aspectRatio = aspectRatioCacheRef.current.get(videoId)
@@ -172,44 +169,62 @@ export const useLayoutManager = (videos, zoomLevel) => {
         } else {
           aspectRatio = 16 / 9 // Default
         }
-      } else if (typeof aspectRatio === 'string') {
-        const [width, height] = aspectRatio.split('/').map(Number)
-        aspectRatio = width / height
       }
 
       // Calculate item width based on fixed height and aspect ratio
-      const itemWidth = Math.round(fixedRowHeight * aspectRatio)
+      const itemWidth = Math.round(contentHeight * aspectRatio)
 
-      // Find row with minimum width
-      const shortestRowIndex = rowWidths.indexOf(Math.min(...rowWidths))
-      const leftPosition = rowWidths[shortestRowIndex]
-      const topPosition = shortestRowIndex * (fixedRowHeight + rowGap)
-
-      // Position the item
-      videoItem.style.position = 'absolute'
-      videoItem.style.left = `${leftPosition}px`
-      videoItem.style.top = `${topPosition}px`
-      videoItem.style.width = `${itemWidth}px`
-      videoItem.style.height = `${fixedRowHeight}px`
-
-      // Update the video element styling
-      const videoElement = videoItem.querySelector('video, .video-placeholder')
-      if (videoElement) {
-        videoElement.style.width = '100%'
-        videoElement.style.height = `${fixedRowHeight - 30}px` // Subtract filename space
-        videoElement.style.objectFit = 'cover'
+      // Check if this video fits in the current row
+      if (currentRowWidth + itemWidth <= containerWidth || rowVideos.length === 0) {
+        // Add to current row
+        rowVideos.push({ videoItem, width: itemWidth, aspectRatio })
+        currentRowWidth += itemWidth + (rowVideos.length > 1 ? gap : 0)
+      } else {
+        // Start new row - first save the current row
+        if (rowVideos.length > 0) {
+          allRows.push({ videos: rowVideos, y: currentRowY })
+          currentRowY += fixedHeight + gap
+        }
+        
+        // Start new row with this video
+        rowVideos = [{ videoItem, width: itemWidth, aspectRatio }]
+        currentRowWidth = itemWidth
       }
 
-      // Update row width
-      rowWidths[shortestRowIndex] += itemWidth + rowGap
+      // If this is the last video, save the current row
+      if (index === videoItems.length - 1 && rowVideos.length > 0) {
+        allRows.push({ videos: rowVideos, y: currentRowY })
+      }
     })
 
-    // Set grid container dimensions
-    const maxWidth = Math.max(...rowWidths)
-    grid.style.width = `${maxWidth}px`
-    grid.style.height = `${maxRows * (fixedRowHeight + rowGap)}px`
+    // Now position all videos
+    allRows.forEach(row => {
+      let currentX = 0
+      
+      row.videos.forEach(({ videoItem, width }) => {
+        // Position the item
+        videoItem.style.position = 'absolute'
+        videoItem.style.left = `${currentX}px`
+        videoItem.style.top = `${row.y}px`
+        videoItem.style.width = `${width}px`
+        videoItem.style.height = `${fixedHeight}px`
+
+        // Update the video container styling
+        const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
+        if (videoContainer) {
+          videoContainer.style.height = `${contentHeight}px`
+        }
+
+        currentX += width + gap
+      })
+    })
+
+    // Set grid container height (no horizontal overflow)
+    const totalHeight = allRows.length > 0 ? (allRows.length * (fixedHeight + gap)) : fixedHeight
+    grid.style.height = `${totalHeight}px`
+    grid.style.width = '100%' // Don't expand horizontally
     grid.style.position = 'relative'
-    grid.style.overflowX = 'auto'
+    grid.style.overflowX = 'visible' // No horizontal scroll
   }, [])
 
   // Grid layout (original CSS grid behavior)
@@ -228,12 +243,10 @@ export const useLayoutManager = (videos, zoomLevel) => {
       videoItem.style.width = ''
       videoItem.style.height = ''
       
-      // Reset video element styling
-      const videoElement = videoItem.querySelector('video, .video-placeholder')
-      if (videoElement) {
-        videoElement.style.width = '100%'
-        videoElement.style.height = '140px' // Fixed height for grid mode
-        videoElement.style.objectFit = 'cover'
+      // Reset video container styling - let CSS handle it
+      const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
+      if (videoContainer) {
+        videoContainer.style.height = ''
       }
     })
 
@@ -313,11 +326,8 @@ export const useLayoutManager = (videos, zoomLevel) => {
     // Clear cached measurements when switching layouts
     cachedGridMeasurementsRef.current = null
 
-    // Remove all layout classes
-    grid.classList.remove('masonry-vertical', 'masonry-horizontal')
-
+    // Apply the layout immediately
     if (mode === 'masonry-vertical') {
-      grid.classList.add('masonry-vertical')
       // Use setTimeout to ensure CSS changes are applied first
       setTimeout(() => {
         updateCachedGridMeasurements()
@@ -330,7 +340,6 @@ export const useLayoutManager = (videos, zoomLevel) => {
         }
       }, 50)
     } else if (mode === 'masonry-horizontal') {
-      grid.classList.add('masonry-horizontal')
       setTimeout(() => {
         initializeMasonryGrid()
         if (currentScrollY > 0) {
@@ -354,38 +363,25 @@ export const useLayoutManager = (videos, zoomLevel) => {
 
   // Setup resize handling
   useEffect(() => {
-    let isResizing = false
-
     const handleResize = () => {
-      isResizing = true
       clearTimeout(resizeTimeoutRef.current)
 
-      // Only handle resize AFTER user stops resizing for 1 second
+      // Only handle resize AFTER user stops resizing for 500ms
       resizeTimeoutRef.current = setTimeout(() => {
-        isResizing = false
-        handleResizeComplete()
-      }, 1000)
-    }
+        console.log('Window resize complete - updating layout')
 
-    const handleResizeComplete = () => {
-      console.log('Window resize complete - updating layout')
+        // Clear cached measurements
+        cachedGridMeasurementsRef.current = null
 
-      // Clear cached measurements
-      cachedGridMeasurementsRef.current = null
-
-      // Re-layout for any masonry mode
-      if ((layoutMode === 'masonry-vertical' || layoutMode === 'masonry-horizontal') &&
-          !isLayoutingRef.current &&
-          !isUserScrollingRef.current) {
-        setTimeout(() => {
-          initializeMasonryGrid()
-        }, 100)
-      }
-
-      // Handle post-resize video management
-      setTimeout(() => {
-        handlePostResize()
-      }, 300)
+        // Re-layout for any masonry mode
+        if ((layoutMode === 'masonry-vertical' || layoutMode === 'masonry-horizontal') &&
+            !isLayoutingRef.current &&
+            !isUserScrollingRef.current) {
+          setTimeout(() => {
+            initializeMasonryGrid()
+          }, 100)
+        }
+      }, 500)
     }
 
     window.addEventListener('resize', handleResize)
@@ -396,51 +392,6 @@ export const useLayoutManager = (videos, zoomLevel) => {
     }
   }, [layoutMode, initializeMasonryGrid])
 
-  const handlePostResize = useCallback(() => {
-    console.log('LayoutManager handling post-resize recovery...')
-    
-    // Manual visibility check since observers might be confused
-    const visibleVideoIds = manualVisibilityCheck()
-    
-    // Restart videos that should be playing
-    setTimeout(() => {
-      restartVisibleVideos(visibleVideoIds)
-    }, 100)
-  }, [])
-
-  const manualVisibilityCheck = useCallback(() => {
-    const viewportTop = window.scrollY
-    const viewportBottom = viewportTop + window.innerHeight
-    const buffer = 100
-
-    let visibleCount = 0
-    const visibleVideoIds = new Set()
-
-    const videoElements = document.querySelectorAll('.video-item')
-    videoElements.forEach(videoItem => {
-      const rect = videoItem.getBoundingClientRect()
-      const absoluteTop = rect.top + window.scrollY
-      const absoluteBottom = absoluteTop + rect.height
-
-      const isVisible = absoluteBottom >= (viewportTop - buffer) &&
-                       absoluteTop <= (viewportBottom + buffer)
-
-      if (isVisible) {
-        const videoId = videoItem.dataset.videoId || videoItem.dataset.filename
-        visibleVideoIds.add(videoId)
-        visibleCount++
-      }
-    })
-
-    console.log(`Manual visibility check found ${visibleCount} visible videos`)
-    return visibleVideoIds
-  }, [])
-
-  const restartVisibleVideos = useCallback((visibleVideoIds) => {
-    console.log('Restarting visible videos after resize...')
-    return visibleVideoIds
-  }, [])
-
   const toggleLayout = useCallback(() => {
     const modes = ['grid', 'masonry-vertical', 'masonry-horizontal']
     const currentIndex = modes.indexOf(layoutMode)
@@ -448,8 +399,14 @@ export const useLayoutManager = (videos, zoomLevel) => {
     const newMode = modes[nextIndex]
     
     setLayoutMode(newMode)
+    
+    // Apply layout immediately after state change
+    setTimeout(() => {
+      applyLayout(newMode)
+    }, 50)
+    
     return newMode
-  }, [layoutMode])
+  }, [layoutMode, applyLayout])
 
   const refreshMasonryLayout = useCallback(() => {
     // Don't refresh if user is interacting or layout is already in progress
@@ -462,14 +419,16 @@ export const useLayoutManager = (videos, zoomLevel) => {
 
     // Don't refresh too frequently
     const now = Date.now()
-    if (lastScrollTimeRef.current && (now - lastScrollTimeRef.current < 2000)) {
+    if (lastScrollTimeRef.current && (now - lastScrollTimeRef.current < 1000)) {
       console.log('Skipping layout refresh - recent user activity')
       return
     }
 
     console.log('Refreshing masonry layout')
-    initializeMasonryGrid()
-  }, [initializeMasonryGrid])
+    if (layoutMode !== 'grid') {
+      initializeMasonryGrid()
+    }
+  }, [initializeMasonryGrid, layoutMode])
 
   const forceLayout = useCallback(() => {
     const currentScrollY = window.scrollY
@@ -490,32 +449,26 @@ export const useLayoutManager = (videos, zoomLevel) => {
 
     const zoomLevels = ['zoom-small', 'zoom-medium', 'zoom-large', 'zoom-xlarge']
     
+    // Remove all zoom classes
     zoomLevels.forEach(cls => grid.classList.remove(cls))
+    // Add the new zoom class
     grid.classList.add(zoomLevels[level])
 
     // Refresh layout after zoom change
     clearTimeout(masonryLayoutTimeoutRef.current)
     masonryLayoutTimeoutRef.current = setTimeout(() => {
       cachedGridMeasurementsRef.current = null
-      initializeMasonryGrid()
+      if (layoutMode !== 'grid') {
+        initializeMasonryGrid()
+      }
     }, 300)
-  }, [initializeMasonryGrid])
+  }, [initializeMasonryGrid, layoutMode])
 
-  const handleLayoutCollapse = useCallback(() => {
-    console.log('Layout collapse detected - resetting layout manager')
-    
-    layoutRefreshInProgressRef.current = false
-    isLayoutingRef.current = false
-
-    // Force layout recalculation
-    setTimeout(() => {
-      initializeMasonryGrid()
-    }, 100)
-  }, [initializeMasonryGrid])
-
-  // Apply layout when mode changes or videos change
+  // Apply layout when mode or videos change
   useEffect(() => {
-    applyLayout()
+    if (videos.length > 0) {
+      applyLayout()
+    }
   }, [layoutMode, videos.length, applyLayout])
 
   // Apply zoom when zoomLevel changes
@@ -523,40 +476,17 @@ export const useLayoutManager = (videos, zoomLevel) => {
     setZoom(zoomLevel)
   }, [zoomLevel, setZoom])
 
-  // Setup layout collapse monitoring
-  useEffect(() => {
-    let lastHeight = document.documentElement.scrollHeight
-    let consecutiveChecks = 0
-
-    const monitorLayoutCollapse = () => {
-      // Skip monitoring during layout operations
-      if (isLayoutingRef.current || layoutRefreshInProgressRef.current) {
-        return
-      }
-
-      const currentHeight = document.documentElement.scrollHeight
-      const heightChange = Math.abs(currentHeight - lastHeight)
-
-      // Only trigger on MASSIVE height changes (real collapses, not normal layout)
-      if (heightChange > window.innerHeight * 4) {
-        consecutiveChecks++
-
-        // Only trigger after multiple consecutive detections to avoid false positives
-        if (consecutiveChecks >= 2) {
-          console.warn(`SEVERE LAYOUT COLLAPSE DETECTED: Height changed by ${heightChange}px`)
-          handleLayoutCollapse()
-          consecutiveChecks = 0
-        }
-      } else {
-        consecutiveChecks = 0
-      }
-
-      lastHeight = currentHeight
+  // Update aspect ratio cache when videos load
+  const updateAspectRatio = useCallback((videoId, aspectRatio) => {
+    aspectRatioCacheRef.current.set(videoId, aspectRatio)
+    
+    // Refresh layout if this is a masonry mode
+    if (layoutMode !== 'grid') {
+      setTimeout(() => {
+        refreshMasonryLayout()
+      }, 100)
     }
-
-    const intervalId = setInterval(monitorLayoutCollapse, 1000)
-    return () => clearInterval(intervalId)
-  }, [handleLayoutCollapse])
+  }, [layoutMode, refreshMasonryLayout])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -573,7 +503,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
     refreshMasonryLayout,
     forceLayout,
     setZoom,
-    handlePostResize,
-    manualVisibilityCheck
+    updateAspectRatio,
+    manualVisibilityCheck: () => new Set() // Placeholder for compatibility
   }
 }

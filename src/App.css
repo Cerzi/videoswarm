@@ -1,4 +1,4 @@
-/* App.css - Minimal additions to work with existing styles.css */
+/* App.css - Complete layout system for video browser */
 
 .app {
   width: 100%;
@@ -7,38 +7,72 @@
   flex-direction: column;
 }
 
-/* Let your existing styles.css handle most of the styling */
-/* This file is just for any React-specific adjustments */
-
-/* Ensure React doesn't interfere with your existing styles */
+/* Ensure React doesn't interfere with existing styles */
 * {
   box-sizing: border-box;
 }
 
-/* Video-specific styles for React components */
-.video-container {
+/* Base video grid styles */
+.video-grid {
+  padding: 1rem;
+  gap: 4px;
   width: 100%;
-  height: 140px;
-  background: #2d2d2d;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
 }
 
-.video-container video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.video-item {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #2d2d2d;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+  position: relative;
+}
+
+.video-item.selected {
+  border-color: #007acc;
 }
 
 .video-item.error {
   border-color: #ff4444;
 }
 
+.video-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #2d2d2d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-container video,
+.video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.video-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.8rem;
+  text-align: center;
+  background: #2d2d2d;
+}
+
 .error-indicator {
   width: 100%;
-  height: 140px;
+  height: 100%;
   background: #4a0000;
   display: flex;
   flex-direction: column;
@@ -50,57 +84,201 @@
   padding: 1rem;
 }
 
-/* Masonry layout support */
+.video-filename {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  color: white;
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  height: 30px;
+  display: flex;
+  align-items: flex-end;
+}
+
+/* GRID LAYOUT - Fixed size video cards */
+.video-grid.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px;
+}
+
+.video-grid.grid .video-item {
+  aspect-ratio: 16/9;
+  height: 140px; /* Fixed height for grid */
+}
+
+.video-grid.grid .video-container,
+.video-grid.grid .video-placeholder,
+.video-grid.grid .error-indicator {
+  height: calc(100% - 30px); /* Account for filename */
+}
+
+/* VERTICAL MASONRY - Fixed width, dynamic height based on aspect ratio */
 .video-grid.masonry-vertical {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  grid-template-rows: masonry;
   gap: 4px;
-  align-items: start;
+  position: relative;
 }
 
-/* Fallback for browsers without masonry support */
-@supports not (grid-template-rows: masonry) {
-  .video-grid.masonry-vertical {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    grid-auto-rows: 10px; /* Small row height for fine-grained control */
-    gap: 4px;
-  }
+.video-grid.masonry-vertical .video-item {
+  /* Height will be set by JavaScript based on aspect ratio */
+  position: absolute;
 }
 
+/* HORIZONTAL MASONRY - Fixed height, dynamic width based on aspect ratio */
 .video-grid.masonry-horizontal {
-  display: grid;
-  grid-template-rows: repeat(auto-fill, minmax(140px, 1fr));
-  grid-auto-flow: column;
-  gap: 4px;
-  overflow-x: auto;
-  height: 100vh;
+  display: block;
+  position: relative;
+  overflow-x: visible; /* No horizontal scroll */
+  overflow-y: auto; /* Allow vertical scroll */
+  width: 100%;
 }
 
-/* Zoom levels for masonry */
-.video-grid.masonry-vertical.zoom-small {
+.video-grid.masonry-horizontal .video-item {
+  height: 200px; /* Fixed height for horizontal masonry */
+  position: absolute;
+  /* Width will be set by JavaScript based on aspect ratio */
+}
+
+.video-grid.masonry-horizontal .video-container,
+.video-grid.masonry-horizontal .video-placeholder,
+.video-grid.masonry-horizontal .error-indicator {
+  height: calc(100% - 30px); /* Account for filename */
+}
+
+/* ZOOM LEVELS */
+
+/* Small (75%) */
+.video-grid.zoom-small.grid {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 
-.video-grid.masonry-vertical.zoom-medium {
+.video-grid.zoom-small.grid .video-item {
+  height: 105px;
+}
+
+.video-grid.zoom-small.masonry-vertical {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.video-grid.zoom-small.masonry-horizontal .video-item {
+  height: 150px;
+}
+
+/* Medium (100%) - Default */
+.video-grid.zoom-medium.grid {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
-.video-grid.masonry-vertical.zoom-large {
+.video-grid.zoom-medium.grid .video-item {
+  height: 140px;
+}
+
+.video-grid.zoom-medium.masonry-vertical {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.video-grid.zoom-medium.masonry-horizontal .video-item {
+  height: 200px;
+}
+
+/* Large (150%) */
+.video-grid.zoom-large.grid {
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 
-.video-grid.masonry-vertical.zoom-xlarge {
+.video-grid.zoom-large.grid .video-item {
+  height: 210px;
+}
+
+.video-grid.zoom-large.masonry-vertical {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.video-grid.zoom-large.masonry-horizontal .video-item {
+  height: 300px;
+}
+
+/* XLarge (200%) */
+.video-grid.zoom-xlarge.grid {
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
 }
 
-/* Aspect ratio support for masonry */
-.video-grid.masonry-vertical .video-container,
-.video-grid.masonry-horizontal .video-container {
-  height: auto;
-  aspect-ratio: var(--video-aspect-ratio, 16/9);
-  min-height: 100px;
+.video-grid.zoom-xlarge.grid .video-item {
+  height: 280px;
 }
 
-/* Any React-specific overrides can go here */
+.video-grid.zoom-xlarge.masonry-vertical {
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+}
+
+.video-grid.zoom-xlarge.masonry-horizontal .video-item {
+  height: 400px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .video-grid.grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+  
+  .video-grid.masonry-vertical {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+  
+  .video-grid.masonry-horizontal .video-item {
+    height: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .video-grid.grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  
+  .video-grid.masonry-vertical {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  
+  .video-grid.masonry-horizontal .video-item {
+    height: 120px;
+  }
+}
+
+/* Animation for layout transitions */
+.video-item {
+  transition: all 0.3s ease;
+}
+
+/* Ensure masonry layouts have proper positioning context */
+.video-grid.masonry-vertical,
+.video-grid.masonry-horizontal {
+  position: relative;
+}
+
+/* Special handling for loading states in masonry */
+.video-grid.masonry-vertical .video-placeholder,
+.video-grid.masonry-vertical .error-indicator {
+  height: 140px; /* Default placeholder height */
+}
+
+.video-grid.masonry-horizontal .video-placeholder,
+.video-grid.masonry-horizontal .error-indicator {
+  height: calc(100% - 30px);
+}
+
+/* Ensure video elements fill their containers properly */
+.video-item .video-element,
+.video-item .video-container {
+  border-radius: 8px 8px 0 0; /* Match parent border radius, leave bottom for filename */
+}
+
+/* Additional React-specific overrides can go here */
