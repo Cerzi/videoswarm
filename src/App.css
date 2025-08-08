@@ -50,4 +50,57 @@
   padding: 1rem;
 }
 
+/* Masonry layout support */
+.video-grid.masonry-vertical {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-rows: masonry;
+  gap: 4px;
+  align-items: start;
+}
+
+/* Fallback for browsers without masonry support */
+@supports not (grid-template-rows: masonry) {
+  .video-grid.masonry-vertical {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-auto-rows: 10px; /* Small row height for fine-grained control */
+    gap: 4px;
+  }
+}
+
+.video-grid.masonry-horizontal {
+  display: grid;
+  grid-template-rows: repeat(auto-fill, minmax(140px, 1fr));
+  grid-auto-flow: column;
+  gap: 4px;
+  overflow-x: auto;
+  height: 100vh;
+}
+
+/* Zoom levels for masonry */
+.video-grid.masonry-vertical.zoom-small {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.video-grid.masonry-vertical.zoom-medium {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.video-grid.masonry-vertical.zoom-large {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.video-grid.masonry-vertical.zoom-xlarge {
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+}
+
+/* Aspect ratio support for masonry */
+.video-grid.masonry-vertical .video-container,
+.video-grid.masonry-horizontal .video-container {
+  height: auto;
+  aspect-ratio: var(--video-aspect-ratio, 16/9);
+  min-height: 100px;
+}
+
 /* Any React-specific overrides can go here */
