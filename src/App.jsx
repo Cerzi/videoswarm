@@ -485,7 +485,7 @@ function App() {
           {/* Header */}
           <div className="header">
             <h1>
-              🎬 Video Browser{' '}
+              🐝 Video Swarm{' '}
               <span style={{ fontSize: '0.6rem', color: '#666', fontWeight: 'normal' }}>v2.10</span>
             </h1>
 
@@ -587,7 +587,7 @@ function App() {
             <div className="drop-zone">
               {isElectron ? (
                 <div>
-                  <h2>🎬 Welcome to Video Browser</h2>
+                  <h2>🐝 Welcome to Video Swarm 🐝</h2>
                   <p>Click "Select Folder" above to browse your video collection</p>
                   <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
                     Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
