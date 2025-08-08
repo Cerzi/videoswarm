@@ -17,8 +17,6 @@ const defaultSettings = {
   }
 };
 
-
-
 let mainWindow;
 
 async function loadSettings() {
@@ -62,18 +60,36 @@ async function createWindow() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default'
   });
 
-  mainWindow.loadFile('index.html');
-
-  // Send settings to renderer after page loads
-  mainWindow.webContents.once('did-finish-load', () => {
-    mainWindow.webContents.send('settings-loaded', settings);
-  });
+  // REACT INTEGRATION: Load from Vite dev server in development, file in production
+  const isDev = process.argv.includes('--dev');
+  
+  if (isDev) {
+    // Development: load from Vite server
+    console.log('Development mode: Loading from Vite server at http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5173');
+    
+    // Wait a bit longer for Vite to be ready, then send settings
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        mainWindow.webContents.send('settings-loaded', settings);
+      }, 1000);
+    });
+  } else {
+    // Production: load from built files
+    console.log('Production mode: Loading from index.html');
+    mainWindow.loadFile('index.html');
+    
+    // Send settings to renderer after page loads
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow.webContents.send('settings-loaded', settings);
+    });
+  }
 
   // Save window bounds when moved or resized
   mainWindow.on('moved', saveWindowBounds);
   mainWindow.on('resized', saveWindowBounds);
 
-  if (process.argv.includes('--dev')) {
+  if (isDev) {
     mainWindow.webContents.openDevTools();
   }
 }

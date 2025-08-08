@@ -7,95 +7,99 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="header">
-        <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.10</span></h1>
+    <!-- React will render into this div, replacing all the content below -->
+    <div id="root"></div>
+    
+    <!-- Vite will inject the React app here -->
+    <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- Keep these as fallback/reference - React will recreate this structure -->
+    <div style="display: none;">
+        <!-- Original structure preserved for reference -->
+        <div class="header">
+            <h1>🎬 Video Browser <span style="font-size: 0.6rem; color: #666; font-weight: normal;">v2.10</span></h1>
 
-        <!-- Only show Electron folder button if in Electron, otherwise show web fallback -->
-        <div id="folderControls">
-            <button id="electronFolderBtn" class="file-input-label" style="display: none;">
-                📁 Select Folder
-            </button>
-            <div class="file-input-wrapper" id="webFallback" style="display: none;">
-                <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
-                <label for="fileInput" class="file-input-label">⚠️ Open Folder (Limited)</label>
+            <div id="folderControls">
+                <button id="electronFolderBtn" class="file-input-label" style="display: none;">
+                    📁 Select Folder
+                </button>
+                <div class="file-input-wrapper" id="webFallback" style="display: none;">
+                    <input type="file" id="fileInput" class="file-input" webkitdirectory multiple>
+                    <label for="fileInput" class="file-input-label">⚠️ Open Folder (Limited)</label>
+                </div>
+            </div>
+
+            <div class="selection-info" id="selectionInfo" style="display: none;">
+                0 selected
+            </div>
+
+            <div class="debug-info" id="debugInfo" style="font-size: 0.75rem; color: #888; background: #1a1a1a; padding: 0.3rem 0.8rem; border-radius: 4px;">
+                Ready
+            </div>
+
+            <div class="controls">
+                <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
+                <button id="recursiveToggle" class="toggle-button">📂 Recursive</button>
+
+                <div class="video-limit-control" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 0.9rem;">📹</span>
+                    <input type="range" id="videoLimitSlider" class="zoom-slider" min="10" max="100" value="30" step="5" style="width: 100px;">
+                    <span id="videoLimitLabel" style="font-size: 0.8rem; min-width: 30px;">30</span>
+                </div>
+
+                <div class="zoom-control">
+                    <span>🔍</span>
+                    <input type="range" id="zoomSlider" class="zoom-slider" min="0" max="3" value="1" step="1">
+                    <span id="zoomLabel">100%</span>
+                </div>
             </div>
         </div>
 
-        <div class="selection-info" id="selectionInfo" style="display: none;">
-            0 selected
+        <div class="status" id="status" style="display: none;">
+            Ready - Select a folder to browse videos
         </div>
 
-        <div class="debug-info" id="debugInfo" style="font-size: 0.75rem; color: #888; background: #1a1a1a; padding: 0.3rem 0.8rem; border-radius: 4px;">
-            Ready
-        </div>
-
-        <div class="controls">
-            <button id="autoplayToggle" class="toggle-button active">⏸️ Pause All</button>
-            <button id="recursiveToggle" class="toggle-button">📂 Recursive</button>
-
-            <div class="video-limit-control" style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 0.9rem;">📹</span>
-                <input type="range" id="videoLimitSlider" class="zoom-slider" min="10" max="100" value="30" step="5" style="width: 100px;">
-                <span id="videoLimitLabel" style="font-size: 0.8rem; min-width: 30px;">30</span>
-            </div>
-
-            <div class="zoom-control">
-                <span>🔍</span>
-                <input type="range" id="zoomSlider" class="zoom-slider" min="0" max="3" value="1" step="1">
-                <span id="zoomLabel">100%</span>
-            </div>
-        </div>
-    </div>
-
-    <div class="status" id="status" style="display: none;">
-        Ready - Select a folder to browse videos
-    </div>
-
-    <div class="drop-zone" id="dropZone">
-        <div id="electronDropZone" style="display: none;">
-            <h2>🎬 Welcome to Video Browser</h2>
-            <p>Click "Select Folder" above to browse your video collection</p>
-            <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
-                Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
-            </p>
-            <div style="margin-top: 2rem; padding: 1rem; background: #2a4a00; border-radius: 8px; border-left: 4px solid #4CAF50;">
-                <div style="color: #4CAF50; font-weight: bold; margin-bottom: 0.5rem;">✨ Full Desktop Integration</div>
-                <ul style="color: #ccc; margin: 0; padding-left: 1.5rem; line-height: 1.6;">
-                    <li>Browse any folder on your computer</li>
-                    <li>Right-click to show files in file manager</li>
-                    <li>Delete files (moves to trash)</li>
-                    <li>Optimized performance for large collections</li>
-                </ul>
-            </div>
-        </div>
-
-        <div id="webDropZone" style="display: none;">
-            <h2>Drop video files here</h2>
-            <p>Or use the "Open Folder" button above</p>
-            <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
-                Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
-            </p>
-            <div style="margin-top: 2rem; padding: 1rem; background: #4a3000; border-radius: 8px; border-left: 4px solid #ff9800;">
-                <div style="color: #ff9800; font-weight: bold; margin-bottom: 0.5rem;">⚠️ Limited Web Mode</div>
-                <p style="color: #ccc; margin: 0; line-height: 1.6;">
-                    Running in web browser with reduced functionality. For full desktop integration,
-                    consider downloading the desktop app.
+        <div class="drop-zone" id="dropZone">
+            <div id="electronDropZone" style="display: none;">
+                <h2>🎬 Welcome to Video Browser</h2>
+                <p>Click "Select Folder" above to browse your video collection</p>
+                <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
+                    Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
                 </p>
+                <div style="margin-top: 2rem; padding: 1rem; background: #2a4a00; border-radius: 8px; border-left: 4px solid #4CAF50;">
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 0.5rem;">✨ Full Desktop Integration</div>
+                    <ul style="color: #ccc; margin: 0; padding-left: 1.5rem; line-height: 1.6;">
+                        <li>Browse any folder on your computer</li>
+                        <li>Right-click to show files in file manager</li>
+                        <li>Delete files (moves to trash)</li>
+                        <li>Optimized performance for large collections</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="webDropZone" style="display: none;">
+                <h2>Drop video files here</h2>
+                <p>Or use the "Open Folder" button above</p>
+                <p style="margin-top: 1rem; color: #666; font-size: 0.8rem;">
+                    Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
+                </p>
+                <div style="margin-top: 2rem; padding: 1rem; background: #4a3000; border-radius: 8px; border-left: 4px solid #ff9800;">
+                    <div style="color: #ff9800; font-weight: bold; margin-bottom: 0.5rem;">⚠️ Limited Web Mode</div>
+                    <p style="color: #ccc; margin: 0; line-height: 1.6;">
+                        Running in web browser with reduced functionality. For full desktop integration,
+                        consider downloading the desktop app.
+                    </p>
+                </div>
             </div>
         </div>
+
+        <div class="video-grid" id="videoGrid"></div>
+
+        <!-- Context Menu -->
+        <div class="context-menu" id="contextMenu">
+            <div class="context-menu-item" data-action="show-folder">📁 Show in File Manager</div>
+            <div class="context-menu-item" data-action="copy-path">📋 Copy File Path</div>
+        </div>
     </div>
-
-    <div class="video-grid" id="videoGrid"></div>
-
-    <!-- Context Menu -->
-    <div class="context-menu" id="contextMenu">
-        <div class="context-menu-item" data-action="show-folder">📁 Show in File Manager</div>
-        <div class="context-menu-item" data-action="copy-path">📋 Copy File Path</div>
-    </div>
-
-    <script src="performance-manager.js"></script>
-    <script src="layout-manager.js"></script>
-    <script src="ui-manager.js"></script>
-    <script src="video-browser.js"></script>
 </body>
 </html>
