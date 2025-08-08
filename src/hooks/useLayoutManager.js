@@ -21,6 +21,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
             console.log('Loading layout mode from settings:', settings.layoutMode);
             setLayoutMode(settings.layoutMode);
           }
+          // Note: showFilenames is handled in App.js, not here
         });
       }
 

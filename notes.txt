@@ -1,6 +1,3 @@
-- if ctrl+r, loses saved settings - only loads on app start?
-
-
 - double click expands to full screen for a better view of a specific video
 - add tagging/star rating system
 - consider allowing more direct file browsering instead of selecting a specific folder

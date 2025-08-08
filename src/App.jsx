@@ -112,17 +112,15 @@ function App() {
       try {
         await window.electronAPI.saveSettingsPartial({
           recursiveMode,
-          layoutMode,
           autoplayEnabled,
-          showFilenames, // Added to save filename visibility setting
           maxConcurrentPlaying,
-          zoomLevel,
+          // Note: layoutMode, zoomLevel, and showFilenames are saved individually
         });
       } catch (error) {
         console.error('Failed to save settings:', error);
       }
     }
-  }, [recursiveMode, layoutMode, autoplayEnabled, showFilenames, maxConcurrentPlaying, zoomLevel]);
+  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying]);
 
   const handleFolderSelect = async () => {
     if (!window.electronAPI?.selectFolder) {
@@ -147,9 +145,10 @@ function App() {
     }
 
     try {
-      setVideos([]); // Clear existing videos
+      setVideos([]);
       setSelectedVideos(new Set());
       setPlayingVideos(new Set());
+      setVideosWantingToPlay(new Set());
       setLoadedVideos(new Set());
 
       const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
@@ -200,6 +199,8 @@ function App() {
       setPlayingVideos(new Set());
       // Keep videosWantingToPlay as-is so they can resume later
     }
+
+    saveSettings();
   };
 
   const handleLayoutToggle = () => {
@@ -214,8 +215,17 @@ function App() {
   };
 
   const toggleFilenames = () => {
-    setShowFilenames(!showFilenames);
-    saveSettings();
+    const newShowFilenames = !showFilenames;
+    setShowFilenames(newShowFilenames);
+    
+    // Save immediately like other settings
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        showFilenames: newShowFilenames,
+      }).catch(error => {
+        console.error('Failed to save filename setting:', error);
+      });
+    }
   };
 
   const handleVideoLimitChange = (newLimit) => {
@@ -232,6 +242,8 @@ function App() {
       // The paused videos should still want to play
       // (videosWantingToPlay already includes them)
     }
+
+    saveSettings();
   };
 
   const handleZoomChange = (newZoom) => {
@@ -270,10 +282,13 @@ function App() {
     setSelectedVideos(newSelected);
   };
 
-  const handleVideoLoaded = useCallback((videoId, aspectRatio) => {
-    setLoadedVideos((prev) => new Set([...prev, videoId]));
-    updateAspectRatio(videoId, aspectRatio);
-  }, [updateAspectRatio]);
+  const handleVideoLoaded = useCallback(
+    (videoId, aspectRatio) => {
+      setLoadedVideos((prev) => new Set([...prev, videoId]));
+      updateAspectRatio(videoId, aspectRatio);
+    },
+    [updateAspectRatio]
+  );
 
   return (
     <div className="app">
@@ -464,6 +479,7 @@ function App() {
                   onVideoPause={handleVideoPause}
                   onVideoLoad={handleVideoLoaded}
                   layoutMode={layoutMode}
+                  showFilenames={showFilenames}
                 />
               ))}
             </div>
