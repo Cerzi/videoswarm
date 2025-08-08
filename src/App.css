@@ -340,6 +340,58 @@
   pointer-events: none;
 }
 
+/* Context Menu Styles */
+.context-menu {
+  background: #2d2d2d;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
+  overflow: hidden;
+  font-family: inherit;
+}
+
+.context-menu-header {
+  background: #1a1a1a;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #404040;
+}
+
+.context-menu-title {
+  color: #ccc;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  display: block;
+}
+
+.context-menu-items {
+  padding: 0.25rem 0;
+}
+
+.context-menu-item {
+  padding: 0.5rem 0.75rem;
+  color: #ddd;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background-color 0.15s ease;
+}
+
+.context-menu-item:hover {
+  background: #404040;
+  color: white;
+}
+
+.context-menu-item:active {
+  background: #007acc;
+}
+
 /* Ensure video elements fill their containers properly */
 .video-item .video-element,
 .video-item .video-container {

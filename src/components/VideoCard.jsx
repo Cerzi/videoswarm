@@ -10,7 +10,8 @@ const VideoCard = ({
   onVideoPause,
   onVideoLoad, // Callback to report aspect ratio
   layoutMode, // Current layout mode
-  showFilenames = true // NEW: Whether to show filenames
+  showFilenames = true, // Whether to show filenames
+  onContextMenu // NEW: Context menu handler
 }) => {
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -315,7 +316,11 @@ const VideoCard = ({
 
   const handleContextMenu = (e) => {
     e.preventDefault()
-    console.log('Context menu for:', video.name)
+    e.stopPropagation()
+    
+    if (onContextMenu) {
+      onContextMenu(e, video)
+    }
   }
 
   // Get placeholder content based on layout mode
@@ -378,6 +383,7 @@ const VideoCard = ({
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
+      style={{ userSelect: 'none' }} // Prevent text selection interfering with right-click
     >
       {loaded && videoRef.current ? (
         <div 

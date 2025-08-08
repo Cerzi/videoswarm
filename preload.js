@@ -103,5 +103,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getFileProperties: async (filePath) => {
     return await ipcRenderer.invoke('get-file-properties', filePath);
-  }
+  },
+
+    // External player integration
+  openInExternalPlayer: async (filePath) => {
+    return await ipcRenderer.invoke('open-in-external-player', filePath);
+  },
+
+  // Clipboard operations
+  copyToClipboard: async (text) => {
+    return await ipcRenderer.invoke('copy-to-clipboard', text);
+},
 });

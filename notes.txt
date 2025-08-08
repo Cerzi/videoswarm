@@ -1,4 +1,5 @@
-- double click expands to full screen for a better view of a specific video
+- open workflow context option to open in comfy (requires a setting somewhere for putting in comfy URL)
+
 - add tagging/star rating system
 - consider allowing more direct file browsering instead of selecting a specific folder
 - sort by name, with subdirs grouped together (eg folder A sorted by name, then folder B sorted by name, etc)

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import VideoCard from './components/VideoCard';
 import FullScreenModal from './components/FullScreenModal';
+import ContextMenu from './components/ContextMenu';
 import { useLayoutManager } from './hooks/useLayoutManager';
 import { useFullScreenModal } from './hooks/useFullScreenModal';
+import { useContextMenu } from './hooks/useContextMenu';
 import './App.css';
 
 function App() {
@@ -37,6 +39,41 @@ function App() {
     closeFullScreen,
     navigateFullScreen
   } = useFullScreenModal(videos, layoutMode, gridRef);
+
+  // Use the context menu hook
+  const {
+    contextMenu,
+    showContextMenu,
+    hideContextMenu,
+    handleContextAction
+  } = useContextMenu();
+
+  // Handle click outside context menu to close it
+  useEffect(() => {
+    if (contextMenu.visible) {
+      const handleClickOutside = (event) => {
+        // Check if click is outside the context menu
+        const contextMenuElement = document.querySelector('[data-context-menu]');
+        if (contextMenuElement && !contextMenuElement.contains(event.target)) {
+          hideContextMenu();
+        }
+      };
+
+      const handleEscape = (event) => {
+        if (event.key === 'Escape') {
+          hideContextMenu();
+        }
+      };
+
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleEscape);
+      };
+    }
+  }, [contextMenu.visible, hideContextMenu]);
 
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
@@ -620,6 +657,7 @@ function App() {
                   onVideoLoad={handleVideoLoaded}
                   layoutMode={layoutMode}
                   showFilenames={showFilenames}
+                  onContextMenu={showContextMenu}
                 />
               ))}
             </div>
@@ -634,6 +672,16 @@ function App() {
               showFilenames={showFilenames}
               layoutMode={layoutMode}
               gridRef={gridRef}
+            />
+          )}
+
+          {/* Context Menu */}
+          {contextMenu.visible && (
+            <ContextMenu
+              video={contextMenu.video}
+              position={contextMenu.position}
+              onClose={hideContextMenu}
+              onAction={handleContextAction}
             />
           )}
         </>

@@ -251,6 +251,31 @@ ipcMain.handle('show-item-in-folder', async (event, filePath) => {
   }
 });
 
+// Open file in external application (default video player)
+ipcMain.handle('open-in-external-player', async (event, filePath) => {
+  try {
+    console.log('Opening in external player:', filePath);
+    await shell.openPath(filePath);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to open in external player:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Copy text to clipboard
+ipcMain.handle('copy-to-clipboard', async (event, text) => {
+  try {
+    const { clipboard } = require('electron');
+    clipboard.writeText(text);
+    console.log('Copied to clipboard:', text);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Read directory and return video files with metadata
 ipcMain.handle('read-directory', async (event, folderPath, recursive = false) => {
   try {
