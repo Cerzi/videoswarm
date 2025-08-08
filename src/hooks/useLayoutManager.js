@@ -12,6 +12,18 @@ export const useLayoutManager = (videos, zoomLevel) => {
   const masonryLayoutTimeoutRef = useRef(null)
   const resizeTimeoutRef = useRef(null)
 
+  // Load layout mode from settings on mount
+  useEffect(() => {
+    if (window.electronAPI?.onSettingsLoaded) {
+      window.electronAPI.onSettingsLoaded((settings) => {
+        if (settings.layoutMode !== undefined) {
+          console.log('Loading layout mode from settings:', settings.layoutMode);
+          setLayoutMode(settings.layoutMode);
+        }
+      });
+    }
+  }, []);
+
   // Setup scroll detection
   useEffect(() => {
     let scrollTimeout
@@ -392,6 +404,19 @@ export const useLayoutManager = (videos, zoomLevel) => {
     }
   }, [layoutMode, initializeMasonryGrid])
 
+  const saveLayoutSetting = useCallback(async (newLayoutMode) => {
+    if (window.electronAPI?.saveSettingsPartial) {
+      try {
+        await window.electronAPI.saveSettingsPartial({
+          layoutMode: newLayoutMode,
+        });
+        console.log('Layout mode saved:', newLayoutMode);
+      } catch (error) {
+        console.error('Failed to save layout mode:', error);
+      }
+    }
+  }, []);
+
   const toggleLayout = useCallback(() => {
     const modes = ['grid', 'masonry-vertical', 'masonry-horizontal']
     const currentIndex = modes.indexOf(layoutMode)
@@ -400,13 +425,16 @@ export const useLayoutManager = (videos, zoomLevel) => {
     
     setLayoutMode(newMode)
     
+    // Save the setting immediately
+    saveLayoutSetting(newMode)
+    
     // Apply layout immediately after state change
     setTimeout(() => {
       applyLayout(newMode)
     }, 50)
     
     return newMode
-  }, [layoutMode, applyLayout])
+  }, [layoutMode, applyLayout, saveLayoutSetting])
 
   const refreshMasonryLayout = useCallback(() => {
     // Don't refresh if user is interacting or layout is already in progress
@@ -443,6 +471,19 @@ export const useLayoutManager = (videos, zoomLevel) => {
     }, 100)
   }, [initializeMasonryGrid])
 
+  const saveZoomSetting = useCallback(async (newZoomLevel) => {
+    if (window.electronAPI?.saveSettingsPartial) {
+      try {
+        await window.electronAPI.saveSettingsPartial({
+          zoomLevel: newZoomLevel,
+        });
+        console.log('Zoom level saved:', newZoomLevel);
+      } catch (error) {
+        console.error('Failed to save zoom level:', error);
+      }
+    }
+  }, []);
+
   const setZoom = useCallback((level) => {
     const grid = gridRef.current
     if (!grid) return
@@ -454,6 +495,9 @@ export const useLayoutManager = (videos, zoomLevel) => {
     // Add the new zoom class
     grid.classList.add(zoomLevels[level])
 
+    // Save the zoom setting
+    saveZoomSetting(level)
+
     // Refresh layout after zoom change
     clearTimeout(masonryLayoutTimeoutRef.current)
     masonryLayoutTimeoutRef.current = setTimeout(() => {
@@ -462,7 +506,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
         initializeMasonryGrid()
       }
     }, 300)
-  }, [initializeMasonryGrid, layoutMode])
+  }, [initializeMasonryGrid, layoutMode, saveZoomSetting])
 
   // Apply layout when mode or videos change
   useEffect(() => {

@@ -38,6 +38,7 @@ function App() {
         if (settings.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
         if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
+        // Note: layoutMode is handled by useLayoutManager hook
       });
     }
 
@@ -70,7 +71,7 @@ function App() {
       try {
         await window.electronAPI.saveSettingsPartial({
           recursiveMode,
-          layoutMode,
+          layoutMode, // Now included in settings save
           autoplayEnabled,
           maxConcurrentPlaying,
           zoomLevel,
@@ -160,7 +161,7 @@ function App() {
 
   const handleLayoutToggle = () => {
     const newMode = toggleLayout();
-    saveSettings();
+    // Layout mode is now saved automatically in useLayoutManager
     return newMode;
   };
 
@@ -183,8 +184,7 @@ function App() {
 
   const handleZoomChange = (newZoom) => {
     setZoomLevel(newZoom);
-    setZoom(newZoom); // This applies the zoom through the layout manager
-    saveSettings();
+    setZoom(newZoom); // This now handles saving automatically
   };
 
   const getLayoutButtonText = () => {
@@ -276,7 +276,7 @@ function App() {
         <div className="controls">
           <button
             onClick={toggleAutoplay}
-            className={`toggle-button ${autoplayEnabled ? 'active' : ''}`}
+            className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`}
           >
             {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
           </button>
