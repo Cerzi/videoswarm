@@ -90,29 +90,45 @@ const VideoCard = ({
 
       // Set up error handling
       const handleError = (e) => {
-        console.error(`Video load error for ${video.name}:`, e.target?.error || e)
+        // Suppress console logging for known codec issues to reduce noise
+        const isCodecError = e.target?.error?.message?.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') || 
+                            e.target?.error?.message?.includes('no supported streams')
+        
+        if (!isCodecError) {
+          console.error(`Video load error for ${video.name}:`, e.target?.error || e)
+        } else {
+          console.debug(`Codec not supported for ${video.name} (H.265/HEVC)`)
+        }
+        
         clearTimeout(loadTimeoutRef.current)
         setLoading(false)
         hasLoadedRef.current = false
         
         let errorMessage = 'Load Error'
+        let errorType = 'load'
         
         if (e.target?.error?.message) {
           const msg = e.target.error.message
           if (msg.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') || 
               msg.includes('no supported streams')) {
-            errorMessage = 'Codec Not Supported'
+            errorMessage = 'Unsupported Codec'
+            errorType = 'codec'
           } else if (msg.includes('DEMUXER_ERROR')) {
             errorMessage = 'Format Error'
+            errorType = 'format'
           } else if (msg.includes('MEDIA_ELEMENT_ERROR')) {
             errorMessage = 'Media Error'
+            errorType = 'media'
+          } else if (msg.includes('NETWORK_ERROR')) {
+            errorMessage = 'Network Error'
+            errorType = 'network'
           }
         }
         
-        setError({ message: errorMessage, type: 'load' })
+        setError({ message: errorMessage, type: errorType })
       }
 
-      // Set up success handling
+      // Set up success handling with better error catching
       const handleLoad = () => {
         if (videoRef.current) return // Already loaded
         
@@ -132,15 +148,16 @@ const VideoCard = ({
           // Reset and replay instead of relying on loop attribute
           if (videoElement && !videoElement.paused) {
             videoElement.currentTime = 0
-            videoElement.play().catch(() => {
-              // Ignore autoplay errors on loop
+            videoElement.play().catch((playError) => {
+              // Silently ignore autoplay errors on loop
+              console.debug('Autoplay prevented on loop:', playError)
             })
           }
         })
 
-        // Handle errors during playback
-        videoElement.addEventListener('error', (e) => {
-          console.warn('Playback error:', e)
+        // Handle errors during playback - catch and suppress
+        videoElement.addEventListener('error', (playbackError) => {
+          console.debug('Playback error (handled):', playbackError)
           // Don't crash, just pause
           if (isPlaying) {
             pauseVideo()
@@ -153,23 +170,41 @@ const VideoCard = ({
         }
       }
 
-      // Set up timeout
+      // Set up timeout with better error handling
       loadTimeoutRef.current = setTimeout(() => {
-        handleError({ target: { error: { message: 'Loading timeout' } } })
+        handleError({ 
+          target: { 
+            error: { 
+              message: 'Loading timeout - video took too long to load' 
+            } 
+          } 
+        })
       }, 10000)
 
-      // Add event listeners
+      // Add event listeners with error suppression
       videoElement.addEventListener('loadedmetadata', handleLoad)
       videoElement.addEventListener('canplay', handleLoad) 
       videoElement.addEventListener('error', handleError)
 
-      // Set video source
-      if (video.isElectronFile && video.fullPath) {
-        videoElement.src = `file://${video.fullPath}`
-      } else if (video.file) {
-        videoElement.src = URL.createObjectURL(video.file)
-      } else {
-        throw new Error('No valid video source')
+      // Wrap video source setting in try-catch
+      try {
+        if (video.isElectronFile && video.fullPath) {
+          videoElement.src = `file://${video.fullPath}`
+        } else if (video.file) {
+          videoElement.src = URL.createObjectURL(video.file)
+        } else {
+          throw new Error('No valid video source available')
+        }
+      } catch (srcError) {
+        console.debug('Error setting video source:', srcError)
+        handleError({ 
+          target: { 
+            error: { 
+              message: `Source error: ${srcError.message}` 
+            } 
+          } 
+        })
+        return // Don't continue if source setting failed
       }
 
     } catch (err) {
@@ -183,18 +218,23 @@ const VideoCard = ({
   const playVideo = useCallback(() => {
     if (!videoRef.current || isPlaying || !canPlayMoreVideos()) return
 
-    const playPromise = videoRef.current.play()
-    
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          setIsPlaying(true)
-          onVideoPlay?.(videoId)
-        })
-        .catch((err) => {
-          console.debug('Autoplay prevented or failed:', err)
-          // Don't set playing state if play failed
-        })
+    try {
+      const playPromise = videoRef.current.play()
+      
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true)
+            onVideoPlay?.(videoId)
+          })
+          .catch((err) => {
+            console.debug('Autoplay prevented or failed (handled):', err)
+            // Don't set playing state if play failed
+          })
+      }
+    } catch (playError) {
+      console.debug('Play error caught:', playError)
+      // Don't crash the app for play errors
     }
   }, [isPlaying, canPlayMoreVideos, onVideoPlay, videoId])
 
@@ -260,10 +300,37 @@ const VideoCard = ({
   // Get placeholder content based on layout mode
   const getPlaceholderContent = () => {
     if (error) {
+      const getErrorIcon = () => {
+        switch (error.type) {
+          case 'codec': return '🎞️'
+          case 'format': return '📄'
+          case 'network': return '🌐'
+          case 'media': return '📹'
+          default: return '❌'
+        }
+      }
+
+      const getErrorDescription = () => {
+        switch (error.type) {
+          case 'codec': return 'Unsupported video codec (likely H.265/HEVC)'
+          case 'format': return 'Unsupported video format'
+          case 'network': return 'Network error loading video'
+          case 'media': return 'Media playback error'
+          default: return error.message
+        }
+      }
+
       return (
-        <div className="error-indicator">
-          ❌<br />
-          {error.message}
+        <div className={`error-indicator error-${error.type}`}>
+          <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>
+            {getErrorIcon()}
+          </div>
+          <div style={{ fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>
+            {error.message}
+          </div>
+          <div style={{ fontSize: '0.6rem', opacity: 0.8, lineHeight: 1.2 }}>
+            {getErrorDescription()}
+          </div>
         </div>
       )
     } else if (loading) {

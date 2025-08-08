@@ -73,7 +73,6 @@
 .error-indicator {
   width: 100%;
   height: 100%;
-  background: #4a0000;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -82,6 +81,28 @@
   font-size: 0.8rem;
   text-align: center;
   padding: 1rem;
+  background: #4a0000;
+}
+
+/* Specific error types */
+.error-indicator.error-codec {
+  background: #4a2c00; /* Orange-ish for codec issues */
+  color: #ffaa66;
+}
+
+.error-indicator.error-format {
+  background: #4a0000; /* Red for format issues */
+  color: #ff6666;
+}
+
+.error-indicator.error-network {
+  background: #002a4a; /* Blue for network issues */
+  color: #6699ff;
+}
+
+.error-indicator.error-media {
+  background: #4a004a; /* Purple for media issues */
+  color: #cc66ff;
 }
 
 .video-filename {
