@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import VideoCard from './components/VideoCard';
+import FullScreenModal from './components/FullScreenModal';
 import { useLayoutManager } from './hooks/useLayoutManager';
+import { useFullScreenModal } from './hooks/useFullScreenModal';
 import './App.css';
 
 function App() {
@@ -27,6 +29,14 @@ function App() {
     updateAspectRatio,
     manualVisibilityCheck
   } = useLayoutManager(videos, zoomLevel);
+
+  // Use the fullscreen modal hook
+  const {
+    fullScreenVideo,
+    openFullScreen,
+    closeFullScreen,
+    navigateFullScreen
+  } = useFullScreenModal(videos, layoutMode, gridRef);
 
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
@@ -265,7 +275,18 @@ function App() {
     return labels[zoomLevel] || '100%';
   };
 
-  const handleVideoSelect = (videoId, isCtrlClick) => {
+  const handleVideoSelect = (videoId, isCtrlClick, isDoubleClick) => {
+    const video = videos.find(v => v.id === videoId);
+    
+    if (isDoubleClick && video) {
+      // Open fullscreen on double-click
+      openFullScreen(video, playingVideos);
+      // Pause all currently playing videos
+      setPlayingVideos(new Set());
+      return;
+    }
+
+    // Regular selection logic
     const newSelected = new Set(selectedVideos);
 
     if (isCtrlClick) {
@@ -289,6 +310,39 @@ function App() {
     },
     [updateAspectRatio]
   );
+
+  // Handle keyboard shortcuts for fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Only handle if not in fullscreen and have a selection
+      if (fullScreenVideo || selectedVideos.size !== 1) return;
+
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        const selectedVideoId = Array.from(selectedVideos)[0];
+        const video = videos.find(v => v.id === selectedVideoId);
+        
+        if (video) {
+          openFullScreen(video, playingVideos);
+          // Pause all currently playing videos
+          setPlayingVideos(new Set());
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [fullScreenVideo, selectedVideos, videos, openFullScreen, playingVideos]);
+
+  // Handle fullscreen close and resume videos
+  const handleFullScreenClose = useCallback(() => {
+    const videosToResume = closeFullScreen();
+    
+    // Resume previously playing videos
+    if (videosToResume && videosToResume.size > 0) {
+      setPlayingVideos(videosToResume);
+    }
+  }, [closeFullScreen]);
 
   return (
     <div className="app">
@@ -483,6 +537,18 @@ function App() {
                 />
               ))}
             </div>
+          )}
+
+          {/* Fullscreen Modal */}
+          {fullScreenVideo && (
+            <FullScreenModal
+              video={fullScreenVideo}
+              onClose={handleFullScreenClose}
+              onNavigate={navigateFullScreen}
+              showFilenames={showFilenames}
+              layoutMode={layoutMode}
+              gridRef={gridRef}
+            />
           )}
         </>
       )}

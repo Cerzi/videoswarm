@@ -22,6 +22,7 @@ const VideoCard = ({
   const containerRef = useRef(null)
   const loadTimeoutRef = useRef(null)
   const hasLoadedRef = useRef(false)
+  const clickTimeoutRef = useRef(null)
 
   // Get video ID for tracking
   const videoId = video.id || video.fullPath || video.name
@@ -269,6 +270,9 @@ const VideoCard = ({
       if (loadTimeoutRef.current) {
         clearTimeout(loadTimeoutRef.current)
       }
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current)
+      }
       if (videoRef.current) {
         try {
           // Clean up source
@@ -290,7 +294,23 @@ const VideoCard = ({
 
   const handleClick = (e) => {
     e.stopPropagation()
-    onSelect(videoId, e.ctrlKey || e.metaKey)
+    
+    // Clear any existing timeout
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current)
+      clickTimeoutRef.current = null
+      
+      // This is a double-click
+      onSelect(videoId, e.ctrlKey || e.metaKey, true)
+      return
+    }
+    
+    // Set timeout for single-click
+    clickTimeoutRef.current = setTimeout(() => {
+      // This is a single-click
+      onSelect(videoId, e.ctrlKey || e.metaKey, false)
+      clickTimeoutRef.current = null
+    }, 300) // 300ms delay to detect double-click
   }
 
   const handleContextMenu = (e) => {

@@ -296,6 +296,50 @@
   display: none;
 }
 
+/* Fullscreen Modal Styles */
+.fullscreen-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  cursor: pointer;
+}
+
+.fullscreen-video-container {
+  position: relative;
+  max-width: 95vw;
+  max-height: 95vh;
+  cursor: default;
+}
+
+.fullscreen-video {
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain; /* Best fit scaling */
+  display: block;
+}
+
+.fullscreen-filename {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  color: white;
+  padding: 1rem;
+  font-size: 1rem;
+  text-align: center;
+  pointer-events: none;
+}
+
 /* Ensure video elements fill their containers properly */
 .video-item .video-element,
 .video-item .video-container {
