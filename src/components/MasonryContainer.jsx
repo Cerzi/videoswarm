@@ -2,23 +2,32 @@ import React, { useRef, useEffect, useState } from 'react'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 
 export const MasonryContainer = ({ 
-  videos, 
+  videos = [], 
   layoutMode, 
   zoomLevel, 
   children,
   onLayoutModeChange 
 }) => {
+  // Early return if no videos
+  if (!videos || videos.length === 0) {
+    return (
+      <div className={`video-grid ${layoutMode || 'grid'} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel || 1]}`}>
+        {children}
+      </div>
+    )
+  }
+
   const containerRef = useRef(null)
   const [containerWidth, setContainerWidth] = useState(0)
   
   const { 
-    itemPositions, 
+    itemPositions = [], 
     containerHeight, 
     containerWidth: calculatedWidth,
     updateAspectRatio,
     recalculateLayout,
     isMasonry
-  } = useMasonryLayout(videos, layoutMode, zoomLevel, containerWidth)
+  } = useMasonryLayout(videos || [], layoutMode, zoomLevel, containerWidth)
 
   // Measure container width and handle resize
   useEffect(() => {
@@ -59,7 +68,7 @@ export const MasonryContainer = ({
   }
 
   // Create a position lookup for quick access
-  const positionLookup = itemPositions.reduce((acc, pos) => {
+  const positionLookup = (itemPositions || []).reduce((acc, pos) => {
     acc[pos.id] = pos
     return acc
   }, {})
@@ -71,7 +80,7 @@ export const MasonryContainer = ({
       style={containerStyles}
     >
       {React.Children.map(children, (child, index) => {
-        const video = videos[index]
+        const video = videos && videos[index]
         if (!video) return child
 
         const position = positionLookup[video.id]
