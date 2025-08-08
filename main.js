@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const chokidar = require('chokidar'); // Add file system watcher
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 
 const defaultSettings = {
@@ -20,6 +21,10 @@ const defaultSettings = {
 
 let mainWindow;
 let currentSettings = null; // Cache settings in memory
+let fileWatcher = null; // File system watcher
+let currentWatchedFolder = null; // Track currently watched folder
+let pollingInterval = null; // Fallback polling timer
+let lastFolderScan = new Map(); // Track files for polling mode
 
 async function loadSettings() {
   try {
@@ -246,7 +251,7 @@ ipcMain.handle('show-item-in-folder', async (event, filePath) => {
   }
 });
 
-// Read directory and return video files
+// Read directory and return video files with metadata
 ipcMain.handle('read-directory', async (event, folderPath, recursive = false) => {
   try {
     console.log(`Reading directory: ${folderPath} (recursive: ${recursive})`);
@@ -262,7 +267,44 @@ ipcMain.handle('read-directory', async (event, folderPath, recursive = false) =>
         if (file.isFile()) {
           const ext = path.extname(file.name).toLowerCase();
           if (videoExtensions.includes(ext)) {
-            videoFiles.push(fullPath);
+            try {
+              // Get file stats for metadata
+              const stats = await fs.stat(fullPath);
+              
+              // Create rich file object
+              const videoFile = {
+                id: fullPath, // Use full path as unique ID
+                name: file.name,
+                fullPath: fullPath,
+                relativePath: path.relative(folderPath, fullPath),
+                extension: ext,
+                size: stats.size,
+                dateModified: stats.mtime,
+                dateCreated: stats.birthtime,
+                isElectronFile: true,
+                metadata: {
+                  folder: path.dirname(fullPath),
+                  baseName: path.basename(file.name, ext),
+                  sizeFormatted: formatFileSize(stats.size),
+                  dateModifiedFormatted: stats.mtime.toLocaleDateString(),
+                  dateCreatedFormatted: stats.birthtime.toLocaleDateString()
+                }
+              };
+              
+              videoFiles.push(videoFile);
+            } catch (error) {
+              console.warn(`Error reading file stats for ${fullPath}:`, error.message);
+              // Fallback to basic file object
+              videoFiles.push({
+                id: fullPath,
+                name: file.name,
+                fullPath: fullPath,
+                relativePath: path.relative(folderPath, fullPath),
+                extension: ext,
+                isElectronFile: true,
+                metadata: { folder: path.dirname(fullPath) }
+              });
+            }
           }
         } else if (file.isDirectory() && recursive && depth < 10) { // Limit depth to avoid infinite loops
           // Skip hidden directories and common non-media folders
@@ -281,10 +323,299 @@ ipcMain.handle('read-directory', async (event, folderPath, recursive = false) =>
     await scanDirectory(folderPath);
 
     console.log(`Found ${videoFiles.length} video files in ${folderPath} (recursive: ${recursive})`);
-    return videoFiles.sort(); // Sort files alphabetically
+    
+    // Sort files by name for consistent ordering
+    return videoFiles.sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     console.error('Error reading directory:', error);
     throw error;
+  }
+});
+
+// Helper function to format file sizes
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Helper function to check if file is a video
+function isVideoFile(fileName) {
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp', '.ogv'];
+  const ext = path.extname(fileName).toLowerCase();
+  return videoExtensions.includes(ext);
+}
+
+// Helper function to create rich file object
+async function createVideoFileObject(filePath, baseFolderPath) {
+  try {
+    const stats = await fs.stat(filePath);
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    
+    return {
+      id: filePath,
+      name: fileName,
+      fullPath: filePath,
+      relativePath: path.relative(baseFolderPath, filePath),
+      extension: ext,
+      size: stats.size,
+      dateModified: stats.mtime,
+      dateCreated: stats.birthtime,
+      isElectronFile: true,
+      metadata: {
+        folder: path.dirname(filePath),
+        baseName: path.basename(fileName, ext),
+        sizeFormatted: formatFileSize(stats.size),
+        dateModifiedFormatted: stats.mtime.toLocaleDateString(),
+        dateCreatedFormatted: stats.birthtime.toLocaleDateString()
+      }
+    };
+  } catch (error) {
+    console.warn(`Error creating file object for ${filePath}:`, error.message);
+    return null;
+  }
+}
+
+// Start watching a folder for file changes
+ipcMain.handle('start-folder-watch', async (event, folderPath) => {
+  try {
+    // Stop any existing watcher
+    if (fileWatcher) {
+      fileWatcher.close();
+      fileWatcher = null;
+    }
+
+    currentWatchedFolder = folderPath;
+    
+    // Create new watcher with optimized settings
+    fileWatcher = chokidar.watch(folderPath, {
+      ignored: [
+        /(^|[\/\\])\../, // Ignore hidden files/folders
+        '**/node_modules/**', // Ignore node_modules
+        '**/.git/**' // Ignore git folders
+      ],
+      persistent: true,
+      ignoreInitial: true, // Don't fire events for existing files
+      depth: 10, // Limit recursion depth
+      
+      // OPTIMIZATION: Watch directories only, not individual files
+      usePolling: false, // Use native events (faster)
+      awaitWriteFinish: {
+        stabilityThreshold: 500, // Wait 500ms for file to stabilize
+        pollInterval: 100
+      },
+      
+      // CRITICAL: Reduce file handle usage
+      atomic: true, // Reduce duplicate events
+      alwaysStat: false, // Don't automatically stat files
+      followSymlinks: false, // Don't follow symlinks
+      
+      // Platform-specific optimizations
+      ...(process.platform === 'darwin' && {
+        useFsEvents: true // Use macOS FSEvents
+      }),
+      ...(process.platform === 'win32' && {
+        useReaddir: false // Optimize for Windows
+      })
+    });
+
+    // File added
+    fileWatcher.on('add', async (filePath) => {
+      if (isVideoFile(filePath)) {
+        console.log('Video file added:', filePath);
+        const videoFile = await createVideoFileObject(filePath, folderPath);
+        if (videoFile) {
+          mainWindow.webContents.send('file-added', videoFile);
+        }
+      }
+    });
+
+    // File removed
+    fileWatcher.on('unlink', (filePath) => {
+      if (isVideoFile(filePath)) {
+        console.log('Video file removed:', filePath);
+        mainWindow.webContents.send('file-removed', filePath);
+      }
+    });
+
+    // File changed (modified) - debounced to avoid spam
+    let changeTimeouts = new Map();
+    fileWatcher.on('change', async (filePath) => {
+      if (isVideoFile(filePath)) {
+        // Debounce changes to avoid spam
+        if (changeTimeouts.has(filePath)) {
+          clearTimeout(changeTimeouts.get(filePath));
+        }
+        
+        changeTimeouts.set(filePath, setTimeout(async () => {
+          console.log('Video file changed:', filePath);
+          const videoFile = await createVideoFileObject(filePath, folderPath);
+          if (videoFile) {
+            mainWindow.webContents.send('file-changed', videoFile);
+          }
+          changeTimeouts.delete(filePath);
+        }, 1000)); // Wait 1 second before processing change
+      }
+    });
+
+    // Handle errors gracefully
+    fileWatcher.on('error', (error) => {
+      console.error('File watcher error:', error);
+      
+      // Don't spam the renderer with errors
+      if (error.code === 'EMFILE' || error.code === 'ENOSPC') {
+        console.warn('File watcher: Too many files to watch, falling back to polling mode');
+        
+        // Close the problematic watcher
+        if (fileWatcher) {
+          fileWatcher.close();
+          fileWatcher = null;
+        }
+        
+        // Start polling mode as fallback
+        startPollingMode(folderPath);
+        
+        mainWindow.webContents.send('file-watch-error', 'Switched to polling mode for better stability');
+      } else {
+        mainWindow.webContents.send('file-watch-error', error.message);
+      }
+    });
+
+    console.log('Started watching folder:', folderPath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error starting folder watch:', error);
+    
+    // Try fallback polling mode
+    console.log('Attempting fallback to polling mode...');
+    try {
+      startPollingMode(folderPath);
+      return { success: true, mode: 'polling' };
+    } catch (pollingError) {
+      console.error('Polling mode also failed:', pollingError);
+      return { success: false, error: error.message };
+    }
+  }
+});
+
+// Fallback polling mode for when file watching fails
+function startPollingMode(folderPath) {
+  console.log('Starting polling mode for:', folderPath);
+  
+  // Stop any existing polling
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+  }
+  
+  // Initial scan
+  scanFolderForChanges(folderPath);
+  
+  // Poll every 5 seconds
+  pollingInterval = setInterval(() => {
+    scanFolderForChanges(folderPath);
+  }, 5000);
+}
+
+// Scan folder and detect changes (for polling mode)
+async function scanFolderForChanges(folderPath) {
+  try {
+    const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp', '.ogv'];
+    const currentFiles = new Map();
+    
+    // Scan directory
+    async function scanDirectory(dirPath, depth = 0) {
+      if (depth > 10) return; // Limit depth
+      
+      const files = await fs.readdir(dirPath, { withFileTypes: true });
+      
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file.name);
+        
+        if (file.isFile()) {
+          const ext = path.extname(file.name).toLowerCase();
+          if (videoExtensions.includes(ext)) {
+            try {
+              const stats = await fs.stat(fullPath);
+              currentFiles.set(fullPath, {
+                size: stats.size,
+                mtime: stats.mtime.getTime()
+              });
+            } catch (error) {
+              // File might have been deleted while scanning
+            }
+          }
+        } else if (file.isDirectory() && !file.name.startsWith('.')) {
+          await scanDirectory(fullPath, depth + 1);
+        }
+      }
+    }
+    
+    await scanDirectory(folderPath);
+    
+    // Compare with last scan
+    if (lastFolderScan.size > 0) {
+      // Check for new files
+      for (const [filePath, fileInfo] of currentFiles) {
+        if (!lastFolderScan.has(filePath)) {
+          // File added
+          const videoFile = await createVideoFileObject(filePath, folderPath);
+          if (videoFile) {
+            mainWindow.webContents.send('file-added', videoFile);
+          }
+        } else {
+          // Check if file changed
+          const lastInfo = lastFolderScan.get(filePath);
+          if (lastInfo.mtime !== fileInfo.mtime || lastInfo.size !== fileInfo.size) {
+            const videoFile = await createVideoFileObject(filePath, folderPath);
+            if (videoFile) {
+              mainWindow.webContents.send('file-changed', videoFile);
+            }
+          }
+        }
+      }
+      
+      // Check for removed files
+      for (const filePath of lastFolderScan.keys()) {
+        if (!currentFiles.has(filePath)) {
+          mainWindow.webContents.send('file-removed', filePath);
+        }
+      }
+    }
+    
+    // Update last scan
+    lastFolderScan = currentFiles;
+    
+  } catch (error) {
+    console.error('Error in polling mode scan:', error);
+  }
+}
+
+// Stop watching folder
+ipcMain.handle('stop-folder-watch', async (event) => {
+  try {
+    if (fileWatcher) {
+      fileWatcher.close();
+      fileWatcher = null;
+    }
+    
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+    
+    currentWatchedFolder = null;
+    lastFolderScan.clear();
+    console.log('Stopped folder watching');
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error stopping folder watch:', error);
+    return { success: false, error: error.message };
   }
 });
 

@@ -12,9 +12,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return await ipcRenderer.invoke('show-item-in-folder', filePath);
   },
 
-  // Directory reading
+  // Directory reading with enhanced metadata
   readDirectory: async (folderPath, recursive = false) => {
     return await ipcRenderer.invoke('read-directory', folderPath, recursive);
+  },
+
+  // File system watching
+  startFolderWatch: async (folderPath) => {
+    return await ipcRenderer.invoke('start-folder-watch', folderPath);
+  },
+
+  stopFolderWatch: async () => {
+    return await ipcRenderer.invoke('stop-folder-watch');
+  },
+
+  // File system events
+  onFileAdded: (callback) => {
+    ipcRenderer.on('file-added', (event, videoFile) => callback(videoFile));
+  },
+
+  onFileRemoved: (callback) => {
+    ipcRenderer.on('file-removed', (event, filePath) => callback(filePath));
+  },
+
+  onFileChanged: (callback) => {
+    ipcRenderer.on('file-changed', (event, videoFile) => callback(videoFile));
+  },
+
+  onFileWatchError: (callback) => {
+    ipcRenderer.on('file-watch-error', (event, error) => callback(error));
   },
 
   // Get file info

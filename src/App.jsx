@@ -90,6 +90,87 @@ function App() {
     }
   }, []);
 
+  // Set up file system event listeners
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    // File added
+    const handleFileAdded = (videoFile) => {
+      console.log('File added:', videoFile.name);
+      setVideos(prev => {
+        // Check if file already exists (avoid duplicates)
+        if (prev.some(v => v.id === videoFile.id)) {
+          return prev;
+        }
+        // Add and sort by name
+        const newVideos = [...prev, videoFile];
+        return newVideos.sort((a, b) => a.name.localeCompare(b.name));
+      });
+    };
+
+    // File removed  
+    const handleFileRemoved = (filePath) => {
+      console.log('File removed:', filePath);
+      setVideos(prev => prev.filter(v => v.id !== filePath));
+      // Also clean up any related state
+      setSelectedVideos(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filePath);
+        return newSet;
+      });
+      setPlayingVideos(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filePath);
+        return newSet;
+      });
+      setVideosWantingToPlay(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filePath);
+        return newSet;
+      });
+      setLoadedVideos(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filePath);
+        return newSet;
+      });
+    };
+
+    // File changed (updated metadata)
+    const handleFileChanged = (videoFile) => {
+      console.log('File changed:', videoFile.name);
+      setVideos(prev => prev.map(v => 
+        v.id === videoFile.id ? videoFile : v
+      ));
+    };
+
+    // File watch error
+    const handleFileWatchError = (error) => {
+      console.warn('File watch error (this is usually harmless):', error);
+      // Could show a toast notification here instead of console spam
+    };
+
+    // Set up listeners
+    if (window.electronAPI.onFileAdded) {
+      window.electronAPI.onFileAdded(handleFileAdded);
+    }
+    if (window.electronAPI.onFileRemoved) {
+      window.electronAPI.onFileRemoved(handleFileRemoved);
+    }
+    if (window.electronAPI.onFileChanged) {
+      window.electronAPI.onFileChanged(handleFileChanged);
+    }
+    if (window.electronAPI.onFileWatchError) {
+      window.electronAPI.onFileWatchError(handleFileWatchError);
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (window.electronAPI?.stopFolderWatch) {
+        window.electronAPI.stopFolderWatch().catch(console.error);
+      }
+    };
+  }, []);
+
   const canPlayMoreVideos = useCallback(() => {
     return playingVideos.size < maxConcurrentPlaying;
   }, [playingVideos.size, maxConcurrentPlaying]);
@@ -155,24 +236,35 @@ function App() {
     }
 
     try {
+      // Stop any existing file watcher
+      if (window.electronAPI?.stopFolderWatch) {
+        await window.electronAPI.stopFolderWatch();
+      }
+
+      // Clear existing state
       setVideos([]);
       setSelectedVideos(new Set());
       setPlayingVideos(new Set());
       setVideosWantingToPlay(new Set());
       setLoadedVideos(new Set());
 
+      // Read directory with rich metadata
       const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
-      console.log(`Found ${videoFiles.length} video files`);
+      console.log(`Found ${videoFiles.length} video files with metadata`);
 
-      const videoObjects = videoFiles.map((filePath) => ({
-        id: filePath,
-        name: filePath.split(/[/\\]/).pop(),
-        fullPath: filePath,
-        loaded: false,
-        isElectronFile: true,
-      }));
+      // Video files now come as rich objects, not just paths
+      setVideos(videoFiles);
 
-      setVideos(videoObjects);
+      // Start file system watcher
+      if (window.electronAPI?.startFolderWatch) {
+        const watchResult = await window.electronAPI.startFolderWatch(folderPath);
+        if (watchResult.success) {
+          console.log('Started watching folder for changes');
+        } else {
+          console.warn('Failed to start folder watcher:', watchResult.error);
+        }
+      }
+
     } catch (error) {
       console.error('Error reading directory:', error);
     }
@@ -281,8 +373,7 @@ function App() {
     if (isDoubleClick && video) {
       // Open fullscreen on double-click
       openFullScreen(video, playingVideos);
-      // Pause all currently playing videos
-      setPlayingVideos(new Set());
+      // Note: Background videos continue playing
       return;
     }
 
@@ -324,8 +415,7 @@ function App() {
         
         if (video) {
           openFullScreen(video, playingVideos);
-          // Pause all currently playing videos
-          setPlayingVideos(new Set());
+          // Note: Background videos continue playing
         }
       }
     };
@@ -334,14 +424,10 @@ function App() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [fullScreenVideo, selectedVideos, videos, openFullScreen, playingVideos]);
 
-  // Handle fullscreen close and resume videos
+  // Handle fullscreen close
   const handleFullScreenClose = useCallback(() => {
-    const videosToResume = closeFullScreen();
-    
-    // Resume previously playing videos
-    if (videosToResume && videosToResume.size > 0) {
-      setPlayingVideos(videosToResume);
-    }
+    closeFullScreen();
+    // Note: Background videos continue playing naturally
   }, [closeFullScreen]);
 
   return (

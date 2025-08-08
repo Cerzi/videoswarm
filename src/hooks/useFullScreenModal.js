@@ -1,8 +1,7 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 
 export const useFullScreenModal = (videos, layoutMode, gridRef) => {
   const [fullScreenVideo, setFullScreenVideo] = useState(null);
-  const pausedVideosRef = useRef(new Set()); // Store which videos were playing before fullscreen
 
   // Calculate grid navigation order
   const getGridOrder = useCallback(() => {
@@ -82,23 +81,13 @@ export const useFullScreenModal = (videos, layoutMode, gridRef) => {
   }, [fullScreenVideo, getGridOrder, findVideoIndex, videos]);
 
   // Open fullscreen modal
-  const openFullScreen = useCallback((video, currentlyPlaying) => {
-    // Store currently playing videos
-    pausedVideosRef.current = new Set(currentlyPlaying);
-    
-    // Open the modal
+  const openFullScreen = useCallback((video) => {
     setFullScreenVideo(video);
   }, []);
 
   // Close fullscreen modal
   const closeFullScreen = useCallback(() => {
     setFullScreenVideo(null);
-    
-    // Return the set of videos that should resume playing
-    const toResume = pausedVideosRef.current;
-    pausedVideosRef.current = new Set();
-    
-    return toResume;
   }, []);
 
   return {
