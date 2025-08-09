@@ -1,179 +1,219 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 
-const VideoCard = ({ 
+const VideoCard = memo(({ 
   video, 
   selected, 
   onSelect, 
   autoplayEnabled, 
-  canPlayMoreVideos, 
-  onVideoPlay, 
+  canPlayMoreVideos,
+  onVideoPlay,
   onVideoPause,
-  onVideoLoad, // Callback to report aspect ratio
-  layoutMode, // Current layout mode
-  showFilenames = true, // Whether to show filenames
-  onContextMenu // NEW: Context menu handler
-}) => {
-  const [loaded, setLoaded] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [isVisible, setIsVisible] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
+  onVideoLoad,
+  layoutMode,
+  showFilenames = true,
+  onContextMenu,
   
-  const videoRef = useRef(null)
-  const containerRef = useRef(null)
-  const loadTimeoutRef = useRef(null)
-  const hasLoadedRef = useRef(false)
-  const clickTimeoutRef = useRef(null)
+  // Performance props
+  canLoadMoreVideos,
+  isLoading,
+  isLoaded,
+  isVisible,
+  isPlaying,
+  onStartLoading,
+  onStopLoading,
+  onVisibilityChange
+}) => {
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [visible, setVisible] = useState(false);
+  
+  const videoRef = useRef(null);
+  const containerRef = useRef(null);
+  const loadTimeoutRef = useRef(null);
+  const clickTimeoutRef = useRef(null);
+  const hasLoadedRef = useRef(false);
 
-  // Get video ID for tracking
-  const videoId = video.id || video.fullPath || video.name
+  const videoId = video.id || video.fullPath || video.name;
 
-  // Intersection Observer for visibility detection
+  // Sync with parent state
   useEffect(() => {
-    if (!containerRef.current) return
+    setLoaded(isLoaded);
+    setLoading(isLoading);
+    setVisible(isVisible);
+  }, [isLoaded, isLoading, isVisible]);
+
+  // DEBUGGING: Add this to see what's happening
+  if (Math.random() < 0.01) { // Only log 1% of the time to avoid spam
+    console.log(`VideoCard ${video.name}: visible=${visible}, loaded=${loaded}, isPlaying=${isPlaying}, canLoad=${canLoadMoreVideos()}`);
+  }
+
+  // SIMPLIFIED: Only handle visibility detection
+  useEffect(() => {
+    if (!containerRef.current) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          const nowVisible = entry.isIntersecting
-          setIsVisible(nowVisible)
+          const nowVisible = entry.isIntersecting;
+          setVisible(nowVisible);
           
-          // Load video when it comes into view
-          if (nowVisible && !loaded && !loading && !error && !hasLoadedRef.current) {
-            loadVideo()
-          }
+          // Report visibility to parent - that's ALL we do
+          onVisibilityChange?.(videoId, nowVisible);
           
-          // Handle play/pause based on visibility and autoplay settings
-          if (videoRef.current && loaded) {
-            if (nowVisible && autoplayEnabled && canPlayMoreVideos() && !isPlaying) {
-              playVideo()
-            } else if (!nowVisible && isPlaying) {
-              pauseVideo()
-            }
+          // Load video when it becomes visible
+          if (nowVisible && !loaded && !loading && !error && !hasLoadedRef.current && canLoadMoreVideos()) {
+            loadVideo();
           }
-        })
+        });
       },
       {
         root: null,
         rootMargin: '50px 0px 100px 0px',
         threshold: [0, 0.1]
       }
-    )
+    );
 
-    observer.observe(containerRef.current)
+    observer.observe(containerRef.current);
 
     return () => {
-      observer.disconnect()
+      observer.disconnect();
+    };
+  }, [loaded, loading, error, canLoadMoreVideos, onVisibilityChange, videoId]);
+
+  // FIXED: Respond to parent's isPlaying prop AND report actual state
+  useEffect(() => {
+    if (!videoRef.current || !loaded) return;
+
+    const videoElement = videoRef.current;
+
+    if (isPlaying && videoElement.paused) {
+      // Parent says we should be playing
+      console.log(`Starting video: ${video.name}`);
+      videoElement.play()
+        .then(() => {
+          console.log(`✓ Video playing: ${video.name}`);
+          onVideoPlay?.(videoId); // Report actual play
+        })
+        .catch((err) => {
+          console.log(`✗ Video play failed: ${video.name}`, err);
+          onVideoPause?.(videoId); // Report that we're not actually playing
+        });
+    } else if (!isPlaying && !videoElement.paused) {
+      // Parent says we should be paused
+      console.log(`Pausing video: ${video.name}`);
+      videoElement.pause();
+      onVideoPause?.(videoId); // Report actual pause
     }
-  }, [loaded, loading, error, autoplayEnabled, isPlaying])
+  }, [isPlaying, loaded, video.name, videoId, onVideoPlay, onVideoPause]);
 
+  // ALSO ADD: Direct event listeners on the video element to catch any state changes
+  useEffect(() => {
+    if (!videoRef.current) return;
+
+    const videoElement = videoRef.current;
+
+    const handlePlay = () => {
+      console.log(`🎬 Video actually started playing: ${video.name}`);
+      onVideoPlay?.(videoId);
+    };
+
+    const handlePause = () => {
+      console.log(`⏸️ Video actually paused: ${video.name}`);
+      onVideoPause?.(videoId);
+    };
+
+    const handleEnded = () => {
+      console.log(`🔄 Video ended, restarting: ${video.name}`);
+      if (videoElement && !videoElement.paused) {
+        videoElement.currentTime = 0;
+        videoElement.play().catch(console.debug);
+      }
+    };
+
+    videoElement.addEventListener('play', handlePlay);
+    videoElement.addEventListener('pause', handlePause);
+    videoElement.addEventListener('ended', handleEnded);
+
+    return () => {
+      videoElement.removeEventListener('play', handlePlay);
+      videoElement.removeEventListener('pause', handlePause);
+      videoElement.removeEventListener('ended', handleEnded);
+    };
+  }, [loaded, video.name, videoId, onVideoPlay, onVideoPause]);
+
+  // CALLBACK: Load video function
   const loadVideo = useCallback(async () => {
-    if (loading || loaded || error || hasLoadedRef.current) return
+    if (loading || loaded || error || hasLoadedRef.current || !canLoadMoreVideos()) return;
 
-    hasLoadedRef.current = true
-    setLoading(true)
-    setError(null)
+    hasLoadedRef.current = true;
+    setLoading(true);
+    setError(null);
+    
+    onStartLoading?.(videoId);
 
     try {
-      const videoElement = document.createElement('video')
-      videoElement.muted = true
-      videoElement.loop = true
-      videoElement.preload = 'metadata'
-      videoElement.playsInline = true
-      videoElement.className = 'video-element'
+      const videoElement = document.createElement('video');
+      videoElement.muted = true;
+      videoElement.loop = true;
+      videoElement.preload = 'metadata';
+      videoElement.playsInline = true;
+      videoElement.className = 'video-element';
       
-      // Store video ID for performance tracking
-      videoElement.dataset.videoId = videoId
-      
-      // Basic styling - let CSS handle layout-specific sizing
-      videoElement.style.width = '100%'
-      videoElement.style.height = '100%'
-      videoElement.style.objectFit = 'cover'
-      videoElement.style.display = 'block'
+      videoElement.dataset.videoId = videoId;
+      videoElement.style.width = '100%';
+      videoElement.style.height = '100%';
+      videoElement.style.objectFit = 'cover';
+      videoElement.style.display = 'block';
 
-      // Set up error handling
       const handleError = (e) => {
-        // Suppress console logging for known codec issues to reduce noise
         const isCodecError = e.target?.error?.message?.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') || 
-                            e.target?.error?.message?.includes('no supported streams')
+                            e.target?.error?.message?.includes('no supported streams');
         
         if (!isCodecError) {
-          console.error(`Video load error for ${video.name}:`, e.target?.error || e)
-        } else {
-          console.debug(`Codec not supported for ${video.name} (H.265/HEVC)`)
+          console.error(`Video load error for ${video.name}:`, e.target?.error || e);
         }
         
-        clearTimeout(loadTimeoutRef.current)
-        setLoading(false)
-        hasLoadedRef.current = false
+        clearTimeout(loadTimeoutRef.current);
+        setLoading(false);
+        hasLoadedRef.current = false;
         
-        let errorMessage = 'Load Error'
-        let errorType = 'load'
+        onStopLoading?.(videoId);
+        
+        let errorMessage = 'Load Error';
+        let errorType = 'load';
         
         if (e.target?.error?.message) {
-          const msg = e.target.error.message
+          const msg = e.target.error.message;
           if (msg.includes('DEMUXER_ERROR_NO_SUPPORTED_STREAMS') || 
               msg.includes('no supported streams')) {
-            errorMessage = 'Unsupported Codec'
-            errorType = 'codec'
+            errorMessage = 'Unsupported Codec';
+            errorType = 'codec';
           } else if (msg.includes('DEMUXER_ERROR')) {
-            errorMessage = 'Format Error'
-            errorType = 'format'
-          } else if (msg.includes('MEDIA_ELEMENT_ERROR')) {
-            errorMessage = 'Media Error'
-            errorType = 'media'
-          } else if (msg.includes('NETWORK_ERROR')) {
-            errorMessage = 'Network Error'
-            errorType = 'network'
+            errorMessage = 'Format Error';
+            errorType = 'format';
           }
         }
         
-        setError({ message: errorMessage, type: errorType })
-      }
+        setError({ message: errorMessage, type: errorType });
+      };
 
-      // Set up success handling with better error catching
       const handleLoad = () => {
-        if (videoRef.current) return // Already loaded
+        if (videoRef.current) return;
         
-        clearTimeout(loadTimeoutRef.current)
-        setLoading(false)
-        setLoaded(true)
-        videoRef.current = videoElement
+        clearTimeout(loadTimeoutRef.current);
+        setLoading(false);
+        setLoaded(true);
+        videoRef.current = videoElement;
 
-        // Report aspect ratio to parent for layout calculations
+        onStopLoading?.(videoId);
+        
         if (videoElement.videoWidth && videoElement.videoHeight) {
-          const aspectRatio = videoElement.videoWidth / videoElement.videoHeight
-          onVideoLoad?.(videoId, aspectRatio)
+          const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+          onVideoLoad?.(videoId, aspectRatio);
         }
-        
-        // Better event handlers for loop management
-        videoElement.addEventListener('ended', () => {
-          // Reset and replay instead of relying on loop attribute
-          if (videoElement && !videoElement.paused) {
-            videoElement.currentTime = 0
-            videoElement.play().catch((playError) => {
-              // Silently ignore autoplay errors on loop
-              console.debug('Autoplay prevented on loop:', playError)
-            })
-          }
-        })
+      };
 
-        // Handle errors during playback - catch and suppress
-        videoElement.addEventListener('error', (playbackError) => {
-          console.debug('Playback error (handled):', playbackError)
-          // Don't crash, just pause
-          if (isPlaying) {
-            pauseVideo()
-          }
-        })
-        
-        // Try to play if visible and autoplay is enabled
-        if (isVisible && autoplayEnabled && canPlayMoreVideos()) {
-          setTimeout(() => playVideo(), Math.random() * 500)
-        }
-      }
-
-      // Set up timeout with better error handling
       loadTimeoutRef.current = setTimeout(() => {
         handleError({ 
           target: { 
@@ -181,230 +221,222 @@ const VideoCard = ({
               message: 'Loading timeout - video took too long to load' 
             } 
           } 
-        })
-      }, 10000)
+        });
+      }, 10000);
 
-      // Add event listeners with error suppression
-      videoElement.addEventListener('loadedmetadata', handleLoad)
-      videoElement.addEventListener('canplay', handleLoad) 
-      videoElement.addEventListener('error', handleError)
+      videoElement.addEventListener('loadedmetadata', handleLoad);
+      videoElement.addEventListener('canplay', handleLoad); 
+      videoElement.addEventListener('error', handleError);
 
-      // Wrap video source setting in try-catch
-      try {
-        if (video.isElectronFile && video.fullPath) {
-          videoElement.src = `file://${video.fullPath}`
-        } else if (video.file) {
-          videoElement.src = URL.createObjectURL(video.file)
-        } else {
-          throw new Error('No valid video source available')
-        }
-      } catch (srcError) {
-        console.debug('Error setting video source:', srcError)
-        handleError({ 
-          target: { 
-            error: { 
-              message: `Source error: ${srcError.message}` 
-            } 
-          } 
-        })
-        return // Don't continue if source setting failed
+      if (video.isElectronFile && video.fullPath) {
+        videoElement.src = `file://${video.fullPath}`;
+      } else if (video.file) {
+        videoElement.src = URL.createObjectURL(video.file);
+      } else {
+        throw new Error('No valid video source available');
       }
 
     } catch (err) {
-      console.error('Error setting up video:', err)
-      setLoading(false)
-      hasLoadedRef.current = false
-      setError({ message: 'Setup Error', type: 'setup' })
+      console.error('Error setting up video:', err);
+      setLoading(false);
+      hasLoadedRef.current = false;
+      onStopLoading?.(videoId);
+      setError({ message: 'Setup Error', type: 'setup' });
     }
-  }, [video, loading, loaded, error, isVisible, autoplayEnabled, videoId, onVideoLoad])
+  }, [video, loading, loaded, error, videoId, onVideoLoad, onStartLoading, onStopLoading, canLoadMoreVideos]);
 
-  const playVideo = useCallback(() => {
-    if (!videoRef.current || isPlaying || !canPlayMoreVideos()) return
-
-    try {
-      const playPromise = videoRef.current.play()
-      
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            setIsPlaying(true)
-            onVideoPlay?.(videoId)
-          })
-          .catch((err) => {
-            console.debug('Autoplay prevented or failed (handled):', err)
-            // Don't set playing state if play failed
-          })
-      }
-    } catch (playError) {
-      console.debug('Play error caught:', playError)
-      // Don't crash the app for play errors
-    }
-  }, [isPlaying, canPlayMoreVideos, onVideoPlay, videoId])
-
-  const pauseVideo = useCallback(() => {
-    if (!videoRef.current || !isPlaying) return
-
-    try {
-      videoRef.current.pause()
-      setIsPlaying(false)
-      onVideoPause?.(videoId)
-    } catch (err) {
-      console.warn('Error pausing video:', err)
-      // Still update state even if pause failed
-      setIsPlaying(false)
-      onVideoPause?.(videoId)
-    }
-  }, [isPlaying, onVideoPause, videoId])
-
-  // Handle autoplay changes
-  useEffect(() => {
-    if (!autoplayEnabled && isPlaying) {
-      pauseVideo()
-    } else if (autoplayEnabled && isVisible && loaded && !isPlaying && canPlayMoreVideos()) {
-      playVideo()
-    }
-  }, [autoplayEnabled, isVisible, loaded, isPlaying, canPlayMoreVideos, playVideo, pauseVideo])
-
-  // Cleanup on unmount
+  // Cleanup and click handlers
   useEffect(() => {
     return () => {
       if (loadTimeoutRef.current) {
-        clearTimeout(loadTimeoutRef.current)
+        clearTimeout(loadTimeoutRef.current);
       }
       if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current)
+        clearTimeout(clickTimeoutRef.current);
       }
       if (videoRef.current) {
         try {
-          // Clean up source
           if (videoRef.current.src?.startsWith('blob:')) {
-            URL.revokeObjectURL(videoRef.current.src)
+            URL.revokeObjectURL(videoRef.current.src);
           }
-          
-          videoRef.current.pause()
-          videoRef.current.removeAttribute('src')
-          videoRef.current.load()
+          videoRef.current.pause();
+          videoRef.current.removeAttribute('src');
+          videoRef.current.load();
         } catch (err) {
-          console.warn('Error during video cleanup:', err)
+          console.warn('Error during video cleanup:', err);
         }
       }
-      
-      hasLoadedRef.current = false
-    }
-  }, [])
+      hasLoadedRef.current = false;
+    };
+  }, []);
 
-  const handleClick = (e) => {
-    e.stopPropagation()
+  const handleClick = useCallback((e) => {
+    e.stopPropagation();
     
-    // Clear any existing timeout
     if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current)
-      clickTimeoutRef.current = null
-      
-      // This is a double-click
-      onSelect(videoId, e.ctrlKey || e.metaKey, true)
-      return
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      onSelect(videoId, e.ctrlKey || e.metaKey, true);
+      return;
     }
     
-    // Set timeout for single-click
     clickTimeoutRef.current = setTimeout(() => {
-      // This is a single-click
-      onSelect(videoId, e.ctrlKey || e.metaKey, false)
-      clickTimeoutRef.current = null
-    }, 300) // 300ms delay to detect double-click
-  }
+      onSelect(videoId, e.ctrlKey || e.metaKey, false);
+      clickTimeoutRef.current = null;
+    }, 300);
+  }, [onSelect, videoId]);
 
-  const handleContextMenu = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
+  const handleContextMenu = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
     
     if (onContextMenu) {
-      onContextMenu(e, video)
+      onContextMenu(e, video);
     }
-  }
+  }, [onContextMenu, video]);
 
-  // Get placeholder content based on layout mode
-  const getPlaceholderContent = () => {
+  const getPlaceholderContent = useCallback(() => {
     if (error) {
       const getErrorIcon = () => {
         switch (error.type) {
-          case 'codec': return '🎞️'
-          case 'format': return '📄'
-          case 'network': return '🌐'
-          case 'media': return '📹'
-          default: return '❌'
+          case 'codec': return '🎞️';
+          case 'format': return '📄';
+          case 'network': return '🌐';
+          default: return '❌';
         }
-      }
-
-      const getErrorDescription = () => {
-        switch (error.type) {
-          case 'codec': return 'Unsupported video codec (likely H.265/HEVC)'
-          case 'format': return 'Unsupported video format'
-          case 'network': return 'Network error loading video'
-          case 'media': return 'Media playback error'
-          default: return error.message
-        }
-      }
+      };
 
       return (
-        <div className={`error-indicator error-${error.type}`}>
+        <div className={`error-indicator error-${error.type}`} style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          background: 'linear-gradient(135deg, #2d1a1a, #3d2d2d)',
+          color: '#ff6b6b',
+          textAlign: 'center',
+          padding: '1rem',
+          fontSize: '0.8rem'
+        }}>
           <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>
             {getErrorIcon()}
           </div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
             {error.message}
           </div>
-          <div style={{ fontSize: '0.6rem', opacity: 0.8, lineHeight: 1.2 }}>
-            {getErrorDescription()}
+          <div style={{ opacity: 0.8, lineHeight: 1.2 }}>
+            {error.type === 'codec' ? 'Unsupported video codec (likely H.265/HEVC)' : error.message}
           </div>
         </div>
-      )
+      );
     } else if (loading) {
       return (
-        <div className="video-placeholder">
+        <div className="video-placeholder" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          background: 'linear-gradient(135deg, #1a1a1a, #2d2d2d)',
+          color: '#888',
+          fontSize: '0.9rem'
+        }}>
           📼 Loading...
         </div>
-      )
+      );
+    } else if (!canLoadMoreVideos()) {
+      return (
+        <div className="video-placeholder" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          background: 'linear-gradient(135deg, #1a1a1a, #2d2d2d)',
+          color: '#666',
+          fontSize: '0.9rem'
+        }}>
+          ⏳ Waiting...
+        </div>
+      );
     } else {
       return (
-        <div className="video-placeholder">
+        <div className="video-placeholder" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          background: 'linear-gradient(135deg, #1a1a1a, #2d2d2d)',
+          color: '#666',
+          fontSize: '0.9rem'
+        }}>
           📼 Scroll to load
         </div>
-      )
+      );
     }
-  }
+  }, [error, loading, canLoadMoreVideos]);
 
   return (
     <div 
       ref={containerRef}
-      className={`video-item ${selected ? 'selected' : ''} ${error ? 'error' : ''}`}
+      className={`video-item ${selected ? 'selected' : ''} ${error ? 'error' : ''} ${loading ? 'loading' : ''}`}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
-      style={{ userSelect: 'none' }} // Prevent text selection interfering with right-click
+      style={{ 
+        userSelect: 'none',
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        cursor: 'pointer',
+        border: selected ? '3px solid #007acc' : '1px solid #333',
+        background: '#1a1a1a'
+      }}
     >
       {loaded && videoRef.current ? (
         <div 
           className="video-container"
+          style={{ width: '100%', height: showFilenames ? 'calc(100% - 40px)' : '100%' }}
           ref={(container) => {
             if (container && videoRef.current && !container.contains(videoRef.current)) {
-              container.appendChild(videoRef.current)
+              container.appendChild(videoRef.current);
             }
           }}
         />
       ) : (
-        getPlaceholderContent()
+        <div style={{ width: '100%', height: showFilenames ? 'calc(100% - 40px)' : '100%' }}>
+          {getPlaceholderContent()}
+        </div>
       )}
       
       {showFilenames && (
-        <div className="video-filename">
+        <div className="video-filename" style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '40px',
+          background: 'rgba(0, 0, 0, 0.8)',
+          color: '#fff',
+          padding: '8px',
+          fontSize: '0.75rem',
+          lineHeight: '1.2',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          display: 'flex',
+          alignItems: 'center'
+        }}>
           {video.name}
         </div>
       )}
     </div>
-  )
-}
+  );
+});
 
-export default VideoCard
+VideoCard.displayName = 'VideoCard';
+
+export default VideoCard;

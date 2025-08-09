@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import VideoCard from './components/VideoCard';
 import FullScreenModal from './components/FullScreenModal';
 import ContextMenu from './components/ContextMenu';
 import { useLayoutManager } from './hooks/useLayoutManager';
 import { useFullScreenModal } from './hooks/useFullScreenModal';
 import { useContextMenu } from './hooks/useContextMenu';
-import { usePerformanceManager } from './hooks/usePerformanceManager';
 import './App.css';
 
 function App() {
@@ -18,12 +17,22 @@ function App() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   
-  // NEW: Loading state with progress
+  // Loading state
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [loadingStage, setLoadingStage] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
+  
+  // Performance tracking with React state
+  const [playingVideos, setPlayingVideos] = useState(new Set());
+  const [visibleVideos, setVisibleVideos] = useState(new Set());
+  const [loadedVideos, setLoadedVideos] = useState(new Set());
+  const [loadingVideos, setLoadingVideos] = useState(new Set());
 
-  // Use the layout manager hook (RESTORED)
+  // Refs for performance monitoring
+  const cleanupTimeoutRef = useRef(null);
+  const lastCleanupTimeRef = useRef(0);
+
+  // Use layout manager (CORE FUNCTIONALITY PRESERVED)
   const {
     layoutMode,
     gridRef,
@@ -35,24 +44,7 @@ function App() {
     manualVisibilityCheck
   } = useLayoutManager(videos, zoomLevel);
 
-  // Use performance manager with REDUCED complexity (not removed)
-  const {
-    loadingVideos,
-    loadedVideos,
-    visibleVideos,
-    playingVideos,
-    setLoadingVideos,
-    setLoadedVideos,
-    setVisibleVideos,
-    setPlayingVideos,
-    smartCleanup,
-    emergencyCleanup,
-    maxLoadedVideos,
-    maxConcurrentLoading,
-    getPerformanceStats
-  } = usePerformanceManager(videos, maxConcurrentPlaying, autoplayEnabled);
-
-  // Use the fullscreen modal hook (RESTORED)
+  // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED)
   const {
     fullScreenVideo,
     openFullScreen,
@@ -60,7 +52,7 @@ function App() {
     navigateFullScreen
   } = useFullScreenModal(videos, layoutMode, gridRef);
 
-  // Use the context menu hook
+  // Use context menu (CORE FUNCTIONALITY PRESERVED)
   const {
     contextMenu,
     showContextMenu,
@@ -68,43 +60,163 @@ function App() {
     handleContextAction
   } = useContextMenu();
 
-  // Handle click outside context menu to close it
-  useEffect(() => {
-    if (contextMenu.visible) {
-      const handleClickOutside = (event) => {
-        const contextMenuElement = document.querySelector('[data-context-menu]');
-        if (contextMenuElement && !contextMenuElement.contains(event.target)) {
-          hideContextMenu();
-        }
-      };
-
-      const handleEscape = (event) => {
-        if (event.key === 'Escape') {
-          hideContextMenu();
-        }
-      };
-
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleEscape);
-
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-        document.removeEventListener('keydown', handleEscape);
-      };
+  // MEMOIZED: Performance limits calculation
+  const performanceLimits = useMemo(() => {
+    const videoCount = videos.length;
+    
+    if (videoCount < 100) {
+      return { maxLoaded: 60, maxConcurrentLoading: 4 };
+    } else if (videoCount < 500) {
+      return { maxLoaded: 80, maxConcurrentLoading: 3 };
+    } else if (videoCount < 1000) {
+      return { maxLoaded: 100, maxConcurrentLoading: 2 };
+    } else {
+      return { maxLoaded: 120, maxConcurrentLoading: 1 };
     }
+  }, [videos.length]);
+
+  // MEMOIZED: Cleanup function (React-optimized)
+  const performCleanup = useCallback(() => {
+    const now = Date.now();
+    
+    // Throttle cleanup calls
+    if (now - lastCleanupTimeRef.current < 3000) return;
+    lastCleanupTimeRef.current = now;
+    
+    if (loadedVideos.size <= performanceLimits.maxLoaded) return;
+    
+    console.log(`🧹 React cleanup: ${loadedVideos.size}/${performanceLimits.maxLoaded} loaded`);
+    
+    // React-native cleanup using state
+    setLoadedVideos(prev => {
+      const toKeep = new Set();
+      let keepCount = 0;
+      
+      // Keep visible videos first
+      prev.forEach(videoId => {
+        if (visibleVideos.has(videoId) && keepCount < performanceLimits.maxLoaded) {
+          toKeep.add(videoId);
+          keepCount++;
+        }
+      });
+      
+      // Keep playing videos
+      prev.forEach(videoId => {
+        if (playingVideos.has(videoId) && !toKeep.has(videoId) && keepCount < performanceLimits.maxLoaded) {
+          toKeep.add(videoId);
+          keepCount++;
+        }
+      });
+      
+      // Keep some recent videos
+      const remaining = Array.from(prev).filter(id => !toKeep.has(id));
+      remaining.slice(0, performanceLimits.maxLoaded - keepCount).forEach(id => toKeep.add(id));
+      
+      if (toKeep.size < prev.size) {
+        console.log(`🧹 Cleaned up ${prev.size - toKeep.size} videos`);
+      }
+      
+      return toKeep;
+    });
+    
+    // Also clean loading state
+    setLoadingVideos(prev => {
+      const newSet = new Set();
+      prev.forEach(videoId => {
+        if (loadedVideos.has(videoId)) {
+          newSet.add(videoId);
+        }
+      });
+      return newSet;
+    });
+  }, [loadedVideos.size, visibleVideos, playingVideos, performanceLimits]);
+
+  // REACT EFFECT: Performance monitoring
+  useEffect(() => {
+    // Clear any existing timeout
+    if (cleanupTimeoutRef.current) {
+      clearTimeout(cleanupTimeoutRef.current);
+    }
+    
+    // Schedule cleanup check
+    cleanupTimeoutRef.current = setTimeout(() => {
+      if (loadedVideos.size > performanceLimits.maxLoaded || 
+          loadingVideos.size > performanceLimits.maxConcurrentLoading) {
+        performCleanup();
+      }
+    }, 1000);
+    
+    return () => {
+      if (cleanupTimeoutRef.current) {
+        clearTimeout(cleanupTimeoutRef.current);
+      }
+    };
+  }, [loadedVideos.size, loadingVideos.size, performanceLimits, performCleanup]);
+
+  // FIXED: Centralized playback management - App decides what plays
+  useEffect(() => {
+    if (!autoplayEnabled) {
+      // If autoplay is disabled, nothing should be playing
+      setPlayingVideos(new Set());
+      return;
+    }
+
+    // Get videos that are both visible AND loaded (can actually play)
+    const playableVideos = Array.from(visibleVideos).filter(videoId => 
+      loadedVideos.has(videoId)
+    );
+
+    console.log(`Playback check: ${playableVideos.length} playable, ${playingVideos.size} currently playing, max: ${maxConcurrentPlaying}`);
+
+    // Determine which videos should be playing (up to the limit)
+    const shouldBePlaying = new Set(playableVideos.slice(0, maxConcurrentPlaying));
+
+    // Only update if there's actually a change
+    const currentlyPlaying = Array.from(playingVideos).sort();
+    const newPlaying = Array.from(shouldBePlaying).sort();
+    
+    if (JSON.stringify(currentlyPlaying) !== JSON.stringify(newPlaying)) {
+      console.log(`Updating playing videos: ${currentlyPlaying.length} -> ${newPlaying.length}`);
+      setPlayingVideos(shouldBePlaying);
+    }
+
+  }, [autoplayEnabled, visibleVideos, loadedVideos, maxConcurrentPlaying, playingVideos]);
+
+  // CALLBACK: Context menu handling
+  useEffect(() => {
+    if (!contextMenu.visible) return;
+
+    const handleClickOutside = (event) => {
+      const contextMenuElement = document.querySelector('[data-context-menu]');
+      if (contextMenuElement && !contextMenuElement.contains(event.target)) {
+        hideContextMenu();
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        hideContextMenu();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [contextMenu.visible, hideContextMenu]);
 
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
 
-  // Synchronously load settings on mount to prevent flash of default values
+  // CALLBACK: Settings loading
   useEffect(() => {
     const loadSettings = async () => {
       if (window.electronAPI?.getSettings) {
         try {
-          // Try to get settings synchronously
           const settings = await window.electronAPI.getSettings();
-          console.log('Synchronously loaded settings:', settings);
           
           if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
           if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
@@ -114,31 +226,16 @@ function App() {
           
           setSettingsLoaded(true);
         } catch (error) {
-          console.log('Could not load settings synchronously, using defaults');
+          console.log('Using default settings');
           setSettingsLoaded(true);
         }
       } else {
-        // No Electron API, use defaults
         setSettingsLoaded(true);
       }
     };
 
     loadSettings();
 
-    // Also set up the async listener as backup
-    if (window.electronAPI?.onSettingsLoaded) {
-      window.electronAPI.onSettingsLoaded((settings) => {
-        console.log('Async settings received:', settings);
-        if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
-        if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
-        if (settings.showFilenames !== undefined) setShowFilenames(settings.showFilenames);
-        if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
-        if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
-        setSettingsLoaded(true);
-      });
-    }
-
-    // Listen for folder selection from menu
     if (window.electronAPI?.onFolderSelected) {
       window.electronAPI.onFolderSelected((folderPath) => {
         handleElectronFolderSelection(folderPath);
@@ -146,127 +243,150 @@ function App() {
     }
   }, []);
 
-  // Set up file system event listeners
+  // CALLBACK: File system listeners
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    // File added
     const handleFileAdded = (videoFile) => {
-      console.log('File added:', videoFile.name);
       setVideos(prev => {
-        // Check if file already exists (avoid duplicates)
-        if (prev.some(v => v.id === videoFile.id)) {
-          return prev;
-        }
-        // Add and sort by name
-        const newVideos = [...prev, videoFile];
-        return newVideos.sort((a, b) => a.name.localeCompare(b.name));
+        if (prev.some(v => v.id === videoFile.id)) return prev;
+        return [...prev, videoFile].sort((a, b) => a.name.localeCompare(b.name));
       });
     };
 
-    // File removed  
     const handleFileRemoved = (filePath) => {
-      console.log('File removed:', filePath);
       setVideos(prev => prev.filter(v => v.id !== filePath));
-      // Also clean up any related state
-      setSelectedVideos(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setPlayingVideos(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setLoadedVideos(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setLoadingVideos(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
+      // Clean up related state
+      setSelectedVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
+      setPlayingVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
+      setLoadedVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
+      setLoadingVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
+      setVisibleVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
     };
 
-    // File changed (updated metadata)
     const handleFileChanged = (videoFile) => {
-      console.log('File changed:', videoFile.name);
-      setVideos(prev => prev.map(v => 
-        v.id === videoFile.id ? videoFile : v
-      ));
+      setVideos(prev => prev.map(v => v.id === videoFile.id ? videoFile : v));
     };
 
-    // File watch error
-    const handleFileWatchError = (error) => {
-      console.warn('File watch error (this is usually harmless):', error);
-      // Could show a toast notification here instead of console spam
-    };
+    if (window.electronAPI.onFileAdded) window.electronAPI.onFileAdded(handleFileAdded);
+    if (window.electronAPI.onFileRemoved) window.electronAPI.onFileRemoved(handleFileRemoved);
+    if (window.electronAPI.onFileChanged) window.electronAPI.onFileChanged(handleFileChanged);
 
-    // Set up listeners
-    if (window.electronAPI.onFileAdded) {
-      window.electronAPI.onFileAdded(handleFileAdded);
-    }
-    if (window.electronAPI.onFileRemoved) {
-      window.electronAPI.onFileRemoved(handleFileRemoved);
-    }
-    if (window.electronAPI.onFileChanged) {
-      window.electronAPI.onFileChanged(handleFileChanged);
-    }
-    if (window.electronAPI.onFileWatchError) {
-      window.electronAPI.onFileWatchError(handleFileWatchError);
-    }
-
-    // Cleanup on unmount
     return () => {
       if (window.electronAPI?.stopFolderWatch) {
         window.electronAPI.stopFolderWatch().catch(console.error);
       }
     };
-  }, [setPlayingVideos, setLoadedVideos, setLoadingVideos]);
+  }, []);
 
-  const canPlayMoreVideos = useCallback(() => {
-    return playingVideos.size < maxConcurrentPlaying;
-  }, [playingVideos.size, maxConcurrentPlaying]);
-
-  const handleVideoPlay = useCallback((videoId) => {
-    if (playingVideos.size < maxConcurrentPlaying) {
-      setPlayingVideos(prev => new Set([...prev, videoId]));
+  // CALLBACK: Folder loading (CORE FUNCTIONALITY PRESERVED)
+  const handleElectronFolderSelection = useCallback(async (folderPath) => {
+    if (!window.electronAPI?.readDirectory) {
+      console.error('Electron readDirectory API not available');
+      return;
     }
-  }, [playingVideos.size, maxConcurrentPlaying, setPlayingVideos]);
+
+    try {
+      setIsLoadingFolder(true);
+      setLoadingStage('Reading directory...');
+      setLoadingProgress(10);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Stop existing watcher
+      if (window.electronAPI?.stopFolderWatch) {
+        await window.electronAPI.stopFolderWatch();
+      }
+
+      // Clear ALL state
+      setVideos([]);
+      setSelectedVideos(new Set());
+      setPlayingVideos(new Set());
+      setVisibleVideos(new Set());
+      setLoadedVideos(new Set());
+      setLoadingVideos(new Set());
+
+      setLoadingStage('Scanning for video files...');
+      setLoadingProgress(30);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
+      
+      setLoadingStage(`Found ${videoFiles.length} videos - initializing masonry...`);
+      setLoadingProgress(70);
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      console.log(`📊 Setting ${videoFiles.length} videos for masonry layout`);
+      setVideos(videoFiles);
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      setLoadingStage('Complete!');
+      setLoadingProgress(100);
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      setIsLoadingFolder(false);
+
+      // Start file watcher
+      if (window.electronAPI?.startFolderWatch) {
+        const watchResult = await window.electronAPI.startFolderWatch(folderPath);
+        if (watchResult.success) {
+          console.log('👁️ Started watching folder for changes');
+        }
+      }
+
+    } catch (error) {
+      console.error('Error reading directory:', error);
+      setIsLoadingFolder(false);
+    }
+  }, [recursiveMode]);
+
+  // MEMOIZED: Performance callback functions
+  const canPlayMoreVideos = useCallback(() => {
+    return autoplayEnabled;
+  }, [autoplayEnabled]);
+  
+  // FIXED: Always allow visible videos to load
+  const canLoadMoreVideos = useCallback((videoId) => {
+    // If this specific video is visible, ALWAYS allow it to load
+    if (visibleVideos.has(videoId)) {
+      return true;
+    }
+    
+    // For non-visible videos, respect normal limits
+    return loadingVideos.size < performanceLimits.maxConcurrentLoading && 
+           loadedVideos.size < performanceLimits.maxLoaded;
+  }, [visibleVideos, loadingVideos.size, loadedVideos.size, performanceLimits]);
+  
+  // SIMPLIFIED: Remove the old complex handlers, VideoCard will report actual play/pause events
+  const handleVideoPlay = useCallback((videoId) => {
+    console.log(`Video started playing: ${videoId}`);
+    // VideoCard will report when it actually starts playing
+  }, []);
 
   const handleVideoPause = useCallback((videoId) => {
-    setPlayingVideos(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(videoId);
-      return newSet;
-    });
-  }, [setPlayingVideos]);
+    console.log(`Video paused: ${videoId}`);
+    // VideoCard will report when it actually pauses
+  }, []);
 
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
-    },
-    [setLoadedVideos, updateAspectRatio]
-  );
+  const handleVideoLoaded = useCallback((videoId, aspectRatio) => {
+    setLoadedVideos(prev => new Set([...prev, videoId]));
+    updateAspectRatio?.(videoId, aspectRatio);
+  }, [updateAspectRatio]);
 
   const handleVideoStartLoading = useCallback((videoId) => {
     setLoadingVideos(prev => new Set([...prev, videoId]));
-  }, [setLoadingVideos]);
+  }, []);
 
   const handleVideoStopLoading = useCallback((videoId) => {
-    setLoadingVideos(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(videoId);
-      return newSet;
+    setLoadingVideos(prev => { 
+      const newSet = new Set(prev); 
+      newSet.delete(videoId); 
+      return newSet; 
     });
-  }, [setLoadingVideos]);
+  }, []);
 
   const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
-    console.log(`Visibility change: ${videoId} -> ${isVisible ? 'visible' : 'hidden'}`);
     setVisibleVideos(prev => {
       const newSet = new Set(prev);
       if (isVisible) {
@@ -274,113 +394,30 @@ function App() {
       } else {
         newSet.delete(videoId);
       }
-      console.log(`Total visible videos: ${newSet.size}`);
       return newSet;
     });
-  }, [setVisibleVideos]);
+  }, []);
 
-  // NEW: Enhanced folder loading with progress
-  const handleElectronFolderSelection = async (folderPath) => {
-    if (!window.electronAPI?.readDirectory) {
-      console.error('Electron readDirectory API not available');
-      return;
-    }
-
-    try {
-      console.log('🚀 SHOWING LOADING SCREEN');
-      
-      // SHOW LOADING SCREEN WITH PROMINENT DISPLAY
-      setIsLoadingFolder(true);
-      setLoadingStage('Reading directory...');
-      setLoadingProgress(10);
-
-      // Give React time to render the loading screen
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      console.log('📁 Starting folder scan:', folderPath);
-
-      // Stop any existing file watcher
-      if (window.electronAPI?.stopFolderWatch) {
-        await window.electronAPI.stopFolderWatch();
-      }
-
-      // Clear ALL state but do it BEFORE we start loading new videos
-      console.log('🧹 Clearing existing state');
-      setVideos([]);
-      setSelectedVideos(new Set());
-      setPlayingVideos(new Set());
-      setLoadedVideos(new Set());
-      setLoadingVideos(new Set());
-      setVisibleVideos(new Set());
-
-      // Update progress
-      setLoadingStage('Scanning for video files...');
-      setLoadingProgress(30);
-      await new Promise(resolve => setTimeout(resolve, 200));
-
-      // Read directory
-      console.log('📂 Reading directory with recursive:', recursiveMode);
-      const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
-      
-      console.log(`📊 Found ${videoFiles.length} video files`);
-
-      // Update progress
-      setLoadingStage(`Found ${videoFiles.length} videos - preparing layout...`);
-      setLoadingProgress(70);
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // Set videos - this is where the magic happens
-      console.log('🎬 Setting videos state - layout will initialize');
-      setVideos(videoFiles);
-
-      // Give the layout system time to initialize 
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Complete loading
-      setLoadingStage('Complete!');
-      setLoadingProgress(100);
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      console.log('✅ Loading complete, hiding screen');
-      setIsLoadingFolder(false);
-
-      // Start file system watcher
-      if (window.electronAPI?.startFolderWatch) {
-        const watchResult = await window.electronAPI.startFolderWatch(folderPath);
-        if (watchResult.success) {
-          console.log('👁️ Started watching folder for changes');
-        } else {
-          console.warn('Failed to start folder watcher:', watchResult.error);
-        }
-      }
-
-    } catch (error) {
-      console.error('Error reading directory:', error);
-      setIsLoadingFolder(false);
-      setLoadingStage('Error occurred');
-    }
-  };
-
+  // SIMPLIFIED: Settings functions (remove over-optimization)
   const saveSettings = useCallback(async () => {
     if (window.electronAPI?.saveSettingsPartial) {
       try {
         await window.electronAPI.saveSettingsPartial({
-          recursiveMode,
-          autoplayEnabled,
-          maxConcurrentPlaying,
+          recursiveMode, 
+          autoplayEnabled, 
+          maxConcurrentPlaying, 
+          zoomLevel, 
+          showFilenames
         });
+        console.log('Settings saved successfully');
       } catch (error) {
         console.error('Failed to save settings:', error);
       }
     }
-  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying]);
+  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-  const handleFolderSelect = async () => {
-    if (!window.electronAPI?.selectFolder) {
-      console.error('Electron API not available');
-      return;
-    }
-
+  const handleFolderSelect = useCallback(async () => {
+    if (!window.electronAPI?.selectFolder) return;
     try {
       const result = await window.electronAPI.selectFolder();
       if (result && result.folderPath) {
@@ -389,9 +426,9 @@ function App() {
     } catch (error) {
       console.error('Error opening folder dialog:', error);
     }
-  };
+  }, [handleElectronFolderSelection]);
 
-  const handleWebFileSelection = (event) => {
+  const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((file) => {
       const isVideoType = file.type.startsWith('video/');
       const hasVideoExtension = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(file.name);
@@ -409,171 +446,169 @@ function App() {
     setVideos(videoObjects);
     setSelectedVideos(new Set());
     setPlayingVideos(new Set());
+    setVisibleVideos(new Set());
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
-    setVisibleVideos(new Set());
-  };
+  }, []);
 
-  const toggleAutoplay = () => {
+  // FIXED: Control handlers with immediate save
+  const toggleAutoplay = useCallback(() => {
     const newAutoplay = !autoplayEnabled;
     setAutoplayEnabled(newAutoplay);
-
-    if (!newAutoplay) {
-      // Pause all videos
-      setPlayingVideos(new Set());
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        autoplayEnabled: newAutoplay,
+        recursiveMode, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
     }
+  }, [autoplayEnabled, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-    saveSettings();
-  };
-
-  const handleLayoutToggle = () => {
+  const handleLayoutToggle = useCallback(() => {
     const newMode = toggleLayout();
-    // Layout mode is now saved automatically in useLayoutManager
+    
+    // Save layout mode immediately 
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        layoutMode: newMode,
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
+    }
+    
     return newMode;
-  };
+  }, [toggleLayout, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-  const toggleRecursive = () => {
-    setRecursiveMode(!recursiveMode);
-    saveSettings();
-  };
-
-  const toggleFilenames = () => {
+  const toggleRecursive = useCallback(() => { 
+    const newRecursive = !recursiveMode;
+    setRecursiveMode(newRecursive);
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        recursiveMode: newRecursive,
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
+    }
+  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  
+  const toggleFilenames = useCallback(() => { 
     const newShowFilenames = !showFilenames;
     setShowFilenames(newShowFilenames);
     
-    // Save immediately like other settings
+    // Save immediately
     if (window.electronAPI?.saveSettingsPartial) {
       window.electronAPI.saveSettingsPartial({
         showFilenames: newShowFilenames,
-      }).catch(error => {
-        console.error('Failed to save filename setting:', error);
-      });
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel
+      }).catch(console.error);
     }
-  };
+  }, [showFilenames, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel]);
 
-  const handleVideoLimitChange = (newLimit) => {
+  const handleVideoLimitChange = useCallback((newLimit) => {
     setMaxConcurrentPlaying(newLimit);
-
-    // If we reduced the limit, pause excess videos
-    if (playingVideos.size > newLimit) {
-      const playingArray = Array.from(playingVideos);
-      const toKeepPlaying = playingArray.slice(0, newLimit);
-      
-      setPlayingVideos(new Set(toKeepPlaying));
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        maxConcurrentPlaying: newLimit,
+        recursiveMode, 
+        autoplayEnabled, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
     }
+  }, [recursiveMode, autoplayEnabled, zoomLevel, showFilenames]);
 
-    saveSettings();
-  };
+  const handleZoomChange = useCallback((newZoom) => { 
+    setZoomLevel(newZoom); 
+    setZoom(newZoom);
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        zoomLevel: newZoom,
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        showFilenames
+      }).catch(console.error);
+    }
+  }, [setZoom, recursiveMode, autoplayEnabled, maxConcurrentPlaying, showFilenames]);
 
-  const handleZoomChange = (newZoom) => {
-    setZoomLevel(newZoom);
-    setZoom(newZoom); // This now handles saving automatically
-  };
-
-  const getLayoutButtonText = () => {
+  // MEMOIZED: UI helper functions
+  const getLayoutButtonText = useMemo(() => {
     const buttonTexts = {
       grid: '📐 Grid',
       'masonry-vertical': '📐 Vertical',
       'masonry-horizontal': '📐 Horizontal',
     };
     return buttonTexts[layoutMode];
-  };
+  }, [layoutMode]);
 
-  const getZoomLabel = () => {
-    const labels = ['75%', '100%', '150%', '200%'];
-    return labels[zoomLevel] || '100%';
-  };
+  const getZoomLabel = useMemo(() => 
+    (['75%', '100%', '150%', '200%'][zoomLevel] || '100%'), 
+    [zoomLevel]
+  );
 
-  const handleVideoSelect = (videoId, isCtrlClick, isDoubleClick) => {
+  const handleVideoSelect = useCallback((videoId, isCtrlClick, isDoubleClick) => {
     const video = videos.find(v => v.id === videoId);
     
     if (isDoubleClick && video) {
-      // Open fullscreen on double-click
       openFullScreen(video, playingVideos);
-      // Note: Background videos continue playing
       return;
     }
 
-    // Regular selection logic
-    const newSelected = new Set(selectedVideos);
-
-    if (isCtrlClick) {
-      if (newSelected.has(videoId)) {
-        newSelected.delete(videoId);
+    setSelectedVideos(prev => {
+      const newSelected = new Set(prev);
+      if (isCtrlClick) {
+        if (newSelected.has(videoId)) newSelected.delete(videoId);
+        else newSelected.add(videoId);
       } else {
+        newSelected.clear();
         newSelected.add(videoId);
       }
-    } else {
-      newSelected.clear();
-      newSelected.add(videoId);
-    }
+      return newSelected;
+    });
+  }, [videos, openFullScreen, playingVideos]);
 
-    setSelectedVideos(newSelected);
-  };
-
-  // Handle keyboard shortcuts for fullscreen
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // Only handle if not in fullscreen and have a selection
-      if (fullScreenVideo || selectedVideos.size !== 1) return;
-
-      if (e.key === ' ' || e.key === 'Enter') {
-        e.preventDefault();
-        const selectedVideoId = Array.from(selectedVideos)[0];
-        const video = videos.find(v => v.id === selectedVideoId);
-        
-        if (video) {
-          openFullScreen(video, playingVideos);
-          // Note: Background videos continue playing
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [fullScreenVideo, selectedVideos, videos, openFullScreen, playingVideos]);
-
-  // Handle fullscreen close
-  const handleFullScreenClose = useCallback(() => {
-    closeFullScreen();
-    // Note: Background videos continue playing naturally
-  }, [closeFullScreen]);
-
-  // Emergency cleanup hotkey
+  // CALLBACK: Emergency cleanup
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'F12' && e.ctrlKey) {
-        console.log('Emergency cleanup triggered');
-        emergencyCleanup();
+        console.log('🧹 Manual cleanup triggered');
+        performCleanup();
       }
-      
-      // Cancel loading
       if (e.key === 'Escape' && isLoadingFolder) {
-        console.log('Loading cancelled');
         setIsLoadingFolder(false);
       }
     };
-
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [emergencyCleanup, isLoadingFolder]);
+  }, [isLoadingFolder, performCleanup]);
 
   return (
     <div className="app">
-      {/* Show loading until settings are loaded to prevent flash of wrong values */}
       {!settingsLoaded ? (
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          height: '100vh',
-          color: '#888'
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#888' }}>
           Loading settings...
         </div>
       ) : (
         <>
-          {/* NEW: Enhanced Loading Screen */}
+          {/* Loading Screen (PRESERVED) */}
           {isLoadingFolder && (
             <div style={{
               position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -585,68 +620,42 @@ function App() {
                 backgroundColor: '#1a1a1a', borderRadius: '20px', padding: '3rem',
                 maxWidth: '600px', width: '90%', textAlign: 'center',
                 boxShadow: '0 30px 60px rgba(0,0,0,0.8)', 
-                border: '2px solid #333',
-                position: 'relative'
+                border: '2px solid #333'
               }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1.5rem' }}>
-                  🐝
-                </div>
+                <div style={{ fontSize: '3rem', marginBottom: '1.5rem' }}>🐝</div>
                 <div style={{ fontSize: '2rem', marginBottom: '1rem', color: '#4CAF50', fontWeight: 'bold' }}>
                   Video Swarm
                 </div>
-                <div style={{ fontSize: '1.2rem', color: '#ccc', marginBottom: '2rem', minHeight: '40px', lineHeight: 1.4 }}>
+                <div style={{ fontSize: '1.2rem', color: '#ccc', marginBottom: '2rem', minHeight: '40px' }}>
                   {loadingStage || 'Preparing...'}
                 </div>
                 <div style={{
                   width: '100%', height: '16px', backgroundColor: '#333',
-                  borderRadius: '8px', overflow: 'hidden', marginBottom: '2rem',
-                  border: '1px solid #444'
+                  borderRadius: '8px', overflow: 'hidden', marginBottom: '2rem'
                 }}>
                   <div style={{
                     width: `${loadingProgress}%`, height: '100%', 
-                    background: 'linear-gradient(90deg, #4CAF50, #45a049, #4CAF50)',
-                    borderRadius: '8px', transition: 'width 0.5s ease',
-                    backgroundSize: '200% 100%',
-                    animation: loadingProgress < 100 ? 'shimmer 2s infinite linear' : 'none'
+                    background: 'linear-gradient(90deg, #4CAF50, #45a049)',
+                    borderRadius: '8px', transition: 'width 0.5s ease'
                   }} />
                 </div>
-                <div style={{ 
-                  fontSize: '1.5rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '2rem' 
-                }}>
+                <div style={{ fontSize: '1.5rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '2rem' }}>
                   {loadingProgress}%
                 </div>
-                <div style={{
-                  fontSize: '1rem', color: '#666', marginBottom: '2rem',
-                  padding: '1.5rem', background: '#222', borderRadius: '12px',
-                  lineHeight: 1.5
-                }}>
-                  <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                    ⚡ Advanced Masonry Layouts
-                  </div>
-                  Loading your video collection with intelligent performance management...
-                </div>
-                <button onClick={() => {
-                  console.log('❌ Loading cancelled by user');
-                  setIsLoadingFolder(false);
-                }} style={{
+                <button onClick={() => setIsLoadingFolder(false)} style={{
                   padding: '1rem 2.5rem', backgroundColor: '#ff4444',
                   color: 'white', border: 'none', borderRadius: '10px', 
-                  cursor: 'pointer', fontSize: '1.1rem', fontWeight: 'bold',
-                  transition: 'background-color 0.3s ease'
-                }} onMouseEnter={(e) => e.target.style.backgroundColor = '#cc3333'}
-                   onMouseLeave={(e) => e.target.style.backgroundColor = '#ff4444'}>
+                  cursor: 'pointer', fontSize: '1.1rem', fontWeight: 'bold'
+                }}>
                   Cancel Loading
                 </button>
               </div>
             </div>
           )}
 
-          {/* Header */}
+          {/* Header (PRESERVED) */}
           <div className="header">
-            <h1>
-              🐝 Video Swarm{' '}
-              <span style={{ fontSize: '0.6rem', color: '#666', fontWeight: 'normal' }}>v2.15-restored</span>
-            </h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.19-fixed</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
@@ -655,15 +664,8 @@ function App() {
                 </button>
               ) : (
                 <div className="file-input-wrapper">
-                  <input
-                    type="file"
-                    className="file-input"
-                    webkitdirectory="true"
-                    multiple
-                    onChange={handleWebFileSelection}
-                    style={{ display: 'none' }}
-                    id="fileInput"
-                  />
+                  <input type="file" className="file-input" webkitdirectory="true" multiple 
+                    onChange={handleWebFileSelection} style={{ display: 'none' }} id="fileInput" disabled={isLoadingFolder} />
                   <label htmlFor="fileInput" className="file-input-label">
                     ⚠️ Open Folder (Limited)
                   </label>
@@ -671,136 +673,73 @@ function App() {
               )}
             </div>
 
-            <div
-              className="debug-info"
-              style={{
-                fontSize: '0.75rem',
-                color: '#888',
-                background: '#1a1a1a',
-                padding: '0.3rem 0.8rem',
-                borderRadius: '4px',
-              }}
-            >
+            <div className="debug-info" style={{
+              fontSize: '0.75rem', color: '#888', background: '#1a1a1a',
+              padding: '0.3rem 0.8rem', borderRadius: '4px'
+            }}>
               📁 {videos.length} videos | ▶️ {playingVideos.size} playing | 👁️ {visibleVideos.size} in view
             </div>
 
             <div className="controls">
-              <button
-                onClick={toggleAutoplay}
-                className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`}
-                disabled={isLoadingFolder}
-              >
+              <button onClick={toggleAutoplay} className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
               </button>
-
-              <button
-                onClick={toggleRecursive}
-                className={`toggle-button ${recursiveMode ? 'active' : ''}`}
-                disabled={isLoadingFolder}
-              >
+              <button onClick={toggleRecursive} className={`toggle-button ${recursiveMode ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
               </button>
-
-              <button
-                onClick={toggleFilenames}
-                className={`toggle-button ${showFilenames ? 'active' : ''}`}
-                disabled={isLoadingFolder}
-              >
+              <button onClick={toggleFilenames} className={`toggle-button ${showFilenames ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {showFilenames ? '📝 Filenames ON' : '📝 Filenames'}
               </button>
-
               <button onClick={handleLayoutToggle} className="toggle-button" disabled={isLoadingFolder}>
-                {getLayoutButtonText()}
+                {getLayoutButtonText}
               </button>
-
-              <button 
-                onClick={emergencyCleanup}
-                className="toggle-button"
-                title="Clean up loaded videos to free memory"
-                style={{ color: '#ff6b6b' }}
-                disabled={isLoadingFolder}
-              >
+              <button onClick={performCleanup}
+                className="toggle-button" style={{ color: '#ff6b6b' }} disabled={isLoadingFolder}
+                title="Clean up distant videos to free memory">
                 🧹 Cleanup
               </button>
 
               <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.9rem' }}>📹</span>
-                <input
-                  type="range"
-                  className="zoom-slider"
-                  min="10"
-                  max="100"
-                  value={maxConcurrentPlaying}
-                  step="5"
-                  style={{ width: '100px' }}
-                  onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))}
-                  disabled={isLoadingFolder}
-                />
-                <span style={{ fontSize: '0.8rem', minWidth: '30px' }}>{maxConcurrentPlaying}</span>
+                <span>📹</span>
+                <input type="range" min="10" max="100" value={maxConcurrentPlaying} step="5" style={{ width: '100px' }}
+                  onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
+                <span style={{ fontSize: '0.8rem' }}>{maxConcurrentPlaying}</span>
               </div>
 
               <div className="zoom-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>🔍</span>
-                <input
-                  type="range"
-                  className="zoom-slider"
-                  min="0"
-                  max="3"
-                  value={zoomLevel}
-                  step="1"
-                  onChange={(e) => handleZoomChange(parseInt(e.target.value))}
-                  disabled={isLoadingFolder}
-                />
-                <span>{getZoomLabel()}</span>
+                <input type="range" min="0" max="3" value={zoomLevel} step="1"
+                  onChange={(e) => handleZoomChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
+                <span>{getZoomLabel}</span>
               </div>
             </div>
           </div>
 
-          {/* Main content area */}
+          {/* Main content area (CORE FUNCTIONALITY PRESERVED, FIXED FREEZING) */}
           {videos.length === 0 && !isLoadingFolder ? (
             <div className="drop-zone">
-              {isElectron ? (
-                <div>
-                  <h2>🐝 Welcome to Video Swarm 🐝</h2>
-                  <p>Click "Select Folder" above to browse your video collection</p>
-                  <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
-                    Supports: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
-                  </p>
-                  <div
-                    style={{
-                      marginTop: '2rem',
-                      padding: '1rem',
-                      background: '#2a4a00',
-                      borderRadius: '8px',
-                      borderLeft: '4px solid #4CAF50',
-                    }}
-                  >
-                    <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                      ✨ Advanced Masonry Layouts
-                    </div>
-                    <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
-                      <li>Grid Layout: Responsive grid with consistent spacing</li>
-                      <li>Vertical Masonry: Pinterest-style fixed width, variable height</li>
-                      <li>Horizontal Masonry: Fixed height, variable width for ultrawide</li>
-                      <li>Smart performance management for 1000+ video collections</li>
-                    </ul>
-                  </div>
+              <h2>🐝 Welcome to Video Swarm 🐝</h2>
+              <p>Click "Select Folder" above to browse your video collection</p>
+              <div style={{
+                marginTop: '2rem', padding: '1rem', background: '#2a4a00', borderRadius: '8px'
+              }}>
+                <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                  ⚡ Optimized Performance (Fixed)
                 </div>
-              ) : (
-                <div>
-                  <h2>Drop video files here</h2>
-                  <p>Or use the "Open Folder" button above</p>
-                  <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.8rem' }}>
-                    Supports: MP4, MOV, AVI, MKV, WebM, M4V (H.264 codec)
-                  </p>
-                </div>
-              )}
+                <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
+                  <li>Fixed autoplay logic - visible videos now play properly</li>
+                  <li>Centralized playback control in App component</li>
+                  <li>Removed visual styling for playing videos</li>
+                  <li>All masonry layouts preserved and working</li>
+                </ul>
+              </div>
             </div>
           ) : (
             <div 
               ref={gridRef}
               className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
+              {/* FIXED: Direct rendering without heavy useMemo */}
               {videos.map((video) => (
                 <VideoCard
                   key={video.id}
@@ -816,8 +755,8 @@ function App() {
                   showFilenames={showFilenames}
                   onContextMenu={showContextMenu}
                   
-                  // Performance manager integration (RESTORED)
-                  canLoadMoreVideos={() => loadingVideos.size < maxConcurrentLoading && loadedVideos.size < maxLoadedVideos}
+                  // Performance props
+                  canLoadMoreVideos={() => canLoadMoreVideos(video.id)}
                   isLoading={loadingVideos.has(video.id)}
                   isLoaded={loadedVideos.has(video.id)}
                   isVisible={visibleVideos.has(video.id)}
@@ -830,11 +769,11 @@ function App() {
             </div>
           )}
 
-          {/* Fullscreen Modal */}
+          {/* Modals (PRESERVED) */}
           {fullScreenVideo && (
             <FullScreenModal
               video={fullScreenVideo}
-              onClose={handleFullScreenClose}
+              onClose={() => closeFullScreen()}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
               layoutMode={layoutMode}
@@ -842,7 +781,6 @@ function App() {
             />
           )}
 
-          {/* Context Menu */}
           {contextMenu.visible && (
             <ContextMenu
               video={contextMenu.video}
@@ -853,14 +791,6 @@ function App() {
           )}
         </>
       )}
-      
-      {/* Add CSS for loading animation */}
-      <style jsx>{`
-        @keyframes shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-      `}</style>
     </div>
   );
 }
