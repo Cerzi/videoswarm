@@ -1,6 +1,6 @@
 {
   "name": "video-swarm",
-  "version": "2.10.0",
+  "version": "1.0.0",
   "description": "Desktop application for viewing hundreds of videos simultaneously with advanced masonry layouts and real-time file system monitoring",
   "main": "main.js",
   "homepage": "https://github.com/yourusername/video-swarm",

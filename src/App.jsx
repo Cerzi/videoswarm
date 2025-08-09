@@ -10,10 +10,9 @@ import './App.css';
 function App() {
   const [videos, setVideos] = useState([]);
   const [selectedVideos, setSelectedVideos] = useState(new Set());
-  const [autoplayEnabled, setAutoplayEnabled] = useState(true);
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
+  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(100);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   
@@ -85,8 +84,6 @@ function App() {
     
     if (loadedVideos.size <= performanceLimits.maxLoaded) return;
     
-    console.log(`🧹 React cleanup: ${loadedVideos.size}/${performanceLimits.maxLoaded} loaded`);
-    
     // React-native cleanup using state
     setLoadedVideos(prev => {
       const toKeep = new Set();
@@ -155,18 +152,11 @@ function App() {
 
   // FIXED: Centralized playback management - App decides what plays
   useEffect(() => {
-    if (!autoplayEnabled) {
-      // If autoplay is disabled, nothing should be playing
-      setPlayingVideos(new Set());
-      return;
-    }
 
     // Get videos that are both visible AND loaded (can actually play)
     const playableVideos = Array.from(visibleVideos).filter(videoId => 
       loadedVideos.has(videoId)
     );
-
-    console.log(`Playback check: ${playableVideos.length} playable, ${playingVideos.size} currently playing, max: ${maxConcurrentPlaying}`);
 
     // Determine which videos should be playing (up to the limit)
     const shouldBePlaying = new Set(playableVideos.slice(0, maxConcurrentPlaying));
@@ -180,7 +170,7 @@ function App() {
       setPlayingVideos(shouldBePlaying);
     }
 
-  }, [autoplayEnabled, visibleVideos, loadedVideos, maxConcurrentPlaying, playingVideos]);
+  }, [visibleVideos, loadedVideos, maxConcurrentPlaying, playingVideos]);
 
   // CALLBACK: Context menu handling
   useEffect(() => {
@@ -219,7 +209,6 @@ function App() {
           const settings = await window.electronAPI.getSettings();
           
           if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
-          if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
           if (settings.showFilenames !== undefined) setShowFilenames(settings.showFilenames);
           if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
           if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
@@ -343,8 +332,8 @@ function App() {
 
   // MEMOIZED: Performance callback functions
   const canPlayMoreVideos = useCallback(() => {
-    return autoplayEnabled;
-  }, [autoplayEnabled]);
+    return true; // Always allow playing since we removed autoplay toggle
+  }, []);
   
   // FIXED: Always allow visible videos to load
   const canLoadMoreVideos = useCallback((videoId) => {
@@ -360,13 +349,11 @@ function App() {
   
   // SIMPLIFIED: Remove the old complex handlers, VideoCard will report actual play/pause events
   const handleVideoPlay = useCallback((videoId) => {
-    console.log(`Video started playing: ${videoId}`);
-    // VideoCard will report when it actually starts playing
+    // VideoCard reports when it actually starts playing
   }, []);
 
   const handleVideoPause = useCallback((videoId) => {
-    console.log(`Video paused: ${videoId}`);
-    // VideoCard will report when it actually pauses
+    // VideoCard reports when it actually pauses  
   }, []);
 
   const handleVideoLoaded = useCallback((videoId, aspectRatio) => {
@@ -404,7 +391,6 @@ function App() {
       try {
         await window.electronAPI.saveSettingsPartial({
           recursiveMode, 
-          autoplayEnabled, 
           maxConcurrentPlaying, 
           zoomLevel, 
           showFilenames
@@ -414,7 +400,7 @@ function App() {
         console.error('Failed to save settings:', error);
       }
     }
-  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
   const handleFolderSelect = useCallback(async () => {
     if (!window.electronAPI?.selectFolder) return;
@@ -452,22 +438,6 @@ function App() {
   }, []);
 
   // FIXED: Control handlers with immediate save
-  const toggleAutoplay = useCallback(() => {
-    const newAutoplay = !autoplayEnabled;
-    setAutoplayEnabled(newAutoplay);
-    
-    // Save immediately
-    if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI.saveSettingsPartial({
-        autoplayEnabled: newAutoplay,
-        recursiveMode, 
-        maxConcurrentPlaying, 
-        zoomLevel, 
-        showFilenames
-      }).catch(console.error);
-    }
-  }, [autoplayEnabled, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
-
   const handleLayoutToggle = useCallback(() => {
     const newMode = toggleLayout();
     
@@ -476,7 +446,6 @@ function App() {
       window.electronAPI.saveSettingsPartial({
         layoutMode: newMode,
         recursiveMode, 
-        autoplayEnabled, 
         maxConcurrentPlaying, 
         zoomLevel, 
         showFilenames
@@ -484,7 +453,7 @@ function App() {
     }
     
     return newMode;
-  }, [toggleLayout, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [toggleLayout, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
   const toggleRecursive = useCallback(() => { 
     const newRecursive = !recursiveMode;
@@ -494,13 +463,12 @@ function App() {
     if (window.electronAPI?.saveSettingsPartial) {
       window.electronAPI.saveSettingsPartial({
         recursiveMode: newRecursive,
-        autoplayEnabled, 
         maxConcurrentPlaying, 
         zoomLevel, 
         showFilenames
       }).catch(console.error);
     }
-  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
   
   const toggleFilenames = useCallback(() => { 
     const newShowFilenames = !showFilenames;
@@ -511,12 +479,11 @@ function App() {
       window.electronAPI.saveSettingsPartial({
         showFilenames: newShowFilenames,
         recursiveMode, 
-        autoplayEnabled, 
         maxConcurrentPlaying, 
         zoomLevel
       }).catch(console.error);
     }
-  }, [showFilenames, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel]);
+  }, [showFilenames, recursiveMode, maxConcurrentPlaying, zoomLevel]);
 
   const handleVideoLimitChange = useCallback((newLimit) => {
     setMaxConcurrentPlaying(newLimit);
@@ -526,12 +493,11 @@ function App() {
       window.electronAPI.saveSettingsPartial({
         maxConcurrentPlaying: newLimit,
         recursiveMode, 
-        autoplayEnabled, 
         zoomLevel, 
         showFilenames
       }).catch(console.error);
     }
-  }, [recursiveMode, autoplayEnabled, zoomLevel, showFilenames]);
+  }, [recursiveMode, zoomLevel, showFilenames]);
 
   const handleZoomChange = useCallback((newZoom) => { 
     setZoomLevel(newZoom); 
@@ -542,12 +508,11 @@ function App() {
       window.electronAPI.saveSettingsPartial({
         zoomLevel: newZoom,
         recursiveMode, 
-        autoplayEnabled, 
         maxConcurrentPlaying, 
         showFilenames
       }).catch(console.error);
     }
-  }, [setZoom, recursiveMode, autoplayEnabled, maxConcurrentPlaying, showFilenames]);
+  }, [setZoom, recursiveMode, maxConcurrentPlaying, showFilenames]);
 
   // MEMOIZED: UI helper functions
   const getLayoutButtonText = useMemo(() => {
@@ -589,7 +554,6 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'F12' && e.ctrlKey) {
-        console.log('🧹 Manual cleanup triggered');
         performCleanup();
       }
       if (e.key === 'Escape' && isLoadingFolder) {
@@ -655,7 +619,7 @@ function App() {
 
           {/* Header (PRESERVED) */}
           <div className="header">
-            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.19-fixed</span></h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v1.0.0</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
@@ -681,9 +645,6 @@ function App() {
             </div>
 
             <div className="controls">
-              <button onClick={toggleAutoplay} className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`} disabled={isLoadingFolder}>
-                {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
-              </button>
               <button onClick={toggleRecursive} className={`toggle-button ${recursiveMode ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
               </button>
@@ -701,7 +662,7 @@ function App() {
 
               <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>📹</span>
-                <input type="range" min="10" max="100" value={maxConcurrentPlaying} step="5" style={{ width: '100px' }}
+                <input type="range" min="10" max="500" value={maxConcurrentPlaying} step="10" style={{ width: '100px' }}
                   onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
                 <span style={{ fontSize: '0.8rem' }}>{maxConcurrentPlaying}</span>
               </div>
@@ -746,7 +707,6 @@ function App() {
                   video={video}
                   selected={selectedVideos.has(video.id)}
                   onSelect={handleVideoSelect}
-                  autoplayEnabled={autoplayEnabled}
                   canPlayMoreVideos={canPlayMoreVideos}
                   onVideoPlay={handleVideoPlay}
                   onVideoPause={handleVideoPause}

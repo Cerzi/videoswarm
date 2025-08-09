@@ -4,7 +4,6 @@ const VideoCard = memo(({
   video, 
   selected, 
   onSelect, 
-  autoplayEnabled, 
   canPlayMoreVideos,
   onVideoPlay,
   onVideoPause,
@@ -42,11 +41,6 @@ const VideoCard = memo(({
     setLoading(isLoading);
     setVisible(isVisible);
   }, [isLoaded, isLoading, isVisible]);
-
-  // DEBUGGING: Add this to see what's happening
-  if (Math.random() < 0.01) { // Only log 1% of the time to avoid spam
-    console.log(`VideoCard ${video.name}: visible=${visible}, loaded=${loaded}, isPlaying=${isPlaying}, canLoad=${canLoadMoreVideos()}`);
-  }
 
   // SIMPLIFIED: Only handle visibility detection
   useEffect(() => {
@@ -89,42 +83,36 @@ const VideoCard = memo(({
 
     if (isPlaying && videoElement.paused) {
       // Parent says we should be playing
-      console.log(`Starting video: ${video.name}`);
       videoElement.play()
         .then(() => {
-          console.log(`✓ Video playing: ${video.name}`);
           onVideoPlay?.(videoId); // Report actual play
         })
         .catch((err) => {
-          console.log(`✗ Video play failed: ${video.name}`, err);
+          console.debug('Video play failed:', err);
           onVideoPause?.(videoId); // Report that we're not actually playing
         });
     } else if (!isPlaying && !videoElement.paused) {
       // Parent says we should be paused
-      console.log(`Pausing video: ${video.name}`);
       videoElement.pause();
       onVideoPause?.(videoId); // Report actual pause
     }
-  }, [isPlaying, loaded, video.name, videoId, onVideoPlay, onVideoPause]);
+  }, [isPlaying, loaded, videoId, onVideoPlay, onVideoPause]);
 
-  // ALSO ADD: Direct event listeners on the video element to catch any state changes
+  // Event listeners on the video element to catch any state changes
   useEffect(() => {
     if (!videoRef.current) return;
 
     const videoElement = videoRef.current;
 
     const handlePlay = () => {
-      console.log(`🎬 Video actually started playing: ${video.name}`);
       onVideoPlay?.(videoId);
     };
 
     const handlePause = () => {
-      console.log(`⏸️ Video actually paused: ${video.name}`);
       onVideoPause?.(videoId);
     };
 
     const handleEnded = () => {
-      console.log(`🔄 Video ended, restarting: ${video.name}`);
       if (videoElement && !videoElement.paused) {
         videoElement.currentTime = 0;
         videoElement.play().catch(console.debug);
@@ -140,7 +128,7 @@ const VideoCard = memo(({
       videoElement.removeEventListener('pause', handlePause);
       videoElement.removeEventListener('ended', handleEnded);
     };
-  }, [loaded, video.name, videoId, onVideoPlay, onVideoPause]);
+  }, [loaded, videoId, onVideoPlay, onVideoPause]);
 
   // CALLBACK: Load video function
   const loadVideo = useCallback(async () => {

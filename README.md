@@ -28,10 +28,10 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 ## ✨ Features
 
 ### 🚀 **Mass Video Playback**
-- Simultaneous playback of multiple videos (configurable limit: 10-100+)
-- Smart autoplay management with visibility-based loading
+- Simultaneous playback of multiple videos (configurable limit: 10-500+)
+- Smart visibility-based autoplay - only visible videos play automatically
 - Optimized performance for large collections (tested with 1000+ videos)
-- Memory-efficient lazy loading and cleanup
+- Memory-efficient lazy loading and aggressive cleanup of off-screen videos
 
 ### 📐 **Advanced Layout Modes**
 - Grid Layout: Traditional CSS grid with responsive columns
@@ -56,9 +56,9 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 ### ⚙️ **Customization & Settings**
 - Persistent settings stored in user data directory
 - Show/hide filenames toggle
-- Adjustable concurrent playback limits
-- Autoplay pause/resume for all videos
+- Adjustable concurrent playback limits (10-500 videos)
 - Window state preservation (size, position)
+- Intelligent performance management with automatic cleanup
 
 ### 🖥️ **Desktop-Only Application**
 - Native desktop app built with Electron for full file system access
@@ -88,11 +88,11 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 - 📐 Horizontal: Masonry layout, fixed height (best for landscape/ultrawide)
 
 ### Settings Panel
-- ▶️/⏸️ Toggle: Pause/resume all video playback
 - 📂 Recursive: Include subdirectories in scan
 - 📝 Filenames: Show/hide video filenames
-- 📹 Slider: Control max concurrent playing videos (10-100)
+- 📹 Slider: Control max concurrent playing videos (10-500)
 - 🔍 Slider: Adjust thumbnail zoom level
+- 🧹 Cleanup: Manually clean up distant videos to free memory
 
 ## 🛠️ Technical Details
 
@@ -101,7 +101,7 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 - Backend: Electron with IPC communication
 - File Watching: Chokidar with polling fallback
 - Layout Engine: Custom masonry implementation with CSS Grid fallback
-- Performance: Intersection Observer for visibility detection, debounced updates
+- Performance: Intersection Observer for visibility detection, aggressive memory management
 
 ### Supported Formats
 - Video containers: MP4, MOV, AVI, MKV, WebM, M4V, FLV, WMV, 3GP, OGV
@@ -118,11 +118,18 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 - File Properties: Detailed metadata display
 
 ### Performance Optimizations
-- Lazy loading: Videos load only when scrolled into view
-- Intelligent playback: Respects concurrent video limits
-- Memory management: Automatic cleanup of video elements
-- Debounced updates: Smooth scrolling and resizing
-- Native file watching: Real-time updates without polling
+- **Visibility-Based Loading**: Videos only load when scrolled into view
+- **Intelligent Playback**: Automatically plays visible videos up to concurrent limit
+- **Aggressive Cleanup**: Automatically unloads off-screen videos to free memory
+- **Hardware Acceleration**: Utilizes GPU video decoding when available
+- **Memory Management**: Automatic cleanup with configurable limits
+- **Native File Watching**: Real-time updates without polling
+
+### Performance Limits
+- **Concurrent Playing**: 10-500 videos (user configurable)
+- **Memory Management**: Automatic cleanup of invisible videos
+- **Loading Prioritization**: Visible videos always load first
+- **Tested Scale**: Successfully handles 1000+ video collections
 
 ## 🔧 Development
 
@@ -189,13 +196,28 @@ src/
 - Media Managers: Organize and review video collections
 - Researchers: Analyze video datasets
 
+### 💻 **High-Performance Workflows**
+- **4K Monitors**: Display 200-300+ videos simultaneously when zoomed out
+- **Ultrawide Setups**: Utilize full screen real estate
+- **Multi-Monitor**: Span video collections across multiple displays
+- **Workstations**: Leverage high-end hardware for massive video walls
+
 ## 🐛 Known Limitations
 
-- Desktop Only: No web version due to file system requirements
-- H.265/HEVC: Limited browser support, shows placeholder with codec info
-- Very Large Collections: Performance may degrade with 5000+ videos
-- Mobile: Not designed for touch interfaces (desktop application)
-- Internet Required: Only for downloading the app, runs fully offline afterward
+- **Desktop Only**: No web version due to file system requirements
+- **H.265/HEVC**: Limited browser support, shows placeholder with codec info
+- **Very Large Collections**: Performance may degrade with 5000+ videos depending on hardware
+- **Mobile**: Not designed for touch interfaces (desktop application)
+- **Internet Required**: Only for downloading the app, runs fully offline afterward
+
+## 📈 What's New in v1.0.0
+
+- **🎉 First Public Release**: Stable, production-ready video management
+- **⚡ High Performance**: Support for up to 500 concurrent playing videos
+- **🧠 Smart Loading**: Visible videos always load first with aggressive cleanup
+- **🎛️ Simplified Interface**: Streamlined controls for better user experience
+- **📐 Advanced Layouts**: Grid, vertical masonry, and horizontal masonry modes
+- **🔧 Robust File Handling**: Real-time monitoring and native file operations
 
 ## 📝 License
 
@@ -210,10 +232,11 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 - Maintain Electron security best practices
 - Write descriptive commit messages
 - Test across platforms when possible
+- Focus on performance for large video collections
 
 ---
 
-**Video Swarm v2.10** - Built with ❤️ for video professionals and content creators
+**Video Swarm v1.0.0** - Built with ❤️ for video professionals and content creators
 
 ---
 
