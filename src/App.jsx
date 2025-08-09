@@ -59,18 +59,19 @@ function App() {
     handleContextAction
   } = useContextMenu();
 
-  // MEMOIZED: Performance limits calculation
+  // MEMOIZED: Performance limits calculation - BALANCED approach
   const performanceLimits = useMemo(() => {
     const videoCount = videos.length;
     
+    // BALANCED - not too aggressive to maintain functionality
     if (videoCount < 100) {
-      return { maxLoaded: 60, maxConcurrentLoading: 4 };
+      return { maxLoaded: 80, maxConcurrentLoading: 6 };
     } else if (videoCount < 500) {
-      return { maxLoaded: 80, maxConcurrentLoading: 3 };
+      return { maxLoaded: 120, maxConcurrentLoading: 5 };
     } else if (videoCount < 1000) {
-      return { maxLoaded: 100, maxConcurrentLoading: 2 };
+      return { maxLoaded: 160, maxConcurrentLoading: 4 };
     } else {
-      return { maxLoaded: 120, maxConcurrentLoading: 1 };
+      return { maxLoaded: 200, maxConcurrentLoading: 3 };
     }
   }, [videos.length]);
 
@@ -152,11 +153,12 @@ function App() {
 
   // FIXED: Centralized playback management - App decides what plays
   useEffect(() => {
-
     // Get videos that are both visible AND loaded (can actually play)
     const playableVideos = Array.from(visibleVideos).filter(videoId => 
       loadedVideos.has(videoId)
     );
+
+    console.log(`Playback check: ${playableVideos.length} playable, ${playingVideos.size} currently playing, max: ${maxConcurrentPlaying}`);
 
     // Determine which videos should be playing (up to the limit)
     const shouldBePlaying = new Set(playableVideos.slice(0, maxConcurrentPlaying));
@@ -236,10 +238,28 @@ function App() {
   useEffect(() => {
     if (!window.electronAPI) return;
 
+    // Helper function to sort videos hierarchically
+    const sortVideosHierarchically = (videos) => {
+      return videos.sort((a, b) => {
+        // Get directory paths (or empty string for root)
+        const dirA = a.directory || '';
+        const dirB = b.directory || '';
+        
+        // First sort by directory
+        if (dirA !== dirB) {
+          return dirA.localeCompare(dirB);
+        }
+        
+        // Then sort by filename within the same directory
+        return a.name.localeCompare(b.name);
+      });
+    };
+
     const handleFileAdded = (videoFile) => {
       setVideos(prev => {
         if (prev.some(v => v.id === videoFile.id)) return prev;
-        return [...prev, videoFile].sort((a, b) => a.name.localeCompare(b.name));
+        const newVideos = [...prev, videoFile];
+        return sortVideosHierarchically(newVideos);
       });
     };
 
@@ -301,12 +321,27 @@ function App() {
 
       const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
       
-      setLoadingStage(`Found ${videoFiles.length} videos - initializing masonry...`);
+      setLoadingStage(`Found ${videoFiles.length} videos - sorting and organizing...`);
       setLoadingProgress(70);
       await new Promise(resolve => setTimeout(resolve, 300));
 
-      console.log(`📊 Setting ${videoFiles.length} videos for masonry layout`);
-      setVideos(videoFiles);
+      // Sort videos hierarchically by directory then name
+      const sortedVideos = videoFiles.sort((a, b) => {
+        // Get directory paths (or empty string for root)
+        const dirA = a.directory || '';
+        const dirB = b.directory || '';
+        
+        // First sort by directory
+        if (dirA !== dirB) {
+          return dirA.localeCompare(dirB);
+        }
+        
+        // Then sort by filename within the same directory
+        return a.name.localeCompare(b.name);
+      });
+
+      console.log(`📊 Setting ${sortedVideos.length} videos for masonry layout`);
+      setVideos(sortedVideos);
 
       await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -347,13 +382,19 @@ function App() {
            loadedVideos.size < performanceLimits.maxLoaded;
   }, [visibleVideos, loadingVideos.size, loadedVideos.size, performanceLimits]);
   
-  // SIMPLIFIED: Remove the old complex handlers, VideoCard will report actual play/pause events
+  // SIMPLIFIED: Track actual play/pause events from VideoCards
   const handleVideoPlay = useCallback((videoId) => {
-    // VideoCard reports when it actually starts playing
+    // VideoCard reports when it actually starts playing - trust this
+    setPlayingVideos(prev => new Set([...prev, videoId]));
   }, []);
 
   const handleVideoPause = useCallback((videoId) => {
-    // VideoCard reports when it actually pauses  
+    // VideoCard reports when it actually pauses - trust this  
+    setPlayingVideos(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(videoId);
+      return newSet;
+    });
   }, []);
 
   const handleVideoLoaded = useCallback((videoId, aspectRatio) => {
@@ -427,9 +468,13 @@ function App() {
       file,
       loaded: false,
       isElectronFile: false,
+      directory: '', // Web files don't have directory structure
     }));
 
-    setVideos(videoObjects);
+    // Sort web files alphabetically by name
+    const sortedVideoObjects = videoObjects.sort((a, b) => a.name.localeCompare(b.name));
+
+    setVideos(sortedVideoObjects);
     setSelectedVideos(new Set());
     setPlayingVideos(new Set());
     setVisibleVideos(new Set());
@@ -438,6 +483,7 @@ function App() {
   }, []);
 
   // FIXED: Control handlers with immediate save
+  // FIXED: Simpler layout toggle - let existing cleanup handle memory management
   const handleLayoutToggle = useCallback(() => {
     const newMode = toggleLayout();
     
@@ -550,11 +596,11 @@ function App() {
     });
   }, [videos, openFullScreen, playingVideos]);
 
-  // CALLBACK: Emergency cleanup
+  // CALLBACK: Emergency cleanup (keep for Ctrl+F12 hotkey)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'F12' && e.ctrlKey) {
-        performCleanup();
+        performCleanup(); // Keep hotkey for power users
       }
       if (e.key === 'Escape' && isLoadingFolder) {
         setIsLoadingFolder(false);
@@ -619,7 +665,7 @@ function App() {
 
           {/* Header (PRESERVED) */}
           <div className="header">
-            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v1.0.0</span></h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.19-fixed</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
@@ -653,11 +699,6 @@ function App() {
               </button>
               <button onClick={handleLayoutToggle} className="toggle-button" disabled={isLoadingFolder}>
                 {getLayoutButtonText}
-              </button>
-              <button onClick={performCleanup}
-                className="toggle-button" style={{ color: '#ff6b6b' }} disabled={isLoadingFolder}
-                title="Clean up distant videos to free memory">
-                🧹 Cleanup
               </button>
 
               <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

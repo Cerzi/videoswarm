@@ -42,7 +42,7 @@ const VideoCard = memo(({
     setVisible(isVisible);
   }, [isLoaded, isLoading, isVisible]);
 
-  // SIMPLIFIED: Only handle visibility detection
+  // Intersection Observer for visibility detection
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -52,7 +52,7 @@ const VideoCard = memo(({
           const nowVisible = entry.isIntersecting;
           setVisible(nowVisible);
           
-          // Report visibility to parent - that's ALL we do
+          // Report visibility to parent
           onVisibilityChange?.(videoId, nowVisible);
           
           // Load video when it becomes visible
@@ -75,7 +75,7 @@ const VideoCard = memo(({
     };
   }, [loaded, loading, error, canLoadMoreVideos, onVisibilityChange, videoId]);
 
-  // FIXED: Respond to parent's isPlaying prop AND report actual state
+  // Respond to parent's isPlaying prop
   useEffect(() => {
     if (!videoRef.current || !loaded) return;
 
@@ -85,20 +85,20 @@ const VideoCard = memo(({
       // Parent says we should be playing
       videoElement.play()
         .then(() => {
-          onVideoPlay?.(videoId); // Report actual play
+          onVideoPlay?.(videoId);
         })
         .catch((err) => {
           console.debug('Video play failed:', err);
-          onVideoPause?.(videoId); // Report that we're not actually playing
+          onVideoPause?.(videoId);
         });
     } else if (!isPlaying && !videoElement.paused) {
       // Parent says we should be paused
       videoElement.pause();
-      onVideoPause?.(videoId); // Report actual pause
+      onVideoPause?.(videoId);
     }
   }, [isPlaying, loaded, videoId, onVideoPlay, onVideoPause]);
 
-  // Event listeners on the video element to catch any state changes
+  // Event listeners on video element
   useEffect(() => {
     if (!videoRef.current) return;
 
@@ -130,7 +130,7 @@ const VideoCard = memo(({
     };
   }, [loaded, videoId, onVideoPlay, onVideoPause]);
 
-  // CALLBACK: Load video function
+  // Load video function
   const loadVideo = useCallback(async () => {
     if (loading || loaded || error || hasLoadedRef.current || !canLoadMoreVideos()) return;
 
@@ -233,7 +233,7 @@ const VideoCard = memo(({
     }
   }, [video, loading, loaded, error, videoId, onVideoLoad, onStartLoading, onStopLoading, canLoadMoreVideos]);
 
-  // Cleanup and click handlers
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (loadTimeoutRef.current) {
@@ -244,12 +244,26 @@ const VideoCard = memo(({
       }
       if (videoRef.current) {
         try {
-          if (videoRef.current.src?.startsWith('blob:')) {
-            URL.revokeObjectURL(videoRef.current.src);
+          const videoElement = videoRef.current;
+          
+          // Clean up video element
+          videoElement.pause();
+          
+          // Clean up blob URLs
+          if (videoElement.src?.startsWith('blob:')) {
+            URL.revokeObjectURL(videoElement.src);
           }
-          videoRef.current.pause();
-          videoRef.current.removeAttribute('src');
-          videoRef.current.load();
+          
+          // Reset video element
+          videoElement.removeAttribute('src');
+          videoElement.load();
+          
+          // Remove from DOM if still attached
+          if (videoElement.parentNode) {
+            videoElement.parentNode.removeChild(videoElement);
+          }
+          
+          videoRef.current = null;
         } catch (err) {
           console.warn('Error during video cleanup:', err);
         }
@@ -258,6 +272,7 @@ const VideoCard = memo(({
     };
   }, []);
 
+  // Click handlers
   const handleClick = useCallback((e) => {
     e.stopPropagation();
     
@@ -283,6 +298,7 @@ const VideoCard = memo(({
     }
   }, [onContextMenu, video]);
 
+  // Placeholder content
   const getPlaceholderContent = useCallback(() => {
     if (error) {
       const getErrorIcon = () => {
