@@ -398,4 +398,412 @@
   border-radius: 8px 8px 0 0; /* Match parent border radius, leave bottom for filename */
 }
 
-/* Additional React-specific overrides can go here */
+/* Performance and Loading State Styles */
+
+/* Smooth transitions for video cards during progressive rendering */
+.video-item {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  will-change: opacity, transform;
+}
+
+/* Loading state animations */
+.video-item.loading {
+  opacity: 0.7;
+}
+
+.video-item.loading .video-placeholder {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Playing indicator */
+.video-item.playing {
+  box-shadow: 0 0 0 2px #4CAF50;
+}
+
+.video-item.playing::after {
+  content: '▶️';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 4px;
+  border-radius: 3px;
+  z-index: 2;
+}
+
+/* Visible indicator (for debugging) */
+.video-item[data-visible="true"] {
+  border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+/* Improved placeholder states */
+.video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
+  color: #888;
+  text-align: center;
+  font-size: 0.9rem;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+/* Error states with better visual hierarchy */
+.error-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
+  color: #ff6b6b;
+  text-align: center;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.error-indicator.error-codec {
+  background: linear-gradient(135deg, #2d2a1a, #3d3a2d);
+  color: #ffb347;
+}
+
+/* Performance debug overlay */
+.debug-info {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  transition: all 0.3s ease;
+}
+
+.debug-info:hover {
+  background: #2a2a2a !important;
+  color: #fff !important;
+}
+
+/* Loading states for controls */
+.header button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transition: opacity 0.3s ease;
+}
+
+.header input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Infinite scroll indicator styling */
+.video-grid > div:last-child {
+  animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Memory pressure indicators */
+.app[data-memory-pressure="high"] .video-item:not(.visible) {
+  opacity: 0.3;
+}
+
+.app[data-memory-pressure="critical"] .video-item:not(.visible) {
+  display: none;
+}
+
+/* Smooth layout changes during progressive rendering */
+.video-grid {
+  transition: height 0.3s ease;
+}
+
+/* Better visual feedback for large collections */
+.video-grid.rendering {
+  overflow: hidden;
+}
+
+.video-grid.rendering::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #4CAF50, #45a049);
+  animation: loading-bar 2s ease-in-out infinite;
+  z-index: 1000;
+}
+
+@keyframes loading-bar {
+  0%, 100% { transform: translateX(-100%); }
+  50% { transform: translateX(100vw); }
+}
+
+/* Responsive adjustments for loading states */
+@media (max-width: 768px) {
+  .debug-info {
+    font-size: 0.6rem !important;
+    padding: 0.2rem 0.5rem !important;
+  }
+  
+  .video-placeholder {
+    font-size: 0.8rem;
+    padding: 0.5rem;
+  }
+  
+  .error-indicator {
+    font-size: 0.7rem;
+    padding: 0.5rem;
+  }
+}
+
+/* Performance-based grid optimizations */
+.video-grid.performance-mode .video-item {
+  contain: layout style paint;
+  transform: translateZ(0);
+}
+
+/* Reduced motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .video-item,
+  .video-placeholder,
+  .debug-info {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Virtual Grid Styles */
+
+.virtual-grid-container {
+  background: #1a1a1a;
+  width: 100%;
+  position: relative;
+  /* Enable hardware acceleration */
+  will-change: scroll-position;
+  transform: translateZ(0);
+}
+
+.virtual-grid-container::-webkit-scrollbar {
+  width: 12px;
+}
+
+.virtual-grid-container::-webkit-scrollbar-track {
+  background: #2d2d2d;
+}
+
+.virtual-grid-container::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 6px;
+}
+
+.virtual-grid-container::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+/* Virtual item positioning optimizations */
+.virtual-grid-container .video-item {
+  /* Optimize for position changes */
+  will-change: transform;
+  transform: translateZ(0);
+  /* Disable transitions in virtual mode for performance */
+  transition: none !important;
+  /* Ensure proper containment */
+  contain: layout style paint size;
+}
+
+/* Layout-specific adjustments for virtual scrolling */
+.virtual-grid-container.layout-grid .video-item {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.virtual-grid-container.layout-masonry-vertical .video-item {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.virtual-grid-container.layout-masonry-horizontal .video-item {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Zoom level optimizations */
+.virtual-grid-container.zoom-small .video-item {
+  font-size: 0.8rem;
+}
+
+.virtual-grid-container.zoom-medium .video-item {
+  font-size: 0.9rem;
+}
+
+.virtual-grid-container.zoom-large .video-item {
+  font-size: 1rem;
+}
+
+.virtual-grid-container.zoom-xlarge .video-item {
+  font-size: 1.1rem;
+}
+
+/* Filename visibility */
+.virtual-grid-container.hide-filenames .video-filename {
+  display: none;
+}
+
+/* Performance optimizations for virtual items */
+.virtual-grid-container .video-container {
+  /* Ensure video containers are optimized */
+  contain: layout style paint;
+  will-change: auto;
+}
+
+.virtual-grid-container .video-element {
+  /* Optimize video elements */
+  will-change: auto;
+  transform: translateZ(0);
+}
+
+/* Loading states in virtual mode */
+.virtual-grid-container .video-placeholder {
+  /* Simplified placeholder for better performance */
+  background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.9rem;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Error states optimized for virtual scrolling */
+.virtual-grid-container .error-indicator {
+  background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #ff6b6b;
+  font-size: 0.8rem;
+  height: 100%;
+  text-align: center;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
+
+/* Selection states */
+.virtual-grid-container .video-item.selected {
+  box-shadow: 0 0 0 3px #007acc;
+  z-index: 10;
+}
+
+/* Playing indicator in virtual mode */
+.virtual-grid-container .video-item.playing::after {
+  content: '▶️';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.7rem;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 2px 4px;
+  border-radius: 3px;
+  z-index: 5;
+}
+
+/* Hover effects (lightweight for virtual scrolling) */
+.virtual-grid-container .video-item:hover {
+  transform: scale(1.02);
+  z-index: 5;
+  transition: transform 0.1s ease;
+}
+
+.virtual-grid-container .video-item:hover .video-filename {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+/* Responsive design for virtual grid */
+@media (max-width: 768px) {
+  .virtual-grid-container {
+    padding-top: 60px; /* Smaller header on mobile */
+  }
+  
+  .virtual-grid-container .video-filename {
+    font-size: 0.7rem;
+    padding: 2px 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .virtual-grid-container {
+    padding-top: 50px;
+  }
+  
+  .virtual-grid-container .video-item {
+    font-size: 0.75rem;
+  }
+}
+
+/* Debug overlay positioning */
+.virtual-grid-container + .debug-overlay {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.9);
+  color: #0f0;
+  padding: 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.7rem;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+/* Smooth scrolling behavior */
+.virtual-grid-container {
+  scroll-behavior: smooth;
+}
+
+/* High performance mode */
+.virtual-grid-container.performance-mode .video-item {
+  /* Maximum performance optimizations */
+  contain: strict;
+  will-change: transform;
+  transform: translateZ(0) scale(1);
+}
+
+.virtual-grid-container.performance-mode .video-item:hover {
+  /* Disable hover effects in performance mode */
+  transform: translateZ(0) scale(1) !important;
+}
+
+/* Accessibility improvements */
+.virtual-grid-container:focus-within .video-item.selected {
+  outline: 2px solid #007acc;
+  outline-offset: 2px;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .virtual-grid-container {
+    scroll-behavior: auto;
+  }
+  
+  .virtual-grid-container .video-item {
+    transition: none !important;
+    animation: none !important;
+  }
+  
+  .virtual-grid-container .video-item:hover {
+    transform: none !important;
+  }
+}

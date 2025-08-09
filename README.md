@@ -1,6 +1,6 @@
 # 🐝 Video Swarm
 
-A desktop application for viewing hundreds of videos simultaneously. Perfect for managing large video collections with advanced masonry layouts, real-time playback, and instant file system monitoring.
+A desktop Electron application for viewing hundreds of videos simultaneously. Perfect for managing large video collections with advanced masonry layouts, real-time playback, and instant file system monitoring.
 
 > **See your entire video collection in motion** - when static thumbnails aren't enough, Video Swarm shows you everything at once.
 
@@ -70,8 +70,8 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 
 ### Getting Started
 1. Launch the application
-2. Click "📁 Select Folder" to choose your video directory
-3. Toggle "📂 Recursive" to include subdirectories
+2. Toggle "📂 Recursive" to include subdirectories
+3. Click "📁 Select Folder" to choose your video directory
 4. Adjust settings using the top control bar
 
 ### Navigation Controls
