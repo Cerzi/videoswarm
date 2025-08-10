@@ -10,13 +10,17 @@ const path = require("path");
 const fs = require("fs").promises;
 const chokidar = require("chokidar");
 
-console.log('=== MAIN.JS LOADING ===');
-console.log('Node version:', process.version);
-console.log('Electron version:', process.versions.electron);
+console.log("=== MAIN.JS LOADING ===");
+console.log("Node version:", process.version);
+console.log("Electron version:", process.versions.electron);
 
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("--no-sandbox");
   app.commandLine.appendSwitch("--disable-setuid-sandbox");
+  app.commandLine.appendSwitch("ignore-gpu-blocklist");
+  app.commandLine.appendSwitch("enable-features", "VaapiVideoDecodeLinuxGL");
+  app.commandLine.appendSwitch("use-gl", "desktop");
+  console.log("GPU status:", app.getGPUFeatureStatus());
 }
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
@@ -47,7 +51,7 @@ async function loadSettings() {
     const data = await fs.readFile(settingsPath, "utf8");
     const settings = JSON.parse(data);
     console.log("Settings loaded:", settings);
-    
+
     // Remove layoutMode and autoplayEnabled from loaded settings if they exist (cleanup)
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
     currentSettings = { ...defaultSettings, ...cleanSettings };
@@ -481,7 +485,7 @@ ipcMain.handle("start-folder-watch", async (event, folderPath) => {
     currentWatchedFolder = folderPath;
 
     // Create new watcher with optimized settings
-    fileWatcher = chokidar.watch(folderPath, {
+    fileWatcher = chokidar.watch(path.join(folderPath, '**/'), {
       ignored: [
         /(^|[\/\\])\../, // Ignore hidden files/folders
         "**/node_modules/**", // Ignore node_modules
