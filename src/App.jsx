@@ -897,13 +897,6 @@ function App() {
                 <div style={{ fontSize: '1.5rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '2rem' }}>
                   {loadingProgress}%
                 </div>
-                <button onClick={() => setIsLoadingFolder(false)} style={{
-                  padding: '1rem 2.5rem', backgroundColor: '#ff4444',
-                  color: 'white', border: 'none', borderRadius: '10px', 
-                  cursor: 'pointer', fontSize: '1.1rem', fontWeight: 'bold'
-                }}>
-                  Cancel Loading
-                </button>
               </div>
             </div>
           )}
