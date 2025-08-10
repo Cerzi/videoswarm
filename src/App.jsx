@@ -1,18 +1,28 @@
 // App.jsx
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import VideoCard from "./components/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
+import { useProgressiveList } from "./hooks/useProgressiveList";
 import "./App.css";
 
 // Helper function to get directory path
 const path = {
   dirname: (filePath) => {
     if (!filePath) return "";
-    const lastSlash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+    const lastSlash = Math.max(
+      filePath.lastIndexOf("/"),
+      filePath.lastIndexOf("\\")
+    );
     return lastSlash === -1 ? "" : filePath.substring(0, lastSlash);
   },
 };
@@ -44,12 +54,8 @@ function App() {
   const gridRef = useRef(null);
 
   // ----- Masonry hook -----
-  const {
-    updateAspectRatio,
-    onItemsChanged,
-    setZoomClass,
-    scheduleLayout,
-  } = useChunkedMasonry({ gridRef });
+  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
+    useChunkedMasonry({ gridRef });
 
   // MEMOIZED: Grouped and sorted videos
   const groupedAndSortedVideos = useMemo(() => {
@@ -57,7 +63,8 @@ function App() {
     const videosByFolder = new Map();
     videos.forEach((video) => {
       const folderPath =
-        video.metadata?.folder || path.dirname(video.fullPath || video.relativePath || "");
+        video.metadata?.folder ||
+        path.dirname(video.fullPath || video.relativePath || "");
       if (!videosByFolder.has(folderPath)) videosByFolder.set(folderPath, []);
       videosByFolder.get(folderPath).push(video);
     });
@@ -68,13 +75,20 @@ function App() {
       folderVideos.sort((a, b) => a.name.localeCompare(b.name));
       result.push(...folderVideos);
     });
-    if (__DEV__) console.log(`📁 Grouped ${videos.length} videos into ${sortedFolders.length} folders`);
+    if (__DEV__)
+      console.log(
+        `📁 Grouped ${videos.length} videos into ${sortedFolders.length} folders`
+      );
     return result;
   }, [videos]);
 
   // fullscreen / context menu
-  const { fullScreenVideo, openFullScreen, closeFullScreen, navigateFullScreen } =
-    useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
+  const {
+    fullScreenVideo,
+    openFullScreen,
+    closeFullScreen,
+    navigateFullScreen,
+  } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
   const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
     useContextMenu();
 
@@ -103,13 +117,19 @@ function App() {
         }
       });
       prev.forEach((id) => {
-        if (playingVideos.has(id) && !toKeep.has(id) && keep < performanceLimits.maxLoaded) {
+        if (
+          playingVideos.has(id) &&
+          !toKeep.has(id) &&
+          keep < performanceLimits.maxLoaded
+        ) {
           toKeep.add(id);
           keep++;
         }
       });
       const remaining = Array.from(prev).filter((id) => !toKeep.has(id));
-      remaining.slice(0, performanceLimits.maxLoaded - keep).forEach((id) => toKeep.add(id));
+      remaining
+        .slice(0, performanceLimits.maxLoaded - keep)
+        .forEach((id) => toKeep.add(id));
       return toKeep;
     });
 
@@ -133,11 +153,18 @@ function App() {
       }
     }, 1000);
     return () => clearTimeout(cleanupTimeoutRef.current);
-  }, [loadedVideos.size, loadingVideos.size, performanceLimits, performCleanup]);
+  }, [
+    loadedVideos.size,
+    loadingVideos.size,
+    performanceLimits,
+    performCleanup,
+  ]);
 
   // playback management (unchanged)
   useEffect(() => {
-    const playable = Array.from(visibleVideos).filter((id) => loadedVideos.has(id));
+    const playable = Array.from(visibleVideos).filter((id) =>
+      loadedVideos.has(id)
+    );
     const target = new Set(playable.slice(0, maxConcurrentPlaying));
     const a = Array.from(playingVideos).sort().join("|");
     const b = Array.from(target).sort().join("|");
@@ -174,7 +201,8 @@ function App() {
         const s = await api.getSettings();
         if (s.recursiveMode !== undefined) setRecursiveMode(s.recursiveMode);
         if (s.showFilenames !== undefined) setShowFilenames(s.showFilenames);
-        if (s.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(s.maxConcurrentPlaying);
+        if (s.maxConcurrentPlaying !== undefined)
+          setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
       } catch {}
       setSettingsLoaded(true);
@@ -194,7 +222,9 @@ function App() {
     const handleFileAdded = (videoFile) => {
       setVideos((prev) => {
         if (prev.some((v) => v.id === videoFile.id)) return prev;
-        return [...prev, videoFile].sort((a, b) => a.name.localeCompare(b.name));
+        return [...prev, videoFile].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        );
       });
     };
     const handleFileRemoved = (filePath) => {
@@ -226,7 +256,9 @@ function App() {
       });
     };
     const handleFileChanged = (videoFile) => {
-      setVideos((prev) => prev.map((v) => (v.id === videoFile.id ? videoFile : v)));
+      setVideos((prev) =>
+        prev.map((v) => (v.id === videoFile.id ? videoFile : v))
+      );
     };
 
     api.onFileAdded?.(handleFileAdded);
@@ -312,7 +344,9 @@ function App() {
 
         const files = await api.readDirectory(folderPath, recursiveMode);
 
-        setLoadingStage(`Found ${files.length} videos — initializing masonry...`);
+        setLoadingStage(
+          `Found ${files.length} videos — initializing masonry...`
+        );
         setLoadingProgress(70);
         await new Promise((r) => setTimeout(r, 200));
 
@@ -342,7 +376,9 @@ function App() {
   const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((f) => {
       const isVideoType = f.type.startsWith("video/");
-      const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(f.name);
+      const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
+        f.name
+      );
       return isVideoType || hasExt;
     });
     const list = files.map((f) => ({
@@ -444,44 +480,119 @@ function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isLoadingFolder]);
 
+  const progressiveVideos = useProgressiveList(groupedAndSortedVideos, 100, 16);
+
   return (
     <div className="app">
       {!settingsLoaded ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "#888" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100vh",
+            color: "#888",
+          }}
+        >
           Loading settings...
         </div>
       ) : (
         <>
           {isLoadingFolder && (
-            <div style={{
-              position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.95)",
-              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99999, backdropFilter: "blur(8px)"
-            }}>
-              <div style={{
-                backgroundColor: "#1a1a1a", borderRadius: 20, padding: "3rem",
-                maxWidth: 600, width: "90%", textAlign: "center", boxShadow: "0 30px 60px rgba(0,0,0,0.8)", border: "2px solid #333"
-              }}>
-                <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>🐝</div>
-                <div style={{ fontSize: "2rem", marginBottom: "1rem", color: "#4CAF50", fontWeight: "bold" }}>Video Swarm</div>
-                <div style={{ fontSize: "1.2rem", color: "#ccc", marginBottom: "2rem", minHeight: 40 }}>
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                backgroundColor: "rgba(0,0,0,0.95)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 99999,
+                backdropFilter: "blur(8px)",
+              }}
+            >
+              <div
+                style={{
+                  backgroundColor: "#1a1a1a",
+                  borderRadius: 20,
+                  padding: "3rem",
+                  maxWidth: 600,
+                  width: "90%",
+                  textAlign: "center",
+                  boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
+                  border: "2px solid #333",
+                }}
+              >
+                <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>
+                  🐝
+                </div>
+                <div
+                  style={{
+                    fontSize: "2rem",
+                    marginBottom: "1rem",
+                    color: "#4CAF50",
+                    fontWeight: "bold",
+                  }}
+                >
+                  Video Swarm
+                </div>
+                <div
+                  style={{
+                    fontSize: "1.2rem",
+                    color: "#ccc",
+                    marginBottom: "2rem",
+                    minHeight: 40,
+                  }}
+                >
                   {loadingStage || "Preparing..."}
                 </div>
-                <div style={{ width: "100%", height: 16, backgroundColor: "#333", borderRadius: 8, overflow: "hidden", marginBottom: "2rem" }}>
-                  <div style={{ width: `${loadingProgress}%`, height: "100%", background: "linear-gradient(90deg, #4CAF50, #45a049)", borderRadius: 8, transition: "width 0.5s ease" }} />
+                <div
+                  style={{
+                    width: "100%",
+                    height: 16,
+                    backgroundColor: "#333",
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    marginBottom: "2rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${loadingProgress}%`,
+                      height: "100%",
+                      background: "linear-gradient(90deg, #4CAF50, #45a049)",
+                      borderRadius: 8,
+                      transition: "width 0.5s ease",
+                    }}
+                  />
                 </div>
-                <div style={{ fontSize: "1.5rem", color: "#4CAF50", fontWeight: "bold", marginBottom: "2rem" }}>{loadingProgress}%</div>
+                <div
+                  style={{
+                    fontSize: "1.5rem",
+                    color: "#4CAF50",
+                    fontWeight: "bold",
+                    marginBottom: "2rem",
+                  }}
+                >
+                  {loadingProgress}%
+                </div>
               </div>
             </div>
           )}
 
           <div className="header">
             <h1>
-              🐝 Video Swarm <span style={{ fontSize: "0.6rem", color: "#666" }}>v1.0.0</span>
+              🐝 Video Swarm{" "}
+              <span style={{ fontSize: "0.6rem", color: "#666" }}>v1.0.0</span>
             </h1>
 
             <div id="folderControls">
               {window.electronAPI?.isElectron ? (
-                <button onClick={handleFolderSelect} className="file-input-label" disabled={isLoadingFolder}>
+                <button
+                  onClick={handleFolderSelect}
+                  className="file-input-label"
+                  disabled={isLoadingFolder}
+                >
                   📁 Select Folder
                 </button>
               ) : (
@@ -503,29 +614,72 @@ function App() {
               )}
             </div>
 
-            <div className="debug-info" style={{ fontSize: "0.75rem", color: "#888", background: "#1a1a1a", padding: "0.3rem 0.8rem", borderRadius: 4 }}>
-              📁 {videos.length} videos | ▶️ {playingVideos.size} playing | 👁️ {visibleVideos.size} in view
+            <div
+              className="debug-info"
+              style={{
+                fontSize: "0.75rem",
+                color: "#888",
+                background: "#1a1a1a",
+                padding: "0.3rem 0.8rem",
+                borderRadius: 4,
+              }}
+            >
+              📁 {videos.length} videos | ▶️ {playingVideos.size} playing | 👁️{" "}
+              {visibleVideos.size} in view
             </div>
 
             <div className="controls">
-              <button onClick={toggleRecursive} className={`toggle-button ${recursiveMode ? "active" : ""}`} disabled={isLoadingFolder}>
+              <button
+                onClick={toggleRecursive}
+                className={`toggle-button ${recursiveMode ? "active" : ""}`}
+                disabled={isLoadingFolder}
+              >
                 {recursiveMode ? "📂 Recursive ON" : "📂 Recursive"}
               </button>
-              <button onClick={toggleFilenames} className={`toggle-button ${showFilenames ? "active" : ""}`} disabled={isLoadingFolder}>
+              <button
+                onClick={toggleFilenames}
+                className={`toggle-button ${showFilenames ? "active" : ""}`}
+                disabled={isLoadingFolder}
+              >
                 {showFilenames ? "📝 Filenames ON" : "📝 Filenames"}
               </button>
 
-              <div className="video-limit-control" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <div
+                className="video-limit-control"
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
                 <span>📹</span>
-                <input type="range" min="10" max="100" value={maxConcurrentPlaying} step="5" style={{ width: 100 }}
-                  onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
-                <span style={{ fontSize: "0.8rem" }}>{maxConcurrentPlaying}</span>
+                <input
+                  type="range"
+                  min="10"
+                  max="100"
+                  value={maxConcurrentPlaying}
+                  step="5"
+                  style={{ width: 100 }}
+                  onChange={(e) =>
+                    handleVideoLimitChange(parseInt(e.target.value))
+                  }
+                  disabled={isLoadingFolder}
+                />
+                <span style={{ fontSize: "0.8rem" }}>
+                  {maxConcurrentPlaying}
+                </span>
               </div>
 
-              <div className="zoom-control" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <div
+                className="zoom-control"
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
                 <span>🔍</span>
-                <input type="range" min="0" max="3" value={zoomLevel} step="1"
-                  onChange={(e) => handleZoomChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
+                <input
+                  type="range"
+                  min="0"
+                  max="3"
+                  value={zoomLevel}
+                  step="1"
+                  onChange={(e) => handleZoomChange(parseInt(e.target.value))}
+                  disabled={isLoadingFolder}
+                />
                 <span>{getZoomLabel}</span>
               </div>
             </div>
@@ -539,9 +693,15 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""} ${["zoom-small","zoom-medium","zoom-large","zoom-xlarge"][zoomLevel]}`}
+              className={`video-grid masonry-vertical ${
+                !showFilenames ? "hide-filenames" : ""
+              } ${
+                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
+                  zoomLevel
+                ]
+              }`}
             >
-              {groupedAndSortedVideos.map((video) => (
+              {progressiveVideos.map((video) => (
                 <VideoCard
                   key={video.id}
                   video={video}
@@ -555,7 +715,8 @@ function App() {
                   onContextMenu={showContextMenu}
                   canLoadMoreVideos={() =>
                     visibleVideos.has(video.id) ||
-                    (loadingVideos.size < performanceLimits.maxConcurrentLoading &&
+                    (loadingVideos.size <
+                      performanceLimits.maxConcurrentLoading &&
                       loadedVideos.size < performanceLimits.maxLoaded)
                   }
                   isLoading={loadingVideos.has(video.id)}
