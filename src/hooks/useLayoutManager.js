@@ -241,39 +241,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
       window.removeEventListener('resize', handleResize)
       clearTimeout(resizeTimeoutRef.current)
     }
-  }, [layoutMode, initializeMasonryGrid])
-
-  const saveLayoutSetting = useCallback(async (newLayoutMode) => {
-    if (window.electronAPI?.saveSettingsPartial) {
-      try {
-        await window.electronAPI.saveSettingsPartial({
-          layoutMode: newLayoutMode,
-        });
-        console.log('Layout mode saved:', newLayoutMode);
-      } catch (error) {
-        console.error('Failed to save layout mode:', error);
-      }
-    }
-  }, []);
-
-  const toggleLayout = useCallback(() => {
-    const modes = ['grid', 'masonry-vertical', 'masonry-horizontal']
-    const currentIndex = modes.indexOf(layoutMode)
-    const nextIndex = (currentIndex + 1) % modes.length
-    const newMode = modes[nextIndex]
-    
-    setLayoutMode(newMode)
-    
-    // Save the setting immediately
-    saveLayoutSetting(newMode)
-    
-    // Apply layout immediately after state change
-    setTimeout(() => {
-      applyLayout(newMode)
-    }, 50)
-    
-    return newMode
-  }, [layoutMode, applyLayout, saveLayoutSetting])
+  }, [initializeMasonryGrid])
 
   const refreshMasonryLayout = useCallback(() => {
     // Don't refresh if user is interacting or layout is already in progress
