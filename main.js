@@ -21,9 +21,9 @@ if (process.platform === "linux") {
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
+// SIMPLIFIED: Removed layoutMode from default settings
 const defaultSettings = {
   recursiveMode: false,
-  layoutMode: "grid",
   autoplayEnabled: true,
   maxConcurrentPlaying: 30,
   zoomLevel: 1,
@@ -48,7 +48,10 @@ async function loadSettings() {
     const data = await fs.readFile(settingsPath, "utf8");
     const settings = JSON.parse(data);
     console.log("Settings loaded:", settings);
-    currentSettings = { ...defaultSettings, ...settings };
+    
+    // Remove layoutMode from loaded settings if it exists (cleanup)
+    const { layoutMode, ...cleanSettings } = settings;
+    currentSettings = { ...defaultSettings, ...cleanSettings };
     return currentSettings;
   } catch (error) {
     console.log("No settings file found, using defaults");
@@ -59,9 +62,11 @@ async function loadSettings() {
 
 async function saveSettings(settings) {
   try {
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
-    currentSettings = settings;
-    console.log("Settings saved:", settings);
+    // Remove layoutMode from settings if it exists (cleanup)
+    const { layoutMode, ...cleanSettings } = settings;
+    await fs.writeFile(settingsPath, JSON.stringify(cleanSettings, null, 2));
+    currentSettings = cleanSettings;
+    console.log("Settings saved:", cleanSettings);
   } catch (error) {
     console.error("Failed to save settings:", error);
   }
@@ -88,8 +93,6 @@ async function createWindow() {
   });
 
   const isDev = process.argv.includes("--dev");
-
-  // REMOVED: Don't set command line switches here - they need to be set earlier
 
   if (isDev) {
     console.log(

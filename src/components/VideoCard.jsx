@@ -9,7 +9,6 @@ const VideoCard = memo(({
   onVideoPlay,
   onVideoPause,
   onVideoLoad,
-  layoutMode,
   showFilenames = true,
   onContextMenu,
   

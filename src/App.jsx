@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import VideoCard from './components/VideoCard';
 import FullScreenModal from './components/FullScreenModal';
 import ContextMenu from './components/ContextMenu';
-import { useLayoutManager } from './hooks/useLayoutManager';
 import { useFullScreenModal } from './hooks/useFullScreenModal';
 import { useContextMenu } from './hooks/useContextMenu';
 import './App.css';
@@ -28,29 +27,26 @@ function App() {
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
-  // Refs for performance monitoring
+  // Refs for performance monitoring and masonry layout
   const cleanupTimeoutRef = useRef(null);
   const lastCleanupTimeRef = useRef(0);
+  const gridRef = useRef(null);
+  const aspectRatioCacheRef = useRef(new Map());
+  const cachedGridMeasurementsRef = useRef(null);
+  const isLayoutingRef = useRef(false);
+  const isUserScrollingRef = useRef(false);
+  const layoutRefreshInProgressRef = useRef(false);
+  const lastScrollTimeRef = useRef(0);
+  const masonryLayoutTimeoutRef = useRef(null);
+  const resizeTimeoutRef = useRef(null);
 
-  // Use layout manager (CORE FUNCTIONALITY PRESERVED)
-  const {
-    layoutMode,
-    gridRef,
-    toggleLayout,
-    refreshMasonryLayout,
-    forceLayout,
-    setZoom,
-    updateAspectRatio,
-    manualVisibilityCheck
-  } = useLayoutManager(videos, zoomLevel);
-
-  // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED)
+  // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED) - simplified without layoutMode
   const {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
     navigateFullScreen
-  } = useFullScreenModal(videos, layoutMode, gridRef);
+  } = useFullScreenModal(videos, 'masonry-vertical', gridRef);
 
   // Use context menu (CORE FUNCTIONALITY PRESERVED)
   const {
@@ -211,7 +207,7 @@ function App() {
   // Check if we're in Electron
   const isElectron = window.electronAPI?.isElectron;
 
-  // CALLBACK: Settings loading
+  // CALLBACK: Settings loading (simplified without layoutMode)
   useEffect(() => {
     const loadSettings = async () => {
       if (window.electronAPI?.getSettings) {
@@ -276,6 +272,282 @@ function App() {
       if (window.electronAPI?.stopFolderWatch) {
         window.electronAPI.stopFolderWatch().catch(console.error);
       }
+    };
+  }, []);
+
+  // MASONRY LAYOUT FUNCTIONS (extracted from useLayoutManager)
+  
+  // Helper function to get column count
+  const getColumnCount = useCallback((computedStyle) => {
+    const gridTemplateColumns = computedStyle.gridTemplateColumns;
+    if (gridTemplateColumns === 'none') return 1;
+    return gridTemplateColumns.split(' ').length;
+  }, []);
+
+  const updateCachedGridMeasurements = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const computedStyle = window.getComputedStyle(grid);
+    const columnCount = getColumnCount(computedStyle);
+    const columnGap = parseFloat(computedStyle.columnGap) || 4;
+
+    const gridWidth = grid.clientWidth;
+    const padding = (parseFloat(computedStyle.paddingLeft) || 0) + (parseFloat(computedStyle.paddingRight) || 0);
+
+    const availableWidth = gridWidth - padding;
+    const totalGapWidth = columnGap * (columnCount - 1);
+    const columnWidth = (availableWidth - totalGapWidth) / columnCount;
+
+    cachedGridMeasurementsRef.current = {
+      columnWidth: Math.floor(columnWidth),
+      columnCount,
+      columnGap,
+      gridWidth: availableWidth
+    };
+
+    console.log('Grid measurements:', cachedGridMeasurementsRef.current);
+  }, [getColumnCount]);
+
+  // TRUE MASONRY IMPLEMENTATION - Fixed Width, Variable Height (Vertical)
+  const layoutMasonryVertical = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    console.log('Laying out vertical masonry (fixed width, variable height)');
+
+    // Get grid measurements
+    if (!cachedGridMeasurementsRef.current) {
+      updateCachedGridMeasurements();
+    }
+
+    const { columnWidth, columnCount, columnGap } = cachedGridMeasurementsRef.current || {};
+    if (!columnWidth) return;
+
+    // Initialize column heights array
+    const columnHeights = new Array(columnCount).fill(0);
+    
+    // Get all video items
+    const videoItems = grid.querySelectorAll('.video-item');
+    
+    videoItems.forEach((videoItem, index) => {
+      // Get or calculate aspect ratio
+      const videoId = videoItem.dataset.videoId || videoItem.dataset.filename;
+      let aspectRatio = aspectRatioCacheRef.current.get(videoId);
+      
+      if (!aspectRatio) {
+        const video = videoItem.querySelector('video');
+        if (video && video.videoWidth && video.videoHeight) {
+          aspectRatio = video.videoWidth / video.videoHeight;
+          aspectRatioCacheRef.current.set(videoId, aspectRatio);
+        } else {
+          aspectRatio = 16 / 9; // Default
+        }
+      }
+
+      // Calculate item height based on fixed width and aspect ratio
+      const itemHeight = Math.round(columnWidth / aspectRatio);
+
+      // Find column with minimum height
+      const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+      const leftPosition = shortestColumnIndex * (columnWidth + columnGap);
+      const topPosition = columnHeights[shortestColumnIndex];
+
+      // Position the item
+      videoItem.style.position = 'absolute';
+      videoItem.style.left = `${leftPosition}px`;
+      videoItem.style.top = `${topPosition}px`;
+      videoItem.style.width = `${columnWidth}px`;
+      videoItem.style.height = `${itemHeight}px`;
+
+      // Update the video container styling
+      const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator');
+      if (videoContainer) {
+        videoContainer.style.height = `${itemHeight}px`;
+      }
+
+      // Update column height
+      columnHeights[shortestColumnIndex] += itemHeight + columnGap;
+    });
+
+    // Set grid container height to accommodate all items
+    const maxHeight = Math.max(...columnHeights);
+    grid.style.height = `${maxHeight}px`;
+    grid.style.position = 'relative';
+  }, [updateCachedGridMeasurements]);
+
+  const initializeMasonryGrid = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid || isLayoutingRef.current || isUserScrollingRef.current) return;
+
+    // Check if native masonry is supported
+    if (CSS.supports('grid-template-rows', 'masonry')) {
+      console.log('Using native CSS masonry');
+      return;
+    }
+
+    // Prevent layout loops
+    if (layoutRefreshInProgressRef.current) {
+      console.log('Skipping masonry init - refresh in progress');
+      return;
+    }
+
+    isLayoutingRef.current = true;
+    layoutRefreshInProgressRef.current = true;
+
+    console.log('Initializing masonry layout');
+
+    // Preserve scroll position
+    const currentScrollY = window.scrollY;
+
+    // Wait for DOM to settle, then apply layout
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!isUserScrollingRef.current) {
+          layoutMasonryVertical();
+        }
+
+        // Restore scroll position ONLY if it was significant
+        if (currentScrollY > 100) {
+          setTimeout(() => {
+            if (!isUserScrollingRef.current) {
+              window.scrollTo(0, currentScrollY);
+              console.log(`Restored scroll position to ${currentScrollY}px`);
+            }
+          }, 100);
+        }
+
+        isLayoutingRef.current = false;
+
+        // Longer delay before allowing refresh again
+        setTimeout(() => {
+          layoutRefreshInProgressRef.current = false;
+        }, 500);
+      });
+    });
+  }, [layoutMasonryVertical]);
+
+  const refreshMasonryLayout = useCallback(() => {
+    // Don't refresh if user is interacting or layout is already in progress
+    if (isUserScrollingRef.current ||
+        layoutRefreshInProgressRef.current ||
+        isLayoutingRef.current) {
+      console.log('Skipping layout refresh - interaction or refresh in progress');
+      return;
+    }
+
+    // Don't refresh too frequently
+    const now = Date.now();
+    if (lastScrollTimeRef.current && (now - lastScrollTimeRef.current < 1000)) {
+      console.log('Skipping layout refresh - recent user activity');
+      return;
+    }
+
+    console.log('Refreshing masonry layout');
+    initializeMasonryGrid();
+  }, [initializeMasonryGrid]);
+
+  // Setup scroll detection
+  useEffect(() => {
+    let scrollTimeout;
+
+    const handleScroll = () => {
+      lastScrollTimeRef.current = Date.now();
+      isUserScrollingRef.current = true;
+
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        isUserScrollingRef.current = false;
+      }, 150);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      clearTimeout(scrollTimeout);
+    };
+  }, []);
+
+  // Setup resize handling
+  useEffect(() => {
+    const handleResize = () => {
+      clearTimeout(resizeTimeoutRef.current);
+
+      // Only handle resize AFTER user stops resizing for 500ms
+      resizeTimeoutRef.current = setTimeout(() => {
+        console.log('Window resize complete - updating layout');
+
+        // Clear cached measurements
+        cachedGridMeasurementsRef.current = null;
+
+        // Re-layout
+        if (!isLayoutingRef.current && !isUserScrollingRef.current) {
+          setTimeout(() => {
+            initializeMasonryGrid();
+          }, 100);
+        }
+      }, 500);
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(resizeTimeoutRef.current);
+    };
+  }, [initializeMasonryGrid]);
+
+  // Apply layout when videos change
+  useEffect(() => {
+    if (videos.length > 0) {
+      setTimeout(() => {
+        updateCachedGridMeasurements();
+        initializeMasonryGrid();
+      }, 50);
+    }
+  }, [videos.length, updateCachedGridMeasurements, initializeMasonryGrid]);
+
+  // Setup zoom level handling
+  const setZoom = useCallback((level) => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const zoomLevels = ['zoom-small', 'zoom-medium', 'zoom-large', 'zoom-xlarge'];
+    
+    // Remove all zoom classes
+    zoomLevels.forEach(cls => grid.classList.remove(cls));
+    // Add the new zoom class
+    grid.classList.add(zoomLevels[level]);
+
+    // Refresh layout after zoom change
+    clearTimeout(masonryLayoutTimeoutRef.current);
+    masonryLayoutTimeoutRef.current = setTimeout(() => {
+      cachedGridMeasurementsRef.current = null;
+      initializeMasonryGrid();
+    }, 300);
+  }, [initializeMasonryGrid]);
+
+  // Apply zoom when zoomLevel changes
+  useEffect(() => {
+    setZoom(zoomLevel);
+  }, [zoomLevel, setZoom]);
+
+  // Update aspect ratio cache when videos load
+  const updateAspectRatio = useCallback((videoId, aspectRatio) => {
+    aspectRatioCacheRef.current.set(videoId, aspectRatio);
+    
+    // Refresh layout
+    setTimeout(() => {
+      refreshMasonryLayout();
+    }, 100);
+  }, [refreshMasonryLayout]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(masonryLayoutTimeoutRef.current);
+      clearTimeout(resizeTimeoutRef.current);
     };
   }, []);
 
@@ -451,7 +723,7 @@ function App() {
     setLoadingVideos(new Set());
   }, []);
 
-  // FIXED: Control handlers with immediate save
+  // FIXED: Control handlers with immediate save (simplified without layout mode)
   const toggleAutoplay = useCallback(() => {
     const newAutoplay = !autoplayEnabled;
     setAutoplayEnabled(newAutoplay);
@@ -467,24 +739,6 @@ function App() {
       }).catch(console.error);
     }
   }, [autoplayEnabled, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
-
-  const handleLayoutToggle = useCallback(() => {
-    const newMode = toggleLayout();
-    
-    // Save layout mode immediately 
-    if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI.saveSettingsPartial({
-        layoutMode: newMode,
-        recursiveMode, 
-        autoplayEnabled, 
-        maxConcurrentPlaying, 
-        zoomLevel, 
-        showFilenames
-      }).catch(console.error);
-    }
-    
-    return newMode;
-  }, [toggleLayout, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
   const toggleRecursive = useCallback(() => { 
     const newRecursive = !recursiveMode;
@@ -550,15 +804,6 @@ function App() {
   }, [setZoom, recursiveMode, autoplayEnabled, maxConcurrentPlaying, showFilenames]);
 
   // MEMOIZED: UI helper functions
-  const getLayoutButtonText = useMemo(() => {
-    const buttonTexts = {
-      grid: '📐 Grid',
-      'masonry-vertical': '📐 Vertical',
-      'masonry-horizontal': '📐 Horizontal',
-    };
-    return buttonTexts[layoutMode];
-  }, [layoutMode]);
-
   const getZoomLabel = useMemo(() => 
     (['75%', '100%', '150%', '200%'][zoomLevel] || '100%'), 
     [zoomLevel]
@@ -653,9 +898,9 @@ function App() {
             </div>
           )}
 
-          {/* Header (PRESERVED) */}
+          {/* Header (SIMPLIFIED - removed layout toggle) */}
           <div className="header">
-            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.19-fixed</span></h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.20-masonry</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
@@ -690,9 +935,6 @@ function App() {
               <button onClick={toggleFilenames} className={`toggle-button ${showFilenames ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {showFilenames ? '📝 Filenames ON' : '📝 Filenames'}
               </button>
-              <button onClick={handleLayoutToggle} className="toggle-button" disabled={isLoadingFolder}>
-                {getLayoutButtonText}
-              </button>
               <button onClick={performCleanup}
                 className="toggle-button" style={{ color: '#ff6b6b' }} disabled={isLoadingFolder}
                 title="Clean up distant videos to free memory">
@@ -715,7 +957,7 @@ function App() {
             </div>
           </div>
 
-          {/* Main content area (CORE FUNCTIONALITY PRESERVED, FIXED FREEZING) */}
+          {/* Main content area (SIMPLIFIED - always masonry-vertical) */}
           {videos.length === 0 && !isLoadingFolder ? (
             <div className="drop-zone">
               <h2>🐝 Welcome to Video Swarm 🐝</h2>
@@ -724,20 +966,20 @@ function App() {
                 marginTop: '2rem', padding: '1rem', background: '#2a4a00', borderRadius: '8px'
               }}>
                 <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                  ⚡ Optimized Performance (Fixed)
+                  ⚡ Vertical Masonry Layout
                 </div>
                 <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
-                  <li>Fixed autoplay logic - visible videos now play properly</li>
-                  <li>Centralized playback control in App component</li>
-                  <li>Removed visual styling for playing videos</li>
-                  <li>All masonry layouts preserved and working</li>
+                  <li>Optimized fixed-width masonry display</li>
+                  <li>Perfect for varied aspect ratio videos</li>
+                  <li>Intelligent layout with preserved scroll position</li>
+                  <li>All performance optimizations preserved</li>
                 </ul>
               </div>
             </div>
           ) : (
             <div 
               ref={gridRef}
-              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
+              className={`video-grid masonry-vertical zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
               {/* FIXED: Direct rendering without heavy useMemo */}
               {videos.map((video) => (
@@ -751,7 +993,7 @@ function App() {
                   onVideoPlay={handleVideoPlay}
                   onVideoPause={handleVideoPause}
                   onVideoLoad={handleVideoLoaded}
-                  layoutMode={layoutMode}
+                  layoutMode="masonry-vertical"
                   showFilenames={showFilenames}
                   onContextMenu={showContextMenu}
                   
@@ -776,7 +1018,7 @@ function App() {
               onClose={() => closeFullScreen()}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
-              layoutMode={layoutMode}
+              layoutMode="masonry-vertical"
               gridRef={gridRef}
             />
           )}

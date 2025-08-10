@@ -1,15 +1,15 @@
 {
   "name": "video-swarm",
-  "version": "2.10.0",
+  "version": "1.0.0",
   "description": "Desktop application for viewing hundreds of videos simultaneously with advanced masonry layouts and real-time file system monitoring",
   "main": "main.js",
-  "homepage": "https://github.com/yourusername/video-swarm",
+  "homepage": "https://github.com/cerzi/video-swarm",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/video-swarm.git"
+    "url": "https://github.com/cerzi/video-swarm.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/video-swarm/issues"
+    "url": "https://github.com/cerzi/video-swarm/issues"
   },
   "keywords": [
     "video",
@@ -23,9 +23,9 @@
     "content-creation"
   ],
   "author": {
-    "name": "Your Name",
-    "email": "your.email@example.com",
-    "url": "https://github.com/yourusername"
+    "name": "Ben Pateman",
+    "email": "bpateman@gmail.com",
+    "url": "https://github.com/cerzi"
   },
   "license": "MIT",
   "engines": {
