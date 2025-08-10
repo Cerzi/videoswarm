@@ -1,41 +1,33 @@
-import React, {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo,
-} from "react";
-import VideoCard from "./components/VideoCard";
-import FullScreenModal from "./components/FullScreenModal";
-import ContextMenu from "./components/ContextMenu";
-import { useLayoutManager } from "./hooks/useLayoutManager";
-import { useFullScreenModal } from "./hooks/useFullScreenModal";
-import { useContextMenu } from "./hooks/useContextMenu";
-import "./App.css";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import VideoCard from './components/VideoCard';
+import FullScreenModal from './components/FullScreenModal';
+import ContextMenu from './components/ContextMenu';
+import { useLayoutManager } from './hooks/useLayoutManager';
+import { useFullScreenModal } from './hooks/useFullScreenModal';
+import { useContextMenu } from './hooks/useContextMenu';
+import { useVideoManager } from './hooks/useVideoManager';
+import './App.css';
 
 function App() {
   const [videos, setVideos] = useState([]);
   const [selectedVideos, setSelectedVideos] = useState(new Set());
+  const [autoplayEnabled, setAutoplayEnabled] = useState(true);
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(100);
+  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-
+  
   // Loading state
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
-  const [loadingStage, setLoadingStage] = useState("");
+  const [loadingStage, setLoadingStage] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
-
-  // Performance tracking with React state
-  const [playingVideos, setPlayingVideos] = useState(new Set());
-  const [visibleVideos, setVisibleVideos] = useState(new Set());
-  const [loadedVideos, setLoadedVideos] = useState(new Set());
-  const [loadingVideos, setLoadingVideos] = useState(new Set());
-
-  // Refs for performance monitoring
-  const cleanupTimeoutRef = useRef(null);
-  const lastCleanupTimeRef = useRef(0);
+  
+  // NEW: Layout loading state for layout transitions
+  const [isLayoutLoading, setIsLayoutLoading] = useState(false);
+  
+  // CENTRALIZED: Video state management
+  const videoManager = useVideoManager(videos, autoplayEnabled, maxConcurrentPlaying);
 
   // Use layout manager (CORE FUNCTIONALITY PRESERVED)
   const {
@@ -46,7 +38,7 @@ function App() {
     forceLayout,
     setZoom,
     updateAspectRatio,
-    isApplyingLayout,
+    manualVisibilityCheck
   } = useLayoutManager(videos, zoomLevel);
 
   // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED)
@@ -54,200 +46,40 @@ function App() {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
-    navigateFullScreen,
+    navigateFullScreen
   } = useFullScreenModal(videos, layoutMode, gridRef);
 
   // Use context menu (CORE FUNCTIONALITY PRESERVED)
-  const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
-    useContextMenu();
-
-  // MEMOIZED: Performance limits calculation - BALANCED approach
-  const performanceLimits = useMemo(() => {
-    const videoCount = videos.length;
-
-    // BALANCED - not too aggressive to maintain functionality
-    if (videoCount < 100) {
-      return { maxLoaded: 80, maxConcurrentLoading: 6 };
-    } else if (videoCount < 500) {
-      return { maxLoaded: 120, maxConcurrentLoading: 5 };
-    } else if (videoCount < 1000) {
-      return { maxLoaded: 160, maxConcurrentLoading: 4 };
-    } else {
-      return { maxLoaded: 200, maxConcurrentLoading: 3 };
-    }
-  }, [videos.length]);
-
-  const performCleanup = useCallback(() => {
-    const now = Date.now();
-
-    // Throttle cleanup calls but allow layout-triggered cleanup
-    if (now - lastCleanupTimeRef.current < 1000) {
-      console.log("⏰ Cleanup throttled");
-      return;
-    }
-    lastCleanupTimeRef.current = now;
-
-    console.log(
-      `🧹 Starting cleanup: ${loadedVideos.size} loaded, limit: ${performanceLimits.maxLoaded}`
-    );
-
-    // PHASE 1 FIX: More aggressive cleanup for layout switches
-
-    // 1. Force unload ALL non-visible videos
-    const videosToUnload = [];
-    loadedVideos.forEach((videoId) => {
-      if (!visibleVideos.has(videoId)) {
-        videosToUnload.push(videoId);
-      }
-    });
-
-    // 2. Also unload some visible videos if we're way over limit
-    if (loadedVideos.size > performanceLimits.maxLoaded * 2) {
-      const visibleArray = Array.from(visibleVideos);
-      const excessVisible = visibleArray.slice(performanceLimits.maxLoaded);
-      videosToUnload.push(...excessVisible);
-    }
-
-    if (videosToUnload.length > 0) {
-      // 3. Physically unload video elements
-      videosToUnload.forEach((videoId) => {
-        const videoElement = document.querySelector(
-          `[data-video-id="${videoId}"] video`
-        );
-        if (videoElement && videoElement.src) {
-          videoElement.pause();
-          videoElement.removeAttribute("src");
-          videoElement.load();
-        }
-      });
-
-      // 4. Update state
-      setLoadedVideos((prev) => {
-        const newSet = new Set(prev);
-        videosToUnload.forEach((id) => newSet.delete(id));
-        return newSet;
-      });
-
-      setLoadingVideos((prev) => {
-        const newSet = new Set(prev);
-        videosToUnload.forEach((id) => newSet.delete(id));
-        return newSet;
-      });
-
-      setPlayingVideos((prev) => {
-        const newSet = new Set(prev);
-        videosToUnload.forEach((id) => newSet.delete(id));
-        return newSet;
-      });
-
-      console.log(`🧹 Aggressively cleaned up ${videosToUnload.length} videos`);
-    }
-
-    // 5. Force garbage collection if available
-    if (window.gc && videosToUnload.length > 10) {
-      setTimeout(() => {
-        window.gc();
-        console.log("🗑️ Forced garbage collection after aggressive cleanup");
-      }, 100);
-    }
-  }, [loadedVideos, visibleVideos, playingVideos, performanceLimits]);
-
-  // REACT EFFECT: Performance monitoring
-  useEffect(() => {
-    // Clear any existing timeout
-    if (cleanupTimeoutRef.current) {
-      clearTimeout(cleanupTimeoutRef.current);
-    }
-
-    // Schedule cleanup check
-    cleanupTimeoutRef.current = setTimeout(() => {
-      if (
-        loadedVideos.size > performanceLimits.maxLoaded ||
-        loadingVideos.size > performanceLimits.maxConcurrentLoading
-      ) {
-        performCleanup();
-      }
-    }, 1000);
-
-    return () => {
-      if (cleanupTimeoutRef.current) {
-        clearTimeout(cleanupTimeoutRef.current);
-      }
-    };
-  }, [
-    loadedVideos.size,
-    loadingVideos.size,
-    performanceLimits,
-    performCleanup,
-  ]);
-
-  useEffect(() => {
-    // SAFETY CHECK 1: Don't manage playback during layout changes
-    if (isApplyingLayout) {
-      console.log("🚫 Skipping playback management - layout in progress");
-      return;
-    }
-
-    // SAFETY CHECK 2: Don't play videos if too many are visible (intersection observer chaos)
-    if (visibleVideos.size > videos.length * 0.5) {
-      console.log(
-        `🚨 Layout chaos detected: ${visibleVideos.size} visible out of ${videos.length} - pausing all`
-      );
-      setPlayingVideos(new Set());
-      return;
-    }
-
-    // Normal playback logic (your existing code)...
-    const playableVideos = Array.from(visibleVideos).filter((videoId) =>
-      loadedVideos.has(videoId)
-    );
-
-    console.log(
-      `Playback check: ${playableVideos.length} playable, ${playingVideos.size} currently playing, max: ${maxConcurrentPlaying}`
-    );
-
-    const shouldBePlaying = new Set(
-      playableVideos.slice(0, maxConcurrentPlaying)
-    );
-
-    setPlayingVideos((currentPlaying) => {
-      const currentArray = Array.from(currentPlaying).sort();
-      const newArray = Array.from(shouldBePlaying).sort();
-
-      if (JSON.stringify(currentArray) !== JSON.stringify(newArray)) {
-        console.log(
-          `Updating playing videos: ${currentArray.length} -> ${newArray.length}`
-        );
-        return shouldBePlaying;
-      }
-
-      return currentPlaying;
-    });
-  }, [visibleVideos, loadedVideos, maxConcurrentPlaying, isApplyingLayout]);
+  const {
+    contextMenu,
+    showContextMenu,
+    hideContextMenu,
+    handleContextAction
+  } = useContextMenu();
 
   // CALLBACK: Context menu handling
   useEffect(() => {
     if (!contextMenu.visible) return;
 
     const handleClickOutside = (event) => {
-      const contextMenuElement = document.querySelector("[data-context-menu]");
+      const contextMenuElement = document.querySelector('[data-context-menu]');
       if (contextMenuElement && !contextMenuElement.contains(event.target)) {
         hideContextMenu();
       }
     };
 
     const handleEscape = (event) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         hideContextMenu();
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
     };
   }, [contextMenu.visible, hideContextMenu]);
 
@@ -260,19 +92,16 @@ function App() {
       if (window.electronAPI?.getSettings) {
         try {
           const settings = await window.electronAPI.getSettings();
-
-          if (settings.recursiveMode !== undefined)
-            setRecursiveMode(settings.recursiveMode);
-          if (settings.showFilenames !== undefined)
-            setShowFilenames(settings.showFilenames);
-          if (settings.maxConcurrentPlaying !== undefined)
-            setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
-          if (settings.zoomLevel !== undefined)
-            setZoomLevel(settings.zoomLevel);
-
+          
+          if (settings.recursiveMode !== undefined) setRecursiveMode(settings.recursiveMode);
+          if (settings.autoplayEnabled !== undefined) setAutoplayEnabled(settings.autoplayEnabled);
+          if (settings.showFilenames !== undefined) setShowFilenames(settings.showFilenames);
+          if (settings.maxConcurrentPlaying !== undefined) setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
+          if (settings.zoomLevel !== undefined) setZoomLevel(settings.zoomLevel);
+          
           setSettingsLoaded(true);
         } catch (error) {
-          console.log("Using default settings");
+          console.log('Using default settings');
           setSettingsLoaded(true);
         }
       } else {
@@ -293,12 +122,12 @@ function App() {
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    // Helper function to sort videos hierarchically
+    // NEW: Helper function to sort videos hierarchically by folder then name
     const sortVideosHierarchically = (videos) => {
       return videos.sort((a, b) => {
         // Get directory paths (or empty string for root)
-        const dirA = a.directory || "";
-        const dirB = b.directory || "";
+        const dirA = a.directory || '';
+        const dirB = b.directory || '';
 
         // First sort by directory
         if (dirA !== dirB) {
@@ -311,55 +140,27 @@ function App() {
     };
 
     const handleFileAdded = (videoFile) => {
-      setVideos((prev) => {
-        if (prev.some((v) => v.id === videoFile.id)) return prev;
+      setVideos(prev => {
+        if (prev.some(v => v.id === videoFile.id)) return prev;
         const newVideos = [...prev, videoFile];
         return sortVideosHierarchically(newVideos);
       });
     };
 
     const handleFileRemoved = (filePath) => {
-      setVideos((prev) => prev.filter((v) => v.id !== filePath));
+      setVideos(prev => prev.filter(v => v.id !== filePath));
       // Clean up related state
-      setSelectedVideos((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setPlayingVideos((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setLoadedVideos((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setLoadingVideos((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
-      setVisibleVideos((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(filePath);
-        return newSet;
-      });
+      setSelectedVideos(prev => { const newSet = new Set(prev); newSet.delete(filePath); return newSet; });
+      // Video state cleanup now handled by useVideoManager
     };
 
     const handleFileChanged = (videoFile) => {
-      setVideos((prev) =>
-        prev.map((v) => (v.id === videoFile.id ? videoFile : v))
-      );
+      setVideos(prev => prev.map(v => v.id === videoFile.id ? videoFile : v));
     };
 
-    if (window.electronAPI.onFileAdded)
-      window.electronAPI.onFileAdded(handleFileAdded);
-    if (window.electronAPI.onFileRemoved)
-      window.electronAPI.onFileRemoved(handleFileRemoved);
-    if (window.electronAPI.onFileChanged)
-      window.electronAPI.onFileChanged(handleFileChanged);
+    if (window.electronAPI.onFileAdded) window.electronAPI.onFileAdded(handleFileAdded);
+    if (window.electronAPI.onFileRemoved) window.electronAPI.onFileRemoved(handleFileRemoved);
+    if (window.electronAPI.onFileChanged) window.electronAPI.onFileChanged(handleFileChanged);
 
     return () => {
       if (window.electronAPI?.stopFolderWatch) {
@@ -369,178 +170,83 @@ function App() {
   }, []);
 
   // CALLBACK: Folder loading (CORE FUNCTIONALITY PRESERVED)
-  const handleElectronFolderSelection = useCallback(
-    async (folderPath) => {
-      if (!window.electronAPI?.readDirectory) {
-        console.error("Electron readDirectory API not available");
-        return;
-      }
-
-      try {
-        setIsLoadingFolder(true);
-        setLoadingStage("Reading directory...");
-        setLoadingProgress(10);
-
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // Stop existing watcher
-        if (window.electronAPI?.stopFolderWatch) {
-          await window.electronAPI.stopFolderWatch();
-        }
-
-        // Clear ALL state
-        setVideos([]);
-        setSelectedVideos(new Set());
-        setPlayingVideos(new Set());
-        setVisibleVideos(new Set());
-        setLoadedVideos(new Set());
-        setLoadingVideos(new Set());
-
-        setLoadingStage("Scanning for video files...");
-        setLoadingProgress(30);
-        await new Promise((resolve) => setTimeout(resolve, 200));
-
-        const videoFiles = await window.electronAPI.readDirectory(
-          folderPath,
-          recursiveMode
-        );
-
-        setLoadingStage(
-          `Found ${videoFiles.length} videos - sorting and organizing...`
-        );
-        setLoadingProgress(70);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-
-        // Sort videos hierarchically by directory then name
-        const sortedVideos = videoFiles.sort((a, b) => {
-          // Get directory paths (or empty string for root)
-          const dirA = a.directory || "";
-          const dirB = b.directory || "";
-
-          // First sort by directory
-          if (dirA !== dirB) {
-            return dirA.localeCompare(dirB);
-          }
-
-          // Then sort by filename within the same directory
-          return a.name.localeCompare(b.name);
-        });
-
-        console.log(
-          `📊 Setting ${sortedVideos.length} videos for masonry layout`
-        );
-        setVideos(sortedVideos);
-
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        setLoadingStage("Complete!");
-        setLoadingProgress(100);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-
-        setIsLoadingFolder(false);
-
-        // Start file watcher
-        if (window.electronAPI?.startFolderWatch) {
-          const watchResult = await window.electronAPI.startFolderWatch(
-            folderPath
-          );
-          if (watchResult.success) {
-            console.log("👁️ Started watching folder for changes");
-          }
-        }
-      } catch (error) {
-        console.error("Error reading directory:", error);
-        setIsLoadingFolder(false);
-      }
-    },
-    [recursiveMode]
-  );
-
-  // MEMOIZED: Performance callback functions
-  const canPlayMoreVideos = useCallback(() => {
-    return true; // Always allow playing since we removed autoplay toggle
-  }, []);
-
-  // FIXED: Always allow visible videos to load
-  const canLoadMoreVideos = useCallback(
-    (videoId) => {
-      // If this specific video is visible, ALWAYS allow it to load
-      if (visibleVideos.has(videoId)) {
-        return true;
-      }
-
-      // For non-visible videos, respect normal limits
-      return (
-        loadingVideos.size < performanceLimits.maxConcurrentLoading &&
-        loadedVideos.size < performanceLimits.maxLoaded
-      );
-    },
-    [visibleVideos, loadingVideos.size, loadedVideos.size, performanceLimits]
-  );
-
-  // SIMPLIFIED: Track actual play/pause events from VideoCards
-  const handleVideoPlay = useCallback((videoId) => {
-    // VideoCard reports when it actually starts playing - trust this
-    setPlayingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
-
-  const handleVideoPause = useCallback((videoId) => {
-    // VideoCard reports when it actually pauses - trust this
-    setPlayingVideos((prev) => {
-      const newSet = new Set(prev);
-      newSet.delete(videoId);
-      return newSet;
-    });
-  }, []);
-
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio?.(videoId, aspectRatio);
-    },
-    [updateAspectRatio]
-  );
-
-  const handleVideoStartLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
-
-  const handleVideoStopLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => {
-      const newSet = new Set(prev);
-      newSet.delete(videoId);
-      return newSet;
-    });
-  }, []);
-
-  const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
-    setVisibleVideos((prev) => {
-      const newSet = new Set(prev);
-      if (isVisible) {
-        newSet.add(videoId);
-      } else {
-        newSet.delete(videoId);
-      }
-      return newSet;
-    });
-  }, []);
-
-  // SIMPLIFIED: Settings functions (remove over-optimization)
-  const saveSettings = useCallback(async () => {
-    if (window.electronAPI?.saveSettingsPartial) {
-      try {
-        await window.electronAPI.saveSettingsPartial({
-          recursiveMode,
-          maxConcurrentPlaying,
-          zoomLevel,
-          showFilenames,
-        });
-        console.log("Settings saved successfully");
-      } catch (error) {
-        console.error("Failed to save settings:", error);
-      }
+  const handleElectronFolderSelection = useCallback(async (folderPath) => {
+    if (!window.electronAPI?.readDirectory) {
+      console.error('Electron readDirectory API not available');
+      return;
     }
-  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
+
+    try {
+      setIsLoadingFolder(true);
+      setLoadingStage('Reading directory...');
+      setLoadingProgress(10);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Stop existing watcher
+      if (window.electronAPI?.stopFolderWatch) {
+        await window.electronAPI.stopFolderWatch();
+      }
+
+      // Clear ALL state
+      setVideos([]);
+      setSelectedVideos(new Set());
+      // Video state now managed by useVideoManager hook
+
+      setLoadingStage('Scanning for video files...');
+      setLoadingProgress(30);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      const videoFiles = await window.electronAPI.readDirectory(folderPath, recursiveMode);
+      
+      setLoadingStage(`Found ${videoFiles.length} videos - sorting and organizing...`);
+      setLoadingProgress(70);
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // NEW: Sort videos hierarchically by directory then name
+      const sortedVideos = videoFiles.sort((a, b) => {
+        // Get directory paths (or empty string for root)
+        const dirA = a.directory || '';
+        const dirB = b.directory || '';
+
+        // First sort by directory
+        if (dirA !== dirB) {
+          return dirA.localeCompare(dirB);
+        }
+
+        // Then sort by filename within the same directory
+        return a.name.localeCompare(b.name);
+      });
+
+      console.log(`📊 Setting ${sortedVideos.length} videos for masonry layout`);
+      setVideos(sortedVideos);
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      setLoadingStage('Complete!');
+      setLoadingProgress(100);
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      setIsLoadingFolder(false);
+
+      // Start file watcher
+      if (window.electronAPI?.startFolderWatch) {
+        const watchResult = await window.electronAPI.startFolderWatch(folderPath);
+        if (watchResult.success) {
+          console.log('👁️ Started watching folder for changes');
+        }
+      }
+
+    } catch (error) {
+      console.error('Error reading directory:', error);
+      setIsLoadingFolder(false);
+    }
+  }, [recursiveMode]);
+
+  // MEMOIZED: Performance callback functions - simplified
+  const canPlayMoreVideos = useCallback(() => {
+    return autoplayEnabled;
+  }, [autoplayEnabled]);
 
   const handleFolderSelect = useCallback(async () => {
     if (!window.electronAPI?.selectFolder) return;
@@ -550,15 +256,14 @@ function App() {
         await handleElectronFolderSelection(result.folderPath);
       }
     } catch (error) {
-      console.error("Error opening folder dialog:", error);
+      console.error('Error opening folder dialog:', error);
     }
   }, [handleElectronFolderSelection]);
 
   const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((file) => {
-      const isVideoType = file.type.startsWith("video/");
-      const hasVideoExtension =
-        /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(file.name);
+      const isVideoType = file.type.startsWith('video/');
+      const hasVideoExtension = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(file.name);
       return isVideoType || hasVideoExtension;
     });
 
@@ -568,315 +273,285 @@ function App() {
       file,
       loaded: false,
       isElectronFile: false,
-      directory: "", // Web files don't have directory structure
+      directory: '', // Web files don't have directory structure
     }));
 
     // Sort web files alphabetically by name
-    const sortedVideoObjects = videoObjects.sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
+    const sortedVideoObjects = videoObjects.sort((a, b) => a.name.localeCompare(b.name));
 
     setVideos(sortedVideoObjects);
     setSelectedVideos(new Set());
-    setPlayingVideos(new Set());
-    setVisibleVideos(new Set());
-    setLoadedVideos(new Set());
-    setLoadingVideos(new Set());
+    // Video state now managed by useVideoManager hook
   }, []);
 
-  const handleLayoutToggle = useCallback(() => {
-    console.log("🔄 Layout toggle requested");
-
-    // PHASE 1 FIX: MUCH lighter cleanup - don't clear loaded state
-
-    // 1. Just pause playing videos, don't clear loaded state
-    setPlayingVideos(new Set());
-
-    // 2. Switch layout immediately (let applyLayout handle the rest)
-    const newMode = toggleLayout();
-
-    // 3. Save layout mode immediately
+  // FIXED: Control handlers with immediate save
+  const toggleAutoplay = useCallback(() => {
+    const newAutoplay = !autoplayEnabled;
+    setAutoplayEnabled(newAutoplay);
+    
+    // Save immediately
     if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI
-        .saveSettingsPartial({
-          layoutMode: newMode,
-          recursiveMode,
-          maxConcurrentPlaying,
-          zoomLevel,
-          showFilenames,
-        })
-        .catch(console.error);
+      window.electronAPI.saveSettingsPartial({
+        autoplayEnabled: newAutoplay,
+        recursiveMode, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
     }
+  }, [autoplayEnabled, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-    console.log(`✅ Layout switched to ${newMode}`);
+  // NEW: Enhanced layout toggle with centralized video manager cleanup
+  const handleLayoutToggle = useCallback(async () => {
+    console.log('🔄 Layout toggle requested');
+    
+    // Show layout loading screen for large collections
+    if (videos.length > 500) {
+      setIsLayoutLoading(true);
+    }
+    
+    // Use VideoManager's cleanup for layout switches
+    videoManager.prepareForLayoutSwitch();
+    
+    // Give a moment for the cleanup to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const newMode = toggleLayout();
+    
+    // Save layout mode immediately 
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        layoutMode: newMode,
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
+    }
+    
+    // Hide loading screen after transition
+    if (videos.length > 500) {
+      setTimeout(() => {
+        setIsLayoutLoading(false);
+      }, 1500);
+    }
+    
+    // Re-evaluate playback after layout settles
+    setTimeout(() => {
+      videoManager.reevaluatePlayback();
+    }, 1000);
+    
+    // Debug: Log VideoManager state after layout switch
+    setTimeout(() => {
+      const stats = videoManager.getStats();
+      console.log(`📊 Post-layout stats:`, stats);
+    }, 2000);
+    
+    console.log(`✅ Layout switched to ${newMode} with centralized cleanup`);
     return newMode;
-  }, [
-    toggleLayout,
-    recursiveMode,
-    maxConcurrentPlaying,
-    zoomLevel,
-    showFilenames,
-  ]);
+  }, [toggleLayout, videos.length, videoManager, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-  const handleVideoLimitChange = useCallback(
-    (newLimit) => {
-      setMaxConcurrentPlaying(newLimit);
-
-      // Save immediately
-      if (window.electronAPI?.saveSettingsPartial) {
-        window.electronAPI
-          .saveSettingsPartial({
-            maxConcurrentPlaying: newLimit,
-            recursiveMode,
-            zoomLevel,
-            showFilenames,
-          })
-          .catch(console.error);
-      }
-    },
-    [recursiveMode, zoomLevel, showFilenames]
-  );
-
-  const handleZoomChange = useCallback(
-    (newZoom) => {
-      setZoomLevel(newZoom);
-      setZoom(newZoom);
-
-      // Save immediately
-      if (window.electronAPI?.saveSettingsPartial) {
-        window.electronAPI
-          .saveSettingsPartial({
-            zoomLevel: newZoom,
-            recursiveMode,
-            maxConcurrentPlaying,
-            showFilenames,
-          })
-          .catch(console.error);
-      }
-    },
-    [setZoom, recursiveMode, maxConcurrentPlaying, showFilenames]
-  );
-
-  const toggleRecursive = useCallback(() => {
+  const toggleRecursive = useCallback(() => { 
     const newRecursive = !recursiveMode;
     setRecursiveMode(newRecursive);
-
+    
     // Save immediately
     if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI
-        .saveSettingsPartial({
-          recursiveMode: newRecursive,
-          maxConcurrentPlaying,
-          zoomLevel,
-          showFilenames,
-        })
-        .catch(console.error);
+      window.electronAPI.saveSettingsPartial({
+        recursiveMode: newRecursive,
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
     }
-  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
-
-  const toggleFilenames = useCallback(() => {
+  }, [recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  
+  const toggleFilenames = useCallback(() => { 
     const newShowFilenames = !showFilenames;
     setShowFilenames(newShowFilenames);
-
+    
     // Save immediately
     if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI
-        .saveSettingsPartial({
-          showFilenames: newShowFilenames,
-          recursiveMode,
-          maxConcurrentPlaying,
-          zoomLevel,
-        })
-        .catch(console.error);
+      window.electronAPI.saveSettingsPartial({
+        showFilenames: newShowFilenames,
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        zoomLevel
+      }).catch(console.error);
     }
-  }, [showFilenames, recursiveMode, maxConcurrentPlaying, zoomLevel]);
+  }, [showFilenames, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel]);
+
+  const handleVideoLimitChange = useCallback((newLimit) => {
+    setMaxConcurrentPlaying(newLimit);
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        maxConcurrentPlaying: newLimit,
+        recursiveMode, 
+        autoplayEnabled, 
+        zoomLevel, 
+        showFilenames
+      }).catch(console.error);
+    }
+  }, [recursiveMode, autoplayEnabled, zoomLevel, showFilenames]);
+
+  const handleZoomChange = useCallback((newZoom) => { 
+    setZoomLevel(newZoom); 
+    setZoom(newZoom);
+    
+    // Save immediately
+    if (window.electronAPI?.saveSettingsPartial) {
+      window.electronAPI.saveSettingsPartial({
+        zoomLevel: newZoom,
+        recursiveMode, 
+        autoplayEnabled, 
+        maxConcurrentPlaying, 
+        showFilenames
+      }).catch(console.error);
+    }
+  }, [setZoom, recursiveMode, autoplayEnabled, maxConcurrentPlaying, showFilenames]);
 
   // MEMOIZED: UI helper functions
   const getLayoutButtonText = useMemo(() => {
     const buttonTexts = {
-      grid: "📐 Grid",
-      "masonry-vertical": "📐 Vertical",
-      "masonry-horizontal": "📐 Horizontal",
+      grid: '📐 Grid',
+      'masonry-vertical': '📐 Vertical',
+      'masonry-horizontal': '📐 Horizontal',
     };
     return buttonTexts[layoutMode];
   }, [layoutMode]);
 
-  const getZoomLabel = useMemo(
-    () => ["75%", "100%", "150%", "200%"][zoomLevel] || "100%",
+  const getZoomLabel = useMemo(() => 
+    (['75%', '100%', '150%', '200%'][zoomLevel] || '100%'), 
     [zoomLevel]
   );
 
-  const handleVideoSelect = useCallback(
-    (videoId, isCtrlClick, isDoubleClick) => {
-      const video = videos.find((v) => v.id === videoId);
+  const handleVideoSelect = useCallback((videoId, isCtrlClick, isDoubleClick) => {
+    const video = videos.find(v => v.id === videoId);
+    
+    if (isDoubleClick && video) {
+      openFullScreen(video, videoManager.playingVideos);
+      return;
+    }
 
-      if (isDoubleClick && video) {
-        openFullScreen(video, playingVideos);
-        return;
+    setSelectedVideos(prev => {
+      const newSelected = new Set(prev);
+      if (isCtrlClick) {
+        if (newSelected.has(videoId)) newSelected.delete(videoId);
+        else newSelected.add(videoId);
+      } else {
+        newSelected.clear();
+        newSelected.add(videoId);
       }
+      return newSelected;
+    });
+  }, [videos, openFullScreen, videoManager.playingVideos]);
 
-      setSelectedVideos((prev) => {
-        const newSelected = new Set(prev);
-        if (isCtrlClick) {
-          if (newSelected.has(videoId)) newSelected.delete(videoId);
-          else newSelected.add(videoId);
-        } else {
-          newSelected.clear();
-          newSelected.add(videoId);
-        }
-        return newSelected;
-      });
-    },
-    [videos, openFullScreen, playingVideos]
-  );
+  // CALLBACK: Emergency cleanup
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && (isLoadingFolder || isLayoutLoading)) {
+        setIsLoadingFolder(false);
+        setIsLayoutLoading(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isLoadingFolder, isLayoutLoading]);
 
   return (
     <div className="app">
       {!settingsLoaded ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100vh",
-            color: "#888",
-          }}
-        >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#888' }}>
           Loading settings...
         </div>
       ) : (
         <>
           {/* Loading Screen (PRESERVED) */}
           {isLoadingFolder && (
-            <div
-              style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "rgba(0, 0, 0, 0.95)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 99999,
-                backdropFilter: "blur(8px)",
-              }}
-            >
-              <div
-                style={{
-                  backgroundColor: "#1a1a1a",
-                  borderRadius: "20px",
-                  padding: "3rem",
-                  maxWidth: "600px",
-                  width: "90%",
-                  textAlign: "center",
-                  boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
-                  border: "2px solid #333",
-                }}
-              >
-                <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>
-                  🐝
-                </div>
-                <div
-                  style={{
-                    fontSize: "2rem",
-                    marginBottom: "1rem",
-                    color: "#4CAF50",
-                    fontWeight: "bold",
-                  }}
-                >
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.95)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', zIndex: 99999,
+              backdropFilter: 'blur(8px)'
+            }}>
+              <div style={{
+                backgroundColor: '#1a1a1a', borderRadius: '20px', padding: '3rem',
+                maxWidth: '600px', width: '90%', textAlign: 'center',
+                boxShadow: '0 30px 60px rgba(0,0,0,0.8)', 
+                border: '2px solid #333'
+              }}>
+                <div style={{ fontSize: '3rem', marginBottom: '1.5rem' }}>🐝</div>
+                <div style={{ fontSize: '2rem', marginBottom: '1rem', color: '#4CAF50', fontWeight: 'bold' }}>
                   Video Swarm
                 </div>
-                <div
-                  style={{
-                    fontSize: "1.2rem",
-                    color: "#ccc",
-                    marginBottom: "2rem",
-                    minHeight: "40px",
-                  }}
-                >
-                  {loadingStage || "Preparing..."}
+                <div style={{ fontSize: '1.2rem', color: '#ccc', marginBottom: '2rem', minHeight: '40px' }}>
+                  {loadingStage || 'Preparing...'}
                 </div>
-                <div
-                  style={{
-                    width: "100%",
-                    height: "16px",
-                    backgroundColor: "#333",
-                    borderRadius: "8px",
-                    overflow: "hidden",
-                    marginBottom: "2rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${loadingProgress}%`,
-                      height: "100%",
-                      background: "linear-gradient(90deg, #4CAF50, #45a049)",
-                      borderRadius: "8px",
-                      transition: "width 0.5s ease",
-                    }}
-                  />
+                <div style={{
+                  width: '100%', height: '16px', backgroundColor: '#333',
+                  borderRadius: '8px', overflow: 'hidden', marginBottom: '2rem'
+                }}>
+                  <div style={{
+                    width: `${loadingProgress}%`, height: '100%', 
+                    background: 'linear-gradient(90deg, #4CAF50, #45a049)',
+                    borderRadius: '8px', transition: 'width 0.5s ease'
+                  }} />
                 </div>
-                <div
-                  style={{
-                    fontSize: "1.5rem",
-                    color: "#4CAF50",
-                    fontWeight: "bold",
-                    marginBottom: "2rem",
-                  }}
-                >
+                <div style={{ fontSize: '1.5rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '2rem' }}>
                   {loadingProgress}%
                 </div>
-                <button
-                  onClick={() => setIsLoadingFolder(false)}
-                  style={{
-                    padding: "1rem 2.5rem",
-                    backgroundColor: "#ff4444",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "10px",
-                    cursor: "pointer",
-                    fontSize: "1.1rem",
-                    fontWeight: "bold",
-                  }}
-                >
+                <button onClick={() => setIsLoadingFolder(false)} style={{
+                  padding: '1rem 2.5rem', backgroundColor: '#ff4444',
+                  color: 'white', border: 'none', borderRadius: '10px', 
+                  cursor: 'pointer', fontSize: '1.1rem', fontWeight: 'bold'
+                }}>
                   Cancel Loading
                 </button>
               </div>
             </div>
           )}
 
+          {/* NEW: Layout Loading Screen */}
+          {isLayoutLoading && (
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.8)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+              backdropFilter: 'blur(4px)'
+            }}>
+              <div style={{
+                backgroundColor: '#1a1a1a', borderRadius: '15px', padding: '2rem',
+                textAlign: 'center', border: '2px solid #333'
+              }}>
+                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🔄</div>
+                <div style={{ fontSize: '1.2rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '1rem' }}>
+                  Switching Layout
+                </div>
+                <div style={{ color: '#ccc' }}>
+                  Reorganizing {videos.length} videos...
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Header (PRESERVED) */}
           <div className="header">
-            <h1>
-              🐝 Video Swarm{" "}
-              <span style={{ fontSize: "0.6rem", color: "#666" }}>
-                v2.19-fixed
-              </span>
-            </h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.21-fixed</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
-                <button
-                  onClick={handleFolderSelect}
-                  className="file-input-label"
-                  disabled={isLoadingFolder}
-                >
+                <button onClick={handleFolderSelect} className="file-input-label" disabled={isLoadingFolder}>
                   📁 Select Folder
                 </button>
               ) : (
                 <div className="file-input-wrapper">
-                  <input
-                    type="file"
-                    className="file-input"
-                    webkitdirectory="true"
-                    multiple
-                    onChange={handleWebFileSelection}
-                    style={{ display: "none" }}
-                    id="fileInput"
-                    disabled={isLoadingFolder}
-                  />
+                  <input type="file" className="file-input" webkitdirectory="true" multiple 
+                    onChange={handleWebFileSelection} style={{ display: 'none' }} id="fileInput" disabled={isLoadingFolder} />
                   <label htmlFor="fileInput" className="file-input-label">
                     ⚠️ Open Folder (Limited)
                   </label>
@@ -884,79 +559,38 @@ function App() {
               )}
             </div>
 
-            <div
-              className="debug-info"
-              style={{
-                fontSize: "0.75rem",
-                color: "#888",
-                background: "#1a1a1a",
-                padding: "0.3rem 0.8rem",
-                borderRadius: "4px",
-              }}
-            >
-              📁 {videos.length} videos | ▶️ {playingVideos.size} playing | 👁️{" "}
-              {visibleVideos.size} in view
+            <div className="debug-info" style={{
+              fontSize: '0.75rem', color: '#888', background: '#1a1a1a',
+              padding: '0.3rem 0.8rem', borderRadius: '4px'
+            }}>
+              📁 {videos.length} videos | ▶️ {videoManager.playingVideos.size} playing | 👁️ {videoManager.visibleVideos.size} in view
             </div>
 
             <div className="controls">
-              <button
-                onClick={toggleRecursive}
-                className={`toggle-button ${recursiveMode ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {recursiveMode ? "📂 Recursive ON" : "📂 Recursive"}
+              <button onClick={toggleAutoplay} className={`toggle-button ${!autoplayEnabled ? 'active' : ''}`} disabled={isLoadingFolder}>
+                {autoplayEnabled ? '⏸️ Pause All' : '▶️ Resume All'}
               </button>
-              <button
-                onClick={toggleFilenames}
-                className={`toggle-button ${showFilenames ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {showFilenames ? "📝 Filenames ON" : "📝 Filenames"}
+              <button onClick={toggleRecursive} className={`toggle-button ${recursiveMode ? 'active' : ''}`} disabled={isLoadingFolder}>
+                {recursiveMode ? '📂 Recursive ON' : '📂 Recursive'}
               </button>
-              <button
-                onClick={handleLayoutToggle}
-                className="toggle-button"
-                disabled={isLoadingFolder}
-              >
+              <button onClick={toggleFilenames} className={`toggle-button ${showFilenames ? 'active' : ''}`} disabled={isLoadingFolder}>
+                {showFilenames ? '📝 Filenames ON' : '📝 Filenames'}
+              </button>
+              <button onClick={handleLayoutToggle} className="toggle-button" disabled={isLoadingFolder}>
                 {getLayoutButtonText}
               </button>
 
-              <div
-                className="video-limit-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
+              <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>📹</span>
-                <input
-                  type="range"
-                  min="10"
-                  max="500"
-                  value={maxConcurrentPlaying}
-                  step="10"
-                  style={{ width: "100px" }}
-                  onChange={(e) =>
-                    handleVideoLimitChange(parseInt(e.target.value))
-                  }
-                  disabled={isLoadingFolder}
-                />
-                <span style={{ fontSize: "0.8rem" }}>
-                  {maxConcurrentPlaying}
-                </span>
+                <input type="range" min="10" max="100" value={maxConcurrentPlaying} step="5" style={{ width: '100px' }}
+                  onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
+                <span style={{ fontSize: '0.8rem' }}>{maxConcurrentPlaying}</span>
               </div>
 
-              <div
-                className="zoom-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
+              <div className="zoom-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>🔍</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="3"
-                  value={zoomLevel}
-                  step="1"
-                  onChange={(e) => handleZoomChange(parseInt(e.target.value))}
-                  disabled={isLoadingFolder}
-                />
+                <input type="range" min="0" max="3" value={zoomLevel} step="1"
+                  onChange={(e) => handleZoomChange(parseInt(e.target.value))} disabled={isLoadingFolder} />
                 <span>{getZoomLabel}</span>
               </div>
             </div>
@@ -967,70 +601,47 @@ function App() {
             <div className="drop-zone">
               <h2>🐝 Welcome to Video Swarm 🐝</h2>
               <p>Click "Select Folder" above to browse your video collection</p>
-              <div
-                style={{
-                  marginTop: "2rem",
-                  padding: "1rem",
-                  background: "#2a4a00",
-                  borderRadius: "8px",
-                }}
-              >
-                <div
-                  style={{
-                    color: "#4CAF50",
-                    fontWeight: "bold",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  ⚡ Optimized Performance (Fixed)
+              <div style={{
+                marginTop: '2rem', padding: '1rem', background: '#2a4a00', borderRadius: '8px'
+              }}>
+                <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                  ⚡ Performance Improvements (v2.21)
                 </div>
-                <ul
-                  style={{
-                    color: "#ccc",
-                    margin: 0,
-                    paddingLeft: "1.5rem",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  <li>
-                    Fixed autoplay logic - visible videos now play properly
-                  </li>
-                  <li>Centralized playback control in App component</li>
-                  <li>Removed visual styling for playing videos</li>
-                  <li>All masonry layouts preserved and working</li>
+                <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
+                  <li>Fixed infinite playback loops - centralized video state management</li>
+                  <li>Improved layout switching with proper playback recovery</li>
+                  <li>Smart hierarchical folder sorting (folder groups)</li>
+                  <li>Conservative memory management to prevent crashes</li>
                 </ul>
               </div>
             </div>
           ) : (
-            <div
+            <div 
               ref={gridRef}
-              className={`video-grid ${layoutMode} zoom-${
-                ["small", "medium", "large", "xlarge"][zoomLevel]
-              } ${!showFilenames ? "hide-filenames" : ""}`}
+              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
-              {/* FIXED: Direct rendering without heavy useMemo */}
+              {/* CENTRALIZED: Direct rendering with VideoManager commands */}
               {videos.map((video) => (
                 <VideoCard
                   key={video.id}
                   video={video}
                   selected={selectedVideos.has(video.id)}
                   onSelect={handleVideoSelect}
-                  canPlayMoreVideos={canPlayMoreVideos}
-                  onVideoPlay={handleVideoPlay}
-                  onVideoPause={handleVideoPause}
-                  onVideoLoad={handleVideoLoaded}
                   layoutMode={layoutMode}
                   showFilenames={showFilenames}
                   onContextMenu={showContextMenu}
-                  // Performance props
-                  canLoadMoreVideos={() => canLoadMoreVideos(video.id)}
-                  isLoading={loadingVideos.has(video.id)}
-                  isLoaded={loadedVideos.has(video.id)}
-                  isVisible={visibleVideos.has(video.id)}
-                  isPlaying={playingVideos.has(video.id)}
-                  onStartLoading={handleVideoStartLoading}
-                  onStopLoading={handleVideoStopLoading}
-                  onVisibilityChange={handleVideoVisibilityChange}
+                  onVideoLoad={updateAspectRatio}
+                  
+                  // Commands from VideoManager (PURE INPUTS)
+                  shouldPlay={videoManager.videoCardAPI.isPlaying(video.id)}
+                  shouldLoad={videoManager.videoCardAPI.isVisible(video.id)}
+                  canLoadMore={videoManager.videoCardAPI.canLoadMore(video.id)}
+                  
+                  // Event reporting to VideoManager (PURE OUTPUTS)
+                  onVisibilityChange={videoManager.videoCardAPI.reportVisibility}
+                  onLoadStart={videoManager.videoCardAPI.reportLoadStart}
+                  onLoadComplete={videoManager.videoCardAPI.reportLoadComplete}
+                  onLoadError={videoManager.videoCardAPI.reportLoadError}
                 />
               ))}
             </div>
