@@ -705,6 +705,7 @@ function App() {
                 <VideoCard
                   key={video.id}
                   video={video}
+                  ioRoot={gridRef}
                   selected={selectedVideos.has(video.id)}
                   onSelect={handleVideoSelect}
                   canPlayMoreVideos={() => true}
