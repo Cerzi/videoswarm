@@ -4,7 +4,6 @@ const VideoCard = memo(({
   video, 
   selected, 
   onSelect, 
-  autoplayEnabled, 
   canPlayMoreVideos,
   onVideoPlay,
   onVideoPause,
@@ -42,10 +41,7 @@ const VideoCard = memo(({
     setVisible(isVisible);
   }, [isLoaded, isLoading, isVisible]);
 
-  // DEBUGGING: Add this to see what's happening
-  if (Math.random() < 0.01) { // Only log 1% of the time to avoid spam
-    console.log(`VideoCard ${video.name}: visible=${visible}, loaded=${loaded}, isPlaying=${isPlaying}, canLoad=${canLoadMoreVideos()}`);
-  }
+  // DEBUGGING: Removed console log spam
 
   // SIMPLIFIED: Only handle visibility detection
   useEffect(() => {

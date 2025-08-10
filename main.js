@@ -21,10 +21,9 @@ if (process.platform === "linux") {
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
-// SIMPLIFIED: Removed layoutMode from default settings
+// SIMPLIFIED: Removed layoutMode and autoplayEnabled from default settings
 const defaultSettings = {
   recursiveMode: false,
-  autoplayEnabled: true,
   maxConcurrentPlaying: 30,
   zoomLevel: 1,
   showFilenames: true,
@@ -49,8 +48,8 @@ async function loadSettings() {
     const settings = JSON.parse(data);
     console.log("Settings loaded:", settings);
     
-    // Remove layoutMode from loaded settings if it exists (cleanup)
-    const { layoutMode, ...cleanSettings } = settings;
+    // Remove layoutMode and autoplayEnabled from loaded settings if they exist (cleanup)
+    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
     currentSettings = { ...defaultSettings, ...cleanSettings };
     return currentSettings;
   } catch (error) {
@@ -62,8 +61,8 @@ async function loadSettings() {
 
 async function saveSettings(settings) {
   try {
-    // Remove layoutMode from settings if it exists (cleanup)
-    const { layoutMode, ...cleanSettings } = settings;
+    // Remove layoutMode and autoplayEnabled from settings if they exist (cleanup)
+    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
     await fs.writeFile(settingsPath, JSON.stringify(cleanSettings, null, 2));
     currentSettings = cleanSettings;
     console.log("Settings saved:", cleanSettings);
