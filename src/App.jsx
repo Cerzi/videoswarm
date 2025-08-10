@@ -6,6 +6,15 @@ import { useFullScreenModal } from './hooks/useFullScreenModal';
 import { useContextMenu } from './hooks/useContextMenu';
 import './App.css';
 
+// Helper function to get directory path
+const path = {
+  dirname: (filePath) => {
+    if (!filePath) return '';
+    const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+    return lastSlash === -1 ? '' : filePath.substring(0, lastSlash);
+  }
+};
+
 function App() {
   const [videos, setVideos] = useState([]);
   const [selectedVideos, setSelectedVideos] = useState(new Set());
@@ -39,13 +48,44 @@ function App() {
   const masonryLayoutTimeoutRef = useRef(null);
   const resizeTimeoutRef = useRef(null);
 
+  // MEMOIZED: Grouped and sorted videos
+  const groupedAndSortedVideos = useMemo(() => {
+    if (videos.length === 0) return [];
+
+    // Group videos by their folder path
+    const videosByFolder = new Map();
+    
+    videos.forEach(video => {
+      const folderPath = video.metadata?.folder || path.dirname(video.fullPath || video.relativePath || '');
+      
+      if (!videosByFolder.has(folderPath)) {
+        videosByFolder.set(folderPath, []);
+      }
+      videosByFolder.get(folderPath).push(video);
+    });
+
+    // Sort folders alphabetically, then sort videos within each folder
+    const sortedFolders = Array.from(videosByFolder.keys()).sort();
+    const result = [];
+
+    sortedFolders.forEach(folderPath => {
+      const folderVideos = videosByFolder.get(folderPath);
+      // Sort videos within folder by name
+      folderVideos.sort((a, b) => a.name.localeCompare(b.name));
+      result.push(...folderVideos);
+    });
+
+    console.log(`📁 Grouped ${videos.length} videos into ${sortedFolders.length} folders`);
+    return result;
+  }, [videos]);
+
   // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED) - simplified without layoutMode
   const {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
     navigateFullScreen
-  } = useFullScreenModal(videos, 'masonry-vertical', gridRef);
+  } = useFullScreenModal(groupedAndSortedVideos, 'masonry-vertical', gridRef);
 
   // Use context menu (CORE FUNCTIONALITY PRESERVED)
   const {
@@ -57,7 +97,7 @@ function App() {
 
   // MEMOIZED: Performance limits calculation
   const performanceLimits = useMemo(() => {
-    const videoCount = videos.length;
+    const videoCount = groupedAndSortedVideos.length;
     
     if (videoCount < 100) {
       return { maxLoaded: 60, maxConcurrentLoading: 4 };
@@ -68,7 +108,7 @@ function App() {
     } else {
       return { maxLoaded: 120, maxConcurrentLoading: 1 };
     }
-  }, [videos.length]);
+  }, [groupedAndSortedVideos.length]);
 
   // MEMOIZED: Cleanup function (React-optimized)
   const performCleanup = useCallback(() => {
@@ -495,13 +535,13 @@ function App() {
 
   // Apply layout when videos change
   useEffect(() => {
-    if (videos.length > 0) {
+    if (groupedAndSortedVideos.length > 0) {
       setTimeout(() => {
         updateCachedGridMeasurements();
         initializeMasonryGrid();
       }, 50);
     }
-  }, [videos.length, updateCachedGridMeasurements, initializeMasonryGrid]);
+  }, [groupedAndSortedVideos.length, updateCachedGridMeasurements, initializeMasonryGrid]);
 
   // Setup zoom level handling
   const setZoom = useCallback((level) => {
@@ -784,7 +824,7 @@ function App() {
   );
 
   const handleVideoSelect = useCallback((videoId, isCtrlClick, isDoubleClick) => {
-    const video = videos.find(v => v.id === videoId);
+    const video = groupedAndSortedVideos.find(v => v.id === videoId);
     
     if (isDoubleClick && video) {
       openFullScreen(video, playingVideos);
@@ -802,7 +842,7 @@ function App() {
       }
       return newSelected;
     });
-  }, [videos, openFullScreen, playingVideos]);
+  }, [groupedAndSortedVideos, openFullScreen, playingVideos]);
 
   // CALLBACK: Emergency cleanup (reduced functionality)
   useEffect(() => {
@@ -870,7 +910,7 @@ function App() {
 
           {/* Header (SIMPLIFIED - removed layout toggle) */}
           <div className="header">
-            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v2.20-masonry</span></h1>
+            <h1>🐝 Video Swarm <span style={{ fontSize: '0.6rem', color: '#666' }}>v1.0.0</span></h1>
 
             <div id="folderControls">
               {isElectron ? (
@@ -920,7 +960,7 @@ function App() {
           </div>
 
           {/* Main content area (SIMPLIFIED - always masonry-vertical) */}
-          {videos.length === 0 && !isLoadingFolder ? (
+          {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
             <div className="drop-zone">
               <h2>🐝 Welcome to Video Swarm 🐝</h2>
               <p>Click "Select Folder" above to browse your video collection</p>
@@ -928,12 +968,12 @@ function App() {
                 marginTop: '2rem', padding: '1rem', background: '#2a4a00', borderRadius: '8px'
               }}>
                 <div style={{ color: '#4CAF50', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                  ⚡ Vertical Masonry Layout
+                  ⚡ Folder-Grouped Masonry Layout
                 </div>
                 <ul style={{ color: '#ccc', margin: 0, paddingLeft: '1.5rem', lineHeight: 1.6 }}>
-                  <li>Optimized fixed-width masonry display</li>
-                  <li>Perfect for varied aspect ratio videos</li>
-                  <li>Intelligent layout with preserved scroll position</li>
+                  <li>Videos automatically grouped by subfolder</li>
+                  <li>Sorted alphabetically within each folder</li>
+                  <li>Perfect for organized AI generation workflows</li>
                   <li>All performance optimizations preserved</li>
                 </ul>
               </div>
@@ -943,8 +983,8 @@ function App() {
               ref={gridRef}
               className={`video-grid masonry-vertical zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
-              {/* FIXED: Direct rendering without heavy useMemo */}
-              {videos.map((video) => (
+              {/* FIXED: Direct rendering of grouped and sorted videos */}
+              {groupedAndSortedVideos.map((video) => (
                 <VideoCard
                   key={video.id}
                   video={video}

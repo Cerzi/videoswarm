@@ -1,6 +1,6 @@
 # 🐝 Video Swarm
 
-A desktop Electron application for viewing hundreds of videos simultaneously. Perfect for managing large video collections with advanced masonry layouts, real-time playback, and instant file system monitoring.
+A desktop Electron application for viewing hundreds of videos simultaneously in an intelligent masonry layout. Perfect for managing large video collections with real-time playback and instant file system monitoring.
 
 > **See your entire video collection in motion** - when static thumbnails aren't enough, Video Swarm shows you everything at once.
 
@@ -28,19 +28,19 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 ## ✨ Features
 
 ### 🚀 **Mass Video Playback**
-- Simultaneous playback of multiple videos (configurable limit: 10-100+)
+- Simultaneous playback of multiple videos (configurable limit: 10-100)
 - Smart autoplay management with visibility-based loading
 - Optimized performance for large collections (tested with 1000+ videos)
-- Memory-efficient lazy loading and cleanup
+- Memory-efficient lazy loading and automatic cleanup
 
-### 📐 **Advanced Layout Modes**
-- Grid Layout: Traditional CSS grid with responsive columns
-- Vertical Masonry: Pinterest-style layout with fixed width, variable height
-- Horizontal Masonry: Fixed height, variable width for ultrawide monitors
-- Real-time layout switching with preserved scroll position
+### 📐 **Intelligent Masonry Layout**
+- **Vertical Masonry**: Fixed width, variable height layout optimized for all aspect ratios
+- Perfect for mixed content: portrait, square, and landscape videos
+- Real-time layout updates with preserved scroll position
+- Responsive column count based on window size
 
 ### 🎯 **Smart Navigation & Interaction**
-- Full-screen modal with keyboard navigation (←/→ arrow keys)
+- Full-screen modal with keyboard navigation (←/→ arrow keys, Space, Esc)
 - Double-click to open any video in full-screen
 - Context menu integration (right-click for file operations)
 - Multi-select support with Ctrl+Click
@@ -56,8 +56,8 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 ### ⚙️ **Customization & Settings**
 - Persistent settings stored in user data directory
 - Show/hide filenames toggle
-- Adjustable concurrent playback limits
-- Autoplay pause/resume for all videos
+- Adjustable concurrent playback limits (10-100 videos)
+- Zoom levels for different viewing preferences
 - Window state preservation (size, position)
 
 ### 🖥️ **Desktop-Only Application**
@@ -79,20 +79,14 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 - Ctrl+Click: Multi-select videos
 - Double-click: Open in full-screen mode
 - Right-click: Context menu with file operations
-- Space/Enter: Open selected video in full-screen
+- Space/Enter in full-screen: Play/pause
 - ←/→ in full-screen: Navigate between videos
 
-### Layout Modes
-- 📐 Grid: Responsive grid layout (best for mixed aspect ratios)
-- 📐 Vertical: Masonry layout, fixed width (best for portrait/square videos)
-- 📐 Horizontal: Masonry layout, fixed height (best for landscape/ultrawide)
-
 ### Settings Panel
-- ▶️/⏸️ Toggle: Pause/resume all video playback
-- 📂 Recursive: Include subdirectories in scan
-- 📝 Filenames: Show/hide video filenames
-- 📹 Slider: Control max concurrent playing videos (10-100)
-- 🔍 Slider: Adjust thumbnail zoom level
+- 📂 **Recursive**: Include subdirectories in scan
+- 📝 **Filenames**: Show/hide video filenames
+- 📹 **Slider**: Control max concurrent playing videos (10-100)
+- 🔍 **Slider**: Adjust thumbnail zoom level (75%-200%)
 
 ## 🛠️ Technical Details
 
@@ -100,7 +94,7 @@ Traditional file browsers show only static thumbnails, making it impossible to u
 - Frontend: React 18 with modern hooks and context
 - Backend: Electron with IPC communication
 - File Watching: Chokidar with polling fallback
-- Layout Engine: Custom masonry implementation with CSS Grid fallback
+- Layout Engine: Custom vertical masonry implementation
 - Performance: Intersection Observer for visibility detection, debounced updates
 
 ### Supported Formats
@@ -165,11 +159,9 @@ src/
 │   ├── ContextMenu.js     # Right-click context menu
 │   └── FullScreenModal.js # Full-screen video viewer
 ├── hooks/
-│   ├── useLayoutManager.js    # Layout switching and masonry logic
-│   ├── useContextMenu.js      # Context menu state and actions
 │   ├── useFullScreenModal.js  # Full-screen navigation logic
-│   └── useMasonryLayout.js    # Advanced masonry calculations
-├── App.js                 # Main application component
+│   └── useContextMenu.js      # Context menu state and actions
+├── App.js                 # Main application component with masonry layout
 └── main.js               # Electron main process
 ```
 
@@ -213,7 +205,7 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 ---
 
-**Video Swarm v2.10** - Built with ❤️ for video professionals and content creators
+**Video Swarm v1.0.0** - Built with ❤️ for video professionals and content creators
 
 ---
 
