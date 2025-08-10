@@ -1,48 +1,29 @@
 import { useState, useCallback } from 'react';
 
-export const useFullScreenModal = (videos, layoutMode, gridRef) => {
+export const useFullScreenModal = (videos, gridRef) => {
   const [fullScreenVideo, setFullScreenVideo] = useState(null);
 
-  // Calculate grid navigation order
+  // Calculate grid navigation order (always vertical masonry)
   const getGridOrder = useCallback(() => {
     if (!gridRef.current || !videos.length) return [];
 
     const videoElements = Array.from(gridRef.current.querySelectorAll('.video-item'));
     
-    if (layoutMode === 'grid' || layoutMode === 'masonry-vertical') {
-      // Sort by visual position: top to bottom, left to right
-      return videoElements.sort((a, b) => {
-        const rectA = a.getBoundingClientRect();
-        const rectB = b.getBoundingClientRect();
-        
-        // First sort by Y position (row)
-        const yDiff = rectA.top - rectB.top;
-        if (Math.abs(yDiff) > 10) { // Allow for small differences
-          return yDiff;
-        }
-        
-        // Then sort by X position (column)
-        return rectA.left - rectB.left;
-      });
-    } else if (layoutMode === 'masonry-horizontal') {
-      // Sort by visual position: left to right, top to bottom
-      return videoElements.sort((a, b) => {
-        const rectA = a.getBoundingClientRect();
-        const rectB = b.getBoundingClientRect();
-        
-        // First sort by X position (column)
-        const xDiff = rectA.left - rectB.left;
-        if (Math.abs(xDiff) > 10) { // Allow for small differences
-          return xDiff;
-        }
-        
-        // Then sort by Y position (row)
-        return rectA.top - rectB.top;
-      });
-    }
-    
-    return videoElements;
-  }, [videos, layoutMode, gridRef]);
+    // Sort by visual position: top to bottom, left to right (vertical masonry)
+    return videoElements.sort((a, b) => {
+      const rectA = a.getBoundingClientRect();
+      const rectB = b.getBoundingClientRect();
+      
+      // First sort by Y position (row)
+      const yDiff = rectA.top - rectB.top;
+      if (Math.abs(yDiff) > 10) { // Allow for small differences
+        return yDiff;
+      }
+      
+      // Then sort by X position (column)
+      return rectA.left - rectB.left;
+    });
+  }, [videos, gridRef]);
 
   // Find video by ID in the grid order
   const findVideoIndex = useCallback((videoId) => {

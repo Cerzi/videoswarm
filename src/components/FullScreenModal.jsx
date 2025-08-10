@@ -5,7 +5,6 @@ const FullScreenModal = ({
   onClose, 
   onNavigate, 
   showFilenames,
-  layoutMode,
   gridRef 
 }) => {
   const videoRef = useRef(null);

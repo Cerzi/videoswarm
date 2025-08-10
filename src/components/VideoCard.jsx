@@ -4,7 +4,6 @@ const VideoCard = memo(({
   video, 
   selected, 
   onSelect, 
-  layoutMode,
   showFilenames = true,
   onContextMenu,
   onVideoLoad,

@@ -1,7 +1,6 @@
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 
 export const useLayoutManager = (videos, zoomLevel) => {
-  const [layoutMode, setLayoutMode] = useState('grid')
   const gridRef = useRef(null)
   const isLayoutingRef = useRef(false)
   const isUserScrollingRef = useRef(false)
@@ -11,28 +10,6 @@ export const useLayoutManager = (videos, zoomLevel) => {
   const cachedGridMeasurementsRef = useRef(null)
   const masonryLayoutTimeoutRef = useRef(null)
   const resizeTimeoutRef = useRef(null)
-
-  // Enhanced settings loading that works on both app start and refresh
-  useEffect(() => {
-    const loadLayoutSettings = () => {
-      if (window.electronAPI?.onSettingsLoaded) {
-        window.electronAPI.onSettingsLoaded((settings) => {
-          if (settings.layoutMode !== undefined) {
-            console.log('Loading layout mode from settings:', settings.layoutMode);
-            setLayoutMode(settings.layoutMode);
-          }
-          // Note: showFilenames is handled in App.js, not here
-        });
-      }
-
-      // Also try to request settings immediately in case we missed the initial load
-      if (window.electronAPI?.requestSettings) {
-        window.electronAPI.requestSettings();
-      }
-    };
-
-    loadLayoutSettings();
-  }, []);
 
   // Setup scroll detection
   useEffect(() => {
@@ -88,7 +65,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
     console.log('Grid measurements:', cachedGridMeasurementsRef.current)
   }, [getColumnCount])
 
-  // TRUE MASONRY IMPLEMENTATION - Fixed Width, Variable Height (Vertical)
+  // VERTICAL MASONRY IMPLEMENTATION - Fixed Width, Variable Height
   const layoutMasonryVertical = useCallback(() => {
     const grid = gridRef.current
     if (!grid) return
@@ -125,7 +102,6 @@ export const useLayoutManager = (videos, zoomLevel) => {
       }
 
       // Calculate item height based on fixed width and aspect ratio
-      // No need to add filename height since filenames now overlay
       const itemHeight = Math.round(columnWidth / aspectRatio)
 
       // Find column with minimum height
@@ -156,129 +132,6 @@ export const useLayoutManager = (videos, zoomLevel) => {
     grid.style.position = 'relative'
   }, [updateCachedGridMeasurements])
 
-  // TRUE MASONRY IMPLEMENTATION - Fixed Height, Variable Width (Horizontal)
-  const layoutMasonryHorizontal = useCallback(() => {
-    const grid = gridRef.current
-    if (!grid) return
-
-    console.log('Laying out horizontal masonry (fixed height, variable width)')
-
-    // Get the container width and fixed height
-    const containerWidth = grid.clientWidth - 32 // Account for padding
-    const fixedHeight = 200 // Base fixed height
-    const contentHeight = fixedHeight // Use full height since filenames overlay
-    const gap = 4
-    
-    // Start laying out videos row by row
-    let currentRowWidth = 0
-    let currentRowY = 0
-    let rowVideos = []
-    const allRows = []
-    
-    // Get all video items
-    const videoItems = Array.from(grid.querySelectorAll('.video-item'))
-    
-    videoItems.forEach((videoItem, index) => {
-      // Get or calculate aspect ratio
-      const videoId = videoItem.dataset.videoId || videoItem.dataset.filename
-      let aspectRatio = aspectRatioCacheRef.current.get(videoId)
-      
-      if (!aspectRatio) {
-        const video = videoItem.querySelector('video')
-        if (video && video.videoWidth && video.videoHeight) {
-          aspectRatio = video.videoWidth / video.videoHeight
-          aspectRatioCacheRef.current.set(videoId, aspectRatio)
-        } else {
-          aspectRatio = 16 / 9 // Default
-        }
-      }
-
-      // Calculate item width based on fixed height and aspect ratio
-      const itemWidth = Math.round(contentHeight * aspectRatio)
-
-      // Check if this video fits in the current row
-      if (currentRowWidth + itemWidth <= containerWidth || rowVideos.length === 0) {
-        // Add to current row
-        rowVideos.push({ videoItem, width: itemWidth, aspectRatio })
-        currentRowWidth += itemWidth + (rowVideos.length > 1 ? gap : 0)
-      } else {
-        // Start new row - first save the current row
-        if (rowVideos.length > 0) {
-          allRows.push({ videos: rowVideos, y: currentRowY })
-          currentRowY += fixedHeight + gap
-        }
-        
-        // Start new row with this video
-        rowVideos = [{ videoItem, width: itemWidth, aspectRatio }]
-        currentRowWidth = itemWidth
-      }
-
-      // If this is the last video, save the current row
-      if (index === videoItems.length - 1 && rowVideos.length > 0) {
-        allRows.push({ videos: rowVideos, y: currentRowY })
-      }
-    })
-
-    // Now position all videos
-    allRows.forEach(row => {
-      let currentX = 0
-      
-      row.videos.forEach(({ videoItem, width }) => {
-        // Position the item
-        videoItem.style.position = 'absolute'
-        videoItem.style.left = `${currentX}px`
-        videoItem.style.top = `${row.y}px`
-        videoItem.style.width = `${width}px`
-        videoItem.style.height = `${fixedHeight}px`
-
-        // Update the video container styling
-        const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
-        if (videoContainer) {
-          videoContainer.style.height = `${fixedHeight}px`
-        }
-
-        currentX += width + gap
-      })
-    })
-
-    // Set grid container height (no horizontal overflow)
-    const totalHeight = allRows.length > 0 ? (allRows.length * (fixedHeight + gap)) : fixedHeight
-    grid.style.height = `${totalHeight}px`
-    grid.style.width = '100%' // Don't expand horizontally
-    grid.style.position = 'relative'
-    grid.style.overflowX = 'visible' // No horizontal scroll
-  }, [])
-
-  // Grid layout (original CSS grid behavior)
-  const layoutGrid = useCallback(() => {
-    const grid = gridRef.current
-    if (!grid) return
-
-    console.log('Applying grid layout')
-    
-    // Reset all positioning
-    const videoItems = grid.querySelectorAll('.video-item')
-    videoItems.forEach((videoItem) => {
-      videoItem.style.position = ''
-      videoItem.style.left = ''
-      videoItem.style.top = ''
-      videoItem.style.width = ''
-      videoItem.style.height = ''
-      
-      // Reset video container styling - let CSS handle it
-      const videoContainer = videoItem.querySelector('.video-container, .video-placeholder, .error-indicator')
-      if (videoContainer) {
-        videoContainer.style.height = ''
-      }
-    })
-
-    // Reset grid container
-    grid.style.height = ''
-    grid.style.width = ''
-    grid.style.position = ''
-    grid.style.overflowX = ''
-  }, [])
-
   const initializeMasonryGrid = useCallback(() => {
     const grid = gridRef.current
     if (!grid || isLayoutingRef.current || isUserScrollingRef.current) return
@@ -298,7 +151,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
     isLayoutingRef.current = true
     layoutRefreshInProgressRef.current = true
 
-    console.log('Initializing masonry layout for mode:', layoutMode)
+    console.log('Initializing vertical masonry layout')
 
     // Preserve scroll position
     const currentScrollY = window.scrollY
@@ -307,13 +160,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (!isUserScrollingRef.current) {
-          if (layoutMode === 'masonry-vertical') {
-            layoutMasonryVertical()
-          } else if (layoutMode === 'masonry-horizontal') {
-            layoutMasonryHorizontal()
-          } else {
-            layoutGrid()
-          }
+          layoutMasonryVertical()
         }
 
         // Restore scroll position ONLY if it was significant
@@ -334,62 +181,38 @@ export const useLayoutManager = (videos, zoomLevel) => {
         }, 500)
       })
     })
-  }, [layoutMode, layoutMasonryVertical, layoutMasonryHorizontal, layoutGrid])
+  }, [layoutMasonryVertical])
 
-  const applyLayout = useCallback((mode = layoutMode) => {
+  const applyLayout = useCallback(() => {
     const grid = gridRef.current
     if (!grid) return
 
-    console.log('Applying layout mode:', mode)
+    console.log('Applying vertical masonry layout')
 
     // Preserve scroll position during layout changes
     const currentScrollY = window.scrollY
 
-    // IMPROVED: Lighter cleanup for layout switches - no aggressive unloading
-    
-    // 1. Clear aspect ratio cache if it's getting large (memory management)
+    // Clear aspect ratio cache if it's getting large (memory management)
     if (aspectRatioCacheRef.current.size > 1000) {
       console.log(`🧹 Clearing large aspect ratio cache (${aspectRatioCacheRef.current.size} entries)`)
       aspectRatioCacheRef.current.clear()
     }
 
-    // 2. Clear cached measurements when switching layouts
+    // Clear cached measurements
     cachedGridMeasurementsRef.current = null
 
-    // Apply the layout immediately
-    if (mode === 'masonry-vertical') {
-      // Use setTimeout to ensure CSS changes are applied first
-      setTimeout(() => {
-        updateCachedGridMeasurements()
-        initializeMasonryGrid()
-        // Restore scroll position after layout
-        if (currentScrollY > 0) {
-          requestAnimationFrame(() => {
-            window.scrollTo(0, currentScrollY)
-          })
-        }
-      }, 50)
-    } else if (mode === 'masonry-horizontal') {
-      setTimeout(() => {
-        initializeMasonryGrid()
-        if (currentScrollY > 0) {
-          requestAnimationFrame(() => {
-            window.scrollTo(0, currentScrollY)
-          })
-        }
-      }, 50)
-    } else {
-      // Grid mode
-      setTimeout(() => {
-        layoutGrid()
-        if (currentScrollY > 0) {
-          requestAnimationFrame(() => {
-            window.scrollTo(0, currentScrollY)
-          })
-        }
-      }, 50)
-    }
-  }, [layoutMode, initializeMasonryGrid, layoutGrid, updateCachedGridMeasurements])
+    // Apply vertical masonry layout
+    setTimeout(() => {
+      updateCachedGridMeasurements()
+      initializeMasonryGrid()
+      // Restore scroll position after layout
+      if (currentScrollY > 0) {
+        requestAnimationFrame(() => {
+          window.scrollTo(0, currentScrollY)
+        })
+      }
+    }, 50)
+  }, [initializeMasonryGrid, updateCachedGridMeasurements])
 
   // Setup resize handling
   useEffect(() => {
@@ -403,10 +226,8 @@ export const useLayoutManager = (videos, zoomLevel) => {
         // Clear cached measurements
         cachedGridMeasurementsRef.current = null
 
-        // Re-layout for any masonry mode
-        if ((layoutMode === 'masonry-vertical' || layoutMode === 'masonry-horizontal') &&
-            !isLayoutingRef.current &&
-            !isUserScrollingRef.current) {
+        // Re-layout
+        if (!isLayoutingRef.current && !isUserScrollingRef.current) {
           setTimeout(() => {
             initializeMasonryGrid()
           }, 100)
@@ -471,10 +292,8 @@ export const useLayoutManager = (videos, zoomLevel) => {
     }
 
     console.log('Refreshing masonry layout')
-    if (layoutMode !== 'grid') {
-      initializeMasonryGrid()
-    }
-  }, [initializeMasonryGrid, layoutMode])
+    initializeMasonryGrid()
+  }, [initializeMasonryGrid])
 
   const forceLayout = useCallback(() => {
     const currentScrollY = window.scrollY
@@ -520,11 +339,9 @@ export const useLayoutManager = (videos, zoomLevel) => {
     clearTimeout(masonryLayoutTimeoutRef.current)
     masonryLayoutTimeoutRef.current = setTimeout(() => {
       cachedGridMeasurementsRef.current = null
-      if (layoutMode !== 'grid') {
-        initializeMasonryGrid()
-      }
+      initializeMasonryGrid()
     }, 300)
-  }, [initializeMasonryGrid, layoutMode, saveZoomSetting])
+  }, [initializeMasonryGrid, saveZoomSetting])
 
   // Apply layout when mode or videos change
   useEffect(() => {
@@ -542,13 +359,11 @@ export const useLayoutManager = (videos, zoomLevel) => {
   const updateAspectRatio = useCallback((videoId, aspectRatio) => {
     aspectRatioCacheRef.current.set(videoId, aspectRatio)
     
-    // Refresh layout if this is a masonry mode
-    if (layoutMode !== 'grid') {
-      setTimeout(() => {
-        refreshMasonryLayout()
-      }, 100)
-    }
-  }, [layoutMode, refreshMasonryLayout])
+    // Refresh layout
+    setTimeout(() => {
+      refreshMasonryLayout()
+    }, 100)
+  }, [refreshMasonryLayout])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -559,9 +374,7 @@ export const useLayoutManager = (videos, zoomLevel) => {
   }, [])
 
   return {
-    layoutMode,
     gridRef,
-    toggleLayout,
     refreshMasonryLayout,
     forceLayout,
     setZoom,

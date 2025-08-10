@@ -23,17 +23,12 @@ function App() {
   const [loadingStage, setLoadingStage] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
   
-  // NEW: Layout loading state for layout transitions
-  const [isLayoutLoading, setIsLayoutLoading] = useState(false);
-  
   // CENTRALIZED: Video state management
   const videoManager = useVideoManager(videos, autoplayEnabled, maxConcurrentPlaying);
 
-  // Use layout manager (CORE FUNCTIONALITY PRESERVED)
+  // Use layout manager (SIMPLIFIED TO VERTICAL MASONRY ONLY)
   const {
-    layoutMode,
     gridRef,
-    toggleLayout,
     refreshMasonryLayout,
     forceLayout,
     setZoom,
@@ -41,13 +36,13 @@ function App() {
     manualVisibilityCheck
   } = useLayoutManager(videos, zoomLevel);
 
-  // Use fullscreen modal (CORE FUNCTIONALITY PRESERVED)
+  // Use fullscreen modal (SIMPLIFIED)
   const {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
     navigateFullScreen
-  } = useFullScreenModal(videos, layoutMode, gridRef);
+  } = useFullScreenModal(videos, gridRef);
 
   // Use context menu (CORE FUNCTIONALITY PRESERVED)
   const {
@@ -301,56 +296,6 @@ function App() {
     }
   }, [autoplayEnabled, recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
-  // NEW: Enhanced layout toggle with centralized video manager cleanup
-  const handleLayoutToggle = useCallback(async () => {
-    console.log('🔄 Layout toggle requested');
-    
-    // Show layout loading screen for large collections
-    if (videos.length > 500) {
-      setIsLayoutLoading(true);
-    }
-    
-    // Use VideoManager's cleanup for layout switches
-    videoManager.prepareForLayoutSwitch();
-    
-    // Give a moment for the cleanup to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    const newMode = toggleLayout();
-    
-    // Save layout mode immediately 
-    if (window.electronAPI?.saveSettingsPartial) {
-      window.electronAPI.saveSettingsPartial({
-        layoutMode: newMode,
-        recursiveMode, 
-        autoplayEnabled, 
-        maxConcurrentPlaying, 
-        zoomLevel, 
-        showFilenames
-      }).catch(console.error);
-    }
-    
-    // Hide loading screen after transition
-    if (videos.length > 500) {
-      setTimeout(() => {
-        setIsLayoutLoading(false);
-      }, 1500);
-    }
-    
-    // Re-evaluate playback after layout settles
-    setTimeout(() => {
-      videoManager.reevaluatePlayback();
-    }, 1000);
-    
-    // Debug: Log VideoManager state after layout switch
-    setTimeout(() => {
-      const stats = videoManager.getStats();
-      console.log(`📊 Post-layout stats:`, stats);
-    }, 2000);
-    
-    console.log(`✅ Layout switched to ${newMode} with centralized cleanup`);
-    return newMode;
-  }, [toggleLayout, videos.length, videoManager, recursiveMode, autoplayEnabled, maxConcurrentPlaying, zoomLevel, showFilenames]);
 
   const toggleRecursive = useCallback(() => { 
     const newRecursive = !recursiveMode;
@@ -415,16 +360,6 @@ function App() {
     }
   }, [setZoom, recursiveMode, autoplayEnabled, maxConcurrentPlaying, showFilenames]);
 
-  // MEMOIZED: UI helper functions
-  const getLayoutButtonText = useMemo(() => {
-    const buttonTexts = {
-      grid: '📐 Grid',
-      'masonry-vertical': '📐 Vertical',
-      'masonry-horizontal': '📐 Horizontal',
-    };
-    return buttonTexts[layoutMode];
-  }, [layoutMode]);
-
   const getZoomLabel = useMemo(() => 
     (['75%', '100%', '150%', '200%'][zoomLevel] || '100%'), 
     [zoomLevel]
@@ -454,14 +389,13 @@ function App() {
   // CALLBACK: Emergency cleanup
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && (isLoadingFolder || isLayoutLoading)) {
+      if (e.key === 'Escape' && isLoadingFolder) {
         setIsLoadingFolder(false);
-        setIsLayoutLoading(false);
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isLoadingFolder, isLayoutLoading]);
+  }, [isLoadingFolder]);
 
   return (
     <div className="app">
@@ -516,28 +450,6 @@ function App() {
             </div>
           )}
 
-          {/* NEW: Layout Loading Screen */}
-          {isLayoutLoading && (
-            <div style={{
-              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.8)', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-              backdropFilter: 'blur(4px)'
-            }}>
-              <div style={{
-                backgroundColor: '#1a1a1a', borderRadius: '15px', padding: '2rem',
-                textAlign: 'center', border: '2px solid #333'
-              }}>
-                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🔄</div>
-                <div style={{ fontSize: '1.2rem', color: '#4CAF50', fontWeight: 'bold', marginBottom: '1rem' }}>
-                  Switching Layout
-                </div>
-                <div style={{ color: '#ccc' }}>
-                  Reorganizing {videos.length} videos...
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Header (PRESERVED) */}
           <div className="header">
@@ -575,9 +487,6 @@ function App() {
               </button>
               <button onClick={toggleFilenames} className={`toggle-button ${showFilenames ? 'active' : ''}`} disabled={isLoadingFolder}>
                 {showFilenames ? '📝 Filenames ON' : '📝 Filenames'}
-              </button>
-              <button onClick={handleLayoutToggle} className="toggle-button" disabled={isLoadingFolder}>
-                {getLayoutButtonText}
               </button>
 
               <div className="video-limit-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -618,7 +527,7 @@ function App() {
           ) : (
             <div 
               ref={gridRef}
-              className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
+              className={`video-grid masonry-vertical zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
               {/* CENTRALIZED: Direct rendering with VideoManager commands */}
               {videos.map((video) => (
@@ -627,7 +536,6 @@ function App() {
                   video={video}
                   selected={selectedVideos.has(video.id)}
                   onSelect={handleVideoSelect}
-                  layoutMode={layoutMode}
                   showFilenames={showFilenames}
                   onContextMenu={showContextMenu}
                   onVideoLoad={updateAspectRatio}
@@ -654,7 +562,6 @@ function App() {
               onClose={() => closeFullScreen()}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
-              layoutMode={layoutMode}
               gridRef={gridRef}
             />
           )}
