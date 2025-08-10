@@ -338,9 +338,9 @@ function App() {
     }
     
     // Re-evaluate playback after layout settles
-    setTimeout(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       videoManager.reevaluatePlayback();
-    }, 1000);
+    }));
     
     // Debug: Log VideoManager state after layout switch
     setTimeout(() => {
@@ -617,6 +617,7 @@ function App() {
             </div>
           ) : (
             <div 
+              key={layoutMode}
               ref={gridRef}
               className={`video-grid ${layoutMode} zoom-${['small', 'medium', 'large', 'xlarge'][zoomLevel]} ${!showFilenames ? 'hide-filenames' : ''}`}
             >
