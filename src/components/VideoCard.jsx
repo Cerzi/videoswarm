@@ -1,282 +1,407 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 
-const VideoCard = memo(({
-  video,
-  selected,
-  onSelect,
-  canPlayMoreVideos,
-  onVideoPlay,
-  onVideoPause,
-  onVideoLoad,
-  showFilenames = true,
-  onContextMenu,
-  // Performance props
-  canLoadMoreVideos,
-  isLoading,
-  isLoaded,
-  isVisible,
-  isPlaying,
-  onStartLoading,
-  onStopLoading,
-  onVisibilityChange,
-  ioRoot,
-}) => {
-  const [loaded, setLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [visible, setVisible] = useState(false);
+const VideoCard = memo(
+  ({
+    video,
+    selected,
+    onSelect,
+    canPlayMoreVideos,
+    onVideoPlay,
+    onVideoPause,
+    onVideoLoad,
+    onPlayError,         // NEW: report play failures up
+    onHover,             // NEW: raise priority when hovered
+    showFilenames = true,
+    onContextMenu,
 
-  const videoRef = useRef(null);
-  const containerRef = useRef(null);
-  const loadTimeoutRef = useRef(null);
-  const clickTimeoutRef = useRef(null);
-  const hasLoadedRef = useRef(false);
+    // Performance props
+    canLoadMoreVideos,
+    isLoading,
+    isLoaded,
+    isVisible,
+    isPlaying,
+    onStartLoading,
+    onStopLoading,
+    onVisibilityChange,
+    ioRoot, // optional: IntersectionObserver root (e.g., gridRef)
+  }) => {
+    const [loaded, setLoaded] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [visible, setVisible] = useState(false);
 
-  const videoId = video.id || video.fullPath || video.name;
+    const videoRef = useRef(null);
+    const containerRef = useRef(null);
+    const loadTimeoutRef = useRef(null);
+    const clickTimeoutRef = useRef(null);
+    const hasLoadedRef = useRef(false);
 
-  // --- Load video function ---
-  const loadVideo = useCallback(async () => {
-    if (
-      loading ||
-      loaded ||
-      error ||
-      hasLoadedRef.current ||
-      !canLoadMoreVideos()
-    ) return;
+    const videoId = video.id || video.fullPath || video.name;
 
-    hasLoadedRef.current = true;
-    setLoading(true);
-    setError(null);
-    onStartLoading?.(videoId);
+    // Sync with parent state
+    useEffect(() => {
+      setLoaded(isLoaded);
+      setLoading(isLoading);
+      setVisible(isVisible);
+    }, [isLoaded, isLoading, isVisible]);
 
-    try {
-      const videoElement = document.createElement("video");
-      videoElement.muted = true;
-      videoElement.loop = true;
-      videoElement.preload = "metadata";
-      videoElement.playsInline = true;
-      videoElement.className = "video-element";
-      videoElement.dataset.videoId = videoId;
-      videoElement.style.width = "100%";
-      videoElement.style.height = "100%";
-      videoElement.style.objectFit = "cover";
-      videoElement.style.display = "block";
+    // Visibility detection (IO)
+    useEffect(() => {
+      if (!containerRef.current) return;
+      const rootEl = ioRoot?.current || null;
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            const nowVisible = entry.isIntersecting;
+            setVisible(nowVisible);
+            onVisibilityChange?.(videoId, nowVisible);
+            if (
+              nowVisible &&
+              !loaded &&
+              !loading &&
+              !error &&
+              !hasLoadedRef.current &&
+              (canLoadMoreVideos?.() ?? true)
+            ) {
+              loadVideo();
+            }
+          });
+        },
+        {
+          root: rootEl,
+          rootMargin: "200px 0px",
+          threshold: [0, 0.15],
+        }
+      );
+      observer.observe(containerRef.current);
+      return () => observer.disconnect();
+    }, [
+      loaded,
+      loading,
+      error,
+      canLoadMoreVideos,
+      onVisibilityChange,
+      videoId,
+      ioRoot,
+    ]);
 
-      const handleError = () => {
-        clearTimeout(loadTimeoutRef.current);
+    // Respond to parent's isPlaying prop AND report actual state
+    useEffect(() => {
+      if (!videoRef.current || !loaded) return;
+      const el = videoRef.current;
+      if (isPlaying && el.paused) {
+        el.play()
+          .then(() => {
+            onVideoPlay?.(videoId);
+          })
+          .catch((err) => {
+            onPlayError?.(videoId, err);
+            onVideoPause?.(videoId);
+          });
+      } else if (!isPlaying && !el.paused) {
+        el.pause();
+        onVideoPause?.(videoId);
+      }
+    }, [isPlaying, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
+
+    // DOM event listeners for actual state
+    useEffect(() => {
+      const el = videoRef.current;
+      if (!el) return;
+
+      const handlePlay = () => onVideoPlay?.(videoId);
+      const handlePause = () => onVideoPause?.(videoId);
+      const handleEnded = () => {
+        try {
+          el.currentTime = 0;
+          el.play().catch(() => {});
+        } catch {}
+      };
+
+      el.addEventListener("play", handlePlay);
+      el.addEventListener("pause", handlePause);
+      el.addEventListener("ended", handleEnded);
+      return () => {
+        el.removeEventListener("play", handlePlay);
+        el.removeEventListener("pause", handlePause);
+        el.removeEventListener("ended", handleEnded);
+      };
+    }, [videoId, onVideoPlay, onVideoPause]);
+
+    // Load video
+    const loadVideo = useCallback(async () => {
+      if (
+        loading ||
+        loaded ||
+        error ||
+        hasLoadedRef.current ||
+        !(canLoadMoreVideos?.() ?? true)
+      )
+        return;
+
+      hasLoadedRef.current = true;
+      setError(null);
+      onStartLoading?.(videoId);
+      setLoading(true);
+
+      try {
+        const el = document.createElement("video");
+        el.className = "video-element";
+        el.muted = true;
+        el.loop = true;
+        el.preload = "metadata";
+        el.playsInline = true;
+        el.dataset.videoId = videoId;
+        el.style.width = "100%";
+        el.style.height = "100%";
+        el.style.objectFit = "cover";
+        el.style.display = "block";
+
+        const cleanup = () => {
+          el.removeEventListener("loadedmetadata", onMeta);
+          el.removeEventListener("canplay", onCanPlay);
+          el.removeEventListener("error", onErr);
+        };
+
+        const onMeta = () => {
+          if (el.videoWidth && el.videoHeight) {
+            const ar = el.videoWidth / el.videoHeight;
+            onVideoLoad?.(videoId, ar);
+          }
+        };
+
+        const onCanPlay = () => {
+          clearTimeout(loadTimeoutRef.current);
+          cleanup();
+          setLoading(false);
+          setLoaded(true);
+          onStopLoading?.(videoId);
+          requestAnimationFrame(() => {
+            videoRef.current = el;
+            const container =
+              containerRef.current?.querySelector(".video-container");
+            if (container && !container.contains(el)) {
+              container.appendChild(el);
+            }
+          });
+        };
+
+        const onErr = (e) => {
+          clearTimeout(loadTimeoutRef.current);
+          cleanup();
+          setLoading(false);
+          hasLoadedRef.current = false;
+          onStopLoading?.(videoId);
+
+          let type = "load";
+          let message = "Load Error";
+          const msg = e?.target?.error?.message || "";
+          if (/DEMUXER_ERROR_NO_SUPPORTED_STREAMS|no supported streams/i.test(msg)) {
+            type = "codec";
+            message = "Unsupported Codec";
+          } else if (/DEMUXER_ERROR/i.test(msg)) {
+            type = "format";
+            message = "Format Error";
+          }
+          setError({ type, message });
+        };
+
+        loadTimeoutRef.current = setTimeout(() => {
+          onErr({ target: { error: { message: "Loading timeout" } } });
+        }, 10000);
+
+        el.addEventListener("loadedmetadata", onMeta);
+        el.addEventListener("canplay", onCanPlay);
+        el.addEventListener("error", onErr);
+
+        if (video.isElectronFile && video.fullPath) {
+          el.src = `file://${video.fullPath}`;
+        } else if (video.file) {
+          el.src = URL.createObjectURL(video.file);
+        } else if (video.fullPath || video.relativePath) {
+          el.src = video.fullPath || video.relativePath;
+        } else {
+          throw new Error("No valid video source available");
+        }
+      } catch (err) {
         setLoading(false);
         hasLoadedRef.current = false;
         onStopLoading?.(videoId);
-        setError({ message: "Load Error", type: "load" });
-      };
+        setError({ message: "Setup Error", type: "setup" });
+      }
+    }, [
+      video,
+      loading,
+      loaded,
+      error,
+      canLoadMoreVideos,
+      onStartLoading,
+      onStopLoading,
+      onVideoLoad,
+      videoId,
+    ]);
 
-      const handleLoad = () => {
-        if (videoRef.current) return;
-        clearTimeout(loadTimeoutRef.current);
-        setLoading(false);
-        setLoaded(true);
-        videoRef.current = videoElement;
-        onStopLoading?.(videoId);
-        if (videoElement.videoWidth && videoElement.videoHeight) {
-          onVideoLoad?.(videoId, videoElement.videoWidth / videoElement.videoHeight);
+    // Cleanup
+    useEffect(() => {
+      return () => {
+        if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+        if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+        const el = videoRef.current;
+        if (el) {
+          try {
+            if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
+            el.pause();
+            el.removeAttribute("src");
+            el.load();
+            el.remove();
+          } catch {}
         }
+        hasLoadedRef.current = false;
       };
+    }, []);
 
-      loadTimeoutRef.current = setTimeout(() => {
-        handleError();
-      }, 10000);
+    // Click / double-click
+    const handleClick = useCallback(
+      (e) => {
+        e.stopPropagation();
+        if (clickTimeoutRef.current) {
+          clearTimeout(clickTimeoutRef.current);
+          clickTimeoutRef.current = null;
+          onSelect?.(videoId, e.ctrlKey || e.metaKey, true);
+          return;
+        }
+        clickTimeoutRef.current = setTimeout(() => {
+          onSelect?.(videoId, e.ctrlKey || e.metaKey, false);
+          clickTimeoutRef.current = null;
+        }, 300);
+      },
+      [onSelect, videoId]
+    );
 
-      videoElement.addEventListener("loadedmetadata", handleLoad);
-      videoElement.addEventListener("canplay", handleLoad);
-      videoElement.addEventListener("error", handleError);
+    const handleContextMenu = useCallback(
+      (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu?.(e, video);
+      },
+      [onContextMenu, video]
+    );
 
-      if (video.isElectronFile && video.fullPath) {
-        videoElement.src = `file://${video.fullPath}`;
-      } else if (video.file) {
-        videoElement.src = URL.createObjectURL(video.file);
+    const getPlaceholderContent = useCallback(() => {
+      if (error) {
+        const icon =
+          error.type === "codec"
+            ? "🎞️"
+            : error.type === "format"
+            ? "📄"
+            : error.type === "network"
+            ? "🌐"
+            : "❌";
+        return (
+          <div className={`error-indicator error-${error.type}`}>
+            <div style={{ fontSize: "1.5rem", marginBottom: "0.5rem" }}>
+              {icon}
+            </div>
+            <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+              {error.message}
+            </div>
+            <div style={{ opacity: 0.8, lineHeight: 1.2 }}>
+              {error.type === "codec"
+                ? "Unsupported video codec (likely H.265/HEVC)"
+                : error.message}
+            </div>
+          </div>
+        );
+      } else if (loading) {
+        return <div className="video-placeholder">📼 Loading...</div>;
+      } else if (!(canLoadMoreVideos?.() ?? true)) {
+        return <div className="video-placeholder">⏳ Waiting...</div>;
       } else {
-        throw new Error("No valid video source available");
+        return <div className="video-placeholder">📼 Scroll to load</div>;
       }
-    } catch {
-      setLoading(false);
-      hasLoadedRef.current = false;
-      onStopLoading?.(videoId);
-      setError({ message: "Setup Error", type: "setup" });
-    }
-  }, [
-    video, loading, loaded, error, videoId,
-    onVideoLoad, onStartLoading, onStopLoading, canLoadMoreVideos
-  ]);
+    }, [error, loading, canLoadMoreVideos]);
 
-  // Sync with parent state
-  useEffect(() => {
-    setLoaded(isLoaded);
-    setLoading(isLoading);
-    setVisible(isVisible);
-  }, [isLoaded, isLoading, isVisible]);
+    return (
+      <div
+        ref={containerRef}
+        className={`video-item ${selected ? "selected" : ""} ${
+          error ? "error" : ""
+        } ${loading ? "loading" : ""}`}
+        onMouseEnter={() => onHover?.(videoId)}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        data-filename={video.name}
+        data-video-id={videoId}
+        data-loaded={loaded.toString()}
+        style={{
+          userSelect: "none",
+          position: "relative",
+          width: "100%",
+          height: "100%",
+          borderRadius: "8px",
+          overflow: "hidden",
+          cursor: "pointer",
+          border: selected ? "3px solid #007acc" : "1px solid #333",
+          background: "#1a1a1a",
+        }}
+      >
+        {loaded && videoRef.current ? (
+          <div
+            className="video-container"
+            style={{
+              width: "100%",
+              height: showFilenames ? "calc(100% - 40px)" : "100%",
+            }}
+            ref={(container) => {
+              if (
+                container &&
+                videoRef.current &&
+                !container.contains(videoRef.current)
+              ) {
+                container.appendChild(videoRef.current);
+              }
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: "100%",
+              height: showFilenames ? "calc(100% - 40px)" : "100%",
+            }}
+          >
+            {getPlaceholderContent()}
+          </div>
+        )}
 
-  // Visibility detection
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const rootEl = ioRoot?.current || null;
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        const nowVisible = entry.isIntersecting;
-        setVisible(nowVisible);
-        onVisibilityChange?.(videoId, nowVisible);
-      });
-    }, {
-      root: rootEl,
-      rootMargin: "200px 0px",
-      threshold: [0, 0.15],
-    });
-
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [ioRoot, onVisibilityChange, videoId]);
-
-  // Delay load until visibility is stable
-  useEffect(() => {
-    if (loaded || loading || error || !visible) return;
-    let t;
-    if (!hasLoadedRef.current && (canLoadMoreVideos?.() ?? true)) {
-      t = setTimeout(() => {
-        if (
-          visible && !loaded && !loading &&
-          !error && !hasLoadedRef.current &&
-          (canLoadMoreVideos?.() ?? true)
-        ) {
-          loadVideo();
-        }
-      }, 150);
-    }
-    return () => t && clearTimeout(t);
-  }, [visible, loaded, loading, error, canLoadMoreVideos, loadVideo]);
-
-  // Play/pause handling
-  useEffect(() => {
-    if (!videoRef.current || !loaded) return;
-    const videoElement = videoRef.current;
-    if (isPlaying && videoElement.paused) {
-      videoElement.play().then(() => onVideoPlay?.(videoId))
-        .catch(() => onVideoPause?.(videoId));
-    } else if (!isPlaying && !videoElement.paused) {
-      videoElement.pause();
-      onVideoPause?.(videoId);
-    }
-  }, [isPlaying, loaded, videoId, onVideoPlay, onVideoPause]);
-
-  // Listen to actual play/pause events
-  useEffect(() => {
-    if (!videoRef.current) return;
-    const videoElement = videoRef.current;
-    const handlePlay = () => onVideoPlay?.(videoId);
-    const handlePause = () => onVideoPause?.(videoId);
-    const handleEnded = () => {
-      if (videoElement && !videoElement.paused) {
-        videoElement.currentTime = 0;
-        videoElement.play().catch(() => {});
-      }
-    };
-    videoElement.addEventListener("play", handlePlay);
-    videoElement.addEventListener("pause", handlePause);
-    videoElement.addEventListener("ended", handleEnded);
-    return () => {
-      videoElement.removeEventListener("play", handlePlay);
-      videoElement.removeEventListener("pause", handlePause);
-      videoElement.removeEventListener("ended", handleEnded);
-    };
-  }, [loaded, videoId, onVideoPlay, onVideoPause]);
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      clearTimeout(loadTimeoutRef.current);
-      clearTimeout(clickTimeoutRef.current);
-      if (videoRef.current) {
-        try {
-          if (videoRef.current.src?.startsWith("blob:")) {
-            URL.revokeObjectURL(videoRef.current.src);
-          }
-          videoRef.current.pause();
-          videoRef.current.removeAttribute("src");
-          videoRef.current.load();
-        } catch {}
-      }
-      hasLoadedRef.current = false;
-    };
-  }, []);
-
-  const handleClick = useCallback((e) => {
-    e.stopPropagation();
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-      clickTimeoutRef.current = null;
-      onSelect(videoId, e.ctrlKey || e.metaKey, true);
-      return;
-    }
-    clickTimeoutRef.current = setTimeout(() => {
-      onSelect(videoId, e.ctrlKey || e.metaKey, false);
-      clickTimeoutRef.current = null;
-    }, 300);
-  }, [onSelect, videoId]);
-
-  const handleContextMenu = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onContextMenu?.(e, video);
-  }, [onContextMenu, video]);
-
-  const getPlaceholderContent = useCallback(() => {
-    if (error) return <div className="video-placeholder">❌ {error.message}</div>;
-    if (loading) return <div className="video-placeholder">📼 Loading...</div>;
-    if (!canLoadMoreVideos()) return <div className="video-placeholder">⏳ Waiting...</div>;
-    return <div className="video-placeholder">📼 Scroll to load</div>;
-  }, [error, loading, canLoadMoreVideos]);
-
-  return (
-    <div
-      ref={containerRef}
-      className={`video-item ${selected ? "selected" : ""} ${
-        error ? "error" : ""
-      } ${loading ? "loading" : ""}`}
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-      data-filename={video.name}
-      data-video-id={videoId}
-      data-loaded={loaded.toString()}
-    >
-      {loaded && videoRef.current ? (
-        <div
-          className="video-container"
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
-          ref={(container) => {
-            if (
-              container &&
-              videoRef.current &&
-              !container.contains(videoRef.current)
-            ) {
-              container.appendChild(videoRef.current);
-            }
-          }}
-        />
-      ) : (
-        <div
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
-        >
-          {getPlaceholderContent()}
-        </div>
-      )}
-      {showFilenames && <div className="video-filename">{video.name}</div>}
-    </div>
-  );
-});
+        {showFilenames && (
+          <div
+            className="video-filename"
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: "40px",
+              background: "rgba(0, 0, 0, 0.8)",
+              color: "#fff",
+              padding: "8px",
+              fontSize: "0.75rem",
+              lineHeight: "1.2",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            {video.name}
+          </div>
+        )}
+      </div>
+    );
+  }
+);
 
 VideoCard.displayName = "VideoCard";
+
 export default VideoCard;

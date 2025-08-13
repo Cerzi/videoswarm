@@ -13,6 +13,7 @@ import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useProgressiveList } from "./hooks/useProgressiveList";
+import usePlayOrchestrator from "./hooks/usePlayOrchestrator"; // <-- NEW
 import "./App.css";
 
 // Helper function to get directory path
@@ -34,7 +35,7 @@ function App() {
   const [selectedVideos, setSelectedVideos] = useState(new Set());
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(30);
+  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -160,16 +161,17 @@ function App() {
     performCleanup,
   ]);
 
-  // playback management (unchanged)
+  // --- NEW: Centralized play orchestration ---
+  const { playingSet, markHover, reportPlayError, reportStarted } =
+    usePlayOrchestrator({
+      visibleIds: visibleVideos,
+      loadedIds: loadedVideos,
+      maxPlaying: maxConcurrentPlaying,
+    });
+
   useEffect(() => {
-    const playable = Array.from(visibleVideos).filter((id) =>
-      loadedVideos.has(id)
-    );
-    const target = new Set(playable.slice(0, maxConcurrentPlaying));
-    const a = Array.from(playingVideos).sort().join("|");
-    const b = Array.from(target).sort().join("|");
-    if (a !== b) setPlayingVideos(target);
-  }, [visibleVideos, loadedVideos, maxConcurrentPlaying, playingVideos]);
+    setPlayingVideos(new Set(playingSet));
+  }, [playingSet]);
 
   // context menu hide
   useEffect(() => {
@@ -652,9 +654,9 @@ function App() {
                 <input
                   type="range"
                   min="10"
-                  max="100"
+                  max="500"
                   value={maxConcurrentPlaying}
-                  step="5"
+                  step="10"
                   style={{ width: 100 }}
                   onChange={(e) =>
                     handleVideoLimitChange(parseInt(e.target.value))
@@ -701,34 +703,38 @@ function App() {
                 ]
               }`}
             >
-              {progressiveVideos.map((video) => (
-                <VideoCard
-                  key={video.id}
-                  video={video}
-                  ioRoot={gridRef}
-                  selected={selectedVideos.has(video.id)}
-                  onSelect={handleVideoSelect}
-                  canPlayMoreVideos={() => true}
-                  onVideoPlay={() => {}}
-                  onVideoPause={() => {}}
-                  onVideoLoad={handleVideoLoaded}
-                  showFilenames={showFilenames}
-                  onContextMenu={showContextMenu}
-                  canLoadMoreVideos={() =>
-                    visibleVideos.has(video.id) ||
-                    (loadingVideos.size <
-                      performanceLimits.maxConcurrentLoading &&
-                      loadedVideos.size < performanceLimits.maxLoaded)
-                  }
-                  isLoading={loadingVideos.has(video.id)}
-                  isLoaded={loadedVideos.has(video.id)}
-                  isVisible={visibleVideos.has(video.id)}
-                  isPlaying={playingVideos.has(video.id)}
-                  onStartLoading={handleVideoStartLoading}
-                  onStopLoading={handleVideoStopLoading}
-                  onVisibilityChange={handleVideoVisibilityChange}
-                />
-              ))}
+              {useProgressiveList(groupedAndSortedVideos, 100, 16).map(
+                (video) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    ioRoot={gridRef}
+                    selected={selectedVideos.has(video.id)}
+                    onSelect={handleVideoSelect}
+                    canPlayMoreVideos={() => true}
+                    onVideoPlay={(id) => reportStarted(id)}    // NEW
+                    onPlayError={(id, err) => reportPlayError(id)} // NEW
+                    onHover={(id) => markHover(id)}            // NEW
+                    onVideoPause={() => {}}
+                    onVideoLoad={handleVideoLoaded}
+                    showFilenames={showFilenames}
+                    onContextMenu={showContextMenu}
+                    canLoadMoreVideos={() =>
+                      visibleVideos.has(video.id) ||
+                      (loadingVideos.size <
+                        performanceLimits.maxConcurrentLoading &&
+                        loadedVideos.size < performanceLimits.maxLoaded)
+                    }
+                    isLoading={loadingVideos.has(video.id)}
+                    isLoaded={loadedVideos.has(video.id)}
+                    isVisible={visibleVideos.has(video.id)}
+                    isPlaying={playingVideos.has(video.id)}
+                    onStartLoading={handleVideoStartLoading}
+                    onStopLoading={handleVideoStopLoading}
+                    onVisibilityChange={handleVideoVisibilityChange}
+                  />
+                )
+              )}
             </div>
           )}
 
