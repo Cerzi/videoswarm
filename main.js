@@ -1,3 +1,6 @@
+console.log('=== COMMAND LINE ARGS ===');
+console.log(process.argv);
+
 const {
   app,
   BrowserWindow,
@@ -14,14 +17,21 @@ console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
 console.log("Electron version:", process.versions.electron);
 
-if (process.platform === "linux") {
-  app.commandLine.appendSwitch("--no-sandbox");
-  app.commandLine.appendSwitch("--disable-setuid-sandbox");
-  app.commandLine.appendSwitch("ignore-gpu-blocklist");
-  app.commandLine.appendSwitch("enable-features", "VaapiVideoDecodeLinuxGL");
-  app.commandLine.appendSwitch("use-gl", "desktop");
-  console.log("GPU status:", app.getGPUFeatureStatus());
+if (process.platform === 'linux') {
+  console.log('=== USING NEW CHROMIUM GL FLAGS ===');
+  
+  // NEW format (Electron 37+ / Chromium 123+)
+  app.commandLine.appendSwitch('gl', 'egl-angle');
+  app.commandLine.appendSwitch('angle', 'opengl');
+  
+  // Keep these for compatibility
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');
+  
+  console.log('Using new GL flag format for recent Electron versions');
 }
+
+
+
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
@@ -794,6 +804,7 @@ ipcMain.handle("get-file-properties", async (event, filePath) => {
 });
 
 app.whenReady().then(() => {
+  console.log("GPU status:", app.getGPUFeatureStatus());
   createWindow();
   createMenu();
 });

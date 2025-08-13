@@ -1,108 +1,125 @@
-// hooks/usePlayOrchestrator.js
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Orchestrates which videos are *actively* allowed to play.
- * Input:
- *  - visibleIds: Set<string>
- *  - loadedIds: Set<string>
- *  - userCap: number (slider)
- *  - hoverId: string|null (boosted priority)
- *  - selectedIds: Set<string> (optional, boosted priority)
- *
- * Output:
- *  - activeSet: Set<string> of ids that should be playing now
- *  - dynamicCap: number (internal ceiling below userCap; gently adapts)
- *  - setHoverId(id|null): helper if you want to control from here (optional)
+ * Centralized play orchestration:
+ * - Chooses which videos should be playing (up to maxPlaying)
+ * - Always includes the most-recently hovered item if loaded (may bump another)
+ * - Demotes items that failed to start (temporary penalty)
+ * - Keeps already-playing items stable when possible
  */
 export default function usePlayOrchestrator({
-  visibleIds,
-  loadedIds,
-  userCap,
-  hoverId = null,
-  selectedIds = new Set(),
+  visibleIds,          // Set<string>
+  loadedIds,           // Set<string>
+  maxPlaying,          // number
+  penaltyMs = 6000,    // failure penalty lifetime
+  hoverBoostMs = 2000, // hover priority lifetime
 }) {
-  // Adaptive cap (start conservative to avoid decoder stampede)
-  const [dynamicCap, setDynamicCap] = useState(() => Math.min(userCap, 48));
-  const lastChange = useRef(Date.now());
+  const [playingSet, setPlayingSet] = useState(new Set());
 
-  // Promote steady behavior via simple LRU “stickiness”
-  const lruOrderRef = useRef([]);         // most-recently-active first
-  const lastActiveRef = useRef(new Set()); // last tick's active set
+  const failMapRef = useRef(new Map()); // id -> { count, ts }
+  const hoverRef = useRef({ id: null, ts: 0 });
+  const prevPlayingRef = useRef(new Set());
 
-  // Keep dynamicCap within [16, userCap], adjust slowly
+  // Call this when a card is hovered
+  const markHover = useCallback((id) => {
+    if (!id) return;
+    hoverRef.current = { id, ts: Date.now() };
+  }, []);
+
+  // Card reported a play() rejection
+  const reportPlayError = useCallback((id) => {
+    if (!id) return;
+    const m = failMapRef.current;
+    const prev = m.get(id) || { count: 0, ts: 0 };
+    m.set(id, { count: prev.count + 1, ts: Date.now() });
+  }, []);
+
+  // Card reported it started playing
+  const reportStarted = useCallback((id) => {
+    const m = failMapRef.current;
+    const prev = m.get(id);
+    if (prev) {
+      const next = Math.max(0, prev.count - 1);
+      if (next === 0) m.delete(id);
+      else m.set(id, { count: next, ts: prev.ts });
+    }
+  }, []);
+
   useEffect(() => {
-    setDynamicCap((c) => Math.min(Math.max(c, 16), userCap));
-  }, [userCap]);
+    const now = Date.now();
+    const prev = prevPlayingRef.current;
 
-  // Periodically try to relax the cap a bit if we’re not churning
-  useEffect(() => {
-    const t = setInterval(() => {
-      const now = Date.now();
-      // If we haven't changed the set recently, we can try a gentle bump.
-      if (now - lastChange.current > 4000) {
-        setDynamicCap((c) => Math.min(userCap, c + 8));
-      }
-    }, 3000);
-    return () => clearInterval(t);
-  }, [userCap]);
+    // Base candidates: visible & loaded
+    const visibleLoaded = Array.from(visibleIds).filter((id) =>
+      loadedIds.has(id)
+    );
 
-  const activeSet = useMemo(() => {
-    // Candidates: must be loaded & visible
-    const candidates = [];
-    for (const id of visibleIds) {
-      if (loadedIds.has(id)) candidates.push(id);
-    }
+    // Stability: keep already playing, still eligible
+    const keep = visibleLoaded.filter((id) => prev.has(id));
 
-    if (candidates.length === 0) return new Set();
+    // Remaining candidates
+    const rest = visibleLoaded.filter((id) => !prev.has(id));
 
-    // Build a simple score: hover >> selected >> sticky LRU >> default
-    const lru = lruOrderRef.current;
-    const lruIndex = new Map(lru.map((id, i) => [id, i])); // lower i = more recent
+    // Hover handling (can override visibility, but must be loaded)
+    const hovered =
+      hoverRef.current.id && now - hoverRef.current.ts < hoverBoostMs
+        ? hoverRef.current.id
+        : null;
 
-    const score = (id) => {
-      let s = 0;
-      if (hoverId && id === hoverId) s += 10000;           // force-on-hover
-      if (selectedIds.has(id)) s += 500;                   // bias selected
-      const li = lruIndex.has(id) ? lruIndex.get(id) : 1e6;
-      s += Math.max(0, 2000 - li);                         // stickiness
-      // You can add more (distance-to-center, etc.) later
-      return s;
-    };
-
-    candidates.sort((a, b) => score(b) - score(a));
-
-    const cap = Math.min(dynamicCap, userCap);
-    const winners = new Set(candidates.slice(0, cap));
-
-    // Update LRU: put winners to front (most recent)
-    if (winners.size) {
-      const next = [...lru.filter((id) => !winners.has(id))];
-      for (const id of winners) next.unshift(id);
-      // Trim to a bounded size (avoid unbounded growth)
-      lruOrderRef.current = next.slice(0, 4000);
-    }
-
-    // Detect churn; if the active set keeps flipping too much, gently reduce cap
-    const prev = lastActiveRef.current;
-    let delta = 0;
-    if (prev.size !== winners.size) {
-      delta = Math.abs(prev.size - winners.size);
-    } else {
-      // count symmetric diff cheaply
-      for (const id of winners) if (!prev.has(id)) { delta++; break; }
-    }
-    if (delta > 0) {
-      lastChange.current = Date.now();
-      // If we’re churning a lot while near the cap, step down a bit
-      if (winners.size >= cap && cap > 24) {
-        setDynamicCap((c) => Math.max(24, c - 8));
+    // If hovered is loaded, ensure it's a candidate
+    let hoveredEligible = null;
+    if (hovered && loadedIds.has(hovered)) {
+      hoveredEligible = hovered;
+      if (!rest.includes(hoveredEligible) && !keep.includes(hoveredEligible)) {
+        rest.unshift(hoveredEligible);
       }
     }
 
-    lastActiveRef.current = winners;
-    return winners;
-  }, [visibleIds, loadedIds, userCap, dynamicCap, hoverId, selectedIds]);
+    // Expire old penalties
+    const fm = failMapRef.current;
+    for (const [id, rec] of fm) {
+      if (now - rec.ts > penaltyMs) fm.delete(id);
+    }
 
-  return { activeSet, dynamicCap };
+    // Sort new candidates by penalty (lower penalty first)
+    rest.sort(
+      (a, b) => (fm.get(a)?.count || 0) - (fm.get(b)?.count || 0)
+    );
+
+    // Compose target
+    let target = [...keep];
+
+    // Always include hovered if eligible
+    if (
+      hoveredEligible &&
+      !target.includes(hoveredEligible) &&
+      !rest.includes(hoveredEligible)
+    ) {
+      rest.unshift(hoveredEligible);
+    }
+
+    // Fill remaining slots from rest
+    const slots = Math.max(0, maxPlaying - target.length);
+    if (slots > 0) {
+      target = target.concat(rest.slice(0, slots));
+    }
+
+    // If still not included hovered but eligible, forcibly include it by bumping the last one
+    if (hoveredEligible && !target.includes(hoveredEligible)) {
+      if (target.length < maxPlaying) {
+        target.push(hoveredEligible);
+      } else if (maxPlaying > 0) {
+        // Prefer to bump the last non-hover, non-keep if possible
+        const toBumpIdx = target.findLastIndex((id) => id !== hoveredEligible && !prev.has(id));
+        const bumpIndex = toBumpIdx >= 0 ? toBumpIdx : target.length - 1;
+        target[bumpIndex] = hoveredEligible;
+      }
+    }
+
+    const nextSet = new Set(target);
+    prevPlayingRef.current = nextSet;
+    setPlayingSet(nextSet);
+  }, [visibleIds, loadedIds, maxPlaying, penaltyMs, hoverBoostMs]);
+
+  return { playingSet, markHover, reportPlayError, reportStarted };
 }

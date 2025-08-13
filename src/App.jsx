@@ -712,9 +712,9 @@ function App() {
                     selected={selectedVideos.has(video.id)}
                     onSelect={handleVideoSelect}
                     canPlayMoreVideos={() => true}
-                    onVideoPlay={(id) => reportStarted(id)}    // NEW
-                    onPlayError={(id, err) => reportPlayError(id)} // NEW
-                    onHover={(id) => markHover(id)}            // NEW
+                    onVideoPlay={(id) => reportStarted(id)}   
+                    onPlayError={(id, err) => reportPlayError(id)} 
+                    onHover={(id) => markHover(id)}            
                     onVideoPause={() => {}}
                     onVideoLoad={handleVideoLoaded}
                     showFilenames={showFilenames}
