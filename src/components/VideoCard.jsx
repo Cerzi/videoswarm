@@ -123,6 +123,7 @@ const VideoCard = memo(function VideoCard({
       const p = el.play();
       if (p?.catch)
         p.catch((err) => {
+          const videoName = video.name?.slice(0, 15) || "unknown";
           console.log(`❌ ${videoName}: Play failed:`, err.message);
           handleError(err);
         });

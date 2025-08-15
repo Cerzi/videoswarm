@@ -1,102 +1,90 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 /**
- * Progressively reveals items in small chunks, yielding to the browser
- * between bumps. Keeps a ref to avoid stale closures.
+ * Progressively reveals items based on scroll position and user activity
+ * Much more responsive than idle-time based loading
  */
 export function useProgressiveList(
   items = [],
-  initial = 80,
-  maxPerBatch = 60,
-  idleMinMs = 10,
-  fallbackDelay = 32
+  initial = 100,
+  batchSize = 50,
+  scrollBuffer = 20 // Load this many extra items ahead of scroll
 ) {
   const safeItems = Array.isArray(items) ? items : [];
-  
   const [visibleCount, setVisibleCount] = useState(Math.min(initial, safeItems.length));
-  const visibleRef = useRef(visibleCount);
-  const rcId = useRef(0);
 
-  // keep ref in sync
+  // Reset when items change
   useEffect(() => {
-    visibleRef.current = visibleCount;
-  }, [visibleCount]);
-
-  // reset when dataset size changes
-  useEffect(() => {
-    const next = Math.min(Math.max(initial, visibleRef.current), safeItems.length);
-    console.log(`🔄 Dataset changed: setting visible to ${next}`);
-    visibleRef.current = next;
-    setVisibleCount(next);
+    const initialCount = Math.min(initial, safeItems.length);
+    setVisibleCount(initialCount);
   }, [safeItems.length, initial]);
 
-  // MAIN FIX: Use visibleCount instead of visibleRef.current in the condition
+  // Dynamic loading based on scroll and user activity
+  const loadMore = useCallback(() => {
+    setVisibleCount(prev => {
+      const next = Math.min(prev + batchSize, safeItems.length);
+      if (next > prev) {
+        console.log(`📈 Dynamic load: ${prev} → ${next}`);
+      }
+      return next;
+    });
+  }, [batchSize, safeItems.length]);
+
+  // Auto-load more as user scrolls or interacts
   useEffect(() => {
-    console.log(`🎯 Progressive effect: ${visibleCount} >= ${safeItems.length}? ${visibleCount >= safeItems.length}`);
-    
-    // Use visibleCount (state) instead of visibleRef.current
-    if (visibleCount >= safeItems.length) {
-      console.log(`🏁 All items already visible, skipping progressive loading`);
-      return;
-    }
+    if (visibleCount >= safeItems.length) return;
 
-    console.log(`🚀 Starting progressive loading from ${visibleCount} to ${safeItems.length}`);
-    
-    let cancelled = false;
-    const myId = ++rcId.current;
+    let timeoutId;
+    let isUserActive = false;
 
-    const schedule = () => {
-      if (cancelled || rcId.current !== myId) return;
+    const scheduleLoad = (delay = 100) => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(loadMore, delay);
+    };
 
-      const run = (deadline) => {
-        if (cancelled || rcId.current !== myId) return;
-
-        const bump = (step) => {
-          const currentVisible = visibleRef.current;
-          const next = Math.min(currentVisible + step, safeItems.length);
-          console.log(`📈 Bump: ${currentVisible} + ${step} = ${next}`);
-          
-          if (next !== currentVisible) {
-            visibleRef.current = next;
-            setVisibleCount(next);
-            console.log(`✅ Updated visible count to ${next}`);
-          }
-          return next;
-        };
-
-        if (deadline && typeof deadline.timeRemaining === "function") {
-          let remaining = maxPerBatch;
-          while (deadline.timeRemaining() > idleMinMs && remaining > 0) {
-            const step = Math.min(20, remaining);
-            const next = bump(step);
-            remaining -= step;
-            if (next >= safeItems.length) break;
-          }
-        } else {
-          bump(Math.min(24, maxPerBatch));
-        }
-
-        // Check current state, not ref
-        if (!cancelled && visibleRef.current < safeItems.length) {
-          console.log(`🔄 Scheduling next batch`);
-          setTimeout(schedule, fallbackDelay);
-        } else {
-          console.log(`🏁 Progressive loading complete`);
-        }
-      };
-
-      if ("requestIdleCallback" in window) {
-        requestIdleCallback(run, { timeout: 250 });
-      } else {
-        setTimeout(() => run(), fallbackDelay);
+    const onScroll = () => {
+      isUserActive = true;
+      const scrollPercentage = window.scrollY / (document.documentElement.scrollHeight - window.innerHeight);
+      
+      // If user scrolled past 70% of current content, load more immediately
+      if (scrollPercentage > 0.7) {
+        clearTimeout(timeoutId);
+        loadMore();
+      } else if (scrollPercentage > 0.5) {
+        // If scrolled past 50%, load more soon
+        scheduleLoad(50);
       }
     };
 
-    schedule();
-    return () => {
-      cancelled = true;
+    const onUserActivity = () => {
+      isUserActive = true;
+      scheduleLoad(200); // Load more when user is active
     };
-  }, [visibleCount, safeItems.length, maxPerBatch, idleMinMs, fallbackDelay]); // Added visibleCount to deps
+
+    // Auto-load even without user activity (but slower)
+    const autoLoadInterval = setInterval(() => {
+      if (!isUserActive) {
+        loadMore();
+      }
+      isUserActive = false; // Reset activity flag
+    }, 2000); // Auto-load every 2 seconds if user isn't active
+
+    // Initial fast load
+    scheduleLoad(100);
+
+    // Event listeners
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('mousemove', onUserActivity, { passive: true });
+    window.addEventListener('keydown', onUserActivity, { passive: true });
+
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(autoLoadInterval);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('mousemove', onUserActivity);
+      window.removeEventListener('keydown', onUserActivity);
+    };
+  }, [visibleCount, safeItems.length, loadMore]);
 
   return safeItems.slice(0, visibleCount);
 }
