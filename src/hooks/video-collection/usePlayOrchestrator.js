@@ -8,13 +8,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
  * - Caller reports actual starts/errors via reportStarted/reportPlayError.
  */
 export default function usePlayOrchestrator({
-  visibleIds,   // Set<string>
-  loadedIds,    // Set<string>
-  maxPlaying,   // number
+  visibleIds, // Set<string>
+  loadedIds, // Set<string>
+  maxPlaying, // number
 }) {
   const [playingSet, setPlayingSet] = useState(new Set()); // allowed/desired
   const hoveredRef = useRef(null);
-  const startOrderRef = useRef([]);        // newer at the end
+  const startOrderRef = useRef([]); // newer at the end
   const recentlyErroredRef = useRef(new Map()); // id -> ts
 
   const pushStartOrder = (id) => {
@@ -80,7 +80,6 @@ export default function usePlayOrchestrator({
     return new Set(entries.slice(0, cap));
   };
 
-  // IMPORTANT: we do NOT remove "not loaded" here anymore.
   // We only remove things that are no longer visible (to avoid wasting slots).
   const reconcile = () => {
     setPlayingSet((prev) => {
@@ -89,6 +88,14 @@ export default function usePlayOrchestrator({
       // drop anything not visible anymore
       for (const id of next) {
         if (!visibleIds.has(id)) next.delete(id);
+      }
+
+      // Add all visible videos
+      for (const id of visibleIds) {
+        if (loadedIds.has(id)) {
+          next.add(id);
+          pushStartOrder(id);
+        }
       }
 
       // always try to include hovered (if visible)
@@ -124,9 +131,9 @@ export default function usePlayOrchestrator({
 
   return useMemo(
     () => ({
-      playingSet,      // desired/allowed
-      markHover,       // force-priority on hover
-      reportStarted,   // call when <video> fires "playing"
+      playingSet, // desired/allowed
+      markHover, // force-priority on hover
+      reportStarted, // call when <video> fires "playing"
       reportPlayError, // call on error (load/play)
     }),
     [playingSet]

@@ -14,15 +14,15 @@ const VideoCard = memo(function VideoCard({
   showFilenames = true,
 
   // limits & callbacks (all owned by parent/orchestrator)
-  canLoadMoreVideos,            // () => boolean
-  onStartLoading,               // (id)
-  onStopLoading,                // (id)
-  onVideoLoad,                  // (id, aspectRatio)
-  onVideoPlay,                  // (id) - fires on 'playing' event
-  onVideoPause,                 // (id) - fires on 'pause' event
-  onPlayError,                  // (id, error)
-  onVisibilityChange,           // (id, visible)
-  onHover,                      // (id)
+  canLoadMoreVideos, // () => boolean
+  onStartLoading, // (id)
+  onStopLoading, // (id)
+  onVideoLoad, // (id, aspectRatio)
+  onVideoPlay, // (id) - fires on 'playing' event
+  onVideoPause, // (id) - fires on 'pause' event
+  onPlayError, // (id, error)
+  onVisibilityChange, // (id, visible)
+  onHover, // (id)
 
   // IO root (scroll container)
   ioRoot,
@@ -47,7 +47,6 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
-  // CRITICAL FIX: Reset loading guards when video is removed from parent's loaded set
   useEffect(() => {
     if (!isLoaded && !isLoading && videoRef.current) {
       // Parent has decided this video should no longer be loaded
@@ -60,7 +59,7 @@ const VideoCard = memo(function VideoCard({
         el.load();
         el.remove();
       } catch {}
-      
+
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
@@ -110,7 +109,6 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-
     // attach *actual* media events ⇒ bubble up to orchestrator
     const handlePlaying = () => onVideoPlay?.(videoId);
     const handlePause = () => onVideoPause?.(videoId);
@@ -123,7 +121,11 @@ const VideoCard = memo(function VideoCard({
     // only attempt to play when orchestrated, visible, and loaded
     if (isPlaying && isVisible && loaded) {
       const p = el.play();
-      if (p?.catch) p.catch((err) => handleError(err));
+      if (p?.catch)
+        p.catch((err) => {
+          console.log(`❌ ${videoName}: Play failed:`, err.message);
+          handleError(err);
+        });
     } else {
       // pause early if we're not supposed to be playing
       try {
@@ -140,7 +142,8 @@ const VideoCard = memo(function VideoCard({
 
   // create & load a <video> element (metadata first)
   const loadVideo = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
+    if (loading || loaded || loadRequestedRef.current || videoRef.current)
+      return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
 
     loadRequestedRef.current = true;
@@ -304,7 +307,11 @@ const VideoCard = memo(function VideoCard({
         fontSize: "0.9rem",
       }}
     >
-      {loading ? "📼 Loading…" : (canLoadMoreVideos?.() ?? true) ? "📼 Scroll to load" : "⏳ Waiting…"}
+      {loading
+        ? "📼 Loading…"
+        : canLoadMoreVideos?.() ?? true
+        ? "📼 Scroll to load"
+        : "⏳ Waiting…"}
     </div>
   );
 
@@ -335,9 +342,16 @@ const VideoCard = memo(function VideoCard({
       {loaded && videoRef.current ? (
         <div
           className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
+          style={{
+            width: "100%",
+            height: showFilenames ? "calc(100% - 40px)" : "100%",
+          }}
           ref={(container) => {
-            if (container && videoRef.current && !container.contains(videoRef.current)) {
+            if (
+              container &&
+              videoRef.current &&
+              !container.contains(videoRef.current)
+            ) {
               container.appendChild(videoRef.current);
             }
           }}
@@ -345,7 +359,10 @@ const VideoCard = memo(function VideoCard({
       ) : (
         <div
           className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
+          style={{
+            width: "100%",
+            height: showFilenames ? "calc(100% - 40px)" : "100%",
+          }}
         >
           {renderPlaceholder()}
         </div>

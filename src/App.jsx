@@ -12,8 +12,7 @@ import ContextMenu from "./components/ContextMenu";
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
-import { useProgressiveList } from "./hooks/useProgressiveList";
-import usePlayOrchestrator from "./hooks/usePlayOrchestrator";
+import { useVideoCollection } from "./hooks/video-collection";
 import "./App.css";
 
 // Helper
@@ -44,16 +43,13 @@ function App() {
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
 
-  // Performance tracking with React state
-  const [playingVideos, setPlayingVideos] = useState(new Set());
+  // Video collection state (managed by individual VideoCard components)
   const [actualPlaying, setActualPlaying] = useState(new Set());
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
   const gridRef = useRef(null);
-  const cleanupTimeoutRef = useRef(null);
-  const lastCleanupTimeRef = useRef(0);
 
   // ----- Masonry hook -----
   const { updateAspectRatio, onItemsChanged, setZoomClass } = useChunkedMasonry(
@@ -85,6 +81,17 @@ function App() {
     return result;
   }, [videos]);
 
+  // --- Composite Video Collection Hook ---
+  const videoCollection = useVideoCollection({
+    videos: groupedAndSortedVideos,
+    visibleVideos,
+    loadedVideos,
+    loadingVideos,
+    actualPlaying,
+    maxConcurrentPlaying,
+    progressiveOptions: { initial: 100, batchSize: 40 }
+  });
+
   // fullscreen / context menu
   const {
     fullScreenVideo,
@@ -94,19 +101,6 @@ function App() {
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
   const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
     useContextMenu();
-
-  // --- Centralized play orchestration ---
-  const { playingSet, markHover, reportPlayError, reportStarted } =
-    usePlayOrchestrator({
-      visibleIds: visibleVideos,
-      loadedIds: loadedVideos,
-      maxPlaying: maxConcurrentPlaying,
-    });
-
-  // reflect orchestrator allowed set → props for cards
-  useEffect(() => {
-    setPlayingVideos(new Set(playingSet));
-  }, [playingSet]);
 
   // settings load
   useEffect(() => {
@@ -153,7 +147,7 @@ function App() {
         ns.delete(filePath);
         return ns;
       });
-      setPlayingVideos((prev) => {
+      setActualPlaying((prev) => {
         const ns = new Set(prev);
         ns.delete(filePath);
         return ns;
@@ -169,11 +163,6 @@ function App() {
         return ns;
       });
       setVisibleVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setActualPlaying((prev) => {
         const ns = new Set(prev);
         ns.delete(filePath);
         return ns;
@@ -197,7 +186,7 @@ function App() {
   // relayout when list changes
   useEffect(() => {
     if (groupedAndSortedVideos.length) onItemsChanged();
-  }, [groupedAndSortedVideos.length, onItemsChanged]);
+  }, [groupedAndSortedVideos.length]); // Remove onItemsChanged from deps to prevent infinite loop
 
   // zoom handling via hook
   useEffect(() => {
@@ -216,6 +205,7 @@ function App() {
   const handleVideoStartLoading = useCallback((videoId) => {
     setLoadingVideos((prev) => new Set([...prev, videoId]));
   }, []);
+  
   const handleVideoStopLoading = useCallback((videoId) => {
     setLoadingVideos((prev) => {
       const ns = new Set(prev);
@@ -223,6 +213,7 @@ function App() {
       return ns;
     });
   }, []);
+  
   const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
     setVisibleVideos((prev) => {
       const ns = new Set(prev);
@@ -231,6 +222,65 @@ function App() {
       return ns;
     });
   }, []);
+
+  const handleElectronFolderSelection = useCallback(
+    async (folderPath) => {
+      const api = window.electronAPI;
+      if (!api?.readDirectory) return;
+
+      try {
+        console.log(
+          "🔍 Starting folder selection with recursive =",
+          recursiveMode
+        );
+        setIsLoadingFolder(true);
+        setLoadingStage("Reading directory...");
+        setLoadingProgress(10);
+        await new Promise((r) => setTimeout(r, 100));
+
+        await api.stopFolderWatch?.();
+
+        setVideos([]);
+        setSelectedVideos(new Set());
+        setVisibleVideos(new Set());
+        setLoadedVideos(new Set());
+        setLoadingVideos(new Set());
+        setActualPlaying(new Set());
+
+        setLoadingStage("Scanning for video files...");
+        setLoadingProgress(30);
+        await new Promise((r) => setTimeout(r, 200));
+
+        console.log("📁 Calling readDirectory with:", {
+          folderPath,
+          recursiveMode,
+        });
+        const files = await api.readDirectory(folderPath, recursiveMode);
+        console.log("📁 readDirectory returned:", files.length, "files");
+
+        setLoadingStage(
+          `Found ${files.length} videos — initializing masonry...`
+        );
+        setLoadingProgress(70);
+        await new Promise((r) => setTimeout(r, 200));
+
+        setVideos(files); // triggers onItemsChanged via effect
+        await new Promise((r) => setTimeout(r, 300));
+
+        setLoadingStage("Complete!");
+        setLoadingProgress(100);
+        await new Promise((r) => setTimeout(r, 250));
+        setIsLoadingFolder(false);
+
+        const watchResult = await api.startFolderWatch?.(folderPath);
+        if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
+      } catch (e) {
+        console.error("Error reading directory:", e);
+        setIsLoadingFolder(false);
+      }
+    },
+    [recursiveMode]
+  );
 
   const handleFolderSelect = useCallback(async () => {
     const res = await window.electronAPI?.selectFolder?.();
@@ -254,7 +304,6 @@ function App() {
     }));
     setVideos(list);
     setSelectedVideos(new Set());
-    setPlayingVideos(new Set());
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
@@ -319,7 +368,7 @@ function App() {
     (videoId, isCtrlClick, isDoubleClick) => {
       const video = groupedAndSortedVideos.find((v) => v.id === videoId);
       if (isDoubleClick && video) {
-        openFullScreen(video, playingVideos);
+        openFullScreen(video, videoCollection.playingVideos);
         return;
       }
       setSelectedVideos((prev) => {
@@ -334,7 +383,7 @@ function App() {
         return ns;
       });
     },
-    [groupedAndSortedVideos, openFullScreen, playingVideos]
+    [groupedAndSortedVideos, openFullScreen, videoCollection.playingVideos]
   );
 
   useEffect(() => {
@@ -345,7 +394,13 @@ function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isLoadingFolder]);
 
-  const progressiveVideos = useProgressiveList(groupedAndSortedVideos, 100, 16);
+  // Clean up resources periodically using the video collection's cleanup function
+  useEffect(() => {
+    const cleanup = videoCollection.performCleanup();
+    if (cleanup) {
+      setLoadedVideos(cleanup);
+    }
+  }, [videoCollection.performCleanup]);
 
   return (
     <div className="app">
@@ -489,8 +544,10 @@ function App() {
                 borderRadius: 4,
               }}
             >
-              📁 {videos.length} videos | ▶️ {actualPlaying.size} playing | 👁️{" "}
-              {visibleVideos.size} in view
+              📁 {videoCollection.stats.total} videos | 
+              📺 {videoCollection.stats.rendered} rendered | 
+              ▶️ {videoCollection.stats.playing} playing | 
+              👁️ {visibleVideos.size} in view
             </div>
 
             <div className="controls">
@@ -566,63 +623,58 @@ function App() {
                 ]
               }`}
             >
-              {useProgressiveList(groupedAndSortedVideos, 100, 16).map(
-                (video) => (
-                  <VideoCard
-                    key={video.id}
-                    video={video}
-                    ioRoot={gridRef}
-                    selected={selectedVideos.has(video.id)}
-                    onSelect={(...args) => handleVideoSelect(...args)}
-                    onContextMenu={showContextMenu}
-                    showFilenames={showFilenames}
-                    // load/visibility limits
-                    canLoadMoreVideos={() =>
-                      visibleVideos.has(video.id) ||
-                      (loadingVideos.size <
-                        performanceLimits.maxConcurrentLoading &&
-                        loadedVideos.size < performanceLimits.maxLoaded)
-                    }
-                    isLoading={loadingVideos.has(video.id)}
-                    isLoaded={loadedVideos.has(video.id)}
-                    isVisible={visibleVideos.has(video.id)}
-                    // orchestrated play flag (desired)
-                    isPlaying={playingVideos.has(video.id)}
-                    // lifecycle callbacks
-                    onStartLoading={handleVideoStartLoading}
-                    onStopLoading={handleVideoStopLoading}
-                    onVideoLoad={handleVideoLoaded}
-                    onVisibilityChange={handleVideoVisibilityChange}
-                    // media events → update orchestrator + true count
-                    onVideoPlay={(id) => {
-                      reportStarted(id); // tell orchestrator it really started
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.add(id);
-                        return next;
-                      });
-                    }}
-                    onVideoPause={(id) => {
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
-                    onPlayError={(id) => {
-                      // mark error, free any "actual" slot
-                      reportPlayError(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
-                    // hover to force priority
-                    onHover={(id) => markHover(id)}
-                  />
-                )
-              )}
+              {videoCollection.videosToRender.map((video) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  ioRoot={gridRef}
+                  selected={selectedVideos.has(video.id)}
+                  onSelect={(...args) => handleVideoSelect(...args)}
+                  onContextMenu={showContextMenu}
+                  showFilenames={showFilenames}
+                  
+                  // Video Collection Management
+                  canLoadMoreVideos={() => videoCollection.canLoadVideo(video.id)}
+                  isLoading={loadingVideos.has(video.id)}
+                  isLoaded={loadedVideos.has(video.id)}
+                  isVisible={visibleVideos.has(video.id)}
+                  isPlaying={videoCollection.isVideoPlaying(video.id)}
+                  
+                  // Lifecycle callbacks
+                  onStartLoading={handleVideoStartLoading}
+                  onStopLoading={handleVideoStopLoading}
+                  onVideoLoad={handleVideoLoaded}
+                  onVisibilityChange={handleVideoVisibilityChange}
+                  
+                  // Media events → update orchestrator + actual playing count
+                  onVideoPlay={(id) => {
+                    videoCollection.reportStarted(id);
+                    setActualPlaying((prev) => {
+                      const next = new Set(prev);
+                      next.add(id);
+                      return next;
+                    });
+                  }}
+                  onVideoPause={(id) => {
+                    setActualPlaying((prev) => {
+                      const next = new Set(prev);
+                      next.delete(id);
+                      return next;
+                    });
+                  }}
+                  onPlayError={(id) => {
+                    videoCollection.reportPlayError(id);
+                    setActualPlaying((prev) => {
+                      const next = new Set(prev);
+                      next.delete(id);
+                      return next;
+                    });
+                  }}
+                  
+                  // Hover for priority
+                  onHover={(id) => videoCollection.markHover(id)}
+                />
+              ))}
             </div>
           )}
 
