@@ -1,44 +1,84 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 /**
- * Incrementally reveals items in a list to avoid mounting everything at once.
- * @param {Array} items - The full list of items to render.
- * @param {number} batchSize - Number of items to add per step.
- * @param {number} delay - Delay between batches (ms).
+ * Progressively reveals items in small chunks, yielding to the browser
+ * between bumps. Keeps a ref to avoid stale closures.
  */
-export function useProgressiveList(items, batchSize = 100, delay = 16) {
-  const [visibleCount, setVisibleCount] = useState(batchSize);
+export function useProgressiveList(
+  items,
+  initial = 80,
+  maxPerBatch = 60,
+  idleMinMs = 10,
+  fallbackDelay = 32
+) {
+  const [visibleCount, setVisibleCount] = useState(Math.min(initial, items.length));
+  const visibleRef = useRef(visibleCount);
+  const rcId = useRef(0);
+
+  // keep ref in sync
+  useEffect(() => {
+    visibleRef.current = visibleCount;
+  }, [visibleCount]);
+
+  // reset when dataset size changes
+  useEffect(() => {
+    const next = Math.min(Math.max(initial, visibleRef.current), items.length);
+    visibleRef.current = next;
+    setVisibleCount(next);
+  }, [items.length, initial]);
 
   useEffect(() => {
-    if (visibleCount >= items.length) return;
+    if (visibleRef.current >= items.length) return;
 
     let cancelled = false;
+    const myId = ++rcId.current;
 
-    function loadMore() {
-      if (cancelled) return;
+    const schedule = () => {
+      if (cancelled || rcId.current !== myId) return;
 
-      setVisibleCount(c => {
-        const nextCount = Math.min(c + batchSize, items.length);
-        return nextCount;
-      });
+      const run = (deadline) => {
+        if (cancelled || rcId.current !== myId) return;
 
-      if (visibleCount + batchSize < items.length) {
-        if ('requestIdleCallback' in window) {
-          requestIdleCallback(loadMore);
+        let remaining = maxPerBatch;
+
+        const bump = (step) => {
+          const next = Math.min(visibleRef.current + step, items.length);
+          if (next !== visibleRef.current) {
+            visibleRef.current = next;
+            setVisibleCount(next);
+          }
+          return next;
+        };
+
+        if (deadline && typeof deadline.timeRemaining === "function") {
+          // micro-chunk while there’s idle time
+          while (deadline.timeRemaining() > idleMinMs && remaining > 0) {
+            const step = Math.min(20, remaining);
+            const next = bump(step);
+            remaining -= step;
+            if (next >= items.length) break;
+          }
         } else {
-          setTimeout(loadMore, delay);
+          bump(Math.min(24, maxPerBatch));
         }
+
+        if (!cancelled && visibleRef.current < items.length) {
+          setTimeout(schedule, fallbackDelay);
+        }
+      };
+
+      if ("requestIdleCallback" in window) {
+        requestIdleCallback(run, { timeout: 250 });
+      } else {
+        setTimeout(() => run(), fallbackDelay);
       }
-    }
+    };
 
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(loadMore);
-    } else {
-      setTimeout(loadMore, delay);
-    }
-
-    return () => { cancelled = true; };
-  }, [items.length, batchSize, delay, visibleCount]);
+    schedule();
+    return () => {
+      cancelled = true;
+    };
+  }, [items.length, maxPerBatch, idleMinMs, fallbackDelay]);
 
   return items.slice(0, visibleCount);
 }

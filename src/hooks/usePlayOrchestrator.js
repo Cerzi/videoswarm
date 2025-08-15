@@ -1,125 +1,134 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Centralized play orchestration:
- * - Chooses which videos should be playing (up to maxPlaying)
- * - Always includes the most-recently hovered item if loaded (may bump another)
- * - Demotes items that failed to start (temporary penalty)
- * - Keeps already-playing items stable when possible
+ * Centralized play orchestration.
+ * - playingSet is the *desired* (allowed) set.
+ * - Hover reserves a slot immediately (even if not yet loaded).
+ * - Eviction prefers: hovered > visible+loaded > visible > others.
+ * - Caller reports actual starts/errors via reportStarted/reportPlayError.
  */
 export default function usePlayOrchestrator({
-  visibleIds,          // Set<string>
-  loadedIds,           // Set<string>
-  maxPlaying,          // number
-  penaltyMs = 6000,    // failure penalty lifetime
-  hoverBoostMs = 2000, // hover priority lifetime
+  visibleIds,   // Set<string>
+  loadedIds,    // Set<string>
+  maxPlaying,   // number
 }) {
-  const [playingSet, setPlayingSet] = useState(new Set());
+  const [playingSet, setPlayingSet] = useState(new Set()); // allowed/desired
+  const hoveredRef = useRef(null);
+  const startOrderRef = useRef([]);        // newer at the end
+  const recentlyErroredRef = useRef(new Map()); // id -> ts
 
-  const failMapRef = useRef(new Map()); // id -> { count, ts }
-  const hoverRef = useRef({ id: null, ts: 0 });
-  const prevPlayingRef = useRef(new Set());
+  const pushStartOrder = (id) => {
+    startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
+    startOrderRef.current.push(id);
+  };
 
-  // Call this when a card is hovered
-  const markHover = useCallback((id) => {
-    if (!id) return;
-    hoverRef.current = { id, ts: Date.now() };
-  }, []);
+  const markHover = (id) => {
+    hoveredRef.current = id;
+    reconcile(); // make it snappy
+  };
 
-  // Card reported a play() rejection
-  const reportPlayError = useCallback((id) => {
-    if (!id) return;
-    const m = failMapRef.current;
-    const prev = m.get(id) || { count: 0, ts: 0 };
-    m.set(id, { count: prev.count + 1, ts: Date.now() });
-  }, []);
+  // media actually started
+  const reportStarted = (id) => {
+    // Keep id in desired set (if not already)
+    setPlayingSet((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      pushStartOrder(id);
+      return next;
+    });
+  };
 
-  // Card reported it started playing
-  const reportStarted = useCallback((id) => {
-    const m = failMapRef.current;
-    const prev = m.get(id);
-    if (prev) {
-      const next = Math.max(0, prev.count - 1);
-      if (next === 0) m.delete(id);
-      else m.set(id, { count: next, ts: prev.ts });
-    }
-  }, []);
+  const reportPlayError = (id, _err) => {
+    recentlyErroredRef.current.set(id, performance.now());
+    setPlayingSet((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  // Prefer kept items based on desirability
+  const evictIfNeeded = (baseSet) => {
+    const cap = Math.max(0, Number(maxPlaying) || 0);
+    if (baseSet.size <= cap) return baseSet;
+
+    const hovered = hoveredRef.current;
+    const entries = Array.from(baseSet);
+
+    const orderIdx = new Map();
+    startOrderRef.current.forEach((id, idx) => orderIdx.set(id, idx));
+
+    const desirability = (id) => {
+      const isHovered = hovered && id === hovered ? 2 : 0;
+      const visible = visibleIds.has(id) ? 1 : 0;
+      const loaded = loadedIds.has(id) ? 0.5 : 0; // nudge loaded above not-loaded
+      return isHovered + visible + loaded;
+    };
+
+    entries.sort((a, b) => {
+      const db = desirability(b);
+      const da = desirability(a);
+      if (db !== da) return db - da;
+      // tie-break: keep more recently started first
+      const ib = orderIdx.get(b) ?? -1;
+      const ia = orderIdx.get(a) ?? -1;
+      return ib - ia;
+    });
+
+    return new Set(entries.slice(0, cap));
+  };
+
+  // IMPORTANT: we do NOT remove "not loaded" here anymore.
+  // We only remove things that are no longer visible (to avoid wasting slots).
+  const reconcile = () => {
+    setPlayingSet((prev) => {
+      let next = new Set(prev);
+
+      // drop anything not visible anymore
+      for (const id of next) {
+        if (!visibleIds.has(id)) next.delete(id);
+      }
+
+      // always try to include hovered (if visible)
+      const hovered = hoveredRef.current;
+      if (hovered && visibleIds.has(hovered)) {
+        next.add(hovered);
+        pushStartOrder(hovered);
+      }
+
+      // cap
+      next = evictIfNeeded(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
-    const now = Date.now();
-    const prev = prevPlayingRef.current;
+    reconcile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleIds, loadedIds, maxPlaying]);
 
-    // Base candidates: visible & loaded
-    const visibleLoaded = Array.from(visibleIds).filter((id) =>
-      loadedIds.has(id)
-    );
-
-    // Stability: keep already playing, still eligible
-    const keep = visibleLoaded.filter((id) => prev.has(id));
-
-    // Remaining candidates
-    const rest = visibleLoaded.filter((id) => !prev.has(id));
-
-    // Hover handling (can override visibility, but must be loaded)
-    const hovered =
-      hoverRef.current.id && now - hoverRef.current.ts < hoverBoostMs
-        ? hoverRef.current.id
-        : null;
-
-    // If hovered is loaded, ensure it's a candidate
-    let hoveredEligible = null;
-    if (hovered && loadedIds.has(hovered)) {
-      hoveredEligible = hovered;
-      if (!rest.includes(hoveredEligible) && !keep.includes(hoveredEligible)) {
-        rest.unshift(hoveredEligible);
+  // Expire "recently errored" entries so they can retry later
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = performance.now();
+      for (const [id, ts] of recentlyErroredRef.current) {
+        if (now - ts > 8000) {
+          recentlyErroredRef.current.delete(id);
+        }
       }
-    }
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
 
-    // Expire old penalties
-    const fm = failMapRef.current;
-    for (const [id, rec] of fm) {
-      if (now - rec.ts > penaltyMs) fm.delete(id);
-    }
-
-    // Sort new candidates by penalty (lower penalty first)
-    rest.sort(
-      (a, b) => (fm.get(a)?.count || 0) - (fm.get(b)?.count || 0)
-    );
-
-    // Compose target
-    let target = [...keep];
-
-    // Always include hovered if eligible
-    if (
-      hoveredEligible &&
-      !target.includes(hoveredEligible) &&
-      !rest.includes(hoveredEligible)
-    ) {
-      rest.unshift(hoveredEligible);
-    }
-
-    // Fill remaining slots from rest
-    const slots = Math.max(0, maxPlaying - target.length);
-    if (slots > 0) {
-      target = target.concat(rest.slice(0, slots));
-    }
-
-    // If still not included hovered but eligible, forcibly include it by bumping the last one
-    if (hoveredEligible && !target.includes(hoveredEligible)) {
-      if (target.length < maxPlaying) {
-        target.push(hoveredEligible);
-      } else if (maxPlaying > 0) {
-        // Prefer to bump the last non-hover, non-keep if possible
-        const toBumpIdx = target.findLastIndex((id) => id !== hoveredEligible && !prev.has(id));
-        const bumpIndex = toBumpIdx >= 0 ? toBumpIdx : target.length - 1;
-        target[bumpIndex] = hoveredEligible;
-      }
-    }
-
-    const nextSet = new Set(target);
-    prevPlayingRef.current = nextSet;
-    setPlayingSet(nextSet);
-  }, [visibleIds, loadedIds, maxPlaying, penaltyMs, hoverBoostMs]);
-
-  return { playingSet, markHover, reportPlayError, reportStarted };
+  return useMemo(
+    () => ({
+      playingSet,      // desired/allowed
+      markHover,       // force-priority on hover
+      reportStarted,   // call when <video> fires "playing"
+      reportPlayError, // call on error (load/play)
+    }),
+    [playingSet]
+  );
 }
