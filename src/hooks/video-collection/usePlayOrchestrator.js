@@ -23,24 +23,28 @@ export default function usePlayOrchestrator({
     startOrderRef.current.push(id);
   }, []);
 
-  // Stable function with useCallback to prevent infinite loops
+  // FIXED: More conservative hover handling to prevent video disruption
   const markHover = useCallback((id) => {
+    // Only update if hover actually changed
+    if (hoveredRef.current === id) return;
+
     hoveredRef.current = id;
-    reconcile(); // make it snappy
-  }, []); // Empty dependency array - this function doesn't depend on anything
+  }, []);
 
   // Media actually started - FIXED to prevent infinite loops
-  const reportStarted = useCallback((id) => {
-    // Keep id in desired set (if not already)
-    setPlayingSet((prev) => {
-      if (prev.has(id)) return prev; // No change needed
-      const next = new Set(prev);
-      next.add(id);
-      // Move pushStartOrder outside setState to avoid side effects during render
-      setTimeout(() => pushStartOrder(id), 0);
-      return next;
-    });
-  }, [pushStartOrder]);
+  const reportStarted = useCallback(
+    (id) => {
+      setPlayingSet((prev) => {
+        if (prev.has(id)) return prev; // No change needed
+        const next = new Set(prev);
+        next.add(id);
+        // Move pushStartOrder outside setState to avoid side effects during render
+        setTimeout(() => pushStartOrder(id), 0);
+        return next;
+      });
+    },
+    [pushStartOrder]
+  );
 
   const reportPlayError = useCallback((id, _err) => {
     recentlyErroredRef.current.set(id, performance.now());
@@ -52,68 +56,99 @@ export default function usePlayOrchestrator({
     });
   }, []);
 
-  // Prefer kept items based on desirability
-  const evictIfNeeded = useCallback((baseSet) => {
-    const cap = Math.max(0, Number(maxPlaying) || 0);
-    if (baseSet.size <= cap) return baseSet;
+  // IMPROVED: More stable eviction that doesn't disrupt existing players
+  const evictIfNeeded = useCallback(
+    (baseSet) => {
+      const cap = Math.max(0, Number(maxPlaying) || 0);
+      if (baseSet.size <= cap) return baseSet;
 
-    const hovered = hoveredRef.current;
-    const entries = Array.from(baseSet);
+      const hovered = hoveredRef.current;
+      const entries = Array.from(baseSet);
 
-    const orderIdx = new Map();
-    startOrderRef.current.forEach((id, idx) => orderIdx.set(id, idx));
+      const orderIdx = new Map();
+      startOrderRef.current.forEach((id, idx) => orderIdx.set(id, idx));
 
-    const desirability = (id) => {
-      const isHovered = hovered && id === hovered ? 2 : 0;
-      const visible = visibleIds.has(id) ? 1 : 0;
-      const loaded = loadedIds.has(id) ? 0.5 : 0; // nudge loaded above not-loaded
-      return isHovered + visible + loaded;
-    };
+      const desirability = (id) => {
+        const isHovered = hovered && id === hovered ? 10 : 0; // Much higher priority for hovered
+        const visible = visibleIds.has(id) ? 5 : 0;
+        const loaded = loadedIds.has(id) ? 1 : 0;
+        return isHovered + visible + loaded;
+      };
 
-    entries.sort((a, b) => {
-      const db = desirability(b);
-      const da = desirability(a);
-      if (db !== da) return db - da;
-      // tie-break: keep more recently started first
-      const ib = orderIdx.get(b) ?? -1;
-      const ia = orderIdx.get(a) ?? -1;
-      return ib - ia;
-    });
+      entries.sort((a, b) => {
+        const db = desirability(b);
+        const da = desirability(a);
+        if (db !== da) return db - da;
+        // tie-break: keep more recently started first
+        const ib = orderIdx.get(b) ?? -1;
+        const ia = orderIdx.get(a) ?? -1;
+        return ib - ia;
+      });
 
-    return new Set(entries.slice(0, cap));
-  }, [maxPlaying, visibleIds, loadedIds]);
+      const toKeep = new Set(entries.slice(0, cap));
 
-  // We only remove things that are no longer visible (to avoid wasting slots).
+      // CRITICAL: Always ensure hovered video is included if visible
+      if (hovered && visibleIds.has(hovered)) {
+        toKeep.add(hovered);
+        // If we're now over capacity, remove the least important non-hovered video
+        if (toKeep.size > cap) {
+          const nonHovered = entries.filter((id) => id !== hovered);
+          const leastImportant = nonHovered[nonHovered.length - 1];
+          if (leastImportant) toKeep.delete(leastImportant);
+        }
+      }
+
+      return toKeep;
+    },
+    [maxPlaying, visibleIds, loadedIds]
+  );
+
+  // MUCH more conservative reconcile - only runs when really needed
   const reconcile = useCallback(() => {
     setPlayingSet((prev) => {
       let next = new Set(prev);
+      let hasChanges = false;
 
-      // drop anything not visible anymore
+      // Only remove videos that are no longer visible
       for (const id of next) {
-        if (!visibleIds.has(id)) next.delete(id);
+        if (!visibleIds.has(id)) {
+          next.delete(id);
+          hasChanges = true;
+        }
       }
 
-      // Add all visible videos
+      // Only add videos that should be playing but aren't
       for (const id of visibleIds) {
-        if (loadedIds.has(id)) {
+        if (loadedIds.has(id) && !next.has(id)) {
           next.add(id);
-          // Move side effect outside setState
+          hasChanges = true;
           setTimeout(() => pushStartOrder(id), 0);
         }
       }
 
-      // always try to include hovered (if visible)
+      // Handle hovered video priority without disrupting others
       const hovered = hoveredRef.current;
-      if (hovered && visibleIds.has(hovered)) {
-        next.add(hovered);
-        setTimeout(() => pushStartOrder(hovered), 0);
+      if (hovered && visibleIds.has(hovered) && loadedIds.has(hovered)) {
+        if (!next.has(hovered)) {
+          next.add(hovered);
+          hasChanges = true;
+          setTimeout(() => pushStartOrder(hovered), 0);
+        }
       }
 
-      // cap
-      next = evictIfNeeded(next);
-      return next;
+      // Only evict if we're significantly over capacity (not for small overruns)
+      if (next.size > maxPlaying * 1.1) {
+        // 10% buffer before evicting
+        const evicted = evictIfNeeded(next);
+        if (evicted.size !== next.size) {
+          next = evicted;
+          hasChanges = true;
+        }
+      }
+
+      return hasChanges ? next : prev; // Only return new set if there are actual changes
     });
-  }, [visibleIds, loadedIds, evictIfNeeded, pushStartOrder]);
+  }, [visibleIds, loadedIds, maxPlaying, evictIfNeeded, pushStartOrder]);
 
   // FIXED: Add proper dependency management for reconcile
   useEffect(() => {
