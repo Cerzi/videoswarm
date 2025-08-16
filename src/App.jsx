@@ -89,7 +89,7 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    progressiveOptions: { initial: 100, batchSize: 40 }
+    progressiveOptions: { initial: 100, batchSize: 40 },
   });
 
   // fullscreen / context menu
@@ -124,7 +124,7 @@ function App() {
 
     window.electronAPI?.onFolderSelected?.((folderPath) => {
       handleElectronFolderSelection(folderPath);
-    });
+    }, [handleElectronFolderSelection]);
   }, []); // eslint-disable-line
 
   // FS listeners (unchanged)
@@ -205,7 +205,7 @@ function App() {
   const handleVideoStartLoading = useCallback((videoId) => {
     setLoadingVideos((prev) => new Set([...prev, videoId]));
   }, []);
-  
+
   const handleVideoStopLoading = useCallback((videoId) => {
     setLoadingVideos((prev) => {
       const ns = new Set(prev);
@@ -213,7 +213,7 @@ function App() {
       return ns;
     });
   }, []);
-  
+
   const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
     setVisibleVideos((prev) => {
       const ns = new Set(prev);
@@ -285,7 +285,7 @@ function App() {
   const handleFolderSelect = useCallback(async () => {
     const res = await window.electronAPI?.selectFolder?.();
     if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
-  }, []); // eslint-disable-line
+  }, [handleElectronFolderSelection]); // eslint-disable-line
 
   const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((f) => {
@@ -544,10 +544,10 @@ function App() {
                 borderRadius: 4,
               }}
             >
-              📁 {videoCollection.stats.total} videos | 
-              📺 {videoCollection.stats.rendered} rendered | 
-              ▶️ {videoCollection.stats.playing} playing | 
-              👁️ {visibleVideos.size} in view
+              📁 {videoCollection.stats.total} videos | 📺{" "}
+              {videoCollection.stats.rendered} rendered | ▶️{" "}
+              {videoCollection.stats.playing} playing | 👁️ {visibleVideos.size}{" "}
+              in view
             </div>
 
             <div className="controls">
@@ -632,20 +632,19 @@ function App() {
                   onSelect={(...args) => handleVideoSelect(...args)}
                   onContextMenu={showContextMenu}
                   showFilenames={showFilenames}
-                  
                   // Video Collection Management
-                  canLoadMoreVideos={() => videoCollection.canLoadVideo(video.id)}
+                  canLoadMoreVideos={() =>
+                    videoCollection.canLoadVideo(video.id)
+                  }
                   isLoading={loadingVideos.has(video.id)}
                   isLoaded={loadedVideos.has(video.id)}
                   isVisible={visibleVideos.has(video.id)}
                   isPlaying={videoCollection.isVideoPlaying(video.id)}
-                  
                   // Lifecycle callbacks
                   onStartLoading={handleVideoStartLoading}
                   onStopLoading={handleVideoStopLoading}
                   onVideoLoad={handleVideoLoaded}
                   onVisibilityChange={handleVideoVisibilityChange}
-                  
                   // Media events → update orchestrator + actual playing count
                   onVideoPlay={(id) => {
                     videoCollection.reportStarted(id);
@@ -670,7 +669,6 @@ function App() {
                       return next;
                     });
                   }}
-                  
                   // Hover for priority
                   onHover={(id) => videoCollection.markHover(id)}
                 />

@@ -17,10 +17,10 @@ export default function useVideoResourceManager({
   // Smart limits based on what's actually rendered
   const limits = useMemo(() => {
     const n = progressiveVideos.length;
-    if (n < 100) return { maxLoaded: 60, maxConcurrentLoading: 6 };
-    if (n < 300) return { maxLoaded: 150, maxConcurrentLoading: 4 };
-    if (n < 600) return { maxLoaded: 250, maxConcurrentLoading: 3 };
-    return { maxLoaded: 350, maxConcurrentLoading: 2 };
+    if (n < 100) return { maxLoaded: 40, maxConcurrentLoading: 4 };
+    if (n < 300) return { maxLoaded: 80, maxConcurrentLoading: 3 };
+    if (n < 600) return { maxLoaded: 120, maxConcurrentLoading: 2 };
+    return { maxLoaded: 350, maxConcurrentLoading: 1 };
   }, [progressiveVideos.length]);
 
   // Decide if a specific video can load
