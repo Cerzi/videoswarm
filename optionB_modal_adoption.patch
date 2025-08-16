@@ -1,0 +1,626 @@
+--- a/src/components/VideoCard.jsx
++++ b/src/components/VideoCard.jsx
+@@ -29,6 +29,11 @@
+ }) {
+   const containerRef = useRef(null);
+   const videoRef = useRef(null);
++  const isAdoptedByModal = () => {
++    const el = videoRef.current;
++    return !!(el && el.dataset && el.dataset.adopted === 'modal');
++  };
++
+ 
+   const clickTimeoutRef = useRef(null);
+   const loadTimeoutRef = useRef(null);
+@@ -48,6 +53,9 @@
+   useEffect(() => setLoading(isLoading), [isLoading]);
+ 
+   useEffect(() => {
++        const el = videoRef.current;
++    if (el?.dataset?.adopted === 'modal') return;
++
+     if (!isLoaded && !isLoading && videoRef.current) {
+       // Parent has decided this video should no longer be loaded
+       // Clean up and reset guards so it can load again later
+@@ -194,7 +202,7 @@
+ 
+       // attach to DOM container
+       const container = containerRef.current?.querySelector(".video-container");
+-      if (container && !container.contains(el)) {
++      if (container && !container.contains(el) && !(el.dataset && el.dataset.adopted === 'modal')) {
+         container.appendChild(el);
+       }
+     };
+@@ -340,7 +348,7 @@
+         background: "#1a1a1a",
+       }}
+     >
+-      {loaded && videoRef.current ? (
++      {loaded && videoRef.current && !isAdoptedByModal() ? (
+         <div
+           className="video-container"
+           style={{
+@@ -397,4 +405,4 @@
+   );
+ });
+ 
+-export default VideoCard;
++export default VideoCard;--- a/src/components/FullScreenModal.jsx
++++ b/src/components/FullScreenModal.jsx
+@@ -1,5 +1,9 @@
+ import React, { useEffect, useRef, useState, useCallback } from 'react';
+ 
++/**
++ * FullScreenModal (Option B): adopt/move the grid's existing <video> element
++ * into a modal host, then return it to the grid on close.
++ */
+ const FullScreenModal = ({ 
+   video, 
+   onClose, 
+@@ -7,127 +11,137 @@
+   showFilenames,
+   gridRef 
+ }) => {
+-  const videoRef = useRef(null);
++  const adoptHostRef = useRef(null);      // where we adopt the existing <video>
++  const fallbackRef = useRef(null);       // fallback <video> if adoption fails
+   const modalRef = useRef(null);
++  const adoptedElRef = useRef(null);
++  const originalParentRef = useRef(null);
++  const originalNextSiblingRef = useRef(null);
++
+   const [isLoading, setIsLoading] = useState(true);
+   const [error, setError] = useState(null);
+   const [videoLoaded, setVideoLoaded] = useState(false);
+-
+-  // Try to reuse existing video element for instant loading
+-  const reuseExistingVideoElement = useCallback(() => {
++  const [usingAdopted, setUsingAdopted] = useState(false);
++
++  const findGridVideo = useCallback(() => {
+     if (!video) return null;
+-    
+-    // Find existing video element in the grid
+-    const existingVideo = document.querySelector(`[data-video-id="${video.id}"] video`);
+-    if (existingVideo && existingVideo.readyState >= 2) { // HAVE_CURRENT_DATA or better
+-      console.log('🚀 Found existing loaded video element for instant modal');
+-      
+-      // Clone the video element to avoid disrupting the original
+-      const clonedVideo = existingVideo.cloneNode(true);
+-      clonedVideo.controls = true; // Enable controls for modal
+-      clonedVideo.style.width = '100%';
+-      clonedVideo.style.height = '100%';
+-      clonedVideo.style.maxWidth = '100%';
+-      clonedVideo.style.maxHeight = '80vh';
+-      clonedVideo.style.objectFit = 'contain';
+-      clonedVideo.style.borderRadius = '8px';
+-      clonedVideo.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.8)';
+-      
+-      return clonedVideo;
+-    }
+-    return null;
++    // the project already renders <div data-video-id="..."><div class="video-container">...</div></div>
++    const el = document.querySelector(`[data-video-id="${video.id}"] video`);
++    return el || null;
+   }, [video]);
+ 
+-  // Handle video loading with optimization
++  // Try to adopt the existing element
+   useEffect(() => {
+-    if (!video || !videoRef.current) return;
+-
+-    const videoContainer = videoRef.current.parentElement;
+-    if (!videoContainer) return;
+-
++    if (!video) return;
+     setIsLoading(true);
+     setError(null);
+     setVideoLoaded(false);
+-
+-    // Try to use existing video element first
+-    const existingVideoElement = reuseExistingVideoElement();
+-    
+-    if (existingVideoElement) {
+-      // Replace the video element entirely with the pre-loaded one
+-      videoRef.current.replaceWith(existingVideoElement);
+-      videoRef.current = existingVideoElement;
+-      
+-      // Immediate ready state
++    setUsingAdopted(false);
++
++    const gridVideo = findGridVideo();
++    const host = adoptHostRef.current;
++
++    // Helper to restore on unmount/change
++    const restore = () => {
++      const el = adoptedElRef.current;
++      if (!el) return;
++      try {
++        el.controls = false;
++        el.style.maxWidth = '';
++        el.style.maxHeight = '';
++        el.style.objectFit = '';
++        el.style.borderRadius = '';
++        el.style.boxShadow = '';
++        // mark as not adopted
++        if (el.dataset) delete el.dataset.adopted;
++
++        // Move back to original location
++        const parent = originalParentRef.current;
++        const next = originalNextSiblingRef.current;
++        if (parent && el.isConnected) {
++          if (next && next.parentNode === parent) {
++            parent.insertBefore(el, next);
++          } else {
++            // fallback to known container
++            parent.appendChild(el);
++          }
++        }
++      } catch (e) {
++        // ignore
++      } finally {
++        adoptedElRef.current = null;
++        originalParentRef.current = null;
++        originalNextSiblingRef.current = null;
++      }
++    };
++
++    // Attempt instant adopt
++    if (gridVideo && host && gridVideo.readyState >= 2) {
++      try {
++        // Remember original position
++        originalParentRef.current = gridVideo.parentElement;
++        originalNextSiblingRef.current = gridVideo.nextSibling;
++
++        // Mark as adopted so tile won't re-attach it
++        gridVideo.dataset.adopted = 'modal';
++
++        // Move node
++        host.appendChild(gridVideo);
++        gridVideo.controls = true;
++        gridVideo.style.maxWidth = '100%';
++        gridVideo.style.maxHeight = '80vh';
++        gridVideo.style.objectFit = 'contain';
++        gridVideo.style.borderRadius = '8px';
++        gridVideo.style.boxShadow = '0 20px 40px rgba(0,0,0,0.8)';
++        const playPromise = gridVideo.play?.();
++        if (playPromise && playPromise.catch) playPromise.catch(() => {});
++
++        adoptedElRef.current = gridVideo;
++        setUsingAdopted(true);
++        setIsLoading(false);
++        setVideoLoaded(true);
++
++        return restore; // cleanup on unmount
++      } catch (e) {
++        // Fall through to fallback path
++        console.warn('Adopt failed, fallback to separate <video>:', e);
++      }
++    }
++
++    // Fallback: load into a separate <video>
++    const el = fallbackRef.current;
++    if (!el) return;
++
++    const onCanPlay = () => {
+       setIsLoading(false);
+       setVideoLoaded(true);
+-      
+-      // Auto-play immediately
+-      existingVideoElement.play().catch(err => {
+-        console.warn('Autoplay failed in fullscreen:', err);
+-      });
+-      
+-      console.log('✨ Modal opened instantly with existing video element');
+-      return;
++      el.play().catch(() => {});
++    };
++    const onError = (e) => {
++      setIsLoading(false);
++      setError(e?.target?.error?.message || 'Failed to load video');
++    };
++    el.addEventListener('canplay', onCanPlay);
++    el.addEventListener('error', onError);
++
++    // Assign src only if needed; don’t force reload with load()
++    const nextSrc = video.isElectronFile && video.fullPath
++      ? `file://${video.fullPath}`
++      : (video.blobUrl || (video.file ? URL.createObjectURL(video.file) : ''));
++
++    if (el.src !== nextSrc) {
++      el.preload = 'auto';
++      el.src = nextSrc;
+     }
+ 
+-    // Fallback to normal loading if no existing video found
+-    const videoElement = videoRef.current;
+-
+-    const handleLoad = () => {
+-      setIsLoading(false);
+-      setVideoLoaded(true);
+-      videoElement.play().catch(err => {
+-        console.warn('Autoplay failed in fullscreen:', err);
+-      });
+-    };
+-
+-    const handleError = (e) => {
+-      setIsLoading(false);
+-      setError(e.target?.error?.message || 'Failed to load video');
+-      console.error('Fullscreen video error:', e.target?.error);
+-    };
+-
+-    const handleLoadStart = () => {
+-      setIsLoading(true);
+-    };
+-
+-    const handleCanPlay = () => {
+-      setIsLoading(false);
+-      setVideoLoaded(true);
+-    };
+-
+-    videoElement.addEventListener('loadeddata', handleLoad);
+-    videoElement.addEventListener('canplay', handleCanPlay);
+-    videoElement.addEventListener('error', handleError);
+-    videoElement.addEventListener('loadstart', handleLoadStart);
+-
+-    // Normal loading path
+-    if (video.isElectronFile && video.fullPath) {
+-      videoElement.src = `file://${video.fullPath}`;
+-    } else if (video.file) {
+-      videoElement.src = URL.createObjectURL(video.file);
+-    }
+-
+-    // Force immediate loading
+-    videoElement.preload = 'auto';
+-    videoElement.load();
+-
+     return () => {
+-      if (videoElement.isConnected) { // Only clean up if element is still in DOM
+-        videoElement.removeEventListener('loadeddata', handleLoad);
+-        videoElement.removeEventListener('canplay', handleCanPlay);
+-        videoElement.removeEventListener('error', handleError);
+-        videoElement.removeEventListener('loadstart', handleLoadStart);
+-        
+-        // Clean up blob URL if used
+-        if (video.file && videoElement.src?.startsWith('blob:')) {
+-          URL.revokeObjectURL(videoElement.src);
+-        }
+-      }
+-    };
+-  }, [video, reuseExistingVideoElement]);
+-
+-  // Handle keyboard navigation
++      el.removeEventListener('canplay', onCanPlay);
++      el.removeEventListener('error', onError);
++      // IMPORTANT: do not revoke a shared blobUrl here
++    };
++  }, [video, findGridVideo]);
++
++  // Handle keyboard shortcuts
+   useEffect(() => {
+     const handleKeyDown = (e) => {
+       switch (e.key) {
+@@ -144,43 +158,34 @@
+           break;
+         case ' ':
+           e.preventDefault();
+-          if (videoRef.current) {
+-            if (videoRef.current.paused) {
+-              videoRef.current.play();
+-            } else {
+-              videoRef.current.pause();
+-            }
++          const el = usingAdopted ? adoptedElRef.current : fallbackRef.current;
++          if (el) {
++            if (el.paused) el.play();
++            else el.pause();
+           }
+           break;
+         default:
+           break;
+       }
+     };
+-
+     document.addEventListener('keydown', handleKeyDown);
+     return () => document.removeEventListener('keydown', handleKeyDown);
+-  }, [onClose, onNavigate]);
+-
+-  // Handle click outside to close
++  }, [onClose, onNavigate, usingAdopted]);
++
+   const handleBackdropClick = useCallback((e) => {
+-    if (e.target === modalRef.current) {
+-      onClose();
+-    }
++    if (e.target === modalRef.current) onClose();
+   }, [onClose]);
+ 
+   // Prevent body scroll when modal is open
+   useEffect(() => {
+     document.body.style.overflow = 'hidden';
+-    return () => {
+-      document.body.style.overflow = '';
+-    };
++    return () => { document.body.style.overflow = ''; };
+   }, []);
+ 
+   if (!video) return null;
+ 
+   return (
+     <>
+-      {/* CSS animation moved to separate style element */}
+       <style>{`
+         @keyframes modalSpinner {
+           0% { transform: rotate(0deg); }
+@@ -190,18 +195,15 @@
+           animation: modalSpinner 1s linear infinite;
+         }
+       `}</style>
+-      
++
+       <div
+         ref={modalRef}
+         className="fullscreen-modal"
+         onClick={handleBackdropClick}
+         style={{
+           position: 'fixed',
+-          top: 0,
+-          left: 0,
+-          right: 0,
+-          bottom: 0,
+-          backgroundColor: 'rgba(0, 0, 0, 0.95)',
++          top: 0, left: 0, right: 0, bottom: 0,
++          backgroundColor: 'rgba(0,0,0,0.95)',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+@@ -209,92 +211,52 @@
+           backdropFilter: 'blur(4px)'
+         }}
+       >
+-        {/* Close button */}
++        {/* Close */}
+         <button
+           onClick={onClose}
+           style={{
+-            position: 'absolute',
+-            top: '20px',
+-            right: '20px',
+-            background: 'rgba(0, 0, 0, 0.7)',
+-            border: 'none',
+-            borderRadius: '50%',
+-            width: '50px',
+-            height: '50px',
+-            color: 'white',
+-            fontSize: '24px',
+-            cursor: 'pointer',
+-            display: 'flex',
+-            alignItems: 'center',
+-            justifyContent: 'center',
+-            zIndex: 10001,
+-            transition: 'background-color 0.2s'
++            position: 'absolute', top: 20, right: 20,
++            background: 'rgba(0,0,0,0.7)',
++            border: 'none', borderRadius: '50%',
++            width: 50, height: 50, color: 'white', fontSize: 24,
++            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
++            zIndex: 10001, transition: 'background-color 0.2s'
+           }}
+-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
++          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.9)'}
++          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.7)'}
+           title="Close (Esc)"
+-        >
+-          ×
+-        </button>
+-
+-        {/* Navigation buttons */}
++        >×</button>
++
++        {/* Nav */}
+         <button
+           onClick={() => onNavigate('prev')}
+           style={{
+-            position: 'absolute',
+-            left: '20px',
+-            top: '50%',
+-            transform: 'translateY(-50%)',
+-            background: 'rgba(0, 0, 0, 0.7)',
+-            border: 'none',
+-            borderRadius: '50%',
+-            width: '60px',
+-            height: '60px',
+-            color: 'white',
+-            fontSize: '24px',
+-            cursor: 'pointer',
+-            display: 'flex',
+-            alignItems: 'center',
+-            justifyContent: 'center',
+-            zIndex: 10001,
+-            transition: 'background-color 0.2s'
++            position: 'absolute', left: 20, top: '50%',
++            transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.7)',
++            border: 'none', borderRadius: '50%', width: 60, height: 60,
++            color: 'white', fontSize: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
++            zIndex: 10001, transition: 'background-color 0.2s'
+           }}
+-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
++          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.9)'}
++          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.7)'}
+           title="Previous (←)"
+-        >
+-          ←
+-        </button>
++        >←</button>
+ 
+         <button
+           onClick={() => onNavigate('next')}
+           style={{
+-            position: 'absolute',
+-            right: '20px',
+-            top: '50%',
+-            transform: 'translateY(-50%)',
+-            background: 'rgba(0, 0, 0, 0.7)',
+-            border: 'none',
+-            borderRadius: '50%',
+-            width: '60px',
+-            height: '60px',
+-            color: 'white',
+-            fontSize: '24px',
+-            cursor: 'pointer',
+-            display: 'flex',
+-            alignItems: 'center',
+-            justifyContent: 'center',
+-            zIndex: 10001,
+-            transition: 'background-color 0.2s'
++            position: 'absolute', right: 20, top: '50%',
++            transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.7)',
++            border: 'none', borderRadius: '50%', width: 60, height: 60,
++            color: 'white', fontSize: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
++            zIndex: 10001, transition: 'background-color 0.2s'
+           }}
+-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
++          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.9)'}
++          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0,0,0,0.7)'}
+           title="Next (→)"
+-        >
+-          →
+-        </button>
+-
+-        {/* Video container */}
++        >→</button>
++
++        {/* Body */}
+         <div
+           style={{
+             maxWidth: '90vw',
+@@ -305,97 +267,59 @@
+             justifyContent: 'center'
+           }}
+         >
+-          {/* Loading/Error states */}
+           {isLoading && (
+-            <div style={{
+-              color: 'white',
+-              fontSize: '18px',
+-              display: 'flex',
+-              alignItems: 'center',
+-              gap: '10px',
+-              marginBottom: '20px'
+-            }}>
+-              <div 
+-                className="modal-spinner"
+-                style={{
+-                  width: '20px',
+-                  height: '20px',
+-                  border: '2px solid #ffffff33',
+-                  borderTop: '2px solid white',
+-                  borderRadius: '50%'
+-                }}
+-              />
++            <div style={{ color: 'white', fontSize: 18, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
++              <div className="modal-spinner" style={{ width: 20, height: 20, border: '2px solid #ffffff33', borderTop: '2px solid white', borderRadius: '50%' }} />
+               Loading video...
+             </div>
+           )}
+ 
+           {error && (
+-            <div style={{
+-              color: '#ff6b6b',
+-              fontSize: '18px',
+-              textAlign: 'center',
+-              marginBottom: '20px',
+-              padding: '20px',
+-              background: 'rgba(255, 107, 107, 0.1)',
+-              borderRadius: '8px',
+-              border: '1px solid rgba(255, 107, 107, 0.3)'
+-            }}>
+-              <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
+-              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Error Loading Video</div>
++            <div style={{ color: '#ff6b6b', fontSize: 18, textAlign: 'center', marginBottom: 20, padding: 20, background: 'rgba(255,107,107,0.1)', borderRadius: 8, border: '1px solid rgba(255,107,107,0.3)' }}>
++              <div style={{ fontSize: 24, marginBottom: 10 }}>⚠️</div>
++              <div style={{ fontWeight: 'bold', marginBottom: 5 }}>Error Loading Video</div>
+               <div style={{ opacity: 0.8 }}>{error}</div>
+             </div>
+           )}
+ 
+-          {/* Video element */}
++          {/* Host where we adopt the existing video */}
++          <div
++            ref={adoptHostRef}
++            style={{
++              display: usingAdopted ? 'block' : 'none',
++              maxWidth: '100%',
++              maxHeight: '80vh'
++            }}
++            onClick={(e) => e.stopPropagation()}
++          />
++
++          {/* Fallback <video> used only if adoption fails */}
+           <video
+-            ref={videoRef}
++            ref={fallbackRef}
+             muted
+             loop
+             controls
+             playsInline
+             style={{
++              display: usingAdopted ? 'none' : 'block',
+               maxWidth: '100%',
+               maxHeight: '80vh',
+               objectFit: 'contain',
+               borderRadius: '8px',
+-              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)',
+-              display: error ? 'none' : 'block'
++              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)'
+             }}
+             onClick={(e) => e.stopPropagation()}
+           />
+ 
+-          {/* Video info */}
+           {showFilenames && videoLoaded && (
+-            <div style={{
+-              marginTop: '20px',
+-              padding: '15px 25px',
+-              background: 'rgba(0, 0, 0, 0.8)',
+-              borderRadius: '25px',
+-              color: 'white',
+-              fontSize: '16px',
+-              textAlign: 'center',
+-              maxWidth: '80vw',
+-              wordBreak: 'break-word'
+-            }}>
++            <div style={{ marginTop: 20, padding: '15px 25px', background: 'rgba(0,0,0,0.8)', borderRadius: 25, color: 'white', fontSize: 16, textAlign: 'center', maxWidth: '80vw', wordBreak: 'break-word' }}>
+               {video.name}
+             </div>
+           )}
+ 
+-          {/* Keyboard shortcuts help */}
+-          <div style={{
+-            position: 'absolute',
+-            bottom: '20px',
+-            left: '50%',
+-            transform: 'translateX(-50%)',
+-            background: 'rgba(0, 0, 0, 0.7)',
+-            padding: '10px 20px',
+-            borderRadius: '20px',
+-            color: 'rgba(255, 255, 255, 0.8)',
+-            fontSize: '14px',
+-            textAlign: 'center'
+-          }}>
+-            <span style={{ marginRight: '20px' }}>← → Navigate</span>
+-            <span style={{ marginRight: '20px' }}>Space Play/Pause</span>
++          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.7)', padding: '10px 20px', borderRadius: 20, color: 'rgba(255,255,255,0.8)', fontSize: 14, textAlign: 'center' }}>
++            <span style={{ marginRight: 20 }}>← → Navigate</span>
++            <span style={{ marginRight: 20 }}>Space Play/Pause</span>
+             <span>Esc Close</span>
+           </div>
+         </div>
+@@ -404,4 +328,4 @@
+   );
+ };
+ 
+-export default FullScreenModal;+export default FullScreenModal;

@@ -7,99 +7,136 @@ const FullScreenModal = ({
   showFilenames,
   gridRef 
 }) => {
-  const videoRef = useRef(null);
   const modalRef = useRef(null);
+  const adoptHostRef = useRef(null);     // host where we move the existing grid <video>
+  const fallbackRef = useRef(null);      // fallback <video> if adoption fails
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
+  const [usingAdopted, setUsingAdopted] = useState(false);
 
-  // Try to reuse existing video element for faster loading
-  const reuseExistingVideo = useCallback(() => {
-    if (!video) return null;
-    
+  // Keep track for restoration
+  const adoptedElRef = useRef(null);
+  const originalParentRef = useRef(null);
+  const originalNextSiblingRef = useRef(null);
+
+  // Try to adopt (move) the existing grid video element for instant loading
+  const tryAdoptExistingVideo = useCallback(() => {
+    if (!video) return false;
+
     // Find existing video element in the grid
-    const existingVideo = document.querySelector(`[data-video-id="${video.id}"] video`);
-    if (existingVideo && existingVideo.readyState >= 2) { // HAVE_CURRENT_DATA or better
-      return {
-        src: existingVideo.src,
-        currentTime: existingVideo.currentTime,
-        duration: existingVideo.duration
-      };
+    const existingVideo = document.querySelector(
+      `[data-video-id="${video.id}"] video`
+    );
+    if (existingVideo && existingVideo.readyState >= 2 && adoptHostRef.current) {
+      try {
+        originalParentRef.current = existingVideo.parentElement;
+        originalNextSiblingRef.current = existingVideo.nextSibling;
+
+        // mark adopted so the card won't re-attach or tear down
+        existingVideo.dataset.adopted = 'modal';
+
+        // move node into modal host
+        adoptHostRef.current.appendChild(existingVideo);
+
+        // style + controls for modal
+        existingVideo.controls = true;
+        existingVideo.style.maxWidth = '100%';
+        existingVideo.style.maxHeight = '80vh';
+        existingVideo.style.objectFit = 'contain';
+        existingVideo.style.borderRadius = '8px';
+        existingVideo.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.8)';
+
+        // play (muted already from tile)
+        existingVideo.play?.().catch(() => {});
+
+        adoptedElRef.current = existingVideo;
+        setIsLoading(false);
+        setVideoLoaded(true);
+        setUsingAdopted(true);
+        return true;
+      } catch (e) {
+        console.warn('Adopt failed, will fall back:', e);
+      }
     }
-    return null;
+    return false;
   }, [video]);
 
-  // Handle video loading with optimization
-  useEffect(() => {
-    if (!video || !videoRef.current) return;
+  // Restore adopted node to its original parent/position
+  const restoreAdopted = useCallback(() => {
+    const el = adoptedElRef.current;
+    if (!el) return;
+    try {
+      // revert styles/controls
+      el.controls = false;
+      el.style.maxWidth = '';
+      el.style.maxHeight = '';
+      el.style.objectFit = '';
+      el.style.borderRadius = '';
+      el.style.boxShadow = '';
+      if (el.dataset) delete el.dataset.adopted;
 
-    const videoElement = videoRef.current;
+      const parent = originalParentRef.current;
+      const next = originalNextSiblingRef.current;
+      if (parent) {
+        if (next && next.parentNode === parent) {
+          parent.insertBefore(el, next);
+        } else {
+          parent.appendChild(el);
+        }
+      }
+    } catch {}
+    adoptedElRef.current = null;
+    originalParentRef.current = null;
+    originalNextSiblingRef.current = null;
+  }, []);
+
+  // Main effect: adopt if possible, else use fallback <video>
+  useEffect(() => {
+    if (!video) return;
+
     setIsLoading(true);
     setError(null);
     setVideoLoaded(false);
+    setUsingAdopted(false);
 
-    const handleLoad = () => {
+    // Fast path: adopt
+    const adopted = tryAdoptExistingVideo();
+    if (adopted) return () => restoreAdopted();
+
+    // Fallback: separate <video> element (no forced .load(), reuse src)
+    const el = fallbackRef.current;
+    if (!el) return;
+
+    const onCanPlay = () => {
       setIsLoading(false);
       setVideoLoaded(true);
-      // Auto-play in fullscreen
-      videoElement.play().catch(err => {
-        console.warn('Autoplay failed in fullscreen:', err);
-      });
+      el.play().catch(() => {});
     };
-
-    const handleError = (e) => {
+    const onError = (e) => {
       setIsLoading(false);
-      setError(e.target?.error?.message || 'Failed to load video');
-      console.error('Fullscreen video error:', e.target?.error);
+      setError(e?.target?.error?.message || 'Failed to load video');
     };
 
-    const handleLoadStart = () => {
-      setIsLoading(true);
-    };
+    el.addEventListener('canplay', onCanPlay);
+    el.addEventListener('error', onError);
 
-    const handleCanPlay = () => {
-      setIsLoading(false);
-      setVideoLoaded(true);
-    };
+    // Set source once (avoid .load() resets)
+    const nextSrc = video.isElectronFile && video.fullPath
+      ? `file://${video.fullPath}`
+      : (video.blobUrl || (video.file ? URL.createObjectURL(video.file) : ''));
 
-    videoElement.addEventListener('loadeddata', handleLoad);
-    videoElement.addEventListener('canplay', handleCanPlay);
-    videoElement.addEventListener('error', handleError);
-    videoElement.addEventListener('loadstart', handleLoadStart);
-
-    // Try to reuse existing video data for faster loading
-    const existingVideoData = reuseExistingVideo();
-    
-    if (existingVideoData) {
-      // Use existing video source and seek to same position
-      videoElement.src = existingVideoData.src;
-      videoElement.currentTime = existingVideoData.currentTime;
-      console.log('🚀 Reusing existing video data for faster modal loading');
-    } else {
-      // Fallback to normal loading
-      if (video.isElectronFile && video.fullPath) {
-        videoElement.src = `file://${video.fullPath}`;
-      } else if (video.file) {
-        videoElement.src = URL.createObjectURL(video.file);
-      }
+    if (el.src !== nextSrc) {
+      el.preload = 'auto';
+      el.src = nextSrc;
     }
 
-    // Force immediate loading
-    videoElement.preload = 'auto';
-    videoElement.load();
-
     return () => {
-      videoElement.removeEventListener('loadeddata', handleLoad);
-      videoElement.removeEventListener('canplay', handleCanPlay);
-      videoElement.removeEventListener('error', handleError);
-      videoElement.removeEventListener('loadstart', handleLoadStart);
-      
-      // Clean up blob URL if used
-      if (video.file && videoElement.src?.startsWith('blob:')) {
-        URL.revokeObjectURL(videoElement.src);
-      }
+      el.removeEventListener('canplay', onCanPlay);
+      el.removeEventListener('error', onError);
+      // Do not revoke blob here if shared elsewhere
     };
-  }, [video, reuseExistingVideo]);
+  }, [video, tryAdoptExistingVideo, restoreAdopted]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -118,12 +155,9 @@ const FullScreenModal = ({
           break;
         case ' ':
           e.preventDefault();
-          if (videoRef.current) {
-            if (videoRef.current.paused) {
-              videoRef.current.play();
-            } else {
-              videoRef.current.pause();
-            }
+          {
+            const el = usingAdopted ? adoptedElRef.current : fallbackRef.current;
+            if (el) el.paused ? el.play() : el.pause();
           }
           break;
         default:
@@ -133,7 +167,7 @@ const FullScreenModal = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigate]);
+  }, [onClose, onNavigate, usingAdopted]);
 
   // Handle click outside to close
   const handleBackdropClick = useCallback((e) => {
@@ -146,9 +180,11 @@ const FullScreenModal = ({
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => {
+      // restore adopted video if any
+      restoreAdopted();
       document.body.style.overflow = '';
     };
-  }, []);
+  }, [restoreAdopted]);
 
   if (!video) return null;
 
@@ -268,7 +304,7 @@ const FullScreenModal = ({
           →
         </button>
 
-        {/* Video container */}
+        {/* Body */}
         <div
           style={{
             maxWidth: '90vw',
@@ -320,20 +356,31 @@ const FullScreenModal = ({
             </div>
           )}
 
-          {/* Video element */}
+          {/* Host where we adopt the existing grid <video> */}
+          <div
+            ref={adoptHostRef}
+            style={{
+              display: usingAdopted ? 'block' : 'none',
+              maxWidth: '100%',
+              maxHeight: '80vh'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+
+          {/* Fallback <video> used only if adoption fails */}
           <video
-            ref={videoRef}
+            ref={fallbackRef}
             muted
             loop
             controls
             playsInline
             style={{
+              display: usingAdopted ? 'none' : 'block',
               maxWidth: '100%',
               maxHeight: '80vh',
               objectFit: 'contain',
               borderRadius: '8px',
-              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)',
-              display: error ? 'none' : 'block'
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)'
             }}
             onClick={(e) => e.stopPropagation()}
           />

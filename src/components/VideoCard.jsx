@@ -43,11 +43,20 @@ const VideoCard = memo(function VideoCard({
 
   const videoId = video.id || video.fullPath || video.name;
 
+  // 🔹 helper: is this card’s <video> currently adopted by the modal?
+  const isAdoptedByModal = useCallback(() => {
+    const el = videoRef.current;
+    return !!(el && el.dataset && el.dataset.adopted === "modal");
+  }, []);
+
   // keep mirrors in sync
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
   useEffect(() => {
+    // ⛔ Do not tear down while modal has adopted this element
+    if (isAdoptedByModal()) return;
+
     if (!isLoaded && !isLoading && videoRef.current) {
       // Parent has decided this video should no longer be loaded
       // Clean up and reset guards so it can load again later
@@ -66,7 +75,7 @@ const VideoCard = memo(function VideoCard({
       setLoaded(false);
       setLoading(false);
     }
-  }, [isLoaded, isLoading]);
+  }, [isLoaded, isLoading, isAdoptedByModal]);
 
   // IntersectionObserver: report visibility + opportunistic load
   useEffect(() => {
@@ -194,7 +203,8 @@ const VideoCard = memo(function VideoCard({
 
       // attach to DOM container
       const container = containerRef.current?.querySelector(".video-container");
-      if (container && !container.contains(el)) {
+      // ⛔ don't re-attach if this element is currently adopted by modal
+      if (container && !container.contains(el) && !(el.dataset && el.dataset.adopted === "modal")) {
         container.appendChild(el);
       }
     };
@@ -249,7 +259,8 @@ const VideoCard = memo(function VideoCard({
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
 
       const el = videoRef.current;
-      if (el) {
+      // ⛔ if adopted by modal, let modal restore/cleanup on its own
+      if (el && !(el.dataset && el.dataset.adopted === "modal")) {
         try {
           if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
           el.pause();
@@ -340,7 +351,7 @@ const VideoCard = memo(function VideoCard({
         background: "#1a1a1a",
       }}
     >
-      {loaded && videoRef.current ? (
+      {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
           style={{
@@ -351,7 +362,8 @@ const VideoCard = memo(function VideoCard({
             if (
               container &&
               videoRef.current &&
-              !container.contains(videoRef.current)
+              !container.contains(videoRef.current) &&
+              !(videoRef.current.dataset && videoRef.current.dataset.adopted === "modal")
             ) {
               container.appendChild(videoRef.current);
             }
