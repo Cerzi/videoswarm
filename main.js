@@ -30,16 +30,54 @@ if (process.platform === 'linux') {
   console.log('Using new GL flag format for recent Electron versions');
 }
 
-
-
+// Enable GC in both dev and production for memory management
+app.commandLine.appendSwitch('js-flags', '--expose-gc');
+console.log('🧠 Enabled garbage collection access');
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
+// Enhanced default zoom detection based on screen size
+function getDefaultZoomForScreen() {
+  try {
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+    
+    console.log(`🖥️ Detected display: ${width}x${height}`);
+    
+    // For 4K+ monitors, FORCE minimum 150% (index 2) to prevent crashes
+    if (width >= 3840 || height >= 2160) {
+      console.log('🖥️ 4K+ display detected, defaulting to 150% zoom for memory safety');
+      return 2; // 150%
+    }
+    
+    // For high-DPI displays, default to 150% for safety
+    if (width >= 2560 || height >= 1440) {
+      console.log('🖥️ High-DPI display detected, defaulting to 150% zoom for safety');
+      return 2; // 150%
+    }
+    
+    // For standard displays, 100% should be safe
+    if (width >= 1920 || height >= 1080) {
+      console.log('🖥️ Standard HD display detected, defaulting to 100% zoom');
+      return 1; // 100%
+    }
+    
+    // For smaller displays, 100% is definitely safe
+    console.log('🖥️ Small display detected, defaulting to 100% zoom');
+    return 1; // 100%
+  } catch (error) {
+    console.log('🖥️ Screen not available yet, using safe default zoom (150%)');
+    return 2; // Default to 150% for safety when screen is not available
+  }
+}
+
 // SIMPLIFIED: Removed layoutMode and autoplayEnabled from default settings
+// Note: zoomLevel will be set dynamically after app is ready
 const defaultSettings = {
   recursiveMode: false,
   maxConcurrentPlaying: 30,
-  zoomLevel: 1,
+  zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   windowBounds: {
     width: 1400,
@@ -64,12 +102,30 @@ async function loadSettings() {
 
     // Remove layoutMode and autoplayEnabled from loaded settings if they exist (cleanup)
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
+    
+    // If no zoomLevel in saved settings, detect based on screen (but only after app is ready)
+    if (cleanSettings.zoomLevel === undefined) {
+      const defaultZoom = getDefaultZoomForScreen();
+      cleanSettings.zoomLevel = defaultZoom;
+      console.log("🔍 No saved zoom level, using screen-based default:", cleanSettings.zoomLevel);
+    }
+    
     currentSettings = { ...defaultSettings, ...cleanSettings };
     return currentSettings;
   } catch (error) {
     console.log("No settings file found, using defaults");
-    currentSettings = defaultSettings;
-    return defaultSettings;
+    
+    // Apply screen-based zoom to defaults (but only after app is ready)
+    const settingsWithScreenZoom = { ...defaultSettings };
+    try {
+      settingsWithScreenZoom.zoomLevel = getDefaultZoomForScreen();
+    } catch (screenError) {
+      // Screen not ready yet, use default
+      settingsWithScreenZoom.zoomLevel = 1;
+    }
+    
+    currentSettings = settingsWithScreenZoom;
+    return currentSettings;
   }
 }
 
@@ -100,6 +156,13 @@ async function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,
+      
+      // Enhanced memory management
+      experimentalFeatures: true,
+      backgroundThrottling: false,
+      offscreen: false,
+      spellcheck: false,
+      v8CacheOptions: 'bypassHeatCheck',
     },
     icon: path.join(__dirname, "icon.png"),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
@@ -125,6 +188,44 @@ async function createWindow() {
   mainWindow.webContents.on("dom-ready", () => {
     console.log("DOM ready, sending settings");
     mainWindow.webContents.send("settings-loaded", currentSettings);
+  });
+
+  // Enhanced crash detection
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('🔥 RENDERER PROCESS CRASHED:');
+    console.error('  Reason:', details.reason);
+    console.error('  Exit code:', details.exitCode);
+    console.error('  Timestamp:', new Date().toISOString());
+    
+    // Get memory info at crash time
+    try {
+      console.error('  System memory:', process.getSystemMemoryInfo());
+      console.error('  Process memory:', process.getProcessMemoryInfo());
+    } catch (e) {
+      console.error('  Could not get memory info:', e.message);
+    }
+    
+    if (details.reason === 'oom') {
+      console.error('💥 CONFIRMED: Out of Memory crash - consider increasing zoom level');
+    } else if (details.reason === 'crashed') {
+      console.error('💥 Generic crash - likely memory related');
+    }
+    
+    // Auto-restart (optional)
+    setTimeout(() => {
+      if (!mainWindow.isDestroyed()) {
+        console.log('🔄 Attempting to reload...');
+        mainWindow.reload();
+      }
+    }, 1000);
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('🔥 RENDERER UNRESPONSIVE');
+  });
+
+  mainWindow.webContents.on('responsive', () => {
+    console.log('✅ RENDERER RESPONSIVE AGAIN');
   });
 
   mainWindow.on("moved", saveWindowBounds);

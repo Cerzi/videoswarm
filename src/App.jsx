@@ -81,7 +81,7 @@ function App() {
     return result;
   }, [videos]);
 
-  // --- Composite Video Collection Hook ---
+  // --- Composite Video Collection Hook (now with memory monitoring) ---
   const videoCollection = useVideoCollection({
     videos: groupedAndSortedVideos,
     visibleVideos,
@@ -101,6 +101,169 @@ function App() {
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
   const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
     useContextMenu();
+
+  // === DYNAMIC ZOOM CALCULATION ===
+  const calculateSafeZoom = useCallback((windowWidth, windowHeight, videoCount) => {
+    // Estimate videos per row based on zoom levels and window width
+    const zoomSizes = [150, 200, 300, 400]; // minmax values from CSS
+    const estimatedVideosPerRow = zoomSizes.map(size => Math.floor(windowWidth / size));
+    
+    // Estimate visible videos (assume ~5 rows visible at once)
+    const estimatedVisibleVideos = estimatedVideosPerRow.map(perRow => perRow * 5);
+    
+    // Memory pressure calculation (conservative estimate: 15MB per video)
+    const memoryPressure = estimatedVisibleVideos.map(visible => (visible * 15) / 3600); // as fraction of 3.6GB
+    
+    // Find the highest zoom level that keeps memory under 80%
+    for (let i = 0; i < memoryPressure.length; i++) {
+      if (memoryPressure[i] < 0.8) {
+        console.log(`🧠 Safe zoom level ${i} (${['75%', '100%', '150%', '200%'][i]}) - estimated ${estimatedVisibleVideos[i]} visible videos`);
+        return i;
+      }
+    }
+    
+    // If even 200% is unsafe, force it anyway but warn
+    console.warn('⚠️ All zoom levels may cause memory pressure - using maximum zoom');
+    return 3;
+  }, []);
+
+  // MOVE handleZoomChange BEFORE getMinimumZoomLevel since it depends on it
+  const handleZoomChange = useCallback(
+    (z) => {
+      setZoomLevel(z);
+      setZoomClass(z);
+      window.electronAPI?.saveSettingsPartial?.({
+        zoomLevel: z,
+        recursiveMode,
+        maxConcurrentPlaying,
+        showFilenames,
+      });
+    },
+    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames]
+  );
+
+  // Get minimum zoom level based on current conditions
+  const getMinimumZoomLevel = useCallback(() => {
+    const videoCount = groupedAndSortedVideos.length;
+    const windowWidth = window.innerWidth;
+    
+    // Force higher zoom for large collections on wide screens
+    if (videoCount > 200 && windowWidth > 2560) return 2; // Minimum 150%
+    if (videoCount > 150 && windowWidth > 1920) return 1; // Minimum 100%
+    return 0; // Allow 75%
+  }, [groupedAndSortedVideos.length]);
+
+  // Enhanced zoom change handler with safety limits
+  const handleZoomChangeSafe = useCallback((newZoom) => {
+    const minZoom = getMinimumZoomLevel();
+    const safeZoom = Math.max(newZoom, minZoom);
+    
+    if (safeZoom !== newZoom) {
+      console.warn(`🛡️ Zoom limited to ${['75%', '100%', '150%', '200%'][safeZoom]} for memory safety (requested ${['75%', '100%', '150%', '200%'][newZoom]})`);
+    }
+    
+    handleZoomChange(safeZoom);
+  }, [getMinimumZoomLevel, handleZoomChange]);
+
+  // === MEMORY MONITORING SETUP ===
+  // Initial memory logging and manual GC setup
+  useEffect(() => {
+    // Log initial memory limits
+    if (performance.memory) {
+      console.log('🧠 Initial memory limits:', {
+        jsHeapSizeLimit: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024) + 'MB',
+        totalJSHeapSize: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024) + 'MB',
+        usedJSHeapSize: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024) + 'MB'
+      });
+    } else {
+      console.log('📊 performance.memory not available');
+    }
+
+    // Dev-only manual GC trigger (Ctrl+Shift+G)
+    if (process.env.NODE_ENV !== 'production') {
+      const handleKeydown = (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+          if (window.gc) {
+            const before = performance.memory?.usedJSHeapSize;
+            window.gc();
+            const after = performance.memory?.usedJSHeapSize;
+            const freed = before && after ? Math.round((before - after) / 1024 / 1024) : 0;
+            console.log(`🧹 Manual GC: ${freed}MB freed`);
+          } else {
+            console.warn('🚫 GC not available - start with --js-flags="--expose-gc"');
+          }
+        }
+      };
+      
+      window.addEventListener('keydown', handleKeydown);
+      return () => window.removeEventListener('keydown', handleKeydown);
+    }
+  }, []);
+
+  // Memory warning system for development
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production' && videoCollection.memoryStatus) {
+      const { currentMemoryMB, memoryPressure } = videoCollection.memoryStatus;
+      
+      // Warn developers when approaching production limits
+      if (currentMemoryMB > 3000) {
+        console.warn(`🔥 DEV WARNING: High memory usage (${currentMemoryMB}MB) - this would crash in production!`);
+      }
+      
+      if (memoryPressure > 80) {
+        console.warn(`⚠️ DEV WARNING: Memory pressure at ${memoryPressure}% - production limits would kick in`);
+      }
+    }
+  }, [videoCollection.memoryStatus?.currentMemoryMB, videoCollection.memoryStatus?.memoryPressure]);
+
+  // === DYNAMIC ZOOM WINDOW RESIZE MONITORING ===
+  useEffect(() => {
+    if (!window.electronAPI?.isElectron) return;
+    
+    const handleResize = () => {
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const videoCount = groupedAndSortedVideos.length;
+      
+      // Only auto-adjust if we have a significant number of videos
+      if (videoCount > 50) {
+        const safeZoom = calculateSafeZoom(windowWidth, windowHeight, videoCount);
+        
+        // Only change if it's more restrictive (higher zoom) than current
+        if (safeZoom > zoomLevel) {
+          console.log(`📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${['75%', '100%', '150%', '200%'][safeZoom]} for safety`);
+          handleZoomChange(safeZoom);
+        }
+      }
+    };
+    
+    // Debounce resize events
+    let resizeTimeout;
+    const debouncedResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(handleResize, 500);
+    };
+    
+    window.addEventListener('resize', debouncedResize);
+    return () => {
+      window.removeEventListener('resize', debouncedResize);
+      clearTimeout(resizeTimeout);
+    };
+  }, [groupedAndSortedVideos.length]); // REMOVED calculateSafeZoom, zoomLevel, handleZoomChange from dependencies
+
+  // === AUTO-ADJUST ZOOM WHEN VIDEO COUNT CHANGES ===
+  useEffect(() => {
+    if (groupedAndSortedVideos.length > 100) {
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const safeZoom = calculateSafeZoom(windowWidth, windowHeight, groupedAndSortedVideos.length);
+      
+      if (safeZoom > zoomLevel) {
+        console.log(`📹 Large collection detected (${groupedAndSortedVideos.length} videos) - adjusting zoom for memory safety`);
+        handleZoomChange(safeZoom);
+      }
+    }
+  }, [groupedAndSortedVideos.length]); // REMOVED calculateSafeZoom, zoomLevel, handleZoomChange from dependencies
 
   // settings load
   useEffect(() => {
@@ -285,7 +448,7 @@ function App() {
   const handleFolderSelect = useCallback(async () => {
     const res = await window.electronAPI?.selectFolder?.();
     if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
-  }, [handleElectronFolderSelection]); // eslint-disable-line
+  }, [handleElectronFolderSelection]); // Fixed dependency
 
   const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((f) => {
@@ -345,19 +508,10 @@ function App() {
     [recursiveMode, zoomLevel, showFilenames]
   );
 
-  const handleZoomChange = useCallback(
-    (z) => {
-      setZoomLevel(z);
-      setZoomClass(z);
-      window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: z,
-        recursiveMode,
-        maxConcurrentPlaying,
-        showFilenames,
-      });
-    },
-    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames]
-  );
+  // handleZoomChange is now defined earlier in the file - removed duplicate
+
+  // Enhanced zoom change handler with safety limits
+  // (also moved earlier in the file)
 
   const getZoomLabel = useMemo(
     () => ["75%", "100%", "150%", "200%"][zoomLevel] || "100%",
@@ -402,6 +556,39 @@ function App() {
     }
   }, [videoCollection.performCleanup]);
 
+  // === MEMORY ALERT COMPONENT ===
+  const MemoryAlert = () => {
+    const memStatus = videoCollection.memoryStatus;
+    
+    if (!memStatus || !memStatus.isNearLimit) return null;
+    
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: '80px',
+          right: '20px',
+          background: 'rgba(255, 107, 107, 0.95)',
+          color: 'white',
+          padding: '1rem',
+          borderRadius: '8px',
+          zIndex: 1000,
+          maxWidth: '300px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        }}
+      >
+        <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+          🚨 Memory Warning
+        </div>
+        <div style={{ fontSize: '0.9rem' }}>
+          Memory usage: {memStatus.currentMemoryMB}MB ({memStatus.memoryPressure}%)
+          <br />
+          Reducing video quality to prevent crashes.
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="app">
       {!settingsLoaded ? (
@@ -418,6 +605,9 @@ function App() {
         </div>
       ) : (
         <>
+          {/* Memory Alert */}
+          <MemoryAlert />
+
           {isLoadingFolder && (
             <div
               style={{
@@ -534,6 +724,7 @@ function App() {
               )}
             </div>
 
+            {/* Enhanced Debug Info with Memory Status and Zoom Safety */}
             <div
               className="debug-info"
               style={{
@@ -542,12 +733,60 @@ function App() {
                 background: "#1a1a1a",
                 padding: "0.3rem 0.8rem",
                 borderRadius: 4,
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
               }}
             >
-              📁 {videoCollection.stats.total} videos | 📺{" "}
-              {videoCollection.stats.rendered} rendered | ▶️{" "}
-              {videoCollection.stats.playing} playing | 👁️ {visibleVideos.size}{" "}
-              in view
+              <span>🎬 {videoCollection.stats.total} videos</span>
+              <span>🎭 {videoCollection.stats.rendered} rendered</span>
+              <span>▶️ {videoCollection.stats.playing} playing</span>
+              <span>👁️ {visibleVideos.size} in view</span>
+              
+              {/* Memory status */}
+              {videoCollection.memoryStatus && (
+                <>
+                  <span>|</span>
+                  <span 
+                    style={{ 
+                      color: videoCollection.memoryStatus.isNearLimit ? '#ff6b6b' : 
+                             videoCollection.memoryStatus.memoryPressure > 70 ? '#ffa726' : '#51cf66',
+                      fontWeight: videoCollection.memoryStatus.isNearLimit ? 'bold' : 'normal'
+                    }}
+                  >
+                    🧠 {videoCollection.memoryStatus.currentMemoryMB}MB ({videoCollection.memoryStatus.memoryPressure}%)
+                  </span>
+                  
+                  {/* Safety margin indicator */}
+                  {videoCollection.memoryStatus.safetyMarginMB < 500 && (
+                    <span style={{ color: '#ff6b6b', fontWeight: 'bold' }}>
+                      ⚠️ {videoCollection.memoryStatus.safetyMarginMB}MB margin
+                    </span>
+                  )}
+                </>
+              )}
+
+              {/* Zoom safety indicator */}
+              {groupedAndSortedVideos.length > 100 && (
+                <>
+                  <span>|</span>
+                  <span style={{ 
+                    color: zoomLevel >= getMinimumZoomLevel() ? '#51cf66' : '#ffa726'
+                  }}>
+                    🔍 {getZoomLabel} {zoomLevel < getMinimumZoomLevel() ? '(unsafe)' : '(safe)'}
+                  </span>
+                </>
+              )}
+              
+              {/* Dev mode memory warning */}
+              {process.env.NODE_ENV !== 'production' && performance.memory && (
+                <>
+                  <span>|</span>
+                  <span style={{ color: '#666', fontSize: '0.7rem' }}>
+                    Press Ctrl+Shift+G for manual GC
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="controls">
@@ -570,7 +809,7 @@ function App() {
                 className="video-limit-control"
                 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
               >
-                <span>📹</span>
+                <span>🎹</span>
                 <input
                   type="range"
                   min="10"
@@ -588,6 +827,7 @@ function App() {
                 </span>
               </div>
 
+              {/* Enhanced zoom control with dynamic minimum limits */}
               <div
                 className="zoom-control"
                 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
@@ -595,14 +835,20 @@ function App() {
                 <span>🔍</span>
                 <input
                   type="range"
-                  min="0"
+                  min={getMinimumZoomLevel()}  // Dynamic minimum based on conditions
                   max="3"
                   value={zoomLevel}
                   step="1"
-                  onChange={(e) => handleZoomChange(parseInt(e.target.value))}
+                  onChange={(e) => handleZoomChangeSafe(parseInt(e.target.value))}
                   disabled={isLoadingFolder}
+                  style={{
+                    accentColor: zoomLevel >= getMinimumZoomLevel() ? '#51cf66' : '#ffa726'
+                  }}
                 />
                 <span>{getZoomLabel}</span>
+                {zoomLevel < getMinimumZoomLevel() && (
+                  <span style={{ color: '#ffa726', fontSize: '0.7rem' }}>⚠️</span>
+                )}
               </div>
             </div>
           </div>
@@ -611,6 +857,11 @@ function App() {
             <div className="drop-zone">
               <h2>🐝 Welcome to Video Swarm 🐝</h2>
               <p>Click "Select Folder" above to browse your video collection</p>
+              {window.innerWidth > 2560 && (
+                <p style={{ color: '#ffa726', fontSize: '0.9rem' }}>
+                  🖥️ Large display detected - zoom will auto-adjust for memory safety
+                </p>
+              )}
             </div>
           ) : (
             <div
