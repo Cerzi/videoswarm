@@ -13,7 +13,23 @@ const FullScreenModal = ({
   const [error, setError] = useState(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
 
-  // Handle video loading
+  // Try to reuse existing video element for faster loading
+  const reuseExistingVideo = useCallback(() => {
+    if (!video) return null;
+    
+    // Find existing video element in the grid
+    const existingVideo = document.querySelector(`[data-video-id="${video.id}"] video`);
+    if (existingVideo && existingVideo.readyState >= 2) { // HAVE_CURRENT_DATA or better
+      return {
+        src: existingVideo.src,
+        currentTime: existingVideo.currentTime,
+        duration: existingVideo.duration
+      };
+    }
+    return null;
+  }, [video]);
+
+  // Handle video loading with optimization
   useEffect(() => {
     if (!video || !videoRef.current) return;
 
@@ -41,21 +57,40 @@ const FullScreenModal = ({
       setIsLoading(true);
     };
 
+    const handleCanPlay = () => {
+      setIsLoading(false);
+      setVideoLoaded(true);
+    };
+
     videoElement.addEventListener('loadeddata', handleLoad);
-    videoElement.addEventListener('canplay', handleLoad);
+    videoElement.addEventListener('canplay', handleCanPlay);
     videoElement.addEventListener('error', handleError);
     videoElement.addEventListener('loadstart', handleLoadStart);
 
-    // Set video source
-    if (video.isElectronFile && video.fullPath) {
-      videoElement.src = `file://${video.fullPath}`;
-    } else if (video.file) {
-      videoElement.src = URL.createObjectURL(video.file);
+    // Try to reuse existing video data for faster loading
+    const existingVideoData = reuseExistingVideo();
+    
+    if (existingVideoData) {
+      // Use existing video source and seek to same position
+      videoElement.src = existingVideoData.src;
+      videoElement.currentTime = existingVideoData.currentTime;
+      console.log('🚀 Reusing existing video data for faster modal loading');
+    } else {
+      // Fallback to normal loading
+      if (video.isElectronFile && video.fullPath) {
+        videoElement.src = `file://${video.fullPath}`;
+      } else if (video.file) {
+        videoElement.src = URL.createObjectURL(video.file);
+      }
     }
+
+    // Force immediate loading
+    videoElement.preload = 'auto';
+    videoElement.load();
 
     return () => {
       videoElement.removeEventListener('loadeddata', handleLoad);
-      videoElement.removeEventListener('canplay', handleLoad);
+      videoElement.removeEventListener('canplay', handleCanPlay);
       videoElement.removeEventListener('error', handleError);
       videoElement.removeEventListener('loadstart', handleLoadStart);
       
@@ -64,7 +99,7 @@ const FullScreenModal = ({
         URL.revokeObjectURL(videoElement.src);
       }
     };
-  }, [video]);
+  }, [video, reuseExistingVideo]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -118,220 +153,228 @@ const FullScreenModal = ({
   if (!video) return null;
 
   return (
-    <div
-      ref={modalRef}
-      className="fullscreen-modal"
-      onClick={handleBackdropClick}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.95)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 10000,
-        backdropFilter: 'blur(4px)'
-      }}
-    >
-      {/* Close button */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'absolute',
-          top: '20px',
-          right: '20px',
-          background: 'rgba(0, 0, 0, 0.7)',
-          border: 'none',
-          borderRadius: '50%',
-          width: '50px',
-          height: '50px',
-          color: 'white',
-          fontSize: '24px',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10001,
-          transition: 'background-color 0.2s'
-        }}
-        onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-        onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-        title="Close (Esc)"
-      >
-        ×
-      </button>
-
-      {/* Navigation buttons */}
-      <button
-        onClick={() => onNavigate('prev')}
-        style={{
-          position: 'absolute',
-          left: '20px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: 'rgba(0, 0, 0, 0.7)',
-          border: 'none',
-          borderRadius: '50%',
-          width: '60px',
-          height: '60px',
-          color: 'white',
-          fontSize: '24px',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10001,
-          transition: 'background-color 0.2s'
-        }}
-        onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-        onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-        title="Previous (←)"
-      >
-        ←
-      </button>
-
-      <button
-        onClick={() => onNavigate('next')}
-        style={{
-          position: 'absolute',
-          right: '20px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: 'rgba(0, 0, 0, 0.7)',
-          border: 'none',
-          borderRadius: '50%',
-          width: '60px',
-          height: '60px',
-          color: 'white',
-          fontSize: '24px',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10001,
-          transition: 'background-color 0.2s'
-        }}
-        onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-        onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-        title="Next (→)"
-      >
-        →
-      </button>
-
-      {/* Video container */}
-      <div
-        style={{
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        {/* Loading/Error states */}
-        {isLoading && (
-          <div style={{
-            color: 'white',
-            fontSize: '18px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            marginBottom: '20px'
-          }}>
-            <div style={{
-              width: '20px',
-              height: '20px',
-              border: '2px solid #ffffff33',
-              borderTop: '2px solid white',
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite'
-            }}></div>
-            Loading video...
-          </div>
-        )}
-
-        {error && (
-          <div style={{
-            color: '#ff6b6b',
-            fontSize: '18px',
-            textAlign: 'center',
-            marginBottom: '20px',
-            padding: '20px',
-            background: 'rgba(255, 107, 107, 0.1)',
-            borderRadius: '8px',
-            border: '1px solid rgba(255, 107, 107, 0.3)'
-          }}>
-            <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
-            <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Error Loading Video</div>
-            <div style={{ opacity: 0.8 }}>{error}</div>
-          </div>
-        )}
-
-        {/* Video element */}
-        <video
-          ref={videoRef}
-          muted
-          loop
-          controls
-          style={{
-            maxWidth: '100%',
-            maxHeight: '80vh',
-            objectFit: 'contain',
-            borderRadius: '8px',
-            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)',
-            display: error ? 'none' : 'block'
-          }}
-          onClick={(e) => e.stopPropagation()}
-        />
-
-        {/* Video info */}
-        {showFilenames && videoLoaded && (
-          <div style={{
-            marginTop: '20px',
-            padding: '15px 25px',
-            background: 'rgba(0, 0, 0, 0.8)',
-            borderRadius: '25px',
-            color: 'white',
-            fontSize: '16px',
-            textAlign: 'center',
-            maxWidth: '80vw',
-            wordBreak: 'break-word'
-          }}>
-            {video.name}
-          </div>
-        )}
-
-        {/* Keyboard shortcuts help */}
-        <div style={{
-          position: 'absolute',
-          bottom: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(0, 0, 0, 0.7)',
-          padding: '10px 20px',
-          borderRadius: '20px',
-          color: 'rgba(255, 255, 255, 0.8)',
-          fontSize: '14px',
-          textAlign: 'center'
-        }}>
-          <span style={{ marginRight: '20px' }}>← → Navigate</span>
-          <span style={{ marginRight: '20px' }}>Space Play/Pause</span>
-          <span>Esc Close</span>
-        </div>
-      </div>
-
-      {/* CSS animation for loading spinner */}
-      <style jsx>{`
-        @keyframes spin {
+    <>
+      {/* CSS animation moved to separate style element */}
+      <style>{`
+        @keyframes modalSpinner {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        .modal-spinner {
+          animation: modalSpinner 1s linear infinite;
+        }
       `}</style>
-    </div>
+      
+      <div
+        ref={modalRef}
+        className="fullscreen-modal"
+        onClick={handleBackdropClick}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.95)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          backdropFilter: 'blur(4px)'
+        }}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          style={{
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            background: 'rgba(0, 0, 0, 0.7)',
+            border: 'none',
+            borderRadius: '50%',
+            width: '50px',
+            height: '50px',
+            color: 'white',
+            fontSize: '24px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10001,
+            transition: 'background-color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
+          title="Close (Esc)"
+        >
+          ×
+        </button>
+
+        {/* Navigation buttons */}
+        <button
+          onClick={() => onNavigate('prev')}
+          style={{
+            position: 'absolute',
+            left: '20px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'rgba(0, 0, 0, 0.7)',
+            border: 'none',
+            borderRadius: '50%',
+            width: '60px',
+            height: '60px',
+            color: 'white',
+            fontSize: '24px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10001,
+            transition: 'background-color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
+          title="Previous (←)"
+        >
+          ←
+        </button>
+
+        <button
+          onClick={() => onNavigate('next')}
+          style={{
+            position: 'absolute',
+            right: '20px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'rgba(0, 0, 0, 0.7)',
+            border: 'none',
+            borderRadius: '50%',
+            width: '60px',
+            height: '60px',
+            color: 'white',
+            fontSize: '24px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10001,
+            transition: 'background-color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
+          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
+          title="Next (→)"
+        >
+          →
+        </button>
+
+        {/* Video container */}
+        <div
+          style={{
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          {/* Loading/Error states */}
+          {isLoading && (
+            <div style={{
+              color: 'white',
+              fontSize: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              marginBottom: '20px'
+            }}>
+              <div 
+                className="modal-spinner"
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  border: '2px solid #ffffff33',
+                  borderTop: '2px solid white',
+                  borderRadius: '50%'
+                }}
+              />
+              Loading video...
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              color: '#ff6b6b',
+              fontSize: '18px',
+              textAlign: 'center',
+              marginBottom: '20px',
+              padding: '20px',
+              background: 'rgba(255, 107, 107, 0.1)',
+              borderRadius: '8px',
+              border: '1px solid rgba(255, 107, 107, 0.3)'
+            }}>
+              <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
+              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Error Loading Video</div>
+              <div style={{ opacity: 0.8 }}>{error}</div>
+            </div>
+          )}
+
+          {/* Video element */}
+          <video
+            ref={videoRef}
+            muted
+            loop
+            controls
+            playsInline
+            style={{
+              maxWidth: '100%',
+              maxHeight: '80vh',
+              objectFit: 'contain',
+              borderRadius: '8px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)',
+              display: error ? 'none' : 'block'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+
+          {/* Video info */}
+          {showFilenames && videoLoaded && (
+            <div style={{
+              marginTop: '20px',
+              padding: '15px 25px',
+              background: 'rgba(0, 0, 0, 0.8)',
+              borderRadius: '25px',
+              color: 'white',
+              fontSize: '16px',
+              textAlign: 'center',
+              maxWidth: '80vw',
+              wordBreak: 'break-word'
+            }}>
+              {video.name}
+            </div>
+          )}
+
+          {/* Keyboard shortcuts help */}
+          <div style={{
+            position: 'absolute',
+            bottom: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(0, 0, 0, 0.7)',
+            padding: '10px 20px',
+            borderRadius: '20px',
+            color: 'rgba(255, 255, 255, 0.8)',
+            fontSize: '14px',
+            textAlign: 'center'
+          }}>
+            <span style={{ marginRight: '20px' }}>← → Navigate</span>
+            <span style={{ marginRight: '20px' }}>Space Play/Pause</span>
+            <span>Esc Close</span>
+          </div>
+        </div>
+      </div>
+    </>
   );
 };
 

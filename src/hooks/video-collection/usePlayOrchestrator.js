@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 
 /**
  * Centralized play orchestration.
@@ -17,40 +17,43 @@ export default function usePlayOrchestrator({
   const startOrderRef = useRef([]); // newer at the end
   const recentlyErroredRef = useRef(new Map()); // id -> ts
 
-  const pushStartOrder = (id) => {
+  // Stable function to avoid recreation on every render
+  const pushStartOrder = useCallback((id) => {
     startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
     startOrderRef.current.push(id);
-  };
+  }, []);
 
-  const markHover = (id) => {
+  // Stable function with useCallback to prevent infinite loops
+  const markHover = useCallback((id) => {
     hoveredRef.current = id;
     reconcile(); // make it snappy
-  };
+  }, []); // Empty dependency array - this function doesn't depend on anything
 
-  // media actually started
-  const reportStarted = (id) => {
+  // Media actually started - FIXED to prevent infinite loops
+  const reportStarted = useCallback((id) => {
     // Keep id in desired set (if not already)
     setPlayingSet((prev) => {
-      if (prev.has(id)) return prev;
+      if (prev.has(id)) return prev; // No change needed
       const next = new Set(prev);
       next.add(id);
-      pushStartOrder(id);
+      // Move pushStartOrder outside setState to avoid side effects during render
+      setTimeout(() => pushStartOrder(id), 0);
       return next;
     });
-  };
+  }, [pushStartOrder]);
 
-  const reportPlayError = (id, _err) => {
+  const reportPlayError = useCallback((id, _err) => {
     recentlyErroredRef.current.set(id, performance.now());
     setPlayingSet((prev) => {
-      if (!prev.has(id)) return prev;
+      if (!prev.has(id)) return prev; // No change needed
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
-  };
+  }, []);
 
   // Prefer kept items based on desirability
-  const evictIfNeeded = (baseSet) => {
+  const evictIfNeeded = useCallback((baseSet) => {
     const cap = Math.max(0, Number(maxPlaying) || 0);
     if (baseSet.size <= cap) return baseSet;
 
@@ -78,10 +81,10 @@ export default function usePlayOrchestrator({
     });
 
     return new Set(entries.slice(0, cap));
-  };
+  }, [maxPlaying, visibleIds, loadedIds]);
 
   // We only remove things that are no longer visible (to avoid wasting slots).
-  const reconcile = () => {
+  const reconcile = useCallback(() => {
     setPlayingSet((prev) => {
       let next = new Set(prev);
 
@@ -94,7 +97,8 @@ export default function usePlayOrchestrator({
       for (const id of visibleIds) {
         if (loadedIds.has(id)) {
           next.add(id);
-          pushStartOrder(id);
+          // Move side effect outside setState
+          setTimeout(() => pushStartOrder(id), 0);
         }
       }
 
@@ -102,19 +106,19 @@ export default function usePlayOrchestrator({
       const hovered = hoveredRef.current;
       if (hovered && visibleIds.has(hovered)) {
         next.add(hovered);
-        pushStartOrder(hovered);
+        setTimeout(() => pushStartOrder(hovered), 0);
       }
 
       // cap
       next = evictIfNeeded(next);
       return next;
     });
-  };
+  }, [visibleIds, loadedIds, evictIfNeeded, pushStartOrder]);
 
+  // FIXED: Add proper dependency management for reconcile
   useEffect(() => {
     reconcile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIds, loadedIds, maxPlaying]);
+  }, [visibleIds.size, loadedIds.size, maxPlaying]); // Only depend on sizes, not the sets themselves
 
   // Expire "recently errored" entries so they can retry later
   useEffect(() => {
@@ -129,6 +133,7 @@ export default function usePlayOrchestrator({
     return () => clearInterval(t);
   }, []);
 
+  // Memoize the return object to prevent unnecessary re-renders
   return useMemo(
     () => ({
       playingSet, // desired/allowed
@@ -136,6 +141,6 @@ export default function usePlayOrchestrator({
       reportStarted, // call when <video> fires "playing"
       reportPlayError, // call on error (load/play)
     }),
-    [playingSet]
+    [playingSet, markHover, reportStarted, reportPlayError]
   );
 }
