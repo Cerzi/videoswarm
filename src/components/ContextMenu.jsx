@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 const ContextMenu = ({ 
   video, 
@@ -6,10 +6,47 @@ const ContextMenu = ({
   onClose, 
   onAction 
 }) => {
+  const rootRef = useRef(null);
+
   // Don't render if no video or position
-  if (!video || !position) {
+  const isVisible = !!(video && position);
+  if (!isVisible) {
     return null;
   }
+
+  // Close on left-click (or tap) outside, Esc, resize/scroll
+  useEffect(() => {
+    const handlePointerDown = (e) => {
+      // if click is outside the menu, close
+      const root = rootRef.current;
+      if (root && !root.contains(e.target)) {
+        onClose();
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+
+    const handleWindowChange = () => {
+      onClose();
+    };
+
+    // capture phase so we close even if inner elements call stopPropagation
+    document.addEventListener('mousedown', handlePointerDown, true);
+    document.addEventListener('touchstart', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('resize', handleWindowChange);
+    window.addEventListener('scroll', handleWindowChange, true);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true);
+      document.removeEventListener('touchstart', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('resize', handleWindowChange);
+      window.removeEventListener('scroll', handleWindowChange, true);
+    };
+  }, [onClose]);
 
   const handleAction = (action) => {
     onAction(action);
@@ -125,9 +162,10 @@ const ContextMenu = ({
 
   return (
     <div 
+      ref={rootRef}
       data-context-menu
       style={menuStyle}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}   // keep clicks inside from bubbling
     >
       <div style={headerStyle} title={video.name}>
         {video.name}
@@ -150,12 +188,12 @@ const ContextMenu = ({
             }}
             onClick={() => handleAction(item.action)}
             onMouseEnter={(e) => {
-              e.target.style.backgroundColor = isDangerous ? '#ff4444' : '#404040';
-              e.target.style.color = 'white';
+              e.currentTarget.style.backgroundColor = isDangerous ? '#ff4444' : '#404040';
+              e.currentTarget.style.color = 'white';
             }}
             onMouseLeave={(e) => {
-              e.target.style.backgroundColor = 'transparent';
-              e.target.style.color = isDangerous ? '#ff6b6b' : '#e0e0e0';
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = isDangerous ? '#ff6b6b' : '#e0e0e0';
             }}
           >
             {item.label}
