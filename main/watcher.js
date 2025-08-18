@@ -1,5 +1,6 @@
+// main/watcher.js
 // Single-instance folder watcher with graceful polling fallback.
-// Emits: 'ready', 'mode', 'added', 'removed', 'changed', 'error'
+// Emits: 'mode', 'ready', 'added', 'removed', 'changed', 'error'
 
 const chokidar = require("chokidar");
 const path = require("path");
@@ -8,16 +9,39 @@ const { EventEmitter } = require("events");
 function createFolderWatcher({
   isVideoFile,
   createVideoFileObject,
-  scanFolderForChanges,
+  scanFolderForChanges,   // used for polling fallback
   logger = console,
-  depth = 10,
+  depth = 10,             // keep your previous recursion limit; set to undefined for unlimited
 }) {
+  if (typeof isVideoFile !== "function") {
+    throw new Error("createFolderWatcher: isVideoFile(fn) is required");
+  }
+  if (typeof createVideoFileObject !== "function") {
+    throw new Error("createFolderWatcher: createVideoFileObject(fn) is required");
+  }
+  if (typeof scanFolderForChanges !== "function") {
+    throw new Error("createFolderWatcher: scanFolderForChanges(fn) is required");
+  }
+
   const events = new EventEmitter();
 
-  let fileWatcher = null; // chokidar watcher
-  let pollingInterval = null; // setInterval id
-  let currentFolder = null;
-  const changeTimeouts = new Map(); // debounce per file
+  let fileWatcher = null;          // active chokidar watcher (native events)
+  let pollingInterval = null;      // setInterval id (polling fallback)
+  let currentFolder = null;        // current root
+  let fellBackThisSession = false; // one-shot fallback flag per folder
+  const changeTimeouts = new Map();// debounce timers per file
+
+  // ---- helpers ----
+  function isPolling() {
+    return !!pollingInterval;
+  }
+  function getCurrentFolder() {
+    return currentFolder;
+  }
+  function clearChangeDebouncers() {
+    for (const t of changeTimeouts.values()) clearTimeout(t);
+    changeTimeouts.clear();
+  }
 
   async function stop() {
     try {
@@ -26,22 +50,17 @@ function createFolderWatcher({
         await fileWatcher.close();
       }
     } catch (e) {
-      logger.warn("Error closing file watcher:", e);
+      logger.warn("[watch] Error closing watcher:", e);
     } finally {
       fileWatcher = null;
     }
+
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
     }
-  }
 
-  function isPolling() {
-    return !!pollingInterval;
-  }
-
-  function getCurrentFolder() {
-    return currentFolder;
+    clearChangeDebouncers();
   }
 
   function startPollingMode(folderPath) {
@@ -60,7 +79,7 @@ function createFolderWatcher({
       events.emit("error", e);
     }
 
-    // Poll every 5s (kept from your code)
+    // Poll every 5 seconds (matches your previous behavior)
     pollingInterval = setInterval(() => {
       try {
         scanFolderForChanges(folderPath);
@@ -74,43 +93,53 @@ function createFolderWatcher({
   }
 
   async function start(folderPath) {
-    // No-op if already watching the same folder
+    // If already watching the same folder, return current mode
     if (currentFolder === folderPath && (fileWatcher || pollingInterval)) {
       return { success: true, mode: isPolling() ? "polling" : "watch" };
     }
 
     await stop();
     currentFolder = folderPath;
+    fellBackThisSession = false; // allow native attempt on each new folder
 
-    // Create chokidar watcher (your options preserved)
+    // Create chokidar watcher (native events)
     fileWatcher = chokidar.watch(path.join(folderPath, "**/"), {
       ignored: [
-        /(^|[\/\\])\../, // dotfiles/folders
+        /(^|[\/\\])\../,      // ignore dot files/dirs
         "**/node_modules/**",
         "**/.git/**",
       ],
       persistent: true,
       ignoreInitial: true,
-      depth, // keep your recursion limit
+      depth,                  // recursion limit (unchanged)
 
-      // prefer native events
+      // Prefer native events
       usePolling: false,
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
 
+      // Churn/permissions
       atomic: true,
       alwaysStat: false,
       followSymlinks: false,
       ignorePermissionErrors: true,
 
+      // Platform quirks
       ...(process.platform === "darwin" && { useFsEvents: true }),
       ...(process.platform === "win32" && { useReaddir: false }),
     });
 
-    // Events
+    // ---- events ----
     fileWatcher.on("ready", () => {
-      logger.log("[watch] Watching:", folderPath);
+      // Instrumentation: count directories/files chokidar believes it has
+      try {
+        const watched = fileWatcher.getWatched?.() || {};
+        const dirs = Object.keys(watched).length;
+        let files = 0; for (const d in watched) files += watched[d].length;
+        logger.log(`[watch] ready: dirs=${dirs} files=${files}`);
+      } catch {}
       events.emit("mode", { mode: "watch", folderPath });
       events.emit("ready", { folderPath });
+      logger.log("[watch] Watching:", folderPath);
     });
 
     fileWatcher.on("add", async (filePath) => {
@@ -155,28 +184,40 @@ function createFolderWatcher({
     });
 
     fileWatcher.on("error", async (error) => {
-      logger.error("File watcher error:", error);
-      // On limits, fall back to polling
-      if (error && (error.code === "EMFILE" || error.code === "ENOSPC")) {
-        logger.warn("[watch] Too many files; switching to polling");
+      const code = error && error.code;
+      const isLimitError = code === "EMFILE" || code === "ENOSPC";
+
+      if (isLimitError && !fellBackThisSession) {
+        fellBackThisSession = true; // one-shot per folder
+        logger.warn("[watch] Limit hit:", code, "→ switching to polling");
+        // Close partially-initialized watcher before falling back
+        try {
+          await stop();
+        } catch {}
+
+        // Start polling for the same folder
+        startPollingMode(currentFolder);
+        // Emit mode explicitly because 'ready' may never fire when erroring early
+        events.emit("mode", { mode: "polling", folderPath: currentFolder });
+        // Optional UI hint
         events.emit("error", new Error("Switched to polling mode"));
-        await stop();
-        startPollingMode(folderPath);
-      } else {
-        events.emit("error", error);
+        return;
       }
+
+      // Non-limit errors or repeated limit errors
+      logger.error("File watcher error:", error);
+      events.emit("error", error);
     });
 
     return { success: true, mode: "watch" };
   }
 
+  // public API
   return {
-    // API
     start,
     stop,
     isPolling,
     getCurrentFolder,
-    // event emitter
     on: (...args) => events.on(...args),
     off: (...args) => events.off?.(...args) || events.removeListener(...args),
     once: (...args) => events.once(...args),
