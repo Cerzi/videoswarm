@@ -103,7 +103,7 @@ function createFolderWatcher({
     fellBackThisSession = false; // allow native attempt on each new folder
 
     // Create chokidar watcher (native events)
-    fileWatcher = chokidar.watch(path.join(folderPath, "**/"), {
+    fileWatcher = chokidar.watch(folderPath, {
       ignored: [
         /(^|[\/\\])\../,      // ignore dot files/dirs
         "**/node_modules/**",
