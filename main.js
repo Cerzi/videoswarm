@@ -80,7 +80,7 @@ function getDefaultZoomForScreen() {
 // Note: zoomLevel will be set dynamically after app is ready
 const defaultSettings = {
   recursiveMode: false,
-  maxConcurrentPlaying: 30,
+  maxConcurrentPlaying: 50,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   windowBounds: {
