@@ -447,6 +447,8 @@ async function clearRecentFolders() {
 }
 
 // IPC Handlers
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 ipcMain.handle("save-settings", async (event, settings) => {
   await saveSettings(settings);
   return { success: true };

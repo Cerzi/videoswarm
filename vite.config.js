@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import fs from 'fs'
+
+const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf-8'))
 
 export default defineConfig({
   plugins: [react()],
@@ -9,10 +12,8 @@ export default defineConfig({
     outDir: 'dist-react',
     assetsDir: 'assets',
     rollupOptions: {
-      input: {
-        main: resolve(__dirname, 'index.html')
-      },
-      // Add watch exclusions for build
+      input: { main: resolve(__dirname, 'index.html') },
+      // Note: rollupOptions.watch is ignored in production builds; that's fine.
       watch: {
         exclude: [
           'node_modules/**',
@@ -26,9 +27,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    // ADD FILE WATCHING OPTIMIZATIONS TO FIX EMFILE ERROR
     watch: {
-      // Aggressively ignore directories to reduce file watching
       ignored: [
         '**/node_modules/**',
         '**/.git/**',
@@ -42,38 +41,29 @@ export default defineConfig({
         '**/.electron/**',
         '**/logs/**',
         '**/*.log',
-        // Ignore common video directories that might be in your workspace
         '**/videos/**',
         '**/media/**',
         '**/assets/videos/**',
-        // Ignore other common large directories
         '**/.vscode/**',
         '**/.idea/**',
         '**/Android/**',
         '**/ios/**',
-        // Add any specific video folders you might have
         '**/output/**',
         '**/generated/**',
         '**/ComfyUI/**'
       ],
-      // Use polling as a fallback for file watching issues
       usePolling: process.env.VITE_USE_POLLING === 'true',
       interval: 1000,
       binaryInterval: 1000,
-      // Disable deep watching for performance
       depth: 3
     },
-    hmr: {
-      overlay: true,
-      // Reduce HMR overhead
-      timeout: 30000
-    }
+    hmr: { overlay: true, timeout: 30000 }
   },
-  // Electron-specific optimizations
   define: {
-    global: 'globalThis'
+    global: 'globalThis',
+    // inject the package.json version
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
   },
-  // Optimize for development
   optimizeDeps: {
     include: ['react', 'react-dom'],
     exclude: ['electron']
