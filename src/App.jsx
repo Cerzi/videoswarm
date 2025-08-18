@@ -15,6 +15,7 @@ import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
+import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
 
 // Helper
@@ -31,87 +32,16 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
-/** --- Small split-outs to keep App.jsx readable --- */
 const LoadingOverlay = ({ show, stage, progress }) => {
   if (!show) return null;
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(0,0,0,0.95)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 99999,
-        backdropFilter: "blur(8px)",
+    <LoadingProgress
+      progress={{
+        current: typeof progress === "number" ? progress : 0,
+        total: 100,
+        stage: stage || "",
       }}
-    >
-      <div
-        style={{
-          backgroundColor: "#1a1a1a",
-          borderRadius: 20,
-          padding: "3rem",
-          maxWidth: 600,
-          width: "90%",
-          textAlign: "center",
-          boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
-          border: "2px solid #333",
-        }}
-      >
-        <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>🐝</div>
-        <div
-          style={{
-            fontSize: "2rem",
-            marginBottom: "1rem",
-            color: "#4CAF50",
-            fontWeight: "bold",
-          }}
-        >
-          Video Swarm
-        </div>
-        <div
-          style={{
-            fontSize: "1.2rem",
-            color: "#ccc",
-            marginBottom: "2rem",
-            minHeight: 40,
-          }}
-        >
-          {stage || "Preparing..."}
-        </div>
-        <div
-          style={{
-            width: "100%",
-            height: 16,
-            backgroundColor: "#333",
-            borderRadius: 8,
-            overflow: "hidden",
-            marginBottom: "2rem",
-          }}
-        >
-          <div
-            style={{
-              width: `${progress}%`,
-              height: "100%",
-              background: "linear-gradient(90deg, #4CAF50, #45a049)",
-              borderRadius: 8,
-              transition: "width 0.5s ease",
-            }}
-          />
-        </div>
-        <div
-          style={{
-            fontSize: "1.5rem",
-            color: "#4CAF50",
-            fontWeight: "bold",
-            marginBottom: "2rem",
-          }}
-        >
-          {progress}%
-        </div>
-      </div>
-    </div>
+    />
   );
 };
 
