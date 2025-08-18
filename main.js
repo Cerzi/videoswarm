@@ -1,3 +1,5 @@
+// main.js
+
 console.log("=== COMMAND LINE ARGS ===");
 console.log(process.argv);
 
@@ -11,7 +13,6 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs").promises;
-const chokidar = require("chokidar");
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -93,21 +94,194 @@ const defaultSettings = {
 
 let mainWindow;
 let currentSettings = null;
-let fileWatcher = null;
-let currentWatchedFolder = null;
-let pollingInterval = null;
+
+// ===== Watcher integration (moved to separate module) =====
+const { createFolderWatcher } = require("./main/watcher");
+
+// We keep scanFolderForChanges so the watcher module can call it in polling mode.
 let lastFolderScan = new Map();
 
+// Helper function to check if file is a video
+function isVideoFile(fileName) {
+  const videoExtensions = [
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".m4v",
+    ".flv",
+    ".wmv",
+    ".3gp",
+    ".ogv",
+  ];
+  const ext = path.extname(fileName).toLowerCase();
+  return videoExtensions.includes(ext);
+}
+
+// Helper function to format file sizes
+function formatFileSize(bytes) {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
+// Helper function to create rich file object
+async function createVideoFileObject(filePath, baseFolderPath) {
+  try {
+    const stats = await fs.stat(filePath);
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+
+    return {
+      id: filePath,
+      name: fileName,
+      fullPath: filePath,
+      relativePath: path.relative(baseFolderPath, filePath),
+      extension: ext,
+      size: stats.size,
+      dateModified: stats.mtime,
+      dateCreated: stats.birthtime,
+      isElectronFile: true,
+      metadata: {
+        folder: path.dirname(filePath),
+        baseName: path.basename(fileName, ext),
+        sizeFormatted: formatFileSize(stats.size),
+        dateModifiedFormatted: stats.mtime.toLocaleDateString(),
+        dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
+      },
+    };
+  } catch (error) {
+    console.warn(`Error creating file object for ${filePath}:`, error.message);
+    return null;
+  }
+}
+
+// Scan folder and detect changes (used by watcher in polling mode)
+async function scanFolderForChanges(folderPath) {
+  try {
+    const videoExtensions = [
+      ".mp4",
+      ".mov",
+      ".avi",
+      ".mkv",
+      ".webm",
+      ".m4v",
+      ".flv",
+      ".wmv",
+      ".3gp",
+      ".ogv",
+    ];
+    const currentFiles = new Map();
+
+    async function scanDirectory(dirPath, depth = 0) {
+      if (depth > 10) return; // Limit depth
+      const files = await fs.readdir(dirPath, { withFileTypes: true });
+
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file.name);
+
+        if (file.isFile()) {
+          const ext = path.extname(file.name).toLowerCase();
+          if (videoExtensions.includes(ext)) {
+            try {
+              const stats = await fs.stat(fullPath);
+              currentFiles.set(fullPath, {
+                size: stats.size,
+                mtime: stats.mtime.getTime(),
+              });
+            } catch {
+              // File might have been deleted while scanning
+            }
+          }
+        } else if (file.isDirectory() && !file.name.startsWith(".")) {
+          await scanDirectory(fullPath, depth + 1);
+        }
+      }
+    }
+
+    await scanDirectory(folderPath);
+
+    if (lastFolderScan.size > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      // Added/changed
+      for (const [filePath, fileInfo] of currentFiles) {
+        if (!lastFolderScan.has(filePath)) {
+          const videoFile = await createVideoFileObject(filePath, folderPath);
+          if (videoFile) {
+            mainWindow.webContents.send("file-added", videoFile);
+          }
+        } else {
+          const lastInfo = lastFolderScan.get(filePath);
+          if (
+            lastInfo.mtime !== fileInfo.mtime ||
+            lastInfo.size !== fileInfo.size
+          ) {
+            const videoFile = await createVideoFileObject(filePath, folderPath);
+            if (videoFile) {
+              mainWindow.webContents.send("file-changed", videoFile);
+            }
+          }
+        }
+      }
+      // Removed
+      for (const filePath of lastFolderScan.keys()) {
+        if (!currentFiles.has(filePath)) {
+          mainWindow.webContents.send("file-removed", filePath);
+        }
+      }
+    }
+
+    lastFolderScan = currentFiles;
+  } catch (error) {
+    console.error("Error in polling mode scan:", error);
+  }
+}
+
+// Instantiate watcher (single instance, logic in ./main/watcher.js)
+const folderWatcher = createFolderWatcher({
+  isVideoFile,
+  createVideoFileObject,
+  scanFolderForChanges,
+  logger: console,
+  depth: 10, // unchanged from your previous config
+});
+
+// Wire watcher events to the renderer (native watch mode)
+function wireWatcherEvents(win) {
+  folderWatcher.on("added", (videoFile) => {
+    win.webContents.send("file-added", videoFile);
+  });
+  folderWatcher.on("removed", (filePath) => {
+    win.webContents.send("file-removed", filePath);
+  });
+  folderWatcher.on("changed", (videoFile) => {
+    win.webContents.send("file-changed", videoFile);
+  });
+  folderWatcher.on("mode", ({ mode, folderPath }) => {
+    console.log(`[watch] mode=${mode} path=${folderPath}`);
+    // Optionally notify the renderer:
+    // win.webContents.send("file-watch-mode", mode);
+  });
+  folderWatcher.on("error", (err) => {
+    const msg = (err && err.message) || String(err);
+    win.webContents.send("file-watch-error", msg);
+  });
+  folderWatcher.on("ready", ({ folderPath }) => {
+    console.log("Started watching folder:", folderPath);
+  });
+}
+
+// ===== Settings load/save =====
 async function loadSettings() {
   try {
     const data = await fs.readFile(settingsPath, "utf8");
     const settings = JSON.parse(data);
     console.log("Settings loaded:", settings);
 
-    // Remove layoutMode and autoplayEnabled from loaded settings if they exist (cleanup)
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
 
-    // If no zoomLevel in saved settings, detect based on screen (but only after app is ready)
     if (cleanSettings.zoomLevel === undefined) {
       const defaultZoom = getDefaultZoomForScreen();
       cleanSettings.zoomLevel = defaultZoom;
@@ -119,15 +293,13 @@ async function loadSettings() {
 
     currentSettings = { ...defaultSettings, ...cleanSettings };
     return currentSettings;
-  } catch (error) {
+  } catch {
     console.log("No settings file found, using defaults");
 
-    // Apply screen-based zoom to defaults (but only after app is ready)
     const settingsWithScreenZoom = { ...defaultSettings };
     try {
       settingsWithScreenZoom.zoomLevel = getDefaultZoomForScreen();
-    } catch (screenError) {
-      // Screen not ready yet, use default
+    } catch {
       settingsWithScreenZoom.zoomLevel = 1;
     }
 
@@ -138,7 +310,6 @@ async function loadSettings() {
 
 async function saveSettings(settings) {
   try {
-    // Remove layoutMode and autoplayEnabled from settings if they exist (cleanup)
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
     await fs.writeFile(settingsPath, JSON.stringify(cleanSettings, null, 2));
     currentSettings = cleanSettings;
@@ -148,6 +319,27 @@ async function saveSettings(settings) {
   }
 }
 
+function saveWindowBounds() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const bounds = mainWindow.getBounds();
+    const settings = {
+      windowBounds: bounds,
+    };
+    saveSettingsPartial(settings).catch(console.error);
+  }
+}
+
+async function saveSettingsPartial(partialSettings) {
+  try {
+    const current = await loadSettings();
+    const newSettings = { ...current, ...partialSettings };
+    await saveSettings(newSettings);
+  } catch (error) {
+    console.error("Failed to save partial settings:", error);
+  }
+}
+
+// ===== Window/Menu =====
 async function createWindow() {
   const settings = await loadSettings();
 
@@ -175,7 +367,8 @@ async function createWindow() {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
   });
 
-const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_URL;
+  const isDev =
+    process.argv.includes("--dev") || !!process.env.VITE_DEV_SERVER_URL;
 
   if (isDev) {
     console.log(
@@ -203,15 +396,12 @@ const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_UR
     console.error("  Reason:", details.reason);
     console.error("  Exit code:", details.exitCode);
     console.error("  Timestamp:", new Date().toISOString());
-
-    // Get memory info at crash time
     try {
       console.error("  System memory:", process.getSystemMemoryInfo());
       console.error("  Process memory:", process.getProcessMemoryInfo());
     } catch (e) {
       console.error("  Could not get memory info:", e.message);
     }
-
     if (details.reason === "oom") {
       console.error(
         "💥 CONFIRMED: Out of Memory crash - consider increasing zoom level"
@@ -219,8 +409,6 @@ const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_UR
     } else if (details.reason === "crashed") {
       console.error("💥 Generic crash - likely memory related");
     }
-
-    // Auto-restart (optional)
     setTimeout(() => {
       if (!mainWindow.isDestroyed()) {
         console.log("🔄 Attempting to reload...");
@@ -232,7 +420,6 @@ const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_UR
   mainWindow.webContents.on("unresponsive", () => {
     console.error("🔥 RENDERER UNRESPONSIVE");
   });
-
   mainWindow.webContents.on("responsive", () => {
     console.log("✅ RENDERER RESPONSIVE AGAIN");
   });
@@ -243,6 +430,9 @@ const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_UR
   if (isDev) {
     mainWindow.webContents.openDevTools();
   }
+
+  // Wire watcher events after window exists
+  wireWatcherEvents(mainWindow);
 }
 
 // Create application menu with folder selection
@@ -312,72 +502,23 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-function saveWindowBounds() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const bounds = mainWindow.getBounds();
-    const settings = {
-      windowBounds: bounds,
-    };
+// ===== Recent Folders Store (ESM import) =====
+let recentStore = null;
 
-    // Don't wait for this async operation
-    saveSettingsPartial(settings).catch(console.error);
-  }
-}
-
-async function saveSettingsPartial(partialSettings) {
+async function initRecentStore() {
   try {
-    const currentSettings = await loadSettings();
-    const newSettings = { ...currentSettings, ...partialSettings };
-    await saveSettings(newSettings);
-  } catch (error) {
-    console.error("Failed to save partial settings:", error);
-  }
-}
-
-// --- Recent Folders Store ---
-let Store = null;
-let storeInitialized = false;
-
-function initializeStore() {
-  if (storeInitialized) return Store !== null;
-
-  try {
-    // Try CommonJS require first
-    Store = require("electron-store");
-    console.log("✅ electron-store loaded via require()");
-    storeInitialized = true;
-    return true;
-  } catch (error1) {
-    console.log("❌ require() failed:", error1.message);
-
-    try {
-      // Try accessing default export
-      const storeModule = require("electron-store");
-      Store = storeModule.default || storeModule;
-      console.log("✅ electron-store loaded via default export");
-      storeInitialized = true;
-      return true;
-    } catch (error2) {
-      console.log("❌ default export failed:", error2.message);
-
-      try {
-        // Last resort: try destructuring
-        const { Store: StoreClass } = require("electron-store");
-        Store = StoreClass;
-        console.log("✅ electron-store loaded via destructuring");
-        storeInitialized = true;
-        return true;
-      } catch (error3) {
-        console.error(
-          "❌ All electron-store import methods failed:",
-          error3.message
-        );
-        console.log("📁 Recent folders will be disabled");
-        Store = null;
-        storeInitialized = true;
-        return false;
-      }
-    }
+    const mod = await import("electron-store"); // ESM-only in v9+
+    const StoreClass = mod.default || mod.Store || mod;
+    recentStore = new StoreClass({
+      name: "recent-folders",
+      fileExtension: "json",
+      clearInvalidConfig: true,
+      accessPropertiesByDotNotation: false,
+    });
+    console.log("📁 recentStore initialized");
+  } catch (e) {
+    console.warn("📁 electron-store unavailable:", e?.message);
+    recentStore = null; // feature gracefully disabled
   }
 }
 
@@ -446,27 +587,27 @@ async function clearRecentFolders() {
   }
 }
 
-// IPC Handlers
-ipcMain.handle('get-app-version', () => app.getVersion());
+// ===== IPC Handlers =====
+ipcMain.handle("get-app-version", () => app.getVersion());
 
-ipcMain.handle("save-settings", async (event, settings) => {
+ipcMain.handle("save-settings", async (_event, settings) => {
   await saveSettings(settings);
   return { success: true };
 });
 
-ipcMain.handle("load-settings", async (event) => {
+ipcMain.handle("load-settings", async () => {
   const settings = await loadSettings();
   return settings;
 });
 
-// NEW: Synchronous settings getter - returns cached settings immediately
-ipcMain.handle("get-settings", async (event) => {
+// NEW: Synchronous-ish settings getter - returns cached settings immediately
+ipcMain.handle("get-settings", async () => {
   console.log("get-settings called, returning:", currentSettings);
   return currentSettings || defaultSettings;
 });
 
 // NEW: Request settings (for refresh scenarios)
-ipcMain.handle("request-settings", async (event) => {
+ipcMain.handle("request-settings", async () => {
   console.log("request-settings called, sending settings via IPC");
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(
@@ -477,12 +618,12 @@ ipcMain.handle("request-settings", async (event) => {
   return { success: true };
 });
 
-ipcMain.handle("save-settings-partial", async (event, partialSettings) => {
+ipcMain.handle("save-settings-partial", async (_event, partialSettings) => {
   await saveSettingsPartial(partialSettings);
   return { success: true };
 });
 
-ipcMain.handle("select-folder", async (event) => {
+ipcMain.handle("select-folder", async () => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openDirectory"],
@@ -501,7 +642,7 @@ ipcMain.handle("select-folder", async (event) => {
 });
 
 // Handle file manager opening
-ipcMain.handle("show-item-in-folder", async (event, filePath) => {
+ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
   try {
     console.log("Attempting to show in folder:", filePath);
     shell.showItemInFolder(filePath);
@@ -513,7 +654,7 @@ ipcMain.handle("show-item-in-folder", async (event, filePath) => {
 });
 
 // Open file in external application (default video player)
-ipcMain.handle("open-in-external-player", async (event, filePath) => {
+ipcMain.handle("open-in-external-player", async (_event, filePath) => {
   try {
     console.log("Opening in external player:", filePath);
     await shell.openPath(filePath);
@@ -525,7 +666,7 @@ ipcMain.handle("open-in-external-player", async (event, filePath) => {
 });
 
 // Copy text to clipboard
-ipcMain.handle("copy-to-clipboard", async (event, text) => {
+ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   try {
     const { clipboard } = require("electron");
     clipboard.writeText(text);
@@ -540,7 +681,7 @@ ipcMain.handle("copy-to-clipboard", async (event, text) => {
 // Read directory and return video files with metadata
 ipcMain.handle(
   "read-directory",
-  async (event, folderPath, recursive = false) => {
+  async (_event, folderPath, recursive = false) => {
     try {
       console.log(`Reading directory: ${folderPath} (recursive: ${recursive})`);
       const videoExtensions = [
@@ -567,12 +708,9 @@ ipcMain.handle(
             const ext = path.extname(file.name).toLowerCase();
             if (videoExtensions.includes(ext)) {
               try {
-                // Get file stats for metadata
                 const stats = await fs.stat(fullPath);
-
-                // Create rich file object
                 const videoFile = {
-                  id: fullPath, // Use full path as unique ID
+                  id: fullPath,
                   name: file.name,
                   fullPath: fullPath,
                   relativePath: path.relative(folderPath, fullPath),
@@ -589,14 +727,12 @@ ipcMain.handle(
                     dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
                   },
                 };
-
                 videoFiles.push(videoFile);
               } catch (error) {
                 console.warn(
                   `Error reading file stats for ${fullPath}:`,
                   error.message
                 );
-                // Fallback to basic file object
                 videoFiles.push({
                   id: fullPath,
                   name: file.name,
@@ -609,8 +745,6 @@ ipcMain.handle(
               }
             }
           } else if (file.isDirectory() && recursive && depth < 10) {
-            // Limit depth to avoid infinite loops
-            // Skip hidden directories and common non-media folders
             if (
               !file.name.startsWith(".") &&
               ![
@@ -638,7 +772,6 @@ ipcMain.handle(
         `Found ${videoFiles.length} video files in ${folderPath} (recursive: ${recursive})`
       );
 
-      // Sort files by name for consistent ordering
       return videoFiles.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
       console.error("Error reading directory:", error);
@@ -647,327 +780,8 @@ ipcMain.handle(
   }
 );
 
-// Helper function to format file sizes
-function formatFileSize(bytes) {
-  if (bytes === 0) return "0 Bytes";
-
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
-
-// Helper function to check if file is a video
-function isVideoFile(fileName) {
-  const videoExtensions = [
-    ".mp4",
-    ".mov",
-    ".avi",
-    ".mkv",
-    ".webm",
-    ".m4v",
-    ".flv",
-    ".wmv",
-    ".3gp",
-    ".ogv",
-  ];
-  const ext = path.extname(fileName).toLowerCase();
-  return videoExtensions.includes(ext);
-}
-
-// Helper function to create rich file object
-async function createVideoFileObject(filePath, baseFolderPath) {
-  try {
-    const stats = await fs.stat(filePath);
-    const fileName = path.basename(filePath);
-    const ext = path.extname(fileName).toLowerCase();
-
-    return {
-      id: filePath,
-      name: fileName,
-      fullPath: filePath,
-      relativePath: path.relative(baseFolderPath, filePath),
-      extension: ext,
-      size: stats.size,
-      dateModified: stats.mtime,
-      dateCreated: stats.birthtime,
-      isElectronFile: true,
-      metadata: {
-        folder: path.dirname(filePath),
-        baseName: path.basename(fileName, ext),
-        sizeFormatted: formatFileSize(stats.size),
-        dateModifiedFormatted: stats.mtime.toLocaleDateString(),
-        dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
-      },
-    };
-  } catch (error) {
-    console.warn(`Error creating file object for ${filePath}:`, error.message);
-    return null;
-  }
-}
-
-// Start watching a folder for file changes
-ipcMain.handle("start-folder-watch", async (event, folderPath) => {
-  try {
-    // Stop any existing watcher
-    if (fileWatcher) {
-      fileWatcher.close();
-      fileWatcher = null;
-    }
-
-    currentWatchedFolder = folderPath;
-
-    // Create new watcher with optimized settings
-    fileWatcher = chokidar.watch(path.join(folderPath, "**/"), {
-      ignored: [
-        /(^|[\/\\])\../, // Ignore hidden files/folders
-        "**/node_modules/**", // Ignore node_modules
-        "**/.git/**", // Ignore git folders
-      ],
-      persistent: true,
-      ignoreInitial: true, // Don't fire events for existing files
-      depth: 10, // Limit recursion depth
-
-      // OPTIMIZATION: Watch directories only, not individual files
-      usePolling: false, // Use native events (faster)
-      awaitWriteFinish: {
-        stabilityThreshold: 500, // Wait 500ms for file to stabilize
-        pollInterval: 100,
-      },
-
-      // CRITICAL: Reduce file handle usage
-      atomic: true, // Reduce duplicate events
-      alwaysStat: false, // Don't automatically stat files
-      followSymlinks: false, // Don't follow symlinks
-
-      // Platform-specific optimizations
-      ...(process.platform === "darwin" && {
-        useFsEvents: true, // Use macOS FSEvents
-      }),
-      ...(process.platform === "win32" && {
-        useReaddir: false, // Optimize for Windows
-      }),
-    });
-
-    // File added
-    fileWatcher.on("add", async (filePath) => {
-      if (isVideoFile(filePath)) {
-        console.log("Video file added:", filePath);
-        const videoFile = await createVideoFileObject(filePath, folderPath);
-        if (videoFile) {
-          mainWindow.webContents.send("file-added", videoFile);
-        }
-      }
-    });
-
-    // File removed
-    fileWatcher.on("unlink", (filePath) => {
-      if (isVideoFile(filePath)) {
-        console.log("Video file removed:", filePath);
-        mainWindow.webContents.send("file-removed", filePath);
-      }
-    });
-
-    // File changed (modified) - debounced to avoid spam
-    let changeTimeouts = new Map();
-    fileWatcher.on("change", async (filePath) => {
-      if (isVideoFile(filePath)) {
-        // Debounce changes to avoid spam
-        if (changeTimeouts.has(filePath)) {
-          clearTimeout(changeTimeouts.get(filePath));
-        }
-
-        changeTimeouts.set(
-          filePath,
-          setTimeout(async () => {
-            console.log("Video file changed:", filePath);
-            const videoFile = await createVideoFileObject(filePath, folderPath);
-            if (videoFile) {
-              mainWindow.webContents.send("file-changed", videoFile);
-            }
-            changeTimeouts.delete(filePath);
-          }, 1000)
-        ); // Wait 1 second before processing change
-      }
-    });
-
-    // Handle errors gracefully
-    fileWatcher.on("error", (error) => {
-      console.error("File watcher error:", error);
-
-      // Don't spam the renderer with errors
-      if (error.code === "EMFILE" || error.code === "ENOSPC") {
-        console.warn(
-          "File watcher: Too many files to watch, falling back to polling mode"
-        );
-
-        // Close the problematic watcher
-        if (fileWatcher) {
-          fileWatcher.close();
-          fileWatcher = null;
-        }
-
-        // Start polling mode as fallback
-        startPollingMode(folderPath);
-
-        mainWindow.webContents.send(
-          "file-watch-error",
-          "Switched to polling mode for better stability"
-        );
-      } else {
-        mainWindow.webContents.send("file-watch-error", error.message);
-      }
-    });
-
-    console.log("Started watching folder:", folderPath);
-    return { success: true };
-  } catch (error) {
-    console.error("Error starting folder watch:", error);
-
-    // Try fallback polling mode
-    console.log("Attempting fallback to polling mode...");
-    try {
-      startPollingMode(folderPath);
-      return { success: true, mode: "polling" };
-    } catch (pollingError) {
-      console.error("Polling mode also failed:", pollingError);
-      return { success: false, error: error.message };
-    }
-  }
-});
-
-// Fallback polling mode for when file watching fails
-function startPollingMode(folderPath) {
-  console.log("Starting polling mode for:", folderPath);
-
-  // Stop any existing polling
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-  }
-
-  // Initial scan
-  scanFolderForChanges(folderPath);
-
-  // Poll every 5 seconds
-  pollingInterval = setInterval(() => {
-    scanFolderForChanges(folderPath);
-  }, 5000);
-}
-
-// Scan folder and detect changes (for polling mode)
-async function scanFolderForChanges(folderPath) {
-  try {
-    const videoExtensions = [
-      ".mp4",
-      ".mov",
-      ".avi",
-      ".mkv",
-      ".webm",
-      ".m4v",
-      ".flv",
-      ".wmv",
-      ".3gp",
-      ".ogv",
-    ];
-    const currentFiles = new Map();
-
-    // Scan directory
-    async function scanDirectory(dirPath, depth = 0) {
-      if (depth > 10) return; // Limit depth
-
-      const files = await fs.readdir(dirPath, { withFileTypes: true });
-
-      for (const file of files) {
-        const fullPath = path.join(dirPath, file.name);
-
-        if (file.isFile()) {
-          const ext = path.extname(file.name).toLowerCase();
-          if (videoExtensions.includes(ext)) {
-            try {
-              const stats = await fs.stat(fullPath);
-              currentFiles.set(fullPath, {
-                size: stats.size,
-                mtime: stats.mtime.getTime(),
-              });
-            } catch (error) {
-              // File might have been deleted while scanning
-            }
-          }
-        } else if (file.isDirectory() && !file.name.startsWith(".")) {
-          await scanDirectory(fullPath, depth + 1);
-        }
-      }
-    }
-
-    await scanDirectory(folderPath);
-
-    // Compare with last scan
-    if (lastFolderScan.size > 0) {
-      // Check for new files
-      for (const [filePath, fileInfo] of currentFiles) {
-        if (!lastFolderScan.has(filePath)) {
-          // File added
-          const videoFile = await createVideoFileObject(filePath, folderPath);
-          if (videoFile) {
-            mainWindow.webContents.send("file-added", videoFile);
-          }
-        } else {
-          // Check if file changed
-          const lastInfo = lastFolderScan.get(filePath);
-          if (
-            lastInfo.mtime !== fileInfo.mtime ||
-            lastInfo.size !== fileInfo.size
-          ) {
-            const videoFile = await createVideoFileObject(filePath, folderPath);
-            if (videoFile) {
-              mainWindow.webContents.send("file-changed", videoFile);
-            }
-          }
-        }
-      }
-
-      // Check for removed files
-      for (const filePath of lastFolderScan.keys()) {
-        if (!currentFiles.has(filePath)) {
-          mainWindow.webContents.send("file-removed", filePath);
-        }
-      }
-    }
-
-    // Update last scan
-    lastFolderScan = currentFiles;
-  } catch (error) {
-    console.error("Error in polling mode scan:", error);
-  }
-}
-
-// Stop watching folder
-ipcMain.handle("stop-folder-watch", async (event) => {
-  try {
-    if (fileWatcher) {
-      fileWatcher.close();
-      fileWatcher = null;
-    }
-
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
-    }
-
-    currentWatchedFolder = null;
-    lastFolderScan.clear();
-    console.log("Stopped folder watching");
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error stopping folder watch:", error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Get file info
-ipcMain.handle("get-file-info", async (event, filePath) => {
+// File info helpers
+ipcMain.handle("get-file-info", async (_event, filePath) => {
   try {
     const stats = await fs.stat(filePath);
     return {
@@ -982,7 +796,7 @@ ipcMain.handle("get-file-info", async (event, filePath) => {
   }
 });
 
-ipcMain.handle("delete-file", async (event, filePath) => {
+ipcMain.handle("delete-file", async (_event, filePath) => {
   try {
     await fs.unlink(filePath);
     return { success: true };
@@ -993,9 +807,9 @@ ipcMain.handle("delete-file", async (event, filePath) => {
 });
 
 // Move file to trash (safer than permanent deletion)
-ipcMain.handle("move-to-trash", async (event, filePath) => {
+ipcMain.handle("move-to-trash", async (_event, filePath) => {
   try {
-    const result = await shell.trashItem(filePath);
+    await shell.trashItem(filePath);
     return { success: true };
   } catch (error) {
     console.error("Failed to move to trash:", error);
@@ -1003,7 +817,7 @@ ipcMain.handle("move-to-trash", async (event, filePath) => {
   }
 });
 
-ipcMain.handle("copy-file", async (event, sourcePath, destPath) => {
+ipcMain.handle("copy-file", async (_event, sourcePath, destPath) => {
   try {
     await fs.copyFile(sourcePath, destPath);
     return { success: true };
@@ -1012,7 +826,7 @@ ipcMain.handle("copy-file", async (event, sourcePath, destPath) => {
   }
 });
 
-ipcMain.handle("get-file-properties", async (event, filePath) => {
+ipcMain.handle("get-file-properties", async (_event, filePath) => {
   try {
     const stats = await fs.stat(filePath);
     return {
@@ -1022,57 +836,62 @@ ipcMain.handle("get-file-properties", async (event, filePath) => {
       isDirectory: stats.isDirectory(),
       permissions: stats.mode,
     };
-  } catch (error) {
+  } catch {
     return null;
   }
 });
 
+// Recent folders IPC
 ipcMain.handle("recent:get", async () => await getRecentFolders());
-ipcMain.handle(
-  "recent:add",
-  async (_e, folderPath) => await addRecentFolder(folderPath)
-);
-ipcMain.handle(
-  "recent:remove",
-  async (_e, folderPath) => await removeRecentFolder(folderPath)
-);
+ipcMain.handle("recent:add", async (_e, folderPath) => await addRecentFolder(folderPath));
+ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFolder(folderPath));
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
+// Watcher IPC (delegated to watcher module)
+ipcMain.handle("start-folder-watch", async (_event, folderPath) => {
+  try {
+    const result = await folderWatcher.start(folderPath);
+    return { success: true, mode: result.mode };
+  } catch (e) {
+    console.error("Error starting folder watch:", e);
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle("stop-folder-watch", async () => {
+  try {
+    await folderWatcher.stop();
+    lastFolderScan.clear();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+// App lifecycle
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-async function initRecentStore() {
-  try {
-    const mod = await import("electron-store"); // ESM-only in v9+
-    const StoreClass = mod.default || mod.Store || mod;
-    recentStore = new StoreClass({
-      name: "recent-folders",
-      fileExtension: "json",
-      clearInvalidConfig: true,
-      accessPropertiesByDotNotation: false,
-    });
-    console.log("📁 recentStore initialized");
-  } catch (e) {
-    console.warn("📁 electron-store unavailable:", e?.message);
-    recentStore = null; // feature gracefully disabled
-  }
-}
-
 app.whenReady().then(async () => {
   try {
     console.log("GPU status:", app.getGPUFeatureStatus());
     await initRecentStore(); // safe no-op if it fails
-    await createWindow(); // make sure this actually returns/awaits
-    createMenu(); // optional, after window exists
+    await createWindow();
+    createMenu();
   } catch (err) {
     console.error("❌ Startup failure:", err);
   }
 });
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
+
+// Ensure watcher cleanup on quit
+app.on("before-quit", async () => { await folderWatcher.stop(); });
+app.on("will-quit",   async () => { await folderWatcher.stop(); });
