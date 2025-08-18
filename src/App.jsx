@@ -9,10 +9,12 @@ import React, {
 import VideoCard from "./components/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
+import RecentFolders from "./components/RecentFolders";
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
+import useRecentFolders from "./hooks/useRecentFolders";
 import "./App.css";
 
 // Helper
@@ -29,6 +31,120 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+/** --- Small split-outs to keep App.jsx readable --- */
+const LoadingOverlay = ({ show, stage, progress }) => {
+  if (!show) return null;
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.95)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 99999,
+        backdropFilter: "blur(8px)",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: "#1a1a1a",
+          borderRadius: 20,
+          padding: "3rem",
+          maxWidth: 600,
+          width: "90%",
+          textAlign: "center",
+          boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
+          border: "2px solid #333",
+        }}
+      >
+        <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>🐝</div>
+        <div
+          style={{
+            fontSize: "2rem",
+            marginBottom: "1rem",
+            color: "#4CAF50",
+            fontWeight: "bold",
+          }}
+        >
+          Video Swarm
+        </div>
+        <div
+          style={{
+            fontSize: "1.2rem",
+            color: "#ccc",
+            marginBottom: "2rem",
+            minHeight: 40,
+          }}
+        >
+          {stage || "Preparing..."}
+        </div>
+        <div
+          style={{
+            width: "100%",
+            height: 16,
+            backgroundColor: "#333",
+            borderRadius: 8,
+            overflow: "hidden",
+            marginBottom: "2rem",
+          }}
+        >
+          <div
+            style={{
+              width: `${progress}%`,
+              height: "100%",
+              background: "linear-gradient(90deg, #4CAF50, #45a049)",
+              borderRadius: 8,
+              transition: "width 0.5s ease",
+            }}
+          />
+        </div>
+        <div
+          style={{
+            fontSize: "1.5rem",
+            color: "#4CAF50",
+            fontWeight: "bold",
+            marginBottom: "2rem",
+          }}
+        >
+          {progress}%
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MemoryAlert = ({ memStatus }) => {
+  if (!memStatus || !memStatus.isNearLimit) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: '80px',
+        right: '20px',
+        background: 'rgba(255, 107, 107, 0.95)',
+        color: 'white',
+        padding: '1rem',
+        borderRadius: '8px',
+        zIndex: 1000,
+        maxWidth: '300px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+      }}
+    >
+      <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+        🚨 Memory Warning
+      </div>
+      <div style={{ fontSize: '0.9rem' }}>
+        Memory usage: {memStatus.currentMemoryMB}MB ({memStatus.memoryPressure}%)
+        <br />
+        Reducing video quality to prevent crashes.
+      </div>
+    </div>
+  );
+};
+/** --- end split-outs --- */
+
 function App() {
   const [videos, setVideos] = useState([]);
   const [selectedVideos, setSelectedVideos] = useState(new Set());
@@ -43,7 +159,7 @@ function App() {
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
 
-  // Video collection state (managed by individual VideoCard components)
+  // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
@@ -51,12 +167,20 @@ function App() {
 
   const gridRef = useRef(null);
 
+  // ----- Recent Folders hook -----
+  const {
+    items: recentFolders,
+    add: addRecentFolder,
+    remove: removeRecentFolder,
+    clear: clearRecentFolders,
+  } = useRecentFolders();
+
   // ----- Masonry hook -----
   const { updateAspectRatio, onItemsChanged, setZoomClass } = useChunkedMasonry(
     { gridRef }
   );
 
-  // MEMOIZED: Grouped and sorted videos
+  // MEMOIZED grouped & sorted
   const groupedAndSortedVideos = useMemo(() => {
     if (videos.length === 0) return [];
     const videosByFolder = new Map();
@@ -81,7 +205,7 @@ function App() {
     return result;
   }, [videos]);
 
-  // --- Composite Video Collection Hook (now with memory monitoring) ---
+  // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
     videos: groupedAndSortedVideos,
     visibleVideos,
@@ -104,30 +228,20 @@ function App() {
 
   // === DYNAMIC ZOOM CALCULATION ===
   const calculateSafeZoom = useCallback((windowWidth, windowHeight, videoCount) => {
-    // Estimate videos per row based on zoom levels and window width
-    const zoomSizes = [150, 200, 300, 400]; // minmax values from CSS
+    const zoomSizes = [150, 200, 300, 400];
     const estimatedVideosPerRow = zoomSizes.map(size => Math.floor(windowWidth / size));
-    
-    // Estimate visible videos (assume ~5 rows visible at once)
     const estimatedVisibleVideos = estimatedVideosPerRow.map(perRow => perRow * 5);
-    
-    // Memory pressure calculation (conservative estimate: 15MB per video)
-    const memoryPressure = estimatedVisibleVideos.map(visible => (visible * 15) / 3600); // as fraction of 3.6GB
-    
-    // Find the highest zoom level that keeps memory under 80%
+    const memoryPressure = estimatedVisibleVideos.map(visible => (visible * 15) / 3600);
     for (let i = 0; i < memoryPressure.length; i++) {
       if (memoryPressure[i] < 0.8) {
         console.log(`🧠 Safe zoom level ${i} (${['75%', '100%', '150%', '200%'][i]}) - estimated ${estimatedVisibleVideos[i]} visible videos`);
         return i;
       }
     }
-    
-    // If even 200% is unsafe, force it anyway but warn
     console.warn('⚠️ All zoom levels may cause memory pressure - using maximum zoom');
     return 3;
   }, []);
 
-  // MOVE handleZoomChange BEFORE getMinimumZoomLevel since it depends on it
   const handleZoomChange = useCallback(
     (z) => {
       setZoomLevel(z);
@@ -142,33 +256,25 @@ function App() {
     [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames]
   );
 
-  // Get minimum zoom level based on current conditions
   const getMinimumZoomLevel = useCallback(() => {
     const videoCount = groupedAndSortedVideos.length;
     const windowWidth = window.innerWidth;
-    
-    // Force higher zoom for large collections on wide screens
-    if (videoCount > 200 && windowWidth > 2560) return 2; // Minimum 150%
-    if (videoCount > 150 && windowWidth > 1920) return 1; // Minimum 100%
-    return 0; // Allow 75%
+    if (videoCount > 200 && windowWidth > 2560) return 2;
+    if (videoCount > 150 && windowWidth > 1920) return 1;
+    return 0;
   }, [groupedAndSortedVideos.length]);
 
-  // Enhanced zoom change handler with safety limits
   const handleZoomChangeSafe = useCallback((newZoom) => {
     const minZoom = getMinimumZoomLevel();
     const safeZoom = Math.max(newZoom, minZoom);
-    
     if (safeZoom !== newZoom) {
       console.warn(`🛡️ Zoom limited to ${['75%', '100%', '150%', '200%'][safeZoom]} for memory safety (requested ${['75%', '100%', '150%', '200%'][newZoom]})`);
     }
-    
     handleZoomChange(safeZoom);
   }, [getMinimumZoomLevel, handleZoomChange]);
 
-  // === MEMORY MONITORING SETUP ===
-  // Initial memory logging and manual GC setup
+  // === MEMORY MONITORING (unchanged logging) ===
   useEffect(() => {
-    // Log initial memory limits
     if (performance.memory) {
       console.log('🧠 Initial memory limits:', {
         jsHeapSizeLimit: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024) + 'MB',
@@ -179,7 +285,6 @@ function App() {
       console.log('📊 performance.memory not available');
     }
 
-    // Dev-only manual GC trigger (Ctrl+Shift+G)
     if (process.env.NODE_ENV !== 'production') {
       const handleKeydown = (e) => {
         if (e.ctrlKey && e.shiftKey && e.key === 'G') {
@@ -194,78 +299,63 @@ function App() {
           }
         }
       };
-      
       window.addEventListener('keydown', handleKeydown);
       return () => window.removeEventListener('keydown', handleKeydown);
     }
   }, []);
 
-  // Memory warning system for development
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production' && videoCollection.memoryStatus) {
       const { currentMemoryMB, memoryPressure } = videoCollection.memoryStatus;
-      
-      // Warn developers when approaching production limits
       if (currentMemoryMB > 3000) {
         console.warn(`🔥 DEV WARNING: High memory usage (${currentMemoryMB}MB) - this would crash in production!`);
       }
-      
       if (memoryPressure > 80) {
         console.warn(`⚠️ DEV WARNING: Memory pressure at ${memoryPressure}% - production limits would kick in`);
       }
     }
   }, [videoCollection.memoryStatus?.currentMemoryMB, videoCollection.memoryStatus?.memoryPressure]);
 
-  // === DYNAMIC ZOOM WINDOW RESIZE MONITORING ===
+  // === DYNAMIC ZOOM RESIZE / COUNT (unchanged) ===
   useEffect(() => {
     if (!window.electronAPI?.isElectron) return;
-    
     const handleResize = () => {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
       const videoCount = groupedAndSortedVideos.length;
-      
-      // Only auto-adjust if we have a significant number of videos
       if (videoCount > 50) {
         const safeZoom = calculateSafeZoom(windowWidth, windowHeight, videoCount);
-        
-        // Only change if it's more restrictive (higher zoom) than current
         if (safeZoom > zoomLevel) {
           console.log(`📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${['75%', '100%', '150%', '200%'][safeZoom]} for safety`);
           handleZoomChange(safeZoom);
         }
       }
     };
-    
-    // Debounce resize events
     let resizeTimeout;
     const debouncedResize = () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(handleResize, 500);
     };
-    
     window.addEventListener('resize', debouncedResize);
     return () => {
       window.removeEventListener('resize', debouncedResize);
       clearTimeout(resizeTimeout);
     };
-  }, [groupedAndSortedVideos.length]); // REMOVED calculateSafeZoom, zoomLevel, handleZoomChange from dependencies
+  }, [groupedAndSortedVideos.length]);
 
-  // === AUTO-ADJUST ZOOM WHEN VIDEO COUNT CHANGES ===
   useEffect(() => {
     if (groupedAndSortedVideos.length > 100) {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
       const safeZoom = calculateSafeZoom(windowWidth, windowHeight, groupedAndSortedVideos.length);
-      
       if (safeZoom > zoomLevel) {
         console.log(`📹 Large collection detected (${groupedAndSortedVideos.length} videos) - adjusting zoom for memory safety`);
         handleZoomChange(safeZoom);
       }
     }
-  }, [groupedAndSortedVideos.length]); // REMOVED calculateSafeZoom, zoomLevel, handleZoomChange from dependencies
+  }, [groupedAndSortedVideos.length]);
 
-  // settings load
+  // settings load + folder selection event
   useEffect(() => {
     const load = async () => {
       const api = window.electronAPI;
@@ -349,7 +439,7 @@ function App() {
   // relayout when list changes
   useEffect(() => {
     if (groupedAndSortedVideos.length) onItemsChanged();
-  }, [groupedAndSortedVideos.length]); // Remove onItemsChanged from deps to prevent infinite loop
+  }, [groupedAndSortedVideos.length]);
 
   // zoom handling via hook
   useEffect(() => {
@@ -427,7 +517,7 @@ function App() {
         setLoadingProgress(70);
         await new Promise((r) => setTimeout(r, 200));
 
-        setVideos(files); // triggers onItemsChanged via effect
+        setVideos(files);
         await new Promise((r) => setTimeout(r, 300));
 
         setLoadingStage("Complete!");
@@ -437,18 +527,21 @@ function App() {
 
         const watchResult = await api.startFolderWatch?.(folderPath);
         if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
+
+        // ✅ record in recent folders AFTER successful open
+        addRecentFolder(folderPath);
       } catch (e) {
         console.error("Error reading directory:", e);
         setIsLoadingFolder(false);
       }
     },
-    [recursiveMode]
+    [recursiveMode, addRecentFolder]
   );
 
   const handleFolderSelect = useCallback(async () => {
     const res = await window.electronAPI?.selectFolder?.();
     if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
-  }, [handleElectronFolderSelection]); // Fixed dependency
+  }, [handleElectronFolderSelection]);
 
   const handleWebFileSelection = useCallback((event) => {
     const files = Array.from(event.target.files || []).filter((f) => {
@@ -471,6 +564,8 @@ function App() {
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
     setActualPlaying(new Set());
+
+    // Web “folder” path is not real; skip adding to recents
   }, []);
 
   const toggleRecursive = useCallback(() => {
@@ -508,11 +603,6 @@ function App() {
     [recursiveMode, zoomLevel, showFilenames]
   );
 
-  // handleZoomChange is now defined earlier in the file - removed duplicate
-
-  // Enhanced zoom change handler with safety limits
-  // (also moved earlier in the file)
-
   const getZoomLabel = useMemo(
     () => ["75%", "100%", "150%", "200%"][zoomLevel] || "100%",
     [zoomLevel]
@@ -548,46 +638,13 @@ function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isLoadingFolder]);
 
-  // Clean up resources periodically using the video collection's cleanup function
+  // cleanup pass from videoCollection
   useEffect(() => {
     const cleanup = videoCollection.performCleanup();
     if (cleanup) {
       setLoadedVideos(cleanup);
     }
   }, [videoCollection.performCleanup]);
-
-  // === MEMORY ALERT COMPONENT ===
-  const MemoryAlert = () => {
-    const memStatus = videoCollection.memoryStatus;
-    
-    if (!memStatus || !memStatus.isNearLimit) return null;
-    
-    return (
-      <div
-        style={{
-          position: 'fixed',
-          top: '80px',
-          right: '20px',
-          background: 'rgba(255, 107, 107, 0.95)',
-          color: 'white',
-          padding: '1rem',
-          borderRadius: '8px',
-          zIndex: 1000,
-          maxWidth: '300px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-        }}
-      >
-        <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
-          🚨 Memory Warning
-        </div>
-        <div style={{ fontSize: '0.9rem' }}>
-          Memory usage: {memStatus.currentMemoryMB}MB ({memStatus.memoryPressure}%)
-          <br />
-          Reducing video quality to prevent crashes.
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="app">
@@ -606,89 +663,10 @@ function App() {
       ) : (
         <>
           {/* Memory Alert */}
-          <MemoryAlert />
+          <MemoryAlert memStatus={videoCollection.memoryStatus} />
 
-          {isLoadingFolder && (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                backgroundColor: "rgba(0,0,0,0.95)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 99999,
-                backdropFilter: "blur(8px)",
-              }}
-            >
-              <div
-                style={{
-                  backgroundColor: "#1a1a1a",
-                  borderRadius: 20,
-                  padding: "3rem",
-                  maxWidth: 600,
-                  width: "90%",
-                  textAlign: "center",
-                  boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
-                  border: "2px solid #333",
-                }}
-              >
-                <div style={{ fontSize: "3rem", marginBottom: "1.5rem" }}>
-                  🐝
-                </div>
-                <div
-                  style={{
-                    fontSize: "2rem",
-                    marginBottom: "1rem",
-                    color: "#4CAF50",
-                    fontWeight: "bold",
-                  }}
-                >
-                  Video Swarm
-                </div>
-                <div
-                  style={{
-                    fontSize: "1.2rem",
-                    color: "#ccc",
-                    marginBottom: "2rem",
-                    minHeight: 40,
-                  }}
-                >
-                  {loadingStage || "Preparing..."}
-                </div>
-                <div
-                  style={{
-                    width: "100%",
-                    height: 16,
-                    backgroundColor: "#333",
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    marginBottom: "2rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${loadingProgress}%`,
-                      height: "100%",
-                      background: "linear-gradient(90deg, #4CAF50, #45a049)",
-                      borderRadius: 8,
-                      transition: "width 0.5s ease",
-                    }}
-                  />
-                </div>
-                <div
-                  style={{
-                    fontSize: "1.5rem",
-                    color: "#4CAF50",
-                    fontWeight: "bold",
-                    marginBottom: "2rem",
-                  }}
-                >
-                  {loadingProgress}%
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Loading overlay */}
+          <LoadingOverlay show={isLoadingFolder} stage={loadingStage} progress={loadingProgress} />
 
           <div className="header">
             <h1>
@@ -724,7 +702,7 @@ function App() {
               )}
             </div>
 
-            {/* Enhanced Debug Info with Memory Status and Zoom Safety */}
+            {/* Debug Info */}
             <div
               className="debug-info"
               style={{
@@ -742,22 +720,18 @@ function App() {
               <span>🎭 {videoCollection.stats.rendered} rendered</span>
               <span>▶️ {videoCollection.stats.playing} playing</span>
               <span>👁️ {visibleVideos.size} in view</span>
-              
-              {/* Memory status */}
               {videoCollection.memoryStatus && (
                 <>
                   <span>|</span>
                   <span 
                     style={{ 
                       color: videoCollection.memoryStatus.isNearLimit ? '#ff6b6b' : 
-                             videoCollection.memoryStatus.memoryPressure > 70 ? '#ffa726' : '#51cf66',
+                            videoCollection.memoryStatus.memoryPressure > 70 ? '#ffa726' : '#51cf66',
                       fontWeight: videoCollection.memoryStatus.isNearLimit ? 'bold' : 'normal'
                     }}
                   >
                     🧠 {videoCollection.memoryStatus.currentMemoryMB}MB ({videoCollection.memoryStatus.memoryPressure}%)
                   </span>
-                  
-                  {/* Safety margin indicator */}
                   {videoCollection.memoryStatus.safetyMarginMB < 500 && (
                     <span style={{ color: '#ff6b6b', fontWeight: 'bold' }}>
                       ⚠️ {videoCollection.memoryStatus.safetyMarginMB}MB margin
@@ -765,8 +739,6 @@ function App() {
                   )}
                 </>
               )}
-
-              {/* Zoom safety indicator */}
               {groupedAndSortedVideos.length > 100 && (
                 <>
                   <span>|</span>
@@ -777,8 +749,6 @@ function App() {
                   </span>
                 </>
               )}
-              
-              {/* Dev mode memory warning */}
               {process.env.NODE_ENV !== 'production' && performance.memory && (
                 <>
                   <span>|</span>
@@ -827,7 +797,6 @@ function App() {
                 </span>
               </div>
 
-              {/* Enhanced zoom control with dynamic minimum limits */}
               <div
                 className="zoom-control"
                 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
@@ -835,7 +804,7 @@ function App() {
                 <span>🔍</span>
                 <input
                   type="range"
-                  min={getMinimumZoomLevel()}  // Dynamic minimum based on conditions
+                  min={getMinimumZoomLevel()}
                   max="3"
                   value={zoomLevel}
                   step="1"
@@ -853,16 +822,25 @@ function App() {
             </div>
           </div>
 
+          {/* Home state: show Recent Locations when nothing is loaded */}
           {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
-            <div className="drop-zone">
-              <h2>🐝 Welcome to Video Swarm 🐝</h2>
-              <p>Click "Select Folder" above to browse your video collection</p>
-              {window.innerWidth > 2560 && (
-                <p style={{ color: '#ffa726', fontSize: '0.9rem' }}>
-                  🖥️ Large display detected - zoom will auto-adjust for memory safety
-                </p>
-              )}
-            </div>
+            <>
+              <RecentFolders
+                items={recentFolders}
+                onOpen={(path) => handleElectronFolderSelection(path)}
+                onRemove={removeRecentFolder}
+                onClear={clearRecentFolders}
+              />
+              <div className="drop-zone">
+                <h2>🐝 Welcome to Video Swarm 🐝</h2>
+                <p>Click "Select Folder" above to browse your video collection</p>
+                {window.innerWidth > 2560 && (
+                  <p style={{ color: '#ffa726', fontSize: '0.9rem' }}>
+                    🖥️ Large display detected - zoom will auto-adjust for memory safety
+                  </p>
+                )}
+              </div>
+            </>
           ) : (
             <div
               ref={gridRef}

@@ -1,4 +1,4 @@
-console.log('=== COMMAND LINE ARGS ===');
+console.log("=== COMMAND LINE ARGS ===");
 console.log(process.argv);
 
 const {
@@ -17,57 +17,61 @@ console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
 console.log("Electron version:", process.versions.electron);
 
-if (process.platform === 'linux') {
-  console.log('=== USING NEW CHROMIUM GL FLAGS ===');
-  
+if (process.platform === "linux") {
+  console.log("=== USING NEW CHROMIUM GL FLAGS ===");
+
   // NEW format (Electron 37+ / Chromium 123+)
-  app.commandLine.appendSwitch('gl', 'egl-angle');
-  app.commandLine.appendSwitch('angle', 'opengl');
-  
+  app.commandLine.appendSwitch("gl", "egl-angle");
+  app.commandLine.appendSwitch("angle", "opengl");
+
   // Keep these for compatibility
-  app.commandLine.appendSwitch('ignore-gpu-blocklist');
-  
-  console.log('Using new GL flag format for recent Electron versions');
+  app.commandLine.appendSwitch("ignore-gpu-blocklist");
+
+  console.log("Using new GL flag format for recent Electron versions");
 }
 
 // Enable GC in both dev and production for memory management
-app.commandLine.appendSwitch('js-flags', '--expose-gc');
-console.log('🧠 Enabled garbage collection access');
+app.commandLine.appendSwitch("js-flags", "--expose-gc");
+console.log("🧠 Enabled garbage collection access");
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
 // Enhanced default zoom detection based on screen size
 function getDefaultZoomForScreen() {
   try {
-    const { screen } = require('electron');
+    const { screen } = require("electron");
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
-    
+
     console.log(`🖥️ Detected display: ${width}x${height}`);
-    
+
     // For 4K+ monitors, FORCE minimum 150% (index 2) to prevent crashes
     if (width >= 3840 || height >= 2160) {
-      console.log('🖥️ 4K+ display detected, defaulting to 150% zoom for memory safety');
+      console.log(
+        "🖥️ 4K+ display detected, defaulting to 150% zoom for memory safety"
+      );
       return 2; // 150%
     }
-    
+
     // For high-DPI displays, default to 150% for safety
     if (width >= 2560 || height >= 1440) {
-      console.log('🖥️ High-DPI display detected, defaulting to 150% zoom for safety');
+      console.log(
+        "🖥️ High-DPI display detected, defaulting to 150% zoom for safety"
+      );
       return 2; // 150%
     }
-    
+
     // For standard displays, 100% should be safe
     if (width >= 1920 || height >= 1080) {
-      console.log('🖥️ Standard HD display detected, defaulting to 100% zoom');
+      console.log("🖥️ Standard HD display detected, defaulting to 100% zoom");
       return 1; // 100%
     }
-    
+
     // For smaller displays, 100% is definitely safe
-    console.log('🖥️ Small display detected, defaulting to 100% zoom');
+    console.log("🖥️ Small display detected, defaulting to 100% zoom");
     return 1; // 100%
   } catch (error) {
-    console.log('🖥️ Screen not available yet, using safe default zoom (150%)');
+    console.log("🖥️ Screen not available yet, using safe default zoom (150%)");
     return 2; // Default to 150% for safety when screen is not available
   }
 }
@@ -102,19 +106,22 @@ async function loadSettings() {
 
     // Remove layoutMode and autoplayEnabled from loaded settings if they exist (cleanup)
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
-    
+
     // If no zoomLevel in saved settings, detect based on screen (but only after app is ready)
     if (cleanSettings.zoomLevel === undefined) {
       const defaultZoom = getDefaultZoomForScreen();
       cleanSettings.zoomLevel = defaultZoom;
-      console.log("🔍 No saved zoom level, using screen-based default:", cleanSettings.zoomLevel);
+      console.log(
+        "🔍 No saved zoom level, using screen-based default:",
+        cleanSettings.zoomLevel
+      );
     }
-    
+
     currentSettings = { ...defaultSettings, ...cleanSettings };
     return currentSettings;
   } catch (error) {
     console.log("No settings file found, using defaults");
-    
+
     // Apply screen-based zoom to defaults (but only after app is ready)
     const settingsWithScreenZoom = { ...defaultSettings };
     try {
@@ -123,7 +130,7 @@ async function loadSettings() {
       // Screen not ready yet, use default
       settingsWithScreenZoom.zoomLevel = 1;
     }
-    
+
     currentSettings = settingsWithScreenZoom;
     return currentSettings;
   }
@@ -156,19 +163,19 @@ async function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,
-      
+
       // Enhanced memory management
       experimentalFeatures: true,
       backgroundThrottling: false,
       offscreen: false,
       spellcheck: false,
-      v8CacheOptions: 'bypassHeatCheck',
+      v8CacheOptions: "bypassHeatCheck",
     },
     icon: path.join(__dirname, "icon.png"),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
   });
 
-  const isDev = process.argv.includes("--dev");
+const isDev = process.argv.includes('--dev') || !!process.env.VITE_DEV_SERVER_URL;
 
   if (isDev) {
     console.log(
@@ -191,41 +198,43 @@ async function createWindow() {
   });
 
   // Enhanced crash detection
-  mainWindow.webContents.on('render-process-gone', (event, details) => {
-    console.error('🔥 RENDERER PROCESS CRASHED:');
-    console.error('  Reason:', details.reason);
-    console.error('  Exit code:', details.exitCode);
-    console.error('  Timestamp:', new Date().toISOString());
-    
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    console.error("🔥 RENDERER PROCESS CRASHED:");
+    console.error("  Reason:", details.reason);
+    console.error("  Exit code:", details.exitCode);
+    console.error("  Timestamp:", new Date().toISOString());
+
     // Get memory info at crash time
     try {
-      console.error('  System memory:', process.getSystemMemoryInfo());
-      console.error('  Process memory:', process.getProcessMemoryInfo());
+      console.error("  System memory:", process.getSystemMemoryInfo());
+      console.error("  Process memory:", process.getProcessMemoryInfo());
     } catch (e) {
-      console.error('  Could not get memory info:', e.message);
+      console.error("  Could not get memory info:", e.message);
     }
-    
-    if (details.reason === 'oom') {
-      console.error('💥 CONFIRMED: Out of Memory crash - consider increasing zoom level');
-    } else if (details.reason === 'crashed') {
-      console.error('💥 Generic crash - likely memory related');
+
+    if (details.reason === "oom") {
+      console.error(
+        "💥 CONFIRMED: Out of Memory crash - consider increasing zoom level"
+      );
+    } else if (details.reason === "crashed") {
+      console.error("💥 Generic crash - likely memory related");
     }
-    
+
     // Auto-restart (optional)
     setTimeout(() => {
       if (!mainWindow.isDestroyed()) {
-        console.log('🔄 Attempting to reload...');
+        console.log("🔄 Attempting to reload...");
         mainWindow.reload();
       }
     }, 1000);
   });
 
-  mainWindow.webContents.on('unresponsive', () => {
-    console.error('🔥 RENDERER UNRESPONSIVE');
+  mainWindow.webContents.on("unresponsive", () => {
+    console.error("🔥 RENDERER UNRESPONSIVE");
   });
 
-  mainWindow.webContents.on('responsive', () => {
-    console.log('✅ RENDERER RESPONSIVE AGAIN');
+  mainWindow.webContents.on("responsive", () => {
+    console.log("✅ RENDERER RESPONSIVE AGAIN");
   });
 
   mainWindow.on("moved", saveWindowBounds);
@@ -322,6 +331,118 @@ async function saveSettingsPartial(partialSettings) {
     await saveSettings(newSettings);
   } catch (error) {
     console.error("Failed to save partial settings:", error);
+  }
+}
+
+// --- Recent Folders Store ---
+let Store = null;
+let storeInitialized = false;
+
+function initializeStore() {
+  if (storeInitialized) return Store !== null;
+
+  try {
+    // Try CommonJS require first
+    Store = require("electron-store");
+    console.log("✅ electron-store loaded via require()");
+    storeInitialized = true;
+    return true;
+  } catch (error1) {
+    console.log("❌ require() failed:", error1.message);
+
+    try {
+      // Try accessing default export
+      const storeModule = require("electron-store");
+      Store = storeModule.default || storeModule;
+      console.log("✅ electron-store loaded via default export");
+      storeInitialized = true;
+      return true;
+    } catch (error2) {
+      console.log("❌ default export failed:", error2.message);
+
+      try {
+        // Last resort: try destructuring
+        const { Store: StoreClass } = require("electron-store");
+        Store = StoreClass;
+        console.log("✅ electron-store loaded via destructuring");
+        storeInitialized = true;
+        return true;
+      } catch (error3) {
+        console.error(
+          "❌ All electron-store import methods failed:",
+          error3.message
+        );
+        console.log("📁 Recent folders will be disabled");
+        Store = null;
+        storeInitialized = true;
+        return false;
+      }
+    }
+  }
+}
+
+async function getRecentFolders() {
+  if (!recentStore) {
+    console.log("📁 Recent store not available, returning empty array");
+    return [];
+  }
+  try {
+    return recentStore.get("items", []);
+  } catch (error) {
+    console.error("Failed to get recent folders:", error);
+    return [];
+  }
+}
+
+async function saveRecentFolders(items) {
+  if (!recentStore) {
+    console.log("📁 Recent store not available, cannot save");
+    return;
+  }
+  try {
+    recentStore.set("items", items);
+    console.log("📁 Saved recent folders:", items.length, "items");
+  } catch (error) {
+    console.error("Failed to save recent folders:", error);
+  }
+}
+
+async function addRecentFolder(folderPath) {
+  try {
+    const name = path.basename(folderPath);
+    const now = Date.now();
+    const items = (await getRecentFolders()).filter(
+      (x) => x.path !== folderPath
+    );
+    items.unshift({ path: folderPath, name, lastOpened: now });
+    await saveRecentFolders(items.slice(0, 10));
+    return await getRecentFolders();
+  } catch (error) {
+    console.error("Failed to add recent folder:", error);
+    return [];
+  }
+}
+
+async function removeRecentFolder(folderPath) {
+  try {
+    const items = (await getRecentFolders()).filter(
+      (x) => x.path !== folderPath
+    );
+    await saveRecentFolders(items);
+    return await getRecentFolders();
+  } catch (error) {
+    console.error("Failed to remove recent folder:", error);
+    return [];
+  }
+}
+
+async function clearRecentFolders() {
+  try {
+    await saveRecentFolders([]);
+    return await getRecentFolders();
+  } catch (error) {
+    console.error("Failed to clear recent folders:", error);
+    return [];
   }
 }
 
@@ -596,7 +717,7 @@ ipcMain.handle("start-folder-watch", async (event, folderPath) => {
     currentWatchedFolder = folderPath;
 
     // Create new watcher with optimized settings
-    fileWatcher = chokidar.watch(path.join(folderPath, '**/'), {
+    fileWatcher = chokidar.watch(path.join(folderPath, "**/"), {
       ignored: [
         /(^|[\/\\])\../, // Ignore hidden files/folders
         "**/node_modules/**", // Ignore node_modules
@@ -904,11 +1025,16 @@ ipcMain.handle("get-file-properties", async (event, filePath) => {
   }
 });
 
-app.whenReady().then(() => {
-  console.log("GPU status:", app.getGPUFeatureStatus());
-  createWindow();
-  createMenu();
-});
+ipcMain.handle("recent:get", async () => await getRecentFolders());
+ipcMain.handle(
+  "recent:add",
+  async (_e, folderPath) => await addRecentFolder(folderPath)
+);
+ipcMain.handle(
+  "recent:remove",
+  async (_e, folderPath) => await removeRecentFolder(folderPath)
+);
+ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -916,6 +1042,33 @@ app.on("window-all-closed", () => {
   }
 });
 
+async function initRecentStore() {
+  try {
+    const mod = await import("electron-store"); // ESM-only in v9+
+    const StoreClass = mod.default || mod.Store || mod;
+    recentStore = new StoreClass({
+      name: "recent-folders",
+      fileExtension: "json",
+      clearInvalidConfig: true,
+      accessPropertiesByDotNotation: false,
+    });
+    console.log("📁 recentStore initialized");
+  } catch (e) {
+    console.warn("📁 electron-store unavailable:", e?.message);
+    recentStore = null; // feature gracefully disabled
+  }
+}
+
+app.whenReady().then(async () => {
+  try {
+    console.log("GPU status:", app.getGPUFeatureStatus());
+    await initRecentStore(); // safe no-op if it fails
+    await createWindow(); // make sure this actually returns/awaits
+    createMenu(); // optional, after window exists
+  } catch (err) {
+    console.error("❌ Startup failure:", err);
+  }
+});
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
