@@ -1,43 +1,44 @@
-import { useEffect, useState } from "react";
+// hooks/video-collection/useProgressiveList.js
+import { useEffect, useRef, useState } from "react";
 
-/**
- * Simple progressive loading with reliable timers
- * Industry standard approach - no fancy idle detection
- */
 export function useProgressiveList(
   items = [],
   initial = 100,
   batchSize = 50,
-  intervalMs = 100 // Load a batch every 100ms
+  intervalMs = 100
 ) {
-  const safeItems = Array.isArray(items) ? items : [];
-  const [visibleCount, setVisibleCount] = useState(Math.min(initial, safeItems.length));
+  const safe = Array.isArray(items) ? items : [];
+  const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
+  const prevLenRef = useRef(safe.length);
+  const didInitRef = useRef(false);
 
-  // Reset when items change
+  // Initialize once; clamp if list shrinks; don't reset on growth
   useEffect(() => {
-    const initialCount = Math.min(initial, safeItems.length);
-    setVisibleCount(initialCount);
-  }, [safeItems.length, initial]);
+    const prevLen = prevLenRef.current;
+    const len = safe.length;
 
-  // Simple interval-based progressive loading
+    if (!didInitRef.current) {
+      didInitRef.current = true;
+      setVisible(Math.min(initial, len));
+    } else if (len < prevLen) {
+      // shrink: clamp down to avoid showing stale slots
+      setVisible((v) => Math.min(v, len));
+    }
+    // growth: do nothing; interval will keep advancing
+
+    prevLenRef.current = len;
+  }, [safe.length, initial]);
+
+  // Single steady interval; no dependency on `visible`
   useEffect(() => {
-    if (visibleCount >= safeItems.length) return;
+    if (visible >= safe.length) return;
 
     const timer = setInterval(() => {
-      setVisibleCount(prev => {
-        const next = Math.min(prev + batchSize, safeItems.length);
-        if (next > prev) {
-          console.log(`📈 Progressive: ${prev} → ${next}/${safeItems.length}`);
-        }
-        if (next >= safeItems.length) {
-          console.log(`✅ Progressive loading complete: ${next} items`);
-        }
-        return next;
-      });
+      setVisible((v) => (v < safe.length ? Math.min(v + batchSize, safe.length) : v));
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [visibleCount, safeItems.length, batchSize, intervalMs]);
+  }, [safe.length, batchSize, intervalMs, visible]);
 
-  return safeItems.slice(0, visibleCount);
+  return safe.slice(0, visible);
 }

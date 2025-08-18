@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 export default function useChunkedMasonry({
   gridRef,
-  zoomClassForLevel = (z) => `zoom-${["small","medium","large","xlarge"][z]}`,
+  zoomClassForLevel = (z) => `zoom-${["small", "medium", "large", "xlarge"][z]}`,
   defaultAspect = 16 / 9,
   chunkSize = 200,
   columnGapFallback = 12,
@@ -31,12 +31,10 @@ export default function useChunkedMasonry({
 
     const cs = window.getComputedStyle(grid);
     const columnCount = getColumnCount(cs);
-    const columnGap =
-      parseFloat(cs.columnGap) || parseFloat(cs.gap) || columnGapFallback;
+    const columnGap = parseFloat(cs.columnGap) || parseFloat(cs.gap) || columnGapFallback;
 
     const gridWidth = grid.clientWidth || grid.getBoundingClientRect().width || 0;
-    const padding =
-      (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const padding = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
     const availableWidth = Math.max(0, gridWidth - padding);
 
     const totalGapWidth = columnGap * Math.max(0, columnCount - 1);
@@ -69,8 +67,7 @@ export default function useChunkedMasonry({
       }
 
       if (!cachedGridMeasurementsRef.current) updateCachedGridMeasurements();
-      const { columnWidth, columnCount, columnGap } =
-        cachedGridMeasurementsRef.current || {};
+      const { columnWidth, columnCount, columnGap } = cachedGridMeasurementsRef.current || {};
       if (!columnWidth || !columnCount) {
         isLayingOutRef.current = false;
         return;
@@ -120,10 +117,13 @@ export default function useChunkedMasonry({
           el.style.height = `${h}px`;
           el.style.transform = `translate(${x}px, ${y}px)`;
 
-          const vc = el.querySelector(
-            ".video-container, .video-placeholder, .error-indicator"
-          );
+          const vc = el.querySelector(".video-container, .video-placeholder, .error-indicator");
           if (vc) vc.style.height = `${h}px`;
+
+          // ✅ Mark as positioned so CSS can fade it in (prevents 1-frame ghost at 0,0)
+          if (el.dataset.pos !== "1") {
+            el.dataset.pos = "1";
+          }
 
           columnHeights[minIdx] = y + h + columnGap;
         }
@@ -131,9 +131,7 @@ export default function useChunkedMasonry({
         if (i < items.length) {
           requestAnimationFrame(step);
         } else {
-          const maxHeight = columnHeights.length
-            ? Math.max(...columnHeights)
-            : 0;
+          const maxHeight = columnHeights.length ? Math.max(...columnHeights) : 0;
           grid.style.height = `${maxHeight}px`;
           grid.style.position = "relative";
 
@@ -150,20 +148,22 @@ export default function useChunkedMasonry({
   }, [gridRef, updateCachedGridMeasurements, chunkSize, defaultAspect]);
 
   // public API: call when item AR becomes known
-  const updateAspectRatio = useCallback((id, ar) => {
-    if (!id || !Number.isFinite(ar) || ar <= 0) return;
-    const prev = aspectRatioCacheRef.current.get(id);
-    if (prev !== ar) {
-      aspectRatioCacheRef.current.set(id, ar);
-      // don’t layout immediately; coalesce
-      scheduleLayout();
-    }
-  }, [scheduleLayout]);
+  const updateAspectRatio = useCallback(
+    (id, ar) => {
+      if (!id || !Number.isFinite(ar) || ar <= 0) return;
+      const prev = aspectRatioCacheRef.current.get(id);
+      if (prev !== ar) {
+        aspectRatioCacheRef.current.set(id, ar);
+        // don’t layout immediately; coalesce
+        scheduleLayout();
+      }
+    },
+    [scheduleLayout]
+  );
 
   // public API: call when item list/order changes
   const onItemsChanged = useCallback(() => {
-    // clear cached measurements only if the grid width/columns may be different
-    // otherwise we can keep it – but safe to recompute here:
+    // keep existing positioned items visible; new items (without data-pos) will be hidden by CSS
     cachedGridMeasurementsRef.current = null;
     scheduleLayout();
   }, [scheduleLayout]);
