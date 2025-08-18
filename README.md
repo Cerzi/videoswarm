@@ -69,6 +69,16 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 ---
 
+## Roadmap
+
+Planned for upcoming versions:
+
+- **Tagging and database system** – persist metadata, ratings, and custom tags across sessions
+- Enhanced search and filtering
+- Further performance improvements
+
+---
+
 ## Installation & Development
 
 ### Prerequisites
@@ -116,4 +126,11 @@ preload.js             IPC bridge
 6. Access recently opened folders from the Recent Folders menu
 
 ## License
-MIT License – see LICENSE.
+
+Video Swarm is licensed under the [GNU General Public License v3.0](LICENSE).
+
+This ensures the project remains free and open-source for everyone, and that any improvements or modifications made by others are also shared with the community. You are free to use, modify, and redistribute the software, but if you distribute a modified version you must also make the source code available under the same license.
+
+## Contributing
+
+Contributions are welcome! By submitting a pull request, you agree that your code will be licensed under the same GPLv3 license as the rest of the project.
