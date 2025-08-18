@@ -10,7 +10,8 @@ Video Swarm is a desktop Electron application for browsing large collections of 
 
 Traditional file browsers show static thumbnails and provide limited ways to compare videos at scale. Video Swarm is designed for use cases where *motion* matters and where collections may contain hundreds or thousands of files, such as:
 
-- Reviewing outputs from AI video generation workflows (e.g. ComfyUI, Wan/Hunyuan, etc.)
+- Reviewing outputs from AI video generation workflows (e.g. ComfyUI)
+- Seeing a clear overview of video training datasets for AI training
 - Inspecting stock footage, B-roll, or archival datasets
 - Comparing multiple generations or versions of the same source
 - Research or analysis of large video corpora
@@ -110,7 +111,7 @@ npm run electron:build   # packaged app for current platform
 ### Project Structure
 ```css
 src/
-  components/          React components (VideoCard, ContextMenu, FullScreenModal)
+  components/          React components (VideoCard, ContextMenu, FullScreenModal, RecentFolders)
   hooks/               React hooks (fullscreen logic, context menu, playback manager)
   App.jsx              Main React entry point
 main.js                Electron main process
@@ -121,7 +122,7 @@ preload.js             IPC bridge
 1. Start the application
 2. Select a folder (optionally enable recursive scan)
 3. Videos will be scanned and loaded into the masonry grid
-4. Adjust playback/zoom via the top control bar
+4. Adjust zoom via the top control bar
 5. Ctrl+R to clear all videos
 6. Access recently opened folders from the Recent Folders menu
 
