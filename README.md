@@ -40,7 +40,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Real-time folder monitoring with [Chokidar](https://github.com/paulmillr/chokidar); fallback to polling if too many files
 - Recent Folders list: automatically tracks and persists recently opened folders
 - Rich metadata: size, modification time, creation time
-- Native file operations (show, open, delete, copy)
+- Native file operations (show, open, delete, copy) - show in folder is particularly useful for ComfyUI users for quickly accessing the video in order to re-use workflows
 
 ### Settings
 - Persistent settings stored in Electron’s userData directory (JSON)
