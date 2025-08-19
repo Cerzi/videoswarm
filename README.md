@@ -1,8 +1,20 @@
 # 🐝 Video Swarm
 
-Video Swarm is a desktop Electron application for browsing large collections of video files in a dense “masonry” layout. Instead of static thumbnails, the application plays multiple videos simultaneously, making it easier to compare content, spot variations, and manage large datasets.  
+I got tired of manually opening tens or hundreds of ComfyUI video outputs to try and find an old workflow or get a quick overview of the quality of a large batch run. **Video Swarm** was born because I couldn't find any existing software that does this: tile a large number of videos, all playing at once, with seamless scrolling through subdirectories and quick file operations. I figured I'm not the only one who would find this useful, so I've open-sourced it.
 
 ![Video Swarm Demo](docs/images/demo.gif)
+
+https://github.com/user-attachments/assets/9fed71dd-fe4e-4bdf-8326-ab775979e2d5
+<p><em>demo video</em></p>
+
+---
+
+## TL;DR
+- Download [latest release](https://github.com/Cerzi/videoswarm/releases)  
+- Open a folder with clips (optionally enable recursive scan)  
+- Browse videos in a live-playing masonry grid  
+- Double-click → fullscreen, ←/→ to navigate, Space to pause/play  
+- Right click for context menu. Opening in file explorer will highlight the video file for easy drag and drop into ComfyUI to find old workflows
 
 ---
 
@@ -21,7 +33,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 ## Features
 
 ### Playback and Layout
-- Configurable concurrent playback (default 30; adjustable up to ~100 depending on system resources)
+- Configurable concurrent playback (default 50; adjustable up to 500 depending on system resources)
 - Lazy loading: videos only play when visible in the viewport
 - Automatic cleanup of off-screen elements to reduce memory usage
 - Vertical masonry layout: fixed width, variable height; handles portrait, square, and landscape videos without wasted space
@@ -57,15 +69,16 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - **Layout:** Custom vertical masonry renderer
 - **Performance:** Intersection Observer for visibility detection; debounced updates; GC enabled via Electron flags
 - **File formats:** Supports any codec/container playable by Chromium (tested with MP4/H.264; partial HEVC support depends on system codecs)
+- **Rough edges:** Early release; expect some quirks and ongoing polish
 
 ---
 
-## Limitations
+## Known Limitations
 
 - Designed primarily for folders of short videoclips (~5 seconds) - loading large directories of long videos may have issues
 - Desktop-only: no web version (requires unrestricted filesystem access)
 - HEVC/H.265: limited browser support; may not decode on all systems
-- Very large directories (3000+ files): performance may degrade despite lazy loading
+- Very large directories (3000+ files): performance may degrade despite lazy loading, can be some glitchiness during load
 - No mobile/touch support
 
 ---
@@ -88,8 +101,8 @@ Planned for upcoming versions:
 
 ### Setup
 ```bash
-git clone https://github.com/yourusername/video-swarm.git
-cd video-swarm
+git clone https://github.com/Cerzi/videoswarm.git
+cd videoswarm
 npm install
 ```
 
@@ -120,7 +133,7 @@ preload.js             IPC bridge
 
 ### Usage
 1. Start the application
-2. Select a folder (optionally enable recursive scan)
+2. Select a folder (optionally enable recursive scan to load all videos in subdirs)
 3. Videos will be scanned and loaded into the masonry grid
 4. Adjust zoom via the top control bar
 5. Ctrl+R to clear all videos
