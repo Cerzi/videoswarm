@@ -1,4 +1,7 @@
 # 🐝 Video Swarm
+[![GitHub release](https://img.shields.io/github/v/release/Cerzi/videoswarm?include_prereleases&sort=semver)](https://github.com/Cerzi/videoswarm/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 
 I got tired of manually opening tens or hundreds of ComfyUI video outputs to try and find an old workflow or get a quick overview of the quality of a large batch run. **Video Swarm** was born because I couldn't find any existing software that does this: tile a large number of videos, all playing at once, with seamless scrolling through subdirectories and quick file operations. I figured I'm not the only one who would find this useful, so I've open-sourced it.
 
