@@ -7,6 +7,7 @@ yarn-error.log*
 # Build outputs
 dist/
 dist-react/
+/dist-electron/
 build/
 out/
 
