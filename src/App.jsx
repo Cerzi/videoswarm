@@ -10,6 +10,9 @@ import VideoCard from "./components/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
+import HeaderBar from "./components/HeaderBar";
+import DebugSummary from "./components/DebugSummary";
+
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -195,7 +198,7 @@ function App() {
       window.electronAPI
         .getAppVersion()
         .then((v) => v && setVersion(v))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, []);
 
@@ -256,8 +259,7 @@ function App() {
       for (let i = 0; i < memoryPressure.length; i++) {
         if (memoryPressure[i] < 0.8) {
           console.log(
-            `🧠 Safe zoom level ${i} (${
-              ["75%", "100%", "150%", "200%"][i]
+            `🧠 Safe zoom level ${i} (${["75%", "100%", "150%", "200%"][i]
             }) - estimated ${estimatedVisibleVideos[i]} visible videos`
           );
           return i;
@@ -301,10 +303,8 @@ function App() {
       const safeZoom = Math.max(newZoom, minZoom);
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${
-            ["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${
-            ["75%", "100%", "150%", "200%"][newZoom]
+          `🛡️ Zoom limited to ${["75%", "100%", "150%", "200%"][safeZoom]
+          } for memory safety (requested ${["75%", "100%", "150%", "200%"][newZoom]
           })`
         );
       }
@@ -384,8 +384,7 @@ function App() {
         );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
-              ["75%", "100%", "150%", "200%"][safeZoom]
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${["75%", "100%", "150%", "200%"][safeZoom]
             } for safety`
           );
           handleZoomChange(safeZoom);
@@ -437,7 +436,7 @@ function App() {
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
-      } catch {}
+      } catch { }
       setSettingsLoaded(true);
     };
     load();
@@ -502,7 +501,7 @@ function App() {
     api.onFileChanged?.(handleFileChanged);
 
     return () => {
-      api?.stopFolderWatch?.().catch(() => {});
+      api?.stopFolderWatch?.().catch(() => { });
     };
   }, [selection.setSelected]);
 
@@ -766,180 +765,33 @@ function App() {
             progress={loadingProgress}
           />
 
-          <div className="header">
-            <h1>
-              🐝 Video Swarm{" "}
-              <span style={{ fontSize: "0.6rem", color: "#666" }}>
-                v{version}
-              </span>
-            </h1>
+          <HeaderBar
+            version={version}
+            isLoadingFolder={isLoadingFolder}
+            handleFolderSelect={handleFolderSelect}
+            handleWebFileSelection={handleWebFileSelection}
+            recursiveMode={recursiveMode}
+            toggleRecursive={toggleRecursive}
+            showFilenames={showFilenames}
+            toggleFilenames={toggleFilenames}
+            maxConcurrentPlaying={maxConcurrentPlaying}
+            handleVideoLimitChange={handleVideoLimitChange}
+            zoomLevel={zoomLevel}
+            handleZoomChangeSafe={handleZoomChangeSafe}
+            getMinimumZoomLevel={getMinimumZoomLevel}
+            getZoomLabel={() => getZoomLabel}
+          />
 
-            <div id="folderControls">
-              {window.electronAPI?.isElectron ? (
-                <button
-                  onClick={handleFolderSelect}
-                  className="file-input-label"
-                  disabled={isLoadingFolder}
-                >
-                  📁 Select Folder
-                </button>
-              ) : (
-                <div className="file-input-wrapper">
-                  <input
-                    type="file"
-                    className="file-input"
-                    webkitdirectory="true"
-                    multiple
-                    onChange={handleWebFileSelection}
-                    style={{ display: "none" }}
-                    id="fileInput"
-                    disabled={isLoadingFolder}
-                  />
-                  <label htmlFor="fileInput" className="file-input-label">
-                    ⚠️ Open Folder (Limited)
-                  </label>
-                </div>
-              )}
-            </div>
-
-            {/* Debug Info */}
-            <div
-              className="debug-info"
-              style={{
-                fontSize: "0.75rem",
-                color: "#888",
-                background: "#1a1a1a",
-                padding: "0.3rem 0.8rem",
-                borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              <span>🎬 {videoCollection.stats.total} videos</span>
-              <span>🎭 {videoCollection.stats.rendered} rendered</span>
-              <span>▶️ {videoCollection.stats.playing} playing</span>
-              <span>👁️ {visibleVideos.size} in view</span>
-              {videoCollection.memoryStatus && (
-                <>
-                  <span>|</span>
-                  <span
-                    style={{
-                      color: videoCollection.memoryStatus.isNearLimit
-                        ? "#ff6b6b"
-                        : videoCollection.memoryStatus.memoryPressure > 70
-                        ? "#ffa726"
-                        : "#51cf66",
-                      fontWeight: videoCollection.memoryStatus.isNearLimit
-                        ? "bold"
-                        : "normal",
-                    }}
-                  >
-                    🧠 {videoCollection.memoryStatus.currentMemoryMB}MB (
-                    {videoCollection.memoryStatus.memoryPressure}%)
-                  </span>
-                  {videoCollection.memoryStatus.safetyMarginMB < 500 && (
-                    <span style={{ color: "#ff6b6b", fontWeight: "bold" }}>
-                      ⚠️ {videoCollection.memoryStatus.safetyMarginMB}MB margin
-                    </span>
-                  )}
-                </>
-              )}
-              {groupedAndSortedVideos.length > 100 && (
-                <>
-                  <span>|</span>
-                  <span
-                    style={{
-                      color:
-                        zoomLevel >= getMinimumZoomLevel()
-                          ? "#51cf66"
-                          : "#ffa726",
-                    }}
-                  >
-                    🔍 {getZoomLabel}{" "}
-                    {zoomLevel < getMinimumZoomLevel() ? "(unsafe)" : "(safe)"}
-                  </span>
-                </>
-              )}
-              {process.env.NODE_ENV !== "production" && performance.memory && (
-                <>
-                  <span>|</span>
-                  <span style={{ color: "#666", fontSize: "0.7rem" }}>
-                    Press Ctrl+Shift+G for manual GC
-                  </span>
-                </>
-              )}
-            </div>
-
-            <div className="controls">
-              <button
-                onClick={toggleRecursive}
-                className={`toggle-button ${recursiveMode ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {recursiveMode ? "📂 Recursive ON" : "📂 Recursive"}
-              </button>
-              <button
-                onClick={toggleFilenames}
-                className={`toggle-button ${showFilenames ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {showFilenames ? "📝 Filenames ON" : "📝 Filenames"}
-              </button>
-
-              <div
-                className="video-limit-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <span>🎹</span>
-                <input
-                  type="range"
-                  min="10"
-                  max="500"
-                  value={maxConcurrentPlaying}
-                  step="10"
-                  style={{ width: 100 }}
-                  onChange={(e) =>
-                    handleVideoLimitChange(parseInt(e.target.value))
-                  }
-                  disabled={isLoadingFolder}
-                />
-                <span style={{ fontSize: "0.8rem" }}>
-                  {maxConcurrentPlaying}
-                </span>
-              </div>
-
-              <div
-                className="zoom-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <span>🔍</span>
-                <input
-                  type="range"
-                  min={getMinimumZoomLevel()}
-                  max="3"
-                  value={zoomLevel}
-                  step="1"
-                  onChange={(e) =>
-                    handleZoomChangeSafe(parseInt(e.target.value))
-                  }
-                  disabled={isLoadingFolder}
-                  style={{
-                    accentColor:
-                      zoomLevel >= getMinimumZoomLevel()
-                        ? "#51cf66"
-                        : "#ffa726",
-                  }}
-                />
-                <span>{getZoomLabel}</span>
-                {zoomLevel < getMinimumZoomLevel() && (
-                  <span style={{ color: "#ffa726", fontSize: "0.7rem" }}>
-                    ⚠️
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+          <DebugSummary
+            total={videoCollection.stats.total}
+            rendered={videoCollection.stats.rendered}
+            playing={videoCollection.stats.playing}
+            inView={visibleVideos.size}
+            memoryStatus={videoCollection.memoryStatus}
+            zoomLevel={zoomLevel}
+            getMinimumZoomLevel={getMinimumZoomLevel}
+            getZoomLabel={() => getZoomLabel}
+          />
 
           {/* Home state: Recent Locations when nothing is loaded */}
           {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
@@ -966,13 +818,11 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${
-                !showFilenames ? "hide-filenames" : ""
-              } ${
-                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                  zoomLevel
+              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""
+                } ${["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
+                zoomLevel
                 ]
-              }`}
+                }`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
