@@ -86,8 +86,8 @@ function App() {
     import.meta.env.VITE_APP_VERSION || "dev"
   );
   const [videos, setVideos] = useState([]);
-  // ⬇️ selection is now managed by the SOLID selection hook
-  const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected }
+  // Selection state (SOLID)
+  const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
@@ -115,14 +115,14 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
-  // --- NEW: visual order from masonry
+  // Track visual (masonry) order for Shift-range selection
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
   // ----- Masonry hook -----
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
-      // NEW: emit visual order (top-to-bottom, then left-to-right by y,x)
+      // we emit visual order (top-to-bottom by y, then x) so Shift works intuitively
       onOrderChange: setVisualOrderedIds,
     });
 
@@ -151,13 +151,13 @@ function App() {
     return result;
   }, [videos]);
 
-  // Data-ordered IDs (keep your original "orderedIds")
+  // data order ids (fallback)
   const orderedIds = useMemo(
     () => groupedAndSortedVideos.map((v) => v.id),
     [groupedAndSortedVideos]
   );
 
-  // Prefer visual order (masonry positions) when available; fall back to data order.
+  // Prefer visual order if we have it
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
   const getById = useCallback(
@@ -165,7 +165,7 @@ function App() {
     [groupedAndSortedVideos]
   );
 
-  // simple toast (notify) used by actions layer
+  // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {
     const colors = {
       error: "#ff4444",
@@ -191,12 +191,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Prefer the runtime version if available (packaged Electron reflects real app version)
     if (window.electronAPI?.getAppVersion) {
       window.electronAPI
         .getAppVersion()
         .then((v) => v && setVersion(v))
-        .catch(() => { });
+        .catch(() => {});
     }
   }, []);
 
@@ -218,23 +217,22 @@ function App() {
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
-  
-  // context-menu state-only hook
+
   const { contextMenu, showOnItem, showOnEmpty, hide: hideContextMenu } =
     useContextMenu();
 
-// Action dispatcher (single pipeline for menu/hotkeys/toolbar)
+  // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
   const { runAction } = useActionDispatch(
     {
       electronAPI: window.electronAPI,
       notify,
-      // showProperties: (videos) => { /* optional modal if you want */ },
+      // showProperties: (videos) => { /* optional UI modal */ },
       // confirm: (msg) => window.confirm(msg),
     },
     getById
   );
 
-  // ✅ Hotkeys operate on current selection (Enter / Ctrl+C / Delete)
+  // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
     (actionId, currentSelection) =>
       runAction(actionId, currentSelection, contextMenu.contextId),
@@ -258,7 +256,8 @@ function App() {
       for (let i = 0; i < memoryPressure.length; i++) {
         if (memoryPressure[i] < 0.8) {
           console.log(
-            `🧠 Safe zoom level ${i} (${["75%", "100%", "150%", "200%"][i]
+            `🧠 Safe zoom level ${i} (${
+              ["75%", "100%", "150%", "200%"][i]
             }) - estimated ${estimatedVisibleVideos[i]} visible videos`
           );
           return i;
@@ -282,7 +281,7 @@ function App() {
         maxConcurrentPlaying,
         showFilenames,
       });
-      // Masonry may need a nudge after zoom change
+      // Nudge masonry after zoom change
       scheduleLayout?.();
     },
     [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames, scheduleLayout]
@@ -302,8 +301,10 @@ function App() {
       const safeZoom = Math.max(newZoom, minZoom);
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${["75%", "100%", "150%", "200%"][newZoom]
+          `🛡️ Zoom limited to ${
+            ["75%", "100%", "150%", "200%"][safeZoom]
+          } for memory safety (requested ${
+            ["75%", "100%", "150%", "200%"][newZoom]
           })`
         );
       }
@@ -312,7 +313,7 @@ function App() {
     [getMinimumZoomLevel, handleZoomChange]
   );
 
-  // === MEMORY MONITORING (unchanged logging) ===
+  // === MEMORY MONITORING (dev helpers) ===
   useEffect(() => {
     if (performance.memory) {
       console.log("🧠 Initial memory limits:", {
@@ -383,7 +384,8 @@ function App() {
         );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${["75%", "100%", "150%", "200%"][safeZoom]
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
+              ["75%", "100%", "150%", "200%"][safeZoom]
             } for safety`
           );
           handleZoomChange(safeZoom);
@@ -435,7 +437,7 @@ function App() {
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
-      } catch { }
+      } catch {}
       setSettingsLoaded(true);
     };
     load();
@@ -448,7 +450,7 @@ function App() {
     );
   }, []); // eslint-disable-line
 
-  // FS listeners (unchanged)
+  // FS listeners
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
@@ -500,7 +502,7 @@ function App() {
     api.onFileChanged?.(handleFileChanged);
 
     return () => {
-      api?.stopFolderWatch?.().catch(() => { });
+      api?.stopFolderWatch?.().catch(() => {});
     };
   }, [selection.setSelected]);
 
@@ -596,7 +598,7 @@ function App() {
         const watchResult = await api.startFolderWatch?.(folderPath);
         if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
 
-        // ✅ record in recent folders AFTER successful open
+        // record in recent folders AFTER successful open
         addRecentFolder(folderPath);
       } catch (e) {
         console.error("Error reading directory:", e);
@@ -611,30 +613,31 @@ function App() {
     if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
   }, [handleElectronFolderSelection]);
 
-  const handleWebFileSelection = useCallback((event) => {
-    const files = Array.from(event.target.files || []).filter((f) => {
-      const isVideoType = f.type.startsWith("video/");
-      const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
-        f.name
-      );
-      return isVideoType || hasExt;
-    });
-    const list = files.map((f) => ({
-      id: f.name + f.size,
-      name: f.name,
-      file: f,
-      loaded: false,
-      isElectronFile: false,
-    }));
-    setVideos(list);
-    setSelectedVideos(new Set());
-    setVisibleVideos(new Set());
-    setLoadedVideos(new Set());
-    setLoadingVideos(new Set());
-    setActualPlaying(new Set());
-
-    // Web “folder” path is not real; skip adding to recents
-  }, []);
+  const handleWebFileSelection = useCallback(
+    (event) => {
+      const files = Array.from(event.target.files || []).filter((f) => {
+        const isVideoType = f.type.startsWith("video/");
+        const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
+          f.name
+        );
+        return isVideoType || hasExt;
+      });
+      const list = files.map((f) => ({
+        id: f.name + f.size,
+        name: f.name,
+        file: f,
+        loaded: false,
+        isElectronFile: false,
+      }));
+      setVideos(list);
+      selection.clear();
+      setVisibleVideos(new Set());
+      setLoadedVideos(new Set());
+      setLoadingVideos(new Set());
+      setActualPlaying(new Set());
+    },
+    [selection]
+  );
 
   const toggleRecursive = useCallback(() => {
     const next = !recursiveMode;
@@ -697,10 +700,16 @@ function App() {
         selection.selectOnly(videoId);
       }
     },
-    [getById, openFullScreen, videoCollection.playingVideos, selection, orderedIds]
+    [
+      getById,
+      openFullScreen,
+      videoCollection.playingVideos,
+      selection,
+      orderForRange,
+    ]
   );
 
-  // Context menu on item: right-click also selects if not selected
+  // Right-click on a card: select it (if not in selection) and open menu
   const handleCardContextMenu = useCallback(
     (e, video) => {
       const isSelected = selection.selected.has(video.id);
@@ -709,7 +718,7 @@ function App() {
     [selection.selected, selection.selectOnly, showOnItem]
   );
 
-  // Optional: background context menu (clear selection + show menu)
+  // Right-click on empty background: clear selection and open menu
   const handleBackgroundContextMenu = useCallback(
     (e) => showOnEmpty(e, selection.clear),
     [showOnEmpty, selection.clear]
@@ -819,8 +828,8 @@ function App() {
                       color: videoCollection.memoryStatus.isNearLimit
                         ? "#ff6b6b"
                         : videoCollection.memoryStatus.memoryPressure > 70
-                          ? "#ffa726"
-                          : "#51cf66",
+                        ? "#ffa726"
+                        : "#51cf66",
                       fontWeight: videoCollection.memoryStatus.isNearLimit
                         ? "bold"
                         : "normal",
@@ -932,7 +941,7 @@ function App() {
             </div>
           </div>
 
-          {/* Home state: show Recent Locations when nothing is loaded */}
+          {/* Home state: Recent Locations when nothing is loaded */}
           {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
             <>
               <RecentFolders
@@ -957,11 +966,13 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""
-                } ${["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                zoomLevel
+              className={`video-grid masonry-vertical ${
+                !showFilenames ? "hide-filenames" : ""
+              } ${
+                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
+                  zoomLevel
                 ]
-                }`}
+              }`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
@@ -1028,7 +1039,6 @@ function App() {
 
           {contextMenu.visible && (
             <ContextMenu
-              // new SOLID props
               visible={contextMenu.visible}
               position={contextMenu.position}
               contextId={contextMenu.contextId}
