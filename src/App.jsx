@@ -11,10 +11,16 @@ import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
-import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
+
+// ✅ New SOLID hooks
+import useSelectionState from "./hooks/selection/useSelectionState";
+import { useContextMenu } from "./hooks/context-menu/useContextMenu";
+import useActionDispatch from "./hooks/actions/useActionDispatch";
+import useHotkeys from "./hooks/selection/useHotkeys";
+
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
 
@@ -81,7 +87,8 @@ function App() {
     import.meta.env.VITE_APP_VERSION || "dev"
   );
   const [videos, setVideos] = useState([]);
-  const [selectedVideos, setSelectedVideos] = useState(new Set());
+  // ⬇️ selection is now managed by the SOLID selection hook
+  const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected }
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
@@ -139,6 +146,37 @@ function App() {
     return result;
   }, [videos]);
 
+  // quick lookup for actions/context menu
+  const getById = useCallback(
+    (id) => groupedAndSortedVideos.find((v) => v.id === id),
+    [groupedAndSortedVideos]
+  );
+
+  // simple toast (notify) used by actions layer
+  const notify = useCallback((message, type = "info") => {
+    const colors = {
+      error: "#ff4444",
+      success: "#4CAF50",
+      warning: "#ff9800",
+      info: "#007acc",
+    };
+    const icons = { error: "❌", success: "✅", warning: "⚠️", info: "ℹ️" };
+    const el = document.createElement("div");
+    el.style.cssText = `
+      position: fixed; top: 80px; right: 20px;
+      background: ${colors[type] || colors.info};
+      color: white; padding: 12px 16px; border-radius: 8px; z-index: 10001;
+      font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
+      animation: slideInFromRight 0.2s ease-out;
+    `;
+    el.textContent = `${icons[type] || icons.info} ${message}`;
+    document.body.appendChild(el);
+    setTimeout(() => {
+      if (document.body.contains(el)) document.body.removeChild(el);
+    }, 3000);
+  }, []);
+
   useEffect(() => {
     // Prefer the runtime version if available (packaged Electron reflects real app version)
     if (window.electronAPI?.getAppVersion) {
@@ -160,15 +198,36 @@ function App() {
     progressiveOptions: { initial: 100, batchSize: 40 },
   });
 
-  // fullscreen / context menu
+  // fullscreen
   const {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
-  const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
+
+  // ✅ New context-menu state-only hook
+  const { contextMenu, showOnItem, showOnEmpty, hide: hideContextMenu } =
     useContextMenu();
+
+  // ✅ Action dispatcher (single pipeline for menu/hotkeys/toolbar)
+  const { runAction } = useActionDispatch(
+    {
+      electronAPI: window.electronAPI,
+      notify,
+      // showProperties: (videos) => { /* optional modal if you want */ },
+      // confirm: (msg) => window.confirm(msg),
+    },
+    getById
+  );
+
+  // ✅ Hotkeys operate on current selection (Enter / Ctrl+C / Delete)
+  const runForHotkeys = useCallback(
+    (actionId, currentSelection) =>
+      runAction(actionId, currentSelection, contextMenu.contextId),
+    [runAction, contextMenu.contextId]
+  );
+  useHotkeys(runForHotkeys, () => selection.selected);
 
   // === DYNAMIC ZOOM CALCULATION ===
   const calculateSafeZoom = useCallback(
@@ -299,7 +358,7 @@ function App() {
 
   // === DYNAMIC ZOOM RESIZE / COUNT (unchanged) ===
   useEffect(() => {
-    if (!window.electronAPI?.isElectron) return;
+    if (window.electronAPI?.isElectron === false) return;
     const handleResize = () => {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
@@ -378,7 +437,7 @@ function App() {
     );
   }, []); // eslint-disable-line
 
-  // FS listeners (unchanged)
+  // FS listeners (unchanged except selection updates use selection.setSelected)
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
@@ -393,7 +452,7 @@ function App() {
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      setSelectedVideos((prev) => {
+      selection.setSelected((prev) => {
         const ns = new Set(prev);
         ns.delete(filePath);
         return ns;
@@ -432,7 +491,7 @@ function App() {
     return () => {
       api?.stopFolderWatch?.().catch(() => {});
     };
-  }, []);
+  }, [selection.setSelected]);
 
   // relayout when list changes
   useEffect(() => {
@@ -492,7 +551,7 @@ function App() {
         await api.stopFolderWatch?.();
 
         setVideos([]);
-        setSelectedVideos(new Set());
+        selection.clear();
         setVisibleVideos(new Set());
         setLoadedVideos(new Set());
         setLoadingVideos(new Set());
@@ -533,7 +592,7 @@ function App() {
         setIsLoadingFolder(false);
       }
     },
-    [recursiveMode, addRecentFolder]
+    [recursiveMode, addRecentFolder, selection]
   );
 
   const handleFolderSelect = useCallback(async () => {
@@ -557,14 +616,13 @@ function App() {
       isElectronFile: false,
     }));
     setVideos(list);
-    setSelectedVideos(new Set());
+    selection.clear();
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
     setActualPlaying(new Set());
-
     // Web “folder” path is not real; skip adding to recents
-  }, []);
+  }, [selection]);
 
   const toggleRecursive = useCallback(() => {
     const next = !recursiveMode;
@@ -606,26 +664,33 @@ function App() {
     [zoomLevel]
   );
 
+  // Selection via clicks on cards (single / ctrl-multi / double → fullscreen)
   const handleVideoSelect = useCallback(
     (videoId, isCtrlClick, isDoubleClick) => {
-      const video = groupedAndSortedVideos.find((v) => v.id === videoId);
+      const video = getById(videoId);
       if (isDoubleClick && video) {
         openFullScreen(video, videoCollection.playingVideos);
         return;
       }
-      setSelectedVideos((prev) => {
-        const ns = new Set(prev);
-        if (isCtrlClick) {
-          if (ns.has(videoId)) ns.delete(videoId);
-          else ns.add(videoId);
-        } else {
-          ns.clear();
-          ns.add(videoId);
-        }
-        return ns;
-      });
+      if (isCtrlClick) selection.toggle(videoId);
+      else selection.selectOnly(videoId);
     },
-    [groupedAndSortedVideos, openFullScreen, videoCollection.playingVideos]
+    [getById, openFullScreen, videoCollection.playingVideos, selection]
+  );
+
+  // Context menu on item: right-click also selects if not selected
+  const handleCardContextMenu = useCallback(
+    (e, video) => {
+      const isSelected = selection.selected.has(video.id);
+      showOnItem(e, video.id, isSelected, selection.selectOnly);
+    },
+    [selection.selected, selection.selectOnly, showOnItem]
+  );
+
+  // Optional: background context menu (clear selection + show menu)
+  const handleBackgroundContextMenu = useCallback(
+    (e) => showOnEmpty(e, selection.clear),
+    [showOnEmpty, selection.clear]
   );
 
   useEffect(() => {
@@ -645,7 +710,7 @@ function App() {
   }, [videoCollection.performCleanup]);
 
   return (
-    <div className="app">
+    <div className="app" onContextMenu={handleBackgroundContextMenu}>
       {!settingsLoaded ? (
         <div
           style={{
@@ -883,9 +948,9 @@ function App() {
                   key={video.id}
                   video={video}
                   ioRoot={gridRef}
-                  selected={selectedVideos.has(video.id)}
+                  selected={selection.selected.has(video.id)}
                   onSelect={(...args) => handleVideoSelect(...args)}
-                  onContextMenu={showContextMenu}
+                  onContextMenu={handleCardContextMenu}
                   showFilenames={showFilenames}
                   // Video Collection Management
                   canLoadMoreVideos={() =>
@@ -943,10 +1008,17 @@ function App() {
 
           {contextMenu.visible && (
             <ContextMenu
-              video={contextMenu.video}
+              // new SOLID props
+              visible={contextMenu.visible}
               position={contextMenu.position}
+              contextId={contextMenu.contextId}
+              getById={getById}
+              selectionCount={selection.size}
+              electronAPI={window.electronAPI}
               onClose={hideContextMenu}
-              onAction={handleContextAction}
+              onAction={(actionId) =>
+                runAction(actionId, selection.selected, contextMenu.contextId)
+              }
             />
           )}
         </>

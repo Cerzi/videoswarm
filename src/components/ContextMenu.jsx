@@ -1,44 +1,37 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 
-const ContextMenu = ({ 
-  video, 
-  position, 
-  onClose, 
-  onAction 
+const pluralize = (count, one, many = undefined) =>
+  count === 1 ? one : (many ?? `${one}s`);
+
+const withCount = (count, base, basePlural) =>
+  count > 1 ? `${basePlural ?? base} (${count})` : base;
+
+const ContextMenu = ({
+  visible,
+  position,
+  contextId,
+  getById,
+  selectionCount = 0,
+  electronAPI = typeof window !== 'undefined' ? window.electronAPI : undefined,
+  onClose,
+  onAction,
 }) => {
   const rootRef = useRef(null);
+  if (!visible || !position) return null;
 
-  // Don't render if no video or position
-  const isVisible = !!(video && position);
-  if (!isVisible) {
-    return null;
-  }
-
-  // Close on left-click (or tap) outside, Esc, resize/scroll
   useEffect(() => {
     const handlePointerDown = (e) => {
-      // if click is outside the menu, close
       const root = rootRef.current;
-      if (root && !root.contains(e.target)) {
-        onClose();
-      }
+      if (root && !root.contains(e.target)) onClose?.();
     };
+    const handleKeyDown = (e) => { if (e.key === 'Escape') onClose?.(); };
+    const handleWindowChange = () => onClose?.();
 
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    const handleWindowChange = () => {
-      onClose();
-    };
-
-    // capture phase so we close even if inner elements call stopPropagation
     document.addEventListener('mousedown', handlePointerDown, true);
     document.addEventListener('touchstart', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('resize', handleWindowChange);
     window.addEventListener('scroll', handleWindowChange, true);
-
     return () => {
       document.removeEventListener('mousedown', handlePointerDown, true);
       document.removeEventListener('touchstart', handlePointerDown, true);
@@ -48,67 +41,99 @@ const ContextMenu = ({
     };
   }, [onClose]);
 
+  const primaryVideo = useMemo(() => {
+    if (!contextId || !getById) return undefined;
+    try { return getById(contextId); } catch { return undefined; }
+  }, [contextId, getById]);
+
+  const headerText = useMemo(() => {
+    if (selectionCount > 1) return `${selectionCount} items selected`;
+    if (primaryVideo?.name) return primaryVideo.name;
+    return 'Actions';
+  }, [primaryVideo, selectionCount]);
+
+  const isElectron = Boolean(
+    electronAPI?.openInExternalPlayer || electronAPI?.showItemInFolder || electronAPI?.moveToTrash
+  );
+  const canSingleFileOps = Boolean(primaryVideo?.isElectronFile && primaryVideo?.fullPath);
+
+  // Build menu items with pluralized labels when selectionCount > 1
+  const menuItems = useMemo(() => {
+    const items = [];
+    const n = Math.max(1, selectionCount); // effective count for labels
+
+    // Single-item context
+    if (contextId && selectionCount <= 1) {
+      if (isElectron && canSingleFileOps) {
+        items.push(
+          { id: 'show-in-folder', label: '📁 Show in File Explorer', action: 'show-in-folder' },
+          { id: 'open-external',  label: '🎬 Open in External Player', action: 'open-external' },
+          { type: 'separator' },
+          { id: 'copy-path',          label: '📋 Copy Full Path', action: 'copy-path' },
+          { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
+          { id: 'copy-filename',      label: '📄 Copy Filename', action: 'copy-filename' },
+          { type: 'separator' },
+          { id: 'file-properties',    label: '📊 File Properties', action: 'file-properties' },
+          { type: 'separator' },
+          { id: 'move-to-trash',      label: '🗑️ Move to Trash', action: 'move-to-trash', dangerous: true },
+        );
+      } else {
+        items.push(
+          { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
+          { id: 'copy-filename',      label: '📄 Copy Filename', action: 'copy-filename' },
+          { type: 'separator' },
+          { id: 'file-properties',    label: '📊 File Properties', action: 'file-properties' },
+        );
+      }
+      return items;
+    }
+
+    // Multi-selection (apply to all selected)
+    if (selectionCount > 1) {
+      if (isElectron) {
+        items.push(
+          { id: 'open-external',      label: `🎬 Open ${n} ${pluralize(n, 'item')}`, action: 'open-external' },
+          { type: 'separator' },
+          { id: 'copy-path',          label: `📋 Copy ${n} ${pluralize(n, 'Full Path', 'Full Paths')}`, action: 'copy-path' },
+          { id: 'copy-relative-path', label: `📋 Copy ${n} ${pluralize(n, 'Relative Path', 'Relative Paths')}`, action: 'copy-relative-path' },
+          { id: 'copy-filename',      label: `📄 Copy ${n} ${pluralize(n, 'Filename', 'Filenames')}`, action: 'copy-filename' },
+          { type: 'separator' },
+          { id: 'move-to-trash',      label: `🗑️ Move ${n} ${pluralize(n, 'item')} to Trash`, action: 'move-to-trash', dangerous: true },
+        );
+      } else {
+        items.push(
+          { id: 'copy-relative-path', label: `📋 Copy ${n} ${pluralize(n, 'Relative Path', 'Relative Paths')}`, action: 'copy-relative-path' },
+          { id: 'copy-filename',      label: `📄 Copy ${n} ${pluralize(n, 'Filename', 'Filenames')}`, action: 'copy-filename' },
+        );
+      }
+      return items;
+    }
+
+    // Background (no selection)
+    items.push(
+      { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename', disabled: true }
+    );
+    return items;
+  }, [contextId, selectionCount, isElectron, canSingleFileOps]);
+
   const handleAction = (action) => {
-    onAction(action);
-    onClose();
+    if (!action) return;
+    onAction?.(action);
+    onClose?.();
   };
 
-  // Enhanced menu items based on file type and context
-  const getMenuItems = () => {
-    const baseItems = [
-      { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename' }
-    ];
-
-    if (video.isElectronFile && video.fullPath) {
-      return [
-        { id: 'show-in-folder', label: '📁 Show in File Explorer', action: 'show-in-folder' },
-        { id: 'open-external', label: '🎬 Open in External Player', action: 'open-external' },
-        { type: 'separator' },
-        { id: 'copy-path', label: '📋 Copy Full Path', action: 'copy-path' },
-        { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-        { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename' },
-        { type: 'separator' },
-        { id: 'file-properties', label: '📊 File Properties', action: 'file-properties' },
-        { type: 'separator' },
-        { id: 'move-to-trash', label: '🗑️ Move to Trash', action: 'move-to-trash', dangerous: true }
-      ];
-    } else if (video.webkitRelativePath || video.relativePath) {
-      // Web mode with some relative path info
-      return [
-        { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-        ...baseItems
-      ];
-    } else {
-      return baseItems;
-    }
-  };
-
-  const menuItems = getMenuItems();
-
-  // Calculate position to keep menu on screen
-  const getAdjustedPosition = () => {
-    const menuWidth = 250;
-    const menuHeight = menuItems.length * 35 + 50; // Approximate height
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    let adjustedX = position.x;
-    let adjustedY = position.y;
-
-    // Adjust horizontal position
-    if (position.x + menuWidth > viewportWidth) {
-      adjustedX = viewportWidth - menuWidth - 10;
-    }
-
-    // Adjust vertical position
-    if (position.y + menuHeight > viewportHeight) {
-      adjustedY = viewportHeight - menuHeight - 10;
-    }
-
-    return { x: Math.max(10, adjustedX), y: Math.max(10, adjustedY) };
-  };
-
-  const adjustedPosition = getAdjustedPosition();
+  // Size/positioning
+  const approxHeight = menuItems.reduce((h, it) => h + (it.type === 'separator' ? 8 : 36), 40);
+  const menuWidth = 260;
+  const adjustedPosition = (() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let x = position.x;
+    let y = position.y;
+    if (x + menuWidth > vw) x = Math.max(10, vw - menuWidth - 10);
+    if (y + approxHeight > vh) y = Math.max(10, vh - approxHeight - 10);
+    return { x, y };
+  })();
 
   // Styles
   const menuStyle = {
@@ -124,9 +149,8 @@ const ContextMenu = ({
     zIndex: 999999,
     fontFamily: 'system-ui, -apple-system, sans-serif',
     fontSize: '13px',
-    userSelect: 'none'
+    userSelect: 'none',
   };
-
   const headerStyle = {
     backgroundColor: '#1a1a1a',
     padding: '10px 14px',
@@ -137,63 +161,57 @@ const ContextMenu = ({
     borderRadius: '8px 8px 0 0',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
+    whiteSpace: 'nowrap',
   };
-
-  const itemStyle = {
+  const itemBase = {
     padding: '10px 14px',
     color: '#e0e0e0',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    transition: 'background-color 0.1s ease'
+    transition: 'background-color 0.1s ease',
   };
-
-  const separatorStyle = {
-    height: '1px',
-    backgroundColor: '#404040',
-    margin: '4px 0'
-  };
-
-  const dangerousItemStyle = {
-    ...itemStyle,
-    color: '#ff6b6b'
-  };
+  const separatorStyle = { height: 1, backgroundColor: '#404040', margin: '4px 0' };
 
   return (
-    <div 
+    <div
       ref={rootRef}
       data-context-menu
       style={menuStyle}
-      onClick={(e) => e.stopPropagation()}   // keep clicks inside from bubbling
+      onClick={(e) => e.stopPropagation()}
     >
-      <div style={headerStyle} title={video.name}>
-        {video.name}
+      <div style={headerStyle} title={primaryVideo?.name || headerText}>
+        {headerText}
       </div>
-      
-      {menuItems.map((item, index) => {
-        if (item.type === 'separator') {
-          return <div key={`sep-${index}`} style={separatorStyle} />;
-        }
 
-        const isLast = index === menuItems.length - 1;
-        const isDangerous = item.dangerous;
-        
+      {menuItems.map((item, idx) => {
+        if (item.type === 'separator') {
+          return <div key={`sep-${idx}`} style={separatorStyle} />;
+        }
+        const isLast = idx === menuItems.length - 1;
+        const isDanger = item.dangerous;
+        const disabled = item.disabled;
         return (
           <div
             key={item.id}
+            role="menuitem"
+            aria-disabled={disabled ? 'true' : 'false'}
             style={{
-              ...(isDangerous ? dangerousItemStyle : itemStyle),
-              ...(isLast ? { borderRadius: '0 0 8px 8px' } : {})
+              ...itemBase,
+              ...(isDanger ? { color: '#ff6b6b' } : {}),
+              ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+              ...(isLast ? { borderRadius: '0 0 8px 8px' } : {}),
             }}
-            onClick={() => handleAction(item.action)}
+            onClick={() => !disabled && handleAction(item.action)}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = isDangerous ? '#ff4444' : '#404040';
+              if (disabled) return;
+              e.currentTarget.style.backgroundColor = isDanger ? '#ff4444' : '#404040';
               e.currentTarget.style.color = 'white';
             }}
             onMouseLeave={(e) => {
+              if (disabled) return;
               e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = isDangerous ? '#ff6b6b' : '#e0e0e0';
+              e.currentTarget.style.color = isDanger ? '#ff6b6b' : '#e0e0e0';
             }}
           >
             {item.label}
