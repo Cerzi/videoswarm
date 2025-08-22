@@ -152,6 +152,11 @@ function App() {
     [groupedAndSortedVideos]
   );
 
+  const orderedIds = useMemo(
+    () => groupedAndSortedVideos.map(v => v.id),
+    [groupedAndSortedVideos]
+  );
+
   // simple toast (notify) used by actions layer
   const notify = useCallback((message, type = "info") => {
     const colors = {
@@ -183,7 +188,7 @@ function App() {
       window.electronAPI
         .getAppVersion()
         .then((v) => v && setVersion(v))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, []);
 
@@ -245,8 +250,7 @@ function App() {
       for (let i = 0; i < memoryPressure.length; i++) {
         if (memoryPressure[i] < 0.8) {
           console.log(
-            `🧠 Safe zoom level ${i} (${
-              ["75%", "100%", "150%", "200%"][i]
+            `🧠 Safe zoom level ${i} (${["75%", "100%", "150%", "200%"][i]
             }) - estimated ${estimatedVisibleVideos[i]} visible videos`
           );
           return i;
@@ -288,10 +292,8 @@ function App() {
       const safeZoom = Math.max(newZoom, minZoom);
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${
-            ["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${
-            ["75%", "100%", "150%", "200%"][newZoom]
+          `🛡️ Zoom limited to ${["75%", "100%", "150%", "200%"][safeZoom]
+          } for memory safety (requested ${["75%", "100%", "150%", "200%"][newZoom]
           })`
         );
       }
@@ -371,8 +373,7 @@ function App() {
         );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
-              ["75%", "100%", "150%", "200%"][safeZoom]
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${["75%", "100%", "150%", "200%"][safeZoom]
             } for safety`
           );
           handleZoomChange(safeZoom);
@@ -424,7 +425,7 @@ function App() {
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
-      } catch {}
+      } catch { }
       setSettingsLoaded(true);
     };
     load();
@@ -489,7 +490,7 @@ function App() {
     api.onFileChanged?.(handleFileChanged);
 
     return () => {
-      api?.stopFolderWatch?.().catch(() => {});
+      api?.stopFolderWatch?.().catch(() => { });
     };
   }, [selection.setSelected]);
 
@@ -666,16 +667,24 @@ function App() {
 
   // Selection via clicks on cards (single / ctrl-multi / double → fullscreen)
   const handleVideoSelect = useCallback(
-    (videoId, isCtrlClick, isDoubleClick) => {
+    (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
       const video = getById(videoId);
       if (isDoubleClick && video) {
         openFullScreen(video, videoCollection.playingVideos);
         return;
       }
-      if (isCtrlClick) selection.toggle(videoId);
-      else selection.selectOnly(videoId);
+      if (isShiftClick) {
+        // Shift: range selection (additive if Ctrl also held)
+        selection.selectRange(orderedIds, videoId, /*additive*/ isCtrlClick);
+      } else if (isCtrlClick) {
+        // Ctrl only: toggle
+        selection.toggle(videoId);
+      } else {
+        // Plain click: single select + set anchor
+        selection.selectOnly(videoId);
+      }
     },
-    [getById, openFullScreen, videoCollection.playingVideos, selection]
+    [getById, openFullScreen, videoCollection.playingVideos, selection, orderedIds]
   );
 
   // Context menu on item: right-click also selects if not selected
@@ -797,8 +806,8 @@ function App() {
                       color: videoCollection.memoryStatus.isNearLimit
                         ? "#ff6b6b"
                         : videoCollection.memoryStatus.memoryPressure > 70
-                        ? "#ffa726"
-                        : "#51cf66",
+                          ? "#ffa726"
+                          : "#51cf66",
                       fontWeight: videoCollection.memoryStatus.isNearLimit
                         ? "bold"
                         : "normal",
@@ -935,13 +944,11 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${
-                !showFilenames ? "hide-filenames" : ""
-              } ${
-                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                  zoomLevel
+              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""
+                } ${["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
+                zoomLevel
                 ]
-              }`}
+                }`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard

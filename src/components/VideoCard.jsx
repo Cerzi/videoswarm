@@ -282,11 +282,11 @@ const VideoCard = memo(function VideoCard({
       if (clickTimeoutRef.current) {
         clearTimeout(clickTimeoutRef.current);
         clickTimeoutRef.current = null;
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, true);
+        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
         return;
       }
       clickTimeoutRef.current = setTimeout(() => {
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, false);
+        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
         clickTimeoutRef.current = null;
       }, 300);
     },
