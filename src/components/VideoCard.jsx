@@ -15,14 +15,14 @@ const VideoCard = memo(function VideoCard({
 
   // limits & callbacks (all owned by parent/orchestrator)
   canLoadMoreVideos, // () => boolean
-  onStartLoading, // (id)
-  onStopLoading, // (id)
-  onVideoLoad, // (id, aspectRatio)
-  onVideoPlay, // (id) - fires on 'playing' event
-  onVideoPause, // (id) - fires on 'pause' event
-  onPlayError, // (id, error)
-  onVisibilityChange, // (id, visible)
-  onHover, // (id)
+  onStartLoading,    // (id)
+  onStopLoading,     // (id)
+  onVideoLoad,       // (id, aspectRatio)
+  onVideoPlay,       // (id)
+  onVideoPause,      // (id)
+  onPlayError,       // (id, error)
+  onVisibilityChange,// (id, visible)
+  onHover,           // (id)
 
   // IO root (scroll container)
   ioRoot,
@@ -40,6 +40,7 @@ const VideoCard = memo(function VideoCard({
   // one-shot guards
   const loadRequestedRef = useRef(false);
   const metaNotifiedRef = useRef(false);
+  const permanentErrorRef = useRef(false); // NEW: suppress reload after terminal error
 
   const videoId = video.id || video.fullPath || video.name;
 
@@ -52,6 +53,28 @@ const VideoCard = memo(function VideoCard({
   // keep mirrors in sync
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
+
+  // NEW: robust Windows file URL builder (no %5C)
+  const toFileURL = useCallback((absPath) => {
+    let p = String(absPath || "");
+    p = p.replace(/\\/g, "/");          // normalize slashes
+    p = p.replace(/^([A-Za-z]):/, "/$1:"); // ensure "/C:" prefix in URL path
+    const encoded = encodeURI(p).replace(/#/g, "%23");
+    return `file://${encoded}`;
+  }, []);
+
+  const hardDetach = useCallback((el) => {
+    if (!el) return;
+    try { el.pause(); } catch {}
+    try {
+      if (typeof el.src === "string" && el.src.startsWith("blob:")) {
+        try { URL.revokeObjectURL(el.src); } catch {}
+      }
+      el.removeAttribute("src");
+      el.srcObject = null;
+      el.load();
+    } catch {}
+  }, []);
 
   useEffect(() => {
     // ⛔ Do not tear down while modal has adopted this element
@@ -72,6 +95,7 @@ const VideoCard = memo(function VideoCard({
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
+      // keep permanentErrorRef as-is; parent will likely remove card soon
       setLoaded(false);
       setLoading(false);
     }
@@ -96,6 +120,7 @@ const VideoCard = memo(function VideoCard({
             !loading &&
             !loadRequestedRef.current &&
             !videoRef.current &&
+            !permanentErrorRef.current &&    // NEW: don't reload after terminal error
             (canLoadMoreVideos?.() ?? true)
           ) {
             loadVideo();
@@ -118,29 +143,42 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    // attach *actual* media events ⇒ bubble up to orchestrator
+
     const handlePlaying = () => onVideoPlay?.(videoId);
     const handlePause = () => onVideoPause?.(videoId);
-    const handleError = (e) => onPlayError?.(videoId, e?.target?.error || e);
+    const handleError = (e) => {
+      const err = e?.target?.error || e;
+      onPlayError?.(videoId, err);
+
+      // NEW: classify permanent source errors & hard-detach
+      const msg = String(err?.message || err || "").toLowerCase();
+      const code = err?.code; // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
+      if (
+        code === 4 ||
+        msg.includes("err_file_not_found") ||
+        msg.includes("no supported source") ||
+        msg.includes("src not supported")
+      ) {
+        permanentErrorRef.current = true;
+      }
+      hardDetach(el);
+    };
 
     el.addEventListener("playing", handlePlaying);
     el.addEventListener("pause", handlePause);
     el.addEventListener("error", handleError);
 
     // only attempt to play when orchestrated, visible, and loaded
-    if (isPlaying && isVisible && loaded) {
+    if (isPlaying && isVisible && loaded && !permanentErrorRef.current) { // NEW guard
       const p = el.play();
       if (p?.catch)
         p.catch((err) => {
           const videoName = video.name?.slice(0, 15) || "unknown";
           console.log(`❌ ${videoName}: Play failed:`, err.message);
-          handleError(err);
+          handleError({ target: { error: err } });
         });
     } else {
-      // pause early if we're not supposed to be playing
-      try {
-        el.pause();
-      } catch {}
+      try { el.pause(); } catch {}
     }
 
     return () => {
@@ -148,12 +186,11 @@ const VideoCard = memo(function VideoCard({
       el.removeEventListener("pause", handlePause);
       el.removeEventListener("error", handleError);
     };
-  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
+  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError, hardDetach, video?.name]);
 
   // create & load a <video> element (metadata first)
   const loadVideo = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current)
-      return;
+    if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
 
     loadRequestedRef.current = true;
@@ -204,7 +241,11 @@ const VideoCard = memo(function VideoCard({
       // attach to DOM container
       const container = containerRef.current?.querySelector(".video-container");
       // ⛔ don't re-attach if this element is currently adopted by modal
-      if (container && !container.contains(el) && !(el.dataset && el.dataset.adopted === "modal")) {
+      if (
+        container &&
+        !container.contains(el) &&
+        !(el.dataset && el.dataset.adopted === "modal")
+      ) {
         container.appendChild(el);
       }
     };
@@ -213,10 +254,22 @@ const VideoCard = memo(function VideoCard({
       clearTimeout(loadTimeoutRef.current);
       cleanupListeners();
       finishStopLoading();
-      loadRequestedRef.current = false; // Allow retry on error
+      loadRequestedRef.current = false; // Allow retry on error unless permanent
 
-      // Tell orchestrator about load-time failure (so it can free a slot if needed)
-      onPlayError?.(videoId, e?.target?.error || e);
+      const err = e?.target?.error || e;
+      const msg = String(err?.message || err || "").toLowerCase();
+      const code = err?.code; // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
+      if (
+        code === 4 ||
+        msg.includes("err_file_not_found") ||
+        msg.includes("no supported source") ||
+        msg.includes("src not supported")
+      ) {
+        permanentErrorRef.current = true; // NEW: don't try again for missing/unsupported
+      }
+
+      onPlayError?.(videoId, err);
+      hardDetach(el); // NEW: ensure decoder/file handle is dropped
     };
 
     loadTimeoutRef.current = setTimeout(() => {
@@ -229,7 +282,7 @@ const VideoCard = memo(function VideoCard({
 
     try {
       if (video.isElectronFile && video.fullPath) {
-        el.src = `file://${video.fullPath}`;
+        el.src = toFileURL(video.fullPath); // NEW: correct file:// URL
       } else if (video.file) {
         el.src = URL.createObjectURL(video.file);
       } else if (video.fullPath || video.relativePath) {
@@ -237,6 +290,11 @@ const VideoCard = memo(function VideoCard({
       } else {
         throw new Error("No valid video source");
       }
+      // quick sanity guard for debugging malformed URLs
+      if (el.src.includes("%5C")) {
+        console.warn("[VideoCard] Suspicious file URL (encoded backslashes):", el.src);
+      }
+      el.load();
     } catch (err) {
       onErr({ target: { error: err } });
     }
@@ -250,6 +308,8 @@ const VideoCard = memo(function VideoCard({
     onStopLoading,
     onVideoLoad,
     onPlayError,
+    toFileURL,
+    hardDetach,
   ]);
 
   // Cleanup
@@ -330,9 +390,7 @@ const VideoCard = memo(function VideoCard({
   return (
     <div
       ref={containerRef}
-      className={`video-item ${selected ? "selected" : ""} ${
-        loading ? "loading" : ""
-      }`}
+      className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onContextMenu={handleContextMenu}

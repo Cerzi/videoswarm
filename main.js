@@ -1,5 +1,4 @@
 // main.js
-
 console.log("=== COMMAND LINE ARGS ===");
 console.log(process.argv);
 
@@ -13,6 +12,7 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs").promises;
+require('./main/ipc-trash')(ipcMain);
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -95,7 +95,7 @@ const defaultSettings = {
 let mainWindow;
 let currentSettings = null;
 
-// ===== Watcher integration (moved to separate module) =====
+// ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
 
 // We keep scanFolderForChanges so the watcher module can call it in polling mode.
@@ -796,20 +796,10 @@ ipcMain.handle("get-file-info", async (_event, filePath) => {
   }
 });
 
-ipcMain.handle("delete-file", async (_event, filePath) => {
-  try {
-    await fs.unlink(filePath);
-    return { success: true };
-  } catch (error) {
-    console.error("Failed to delete file:", error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Move file to trash (safer than permanent deletion)
+// keep single-file API but implement it via bulk for consistency
 ipcMain.handle("move-to-trash", async (_event, filePath) => {
   try {
-    await shell.trashItem(filePath);
+    await trash([filePath]); // batch of size 1
     return { success: true };
   } catch (error) {
     console.error("Failed to move to trash:", error);
@@ -894,4 +884,4 @@ app.on("activate", () => {
 
 // Ensure watcher cleanup on quit
 app.on("before-quit", async () => { await folderWatcher.stop(); });
-app.on("will-quit",   async () => { await folderWatcher.stop(); });
+app.on("will-quit", async () => { await folderWatcher.stop(); });

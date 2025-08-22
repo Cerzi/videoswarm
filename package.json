@@ -68,7 +68,8 @@
     "chokidar": "^4.0.3",
     "electron-store": "^10.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "trash": "^9.0.0"
   },
   "build": {
     "appId": "com.videotools.videoswarm",

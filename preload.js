@@ -91,10 +91,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Additional file operations (from your main.js)
-  deleteFile: async (filePath) => {
-    return await ipcRenderer.invoke("delete-file", filePath);
+  bulkMoveToTrash: async (paths) => {
+    return await ipcRenderer.invoke('bulk-move-to-trash', paths);
   },
-
   moveToTrash: async (filePath) => {
     return await ipcRenderer.invoke("move-to-trash", filePath);
   },

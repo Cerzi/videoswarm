@@ -22,6 +22,8 @@ import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import useHotkeys from "./hooks/selection/useHotkeys";
+import { releaseVideoHandlesForAsync } from './utils/releaseVideoHandles';
+import useTrashIntegration from './hooks/actions/useTrashIntegration';
 
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
@@ -225,15 +227,23 @@ function App() {
     useContextMenu();
 
   // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
-  const { runAction } = useActionDispatch(
-    {
-      electronAPI: window.electronAPI,
-      notify,
-      // showProperties: (videos) => { /* optional UI modal */ },
-      // confirm: (msg) => window.confirm(msg),
-    },
-    getById
-  );
+  const deps = useTrashIntegration({
+    electronAPI: window.electronAPI,   // ← was electronAPI
+    notify,
+    confirm: window.confirm,
+    releaseVideoHandlesForAsync,
+
+    // use your real setters
+    setVideos,                         // ← was setAllVideos
+    setSelected: selection.setSelected,
+    setLoadedIds: setLoadedVideos,
+    setPlayingIds: setActualPlaying,
+
+    // (optional but useful if you want to purge these too)
+    setVisibleIds: setVisibleVideos,
+    setLoadingIds: setLoadingVideos,
+  });
+  const { runAction } = useActionDispatch(deps, getById);
 
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
