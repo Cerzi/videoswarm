@@ -15,7 +15,6 @@ import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 
-// ✅ New SOLID hooks
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
@@ -116,12 +115,18 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
-  // ----- Masonry hook -----
-  const { updateAspectRatio, onItemsChanged, setZoomClass } = useChunkedMasonry(
-    { gridRef }
-  );
+  // --- NEW: visual order from masonry
+  const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
-  // MEMOIZED grouped & sorted
+  // ----- Masonry hook -----
+  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
+    useChunkedMasonry({
+      gridRef,
+      // NEW: emit visual order (top-to-bottom, then left-to-right by y,x)
+      onOrderChange: setVisualOrderedIds,
+    });
+
+  // MEMOIZED grouped & sorted (data order)
   const groupedAndSortedVideos = useMemo(() => {
     if (videos.length === 0) return [];
     const videosByFolder = new Map();
@@ -146,14 +151,17 @@ function App() {
     return result;
   }, [videos]);
 
-  // quick lookup for actions/context menu
-  const getById = useCallback(
-    (id) => groupedAndSortedVideos.find((v) => v.id === id),
+  // Data-ordered IDs (keep your original "orderedIds")
+  const orderedIds = useMemo(
+    () => groupedAndSortedVideos.map((v) => v.id),
     [groupedAndSortedVideos]
   );
 
-  const orderedIds = useMemo(
-    () => groupedAndSortedVideos.map(v => v.id),
+  // Prefer visual order (masonry positions) when available; fall back to data order.
+  const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
+
+  const getById = useCallback(
+    (id) => groupedAndSortedVideos.find((v) => v.id === id),
     [groupedAndSortedVideos]
   );
 
@@ -203,19 +211,19 @@ function App() {
     progressiveOptions: { initial: 100, batchSize: 40 },
   });
 
-  // fullscreen
+  // fullscreen / context menu
   const {
     fullScreenVideo,
     openFullScreen,
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
-
-  // ✅ New context-menu state-only hook
+  
+  // context-menu state-only hook
   const { contextMenu, showOnItem, showOnEmpty, hide: hideContextMenu } =
     useContextMenu();
 
-  // ✅ Action dispatcher (single pipeline for menu/hotkeys/toolbar)
+// Action dispatcher (single pipeline for menu/hotkeys/toolbar)
   const { runAction } = useActionDispatch(
     {
       electronAPI: window.electronAPI,
@@ -274,8 +282,10 @@ function App() {
         maxConcurrentPlaying,
         showFilenames,
       });
+      // Masonry may need a nudge after zoom change
+      scheduleLayout?.();
     },
-    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames]
+    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames, scheduleLayout]
   );
 
   const getMinimumZoomLevel = useCallback(() => {
@@ -358,9 +368,9 @@ function App() {
     videoCollection.memoryStatus?.memoryPressure,
   ]);
 
-  // === DYNAMIC ZOOM RESIZE / COUNT (unchanged) ===
+  // === DYNAMIC ZOOM RESIZE / COUNT ===
   useEffect(() => {
-    if (window.electronAPI?.isElectron === false) return;
+    if (!window.electronAPI?.isElectron) return;
     const handleResize = () => {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
@@ -438,7 +448,7 @@ function App() {
     );
   }, []); // eslint-disable-line
 
-  // FS listeners (unchanged except selection updates use selection.setSelected)
+  // FS listeners (unchanged)
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
@@ -497,7 +507,7 @@ function App() {
   // relayout when list changes
   useEffect(() => {
     if (groupedAndSortedVideos.length) onItemsChanged();
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, onItemsChanged]);
 
   // zoom handling via hook
   useEffect(() => {
@@ -617,13 +627,14 @@ function App() {
       isElectronFile: false,
     }));
     setVideos(list);
-    selection.clear();
+    setSelectedVideos(new Set());
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
     setActualPlaying(new Set());
+
     // Web “folder” path is not real; skip adding to recents
-  }, [selection]);
+  }, []);
 
   const toggleRecursive = useCallback(() => {
     const next = !recursiveMode;
@@ -665,7 +676,7 @@ function App() {
     [zoomLevel]
   );
 
-  // Selection via clicks on cards (single / ctrl-multi / double → fullscreen)
+  // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
   const handleVideoSelect = useCallback(
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
       const video = getById(videoId);
@@ -675,8 +686,10 @@ function App() {
       }
       if (isShiftClick) {
         // Shift: range selection (additive if Ctrl also held)
-        selection.selectRange(orderedIds, videoId, /*additive*/ isCtrlClick);
-      } else if (isCtrlClick) {
+        selection.selectRange(orderForRange, videoId, /* additive */ isCtrlClick);
+        return;
+      }
+      if (isCtrlClick) {
         // Ctrl only: toggle
         selection.toggle(videoId);
       } else {

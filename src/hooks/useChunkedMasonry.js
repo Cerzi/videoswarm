@@ -7,9 +7,11 @@ export default function useChunkedMasonry({
   defaultAspect = 16 / 9,
   chunkSize = 200,
   columnGapFallback = 12,
+  onOrderChange,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
+  const lastOrderRef = useRef(null);
 
   const isLayingOutRef = useRef(false);
   const relayoutRequestedRef = useRef(false);
@@ -76,6 +78,9 @@ export default function useChunkedMasonry({
       const columnHeights = new Array(columnCount).fill(0);
       const items = Array.from(grid.querySelectorAll(".video-item"));
 
+      // Collect positions for order calculation
+      const positions = [];
+
       // work in chunks to avoid long tasks
       let i = 0;
       const step = () => {
@@ -125,6 +130,11 @@ export default function useChunkedMasonry({
             el.dataset.pos = "1";
           }
 
+          // Record position for ordering
+          el.dataset.x = String(x);
+          el.dataset.y = String(y);
+          positions.push({ id, x, y }); // NEW
+
           columnHeights[minIdx] = y + h + columnGap;
         }
 
@@ -134,6 +144,19 @@ export default function useChunkedMasonry({
           const maxHeight = columnHeights.length ? Math.max(...columnHeights) : 0;
           grid.style.height = `${maxHeight}px`;
           grid.style.position = "relative";
+
+          // Compute and publish visual order (top-to-bottom, then left-to-right)
+          if (typeof onOrderChange === "function") {
+            positions.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+            const order = positions.map(p => p.id);
+            const prev = lastOrderRef.current || [];
+            // shallow compare to avoid needless updates
+            const changed = order.length !== prev.length || order.some((id, idx) => id !== prev[idx]);
+            if (changed) {
+              lastOrderRef.current = order;
+              onOrderChange(order);
+            }
+          }
 
           isLayingOutRef.current = false;
           if (relayoutRequestedRef.current) {
@@ -145,7 +168,7 @@ export default function useChunkedMasonry({
 
       step();
     });
-  }, [gridRef, updateCachedGridMeasurements, chunkSize, defaultAspect]);
+  }, [gridRef, updateCachedGridMeasurements, chunkSize, defaultAspect, onOrderChange]);
 
   // public API: call when item AR becomes known
   const updateAspectRatio = useCallback(
