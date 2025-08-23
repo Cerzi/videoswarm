@@ -17,8 +17,9 @@ import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
-import useIntersectionObserverRegistry from "./hooks/useIntersectionObserverRegistry";
-import useLongTaskFlag from './hooks/video-collection/useLongTaskFlag';
+import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
+import useLongTaskFlag from './hooks/ui-perf/useLongTaskFlag';
+import useInitGate from './hooks/ui-perf/useInitGate';
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
@@ -111,6 +112,8 @@ function App() {
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+
+  const { scheduleInit } = useInitGate({ perFrame: 6 });
 
   const gridRef = useRef(null);
   const ioRegistry = useIntersectionObserverRegistry(
@@ -922,6 +925,7 @@ function App() {
                   }}
                   // Hover for priority
                   onHover={(id) => videoCollection.markHover(id)}
+                  scheduleInit={scheduleInit}
                 />
               ))}
             </div>
