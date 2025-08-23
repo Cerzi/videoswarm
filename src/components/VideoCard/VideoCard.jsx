@@ -69,7 +69,7 @@ const VideoCard = memo(function VideoCard({
         el.removeAttribute("src");
         el.load();
         el.remove();
-      } catch {}
+      } catch { }
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
@@ -110,6 +110,35 @@ const VideoCard = memo(function VideoCard({
     return () => observer.disconnect();
   }, [ioRoot, loaded, loading, canLoadMoreVideos, onVisibilityChange, videoId]);
 
+  useEffect(() => {
+    // Backup trigger: if parent says we're visible but our local IO
+    // didn't fire yet, attempt a load once the microtask queue clears.
+    if (
+      isVisible &&
+      !loaded &&
+      !loading &&
+      !loadRequestedRef.current &&
+      !videoRef.current &&
+      !permanentErrorRef.current &&
+      (canLoadMoreVideos?.() ?? true)
+    ) {
+      Promise.resolve().then(() => {
+        if (
+          isVisible &&
+          !loaded &&
+          !loading &&
+          !loadRequestedRef.current &&
+          !videoRef.current &&
+          !permanentErrorRef.current &&
+          (canLoadMoreVideos?.() ?? true)
+        ) {
+          loadVideo();
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible, loaded, loading, canLoadMoreVideos]);
+
   // React to orchestration: play/pause only if orchestrator says so
   useEffect(() => {
     const el = videoRef.current;
@@ -134,7 +163,7 @@ const VideoCard = memo(function VideoCard({
       const p = el.play();
       if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
     } else {
-      try { el.pause(); } catch {}
+      try { el.pause(); } catch { }
     }
 
     return () => {
@@ -248,7 +277,7 @@ const VideoCard = memo(function VideoCard({
           el.removeAttribute("src");
           el.load();
           el.remove();
-        } catch {}
+        } catch { }
       }
       videoRef.current = null;
       loadRequestedRef.current = false;
@@ -292,10 +321,10 @@ const VideoCard = memo(function VideoCard({
       {errorText
         ? errorText
         : loading
-        ? "📼 Loading…"
-        : (canLoadMoreVideos?.() ?? true)
-        ? "📼 Scroll to load"
-        : "⏳ Waiting…"}
+          ? "📼 Loading…"
+          : (canLoadMoreVideos?.() ?? true)
+            ? "📼 Scroll to load"
+            : "⏳ Waiting…"}
     </div>
   );
 
