@@ -27,6 +27,7 @@ export default function useVideoResourceManager({
   loadingVideos,
   playingVideos,
   hadLongTaskRecently = false,
+  isNear,
 }) {
   const lastCleanupTimeRef = useRef(0);
   const [currentMemoryMB, setCurrentMemoryMB] = useState(0);
@@ -165,7 +166,7 @@ export default function useVideoResourceManager({
 
       // Always allow visible videos (highest priority)
       if (visibleVideos.has(videoId)) {
-        // But in production, check if we're in memory emergency
+        // check if we're in memory emergency
         if (
           isProduction &&
           currentMemoryMB > PRODUCTION_LIMITS.EMERGENCY_THRESHOLD_MB
@@ -177,6 +178,9 @@ export default function useVideoResourceManager({
         }
         return true;
       }
+      
+      // Only prefetch if the card is near the viewport
+      if (typeof isNear === "function" && !isNear(videoId)) return false;
 
       // For non-visible videos, respect all limits
       const memoryOk =

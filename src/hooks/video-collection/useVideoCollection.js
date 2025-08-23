@@ -17,6 +17,7 @@ export default function useVideoCollection({
   scrollRef = null,
   progressive = {},
   hadLongTaskRecently = false,
+  isNear,
 }) {
   const {
     initial = 100,
@@ -47,6 +48,7 @@ export default function useVideoCollection({
     loadingVideos,
     playingVideos: actualPlaying,
     hadLongTaskRecently,
+    isNear,
   });
 
   // Layer 3: Play orchestration (Business logic)

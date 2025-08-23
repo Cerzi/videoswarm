@@ -105,7 +105,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    observeIntersection(el, handleVisible);
+    observeIntersection(el, videoId, handleVisible);
     return () => {
       unobserveIntersection(el);
     };

@@ -18,8 +18,8 @@ import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
-import useLongTaskFlag from './hooks/ui-perf/useLongTaskFlag';
-import useInitGate from './hooks/ui-perf/useInitGate';
+import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
+import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
@@ -116,13 +116,34 @@ function App() {
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
   const gridRef = useRef(null);
-  const ioRegistry = useIntersectionObserverRegistry(
-    gridRef,
-    {
-      rootMargin: "200px 0px",
-      threshold: [0, 0.15],
-    }
-  );
+  const rootMarginRef = useRef("300px 0px");
+
+  const ioRegistry = useIntersectionObserverRegistry(gridRef, {
+    rootMargin: "1600px 0px",
+    threshold: [0, 0.15],
+    nearPx: 900,
+  });
+
+  useEffect(() => {
+    const el = gridRef.current;
+    const update = () => {
+      const h = el?.clientHeight || window.innerHeight;
+      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
+    };
+    update();
+
+    const ro =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    if (ro && el) ro.observe(el);
+    window.addEventListener("resize", update);
+
+    return () => {
+      if (ro && el) ro.unobserve(el);
+      ro?.disconnect?.();
+      window.removeEventListener("resize", update);
+    };
+  }, [gridRef, ioRegistry]);
+
   const { hadLongTaskRecently } = useLongTaskFlag();
 
   // ----- Recent Folders hook -----
@@ -234,6 +255,7 @@ function App() {
       longTaskAdaptation: true,
     },
     hadLongTaskRecently,
+    isNear: ioRegistry.isNear,
   });
 
   // fullscreen / context menu
