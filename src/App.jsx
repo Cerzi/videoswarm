@@ -220,7 +220,14 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    progressiveOptions: { initial: 100, batchSize: 40 },
+    scrollRef: gridRef,
+    progressive: {
+      initial: 120,
+      batchSize: 64,
+      intervalMs: 100,
+      pauseOnScroll: true,
+      longTaskAdaptation: true,
+    }
   });
 
   // fullscreen / context menu

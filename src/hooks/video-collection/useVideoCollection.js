@@ -1,7 +1,7 @@
 // hooks/video-collection/useVideoCollection.js
-import { useProgressiveList } from './useProgressiveList';
-import useVideoResourceManager from './useVideoResourceManager';
-import usePlayOrchestrator from './usePlayOrchestrator';
+import { useProgressiveList } from "./useProgressiveList";
+import useVideoResourceManager from "./useVideoResourceManager";
+import usePlayOrchestrator from "./usePlayOrchestrator";
 
 /**
  * Composite hook that coordinates the 3-layer video collection system
@@ -14,13 +14,28 @@ export default function useVideoCollection({
   loadingVideos = new Set(),
   actualPlaying = new Set(),
   maxConcurrentPlaying = 250,
-  progressiveOptions = { initial: 80, batchSize: 40 }
+  scrollRef = null,
+  progressive = {},
 }) {
+  const {
+    initial = 100,
+    batchSize = 50,
+    intervalMs = 100,
+    pauseOnScroll = true,
+    longTaskAdaptation = true,
+  } = progressive;
+
   // Layer 1: Progressive rendering (React performance)
   const progressiveVideos = useProgressiveList(
-    videos, 
-    progressiveOptions.initial, 
-    progressiveOptions.batchSize
+    videos,
+    initial,
+    batchSize,
+    intervalMs,
+    {
+      scrollRef,
+      pauseOnScroll,
+      longTaskAdaptation,
+    }
   );
 
   // Layer 2: Resource management (Browser performance)
@@ -33,26 +48,27 @@ export default function useVideoCollection({
   });
 
   // Layer 3: Play orchestration (Business logic)
-  const { playingSet, markHover, reportPlayError, reportStarted } = usePlayOrchestrator({
-    visibleIds: visibleVideos,
-    loadedIds: loadedVideos,
-    maxPlaying: maxConcurrentPlaying,
-  });
+  const { playingSet, markHover, reportPlayError, reportStarted } =
+    usePlayOrchestrator({
+      visibleIds: visibleVideos,
+      loadedIds: loadedVideos,
+      maxPlaying: maxConcurrentPlaying,
+    });
 
   return {
     // What to render
     videosToRender: progressiveVideos,
-    
+
     // Functions for VideoCard
     canLoadVideo,
     isVideoPlaying: (videoId) => playingSet.has(videoId),
     markHover,
     reportPlayError,
     reportStarted,
-    
+
     // Functions for parent
     performCleanup,
-    
+
     // Derived state for UI
     playingVideos: playingSet,
     stats: {
@@ -61,11 +77,15 @@ export default function useVideoCollection({
       playing: playingSet.size,
       loaded: loadedVideos.size,
     },
-    
+
     // Debug info (development only)
-    debug: process.env.NODE_ENV === 'development' ? {
-      resourceLimits: limits,
-      systemHealth: loadedVideos.size > limits.maxLoaded ? 'overloaded' : 'good'
-    } : undefined
+    debug:
+      process.env.NODE_ENV === "development"
+        ? {
+            resourceLimits: limits,
+            systemHealth:
+              loadedVideos.size > limits.maxLoaded ? "overloaded" : "good",
+          }
+        : undefined,
   };
 }
