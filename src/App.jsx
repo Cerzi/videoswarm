@@ -6,7 +6,7 @@ import React, {
   useRef,
   useMemo,
 } from "react";
-import VideoCard from "./components/VideoCard";
+import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";

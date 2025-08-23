@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
+import { classifyMediaError } from "./mediaError";
+import { toFileURL, hardDetach } from "./videoDom";
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -40,7 +42,8 @@ const VideoCard = memo(function VideoCard({
   // one-shot guards
   const loadRequestedRef = useRef(false);
   const metaNotifiedRef = useRef(false);
-  const permanentErrorRef = useRef(false); // NEW: suppress reload after terminal error
+  const permanentErrorRef = useRef(false);
+  const [errorText, setErrorText] = useState(null);
 
   const videoId = video.id || video.fullPath || video.name;
 
@@ -54,35 +57,11 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
-  // NEW: robust Windows file URL builder (no %5C)
-  const toFileURL = useCallback((absPath) => {
-    let p = String(absPath || "");
-    p = p.replace(/\\/g, "/");          // normalize slashes
-    p = p.replace(/^([A-Za-z]):/, "/$1:"); // ensure "/C:" prefix in URL path
-    const encoded = encodeURI(p).replace(/#/g, "%23");
-    return `file://${encoded}`;
-  }, []);
-
-  const hardDetach = useCallback((el) => {
-    if (!el) return;
-    try { el.pause(); } catch {}
-    try {
-      if (typeof el.src === "string" && el.src.startsWith("blob:")) {
-        try { URL.revokeObjectURL(el.src); } catch {}
-      }
-      el.removeAttribute("src");
-      el.srcObject = null;
-      el.load();
-    } catch {}
-  }, []);
-
   useEffect(() => {
     // ⛔ Do not tear down while modal has adopted this element
     if (isAdoptedByModal()) return;
 
     if (!isLoaded && !isLoading && videoRef.current) {
-      // Parent has decided this video should no longer be loaded
-      // Clean up and reset guards so it can load again later
       const el = videoRef.current;
       try {
         if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
@@ -91,11 +70,9 @@ const VideoCard = memo(function VideoCard({
         el.load();
         el.remove();
       } catch {}
-
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
-      // keep permanentErrorRef as-is; parent will likely remove card soon
       setLoaded(false);
       setLoading(false);
     }
@@ -113,30 +90,24 @@ const VideoCard = memo(function VideoCard({
           const nowVisible = entry.isIntersecting;
           onVisibilityChange?.(videoId, nowVisible);
 
-          // Opportunistic load when it first becomes visible and we're allowed
           if (
             nowVisible &&
             !loaded &&
             !loading &&
             !loadRequestedRef.current &&
             !videoRef.current &&
-            !permanentErrorRef.current &&    // NEW: don't reload after terminal error
+            !permanentErrorRef.current &&
             (canLoadMoreVideos?.() ?? true)
           ) {
             loadVideo();
           }
         }
       },
-      {
-        root: rootEl,
-        rootMargin: "200px 0px",
-        threshold: [0, 0.15],
-      }
+      { root: rootEl, rootMargin: "200px 0px", threshold: [0, 0.15] }
     );
 
     observer.observe(el);
     return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ioRoot, loaded, loading, canLoadMoreVideos, onVisibilityChange, videoId]);
 
   // React to orchestration: play/pause only if orchestrator says so
@@ -149,18 +120,9 @@ const VideoCard = memo(function VideoCard({
     const handleError = (e) => {
       const err = e?.target?.error || e;
       onPlayError?.(videoId, err);
-
-      // NEW: classify permanent source errors & hard-detach
-      const msg = String(err?.message || err || "").toLowerCase();
-      const code = err?.code; // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
-      if (
-        code === 4 ||
-        msg.includes("err_file_not_found") ||
-        msg.includes("no supported source") ||
-        msg.includes("src not supported")
-      ) {
-        permanentErrorRef.current = true;
-      }
+      const { terminal, label } = classifyMediaError(err);
+      if (terminal) permanentErrorRef.current = true;
+      setErrorText(`⚠️ ${label}`);
       hardDetach(el);
     };
 
@@ -168,15 +130,9 @@ const VideoCard = memo(function VideoCard({
     el.addEventListener("pause", handlePause);
     el.addEventListener("error", handleError);
 
-    // only attempt to play when orchestrated, visible, and loaded
-    if (isPlaying && isVisible && loaded && !permanentErrorRef.current) { // NEW guard
+    if (isPlaying && isVisible && loaded && !permanentErrorRef.current) {
       const p = el.play();
-      if (p?.catch)
-        p.catch((err) => {
-          const videoName = video.name?.slice(0, 15) || "unknown";
-          console.log(`❌ ${videoName}: Play failed:`, err.message);
-          handleError({ target: { error: err } });
-        });
+      if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
     } else {
       try { el.pause(); } catch {}
     }
@@ -186,12 +142,14 @@ const VideoCard = memo(function VideoCard({
       el.removeEventListener("pause", handlePause);
       el.removeEventListener("error", handleError);
     };
-  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError, hardDetach, video?.name]);
+  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
 
-  // create & load a <video> element (metadata first)
+  // create & load a <video> element
   const loadVideo = useCallback(() => {
     if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
+    if (permanentErrorRef.current) return;
+    setErrorText(null);
 
     loadRequestedRef.current = true;
     onStartLoading?.(videoId);
@@ -223,10 +181,7 @@ const VideoCard = memo(function VideoCard({
     const onMeta = () => {
       if (!metaNotifiedRef.current) {
         metaNotifiedRef.current = true;
-        const ar =
-          el.videoWidth && el.videoHeight
-            ? el.videoWidth / el.videoHeight
-            : 16 / 9;
+        const ar = el.videoWidth && el.videoHeight ? el.videoWidth / el.videoHeight : 16 / 9;
         onVideoLoad?.(videoId, ar);
       }
     };
@@ -237,15 +192,8 @@ const VideoCard = memo(function VideoCard({
       finishStopLoading();
       setLoaded(true);
       videoRef.current = el;
-
-      // attach to DOM container
       const container = containerRef.current?.querySelector(".video-container");
-      // ⛔ don't re-attach if this element is currently adopted by modal
-      if (
-        container &&
-        !container.contains(el) &&
-        !(el.dataset && el.dataset.adopted === "modal")
-      ) {
+      if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
         container.appendChild(el);
       }
     };
@@ -254,22 +202,13 @@ const VideoCard = memo(function VideoCard({
       clearTimeout(loadTimeoutRef.current);
       cleanupListeners();
       finishStopLoading();
-      loadRequestedRef.current = false; // Allow retry on error unless permanent
-
+      loadRequestedRef.current = false;
       const err = e?.target?.error || e;
-      const msg = String(err?.message || err || "").toLowerCase();
-      const code = err?.code; // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
-      if (
-        code === 4 ||
-        msg.includes("err_file_not_found") ||
-        msg.includes("no supported source") ||
-        msg.includes("src not supported")
-      ) {
-        permanentErrorRef.current = true; // NEW: don't try again for missing/unsupported
-      }
-
+      const { terminal, label } = classifyMediaError(err);
+      if (terminal) permanentErrorRef.current = true;
+      setErrorText(`⚠️ ${label}`);
       onPlayError?.(videoId, err);
-      hardDetach(el); // NEW: ensure decoder/file handle is dropped
+      hardDetach(el);
     };
 
     loadTimeoutRef.current = setTimeout(() => {
@@ -282,7 +221,7 @@ const VideoCard = memo(function VideoCard({
 
     try {
       if (video.isElectronFile && video.fullPath) {
-        el.src = toFileURL(video.fullPath); // NEW: correct file:// URL
+        el.src = toFileURL(video.fullPath);
       } else if (video.file) {
         el.src = URL.createObjectURL(video.file);
       } else if (video.fullPath || video.relativePath) {
@@ -290,37 +229,19 @@ const VideoCard = memo(function VideoCard({
       } else {
         throw new Error("No valid video source");
       }
-      // quick sanity guard for debugging malformed URLs
-      if (el.src.includes("%5C")) {
-        console.warn("[VideoCard] Suspicious file URL (encoded backslashes):", el.src);
-      }
       el.load();
     } catch (err) {
       onErr({ target: { error: err } });
     }
-  }, [
-    video,
-    videoId,
-    canLoadMoreVideos,
-    loading,
-    loaded,
-    onStartLoading,
-    onStopLoading,
-    onVideoLoad,
-    onPlayError,
-    toFileURL,
-    hardDetach,
-  ]);
+  }, [video, videoId, canLoadMoreVideos, loading, loaded, onStartLoading, onStopLoading, onVideoLoad, onPlayError]);
 
   // Cleanup
   useEffect(() => {
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
-
       const el = videoRef.current;
-      // ⛔ if adopted by modal, let modal restore/cleanup on its own
-      if (el && !(el.dataset && el.dataset.adopted === "modal")) {
+      if (el && !(el.dataset?.adopted === "modal")) {
         try {
           if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
           el.pause();
@@ -335,53 +256,44 @@ const VideoCard = memo(function VideoCard({
     };
   }, []);
 
-  // single / double click selection
-  const handleClick = useCallback(
-    (e) => {
-      e.stopPropagation();
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
-        clickTimeoutRef.current = null;
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
-        return;
-      }
-      clickTimeoutRef.current = setTimeout(() => {
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
-        clickTimeoutRef.current = null;
-      }, 300);
-    },
-    [onSelect, videoId]
-  );
+  // selection
+  const handleClick = useCallback((e) => {
+    e.stopPropagation();
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
+      return;
+    }
+    clickTimeoutRef.current = setTimeout(() => {
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
+      clickTimeoutRef.current = null;
+    }, 300);
+  }, [onSelect, videoId]);
 
-  const handleContextMenu = useCallback(
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onContextMenu?.(e, video);
-    },
-    [onContextMenu, video]
-  );
+  const handleContextMenu = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu?.(e, video);
+  }, [onContextMenu, video]);
 
-  const handleMouseEnter = useCallback(() => {
-    onHover?.(videoId);
-  }, [onHover, videoId]);
+  const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
   const renderPlaceholder = () => (
-    <div
-      className="video-placeholder"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
-        color: "#888",
-        fontSize: "0.9rem",
-      }}
-    >
-      {loading
+    <div className="video-placeholder" style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      height: "100%",
+      background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
+      color: "#888",
+      fontSize: "0.9rem",
+    }}>
+      {errorText
+        ? errorText
+        : loading
         ? "📼 Loading…"
-        : canLoadMoreVideos?.() ?? true
+        : (canLoadMoreVideos?.() ?? true)
         ? "📼 Scroll to load"
         : "⏳ Waiting…"}
     </div>
@@ -412,54 +324,37 @@ const VideoCard = memo(function VideoCard({
       {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
           ref={(container) => {
-            if (
-              container &&
-              videoRef.current &&
-              !container.contains(videoRef.current) &&
-              !(videoRef.current.dataset && videoRef.current.dataset.adopted === "modal")
-            ) {
+            if (container && videoRef.current && !container.contains(videoRef.current) && !(videoRef.current.dataset?.adopted === "modal")) {
               container.appendChild(videoRef.current);
             }
           }}
         />
       ) : (
-        <div
-          className="video-container"
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
-        >
+        <div className="video-container" style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}>
           {renderPlaceholder()}
         </div>
       )}
 
       {showFilenames && (
-        <div
-          className="video-filename"
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: "40px",
-            background: "rgba(0, 0, 0, 0.8)",
-            color: "#fff",
-            padding: "8px",
-            fontSize: "0.75rem",
-            lineHeight: "1.2",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            display: "flex",
-            alignItems: "center",
-          }}
-        >
+        <div className="video-filename" style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: "40px",
+          background: "rgba(0, 0, 0, 0.8)",
+          color: "#fff",
+          padding: "8px",
+          fontSize: "0.75rem",
+          lineHeight: "1.2",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "flex",
+          alignItems: "center",
+        }}>
           {video.name}
         </div>
       )}
