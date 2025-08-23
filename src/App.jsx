@@ -18,6 +18,7 @@ import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/useIntersectionObserverRegistry";
+import useLongTaskFlag from './hooks/video-collection/useLongTaskFlag';
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
@@ -119,6 +120,7 @@ function App() {
       threshold: [0, 0.15],
     }
   );
+  const { hadLongTaskRecently } = useLongTaskFlag();
 
   // ----- Recent Folders hook -----
   const {
@@ -227,7 +229,8 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
-    }
+    },
+    hadLongTaskRecently,
   });
 
   // fullscreen / context menu
