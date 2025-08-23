@@ -12,24 +12,12 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs").promises;
-require('./main/ipc-trash')(ipcMain);
+require("./main/ipc-trash")(ipcMain);
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
 console.log("Electron version:", process.versions.electron);
 
-if (process.platform === "linux") {
-  console.log("=== USING NEW CHROMIUM GL FLAGS ===");
-
-  // NEW format (Electron 37+ / Chromium 123+)
-  app.commandLine.appendSwitch("gl", "egl-angle");
-  app.commandLine.appendSwitch("angle", "opengl");
-
-  // Keep these for compatibility
-  app.commandLine.appendSwitch("ignore-gpu-blocklist");
-
-  console.log("Using new GL flag format for recent Electron versions");
-}
 
 // Enable GC in both dev and production for memory management
 app.commandLine.appendSwitch("js-flags", "--expose-gc");
@@ -356,6 +344,10 @@ async function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,
 
+      // Native video (linux)
+      contextIsolation: true,
+      nodeIntegration: false,
+
       // Enhanced memory management
       experimentalFeatures: true,
       backgroundThrottling: false,
@@ -389,6 +381,13 @@ async function createWindow() {
     console.log("DOM ready, sending settings");
     mainWindow.webContents.send("settings-loaded", currentSettings);
   });
+
+  // Linux-only: wire the NativeVideoManager AFTER creating the window
+  if (process.platform === "linux") {
+    const { NativeVideoManager } = require("./main/native-video");
+    const nativeVideoMgr = new NativeVideoManager(mainWindow);
+    nativeVideoMgr.init(); // no await needed
+  }
 
   // Enhanced crash detection
   mainWindow.webContents.on("render-process-gone", (event, details) => {
@@ -833,8 +832,14 @@ ipcMain.handle("get-file-properties", async (_event, filePath) => {
 
 // Recent folders IPC
 ipcMain.handle("recent:get", async () => await getRecentFolders());
-ipcMain.handle("recent:add", async (_e, folderPath) => await addRecentFolder(folderPath));
-ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFolder(folderPath));
+ipcMain.handle(
+  "recent:add",
+  async (_e, folderPath) => await addRecentFolder(folderPath)
+);
+ipcMain.handle(
+  "recent:remove",
+  async (_e, folderPath) => await removeRecentFolder(folderPath)
+);
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 // Watcher IPC (delegated to watcher module)
@@ -874,6 +879,13 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error("❌ Startup failure:", err);
   }
+  if (process.argv.includes("--gpu-diagnostics")) {
+    const { BrowserWindow } = require("electron");
+    const w1 = new BrowserWindow({ width: 1000, height: 800 });
+    await w1.loadURL("chrome://gpu");
+    const w2 = new BrowserWindow({ width: 1200, height: 800 });
+    await w2.loadURL("chrome://media-internals");
+  }
 });
 
 app.on("activate", () => {
@@ -883,5 +895,9 @@ app.on("activate", () => {
 });
 
 // Ensure watcher cleanup on quit
-app.on("before-quit", async () => { await folderWatcher.stop(); });
-app.on("will-quit", async () => { await folderWatcher.stop(); });
+app.on("before-quit", async () => {
+  await folderWatcher.stop();
+});
+app.on("will-quit", async () => {
+  await folderWatcher.stop();
+});

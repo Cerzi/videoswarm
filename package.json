@@ -24,7 +24,8 @@
   ],
   "author": {
     "name": "cerzi",
-    "url": "https://github.com/cerzi"
+    "url": "https://github.com/cerzi",
+    "email": "disquietgames@gmail.com"
   },
   "license": "GPL-3.0-or-later",
   "engines": {
@@ -32,16 +33,17 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "start": "electron . --no-sandbox",
-    "dev": "electron . --dev --no-sandbox",
-    "electron:dev": "concurrently \"npm run vite:dev\" \"wait-on http://localhost:5173 && electron . --dev --no-sandbox\"",
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "electron:dev": "cross-env __GLX_VENDOR_LIBRARY_NAME=nvidia __NV_PRIME_RENDER_OFFLOAD=1 LIBVA_DRI3_DISABLE=1 LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct concurrently -k \"npm run vite:dev\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "electron:build": "npm run vite:build && electron-builder",
     "electron:dist": "npm run vite:build && electron-builder --publish=never",
     "electron:pack": "npm run vite:build && electron-builder --dir",
+    "electron:dev:libmpv": "cross-env USE_LIBMPV_LINUX=1 npm run electron:dev",
     "vite:dev": "vite",
     "vite:build": "vite build",
     "vite:preview": "vite preview",
-    "debug": "electron . --no-sandbox --inspect=9229",
+    "debug": "electron . --inspect=9229",
     "clean": "rimraf dist dist-react",
     "rebuild": "npm run clean && npm install",
     "lint": "echo 'Add ESLint when ready'",
@@ -54,6 +56,7 @@
     "@vitest/coverage-v8": "^3.2.4",
     "@vitest/ui": "^3.2.4",
     "concurrently": "^8.2.2",
+    "cross-env": "^10.0.0",
     "electron": "^37.2.6",
     "electron-builder": "^24.9.1",
     "jsdom": "^26.1.0",

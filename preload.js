@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+try {
+  require("./src/renderer/preload/nativeVideo.js");
+  console.log("[preload] nativeVideo preload loaded");
+} catch (e) {
+  console.warn("[preload] nativeVideo preload missing:", e.message);
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -7,7 +14,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   isElectron: true,
 
-  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
 
   // File manager integration
   showItemInFolder: async (filePath) => {
@@ -92,7 +99,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Additional file operations (from your main.js)
   bulkMoveToTrash: async (paths) => {
-    return await ipcRenderer.invoke('bulk-move-to-trash', paths);
+    return await ipcRenderer.invoke("bulk-move-to-trash", paths);
   },
   moveToTrash: async (filePath) => {
     return await ipcRenderer.invoke("move-to-trash", filePath);
