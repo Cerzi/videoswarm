@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-
-const pluralize = (count, one, many = undefined) =>
-  count === 1 ? one : (many ?? `${one}s`);
-
-const withCount = (count, base, basePlural) =>
-  count > 1 ? `${basePlural ?? base} (${count})` : base;
+import {
+  actionPolicies,
+  getContextPolicy,
+  TargetPolicy,
+} from "../hooks/actions/actionPolicies";
 
 const ContextMenu = ({
   visible,
@@ -53,67 +52,67 @@ const ContextMenu = ({
   }, [primaryVideo, selectionCount]);
 
   const isElectron = Boolean(
-    electronAPI?.openInExternalPlayer || electronAPI?.showItemInFolder || electronAPI?.moveToTrash
+    electronAPI?.openInExternalPlayer ||
+    electronAPI?.showItemInFolder ||
+    electronAPI?.moveToTrash
   );
   const canSingleFileOps = Boolean(primaryVideo?.isElectronFile && primaryVideo?.fullPath);
 
-  // Build menu items with pluralized labels when selectionCount > 1
+  // ===== Label helper based on policy =====
+  const menuLabel = (actionId) => {
+    const base = actionPolicies[actionId]?.label ?? actionId;
+    if (selectionCount > 1) {
+      const policy = getContextPolicy(actionId);
+      if (policy === TargetPolicy.CONTEXT_ONLY) return `${base} (this item)`;
+      if (policy === TargetPolicy.ALL_SELECTED) return `${base} (${selectionCount} selected)`;
+    }
+    return base;
+  };
+
+  // ===== Menu items =====
   const menuItems = useMemo(() => {
     const items = [];
-    const n = Math.max(1, selectionCount); // effective count for labels
 
-    // Single-item context
-    if (contextId && selectionCount <= 1) {
+    // If we right-clicked an item (contextId present)
+    if (contextId) {
       if (isElectron && canSingleFileOps) {
+        // Single-item verbs (operate on CONTEXT_ONLY when multi-selected)
         items.push(
-          { id: 'show-in-folder', label: '📁 Show in File Explorer', action: 'show-in-folder' },
-          { id: 'open-external',  label: '🎬 Open in External Player', action: 'open-external' },
-          { type: 'separator' },
-          { id: 'copy-path',          label: '📋 Copy Full Path', action: 'copy-path' },
-          { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-          { id: 'copy-filename',      label: '📄 Copy Filename', action: 'copy-filename' },
-          { type: 'separator' },
-          { id: 'file-properties',    label: '📊 File Properties', action: 'file-properties' },
-          { type: 'separator' },
-          { id: 'move-to-trash',      label: '🗑️ Move to Trash', action: 'move-to-trash', dangerous: true },
-        );
-      } else {
-        items.push(
-          { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-          { id: 'copy-filename',      label: '📄 Copy Filename', action: 'copy-filename' },
-          { type: 'separator' },
-          { id: 'file-properties',    label: '📊 File Properties', action: 'file-properties' },
+          { id: 'show-in-folder', label: `📁 ${menuLabel('show-in-folder')}`, action: 'show-in-folder' },
+          { id: 'open-external',  label: `🎬 ${menuLabel('open-external')}`,  action: 'open-external' },
         );
       }
-      return items;
-    }
 
-    // Multi-selection (apply to all selected)
-    if (selectionCount > 1) {
+      // Copy actions (ALL_SELECTED)
+      items.push(
+        { type: 'separator' },
+        { id: 'copy-path',          label: `📋 ${menuLabel('copy-path')}`,          action: 'copy-path' },
+        { id: 'copy-relative-path', label: `📋 ${menuLabel('copy-relative-path')}`, action: 'copy-relative-path' },
+        { id: 'copy-filename',      label: `📄 ${menuLabel('copy-filename')}`,      action: 'copy-filename' },
+      );
+
+      // Properties (CONTEXT_ONLY)
+      items.push(
+        { type: 'separator' },
+        { id: 'file-properties',    label: `📊 ${menuLabel('file-properties')}`,    action: 'file-properties' },
+      );
+
+      // Destructive (ALL_SELECTED)
       if (isElectron) {
         items.push(
-          { id: 'open-external',      label: `🎬 Open ${n} ${pluralize(n, 'item')}`, action: 'open-external' },
           { type: 'separator' },
-          { id: 'copy-path',          label: `📋 Copy ${n} ${pluralize(n, 'Full Path', 'Full Paths')}`, action: 'copy-path' },
-          { id: 'copy-relative-path', label: `📋 Copy ${n} ${pluralize(n, 'Relative Path', 'Relative Paths')}`, action: 'copy-relative-path' },
-          { id: 'copy-filename',      label: `📄 Copy ${n} ${pluralize(n, 'Filename', 'Filenames')}`, action: 'copy-filename' },
-          { type: 'separator' },
-          { id: 'move-to-trash',      label: `🗑️ Move ${n} ${pluralize(n, 'item')} to Trash`, action: 'move-to-trash', dangerous: true },
-        );
-      } else {
-        items.push(
-          { id: 'copy-relative-path', label: `📋 Copy ${n} ${pluralize(n, 'Relative Path', 'Relative Paths')}`, action: 'copy-relative-path' },
-          { id: 'copy-filename',      label: `📄 Copy ${n} ${pluralize(n, 'Filename', 'Filenames')}`, action: 'copy-filename' },
+          { id: 'move-to-trash', label: `🗑️ ${menuLabel('move-to-trash')}`, action: 'move-to-trash', dangerous: true }
         );
       }
       return items;
     }
 
-    // Background (no selection)
+    // Background context (no contextId): keep minimal
     items.push(
       { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename', disabled: true }
     );
     return items;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextId, selectionCount, isElectron, canSingleFileOps]);
 
   const handleAction = (action) => {
