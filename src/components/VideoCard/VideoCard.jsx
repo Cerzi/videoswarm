@@ -1,3 +1,4 @@
+// src/components/VideoCard/VideoCard.jsx
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
@@ -26,10 +27,12 @@ const VideoCard = memo(function VideoCard({
   onVisibilityChange,// (id, visible)
   onHover,           // (id)
 
-  // IO root (scroll container)
-  ioRoot,
+  // NEW: functions from the shared IO registry
+  observeIntersection,  // (el, (visible:boolean, entry)=>void)
+  unobserveIntersection // (el)=>void
 }) {
-  const containerRef = useRef(null);
+  const cardRef = useRef(null);           // wrapper .video-item
+  const videoContainerRef = useRef(null); // inner .video-container
   const videoRef = useRef(null);
 
   const clickTimeoutRef = useRef(null);
@@ -57,19 +60,18 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
+  // Teardown when parent says not loaded/not loading (unless adopted)
   useEffect(() => {
-    // ⛔ Do not tear down while modal has adopted this element
     if (isAdoptedByModal()) return;
-
     if (!isLoaded && !isLoading && videoRef.current) {
       const el = videoRef.current;
       try {
         if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
         el.pause();
         el.removeAttribute("src");
-        el.load();
+        // NOTE: avoid calling el.load() here; it can force sync churn in Chromium.
         el.remove();
-      } catch { }
+      } catch { /* noop */ }
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
@@ -78,41 +80,45 @@ const VideoCard = memo(function VideoCard({
     }
   }, [isLoaded, isLoading, isAdoptedByModal]);
 
-  // IntersectionObserver: report visibility + opportunistic load
+  // NEW: shared IO registration for visibility + opportunistic load
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const el = cardRef.current;
+    if (!el || !observeIntersection || !unobserveIntersection) return;
 
-    const rootEl = ioRoot?.current || null;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const nowVisible = entry.isIntersecting;
-          onVisibilityChange?.(videoId, nowVisible);
+    const handleVisible = (nowVisible /* boolean */) => {
+      onVisibilityChange?.(videoId, nowVisible);
 
-          if (
-            nowVisible &&
-            !loaded &&
-            !loading &&
-            !loadRequestedRef.current &&
-            !videoRef.current &&
-            !permanentErrorRef.current &&
-            (canLoadMoreVideos?.() ?? true)
-          ) {
-            loadVideo();
-          }
-        }
-      },
-      { root: rootEl, rootMargin: "200px 0px", threshold: [0, 0.15] }
-    );
+      if (
+        nowVisible &&
+        !loaded &&
+        !loading &&
+        !loadRequestedRef.current &&
+        !videoRef.current &&
+        !permanentErrorRef.current &&
+        (canLoadMoreVideos?.() ?? true)
+      ) {
+        loadVideo();
+      }
+    };
 
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [ioRoot, loaded, loading, canLoadMoreVideos, onVisibilityChange, videoId]);
+    observeIntersection(el, handleVisible);
+    return () => {
+      unobserveIntersection(el);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    observeIntersection,
+    unobserveIntersection,
+    videoId,
+    loaded,
+    loading,
+    canLoadMoreVideos,
+    onVisibilityChange
+  ]);
 
+  // Backup trigger: if parent says we're visible but our local handler
+  // didn't run yet, attempt a load once the microtask queue clears.
   useEffect(() => {
-    // Backup trigger: if parent says we're visible but our local IO
-    // didn't fire yet, attempt a load once the microtask queue clears.
     if (
       isVisible &&
       !loaded &&
@@ -163,7 +169,7 @@ const VideoCard = memo(function VideoCard({
       const p = el.play();
       if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
     } else {
-      try { el.pause(); } catch { }
+      try { el.pause(); } catch { /* noop */ }
     }
 
     return () => {
@@ -221,7 +227,8 @@ const VideoCard = memo(function VideoCard({
       finishStopLoading();
       setLoaded(true);
       videoRef.current = el;
-      const container = containerRef.current?.querySelector(".video-container");
+
+      const container = videoContainerRef.current;
       if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
         container.appendChild(el);
       }
@@ -275,9 +282,8 @@ const VideoCard = memo(function VideoCard({
           if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
           el.pause();
           el.removeAttribute("src");
-          el.load();
           el.remove();
-        } catch { }
+        } catch { /* noop */ }
       }
       videoRef.current = null;
       loadRequestedRef.current = false;
@@ -330,7 +336,7 @@ const VideoCard = memo(function VideoCard({
 
   return (
     <div
-      ref={containerRef}
+      ref={cardRef}
       className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
@@ -354,14 +360,14 @@ const VideoCard = memo(function VideoCard({
         <div
           className="video-container"
           style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
-          ref={(container) => {
-            if (container && videoRef.current && !container.contains(videoRef.current) && !(videoRef.current.dataset?.adopted === "modal")) {
-              container.appendChild(videoRef.current);
-            }
-          }}
+          ref={videoContainerRef}
         />
       ) : (
-        <div className="video-container" style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}>
+        <div
+          className="video-container"
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
+          ref={videoContainerRef}
+        >
           {renderPlaceholder()}
         </div>
       )}

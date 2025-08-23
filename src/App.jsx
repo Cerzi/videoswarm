@@ -17,13 +17,14 @@ import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
+import useIntersectionObserverRegistry from "./hooks/useIntersectionObserverRegistry";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import useHotkeys from "./hooks/selection/useHotkeys";
-import { releaseVideoHandlesForAsync } from './utils/releaseVideoHandles';
-import useTrashIntegration from './hooks/actions/useTrashIntegration';
+import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
+import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
@@ -111,6 +112,13 @@ function App() {
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
   const gridRef = useRef(null);
+  const ioRegistry = useIntersectionObserverRegistry(
+    gridRef,
+    {
+      rootMargin: "200px 0px",
+      threshold: [0, 0.15],
+    }
+  );
 
   // ----- Recent Folders hook -----
   const {
@@ -200,7 +208,7 @@ function App() {
       window.electronAPI
         .getAppVersion()
         .then((v) => v && setVersion(v))
-        .catch(() => { });
+        .catch(() => {});
     }
   }, []);
 
@@ -223,18 +231,22 @@ function App() {
     navigateFullScreen,
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
 
-  const { contextMenu, showOnItem, showOnEmpty, hide: hideContextMenu } =
-    useContextMenu();
+  const {
+    contextMenu,
+    showOnItem,
+    showOnEmpty,
+    hide: hideContextMenu,
+  } = useContextMenu();
 
   // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
   const deps = useTrashIntegration({
-    electronAPI: window.electronAPI,   // ← was electronAPI
+    electronAPI: window.electronAPI, // ← was electronAPI
     notify,
     confirm: window.confirm,
     releaseVideoHandlesForAsync,
 
     // use your real setters
-    setVideos,                         // ← was setAllVideos
+    setVideos, // ← was setAllVideos
     setSelected: selection.setSelected,
     setLoadedIds: setLoadedVideos,
     setPlayingIds: setActualPlaying,
@@ -269,7 +281,8 @@ function App() {
       for (let i = 0; i < memoryPressure.length; i++) {
         if (memoryPressure[i] < 0.8) {
           console.log(
-            `🧠 Safe zoom level ${i} (${["75%", "100%", "150%", "200%"][i]
+            `🧠 Safe zoom level ${i} (${
+              ["75%", "100%", "150%", "200%"][i]
             }) - estimated ${estimatedVisibleVideos[i]} visible videos`
           );
           return i;
@@ -296,7 +309,13 @@ function App() {
       // Nudge masonry after zoom change
       scheduleLayout?.();
     },
-    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames, scheduleLayout]
+    [
+      setZoomClass,
+      recursiveMode,
+      maxConcurrentPlaying,
+      showFilenames,
+      scheduleLayout,
+    ]
   );
 
   const getMinimumZoomLevel = useCallback(() => {
@@ -313,8 +332,10 @@ function App() {
       const safeZoom = Math.max(newZoom, minZoom);
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${["75%", "100%", "150%", "200%"][newZoom]
+          `🛡️ Zoom limited to ${
+            ["75%", "100%", "150%", "200%"][safeZoom]
+          } for memory safety (requested ${
+            ["75%", "100%", "150%", "200%"][newZoom]
           })`
         );
       }
@@ -394,7 +415,8 @@ function App() {
         );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${["75%", "100%", "150%", "200%"][safeZoom]
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
+              ["75%", "100%", "150%", "200%"][safeZoom]
             } for safety`
           );
           handleZoomChange(safeZoom);
@@ -446,7 +468,7 @@ function App() {
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
-      } catch { }
+      } catch {}
       setSettingsLoaded(true);
     };
     load();
@@ -511,7 +533,7 @@ function App() {
     api.onFileChanged?.(handleFileChanged);
 
     return () => {
-      api?.stopFolderWatch?.().catch(() => { });
+      api?.stopFolderWatch?.().catch(() => {});
     };
   }, [selection.setSelected]);
 
@@ -698,7 +720,11 @@ function App() {
       }
       if (isShiftClick) {
         // Shift: range selection (additive if Ctrl also held)
-        selection.selectRange(orderForRange, videoId, /* additive */ isCtrlClick);
+        selection.selectRange(
+          orderForRange,
+          videoId,
+          /* additive */ isCtrlClick
+        );
         return;
       }
       if (isCtrlClick) {
@@ -828,17 +854,21 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""
-                } ${["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                zoomLevel
+              className={`video-grid masonry-vertical ${
+                !showFilenames ? "hide-filenames" : ""
+              } ${
+                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
+                  zoomLevel
                 ]
-                }`}
+              }`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
                   key={video.id}
                   video={video}
                   ioRoot={gridRef}
+                  observeIntersection={ioRegistry.observe}
+                  unobserveIntersection={ioRegistry.unobserve}
                   selected={selection.selected.has(video.id)}
                   onSelect={(...args) => handleVideoSelect(...args)}
                   onContextMenu={handleCardContextMenu}
