@@ -34,12 +34,12 @@ const VideoCard = memo(function VideoCard({
 
   scheduleInit = null,
 }) {
-  const cardRef = useRef(null);            // wrapper .video-item
-  const videoContainerRef = useRef(null);  // inner .video-container
+  const cardRef = useRef(null); // wrapper .video-item
+  const videoContainerRef = useRef(null); // inner .video-container
 
-  const videoRef = useRef(null);           // DOM <video> element (fallback path)
-  const nativeIdRef = useRef(null);        // libmpv player id (Linux native path)
-  const nativeCleanupRef = useRef(null);   // cleanup function for observers/listeners
+  const videoRef = useRef(null); // DOM <video> element (fallback path)
+  const nativeIdRef = useRef(null); // libmpv player id (Linux native path)
+  const nativeCleanupRef = useRef(null); // cleanup function for observers/listeners
 
   const clickTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
@@ -68,7 +68,9 @@ const VideoCard = memo(function VideoCard({
         if (alive) setNativeAvailable(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // 🔹 helper: is this card’s <video> currently adopted by the modal?
@@ -142,7 +144,9 @@ const VideoCard = memo(function VideoCard({
     };
 
     observeIntersection(el, videoId, handleVisible);
-    return () => { unobserveIntersection(el); };
+    return () => {
+      unobserveIntersection(el);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeIntersection, unobserveIntersection, videoId, loaded, loading, canLoadMoreVideos, onVisibilityChange]);
 
@@ -189,7 +193,9 @@ const VideoCard = memo(function VideoCard({
             await NativeVideo.pause(nativeIdRef.current);
             onVideoPause?.(videoId);
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       })();
       return;
     }
@@ -217,7 +223,9 @@ const VideoCard = memo(function VideoCard({
       const p = el.play();
       if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
     } else {
-      try { el.pause(); } catch {}
+      try {
+        el.pause();
+      } catch {}
     }
 
     return () => {
@@ -229,7 +237,14 @@ const VideoCard = memo(function VideoCard({
 
   // Create & load (native first if available on Linux; else DOM <video>)
   const loadVideo = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current || nativeIdRef.current) return;
+    if (
+      loading ||
+      loaded ||
+      loadRequestedRef.current ||
+      videoRef.current ||
+      nativeIdRef.current
+    )
+      return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
     if (permanentErrorRef.current) return;
     setErrorText(null);
@@ -265,7 +280,10 @@ const VideoCard = memo(function VideoCard({
       const onMeta = () => {
         if (!metaNotifiedRef.current) {
           metaNotifiedRef.current = true;
-          const ar = el.videoWidth && el.videoHeight ? el.videoWidth / el.videoHeight : 16 / 9;
+          const ar =
+            el.videoWidth && el.videoHeight
+              ? el.videoWidth / el.videoHeight
+              : 16 / 9;
           onVideoLoad?.(videoId, ar);
         }
       };
@@ -278,7 +296,11 @@ const VideoCard = memo(function VideoCard({
         videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
+        if (
+          container &&
+          !container.contains(el) &&
+          !(el.dataset?.adopted === "modal")
+        ) {
           container.appendChild(el);
         }
       };
@@ -320,7 +342,12 @@ const VideoCard = memo(function VideoCard({
         // Optional warm-start: nudge buffering for visible tiles
         if (isVisible) {
           const p = el.play();
-          if (p?.then) p.then(() => { try { el.pause(); } catch {} }).catch(() => {});
+          if (p?.then)
+            p.then(() => {
+              try {
+                el.pause();
+              } catch {}
+            }).catch(() => {});
         }
       } catch (err) {
         onErr({ target: { error: err } });
@@ -338,8 +365,11 @@ const VideoCard = memo(function VideoCard({
 
         // Choose file path (prefer fullPath when running in Electron)
         const file =
-          (video.isElectronFile && video.fullPath) ? video.fullPath :
-          (video.fullPath || video.relativePath || (video.file ? null : null));
+          video.isElectronFile && video.fullPath
+            ? video.fullPath
+            : video.fullPath ||
+              video.relativePath ||
+              (video.file ? null : null);
 
         if (!file) throw new Error("No valid video source (native path)");
 
@@ -364,11 +394,18 @@ const VideoCard = memo(function VideoCard({
         window.addEventListener("scroll", onScroll, { passive: true });
 
         nativeCleanupRef.current = async () => {
-          try { ro.disconnect(); } catch {}
-          try { off?.(); } catch {}
-          try { window.removeEventListener("scroll", onScroll); } catch {}
           try {
-            if (nativeIdRef.current) await NativeVideo.destroy(nativeIdRef.current);
+            ro.disconnect();
+          } catch {}
+          try {
+            off?.();
+          } catch {}
+          try {
+            window.removeEventListener("scroll", onScroll);
+          } catch {}
+          try {
+            if (nativeIdRef.current)
+              await NativeVideo.destroy(nativeIdRef.current);
           } catch {}
           nativeIdRef.current = null;
         };
@@ -388,7 +425,7 @@ const VideoCard = memo(function VideoCard({
           onVideoPlay?.(videoId);
         }
       } catch (err) {
-        console.error("[NativeVideo] init failed:", err);
+        console.error(`[VideoCard:${videoId}] Native init failed:`, err);
         // Fallback to DOM <video> path if native fails
         try {
           await nativeCleanupRef.current?.();
@@ -402,8 +439,10 @@ const VideoCard = memo(function VideoCard({
 
     const runInit = () => {
       if (process.platform === "linux" && nativeAvailable) {
+        console.log(`[VideoCard:${videoId}] using NATIVE path (libmpv)`);
         runInitNative();
       } else {
+        console.log(`[VideoCard:${videoId}] using DOM <video> path (fallback)`);
         runInitDomVideo();
       }
     };
@@ -437,7 +476,9 @@ const VideoCard = memo(function VideoCard({
 
       // Native
       if (nativeIdRef.current) {
-        try { nativeCleanupRef.current?.(); } catch {}
+        try {
+          nativeCleanupRef.current?.();
+        } catch {}
         nativeCleanupRef.current = null;
         nativeIdRef.current = null;
       }
@@ -517,7 +558,9 @@ const VideoCard = memo(function VideoCard({
   return (
     <div
       ref={cardRef}
-      className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
+      className={`video-item ${selected ? "selected" : ""} ${
+        loading ? "loading" : ""
+      }`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onContextMenu={handleContextMenu}
@@ -538,7 +581,9 @@ const VideoCard = memo(function VideoCard({
     >
       {/* Container: in native path, mpv draws above the web layer (Phase 1).
           In DOM video path, we append the <video> element here. */}
-      {loaded && (videoRef.current || nativeIdRef.current) && !isAdoptedByModal() ? (
+      {loaded &&
+      (videoRef.current || nativeIdRef.current) &&
+      !isAdoptedByModal() ? (
         <div
           className="video-container"
           style={{

@@ -1,46 +1,50 @@
-// Linux-only NativeVideoManager: bridges Electron IPC to MpvController.
+// main/native-video/index.js
+// IPC surface + instance management. Idempotent registration and no duplicates.
 
-const { BrowserWindow, ipcMain } = require("electron");
-const { MpvController } = require("./mpv-controller");
-
-const isLinux = process.platform === "linux";
+const { ipcMain, BrowserWindow } = require('electron');
+const { MpvController } = require('./mpv-controller');
 
 class NativeVideoManager {
-  /**
-   * @param {import('electron').BrowserWindow} mainWindow
-   */
-  constructor(mainWindow) {
-    this.mainWindow = mainWindow;
-    this.mpv = new MpvController(process.env.CLIPB_MPV_PATH);
+  constructor({ mpvPath = 'mpv' } = {}) {
+    this.controller = new MpvController({ mpvPath });
+    this._wired = false;
   }
 
   async init() {
-    if (!isLinux) return;
+    if (this._wired) return;
+    this._wired = true;
 
-    ipcMain.handle("nativeVideo:isAvailable", () => true);
+    const ok = await this.controller.isAvailable();
+    console.log('[nativeVideo] mpv available:', ok, `(path=${this.controller.mpvPath})`);
 
-    ipcMain.handle("nativeVideo:create", async (e, args) => {
-      const st = await this.mpv.create(args);
-      return st.id;
+    const register = (channel, handler) => {
+      // ensure idempotent handlers (dev HMR etc.)
+      try { ipcMain.removeHandler(channel); } catch {}
+      ipcMain.handle(channel, handler);
+    };
+
+    register('nativeVideo:isAvailable', async () => this.controller.isAvailable());
+
+    register('nativeVideo:getContentBounds', async (event) => {
+      try {
+        const wc = event.sender;
+        const win = BrowserWindow.fromWebContents(wc) || wc.hostWebContents?.hostWindow;
+        const b = win?.getContentBounds?.();
+        if (!b) throw new Error('no content bounds');
+        return { x: b.x, y: b.y, width: b.width, height: b.height };
+      } catch (e) {
+        console.warn('[nativeVideo] getContentBounds failed:', e?.message || e);
+        return { x: 100, y: 100, width: 640, height: 360 };
+      }
     });
 
-    ipcMain.handle("nativeVideo:destroy", async (e, id) => this.mpv.destroy(id));
-    ipcMain.handle("nativeVideo:play", async (e, id) => this.mpv.play(id));
-    ipcMain.handle("nativeVideo:pause", async (e, id) => this.mpv.pause(id));
-    ipcMain.handle("nativeVideo:seek", async (e, id, s) => this.mpv.seek(id, s));
-    ipcMain.handle("nativeVideo:setProfile", async (e, id, p) => this.mpv.setProfile(id, p));
+    register('nativeVideo:create', async (_e, opts) => this.controller.create(opts));
+    register('nativeVideo:setGeometry', async (_e, id, geom) => this.controller.setGeometry(id, geom));
+    register('nativeVideo:play', async (_e, id) => this.controller.play(id));
+    register('nativeVideo:pause', async (_e, id) => this.controller.pause(id));
+    register('nativeVideo:destroy', async (_e, id) => this.controller.destroy(id));
 
-    ipcMain.handle("nativeVideo:getContentBounds", (e) => {
-      const win = BrowserWindow.fromWebContents(e.sender) || this.mainWindow;
-      return win.getContentBounds();
-    });
-
-    ipcMain.handle("nativeVideo:attachToTile", async (e, id, rect) => {
-      await this.mpv.setGeometry(id, rect);
-    });
-
-    this.mainWindow.on("move", () => this.mainWindow.webContents.send("nativeVideo:window-moved"));
-    this.mainWindow.on("resize", () => this.mainWindow.webContents.send("nativeVideo:window-moved"));
+    console.log('[nativeVideo] IPC handlers registered');
   }
 }
 
