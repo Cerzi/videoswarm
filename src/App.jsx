@@ -13,7 +13,7 @@ import RecentFolders from "./components/RecentFolders";
 import HeaderBar from "./components/HeaderBar";
 import DebugSummary from "./components/DebugSummary";
 
-import { useFullScreenModal } from "./hooks/useFullScreenModal";
+// ❌ removed: useFullScreenModal (replaced by lightweight local state)
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
@@ -258,13 +258,25 @@ function App() {
     isNear: ioRegistry.isNear,
   });
 
-  // fullscreen / context menu
-  const {
-    fullScreenVideo,
-    openFullScreen,
-    closeFullScreen,
-    navigateFullScreen,
-  } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
+  // ----------------------
+  // Fullscreen modal state (replaces old useFullScreenModal hook)
+  // ----------------------
+  const [fsInitialVideo, setFsInitialVideo] = useState(null);
+
+  const openFullScreen = useCallback((video /*, playingSet? */) => {
+    setFsInitialVideo(video || null);
+  }, []);
+
+  const closeFullScreen = useCallback(() => {
+    setFsInitialVideo(null);
+  }, []);
+
+  // Optional: respond to navigate events from the modal (analytics/side-effects)
+  const navigateFullScreen = useCallback((dir) => {
+    // no-op in App (modal manages its own current index)
+    if (__DEV__) console.log("🔀 Fullscreen navigate:", dir);
+  }, []);
+  // ----------------------
 
   const {
     contextMenu,
@@ -750,7 +762,7 @@ function App() {
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
       const video = getById(videoId);
       if (isDoubleClick && video) {
-        openFullScreen(video, videoCollection.playingVideos);
+        openFullScreen(video /*, videoCollection.playingVideos */);
         return;
       }
       if (isShiftClick) {
@@ -953,10 +965,11 @@ function App() {
             </div>
           )}
 
-          {fullScreenVideo && (
+          {fsInitialVideo && (
             <FullScreenModal
-              video={fullScreenVideo}
-              onClose={() => closeFullScreen()}
+              videos={groupedAndSortedVideos}
+              initialVideo={fsInitialVideo}
+              onClose={closeFullScreen}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
               gridRef={gridRef}

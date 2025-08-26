@@ -1,428 +1,331 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+// src/components/FullScreenModal.jsx
+import React, { useEffect, useMemo, useRef } from "react";
+import { useFullScreenController } from "../hooks/fullscreen/useFullScreenController";
+import { useAdoptedVideo } from "../hooks/fullscreen/useAdoptedVideo";
 
-const FullScreenModal = ({ 
-  video, 
-  onClose, 
-  onNavigate, 
-  showFilenames,
-  gridRef 
-}) => {
+// Build a usable src for fallback video (file://, blob, or provided url)
+function computeSrc(v) {
+  if (!v) return "";
+  if (v.blobUrl) return v.blobUrl;
+  if (v.file instanceof File || v.file instanceof Blob) {
+    try {
+      return URL.createObjectURL(v.file);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (v.isElectronFile && v.fullPath) {
+    const normalized = String(v.fullPath).replace(/\\/g, "/");
+    const parts = normalized.split("/").map(encodeURIComponent);
+    return "file://" + parts.join("/");
+  }
+  return v.src || v.url || "";
+}
+
+/**
+ * FullScreenModal
+ * Props:
+ *  - videos: array of video objects
+ *  - initialVideo: id or video object to open on
+ *  - gridRef: ref to the grid root (for adoption)
+ *  - onClose(): void
+ *  - onNavigate(dir): void
+ *  - showFilenames: boolean
+ */
+export default function FullScreenModal({
+  videos = [],
+  initialVideo = null,
+  gridRef,
+  onClose,
+  onNavigate,
+  showFilenames = true,
+}) {
   const modalRef = useRef(null);
-  const adoptHostRef = useRef(null);     // host where we move the existing grid <video>
-  const fallbackRef = useRef(null);      // fallback <video> if adoption fails
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [videoLoaded, setVideoLoaded] = useState(false);
-  const [usingAdopted, setUsingAdopted] = useState(false);
+  const ctl = useFullScreenController(videos);
 
-  // Keep track for restoration
-  const adoptedElRef = useRef(null);
-  const originalParentRef = useRef(null);
-  const originalNextSiblingRef = useRef(null);
+  // Open on mount / when initialVideo changes (call unconditionally; guard inside)
+  useEffect(() => {
+    if (initialVideo != null && ctl.open) {
+      ctl.open(initialVideo?.id ?? initialVideo);
+    }
+  }, [initialVideo, ctl]);
 
-  // Try to adopt (move) the existing grid video element for instant loading
-  const tryAdoptExistingVideo = useCallback(() => {
-    if (!video) return false;
+  const video = ctl.currentVideo;
+  const { adoptHostRef, fallbackRef, activeVideoRef, usingAdopted } =
+    useAdoptedVideo(video, gridRef);
 
-    // Find existing video element in the grid
-    const existingVideo = document.querySelector(
-      `[data-video-id="${video.id}"] video`
-    );
-    if (existingVideo && existingVideo.readyState >= 2 && adoptHostRef.current) {
-      try {
-        originalParentRef.current = existingVideo.parentElement;
-        originalNextSiblingRef.current = existingVideo.nextSibling;
-
-        // mark adopted so the card won't re-attach or tear down
-        existingVideo.dataset.adopted = 'modal';
-
-        // move node into modal host
-        adoptHostRef.current.appendChild(existingVideo);
-
-        // style + controls for modal
-        existingVideo.controls = true;
-        existingVideo.style.maxWidth = '100%';
-        existingVideo.style.maxHeight = '80vh';
-        existingVideo.style.objectFit = 'contain';
-        existingVideo.style.borderRadius = '8px';
-        existingVideo.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.8)';
-
-        // play (muted already from tile)
-        existingVideo.play?.().catch(() => {});
-
-        adoptedElRef.current = existingVideo;
-        setIsLoading(false);
-        setVideoLoaded(true);
-        setUsingAdopted(true);
-        return true;
-      } catch (e) {
-        console.warn('Adopt failed, will fall back:', e);
+  // Global key handling while modal is open (hook always runs; handler guards isOpen)
+  useEffect(() => {
+    function onKey(e) {
+      if (!ctl.isOpen) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        ctl.close();
+        onClose?.();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        ctl.next();
+        onNavigate?.("next");
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        ctl.prev();
+        onNavigate?.("prev");
+      } else if (e.code === "Space" || e.key === " ") {
+        e.preventDefault();
+        ctl.togglePlay();
       }
     }
-    return false;
-  }, [video]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [ctl, onClose, onNavigate]);
 
-  // Restore adopted node to its original parent/position
-  const restoreAdopted = useCallback(() => {
-    const el = adoptedElRef.current;
+  // Apply play/pause intent to the *active* element.
+  // Only auto-play on open when using the adopted grid element (fallback starts paused).
+  useEffect(() => {
+    const el = activeVideoRef.current;
     if (!el) return;
     try {
-      // revert styles/controls
-      el.controls = false;
-      el.style.maxWidth = '';
-      el.style.maxHeight = '';
-      el.style.objectFit = '';
-      el.style.borderRadius = '';
-      el.style.boxShadow = '';
-      if (el.dataset) delete el.dataset.adopted;
-
-      const parent = originalParentRef.current;
-      const next = originalNextSiblingRef.current;
-      if (parent) {
-        if (next && next.parentNode === parent) {
-          parent.insertBefore(el, next);
-        } else {
-          parent.appendChild(el);
+      if (ctl.playIntent === "play" && usingAdopted) {
+        if (el.paused) {
+          const p = el.play?.();
+          if (p && typeof p.catch === "function") p.catch(() => {});
         }
+      } else {
+        if (!el.paused) el.pause?.();
       }
-    } catch {}
-    adoptedElRef.current = null;
-    originalParentRef.current = null;
-    originalNextSiblingRef.current = null;
-  }, []);
-
-  // Main effect: adopt if possible, else use fallback <video>
-  useEffect(() => {
-    if (!video) return;
-
-    setIsLoading(true);
-    setError(null);
-    setVideoLoaded(false);
-    setUsingAdopted(false);
-
-    // Fast path: adopt
-    const adopted = tryAdoptExistingVideo();
-    if (adopted) return () => restoreAdopted();
-
-    // Fallback: separate <video> element (no forced .load(), reuse src)
-    const el = fallbackRef.current;
-    if (!el) return;
-
-    const onCanPlay = () => {
-      setIsLoading(false);
-      setVideoLoaded(true);
-      el.play().catch(() => {});
-    };
-    const onError = (e) => {
-      setIsLoading(false);
-      setError(e?.target?.error?.message || 'Failed to load video');
-    };
-
-    el.addEventListener('canplay', onCanPlay);
-    el.addEventListener('error', onError);
-
-    // Set source once (avoid .load() resets)
-    const nextSrc = video.isElectronFile && video.fullPath
-      ? `file://${video.fullPath}`
-      : (video.blobUrl || (video.file ? URL.createObjectURL(video.file) : ''));
-
-    if (el.src !== nextSrc) {
-      el.preload = 'auto';
-      el.src = nextSrc;
+    } catch {
+      // ignore in tests / JSDOM
     }
+  }, [ctl.playIntent, usingAdopted, activeVideoRef, video?.id]);
 
-    return () => {
-      el.removeEventListener('canplay', onCanPlay);
-      el.removeEventListener('error', onError);
-      // Do not revoke blob here if shared elsewhere
-    };
-  }, [video, tryAdoptExistingVideo, restoreAdopted]);
-
-  // Handle keyboard navigation
+  // Body scroll lock while open (hook always runs; effect guarded)
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      switch (e.key) {
-        case 'Escape':
-          onClose();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          onNavigate('prev');
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          onNavigate('next');
-          break;
-        case ' ':
-          e.preventDefault();
-          {
-            const el = usingAdopted ? adoptedElRef.current : fallbackRef.current;
-            if (el) el.paused ? el.play() : el.pause();
-          }
-          break;
-        default:
-          break;
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigate, usingAdopted]);
-
-  // Handle click outside to close
-  const handleBackdropClick = useCallback((e) => {
-    if (e.target === modalRef.current) {
-      onClose();
-    }
-  }, [onClose]);
-
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
+    if (!ctl.isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      // restore adopted video if any
-      restoreAdopted();
-      document.body.style.overflow = '';
+      document.body.style.overflow = prev;
     };
-  }, [restoreAdopted]);
+  }, [ctl.isOpen]);
 
-  if (!video) return null;
+  // IMPORTANT: Call hooks unconditionally every render.
+  // Compute filename even when closed; we won't render it if closed.
+  const filename = useMemo(() => {
+    if (!showFilenames || !video) return "";
+    const src =
+      video.name ||
+      video.filename ||
+      video.fileName ||
+      video.fullPath ||
+      computeSrc(video);
+    const cleaned = String(src).split(/[\\/]/).pop();
+    return cleaned || "";
+  }, [video, showFilenames]);
+
+  // Render branch happens here; hooks above always run in the same order.
+  if (!ctl.isOpen) return null;
 
   return (
-    <>
-      {/* CSS animation moved to separate style element */}
-      <style>{`
-        @keyframes modalSpinner {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        .modal-spinner {
-          animation: modalSpinner 1s linear infinite;
-        }
-      `}</style>
-      
-      <div
-        ref={modalRef}
-        className="fullscreen-modal"
-        onClick={handleBackdropClick}
+    <div
+      ref={modalRef}
+      className="fullscreen-modal"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.95)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 10000,
+      }}
+    >
+      {/* Close */}
+      <button
+        aria-label="Close"
+        title="Close (Esc)"
+        className="fs-close-btn"
+        onClick={() => {
+          ctl.close();
+          onClose?.();
+        }}
         style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.95)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10000,
-          backdropFilter: 'blur(4px)'
+          position: "absolute",
+          top: 20,
+          right: 20,
+          background: "rgba(0,0,0,0.7)",
+          borderRadius: "50%",
+          width: 50,
+          height: 50,
+          color: "white",
+          fontSize: 24,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10001,
+          transition: "background-color 0.2s",
         }}
       >
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          style={{
-            position: 'absolute',
-            top: '20px',
-            right: '20px',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '50px',
-            height: '50px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Close (Esc)"
-        >
-          ×
-        </button>
+        ×
+      </button>
 
-        {/* Navigation buttons */}
-        <button
-          onClick={() => onNavigate('prev')}
-          style={{
-            position: 'absolute',
-            left: '20px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '60px',
-            height: '60px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Previous (←)"
-        >
-          ←
-        </button>
+      {/* Prev */}
+      <button
+        aria-label="Previous"
+        title="Previous (←)"
+        className="fs-prev-btn"
+        onClick={() => {
+          ctl.prev();
+          onNavigate?.("prev");
+        }}
+        style={{
+          position: "absolute",
+          left: 20,
+          top: "50%",
+          transform: "translateY(-50%)",
+          background: "rgba(0,0,0,0.7)",
+          borderRadius: "50%",
+          width: 60,
+          height: 60,
+          color: "white",
+          fontSize: 24,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10001,
+          transition: "background-color 0.2s",
+        }}
+      >
+        ←
+      </button>
 
-        <button
-          onClick={() => onNavigate('next')}
-          style={{
-            position: 'absolute',
-            right: '20px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '60px',
-            height: '60px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Next (→)"
-        >
-          →
-        </button>
+      {/* Next */}
+      <button
+        aria-label="Next"
+        title="Next (→)"
+        className="fs-next-btn"
+        onClick={() => {
+          ctl.next();
+          onNavigate?.("next");
+        }}
+        style={{
+          position: "absolute",
+          right: 20,
+          top: "50%",
+          transform: "translateY(-50%)",
+          background: "rgba(0,0,0,0.7)",
+          borderRadius: "50%",
+          width: 60,
+          height: 60,
+          color: "white",
+          fontSize: 24,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10001,
+          transition: "background-color 0.2s",
+        }}
+      >
+        →
+      </button>
 
-        {/* Body */}
+      <div
+        style={{
+          maxWidth: "90vw",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {/* filename / spinner row */}
         <div
           style={{
-            maxWidth: '90vw',
-            maxHeight: '90vh',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center'
+            color: "white",
+            fontSize: 18,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 20,
           }}
         >
-          {/* Loading/Error states */}
-          {isLoading && (
-            <div style={{
-              color: 'white',
-              fontSize: '18px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              marginBottom: '20px'
-            }}>
-              <div 
-                className="modal-spinner"
-                style={{
-                  width: '20px',
-                  height: '20px',
-                  border: '2px solid #ffffff33',
-                  borderTop: '2px solid white',
-                  borderRadius: '50%'
-                }}
-              />
-              Loading video...
-            </div>
-          )}
-
-          {error && (
-            <div style={{
-              color: '#ff6b6b',
-              fontSize: '18px',
-              textAlign: 'center',
-              marginBottom: '20px',
-              padding: '20px',
-              background: 'rgba(255, 107, 107, 0.1)',
-              borderRadius: '8px',
-              border: '1px solid rgba(255, 107, 107, 0.3)'
-            }}>
-              <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
-              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Error Loading Video</div>
-              <div style={{ opacity: 0.8 }}>{error}</div>
-            </div>
-          )}
-
-          {/* Host where we adopt the existing grid <video> */}
           <div
-            ref={adoptHostRef}
+            className="modal-spinner"
             style={{
-              display: usingAdopted ? 'block' : 'none',
-              maxWidth: '100%',
-              maxHeight: '80vh'
+              width: 20,
+              height: 20,
+              border: "2px solid rgba(255,255,255,0.2)",
+              borderTop: "2px solid white",
+              borderRadius: "50%",
             }}
-            onClick={(e) => e.stopPropagation()}
           />
-
-          {/* Fallback <video> used only if adoption fails */}
-          <video
-            ref={fallbackRef}
-            muted
-            loop
-            controls
-            playsInline
-            style={{
-              display: usingAdopted ? 'none' : 'block',
-              maxWidth: '100%',
-              maxHeight: '80vh',
-              objectFit: 'contain',
-              borderRadius: '8px',
-              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-
-          {/* Video info */}
-          {showFilenames && videoLoaded && (
-            <div style={{
-              marginTop: '20px',
-              padding: '15px 25px',
-              background: 'rgba(0, 0, 0, 0.8)',
-              borderRadius: '25px',
-              color: 'white',
-              fontSize: '16px',
-              textAlign: 'center',
-              maxWidth: '80vw',
-              wordBreak: 'break-word'
-            }}>
-              {video.name}
-            </div>
-          )}
-
-          {/* Keyboard shortcuts help */}
-          <div style={{
-            position: 'absolute',
-            bottom: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            padding: '10px 20px',
-            borderRadius: '20px',
-            color: 'rgba(255, 255, 255, 0.8)',
-            fontSize: '14px',
-            textAlign: 'center'
-          }}>
-            <span style={{ marginRight: '20px' }}>← → Navigate</span>
-            <span style={{ marginRight: '20px' }}>Space Play/Pause</span>
-            <span>Esc Close</span>
-          </div>
+          {filename ? filename : "Loading video..."}
         </div>
-      </div>
-    </>
-  );
-};
 
-export default FullScreenModal;
+        {/* Adopt host */}
+        <div
+          ref={adoptHostRef}
+          style={{
+            display: usingAdopted ? "block" : "none",
+            maxWidth: "100%",
+            maxHeight: "80vh",
+          }}
+        />
+
+        {/* Fallback video (always rendered so refs are ready) */}
+        <video
+          ref={fallbackRef}
+          style={{
+            display: usingAdopted ? "none" : "block",
+            maxWidth: "100%",
+            maxHeight: "80vh",
+            objectFit: "contain",
+            borderRadius: 8,
+            boxShadow: "0 20px 40px rgba(0,0,0,0.8)",
+          }}
+          controls
+          playsInline
+          loop
+          // IMPORTANT: we do NOT autoPlay here. Keyboard Space toggles via controller.
+          src={computeSrc(video)}
+        />
+
+        {/* helper legend */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: 20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(0,0,0,0.7)",
+            padding: "10px 20px",
+            borderRadius: 20,
+            color: "rgba(255,255,255,0.8)",
+            fontSize: 14,
+            textAlign: "center",
+          }}
+        >
+          <span style={{ marginRight: 20 }}>← → Navigate</span>
+          <span style={{ marginRight: 20 }}>Space Play/Pause</span>
+          <span>Esc Close</span>
+        </div>
+
+        {/* Accessible control target for Space key */}
+        <button
+          aria-label="Toggle play/pause"
+          className="sr-only"
+          style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0 }}
+          onClick={() => ctl.togglePlay()}
+        >
+          Toggle
+        </button>
+      </div>
+    </div>
+  );
+}
