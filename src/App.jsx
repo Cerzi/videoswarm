@@ -32,6 +32,8 @@ import {
   zoomClassForLevel,
   clampZoomIndex,
 } from "./zoom/utils.js";
+import useHotkeys from "./hooks/selection/useHotkeys";
+import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
 
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
@@ -302,14 +304,21 @@ function App() {
       runAction(actionId, currentSelection, contextMenu.contextId),
     [runAction, contextMenu.contextId]
   );
-  // (Hotkey wiring kept as-is)
-  // useHotkeys(runForHotkeys, () => selection.selected);
+  // Global hotkeys (Enter / Ctrl+C / Delete) + Zoom (+ / - and Ctrl/⌘ + Wheel)
+  useHotkeys(runForHotkeys, () => selection.selected, {
+    getZoomIndex: () => zoomLevel,
+    setZoomIndexSafe: (z) => handleZoomChangeSafe(z),
+    minZoomIndex: ZOOM_MIN_INDEX,
+    maxZoomIndex: ZOOM_MAX_INDEX,
+    // wheelStepUnits: 100, // optional sensitivity tuning
+  });
 
   // ====== Zoom logic (refactored) ======
 
   const handleZoomChange = useCallback(
     (z) => {
       const clamped = clampZoomIndex(z);
+      if (clamped === zoomLevel) return; // no-op if unchanged
       setZoomLevel(clamped);
       setZoomClass(clamped);
       window.electronAPI?.saveSettingsPartial?.({
@@ -322,6 +331,7 @@ function App() {
       scheduleLayout?.();
     },
     [
+      zoomLevel,
       setZoomClass,
       recursiveMode,
       maxConcurrentPlaying,
@@ -342,14 +352,17 @@ function App() {
     (newZoom) => {
       const minZoom = getMinimumZoomLevel();
       const safeZoom = Math.max(newZoom, minZoom);
+      if (safeZoom === zoomLevel) return; // nothing to do
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${getZoomLabelByIndex(safeZoom)} for memory safety (requested ${getZoomLabelByIndex(newZoom)})`
+          `🛡️ Zoom limited to ${getZoomLabelByIndex(
+            safeZoom
+          )} for memory safety (requested ${getZoomLabelByIndex(newZoom)})`
         );
       }
       handleZoomChange(safeZoom);
     },
-    [getMinimumZoomLevel, handleZoomChange]
+    [getMinimumZoomLevel, handleZoomChange, zoomLevel]
   );
 
   // === MEMORY MONITORING (dev helpers) ===
@@ -416,10 +429,16 @@ function App() {
       const windowHeight = window.innerHeight;
       const videoCount = groupedAndSortedVideos.length;
       if (videoCount > 50) {
-        const safeZoom = calculateSafeZoom(windowWidth, windowHeight, videoCount);
+        const safeZoom = calculateSafeZoom(
+          windowWidth,
+          windowHeight,
+          videoCount
+        );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${getZoomLabelByIndex(safeZoom)} for safety`
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${getZoomLabelByIndex(
+              safeZoom
+            )} for safety`
           );
           handleZoomChange(safeZoom);
         }
@@ -469,7 +488,8 @@ function App() {
         if (s.showFilenames !== undefined) setShowFilenames(s.showFilenames);
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
-        if (s.zoomLevel !== undefined) setZoomLevel(clampZoomIndex(s.zoomLevel));
+        if (s.zoomLevel !== undefined)
+          setZoomLevel(clampZoomIndex(s.zoomLevel));
       } catch {}
       setSettingsLoaded(true);
     };
@@ -851,7 +871,9 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""} ${zoomClassForLevel(zoomLevel)}`}
+              className={`video-grid masonry-vertical ${
+                !showFilenames ? "hide-filenames" : ""
+              } ${zoomClassForLevel(zoomLevel)}`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
