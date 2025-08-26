@@ -8,7 +8,6 @@ export default function DebugSummary({
   memoryStatus, // { currentMemoryMB, memoryPressure, isNearLimit, safetyMarginMB }
   zoomLevel,
   getMinimumZoomLevel,
-  getZoomLabel,
 }) {
   return (
     <div
@@ -53,19 +52,7 @@ export default function DebugSummary({
         </>
       )}
 
-      {total > 100 && (
-        <>
-          <span>|</span>
-          <span
-            style={{
-              color: zoomLevel >= getMinimumZoomLevel() ? "#51cf66" : "#ffa726",
-            }}
-          >
-            🔍 {getZoomLabel()}{" "}
-            {zoomLevel < getMinimumZoomLevel() ? "(unsafe)" : "(safe)"}
-          </span>
-        </>
-      )}
+      {total > 100}
 
       {process.env.NODE_ENV !== "production" && performance.memory && (
         <>

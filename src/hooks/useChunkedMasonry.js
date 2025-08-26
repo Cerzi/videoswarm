@@ -1,9 +1,11 @@
 // hooks/useChunkedMasonry.js
 import { useCallback, useEffect, useRef } from "react";
+import { zoomClassForLevel } from "../zoom/utils.js";
 
 export default function useChunkedMasonry({
   gridRef,
-  zoomClassForLevel = (z) => `zoom-${["small", "medium", "large", "xlarge"][z]}`,
+  // Now uses the shared zoomClassForLevel so it's always in sync with CSS
+  zoomClassForLevel: zoomClassForLevelProp = zoomClassForLevel,
   defaultAspect = 16 / 9,
   chunkSize = 200,
   columnGapFallback = 12,
@@ -197,13 +199,14 @@ export default function useChunkedMasonry({
       const grid = gridRef.current;
       if (!grid) return;
 
-      const classes = ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"];
+      // remove all known zoom classes and add the desired one
+      const classes = ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge", "zoom-xxlarge"];
       classes.forEach((c) => grid.classList.remove(c));
-      grid.classList.add(zoomClassForLevel(level));
+      grid.classList.add(zoomClassForLevelProp(level));
       cachedGridMeasurementsRef.current = null;
       scheduleLayout();
     },
-    [gridRef, zoomClassForLevel, scheduleLayout]
+    [gridRef, zoomClassForLevelProp, scheduleLayout]
   );
 
   // scroll tracking — avoid thrashing while user is scrolling

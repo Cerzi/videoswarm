@@ -1,4 +1,6 @@
 import React from "react";
+import { ZOOM_MAX_INDEX } from "../zoom/config.js";
+import { clampZoomIndex } from "../zoom/utils.js";
 
 export default function HeaderBar({
   version,
@@ -14,9 +16,10 @@ export default function HeaderBar({
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
-  getZoomLabel,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
+
+  const minZoomIndex = getMinimumZoomLevel();
 
   return (
     <div className="header">
@@ -82,7 +85,7 @@ export default function HeaderBar({
             value={maxConcurrentPlaying}
             step="10"
             style={{ width: 100 }}
-            onChange={(e) => handleVideoLimitChange(parseInt(e.target.value))}
+            onChange={(e) => handleVideoLimitChange(parseInt(e.target.value, 10))}
             disabled={isLoadingFolder}
           />
           <span style={{ fontSize: "0.8rem" }}>{maxConcurrentPlaying}</span>
@@ -95,19 +98,19 @@ export default function HeaderBar({
           <span>🔍</span>
           <input
             type="range"
-            min={getMinimumZoomLevel()}
-            max="3"
+            min={minZoomIndex}
+            max={ZOOM_MAX_INDEX}
             value={zoomLevel}
             step="1"
-            onChange={(e) => handleZoomChangeSafe(parseInt(e.target.value))}
+            onChange={(e) =>
+              handleZoomChangeSafe(clampZoomIndex(parseInt(e.target.value, 10)))
+            }
             disabled={isLoadingFolder}
             style={{
-              accentColor:
-                zoomLevel >= getMinimumZoomLevel() ? "#51cf66" : "#ffa726",
+              accentColor: zoomLevel >= minZoomIndex ? "#51cf66" : "#ffa726",
             }}
           />
-          <span>{getZoomLabel()}</span>
-          {zoomLevel < getMinimumZoomLevel() && (
+          {zoomLevel < minZoomIndex && (
             <span style={{ color: "#ffa726", fontSize: "0.7rem" }}>⚠️</span>
           )}
         </div>

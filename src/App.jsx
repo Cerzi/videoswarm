@@ -24,9 +24,14 @@ import useInitGate from "./hooks/ui-perf/useInitGate";
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
-import useHotkeys from "./hooks/selection/useHotkeys";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
+
+import {
+  calculateSafeZoom,
+  zoomClassForLevel,
+  clampZoomIndex,
+} from "./zoom/utils.js";
 
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
@@ -116,7 +121,6 @@ function App() {
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
   const gridRef = useRef(null);
-  const rootMarginRef = useRef("300px 0px");
 
   const ioRegistry = useIntersectionObserverRegistry(gridRef, {
     rootMargin: "1600px 0px",
@@ -161,7 +165,7 @@ function App() {
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
-      // we emit visual order (top-to-bottom by y, then x) so Shift works intuitively
+      zoomClassForLevel, // use shared mapping
       onOrderChange: setVisualOrderedIds,
     });
 
@@ -298,45 +302,18 @@ function App() {
       runAction(actionId, currentSelection, contextMenu.contextId),
     [runAction, contextMenu.contextId]
   );
-  useHotkeys(runForHotkeys, () => selection.selected);
+  // (Hotkey wiring kept as-is)
+  // useHotkeys(runForHotkeys, () => selection.selected);
 
-  // === DYNAMIC ZOOM CALCULATION ===
-  const calculateSafeZoom = useCallback(
-    (windowWidth, windowHeight, videoCount) => {
-      const zoomSizes = [150, 200, 300, 400];
-      const estimatedVideosPerRow = zoomSizes.map((size) =>
-        Math.floor(windowWidth / size)
-      );
-      const estimatedVisibleVideos = estimatedVideosPerRow.map(
-        (perRow) => perRow * 5
-      );
-      const memoryPressure = estimatedVisibleVideos.map(
-        (visible) => (visible * 15) / 3600
-      );
-      for (let i = 0; i < memoryPressure.length; i++) {
-        if (memoryPressure[i] < 0.8) {
-          console.log(
-            `🧠 Safe zoom level ${i} (${
-              ["75%", "100%", "150%", "200%"][i]
-            }) - estimated ${estimatedVisibleVideos[i]} visible videos`
-          );
-          return i;
-        }
-      }
-      console.warn(
-        "⚠️ All zoom levels may cause memory pressure - using maximum zoom"
-      );
-      return 3;
-    },
-    []
-  );
+  // ====== Zoom logic (refactored) ======
 
   const handleZoomChange = useCallback(
     (z) => {
-      setZoomLevel(z);
-      setZoomClass(z);
+      const clamped = clampZoomIndex(z);
+      setZoomLevel(clamped);
+      setZoomClass(clamped);
       window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: z,
+        zoomLevel: clamped,
         recursiveMode,
         maxConcurrentPlaying,
         showFilenames,
@@ -367,11 +344,7 @@ function App() {
       const safeZoom = Math.max(newZoom, minZoom);
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${
-            ["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${
-            ["75%", "100%", "150%", "200%"][newZoom]
-          })`
+          `🛡️ Zoom limited to ${getZoomLabelByIndex(safeZoom)} for memory safety (requested ${getZoomLabelByIndex(newZoom)})`
         );
       }
       handleZoomChange(safeZoom);
@@ -443,16 +416,10 @@ function App() {
       const windowHeight = window.innerHeight;
       const videoCount = groupedAndSortedVideos.length;
       if (videoCount > 50) {
-        const safeZoom = calculateSafeZoom(
-          windowWidth,
-          windowHeight,
-          videoCount
-        );
+        const safeZoom = calculateSafeZoom(windowWidth, windowHeight, videoCount);
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
-              ["75%", "100%", "150%", "200%"][safeZoom]
-            } for safety`
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${getZoomLabelByIndex(safeZoom)} for safety`
           );
           handleZoomChange(safeZoom);
         }
@@ -468,7 +435,7 @@ function App() {
       window.removeEventListener("resize", debouncedResize);
       clearTimeout(resizeTimeout);
     };
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
 
   useEffect(() => {
     if (groupedAndSortedVideos.length > 100) {
@@ -486,7 +453,7 @@ function App() {
         handleZoomChange(safeZoom);
       }
     }
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
 
   // settings load + folder selection event
   useEffect(() => {
@@ -502,7 +469,7 @@ function App() {
         if (s.showFilenames !== undefined) setShowFilenames(s.showFilenames);
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
-        if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
+        if (s.zoomLevel !== undefined) setZoomLevel(clampZoomIndex(s.zoomLevel));
       } catch {}
       setSettingsLoaded(true);
     };
@@ -740,11 +707,6 @@ function App() {
     [recursiveMode, zoomLevel, showFilenames]
   );
 
-  const getZoomLabel = useMemo(
-    () => ["75%", "100%", "150%", "200%"][zoomLevel] || "100%",
-    [zoomLevel]
-  );
-
   // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
   const handleVideoSelect = useCallback(
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
@@ -850,7 +812,8 @@ function App() {
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
-            getZoomLabel={() => getZoomLabel}
+            // If HeaderBar renders the slider, make sure its `max` is 4
+            // and it uses the provided callbacks.
           />
 
           <DebugSummary
@@ -861,7 +824,6 @@ function App() {
             memoryStatus={videoCollection.memoryStatus}
             zoomLevel={zoomLevel}
             getMinimumZoomLevel={getMinimumZoomLevel}
-            getZoomLabel={() => getZoomLabel}
           />
 
           {/* Home state: Recent Locations when nothing is loaded */}
@@ -889,13 +851,7 @@ function App() {
           ) : (
             <div
               ref={gridRef}
-              className={`video-grid masonry-vertical ${
-                !showFilenames ? "hide-filenames" : ""
-              } ${
-                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                  zoomLevel
-                ]
-              }`}
+              className={`video-grid masonry-vertical ${!showFilenames ? "hide-filenames" : ""} ${zoomClassForLevel(zoomLevel)}`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
