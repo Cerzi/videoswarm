@@ -33,7 +33,7 @@ import {
   clampZoomIndex,
 } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
-import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
+import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX, ZOOM_TILE_WIDTHS } from "./zoom/config";
 
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
@@ -168,6 +168,11 @@ function App() {
     useChunkedMasonry({
       gridRef,
       zoomClassForLevel, // use shared mapping
+      getTileWidthForLevel: (level) =>
+        ZOOM_TILE_WIDTHS[
+          Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
+        ],
+
       onOrderChange: setVisualOrderedIds,
     });
 

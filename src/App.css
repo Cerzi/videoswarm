@@ -137,115 +137,6 @@
   height: 140px; /* Fixed height for grid */
 }
 
-.video-grid.grid .video-container,
-.video-grid.grid .video-placeholder,
-.video-grid.grid .error-indicator {
-  height: 100%; /* Use full height since filenames now overlay */
-}
-
-/* VERTICAL MASONRY - Fixed width, dynamic height based on aspect ratio */
-.video-grid.masonry-vertical {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px;
-  position: relative;
-}
-
-.video-grid.masonry-vertical .video-item {
-  /* Height will be set by JavaScript based on aspect ratio */
-  position: absolute;
-}
-
-/* HORIZONTAL MASONRY - Fixed height, dynamic width based on aspect ratio */
-.video-grid.masonry-horizontal {
-  display: block;
-  position: relative;
-  overflow-x: visible; /* No horizontal scroll */
-  overflow-y: auto; /* Allow vertical scroll */
-  width: 100%;
-}
-
-.video-grid.masonry-horizontal .video-item {
-  height: 200px; /* Fixed height for horizontal masonry */
-  position: absolute;
-  /* Width will be set by JavaScript based on aspect ratio */
-}
-
-.video-grid.masonry-horizontal .video-container,
-.video-grid.masonry-horizontal .video-placeholder,
-.video-grid.masonry-horizontal .error-indicator {
-  height: 100%; /* Use full height since filenames now overlay */
-}
-
-/* ZOOM LEVELS */
-
-/* Small (75%) */
-.video-grid.zoom-small.grid {
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-}
-
-.video-grid.zoom-small.grid .video-item {
-  height: 105px;
-}
-
-.video-grid.zoom-small.masonry-vertical {
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-}
-
-.video-grid.zoom-small.masonry-horizontal .video-item {
-  height: 150px;
-}
-
-/* Medium (100%) - Default */
-.video-grid.zoom-medium.grid {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-}
-
-.video-grid.zoom-medium.grid .video-item {
-  height: 140px;
-}
-
-.video-grid.zoom-medium.masonry-vertical {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-}
-
-.video-grid.zoom-medium.masonry-horizontal .video-item {
-  height: 200px;
-}
-
-/* Large (150%) */
-.video-grid.zoom-large.grid {
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-}
-
-.video-grid.zoom-large.grid .video-item {
-  height: 210px;
-}
-
-.video-grid.zoom-large.masonry-vertical {
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-}
-
-.video-grid.zoom-large.masonry-horizontal .video-item {
-  height: 300px;
-}
-
-/* XLarge (200%) */
-.video-grid.zoom-xlarge.grid {
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-}
-
-.video-grid.zoom-xlarge.grid .video-item {
-  height: 280px;
-}
-
-.video-grid.zoom-xlarge.masonry-vertical {
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-}
-
-.video-grid.zoom-xlarge.masonry-horizontal .video-item {
-  height: 400px;
-}
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
@@ -660,19 +551,6 @@
   overflow: hidden;
 }
 
-/* Zoom level optimizations */
-.virtual-grid-container.zoom-small .video-item {
-  font-size: 0.8rem;
-}
-.virtual-grid-container.zoom-medium .video-item {
-  font-size: 0.9rem;
-}
-.virtual-grid-container.zoom-large .video-item {
-  font-size: 1rem;
-}
-.virtual-grid-container.zoom-xlarge .video-item {
-  font-size: 1.1rem;
-}
 
 /* Filename visibility */
 .virtual-grid-container.hide-filenames .video-filename {
