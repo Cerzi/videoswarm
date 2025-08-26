@@ -5,28 +5,22 @@ import { isEnabledForToolbar } from "../actions/actionPolicies";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
 
-/**
- * Global hotkeys → actions + zoom:
- *  - Ctrl/⌘ + MouseWheel → zoom stepwise
- *  - + / - keys → zoom stepwise
- */
 export default function useHotkeys(run, getSelection, opts = {}) {
   const {
     getZoomIndex,
     setZoomIndexSafe,
     minZoomIndex = 0,
     maxZoomIndex = 4,
-    wheelStepUnits = 100,   // bigger = more scroll to step
-    maxStepsPerWheel = 6,   // safety cap per event
+    wheelStepUnits = 120,   // 120 ≈ one "notch" after normalization
+    maxStepsPerFrame = 3,   // safety: avoid huge jumps per frame
   } = opts;
 
-  // --- Keyboard shortcuts (actions + +/- zoom) ---
+  // ----- existing key handling (Enter/Ctrl+C/Delete/+/-) stays the same -----
   useEffect(() => {
     const onKey = (e) => {
       const sel = getSelection();
       const size = sel?.size ?? 0;
 
-      // Selection actions (only if something is selected)
       if (size) {
         if (e.key === "Enter") {
           if (!isEnabledForToolbar(ActionIds.OPEN_EXTERNAL, size)) return;
@@ -46,16 +40,14 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         }
       }
 
-      // Zoom by +/- (no modifiers)
+      // +/- zoom (no modifiers)
       if (getZoomIndex && setZoomIndexSafe) {
         if (e.key === "+" || e.key === "=") {
           e.preventDefault();
-          const next = clampIndex(getZoomIndex() + 1, minZoomIndex, maxZoomIndex);
-          setZoomIndexSafe(next);
+          setZoomIndexSafe(clampIndex(getZoomIndex() + 1, minZoomIndex, maxZoomIndex));
         } else if (e.key === "-") {
           e.preventDefault();
-          const next = clampIndex(getZoomIndex() - 1, minZoomIndex, maxZoomIndex);
-          setZoomIndexSafe(next);
+          setZoomIndexSafe(clampIndex(getZoomIndex() - 1, minZoomIndex, maxZoomIndex));
         }
       }
     };
@@ -64,45 +56,71 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     return () => document.removeEventListener("keydown", onKey);
   }, [run, getSelection, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex]);
 
-  // --- Ctrl/⌘ + MouseWheel → Zoom ---
+  // ----- Ctrl/⌘ + Wheel → zoom, coalesced per frame -----
   const accumRef = useRef(0);
+  const rafRef = useRef(0);
+  const lastDirRef = useRef(0); // remember last direction to keep feel consistent within frame
 
   const normalizeDelta = (e) => {
     let dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 16;
-    else if (e.deltaMode === 2) dy *= 120;
+    if (e.deltaMode === 1) dy *= 16;     // lines → px
+    else if (e.deltaMode === 2) dy *= 120; // pages → px
     return dy;
   };
 
   useEffect(() => {
     if (!getZoomIndex || !setZoomIndexSafe) return;
 
+    const tick = () => {
+      rafRef.current = 0;
+
+      // Convert accumulated delta into whole steps
+      const units = wheelStepUnits || 120;
+      let stepsFloat = accumRef.current / units;
+      let steps = stepsFloat < 0 ? Math.floor(stepsFloat) : Math.ceil(stepsFloat);
+      // Bound steps per frame to avoid big jumps
+      steps = Math.max(-maxStepsPerFrame, Math.min(maxStepsPerFrame, steps));
+
+      if (steps !== 0) {
+        // consume exactly the units we’re applying
+        accumRef.current -= steps * units;
+
+        let current = getZoomIndex();
+        const dir = steps > 0 ? (lastDirRef.current || 1) : (lastDirRef.current || -1);
+        const sign = steps > 0 ? Math.sign(dir) : Math.sign(dir);
+
+        // apply one-step moves repeatedly; this guarantees we never skip an index
+        const iterations = Math.abs(steps);
+        for (let i = 0; i < iterations; i++) {
+          const next = clampIndex(current + (sign < 0 ? -1 : +1), minZoomIndex, maxZoomIndex);
+          if (next === current) break; // hit a bound
+          setZoomIndexSafe(next);
+          current = next;
+        }
+
+        lastDirRef.current = sign;
+      }
+    };
+
     const onWheel = (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!(e.ctrlKey || e.metaKey)) return; // only when modifier held
       e.preventDefault();
 
-      accumRef.current += normalizeDelta(e);
+      const dy = normalizeDelta(e);
+      accumRef.current += dy;
 
-      // how many steps should we take this event?
-      let steps = 0;
-      while (Math.abs(accumRef.current) >= wheelStepUnits && steps < maxStepsPerWheel) {
-        steps += 1;
-        accumRef.current += accumRef.current < 0 ? wheelStepUnits : -wheelStepUnits;
-      }
-      if (!steps) return;
-
-      // apply steps, updating current as we go
-      let current = getZoomIndex();
-      for (let i = 0; i < steps; i++) {
-        const dir = normalizeDelta(e) < 0 ? +1 : -1; // up/forward = zoom in
-        const next = clampIndex(current + dir, minZoomIndex, maxZoomIndex);
-        if (next === current) break; // already at bound
-        setZoomIndexSafe(next);
-        current = next; // advance so we don't repeat same value
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(tick);
       }
     };
 
     window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel, { passive: false });
-  }, [getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, wheelStepUnits, maxStepsPerWheel]);
+    return () => {
+      window.removeEventListener("wheel", onWheel, { passive: false });
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      accumRef.current = 0;
+      lastDirRef.current = 0;
+    };
+  }, [getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, wheelStepUnits, maxStepsPerFrame]);
 }
