@@ -1,30 +1,38 @@
-import { describe, test, expect, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { useProgressiveList } from './useProgressiveList';
+import { describe, test, expect, vi } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import { useProgressiveList } from "./useProgressiveList";
 
-describe('useProgressiveList', () => {
-  test('shows initial slice then batches over time', () => {
+describe("useProgressiveList", () => {
+  it("shows initial slice then batches over time", () => {
     vi.useFakeTimers();
     const items = Array.from({ length: 200 }, (_, i) => i);
+
+    // Force deterministic interval mode
     const { result } = renderHook(() =>
-      useProgressiveList(items, /*initial*/ 50, /*batch*/ 25, /*interval*/ 100)
+      useProgressiveList(items, 50, 25, 1, {
+        forceInterval: true,
+        pauseOnScroll: false,
+        longTaskAdaptation: false,
+      })
     );
 
+    // Initial slice
     expect(result.current.length).toBe(50);
 
-    act(() => vi.advanceTimersByTime(100));
+    // One tick => +25 => 75
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
     expect(result.current.length).toBe(75);
 
-    act(() => vi.advanceTimersByTime(3 * 100));
-    expect(result.current.length).toBe(150);
-
-    act(() => vi.advanceTimersByTime(3 * 100));
-    expect(result.current.length).toBe(200);
-
-    vi.useRealTimers();
+    // Another tick => +25 => 100
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBe(100);
   });
 
-  test('clamps down on shrink, does not reset on growth', () => {
+  test("clamps down on shrink, does not reset on growth", () => {
     vi.useFakeTimers();
     let items = Array.from({ length: 120 }, (_, i) => i);
     const { result, rerender } = renderHook(

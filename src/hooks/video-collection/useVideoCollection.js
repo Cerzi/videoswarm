@@ -3,6 +3,14 @@ import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
 
+export const PROGRESSIVE_DEFAULTS = {
+  initial: 100,
+  batchSize: 50,
+  intervalMs: 100,
+  pauseOnScroll: true,
+  longTaskAdaptation: true,
+};
+
 /**
  * Composite hook that coordinates the 3-layer video collection system
  * Handles React performance, browser resources, and play orchestration
@@ -20,23 +28,40 @@ export default function useVideoCollection({
   isNear,
 }) {
   const {
-    initial = 100,
-    batchSize = 50,
-    intervalMs = 100,
-    pauseOnScroll = true,
-    longTaskAdaptation = true,
-  } = progressive;
+    initial = PROGRESSIVE_DEFAULTS.initial,
+    batchSize = PROGRESSIVE_DEFAULTS.batchSize,
+    intervalMs = PROGRESSIVE_DEFAULTS.intervalMs,
+    pauseOnScroll = PROGRESSIVE_DEFAULTS.pauseOnScroll,
+    longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
+    forceInterval,
+  } = progressive || {};
+
+  // Normalize to safe numbers
+  const safeInitial = Math.max(
+    0,
+    Number.isFinite(initial) ? initial : PROGRESSIVE_DEFAULTS.initial
+  );
+  const safeBatchSize = Math.max(
+    1,
+    Number.isFinite(batchSize) ? batchSize : PROGRESSIVE_DEFAULTS.batchSize
+  );
+  const safeInterval = Math.max(
+    1,
+    Number.isFinite(intervalMs) ? intervalMs : PROGRESSIVE_DEFAULTS.intervalMs
+  );
 
   // Layer 1: Progressive rendering (React performance)
   const progressiveVideos = useProgressiveList(
     videos,
-    initial,
-    batchSize,
-    intervalMs,
+    safeInitial,
+    safeBatchSize,
+    safeInterval,
     {
       scrollRef,
       pauseOnScroll,
       longTaskAdaptation,
+      hadLongTaskRecently,
+      forceInterval: !!forceInterval,
     }
   );
 

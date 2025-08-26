@@ -48,11 +48,12 @@ const VideoCard = memo(function VideoCard({
   const loadRequestedRef = useRef(false);
   const metaNotifiedRef = useRef(false);
   const permanentErrorRef = useRef(false);
+  const retryAttemptsRef = useRef(0);
   const [errorText, setErrorText] = useState(null);
 
   const videoId = video.id || video.fullPath || video.name;
 
-  // 🔹 helper: is this card’s <video> currently adopted by the modal?
+  // 🔹 helper: is this card's <video> currently adopted by the modal?
   const isAdoptedByModal = useCallback(() => {
     const el = videoRef.current;
     return !!(el && el.dataset && el.dataset.adopted === "modal");
@@ -61,6 +62,22 @@ const VideoCard = memo(function VideoCard({
   // keep mirrors in sync
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
+
+  // If the *content* of the file changes, clear any sticky error so we can try again.
+  // (main.js sends dateModified/size; preload forwards it; App.jsx maps it into `video`.)
+  useEffect(() => {
+    // Only clear if we were in an error state
+    if (permanentErrorRef.current || errorText) {
+      permanentErrorRef.current = false;
+      retryAttemptsRef.current = 0;
+      setErrorText(null);
+      // ensure we can reattempt
+      loadRequestedRef.current = false;
+      setLoaded(false);
+      setLoading(false);
+    }
+  // include whichever fields you know change on write/rename
+  }, [video.id, video.size, video.dateModified]);
 
   // Teardown when parent says not loaded/not loading (unless adopted)
   useEffect(() => {
@@ -250,10 +267,36 @@ const VideoCard = memo(function VideoCard({
         loadRequestedRef.current = false;
         const err = e?.target?.error || e;
         const { terminal, label } = classifyMediaError(err);
-        if (terminal) permanentErrorRef.current = true;
-        setErrorText(`⚠️ ${label}`);
+
+        // Heuristic: for local files (Electron) an early code 4 is often transient while the file is still
+        // being written. Allow a couple of retries before marking permanent.
+        const code = err?.code ?? null;
+        const isLocal = Boolean(video.isElectronFile && video.fullPath);
+        const looksTransientLocal = isLocal && code === 4 && retryAttemptsRef.current < 2;
+
+        if (terminal && !looksTransientLocal) {
+          permanentErrorRef.current = true;
+        }
+        setErrorText(`⚠️ ${looksTransientLocal ? "Temporary read error" : label}`);
         onPlayError?.(videoId, err);
         hardDetach(el);
+
+        // Opportunistic retry for likely-transient local errors
+        if (!permanentErrorRef.current && looksTransientLocal) {
+          retryAttemptsRef.current += 1;
+          setTimeout(() => {
+            if (
+              isVisible &&
+              !loaded &&
+              !loading &&
+              !loadRequestedRef.current &&
+              !videoRef.current &&
+              (canLoadMoreVideos?.() ?? true)
+            ) {
+              loadVideo();
+            }
+          }, 1200);
+        }
       };
 
       loadTimeoutRef.current = setTimeout(() => {
@@ -292,7 +335,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    // If you’ve added an init scheduler, use it; otherwise run immediately
+    // If you've added an init scheduler, use it; otherwise run immediately
     if (typeof scheduleInit === "function") {
       scheduleInit(runInit);
     } else {

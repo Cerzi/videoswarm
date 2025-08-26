@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
  *   - Adapts batch size up/down based on recent long tasks.
  *
  * Test/SSR environments (no rIC): falls back to setInterval using `intervalMs`,
- * so existing tests that use fake timers still pass.
+ * so existing tests that use fake timers still pass (deterministic).
  */
 export function useProgressiveList(
   items = [],
@@ -26,11 +26,22 @@ export function useProgressiveList(
     // Optional scroll root to detect active scrolling; defaults to window.
     scrollRef = null,
     pauseOnScroll = true,
+
+    // Enable adaptive batch sizing based on recent long tasks.
     longTaskAdaptation = true,
+
+    // NEW: external/global signal from higher layers (composite hook)
+    // indicating "we saw a recent long task somewhere" → throttle here too.
+    hadLongTaskRecently = false,
+
+    // Adaptive batch size window
     minBatch = Math.max(8, Math.floor(batchSize / 2)),
     maxBatch = Math.max(batchSize, batchSize * 3),
+
+    // Scroll inactivity threshold
     scrollIdleMs = 120,
-    // Force simple interval mode (useful for tests)
+
+    // Force interval mode (useful for tests/SSR)
     forceInterval = false,
   } = options;
 
@@ -55,7 +66,8 @@ export function useProgressiveList(
     }
     // Do not reset visible on growth.
     prevLenRef.current = len;
-  }, [safe.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safe.length]);
 
   // Short-circuit when fully visible
   const allVisible = visible >= safe.length;
@@ -71,8 +83,12 @@ export function useProgressiveList(
   // State/refs used by idle strategy
   const isScrollingRef = useRef(false);
   const scrollingTimeoutRef = useRef(null);
+
+  // Unified “recent long task” flag (internal OR external)
   const hadLongTaskRecentlyRef = useRef(false);
   const longTaskTimeoutRef = useRef(null);
+
+  // Adaptive batch (only used by idle path)
   const dynamicBatchRef = useRef(batchSize);
 
   // Attach scroll listener (pause while user is scrolling)
@@ -98,7 +114,19 @@ export function useProgressiveList(
     };
   }, [scrollRef, pauseOnScroll, scrollIdleMs, shouldUseInterval]);
 
-  // Watch for long tasks and adapt the batch size window
+  // EXTERNAL recent-long-task signal → coalesce into the same ref with a short decay
+  useEffect(() => {
+    if (!longTaskAdaptation) return;
+    if (!hadLongTaskRecently) return;
+
+    hadLongTaskRecentlyRef.current = true;
+    if (longTaskTimeoutRef.current) clearTimeout(longTaskTimeoutRef.current);
+    longTaskTimeoutRef.current = setTimeout(() => {
+      hadLongTaskRecentlyRef.current = false;
+    }, 800); // same decay window as the internal observer
+  }, [hadLongTaskRecently, longTaskAdaptation]);
+
+  // INTERNAL Long Tasks API observer (where available)
   useEffect(() => {
     if (!longTaskAdaptation || shouldUseInterval) return;
     if (typeof window === "undefined" || typeof PerformanceObserver !== "function") return;
@@ -129,7 +157,7 @@ export function useProgressiveList(
     };
   }, [longTaskAdaptation, shouldUseInterval]);
 
-  // Choose next batch size based on conditions
+  // Choose next batch size based on conditions (idle path only)
   const computeNextBatch = () => {
     let b = dynamicBatchRef.current;
 
@@ -147,7 +175,7 @@ export function useProgressiveList(
     return b;
   };
 
-  // Idle growth scheduler
+  // Idle growth scheduler (preferred in real browsers)
   useEffect(() => {
     if (allVisible || shouldUseInterval) return;
 
@@ -155,9 +183,9 @@ export function useProgressiveList(
 
     const schedule = () => {
       if (cancelled) return;
+
       // Skip while user actively scrolling to prioritize smoothness
       if (pauseOnScroll && isScrollingRef.current) {
-        // Try again soon (throttle)
         rafId = requestAnimationFrame(schedule);
         return;
       }
@@ -172,7 +200,6 @@ export function useProgressiveList(
         rafId = requestAnimationFrame(schedule);
       };
 
-      // Prefer rIC; fallback to rAF for scheduling cadence, but still call idleCb synchronously.
       if (typeof window.requestIdleCallback === "function") {
         ricId = window.requestIdleCallback(idleCb, { timeout: 250 });
       } else {
@@ -191,14 +218,16 @@ export function useProgressiveList(
         try { window.cancelIdleCallback(ricId); } catch {}
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     allVisible,
     pauseOnScroll,
     shouldUseInterval,
-    // do not depend on visible/safe.length here; the setVisible closure handles it
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+    // note: do not depend on visible/safe.length here; the setVisible closure handles it
+  ]);
 
-  // Interval fallback (tests/SSR)
+  // Interval fallback (tests/SSR) — deterministic growth using fixed batchSize
+  // (kept fixed for backward-compat with existing tests)
   useEffect(() => {
     if (!shouldUseInterval) return;
     if (allVisible) return;
