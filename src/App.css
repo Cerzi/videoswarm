@@ -1,5 +1,6 @@
-/* App.css - Complete layout system for video browser */
+/* App.css — streamlined + modal interaction fix */
 
+/* ===== App frame ===== */
 .app {
   width: 100%;
   height: 100vh;
@@ -8,11 +9,9 @@
 }
 
 /* Ensure React doesn't interfere with existing styles */
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-/* Base video grid styles */
+/* ===== Base video grid ===== */
 .video-grid {
   padding: 1rem;
   gap: 4px;
@@ -20,27 +19,26 @@
   position: relative;
   flex: 1;
   overflow-y: auto;
+  transition: height 0.3s ease; /* keep single transition */
 }
 
+/* Video card */
 .video-item {
   content-visibility: auto;
-  contain-intrinsic-size: 140px 250px; /* pick a sensible placeholder (per zoom) */
+  contain-intrinsic-size: 140px 250px;
   border: 2px solid transparent;
   border-radius: 8px;
   overflow: hidden;
   background: #2d2d2d;
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease; /* tweaked */
   position: relative;
+  /* Consolidated transitions (drop duplicate blocks later in file) */
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  will-change: opacity, transform;
 }
 
-.video-item.selected {
-  border-color: #007acc;
-}
-
-.video-item.error {
-  border-color: #ff4444;
-}
+.video-item.selected { border-color: #007acc; }
+.video-item.error { border-color: #ff4444; }
 
 .video-container {
   width: 100%;
@@ -60,60 +58,13 @@
   display: block;
 }
 
-.video-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  font-size: 0.8rem;
-  text-align: center;
-  background: #2d2d2d;
-}
-
-.error-indicator {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #ff6666;
-  font-size: 0.8rem;
-  text-align: center;
-  padding: 1rem;
-  background: #4a0000;
-}
-
-/* Specific error types */
-.error-indicator.error-codec {
-  background: #4a2c00; /* Orange-ish for codec issues */
-  color: #ffaa66;
-}
-
-.error-indicator.error-format {
-  background: #4a0000; /* Red for format issues */
-  color: #ff6666;
-}
-
-.error-indicator.error-network {
-  background: #002a4a; /* Blue for network issues */
-  color: #6699ff;
-}
-
-.error-indicator.error-media {
-  background: #4a004a; /* Purple for media issues */
-  color: #cc66ff;
-}
-
+/* Filename ribbon */
 .video-filename {
   position: absolute;
+  inset-inline: 0;
   bottom: 0;
-  left: 0;
-  right: 0;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
-  color: white;
+  color: #fff;
   padding: 0.5rem;
   font-size: 0.75rem;
   white-space: nowrap;
@@ -122,64 +73,25 @@
   pointer-events: none;
   display: flex;
   align-items: flex-end;
-  /* Remove fixed height - let it overlay naturally */
 }
+.video-grid.hide-filenames .video-filename { display: none; }
 
-/* GRID LAYOUT - Fixed size video cards */
+/* ===== Grid layout (fixed height cards) ===== */
 .video-grid.grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 4px;
 }
-
 .video-grid.grid .video-item {
   aspect-ratio: 16/9;
-  height: 140px; /* Fixed height for grid */
+  height: 140px;
 }
 
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .video-grid.grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  }
-
-  .video-grid.masonry-vertical {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  }
-
-  .video-grid.masonry-horizontal .video-item {
-    height: 150px;
-  }
-}
-
-@media (max-width: 480px) {
-  .video-grid.grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  }
-
-  .video-grid.masonry-vertical {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  }
-
-  .video-grid.masonry-horizontal .video-item {
-    height: 120px;
-  }
-}
-
-/* Animation for layout transitions */
-.video-item {
-  /* previously: transition: all 0.3s ease; */
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* Ensure masonry layouts have proper positioning context */
+/* ===== Masonry layout scaffolding ===== */
 .video-grid.masonry-vertical,
-.video-grid.masonry-horizontal {
-  position: relative;
-}
+.video-grid.masonry-horizontal { position: relative; }
 
-/* ▶️ Masonry ghost-frame fix: hide unpositioned items */
+/* Hide unpositioned items while measuring/placing */
 .video-grid.masonry-vertical .video-item,
 .video-grid.masonry-horizontal .video-item {
   opacity: 0;
@@ -187,184 +99,22 @@
   contain: layout paint size;
   will-change: transform;
   transform: translateZ(0);
-  transition: opacity 0.15s ease !important; /* opacity only */
+  transition: opacity 0.15s ease !important;
 }
-
 .video-grid.masonry-vertical .video-item[data-pos="1"],
 .video-grid.masonry-horizontal .video-item[data-pos="1"] {
   opacity: 1;
   pointer-events: auto;
 }
-
-/* Prevent transform/height animations during masonry layout */
+/* Prevent transform/height animations during masonry passes */
 .video-grid.masonry-vertical .video-item,
-.video-grid.masonry-horizontal .video-item {
-  transition-property: opacity !important;
-}
+.video-grid.masonry-horizontal .video-item { transition-property: opacity !important; }
 
-/* Special handling for loading states in masonry */
+/* Default placeholder height for masonry (while probing) */
 .video-grid.masonry-vertical .video-placeholder,
-.video-grid.masonry-vertical .error-indicator {
-  height: 140px; /* Default placeholder height */
-}
+.video-grid.masonry-vertical .error-indicator { height: 140px; }
 
-/* Hide filenames when the hide-filenames class is present */
-.video-grid.hide-filenames .video-filename {
-  display: none;
-}
-
-/* Fullscreen Modal Styles */
-.fullscreen-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  cursor: pointer;
-}
-
-.fullscreen-video-container {
-  position: relative;
-  max-width: 95vw;
-  max-height: 95vh;
-  cursor: default;
-}
-
-.fullscreen-video {
-  max-width: 95vw;
-  max-height: 95vh;
-  width: auto;
-  height: auto;
-  object-fit: contain; /* Best fit scaling */
-  display: block;
-}
-
-.fullscreen-filename {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
-  color: white;
-  padding: 1rem;
-  font-size: 1rem;
-  text-align: center;
-  pointer-events: none;
-}
-
-/* Context Menu Styles */
-.context-menu {
-  background: #2d2d2d;
-  border: 1px solid #404040;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  min-width: 200px;
-  overflow: hidden;
-  font-family: inherit;
-}
-
-.context-menu-header {
-  background: #1a1a1a;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid #404040;
-}
-
-.context-menu-title {
-  color: #ccc;
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 180px;
-  display: block;
-}
-
-.context-menu-items {
-  padding: 0.25rem 0;
-}
-
-.context-menu-item {
-  padding: 0.5rem 0.75rem;
-  color: #ddd;
-  font-size: 0.85rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  transition: background-color 0.15s ease;
-}
-
-.context-menu-item:hover {
-  background: #404040;
-  color: white;
-}
-
-.context-menu-item:active {
-  background: #007acc;
-}
-
-/* Ensure video elements fill their containers properly */
-.video-item .video-element,
-.video-item .video-container {
-  border-radius: 8px 8px 0 0; /* Match parent border radius, leave bottom for filename */
-}
-
-/* Performance and Loading State Styles */
-
-/* Smooth transitions for video cards during progressive rendering */
-.video-item {
-  transition: opacity 0.3s ease, transform 0.3s ease;
-  will-change: opacity, transform;
-}
-
-/* Loading state animations */
-.video-item.loading {
-  opacity: 0.7;
-}
-
-.video-item.loading .video-placeholder {
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* Playing indicator */
-.video-item.playing {
-  box-shadow: 0 0 0 2px #4caf50;
-}
-
-.video-item.playing::after {
-  content: "▶️";
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  font-size: 0.8rem;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 2px 4px;
-  border-radius: 3px;
-  z-index: 2;
-}
-
-/* Visible indicator (for debugging) */
-.video-item[data-visible="true"] {
-  border: 1px solid rgba(76, 175, 80, 0.3);
-}
-
-/* Improved placeholder states */
+/* ===== States: placeholder / error (unified) ===== */
 .video-placeholder {
   display: flex;
   flex-direction: column;
@@ -379,7 +129,6 @@
   box-sizing: border-box;
 }
 
-/* Error states with better visual hierarchy */
 .error-indicator {
   display: flex;
   flex-direction: column;
@@ -393,114 +142,216 @@
   box-sizing: border-box;
 }
 
+/* Specific error accents */
 .error-indicator.error-codec {
   background: linear-gradient(135deg, #2d2a1a, #3d3a2d);
   color: #ffb347;
 }
-
-/* Performance debug overlay */
-.debug-info {
-  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
-  transition: all 0.3s ease;
+.error-indicator.error-format { /* (kept for clarity) */
+  background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
+  color: #ff6b6b;
 }
 
-.debug-info:hover {
-  background: #2a2a2a !important;
-  color: #fff !important;
+/* Playing indicator */
+.video-item.playing { box-shadow: 0 0 0 2px #4caf50; }
+.video-item.playing::after {
+  content: "▶️";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 4px;
+  border-radius: 3px;
+  z-index: 2;
 }
 
-/* Loading states for controls */
-.header button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transition: opacity 0.3s ease;
+/* Debug visibility outline */
+.video-item[data-visible="true"] {
+  border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
-.header input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Infinite scroll indicator styling */
-.video-grid > div:last-child {
-  animation: fadeIn 0.5s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Memory pressure indicators */
-.app[data-memory-pressure="high"] .video-item:not(.visible) {
-  opacity: 0.3;
-}
-
-.app[data-memory-pressure="critical"] .video-item:not(.visible) {
-  display: none;
-}
-
-/* Smooth layout changes during progressive rendering */
-.video-grid {
-  transition: height 0.3s ease;
-}
-
-/* Better visual feedback for large collections */
-.video-grid.rendering {
+/* ===== Context menu ===== */
+.context-menu {
+  background: #2d2d2d;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
   overflow: hidden;
+  font-family: inherit;
 }
+.context-menu-header {
+  background: #1a1a1a;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #404040;
+}
+.context-menu-title {
+  color: #ccc;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  display: block;
+}
+.context-menu-items { padding: 0.25rem 0; }
+.context-menu-item {
+  padding: 0.5rem 0.75rem;
+  color: #ddd;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background-color 0.15s ease;
+}
+.context-menu-item:hover { background: #404040; color: #fff; }
+.context-menu-item:active { background: #007acc; }
 
+/* Ensure inner containers inherit radius */
+.video-item .video-element,
+.video-item .video-container { border-radius: 8px 8px 0 0; }
+
+/* ===== Loading feedback / misc ===== */
+.video-item.loading { opacity: 0.7; }
+.video-item.loading .video-placeholder { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+
+.header button:disabled,
+.header input:disabled { opacity: 0.5; cursor: not-allowed; transition: opacity 0.3s ease; }
+
+/* “Render in progress” top bar */
+.video-grid.rendering { overflow: hidden; }
 .video-grid.rendering::after {
   content: "";
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 0; left: 0; right: 0;
   height: 3px;
   background: linear-gradient(90deg, #4caf50, #45a049);
   animation: loading-bar 2s ease-in-out infinite;
   z-index: 1000;
 }
+@keyframes loading-bar { 0%,100% { transform: translateX(-100%); } 50% { transform: translateX(100vw); } }
 
-@keyframes loading-bar {
-  0%,
-  100% {
-    transform: translateX(-100%);
-  }
-  50% {
-    transform: translateX(100vw);
-  }
-}
+/* Memory-pressure hinting */
+.app[data-memory-pressure="high"] .video-item:not(.visible) { opacity: 0.3; }
+.app[data-memory-pressure="critical"] .video-item:not(.visible) { display: none; }
 
-/* Responsive adjustments for loading states */
-@media (max-width: 768px) {
-  .debug-info {
-    font-size: 0.6rem !important;
-    padding: 0.2rem 0.5rem !important;
-  }
-  .video-placeholder {
-    font-size: 0.8rem;
-    padding: 0.5rem;
-  }
-  .error-indicator {
-    font-size: 0.7rem;
-    padding: 0.5rem;
-  }
-}
-
-/* Performance-based grid optimizations */
-.video-grid.performance-mode .video-item {
-  contain: layout style paint;
+/* ===== Virtual grid (kept) ===== */
+.virtual-grid-container {
+  background: #1a1a1a;
+  width: 100%;
+  position: relative;
+  will-change: scroll-position;
   transform: translateZ(0);
+  scroll-behavior: smooth;
+}
+.virtual-grid-container::-webkit-scrollbar { width: 12px; }
+.virtual-grid-container::-webkit-scrollbar-track { background: #2d2d2d; }
+.virtual-grid-container::-webkit-scrollbar-thumb { background: #555; border-radius: 6px; }
+.virtual-grid-container::-webkit-scrollbar-thumb:hover { background: #777; }
+
+.virtual-grid-container .video-item {
+  will-change: transform;
+  transform: translateZ(0);
+  transition: none !important;
+  contain: layout style paint size;
+}
+.virtual-grid-container.layout-grid .video-item,
+.virtual-grid-container.layout-masonry-vertical .video-item,
+.virtual-grid-container.layout-masonry-horizontal .video-item {
+  border-radius: 8px;
+  overflow: hidden;
+}
+.virtual-grid-container.hide-filenames .video-filename { display: none; }
+.virtual-grid-container .video-container { contain: layout style paint; will-change: auto; }
+.virtual-grid-container .video-element { will-change: auto; transform: translateZ(0); }
+
+/* Lightweight hover */
+.virtual-grid-container .video-item:hover {
+  transform: scale(1.02);
+  z-index: 5;
+  transition: transform 0.1s ease;
+}
+.virtual-grid-container .video-item:hover .video-filename { background: rgba(0,0,0,0.9); }
+
+/* Selection + playing badges in virtual */
+.virtual-grid-container .video-item.selected { box-shadow: 0 0 0 3px #007acc; z-index: 10; }
+.virtual-grid-container .video-item.playing::after {
+  content: "▶️";
+  position: absolute; top: 4px; right: 4px;
+  font-size: 0.7rem;
+  background: rgba(0,0,0,0.8);
+  padding: 2px 4px; border-radius: 3px; z-index: 5;
 }
 
-/* Reduced motion for accessibility */
+/* Debug overlay */
+.virtual-grid-container + .debug-overlay {
+  position: fixed;
+  bottom: 20px; right: 20px;
+  background: rgba(0,0,0,0.9);
+  color: #0f0; padding: 8px; border-radius: 4px;
+  font-family: monospace; font-size: 0.7rem;
+  z-index: 1001; pointer-events: none;
+}
+
+/* High-performance mode */
+.virtual-grid-container.performance-mode .video-item {
+  contain: strict;
+  will-change: transform;
+  transform: translateZ(0) scale(1);
+}
+.virtual-grid-container.performance-mode .video-item:hover {
+  transform: translateZ(0) scale(1) !important;
+}
+
+/* ===== Fullscreen modal (Linux click fix) ===== */
+.fullscreen-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 10000;
+  cursor: default; /* avoid implying backdrop click */
+  background: rgba(0,0,0,0.9);
+  /* CRITICAL: disable window drag over the overlay */
+  -webkit-app-region: no-drag;
+}
+.fullscreen-modal * { -webkit-app-region: no-drag; } /* belt & braces */
+
+/* If you render a separate backdrop element, keep it visual-only */
+.fullscreen-modal__backdrop { pointer-events: none; }
+
+/* Content area must accept pointer events */
+.fullscreen-video-container {
+  position: relative;
+  max-width: 95vw;
+  max-height: 95vh;
+  pointer-events: auto;
+}
+.fullscreen-video {
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+.fullscreen-filename {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  color: #fff;
+  padding: 1rem;
+  font-size: 1rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ===== Accessibility / reduced motion ===== */
 @media (prefers-reduced-motion: reduce) {
   .video-item,
   .video-placeholder,
@@ -508,191 +359,30 @@
     animation: none !important;
     transition: none !important;
   }
+  .virtual-grid-container { scroll-behavior: auto; }
+  .virtual-grid-container .video-item { transition: none !important; animation: none !important; }
+  .virtual-grid-container .video-item:hover { transform: none !important; }
 }
 
-/* Virtual Grid Styles */
-
-.virtual-grid-container {
-  background: #1a1a1a;
-  width: 100%;
-  position: relative;
-  /* Enable hardware acceleration */
-  will-change: scroll-position;
-  transform: translateZ(0);
-}
-
-.virtual-grid-container::-webkit-scrollbar {
-  width: 12px;
-}
-.virtual-grid-container::-webkit-scrollbar-track {
-  background: #2d2d2d;
-}
-.virtual-grid-container::-webkit-scrollbar-thumb {
-  background: #555;
-  border-radius: 6px;
-}
-.virtual-grid-container::-webkit-scrollbar-thumb:hover {
-  background: #777;
-}
-
-/* Virtual item positioning optimizations */
-.virtual-grid-container .video-item {
-  will-change: transform;
-  transform: translateZ(0);
-  transition: none !important;
-  contain: layout style paint size;
-}
-
-/* Layout-specific adjustments for virtual scrolling */
-.virtual-grid-container.layout-grid .video-item,
-.virtual-grid-container.layout-masonry-vertical .video-item,
-.virtual-grid-container.layout-masonry-horizontal .video-item {
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-
-/* Filename visibility */
-.virtual-grid-container.hide-filenames .video-filename {
-  display: none;
-}
-
-/* Performance optimizations for virtual items */
-.virtual-grid-container .video-container {
-  contain: layout style paint;
-  will-change: auto;
-}
-.virtual-grid-container .video-element {
-  will-change: auto;
-  transform: translateZ(0);
-}
-
-/* Loading states in virtual mode */
-.virtual-grid-container .video-placeholder {
-  background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  font-size: 0.9rem;
-  height: 100%;
-  box-sizing: border-box;
-}
-
-/* Error states optimized for virtual scrolling */
-.virtual-grid-container .error-indicator {
-  background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #ff6b6b;
-  font-size: 0.8rem;
-  height: 100%;
-  text-align: center;
-  padding: 0.5rem;
-  box-sizing: border-box;
-}
-
-/* Selection states */
-.virtual-grid-container .video-item.selected {
-  box-shadow: 0 0 0 3px #007acc;
-  z-index: 10;
-}
-
-/* Playing indicator in virtual mode */
-.virtual-grid-container .video-item.playing::after {
-  content: "▶️";
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  font-size: 0.7rem;
-  background: rgba(0, 0, 0, 0.8);
-  padding: 2px 4px;
-  border-radius: 3px;
-  z-index: 5;
-}
-
-/* Hover effects (lightweight for virtual scrolling) */
-.virtual-grid-container .video-item:hover {
-  transform: scale(1.02);
-  z-index: 5;
-  transition: transform 0.1s ease;
-}
-
-.virtual-grid-container .video-item:hover .video-filename {
-  background: rgba(0, 0, 0, 0.9);
-}
-
-/* Responsive design for virtual grid */
+/* ===== Responsive tweaks ===== */
 @media (max-width: 768px) {
-  .virtual-grid-container {
-    padding-top: 60px;
-  }
-  .virtual-grid-container .video-filename {
-    font-size: 0.7rem;
-    padding: 2px 4px;
-  }
+  .video-grid.grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .video-grid.masonry-vertical { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .video-grid.masonry-horizontal .video-item { height: 150px; }
+
+  .debug-info { font-size: 0.6rem !important; padding: 0.2rem 0.5rem !important; }
+  .video-placeholder { font-size: 0.8rem; padding: 0.5rem; }
+  .error-indicator { font-size: 0.7rem; padding: 0.5rem; }
+
+  .virtual-grid-container { padding-top: 60px; }
+  .virtual-grid-container .video-filename { font-size: 0.7rem; padding: 2px 4px; }
 }
 
 @media (max-width: 480px) {
-  .virtual-grid-container {
-    padding-top: 50px;
-  }
-  .virtual-grid-container .video-item {
-    font-size: 0.75rem;
-  }
-}
+  .video-grid.grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .video-grid.masonry-vertical { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .video-grid.masonry-horizontal .video-item { height: 120px; }
 
-/* Debug overlay positioning */
-.virtual-grid-container + .debug-overlay {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  background: rgba(0, 0, 0, 0.9);
-  color: #0f0;
-  padding: 8px;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 0.7rem;
-  z-index: 1001;
-  pointer-events: none;
-}
-
-/* Smooth scrolling behavior */
-.virtual-grid-container {
-  scroll-behavior: smooth;
-}
-
-/* High performance mode */
-.virtual-grid-container.performance-mode .video-item {
-  contain: strict;
-  will-change: transform;
-  transform: translateZ(0) scale(1);
-}
-
-.virtual-grid-container.performance-mode .video-item:hover {
-  transform: translateZ(0) scale(1) !important;
-}
-
-/* Accessibility improvements */
-.virtual-grid-container:focus-within .video-item.selected {
-  outline: 2px solid #007acc;
-  outline-offset: 2px;
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-  .virtual-grid-container {
-    scroll-behavior: auto;
-  }
-
-  .virtual-grid-container .video-item {
-    transition: none !important;
-    animation: none !important;
-  }
-
-  .virtual-grid-container .video-item:hover {
-    transform: none !important;
-  }
+  .virtual-grid-container { padding-top: 50px; }
+  .virtual-grid-container .video-item { font-size: 0.75rem; }
 }
