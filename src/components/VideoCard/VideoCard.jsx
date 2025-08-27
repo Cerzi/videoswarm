@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
+import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -16,82 +17,81 @@ const VideoCard = memo(function VideoCard({
   isVisible,
   showFilenames = true,
 
-  // limits & callbacks (all owned by parent/orchestrator)
-  canLoadMoreVideos, // () => boolean
-  onStartLoading, // (id)
-  onStopLoading, // (id)
-  onVideoLoad, // (id, aspectRatio)
-  onVideoPlay, // (id)
-  onVideoPause, // (id)
-  onPlayError, // (id, error)
-  onVisibilityChange, // (id, visible)
-  onHover, // (id)
+  // limits & callbacks (owned by parent/orchestrator)
+  canLoadMoreVideos,      // () => boolean
+  onStartLoading,         // (id)
+  onStopLoading,          // (id)
+  onVideoLoad,            // (id, aspectRatio)
+  onVideoPlay,            // (id)
+  onVideoPause,           // (id)
+  onPlayError,            // (id, error)
+  onVisibilityChange,     // (id, visible)
+  onHover,                // (id)
 
-  // functions from the shared IO registry
-  observeIntersection, // (el, (visible:boolean, entry)=>void)
-  unobserveIntersection, // (el)=>void
+  // IO registry
+  observeIntersection,    // (el, id, cb)
+  unobserveIntersection,  // (el)=>void
 
+  // optional init scheduler
   scheduleInit = null,
 }) {
-  const cardRef = useRef(null); // wrapper .video-item
-  const videoContainerRef = useRef(null); // inner .video-container
+  const cardRef = useRef(null);
+  const videoContainerRef = useRef(null);
   const videoRef = useRef(null);
 
   const clickTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
 
-  // local mirrors to reduce chatter (parent is source of truth)
+  // local mirrors (parent is source of truth)
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // one-shot guards
+  // guards
   const loadRequestedRef = useRef(false);
   const metaNotifiedRef = useRef(false);
   const permanentErrorRef = useRef(false);
-  const retryAttemptsRef = useRef(0);
-  const [errorText, setErrorText] = useState(null);
+  const retryAttemptsRef   = useRef(0);
+  const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
 
+  const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
 
-  // 🔹 helper: is this card's <video> currently adopted by the modal?
+  // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
     const el = videoRef.current;
     return !!(el && el.dataset && el.dataset.adopted === "modal");
   }, []);
 
-  // keep mirrors in sync
+  // mirror flags
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
-  // If the *content* of the file changes, clear any sticky error so we can try again.
-  // (main.js sends dateModified/size; preload forwards it; App.jsx maps it into `video`.)
+  // If file content changed, clear sticky error so we can retry
   useEffect(() => {
-    // Only clear if we were in an error state
     if (permanentErrorRef.current || errorText) {
       permanentErrorRef.current = false;
-      retryAttemptsRef.current = 0;
+      retryAttemptsRef.current  = 0;
       setErrorText(null);
-      // ensure we can reattempt
       loadRequestedRef.current = false;
       setLoaded(false);
       setLoading(false);
     }
-  // include whichever fields you know change on write/rename
   }, [video.id, video.size, video.dateModified]);
 
-  // Teardown when parent says not loaded/not loading (unless adopted)
+  // Teardown when parent says not loaded/not loading (unless adopted by modal)
   useEffect(() => {
     if (isAdoptedByModal()) return;
     if (!isLoaded && !isLoading && videoRef.current) {
       const el = videoRef.current;
       try {
+        suppressErrorsRef.current = true;
         if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
         el.pause();
         el.removeAttribute("src");
-        // NOTE: avoid calling el.load() here; it can force sync churn in Chromium.
         el.remove();
-      } catch {
-        /* noop */
+      } catch {}
+      finally {
+        setTimeout(() => { suppressErrorsRef.current = false; }, 0);
       }
       videoRef.current = null;
       loadRequestedRef.current = false;
@@ -101,7 +101,7 @@ const VideoCard = memo(function VideoCard({
     }
   }, [isLoaded, isLoading, isAdoptedByModal]);
 
-  // NEW: shared IO registration for visibility + opportunistic load
+  // IO registration for visibility
   useEffect(() => {
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
@@ -126,11 +126,9 @@ const VideoCard = memo(function VideoCard({
     return () => {
       unobserveIntersection(el);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeIntersection, unobserveIntersection, videoId, loaded, loading, canLoadMoreVideos, onVisibilityChange]);
 
-  // Backup trigger: if parent says we're visible but our local handler
-  // didn't run yet, attempt a load once the microtask queue clears.
+  // Backup trigger if parent already flags visible
   useEffect(() => {
     if (
       isVisible &&
@@ -155,51 +153,83 @@ const VideoCard = memo(function VideoCard({
         }
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVisible, loaded, loading, canLoadMoreVideos]);
 
-  // React to orchestration: play/pause only if orchestrator says so
+  // Orchestrated play/pause + error handling
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
 
     const handlePlaying = () => onVideoPlay?.(videoId);
-    const handlePause = () => onVideoPause?.(videoId);
-    const handleError = (e) => {
+    const handlePause   = () => onVideoPause?.(videoId);
+
+    const handleError = async (e) => {
+      if (suppressErrorsRef.current) return;
       const err = e?.target?.error || e;
       onPlayError?.(videoId, err);
+
       const { terminal, label } = classifyMediaError(err);
-      if (terminal) permanentErrorRef.current = true;
+      const code = err?.code ?? null;
+      const decodeWhileActive =
+        code === 3 && el.currentSrc && !suppressErrorsRef.current;
+
+      // Soft recovery first
+      try {
+        const t = el.currentTime || 0;
+        el.pause();
+        el.load();
+        try { el.currentTime = t; } catch {}
+        await el.play().catch(() => {});
+        setErrorText(null);
+        return;
+      } catch {}
+
+      if (terminal && decodeWhileActive) {
+        permanentErrorRef.current = true;
+      }
       setErrorText(`⚠️ ${label}`);
       hardDetach(el);
     };
 
     el.addEventListener("playing", handlePlaying);
-    el.addEventListener("pause", handlePause);
-    el.addEventListener("error", handleError);
+    el.addEventListener("pause",   handlePause);
+    el.addEventListener("error",   handleError);
 
     if (isPlaying && isVisible && loaded && !permanentErrorRef.current) {
       const p = el.play();
       if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
     } else {
-      try {
-        el.pause();
-      } catch {
-        /* noop */
-      }
+      try { el.pause(); } catch {}
     }
 
     return () => {
       el.removeEventListener("playing", handlePlaying);
-      el.removeEventListener("pause", handlePause);
-      el.removeEventListener("error", handleError);
+      el.removeEventListener("pause",   handlePause);
+      el.removeEventListener("error",   handleError);
     };
   }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
 
-  // create & load a <video> element
+  // Quiet stall watchdog (no visual changes)
+  useEffect(() => {
+    if (!videoRef.current) return;
+    const enable =
+      loaded && isPlaying && isVisible && !isAdoptedByModal() && !permanentErrorRef.current;
+    let teardown = null;
+    if (enable) {
+      teardown = useVideoStallWatchdog(videoRef, {
+        id: videoId,
+        tickMs: 2500,        // slightly slower to reduce overhead
+        minDeltaSec: 0.12,
+        ticksToStall: 3,     // ~7.5s
+        maxLogsPerMin: 1,
+      });
+    }
+    return () => { if (teardown) teardown(); };
+  }, [loaded, isPlaying, isVisible, isAdoptedByModal, videoId]);
+
+  // create & load <video>
   const loadVideo = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current)
-      return;
+    if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
     if (permanentErrorRef.current) return;
     setErrorText(null);
@@ -213,7 +243,7 @@ const VideoCard = memo(function VideoCard({
       el.muted = true;
       el.loop = true;
       el.playsInline = true;
-      el.preload = isVisible ? "auto" : "metadata"; // earlier first frame for visible
+      el.preload = isVisible ? "auto" : "metadata";
       el.className = "video-element";
       el.dataset.videoId = videoId;
       el.style.width = "100%";
@@ -223,8 +253,8 @@ const VideoCard = memo(function VideoCard({
 
       const cleanupListeners = () => {
         el.removeEventListener("loadedmetadata", onMeta);
-        el.removeEventListener("loadeddata", onLoadedData);
-        el.removeEventListener("error", onErr);
+        el.removeEventListener("loadeddata",    onLoadedData);
+        el.removeEventListener("error",         onErr);
       };
 
       const finishStopLoading = () => {
@@ -251,37 +281,57 @@ const VideoCard = memo(function VideoCard({
         videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (
-          container &&
-          !container.contains(el) &&
-          !(el.dataset?.adopted === "modal")
-        ) {
+        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
           container.appendChild(el);
         }
       };
 
-      const onErr = (e) => {
+      const onErr = async (e) => {
+        if (suppressErrorsRef.current) return;
         clearTimeout(loadTimeoutRef.current);
         cleanupListeners();
         finishStopLoading();
         loadRequestedRef.current = false;
+
         const err = e?.target?.error || e;
         const { terminal, label } = classifyMediaError(err);
 
-        // Heuristic: for local files (Electron) an early code 4 is often transient while the file is still
-        // being written. Allow a couple of retries before marking permanent.
         const code = err?.code ?? null;
         const isLocal = Boolean(video.isElectronFile && video.fullPath);
         const looksTransientLocal = isLocal && code === 4 && retryAttemptsRef.current < 2;
 
-        if (terminal && !looksTransientLocal) {
+        // Soft recover once
+        try {
+          const t = el.currentTime || 0;
+          el.pause();
+          el.load();
+          try { el.currentTime = t; } catch {}
+          await el.play().catch(() => {});
+          setErrorText(null);
+          return;
+        } catch {}
+
+        const decodeWhileActive =
+          code === 3 && el.currentSrc && !suppressErrorsRef.current;
+
+        if (terminal && decodeWhileActive && !looksTransientLocal) {
           permanentErrorRef.current = true;
         }
+
         setErrorText(`⚠️ ${looksTransientLocal ? "Temporary read error" : label}`);
         onPlayError?.(videoId, err);
-        hardDetach(el);
 
-        // Opportunistic retry for likely-transient local errors
+        // Only detach permanently if confirmed decode error
+        if (decodeWhileActive && !looksTransientLocal) {
+          try {
+            suppressErrorsRef.current = true;
+            hardDetach(el);
+          } finally {
+            setTimeout(() => { suppressErrorsRef.current = false; }, 0);
+          }
+        }
+
+        // Retry once for transient local errors
         if (!permanentErrorRef.current && looksTransientLocal) {
           retryAttemptsRef.current += 1;
           setTimeout(() => {
@@ -299,13 +349,20 @@ const VideoCard = memo(function VideoCard({
         }
       };
 
-      loadTimeoutRef.current = setTimeout(() => {
-        onErr({ target: { error: new Error("Loading timeout") } });
-      }, 10000);
+      // Conditional load-timeout (cancelled when invisible)
+      const armLoadTimeout = () => {
+        clearTimeout(loadTimeoutRef.current);
+        if (isVisible) {
+          loadTimeoutRef.current = setTimeout(() => {
+            if (isVisible) onErr({ target: { error: new Error("Loading timeout") } });
+          }, 10000);
+        }
+      };
+      armLoadTimeout();
 
       el.addEventListener("loadedmetadata", onMeta);
-      el.addEventListener("loadeddata", onLoadedData);
-      el.addEventListener("error", onErr);
+      el.addEventListener("loadeddata",    onLoadedData);
+      el.addEventListener("error",         onErr);
 
       try {
         if (video.isElectronFile && video.fullPath) {
@@ -319,23 +376,12 @@ const VideoCard = memo(function VideoCard({
         }
 
         el.load();
-
-        // Optional warm-start: nudge buffering for visible tiles
-        if (isVisible) {
-          const p = el.play();
-          if (p?.then)
-            p.then(() => {
-              try {
-                el.pause();
-              } catch {}
-            }).catch(() => {});
-        }
+        // No warm-start play/pause (keeps CPU/GPU quieter)
       } catch (err) {
         onErr({ target: { error: err } });
       }
     };
 
-    // If you've added an init scheduler, use it; otherwise run immediately
     if (typeof scheduleInit === "function") {
       scheduleInit(runInit);
     } else {
@@ -352,10 +398,18 @@ const VideoCard = memo(function VideoCard({
     onStopLoading,
     onVideoLoad,
     onPlayError,
-    scheduleInit, // optional, safe if undefined
+    scheduleInit,
   ]);
 
-  // Cleanup
+  // Cancel load timeout if we become invisible
+  useEffect(() => {
+    if (!isVisible && loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
+    }
+  }, [isVisible]);
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
@@ -363,12 +417,14 @@ const VideoCard = memo(function VideoCard({
       const el = videoRef.current;
       if (el && !(el.dataset?.adopted === "modal")) {
         try {
+          suppressErrorsRef.current = true;
           if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
           el.pause();
           el.removeAttribute("src");
           el.remove();
-        } catch {
-          /* noop */
+        } catch {}
+        finally {
+          setTimeout(() => { suppressErrorsRef.current = false; }, 0);
         }
       }
       videoRef.current = null;
@@ -377,37 +433,28 @@ const VideoCard = memo(function VideoCard({
     };
   }, []);
 
-  // selection
-  const handleClick = useCallback(
-    (e) => {
-      e.stopPropagation();
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
-        clickTimeoutRef.current = null;
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
-        return;
-      }
-      clickTimeoutRef.current = setTimeout(() => {
-        onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
-        clickTimeoutRef.current = null;
-      }, 300);
-    },
-    [onSelect, videoId]
-  );
+  // UI handlers (unchanged)
+  const handleClick = useCallback((e) => {
+    e.stopPropagation();
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
+      return;
+    }
+    clickTimeoutRef.current = setTimeout(() => {
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
+      clickTimeoutRef.current = null;
+    }, 300);
+  }, [onSelect, videoId]);
 
-  const handleContextMenu = useCallback(
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onContextMenu?.(e, video);
-    },
-    [onContextMenu, video]
-  );
+  const handleContextMenu = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu?.(e, video);
+  }, [onContextMenu, video]);
 
-  const handleMouseEnter = useCallback(
-    () => onHover?.(videoId),
-    [onHover, videoId]
-  );
+  const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
   const renderPlaceholder = () => (
     <div
@@ -435,9 +482,7 @@ const VideoCard = memo(function VideoCard({
   return (
     <div
       ref={cardRef}
-      className={`video-item ${selected ? "selected" : ""} ${
-        loading ? "loading" : ""
-      }`}
+      className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onContextMenu={handleContextMenu}
@@ -459,19 +504,13 @@ const VideoCard = memo(function VideoCard({
       {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
           ref={videoContainerRef}
         />
       ) : (
         <div
           className="video-container"
-          style={{
-            width: "100%",
-            height: showFilenames ? "calc(100% - 40px)" : "100%",
-          }}
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
           ref={videoContainerRef}
         >
           {renderPlaceholder()}
