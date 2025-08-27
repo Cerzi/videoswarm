@@ -107,7 +107,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       e.preventDefault();
 
       const dy = normalizeDelta(e);
-      accumRef.current += dy;
+      accumRef.current -= dy;
 
       if (!rafRef.current) {
         rafRef.current = requestAnimationFrame(tick);
