@@ -74,6 +74,7 @@ export default function useVideoCollection({
     playingVideos: actualPlaying,
     hadLongTaskRecently,
     isNear,
+    playingCap: maxConcurrentPlaying,
   });
 
   // Layer 3: Play orchestration (Business logic)

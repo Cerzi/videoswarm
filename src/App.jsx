@@ -790,12 +790,25 @@ function App() {
   }, [isLoadingFolder]);
 
   // cleanup pass from videoCollection
-  useEffect(() => {
-    const cleanup = videoCollection.performCleanup();
-    if (cleanup) {
-      setLoadedVideos(cleanup);
-    }
-  }, [videoCollection.performCleanup]);
+  // drive the effect by stable scalars; apply deletions, not replacement; de-bounce one tick
+  const maxLoaded = videoCollection.limits?.maxLoaded ?? 0;                 
+  const loadedSize = loadedVideos.size;                                    
+  const playingSize = actualPlaying.size;                                  
+  const loadingSize = loadingVideos.size;                                   
+
+  useEffect(() => {                                                          
+    const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
+      const victims = videoCollection.performCleanup?.();
+      if (Array.isArray(victims) && victims.length) {
+        setLoadedVideos((prev) => {
+          const ns = new Set(prev);
+          for (const vid of victims) ns.delete(vid);
+          return ns;
+        });
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
@@ -837,8 +850,6 @@ function App() {
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
-            // If HeaderBar renders the slider, make sure its `max` is 4
-            // and it uses the provided callbacks.
           />
 
           <DebugSummary

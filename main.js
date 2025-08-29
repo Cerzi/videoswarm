@@ -837,7 +837,7 @@ ipcMain.handle("recent:add", async (_e, folderPath) => await addRecentFolder(fol
 ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFolder(folderPath));
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
-// Watcher IPC (delegated to watcher module)
+// Watcher IPC (delegated to file watcher module)
 ipcMain.handle("start-folder-watch", async (_event, folderPath) => {
   try {
     const result = await folderWatcher.start(folderPath);
@@ -857,6 +857,40 @@ ipcMain.handle("stop-folder-watch", async () => {
     return { success: false, error: e.message || String(e) };
   }
 });
+
+ipcMain.handle('mem:get', () => {
+  // app.getAppMetrics(): memory fields are in KB
+  const procs = app.getAppMetrics();
+  const totals = procs.reduce(
+    (acc, p) => {
+      const m = p.memory || {};
+      acc.workingSetKB += m.workingSetSize || 0; // KB
+      acc.privateKB += m.privateBytes || 0; // KB
+      acc.sharedKB += m.sharedBytes || 0; // KB
+      return acc;
+    },
+    { workingSetKB: 0, privateKB: 0, sharedKB: 0 }
+  );
+
+  // System memory (also in KB)
+  const sys = process.getSystemMemoryInfo(); // { total, free, ... } in KB
+  const totalMB = Math.round((sys.total || 0) / 1024);             // KB -> MB
+  const wsMB = Math.round((totals.workingSetKB || 0) / 1024);   // KB -> MB
+
+  return {
+    processes: procs.map(p => ({
+      pid: p.pid,
+      type: p.type,
+      memory: p.memory, // raw KB figures
+    })),
+    totals: {
+      ...totals,  // workingSetKB/privateKB/sharedKB (KB)
+      wsMB,       // working set across all Electron processes (MB)
+      totalMB,    // system total RAM (MB)
+    },
+  };
+});
+
 
 // App lifecycle
 app.on("window-all-closed", () => {

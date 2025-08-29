@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("copy-to-clipboard", text);
   },
 
+
+
   recent: {
     get: async () => ipcRenderer.invoke("recent:get"),
     add: async (folderPath) => ipcRenderer.invoke("recent:add", folderPath),
@@ -123,4 +125,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("recent:remove", folderPath),
     clear: async () => ipcRenderer.invoke("recent:clear"),
   },
+});
+
+contextBridge.exposeInMainWorld('appMem', {
+  get: () => ipcRenderer.invoke('mem:get'),
 });
