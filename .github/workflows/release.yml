@@ -75,18 +75,27 @@ jobs:
         shell: bash
         working-directory: dist_upload
         run: |
+          set -euo pipefail
           : > SHA256SUMS.txt
+
+          files=$(find . -maxdepth 1 -type f -printf '%f\n' || true)
+          if [ -z "$files" ]; then
+            echo "No files found to hash" >> SHA256SUMS.txt
+            exit 0
+          fi
+
           if command -v shasum >/dev/null 2>&1; then
-            for f in *; do
-              [ -f "$f" ] && shasum -a 256 "$f" >> SHA256SUMS.txt
+            for f in $files; do
+              shasum -a 256 "$f" >> SHA256SUMS.txt || true
             done
           elif command -v sha256sum >/dev/null 2>&1; then
-            for f in *; do
-              [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS.txt
+            for f in $files; do
+              sha256sum "$f" >> SHA256SUMS.txt || true
             done
           else
             echo "No sha tool found; leaving empty SHA256SUMS.txt"
           fi
+
 
       # --- Checksums: Windows (use PowerShell for reliability)
       - name: Generate SHA256 checksums (Windows)
