@@ -33,31 +33,78 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Show builder versions
+        run: |
+          node -v
+          npm -v
+          npx electron-builder --version || true
+
+      # Linux-only build deps commonly needed by electron-builder
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            icnsutils graphicsmagick xz-utils rpm
+
+      # Build per OS (electron-builder under the hood via your scripts)
       - name: Build (electron-builder)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # Optional: more verbose logs
+          DEBUG: electron-builder*
         run: npm run electron:dist
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p dist_upload
+          # Adjust if your output dir differs (electron-builder defaults to dist/)
           cp -r dist/* dist_upload/ || true
 
-      - name: Generate SHA256 checksums
+      - name: List dist_upload contents
         shell: bash
         run: |
-          cd dist_upload
+          echo "pwd = $(pwd)"
+          ls -la dist_upload || true
+
+      # --- Checksums: Unix
+      - name: Generate SHA256 checksums (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: dist_upload
+        run: |
           : > SHA256SUMS.txt
           if command -v shasum >/dev/null 2>&1; then
-            for f in *; do [ -f "$f" ] && shasum -a 256 "$f" >> SHA256SUMS.txt; done
-          elif command -v certutil >/dev/null 2>&1; then
             for f in *; do
-              if [ -f "$f" ]; then
-                echo "SHA256($f)=" >> SHA256SUMS.txt
-                certutil -hashfile "$f" SHA256 >> SHA256SUMS.txt
-                echo "" >> SHA256SUMS.txt
-              fi
+              [ -f "$f" ] && shasum -a 256 "$f" >> SHA256SUMS.txt
             done
+          elif command -v sha256sum >/dev/null 2>&1; then
+            for f in *; do
+              [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS.txt
+            done
+          else
+            echo "No sha tool found; leaving empty SHA256SUMS.txt"
           fi
+
+      # --- Checksums: Windows (use PowerShell for reliability)
+      - name: Generate SHA256 checksums (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: dist_upload
+        run: |
+          if (!(Test-Path .)) { throw "dist_upload not found" }
+          $files = Get-ChildItem -File
+          if ($files.Count -eq 0) {
+            "No files to hash" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+            exit 0
+          }
+          $lines = foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash
+            "$hash  $($f.Name)"
+          }
+          $lines | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
 
       - name: Upload artifacts (per-OS)
         uses: actions/upload-artifact@v4
@@ -88,7 +135,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           draft: true
-          # mark prerelease if tag contains "-rc"
           prerelease: ${{ contains(github.ref_name, '-rc') }}
           generate_release_notes: false
           body: ${{ steps.notes.outputs.body }}
