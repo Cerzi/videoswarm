@@ -6,15 +6,35 @@ import React, {
   useRef,
   useMemo,
 } from "react";
-import VideoCard from "./components/VideoCard";
+import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
+import HeaderBar from "./components/HeaderBar";
+import DebugSummary from "./components/DebugSummary";
+
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
-import { useContextMenu } from "./hooks/useContextMenu";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
+import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
+import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
+import useInitGate from "./hooks/ui-perf/useInitGate";
+
+import useSelectionState from "./hooks/selection/useSelectionState";
+import { useContextMenu } from "./hooks/context-menu/useContextMenu";
+import useActionDispatch from "./hooks/actions/useActionDispatch";
+import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
+import useTrashIntegration from "./hooks/actions/useTrashIntegration";
+
+import {
+  calculateSafeZoom,
+  zoomClassForLevel,
+  clampZoomIndex,
+} from "./zoom/utils.js";
+import useHotkeys from "./hooks/selection/useHotkeys";
+import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX, ZOOM_TILE_WIDTHS } from "./zoom/config";
+
 import LoadingProgress from "./components/LoadingProgress";
 import "./App.css";
 
@@ -81,7 +101,8 @@ function App() {
     import.meta.env.VITE_APP_VERSION || "dev"
   );
   const [videos, setVideos] = useState([]);
-  const [selectedVideos, setSelectedVideos] = useState(new Set());
+  // Selection state (SOLID)
+  const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
@@ -99,7 +120,37 @@ function App() {
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
+  const { scheduleInit } = useInitGate({ perFrame: 6 });
+
   const gridRef = useRef(null);
+
+  const ioRegistry = useIntersectionObserverRegistry(gridRef, {
+    rootMargin: "1600px 0px",
+    threshold: [0, 0.15],
+    nearPx: 900,
+  });
+
+  useEffect(() => {
+    const el = gridRef.current;
+    const update = () => {
+      const h = el?.clientHeight || window.innerHeight;
+      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
+    };
+    update();
+
+    const ro =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    if (ro && el) ro.observe(el);
+    window.addEventListener("resize", update);
+
+    return () => {
+      if (ro && el) ro.unobserve(el);
+      ro?.disconnect?.();
+      window.removeEventListener("resize", update);
+    };
+  }, [gridRef, ioRegistry]);
+
+  const { hadLongTaskRecently } = useLongTaskFlag();
 
   // ----- Recent Folders hook -----
   const {
@@ -109,12 +160,23 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
-  // ----- Masonry hook -----
-  const { updateAspectRatio, onItemsChanged, setZoomClass } = useChunkedMasonry(
-    { gridRef }
-  );
+  // Track visual (masonry) order for Shift-range selection
+  const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
-  // MEMOIZED grouped & sorted
+  // ----- Masonry hook -----
+  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
+    useChunkedMasonry({
+      gridRef,
+      zoomClassForLevel, // use shared mapping
+      getTileWidthForLevel: (level) =>
+        ZOOM_TILE_WIDTHS[
+          Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
+        ],
+
+      onOrderChange: setVisualOrderedIds,
+    });
+
+  // MEMOIZED grouped & sorted (data order)
   const groupedAndSortedVideos = useMemo(() => {
     if (videos.length === 0) return [];
     const videosByFolder = new Map();
@@ -139,8 +201,46 @@ function App() {
     return result;
   }, [videos]);
 
+  // data order ids (fallback)
+  const orderedIds = useMemo(
+    () => groupedAndSortedVideos.map((v) => v.id),
+    [groupedAndSortedVideos]
+  );
+
+  // Prefer visual order if we have it
+  const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
+
+  const getById = useCallback(
+    (id) => groupedAndSortedVideos.find((v) => v.id === id),
+    [groupedAndSortedVideos]
+  );
+
+  // Simple toast used by actions layer
+  const notify = useCallback((message, type = "info") => {
+    const colors = {
+      error: "#ff4444",
+      success: "#4CAF50",
+      warning: "#ff9800",
+      info: "#007acc",
+    };
+    const icons = { error: "❌", success: "✅", warning: "⚠️", info: "ℹ️" };
+    const el = document.createElement("div");
+    el.style.cssText = `
+      position: fixed; top: 80px; right: 20px;
+      background: ${colors[type] || colors.info};
+      color: white; padding: 12px 16px; border-radius: 8px; z-index: 10001;
+      font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
+      animation: slideInFromRight 0.2s ease-out;
+    `;
+    el.textContent = `${icons[type] || icons.info} ${message}`;
+    document.body.appendChild(el);
+    setTimeout(() => {
+      if (document.body.contains(el)) document.body.removeChild(el);
+    }, 3000);
+  }, []);
+
   useEffect(() => {
-    // Prefer the runtime version if available (packaged Electron reflects real app version)
     if (window.electronAPI?.getAppVersion) {
       window.electronAPI
         .getAppVersion()
@@ -157,7 +257,16 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    progressiveOptions: { initial: 100, batchSize: 40 },
+    scrollRef: gridRef,
+    progressive: {
+      initial: 120,
+      batchSize: 64,
+      intervalMs: 100,
+      pauseOnScroll: true,
+      longTaskAdaptation: true,
+    },
+    hadLongTaskRecently,
+    isNear: ioRegistry.isNear,
   });
 
   // fullscreen / context menu
@@ -167,52 +276,73 @@ function App() {
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
-  const { contextMenu, showContextMenu, hideContextMenu, handleContextAction } =
-    useContextMenu();
 
-  // === DYNAMIC ZOOM CALCULATION ===
-  const calculateSafeZoom = useCallback(
-    (windowWidth, windowHeight, videoCount) => {
-      const zoomSizes = [150, 200, 300, 400];
-      const estimatedVideosPerRow = zoomSizes.map((size) =>
-        Math.floor(windowWidth / size)
-      );
-      const estimatedVisibleVideos = estimatedVideosPerRow.map(
-        (perRow) => perRow * 5
-      );
-      const memoryPressure = estimatedVisibleVideos.map(
-        (visible) => (visible * 15) / 3600
-      );
-      for (let i = 0; i < memoryPressure.length; i++) {
-        if (memoryPressure[i] < 0.8) {
-          console.log(
-            `🧠 Safe zoom level ${i} (${
-              ["75%", "100%", "150%", "200%"][i]
-            }) - estimated ${estimatedVisibleVideos[i]} visible videos`
-          );
-          return i;
-        }
-      }
-      console.warn(
-        "⚠️ All zoom levels may cause memory pressure - using maximum zoom"
-      );
-      return 3;
-    },
-    []
+  const {
+    contextMenu,
+    showOnItem,
+    showOnEmpty,
+    hide: hideContextMenu,
+  } = useContextMenu();
+
+  // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
+  const deps = useTrashIntegration({
+    electronAPI: window.electronAPI, // ← was electronAPI
+    notify,
+    confirm: window.confirm,
+    releaseVideoHandlesForAsync,
+
+    // use your real setters
+    setVideos, // ← was setAllVideos
+    setSelected: selection.setSelected,
+    setLoadedIds: setLoadedVideos,
+    setPlayingIds: setActualPlaying,
+
+    // (optional but useful if you want to purge these too)
+    setVisibleIds: setVisibleVideos,
+    setLoadingIds: setLoadingVideos,
+  });
+  const { runAction } = useActionDispatch(deps, getById);
+
+  // Hotkeys operate on current selection
+  const runForHotkeys = useCallback(
+    (actionId, currentSelection) =>
+      runAction(actionId, currentSelection, contextMenu.contextId),
+    [runAction, contextMenu.contextId]
   );
+  // Global hotkeys (Enter / Ctrl+C / Delete) + Zoom (+ / - and Ctrl/⌘ + Wheel)
+  useHotkeys(runForHotkeys, () => selection.selected, {
+    getZoomIndex: () => zoomLevel,
+    setZoomIndexSafe: (z) => handleZoomChangeSafe(z),
+    minZoomIndex: ZOOM_MIN_INDEX,
+    maxZoomIndex: ZOOM_MAX_INDEX,
+    // wheelStepUnits: 100, // optional sensitivity tuning
+  });
+
+  // ====== Zoom logic (refactored) ======
 
   const handleZoomChange = useCallback(
     (z) => {
-      setZoomLevel(z);
-      setZoomClass(z);
+      const clamped = clampZoomIndex(z);
+      if (clamped === zoomLevel) return; // no-op if unchanged
+      setZoomLevel(clamped);
+      setZoomClass(clamped);
       window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: z,
+        zoomLevel: clamped,
         recursiveMode,
         maxConcurrentPlaying,
         showFilenames,
       });
+      // Nudge masonry after zoom change
+      scheduleLayout?.();
     },
-    [setZoomClass, recursiveMode, maxConcurrentPlaying, showFilenames]
+    [
+      zoomLevel,
+      setZoomClass,
+      recursiveMode,
+      maxConcurrentPlaying,
+      showFilenames,
+      scheduleLayout,
+    ]
   );
 
   const getMinimumZoomLevel = useCallback(() => {
@@ -227,21 +357,20 @@ function App() {
     (newZoom) => {
       const minZoom = getMinimumZoomLevel();
       const safeZoom = Math.max(newZoom, minZoom);
+      if (safeZoom === zoomLevel) return; // nothing to do
       if (safeZoom !== newZoom) {
         console.warn(
-          `🛡️ Zoom limited to ${
-            ["75%", "100%", "150%", "200%"][safeZoom]
-          } for memory safety (requested ${
-            ["75%", "100%", "150%", "200%"][newZoom]
-          })`
+          `🛡️ Zoom limited to ${getZoomLabelByIndex(
+            safeZoom
+          )} for memory safety (requested ${getZoomLabelByIndex(newZoom)})`
         );
       }
       handleZoomChange(safeZoom);
     },
-    [getMinimumZoomLevel, handleZoomChange]
+    [getMinimumZoomLevel, handleZoomChange, zoomLevel]
   );
 
-  // === MEMORY MONITORING (unchanged logging) ===
+  // === MEMORY MONITORING (dev helpers) ===
   useEffect(() => {
     if (performance.memory) {
       console.log("🧠 Initial memory limits:", {
@@ -297,7 +426,7 @@ function App() {
     videoCollection.memoryStatus?.memoryPressure,
   ]);
 
-  // === DYNAMIC ZOOM RESIZE / COUNT (unchanged) ===
+  // === DYNAMIC ZOOM RESIZE / COUNT ===
   useEffect(() => {
     if (!window.electronAPI?.isElectron) return;
     const handleResize = () => {
@@ -312,9 +441,9 @@ function App() {
         );
         if (safeZoom > zoomLevel) {
           console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${
-              ["75%", "100%", "150%", "200%"][safeZoom]
-            } for safety`
+            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${getZoomLabelByIndex(
+              safeZoom
+            )} for safety`
           );
           handleZoomChange(safeZoom);
         }
@@ -330,7 +459,7 @@ function App() {
       window.removeEventListener("resize", debouncedResize);
       clearTimeout(resizeTimeout);
     };
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
 
   useEffect(() => {
     if (groupedAndSortedVideos.length > 100) {
@@ -348,7 +477,7 @@ function App() {
         handleZoomChange(safeZoom);
       }
     }
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
 
   // settings load + folder selection event
   useEffect(() => {
@@ -364,7 +493,8 @@ function App() {
         if (s.showFilenames !== undefined) setShowFilenames(s.showFilenames);
         if (s.maxConcurrentPlaying !== undefined)
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
-        if (s.zoomLevel !== undefined) setZoomLevel(s.zoomLevel);
+        if (s.zoomLevel !== undefined)
+          setZoomLevel(clampZoomIndex(s.zoomLevel));
       } catch {}
       setSettingsLoaded(true);
     };
@@ -378,7 +508,7 @@ function App() {
     );
   }, []); // eslint-disable-line
 
-  // FS listeners (unchanged)
+  // FS listeners
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
@@ -393,7 +523,7 @@ function App() {
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      setSelectedVideos((prev) => {
+      selection.setSelected((prev) => {
         const ns = new Set(prev);
         ns.delete(filePath);
         return ns;
@@ -432,12 +562,12 @@ function App() {
     return () => {
       api?.stopFolderWatch?.().catch(() => {});
     };
-  }, []);
+  }, [selection.setSelected]);
 
   // relayout when list changes
   useEffect(() => {
     if (groupedAndSortedVideos.length) onItemsChanged();
-  }, [groupedAndSortedVideos.length]);
+  }, [groupedAndSortedVideos.length, onItemsChanged]);
 
   // zoom handling via hook
   useEffect(() => {
@@ -492,7 +622,7 @@ function App() {
         await api.stopFolderWatch?.();
 
         setVideos([]);
-        setSelectedVideos(new Set());
+        selection.clear();
         setVisibleVideos(new Set());
         setLoadedVideos(new Set());
         setLoadingVideos(new Set());
@@ -526,14 +656,14 @@ function App() {
         const watchResult = await api.startFolderWatch?.(folderPath);
         if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
 
-        // ✅ record in recent folders AFTER successful open
+        // record in recent folders AFTER successful open
         addRecentFolder(folderPath);
       } catch (e) {
         console.error("Error reading directory:", e);
         setIsLoadingFolder(false);
       }
     },
-    [recursiveMode, addRecentFolder]
+    [recursiveMode, addRecentFolder, selection]
   );
 
   const handleFolderSelect = useCallback(async () => {
@@ -541,30 +671,31 @@ function App() {
     if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
   }, [handleElectronFolderSelection]);
 
-  const handleWebFileSelection = useCallback((event) => {
-    const files = Array.from(event.target.files || []).filter((f) => {
-      const isVideoType = f.type.startsWith("video/");
-      const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
-        f.name
-      );
-      return isVideoType || hasExt;
-    });
-    const list = files.map((f) => ({
-      id: f.name + f.size,
-      name: f.name,
-      file: f,
-      loaded: false,
-      isElectronFile: false,
-    }));
-    setVideos(list);
-    setSelectedVideos(new Set());
-    setVisibleVideos(new Set());
-    setLoadedVideos(new Set());
-    setLoadingVideos(new Set());
-    setActualPlaying(new Set());
-
-    // Web “folder” path is not real; skip adding to recents
-  }, []);
+  const handleWebFileSelection = useCallback(
+    (event) => {
+      const files = Array.from(event.target.files || []).filter((f) => {
+        const isVideoType = f.type.startsWith("video/");
+        const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
+          f.name
+        );
+        return isVideoType || hasExt;
+      });
+      const list = files.map((f) => ({
+        id: f.name + f.size,
+        name: f.name,
+        file: f,
+        loaded: false,
+        isElectronFile: false,
+      }));
+      setVideos(list);
+      selection.clear();
+      setVisibleVideos(new Set());
+      setLoadedVideos(new Set());
+      setLoadingVideos(new Set());
+      setActualPlaying(new Set());
+    },
+    [selection]
+  );
 
   const toggleRecursive = useCallback(() => {
     const next = !recursiveMode;
@@ -601,31 +732,53 @@ function App() {
     [recursiveMode, zoomLevel, showFilenames]
   );
 
-  const getZoomLabel = useMemo(
-    () => ["75%", "100%", "150%", "200%"][zoomLevel] || "100%",
-    [zoomLevel]
-  );
-
+  // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
   const handleVideoSelect = useCallback(
-    (videoId, isCtrlClick, isDoubleClick) => {
-      const video = groupedAndSortedVideos.find((v) => v.id === videoId);
+    (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
+      const video = getById(videoId);
       if (isDoubleClick && video) {
         openFullScreen(video, videoCollection.playingVideos);
         return;
       }
-      setSelectedVideos((prev) => {
-        const ns = new Set(prev);
-        if (isCtrlClick) {
-          if (ns.has(videoId)) ns.delete(videoId);
-          else ns.add(videoId);
-        } else {
-          ns.clear();
-          ns.add(videoId);
-        }
-        return ns;
-      });
+      if (isShiftClick) {
+        // Shift: range selection (additive if Ctrl also held)
+        selection.selectRange(
+          orderForRange,
+          videoId,
+          /* additive */ isCtrlClick
+        );
+        return;
+      }
+      if (isCtrlClick) {
+        // Ctrl only: toggle
+        selection.toggle(videoId);
+      } else {
+        // Plain click: single select + set anchor
+        selection.selectOnly(videoId);
+      }
     },
-    [groupedAndSortedVideos, openFullScreen, videoCollection.playingVideos]
+    [
+      getById,
+      openFullScreen,
+      videoCollection.playingVideos,
+      selection,
+      orderForRange,
+    ]
+  );
+
+  // Right-click on a card: select it (if not in selection) and open menu
+  const handleCardContextMenu = useCallback(
+    (e, video) => {
+      const isSelected = selection.selected.has(video.id);
+      showOnItem(e, video.id, isSelected, selection.selectOnly);
+    },
+    [selection.selected, selection.selectOnly, showOnItem]
+  );
+
+  // Right-click on empty background: clear selection and open menu
+  const handleBackgroundContextMenu = useCallback(
+    (e) => showOnEmpty(e, selection.clear),
+    [showOnEmpty, selection.clear]
   );
 
   useEffect(() => {
@@ -637,15 +790,28 @@ function App() {
   }, [isLoadingFolder]);
 
   // cleanup pass from videoCollection
-  useEffect(() => {
-    const cleanup = videoCollection.performCleanup();
-    if (cleanup) {
-      setLoadedVideos(cleanup);
-    }
-  }, [videoCollection.performCleanup]);
+  // drive the effect by stable scalars; apply deletions, not replacement; de-bounce one tick
+  const maxLoaded = videoCollection.limits?.maxLoaded ?? 0;                 
+  const loadedSize = loadedVideos.size;                                    
+  const playingSize = actualPlaying.size;                                  
+  const loadingSize = loadingVideos.size;                                   
+
+  useEffect(() => {                                                          
+    const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
+      const victims = videoCollection.performCleanup?.();
+      if (Array.isArray(victims) && victims.length) {
+        setLoadedVideos((prev) => {
+          const ns = new Set(prev);
+          for (const vid of victims) ns.delete(vid);
+          return ns;
+        });
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
 
   return (
-    <div className="app">
+    <div className="app" onContextMenu={handleBackgroundContextMenu}>
       {!settingsLoaded ? (
         <div
           style={{
@@ -670,182 +836,33 @@ function App() {
             progress={loadingProgress}
           />
 
-          <div className="header">
-            <h1>
-              🐝 Video Swarm{" "}
-              <span style={{ fontSize: "0.6rem", color: "#666" }}>
-                v{version}
-              </span>
-            </h1>
+          <HeaderBar
+            version={version}
+            isLoadingFolder={isLoadingFolder}
+            handleFolderSelect={handleFolderSelect}
+            handleWebFileSelection={handleWebFileSelection}
+            recursiveMode={recursiveMode}
+            toggleRecursive={toggleRecursive}
+            showFilenames={showFilenames}
+            toggleFilenames={toggleFilenames}
+            maxConcurrentPlaying={maxConcurrentPlaying}
+            handleVideoLimitChange={handleVideoLimitChange}
+            zoomLevel={zoomLevel}
+            handleZoomChangeSafe={handleZoomChangeSafe}
+            getMinimumZoomLevel={getMinimumZoomLevel}
+          />
 
-            <div id="folderControls">
-              {window.electronAPI?.isElectron ? (
-                <button
-                  onClick={handleFolderSelect}
-                  className="file-input-label"
-                  disabled={isLoadingFolder}
-                >
-                  📁 Select Folder
-                </button>
-              ) : (
-                <div className="file-input-wrapper">
-                  <input
-                    type="file"
-                    className="file-input"
-                    webkitdirectory="true"
-                    multiple
-                    onChange={handleWebFileSelection}
-                    style={{ display: "none" }}
-                    id="fileInput"
-                    disabled={isLoadingFolder}
-                  />
-                  <label htmlFor="fileInput" className="file-input-label">
-                    ⚠️ Open Folder (Limited)
-                  </label>
-                </div>
-              )}
-            </div>
+          <DebugSummary
+            total={videoCollection.stats.total}
+            rendered={videoCollection.stats.rendered}
+            playing={videoCollection.stats.playing}
+            inView={visibleVideos.size}
+            memoryStatus={videoCollection.memoryStatus}
+            zoomLevel={zoomLevel}
+            getMinimumZoomLevel={getMinimumZoomLevel}
+          />
 
-            {/* Debug Info */}
-            <div
-              className="debug-info"
-              style={{
-                fontSize: "0.75rem",
-                color: "#888",
-                background: "#1a1a1a",
-                padding: "0.3rem 0.8rem",
-                borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              <span>🎬 {videoCollection.stats.total} videos</span>
-              <span>🎭 {videoCollection.stats.rendered} rendered</span>
-              <span>▶️ {videoCollection.stats.playing} playing</span>
-              <span>👁️ {visibleVideos.size} in view</span>
-              {videoCollection.memoryStatus && (
-                <>
-                  <span>|</span>
-                  <span
-                    style={{
-                      color: videoCollection.memoryStatus.isNearLimit
-                        ? "#ff6b6b"
-                        : videoCollection.memoryStatus.memoryPressure > 70
-                        ? "#ffa726"
-                        : "#51cf66",
-                      fontWeight: videoCollection.memoryStatus.isNearLimit
-                        ? "bold"
-                        : "normal",
-                    }}
-                  >
-                    🧠 {videoCollection.memoryStatus.currentMemoryMB}MB (
-                    {videoCollection.memoryStatus.memoryPressure}%)
-                  </span>
-                  {videoCollection.memoryStatus.safetyMarginMB < 500 && (
-                    <span style={{ color: "#ff6b6b", fontWeight: "bold" }}>
-                      ⚠️ {videoCollection.memoryStatus.safetyMarginMB}MB margin
-                    </span>
-                  )}
-                </>
-              )}
-              {groupedAndSortedVideos.length > 100 && (
-                <>
-                  <span>|</span>
-                  <span
-                    style={{
-                      color:
-                        zoomLevel >= getMinimumZoomLevel()
-                          ? "#51cf66"
-                          : "#ffa726",
-                    }}
-                  >
-                    🔍 {getZoomLabel}{" "}
-                    {zoomLevel < getMinimumZoomLevel() ? "(unsafe)" : "(safe)"}
-                  </span>
-                </>
-              )}
-              {process.env.NODE_ENV !== "production" && performance.memory && (
-                <>
-                  <span>|</span>
-                  <span style={{ color: "#666", fontSize: "0.7rem" }}>
-                    Press Ctrl+Shift+G for manual GC
-                  </span>
-                </>
-              )}
-            </div>
-
-            <div className="controls">
-              <button
-                onClick={toggleRecursive}
-                className={`toggle-button ${recursiveMode ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {recursiveMode ? "📂 Recursive ON" : "📂 Recursive"}
-              </button>
-              <button
-                onClick={toggleFilenames}
-                className={`toggle-button ${showFilenames ? "active" : ""}`}
-                disabled={isLoadingFolder}
-              >
-                {showFilenames ? "📝 Filenames ON" : "📝 Filenames"}
-              </button>
-
-              <div
-                className="video-limit-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <span>🎹</span>
-                <input
-                  type="range"
-                  min="10"
-                  max="500"
-                  value={maxConcurrentPlaying}
-                  step="10"
-                  style={{ width: 100 }}
-                  onChange={(e) =>
-                    handleVideoLimitChange(parseInt(e.target.value))
-                  }
-                  disabled={isLoadingFolder}
-                />
-                <span style={{ fontSize: "0.8rem" }}>
-                  {maxConcurrentPlaying}
-                </span>
-              </div>
-
-              <div
-                className="zoom-control"
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <span>🔍</span>
-                <input
-                  type="range"
-                  min={getMinimumZoomLevel()}
-                  max="3"
-                  value={zoomLevel}
-                  step="1"
-                  onChange={(e) =>
-                    handleZoomChangeSafe(parseInt(e.target.value))
-                  }
-                  disabled={isLoadingFolder}
-                  style={{
-                    accentColor:
-                      zoomLevel >= getMinimumZoomLevel()
-                        ? "#51cf66"
-                        : "#ffa726",
-                  }}
-                />
-                <span>{getZoomLabel}</span>
-                {zoomLevel < getMinimumZoomLevel() && (
-                  <span style={{ color: "#ffa726", fontSize: "0.7rem" }}>
-                    ⚠️
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Home state: show Recent Locations when nothing is loaded */}
+          {/* Home state: Recent Locations when nothing is loaded */}
           {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
             <>
               <RecentFolders
@@ -872,20 +889,18 @@ function App() {
               ref={gridRef}
               className={`video-grid masonry-vertical ${
                 !showFilenames ? "hide-filenames" : ""
-              } ${
-                ["zoom-small", "zoom-medium", "zoom-large", "zoom-xlarge"][
-                  zoomLevel
-                ]
-              }`}
+              } ${zoomClassForLevel(zoomLevel)}`}
             >
               {videoCollection.videosToRender.map((video) => (
                 <VideoCard
                   key={video.id}
                   video={video}
                   ioRoot={gridRef}
-                  selected={selectedVideos.has(video.id)}
+                  observeIntersection={ioRegistry.observe}
+                  unobserveIntersection={ioRegistry.unobserve}
+                  selected={selection.selected.has(video.id)}
                   onSelect={(...args) => handleVideoSelect(...args)}
-                  onContextMenu={showContextMenu}
+                  onContextMenu={handleCardContextMenu}
                   showFilenames={showFilenames}
                   // Video Collection Management
                   canLoadMoreVideos={() =>
@@ -926,6 +941,7 @@ function App() {
                   }}
                   // Hover for priority
                   onHover={(id) => videoCollection.markHover(id)}
+                  scheduleInit={scheduleInit}
                 />
               ))}
             </div>
@@ -943,10 +959,16 @@ function App() {
 
           {contextMenu.visible && (
             <ContextMenu
-              video={contextMenu.video}
+              visible={contextMenu.visible}
               position={contextMenu.position}
+              contextId={contextMenu.contextId}
+              getById={getById}
+              selectionCount={selection.size}
+              electronAPI={window.electronAPI}
               onClose={hideContextMenu}
-              onAction={handleContextAction}
+              onAction={(actionId) =>
+                runAction(actionId, selection.selected, contextMenu.contextId)
+              }
             />
           )}
         </>

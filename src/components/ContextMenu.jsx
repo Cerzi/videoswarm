@@ -1,44 +1,36 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import {
+  actionPolicies,
+  getContextPolicy,
+  TargetPolicy,
+} from "../hooks/actions/actionPolicies";
 
-const ContextMenu = ({ 
-  video, 
-  position, 
-  onClose, 
-  onAction 
+const ContextMenu = ({
+  visible,
+  position,
+  contextId,
+  getById,
+  selectionCount = 0,
+  electronAPI = typeof window !== 'undefined' ? window.electronAPI : undefined,
+  onClose,
+  onAction,
 }) => {
   const rootRef = useRef(null);
+  if (!visible || !position) return null;
 
-  // Don't render if no video or position
-  const isVisible = !!(video && position);
-  if (!isVisible) {
-    return null;
-  }
-
-  // Close on left-click (or tap) outside, Esc, resize/scroll
   useEffect(() => {
     const handlePointerDown = (e) => {
-      // if click is outside the menu, close
       const root = rootRef.current;
-      if (root && !root.contains(e.target)) {
-        onClose();
-      }
+      if (root && !root.contains(e.target)) onClose?.();
     };
+    const handleKeyDown = (e) => { if (e.key === 'Escape') onClose?.(); };
+    const handleWindowChange = () => onClose?.();
 
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    const handleWindowChange = () => {
-      onClose();
-    };
-
-    // capture phase so we close even if inner elements call stopPropagation
     document.addEventListener('mousedown', handlePointerDown, true);
     document.addEventListener('touchstart', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('resize', handleWindowChange);
     window.addEventListener('scroll', handleWindowChange, true);
-
     return () => {
       document.removeEventListener('mousedown', handlePointerDown, true);
       document.removeEventListener('touchstart', handlePointerDown, true);
@@ -48,67 +40,99 @@ const ContextMenu = ({
     };
   }, [onClose]);
 
+  const primaryVideo = useMemo(() => {
+    if (!contextId || !getById) return undefined;
+    try { return getById(contextId); } catch { return undefined; }
+  }, [contextId, getById]);
+
+  const headerText = useMemo(() => {
+    if (selectionCount > 1) return `${selectionCount} items selected`;
+    if (primaryVideo?.name) return primaryVideo.name;
+    return 'Actions';
+  }, [primaryVideo, selectionCount]);
+
+  const isElectron = Boolean(
+    electronAPI?.openInExternalPlayer ||
+    electronAPI?.showItemInFolder ||
+    electronAPI?.moveToTrash
+  );
+  const canSingleFileOps = Boolean(primaryVideo?.isElectronFile && primaryVideo?.fullPath);
+
+  // ===== Label helper based on policy =====
+  const menuLabel = (actionId) => {
+    const base = actionPolicies[actionId]?.label ?? actionId;
+    if (selectionCount > 1) {
+      const policy = getContextPolicy(actionId);
+      if (policy === TargetPolicy.CONTEXT_ONLY) return `${base} (this item)`;
+      if (policy === TargetPolicy.ALL_SELECTED) return `${base} (${selectionCount} selected)`;
+    }
+    return base;
+  };
+
+  // ===== Menu items =====
+  const menuItems = useMemo(() => {
+    const items = [];
+
+    // If we right-clicked an item (contextId present)
+    if (contextId) {
+      if (isElectron && canSingleFileOps) {
+        // Single-item verbs (operate on CONTEXT_ONLY when multi-selected)
+        items.push(
+          { id: 'show-in-folder', label: `📁 ${menuLabel('show-in-folder')}`, action: 'show-in-folder' },
+          { id: 'open-external',  label: `🎬 ${menuLabel('open-external')}`,  action: 'open-external' },
+        );
+      }
+
+      // Copy actions (ALL_SELECTED)
+      items.push(
+        { type: 'separator' },
+        { id: 'copy-path',          label: `📋 ${menuLabel('copy-path')}`,          action: 'copy-path' },
+        { id: 'copy-relative-path', label: `📋 ${menuLabel('copy-relative-path')}`, action: 'copy-relative-path' },
+        { id: 'copy-filename',      label: `📄 ${menuLabel('copy-filename')}`,      action: 'copy-filename' },
+      );
+
+      // Properties (CONTEXT_ONLY)
+      items.push(
+        { type: 'separator' },
+        { id: 'file-properties',    label: `📊 ${menuLabel('file-properties')}`,    action: 'file-properties' },
+      );
+
+      // Destructive (ALL_SELECTED)
+      if (isElectron) {
+        items.push(
+          { type: 'separator' },
+          { id: 'move-to-trash', label: `🗑️ ${menuLabel('move-to-trash')}`, action: 'move-to-trash', dangerous: true }
+        );
+      }
+      return items;
+    }
+
+    // Background context (no contextId): keep minimal
+    items.push(
+      { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename', disabled: true }
+    );
+    return items;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextId, selectionCount, isElectron, canSingleFileOps]);
+
   const handleAction = (action) => {
-    onAction(action);
-    onClose();
+    if (!action) return;
+    onAction?.(action);
+    onClose?.();
   };
 
-  // Enhanced menu items based on file type and context
-  const getMenuItems = () => {
-    const baseItems = [
-      { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename' }
-    ];
-
-    if (video.isElectronFile && video.fullPath) {
-      return [
-        { id: 'show-in-folder', label: '📁 Show in File Explorer', action: 'show-in-folder' },
-        { id: 'open-external', label: '🎬 Open in External Player', action: 'open-external' },
-        { type: 'separator' },
-        { id: 'copy-path', label: '📋 Copy Full Path', action: 'copy-path' },
-        { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-        { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename' },
-        { type: 'separator' },
-        { id: 'file-properties', label: '📊 File Properties', action: 'file-properties' },
-        { type: 'separator' },
-        { id: 'move-to-trash', label: '🗑️ Move to Trash', action: 'move-to-trash', dangerous: true }
-      ];
-    } else if (video.webkitRelativePath || video.relativePath) {
-      // Web mode with some relative path info
-      return [
-        { id: 'copy-relative-path', label: '📋 Copy Relative Path', action: 'copy-relative-path' },
-        ...baseItems
-      ];
-    } else {
-      return baseItems;
-    }
-  };
-
-  const menuItems = getMenuItems();
-
-  // Calculate position to keep menu on screen
-  const getAdjustedPosition = () => {
-    const menuWidth = 250;
-    const menuHeight = menuItems.length * 35 + 50; // Approximate height
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    let adjustedX = position.x;
-    let adjustedY = position.y;
-
-    // Adjust horizontal position
-    if (position.x + menuWidth > viewportWidth) {
-      adjustedX = viewportWidth - menuWidth - 10;
-    }
-
-    // Adjust vertical position
-    if (position.y + menuHeight > viewportHeight) {
-      adjustedY = viewportHeight - menuHeight - 10;
-    }
-
-    return { x: Math.max(10, adjustedX), y: Math.max(10, adjustedY) };
-  };
-
-  const adjustedPosition = getAdjustedPosition();
+  // Size/positioning
+  const approxHeight = menuItems.reduce((h, it) => h + (it.type === 'separator' ? 8 : 36), 40);
+  const menuWidth = 260;
+  const adjustedPosition = (() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let x = position.x;
+    let y = position.y;
+    if (x + menuWidth > vw) x = Math.max(10, vw - menuWidth - 10);
+    if (y + approxHeight > vh) y = Math.max(10, vh - approxHeight - 10);
+    return { x, y };
+  })();
 
   // Styles
   const menuStyle = {
@@ -124,9 +148,8 @@ const ContextMenu = ({
     zIndex: 999999,
     fontFamily: 'system-ui, -apple-system, sans-serif',
     fontSize: '13px',
-    userSelect: 'none'
+    userSelect: 'none',
   };
-
   const headerStyle = {
     backgroundColor: '#1a1a1a',
     padding: '10px 14px',
@@ -137,63 +160,57 @@ const ContextMenu = ({
     borderRadius: '8px 8px 0 0',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
+    whiteSpace: 'nowrap',
   };
-
-  const itemStyle = {
+  const itemBase = {
     padding: '10px 14px',
     color: '#e0e0e0',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    transition: 'background-color 0.1s ease'
+    transition: 'background-color 0.1s ease',
   };
-
-  const separatorStyle = {
-    height: '1px',
-    backgroundColor: '#404040',
-    margin: '4px 0'
-  };
-
-  const dangerousItemStyle = {
-    ...itemStyle,
-    color: '#ff6b6b'
-  };
+  const separatorStyle = { height: 1, backgroundColor: '#404040', margin: '4px 0' };
 
   return (
-    <div 
+    <div
       ref={rootRef}
       data-context-menu
       style={menuStyle}
-      onClick={(e) => e.stopPropagation()}   // keep clicks inside from bubbling
+      onClick={(e) => e.stopPropagation()}
     >
-      <div style={headerStyle} title={video.name}>
-        {video.name}
+      <div style={headerStyle} title={primaryVideo?.name || headerText}>
+        {headerText}
       </div>
-      
-      {menuItems.map((item, index) => {
-        if (item.type === 'separator') {
-          return <div key={`sep-${index}`} style={separatorStyle} />;
-        }
 
-        const isLast = index === menuItems.length - 1;
-        const isDangerous = item.dangerous;
-        
+      {menuItems.map((item, idx) => {
+        if (item.type === 'separator') {
+          return <div key={`sep-${idx}`} style={separatorStyle} />;
+        }
+        const isLast = idx === menuItems.length - 1;
+        const isDanger = item.dangerous;
+        const disabled = item.disabled;
         return (
           <div
             key={item.id}
+            role="menuitem"
+            aria-disabled={disabled ? 'true' : 'false'}
             style={{
-              ...(isDangerous ? dangerousItemStyle : itemStyle),
-              ...(isLast ? { borderRadius: '0 0 8px 8px' } : {})
+              ...itemBase,
+              ...(isDanger ? { color: '#ff6b6b' } : {}),
+              ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+              ...(isLast ? { borderRadius: '0 0 8px 8px' } : {}),
             }}
-            onClick={() => handleAction(item.action)}
+            onClick={() => !disabled && handleAction(item.action)}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = isDangerous ? '#ff4444' : '#404040';
+              if (disabled) return;
+              e.currentTarget.style.backgroundColor = isDanger ? '#ff4444' : '#404040';
               e.currentTarget.style.color = 'white';
             }}
             onMouseLeave={(e) => {
+              if (disabled) return;
               e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = isDangerous ? '#ff6b6b' : '#e0e0e0';
+              e.currentTarget.style.color = isDanger ? '#ff6b6b' : '#e0e0e0';
             }}
           >
             {item.label}
