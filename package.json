@@ -24,7 +24,8 @@
   ],
   "author": {
     "name": "cerzi",
-    "url": "https://github.com/cerzi"
+    "url": "https://github.com/cerzi",
+    "email": "bpateman@gmail.com"
   },
   "license": "GPL-3.0-or-later",
   "engines": {
@@ -71,7 +72,7 @@
     "trash": "^9.0.0"
   },
   "build": {
-    "appId": "com.videotools.videoswarm",
+    "appId": "com.cerzi.videoswarm",
     "productName": "VideoSwarm",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "afterPack": "./scripts/linux-fix.js",
@@ -150,13 +151,14 @@
         }
       ],
       "icon": "build/icon.png",
-      "category": "AudioVideo",
+      "category": "Video",
       "executableName": "video-swarm",
       "desktop": {
         "Name": "Video Swarm",
         "Comment": "View hundreds of videos simultaneously",
-        "Categories": "AudioVideo;Video;Photography;"
-      }
+        "Categories": "Video;"
+      },
+      "maintainer": "Cerzi <bpateman@gmail.com>"
     },
     "nsis": {
       "oneClick": false,
