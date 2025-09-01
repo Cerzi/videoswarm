@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'            # ex: v0.2.0, v0.2.0-rc.1
+  workflow_dispatch:     # allow manual runs
+
+permissions:
+  contents: write        # needed for gh-release
+  pull-requests: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build (electron-builder)
+        run: npm run electron:dist
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist_upload
+          cp -r dist/* dist_upload/ || true
+
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          cd dist_upload
+          : > SHA256SUMS.txt
+          if command -v shasum >/dev/null 2>&1; then
+            for f in *; do [ -f "$f" ] && shasum -a 256 "$f" >> SHA256SUMS.txt; done
+          elif command -v certutil >/dev/null 2>&1; then
+            for f in *; do
+              if [ -f "$f" ]; then
+                echo "SHA256($f)=" >> SHA256SUMS.txt
+                certutil -hashfile "$f" SHA256 >> SHA256SUMS.txt
+                echo "" >> SHA256SUMS.txt
+              fi
+            done
+          fi
+
+      - name: Upload artifacts (per-OS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: videoswarm-${{ runner.os }}-artifacts
+          path: dist_upload
+
+  release:
+    name: Draft GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: collected
+
+      - name: Generate Release Notes (Release Drafter)
+        id: notes
+        uses: release-drafter/release-drafter@v6
+        with:
+          disable-autolabeler: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          # mark prerelease if tag contains "-rc"
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          generate_release_notes: false
+          body: ${{ steps.notes.outputs.body }}
+          files: |
+            collected/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      # Fast sanity build. If you have a pure web build, run it first.
+      - name: Build (web)
+        run: npm run build --if-present
+
+      # Optional: electron pack without making installers (faster than electron:dist)
+      - name: Electron pack (no installers)
+        run: npm run electron:pack --if-present
