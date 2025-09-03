@@ -4,7 +4,11 @@ on:
   pull_request:
     branches: [main, dev]
   push:
-    branches: [dev]
+    branches: [main, dev]
+    paths-ignore:                   # don’t run for docs/notes-only changes
+      - '**.md'
+      - 'docs/**'
+      - '.github/release-drafter.yml'
 
 permissions:
   contents: read
