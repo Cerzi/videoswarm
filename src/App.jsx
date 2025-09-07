@@ -33,6 +33,7 @@ import {
   groupAndSort,
   buildRandomOrderMap,
 } from "./sorting/sorting.js";
+import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 
 import {
   calculateSafeZoom,
@@ -762,40 +763,25 @@ function App() {
     [recursiveMode, zoomLevel, showFilenames]
   );
 
-  const handleSortKeyChange = useCallback(
-    (key) => {
+  const handleSortChange = useCallback(
+    (value) => {
+      const { sortKey: key, sortDir: dir } = parseSortValue(value);
       setSortKey(key);
-      if (key === SortKey.RANDOM && randomSeed == null) {
-        const seed = Date.now();
+      setSortDir(dir);
+      let seed = randomSeed;
+      if (key === SortKey.RANDOM && seed == null) {
+        seed = Date.now();
         setRandomSeed(seed);
-        window.electronAPI?.saveSettingsPartial?.({
-          sortKey: key,
-          sortDir,
-          groupByFolders,
-          randomSeed: seed,
-        });
-      } else {
-        window.electronAPI?.saveSettingsPartial?.({
-          sortKey: key,
-          sortDir,
-          groupByFolders,
-          randomSeed,
-        });
       }
+      window.electronAPI?.saveSettingsPartial?.({
+        sortKey: key,
+        sortDir: dir,
+        groupByFolders,
+        randomSeed: seed,
+      });
     },
-    [sortDir, groupByFolders, randomSeed]
+    [groupByFolders, randomSeed]
   );
-
-  const toggleSortDir = useCallback(() => {
-    const next = sortDir === "asc" ? "desc" : "asc";
-    setSortDir(next);
-    window.electronAPI?.saveSettingsPartial?.({
-      sortKey,
-      sortDir: next,
-      groupByFolders,
-      randomSeed,
-    });
-  }, [sortDir, sortKey, groupByFolders, randomSeed]);
 
   const toggleGroupByFolders = useCallback(() => {
     const next = !groupByFolders;
@@ -938,10 +924,9 @@ function App() {
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
             sortKey={sortKey}
-            sortDir={sortDir}
+            sortSelection={formatSortValue(sortKey, sortDir)}
             groupByFolders={groupByFolders}
-            onSortKeyChange={handleSortKeyChange}
-            onSortDirToggle={toggleSortDir}
+            onSortChange={handleSortChange}
             onGroupByFoldersToggle={toggleGroupByFolders}
             onReshuffle={reshuffleRandom}
           />
