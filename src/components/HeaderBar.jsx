@@ -25,14 +25,6 @@ const FolderIcon = (props) => (
   </Icon>
 );
 
-const LayersIcon = (props) => (
-  <Icon {...props}>
-    <path d="M12 3L2 9l10 6 10-6-10-6z" />
-    <path d="M2 15l10 6 10-6" />
-    <path d="M2 9l10 6 10-6" />
-  </Icon>
-);
-
 const TextIcon = (props) => (
   <Icon {...props}>
     <path d="M4 7V4h16v3" />
@@ -106,13 +98,10 @@ export default function HeaderBar({
 
   const minZoomIndex = getMinimumZoomLevel();
 
-  const groupStyle = {
+  const dividerStyle = {
     display: "flex",
     alignItems: "center",
     gap: "0.5rem",
-  };
-  const dividerStyle = {
-    ...groupStyle,
     marginLeft: "1rem",
     paddingLeft: "1rem",
     borderLeft: "1px solid #ccc",
@@ -148,6 +137,16 @@ export default function HeaderBar({
           </div>
         )}
 
+        <label className="subfolders-option" title="Scan subfolders">
+          <input
+            type="checkbox"
+            checked={recursiveMode}
+            onChange={toggleRecursive}
+            disabled={isLoadingFolder}
+          />
+          <span>Subfolders</span>
+        </label>
+
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
@@ -158,25 +157,14 @@ export default function HeaderBar({
       </h1>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
-        <div style={groupStyle}>
-          <button
-            onClick={toggleRecursive}
-            className={`toggle-button ${recursiveMode ? "active" : ""}`}
-            disabled={isLoadingFolder}
-            title="Scan subfolders"
-          >
-            <LayersIcon />
-          </button>
-
-          <button
-            onClick={toggleFilenames}
-            className={`toggle-button ${showFilenames ? "active" : ""}`}
-            disabled={isLoadingFolder}
-            title="Show/hide filenames"
-          >
-            <TextIcon />
-          </button>
-        </div>
+        <button
+          onClick={toggleFilenames}
+          className={`toggle-button ${showFilenames ? "active" : ""}`}
+          disabled={isLoadingFolder}
+          title="Show/hide filenames"
+        >
+          <TextIcon />
+        </button>
 
         <div style={dividerStyle}>
           <div className="video-limit-control" title="Max playing limit">
@@ -220,6 +208,7 @@ export default function HeaderBar({
 
         <div style={dividerStyle}>
           <select
+            className="select-control"
             value={sortSelection}
             onChange={(e) => onSortChange(e.target.value)}
             disabled={isLoadingFolder}

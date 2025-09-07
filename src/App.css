@@ -108,6 +108,26 @@ body {
   cursor: not-allowed;
 }
 
+.select-control {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23f5f5f5' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 0.8rem;
+  padding-right: 1.5rem;
+}
+
+.select-control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .video-limit-control,
 .zoom-control {
   display: flex;
@@ -120,12 +140,16 @@ body {
   accent-color: var(--color-accent);
 }
 
-.recent-locations {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 0.3rem 0.5rem;
+
+.subfolders-option {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.subfolders-option input {
+  accent-color: var(--color-accent);
 }
 
 .drop-zone {

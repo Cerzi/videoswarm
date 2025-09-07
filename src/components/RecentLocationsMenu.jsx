@@ -4,7 +4,7 @@ export default function RecentLocationsMenu({ items, onOpen }) {
   if (!items?.length) return null;
   return (
     <select
-      className="recent-locations"
+      className="select-control"
       onChange={(e) => {
         const path = e.target.value;
         if (path) onOpen(path);
