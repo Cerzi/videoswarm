@@ -99,7 +99,7 @@ export default function HeaderBar({
           <div
             className="video-limit-control"
             style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-            title="Thumbnail size"
+            title="Max playing limit"
           >
             <span>🎹</span>
             <input
