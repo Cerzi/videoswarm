@@ -28,6 +28,14 @@ import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 
 import {
+  SortKey,
+  buildComparator,
+  groupAndSort,
+  buildRandomOrderMap,
+} from "./sorting/sorting.js";
+import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
+
+import {
   calculateSafeZoom,
   zoomClassForLevel,
   clampZoomIndex,
@@ -108,6 +116,10 @@ function App() {
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [sortKey, setSortKey] = useState(SortKey.NAME);
+  const [sortDir, setSortDir] = useState("asc");
+  const [groupByFolders, setGroupByFolders] = useState(true);
+  const [randomSeed, setRandomSeed] = useState(null);
 
   // Loading state
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
@@ -176,44 +188,53 @@ function App() {
       onOrderChange: setVisualOrderedIds,
     });
 
-  // MEMOIZED grouped & sorted (data order)
-  const groupedAndSortedVideos = useMemo(() => {
-    if (videos.length === 0) return [];
-    const videosByFolder = new Map();
-    videos.forEach((video) => {
-      const folderPath =
-        video.metadata?.folder ||
-        path.dirname(video.fullPath || video.relativePath || "");
-      if (!videosByFolder.has(folderPath)) videosByFolder.set(folderPath, []);
-      videosByFolder.get(folderPath).push(video);
-    });
-    const sortedFolders = Array.from(videosByFolder.keys()).sort();
-    const result = [];
-    sortedFolders.forEach((folderPath) => {
-      const folderVideos = videosByFolder.get(folderPath);
-      folderVideos.sort((a, b) => a.name.localeCompare(b.name));
-      result.push(...folderVideos);
-    });
-    if (__DEV__)
-      console.log(
-        `📁 Grouped ${videos.length} videos into ${sortedFolders.length} folders`
-      );
-    return result;
-  }, [videos]);
+  // MEMOIZED sorting & grouping
+  const randomOrderMap = useMemo(
+    () =>
+      sortKey === SortKey.RANDOM
+        ? buildRandomOrderMap(
+            videos.map((v) => v.id),
+            randomSeed ?? Date.now()
+          )
+        : null,
+    [sortKey, randomSeed, videos]
+  );
+
+  const comparator = useMemo(
+    () => buildComparator({ sortKey, sortDir, randomOrderMap }),
+    [sortKey, sortDir, randomOrderMap]
+  );
+
+  const orderedVideos = useMemo(
+    () => groupAndSort(videos, { groupByFolders, comparator }),
+    [videos, groupByFolders, comparator]
+  );
 
   // data order ids (fallback)
   const orderedIds = useMemo(
-    () => groupedAndSortedVideos.map((v) => v.id),
-    [groupedAndSortedVideos]
+    () => orderedVideos.map((v) => v.id),
+    [orderedVideos]
   );
 
   // Prefer visual order if we have it
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
   const getById = useCallback(
-    (id) => groupedAndSortedVideos.find((v) => v.id === id),
-    [groupedAndSortedVideos]
+    (id) => orderedVideos.find((v) => v.id === id),
+    [orderedVideos]
   );
+
+  const sortStatus = useMemo(() => {
+    const keyLabels = {
+      [SortKey.NAME]: "Name",
+      [SortKey.CREATED]: "Created",
+      [SortKey.RANDOM]: "Random",
+    };
+    const arrow =
+      sortKey === SortKey.RANDOM ? "" : sortDir === "asc" ? "↑" : "↓";
+    const base = `Sorted by ${keyLabels[sortKey]}${arrow ? ` ${arrow}` : ""}`;
+    return groupByFolders ? `${base} • Grouped by folders` : base;
+  }, [sortKey, sortDir, groupByFolders]);
 
   // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {
@@ -251,7 +272,7 @@ function App() {
 
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
-    videos: groupedAndSortedVideos,
+    videos: orderedVideos,
     visibleVideos,
     loadedVideos,
     loadingVideos,
@@ -275,7 +296,7 @@ function App() {
     openFullScreen,
     closeFullScreen,
     navigateFullScreen,
-  } = useFullScreenModal(groupedAndSortedVideos, "masonry-vertical", gridRef);
+  } = useFullScreenModal(orderedVideos, "masonry-vertical", gridRef);
 
   const {
     contextMenu,
@@ -346,12 +367,12 @@ function App() {
   );
 
   const getMinimumZoomLevel = useCallback(() => {
-    const videoCount = groupedAndSortedVideos.length;
+    const videoCount = orderedVideos.length;
     const windowWidth = window.innerWidth;
     if (videoCount > 200 && windowWidth > 2560) return 2;
     if (videoCount > 150 && windowWidth > 1920) return 1;
     return 0;
-  }, [groupedAndSortedVideos.length]);
+  }, [orderedVideos.length]);
 
   const handleZoomChangeSafe = useCallback(
     (newZoom) => {
@@ -432,7 +453,7 @@ function App() {
     const handleResize = () => {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
-      const videoCount = groupedAndSortedVideos.length;
+      const videoCount = orderedVideos.length;
       if (videoCount > 50) {
         const safeZoom = calculateSafeZoom(
           windowWidth,
@@ -459,25 +480,25 @@ function App() {
       window.removeEventListener("resize", debouncedResize);
       clearTimeout(resizeTimeout);
     };
-  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
+  }, [orderedVideos.length, zoomLevel, handleZoomChange]);
 
   useEffect(() => {
-    if (groupedAndSortedVideos.length > 100) {
+    if (orderedVideos.length > 100) {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
       const safeZoom = calculateSafeZoom(
         windowWidth,
         windowHeight,
-        groupedAndSortedVideos.length
+        orderedVideos.length
       );
       if (safeZoom > zoomLevel) {
         console.log(
-          `📹 Large collection detected (${groupedAndSortedVideos.length} videos) - adjusting zoom for memory safety`
+          `📹 Large collection detected (${orderedVideos.length} videos) - adjusting zoom for memory safety`
         );
         handleZoomChange(safeZoom);
       }
     }
-  }, [groupedAndSortedVideos.length, zoomLevel, handleZoomChange]);
+  }, [orderedVideos.length, zoomLevel, handleZoomChange]);
 
   // settings load + folder selection event
   useEffect(() => {
@@ -495,6 +516,10 @@ function App() {
           setMaxConcurrentPlaying(s.maxConcurrentPlaying);
         if (s.zoomLevel !== undefined)
           setZoomLevel(clampZoomIndex(s.zoomLevel));
+        if (s.sortKey) setSortKey(s.sortKey);
+        if (s.sortDir) setSortDir(s.sortDir);
+        if (s.groupByFolders !== undefined) setGroupByFolders(s.groupByFolders);
+        if (s.randomSeed !== undefined) setRandomSeed(s.randomSeed);
       } catch {}
       setSettingsLoaded(true);
     };
@@ -517,7 +542,10 @@ function App() {
       setVideos((prev) => {
         if (prev.some((v) => v.id === videoFile.id)) return prev;
         return [...prev, videoFile].sort((a, b) =>
-          a.name.localeCompare(b.name)
+          a.basename.localeCompare(b.basename, undefined, {
+            numeric: true,
+            sensitivity: "base",
+          })
         );
       });
     };
@@ -566,8 +594,8 @@ function App() {
 
   // relayout when list changes
   useEffect(() => {
-    if (groupedAndSortedVideos.length) onItemsChanged();
-  }, [groupedAndSortedVideos.length, onItemsChanged]);
+    if (orderedVideos.length) onItemsChanged();
+  }, [orderedVideos.length, onItemsChanged]);
 
   // zoom handling via hook
   useEffect(() => {
@@ -686,6 +714,9 @@ function App() {
         file: f,
         loaded: false,
         isElectronFile: false,
+        basename: f.name,
+        dirname: "",
+        createdMs: f.lastModified || 0,
       }));
       setVideos(list);
       selection.clear();
@@ -731,6 +762,48 @@ function App() {
     },
     [recursiveMode, zoomLevel, showFilenames]
   );
+
+  const handleSortChange = useCallback(
+    (value) => {
+      const { sortKey: key, sortDir: dir } = parseSortValue(value);
+      setSortKey(key);
+      setSortDir(dir);
+      let seed = randomSeed;
+      if (key === SortKey.RANDOM && seed == null) {
+        seed = Date.now();
+        setRandomSeed(seed);
+      }
+      window.electronAPI?.saveSettingsPartial?.({
+        sortKey: key,
+        sortDir: dir,
+        groupByFolders,
+        randomSeed: seed,
+      });
+    },
+    [groupByFolders, randomSeed]
+  );
+
+  const toggleGroupByFolders = useCallback(() => {
+    const next = !groupByFolders;
+    setGroupByFolders(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      sortKey,
+      sortDir,
+      groupByFolders: next,
+      randomSeed,
+    });
+  }, [groupByFolders, sortKey, sortDir, randomSeed]);
+
+  const reshuffleRandom = useCallback(() => {
+    const seed = Date.now();
+    setRandomSeed(seed);
+    window.electronAPI?.saveSettingsPartial?.({
+      sortKey,
+      sortDir,
+      groupByFolders,
+      randomSeed: seed,
+    });
+  }, [sortKey, sortDir, groupByFolders]);
 
   // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
   const handleVideoSelect = useCallback(
@@ -850,6 +923,12 @@ function App() {
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
+            sortKey={sortKey}
+            sortSelection={formatSortValue(sortKey, sortDir)}
+            groupByFolders={groupByFolders}
+            onSortChange={handleSortChange}
+            onGroupByFoldersToggle={toggleGroupByFolders}
+            onReshuffle={reshuffleRandom}
           />
 
           <DebugSummary
@@ -860,10 +939,11 @@ function App() {
             memoryStatus={videoCollection.memoryStatus}
             zoomLevel={zoomLevel}
             getMinimumZoomLevel={getMinimumZoomLevel}
+            sortStatus={sortStatus}
           />
 
           {/* Home state: Recent Locations when nothing is loaded */}
-          {groupedAndSortedVideos.length === 0 && !isLoadingFolder ? (
+          {orderedVideos.length === 0 && !isLoadingFolder ? (
             <>
               <RecentFolders
                 items={recentFolders}
