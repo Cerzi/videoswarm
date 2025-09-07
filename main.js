@@ -351,6 +351,7 @@ async function saveSettingsPartial(partialSettings) {
 // ===== Window/Menu =====
 async function createWindow() {
   const settings = await loadSettings();
+  const appVersion = app.getVersion();
 
   mainWindow = new BrowserWindow({
     width: settings.windowBounds.width,
@@ -374,6 +375,7 @@ async function createWindow() {
     },
     icon: path.join(__dirname, "icon.png"),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    title: `Video Swarm v${appVersion}`,
   });
 
   const isDev =
@@ -391,11 +393,13 @@ async function createWindow() {
 
   mainWindow.webContents.on("did-finish-load", () => {
     console.log("Page loaded, sending settings immediately");
+    mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
   });
 
   mainWindow.webContents.on("dom-ready", () => {
     console.log("DOM ready, sending settings");
+    mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
   });
 
