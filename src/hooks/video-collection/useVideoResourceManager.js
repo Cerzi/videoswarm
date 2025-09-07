@@ -116,6 +116,9 @@ export default function useVideoResourceManager({
     maxConcurrentLoading: 8,
   });
 
+  // Multiplier applied to computed limits; allows runtime reduction
+  const [limitMultiplier, setLimitMultiplier] = useState(1);
+
   const limits = useMemo(() => {
     const dm =
       (typeof navigator !== "undefined" && navigator.deviceMemory) || 8;
@@ -177,9 +180,15 @@ export default function useVideoResourceManager({
 
     // Concurrent loaders: small fraction of maxLoaded, clamped
     const baseLoaders = Math.max(4, Math.floor(maxLoaded / 8));
-    const maxConcurrentLoading = Math.min(
+    let maxConcurrentLoading = Math.min(
       CONFIG.BASE_MAX_LOADING,
       hadLongTaskRecently ? Math.max(4, Math.floor(baseLoaders * 0.6)) : baseLoaders
+    );
+
+    maxLoaded = Math.max(1, Math.floor(maxLoaded * limitMultiplier));
+    maxConcurrentLoading = Math.max(
+      1,
+      Math.floor(maxConcurrentLoading * limitMultiplier)
     );
 
     const computed = {
@@ -203,6 +212,7 @@ export default function useVideoResourceManager({
     mem.totalMemoryMB,
     hadLongTaskRecently,
     playingCap, // re-evaluate if user cap changes
+    limitMultiplier,
   ]);
 
   // --- admission control (relaxed + visible priority) ---
@@ -287,6 +297,18 @@ export default function useVideoResourceManager({
     return victims.length > 0 ? victims : undefined;
   }, [_loadedVideos, limits.maxLoaded, _visibleVideos, _playingVideos, isNear]);
 
+  // Reduce limits after catastrophic player creation failures
+  const reportPlayerCreationFailure = useCallback(() => {
+    setLimitMultiplier((m) => m * 0.5);
+  }, []);
+
+  // Cleanup once multiplier has reduced limits
+  useEffect(() => {
+    if (limitMultiplier < 1) {
+      performCleanup();
+    }
+  }, [limitMultiplier, performCleanup]);
+
   // Dev logging (throttled, skip until IPC answers)
   const logThrottle = useRef(0);
   useEffect(() => {
@@ -324,5 +346,6 @@ export default function useVideoResourceManager({
     performCleanup,
     limits,
     memoryStatus,
+    reportPlayerCreationFailure,
   };
 }

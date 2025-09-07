@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import useVideoResourceManager from './useVideoResourceManager';
 
 const makeVideos = (n) => Array.from({ length: n }, (_, i) => ({ id: String(i + 1) }));
@@ -127,5 +127,52 @@ describe('useVideoResourceManager (current behavior)', () => {
       expect(victimsInLoaded.length).toBeGreaterThan(0);
       expect(victimsInLoaded.length).toBeLessThanOrEqual(overBy);
     }
+  });
+});
+
+describe('reportPlayerCreationFailure', () => {
+  test('halves limits and blocks loads over the new cap', async () => {
+    const progressiveVideos = makeVideos(200);
+    const visible = new Set();
+    const loaded = new Set();
+    const loading = new Set();
+
+    const { result } = renderHook(() =>
+      useVideoResourceManager({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear: () => false,
+        playingCap: 32,
+      })
+    );
+
+    await flushAsync();
+
+    const { maxLoaded: beforeLoaded, maxConcurrentLoading: beforeLoading } =
+      result.current.limits;
+
+    for (let i = 0; i < beforeLoaded; i++) loaded.add(`L${i}`);
+
+    act(() => {
+      result.current.reportPlayerCreationFailure();
+    });
+
+    await flushAsync();
+
+    const { maxLoaded: afterLoaded, maxConcurrentLoading: afterLoading } =
+      result.current.limits;
+
+    const SMOOTH_STEP = 12; // mirror internal tuning
+    const expectedLoaded = Math.floor((beforeLoaded + SMOOTH_STEP) / 2);
+    const baseLoaders = Math.max(4, Math.floor((beforeLoaded + SMOOTH_STEP) / 8));
+    const expectedLoading = Math.floor(baseLoaders / 2);
+
+    expect(afterLoaded).toBe(expectedLoaded);
+    expect(afterLoading).toBe(expectedLoading);
+
+    expect(result.current.canLoadVideo('extra')).toBe(false);
   });
 });

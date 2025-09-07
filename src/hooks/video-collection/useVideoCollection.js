@@ -66,7 +66,12 @@ export default function useVideoCollection({
   );
 
   // Layer 2: Resource management (Browser performance)
-  const { canLoadVideo, performCleanup, limits } = useVideoResourceManager({
+  const {
+    canLoadVideo,
+    performCleanup,
+    limits,
+    reportPlayerCreationFailure,
+  } = useVideoResourceManager({
     progressiveVideos,
     visibleVideos,
     loadedVideos,
@@ -95,6 +100,7 @@ export default function useVideoCollection({
     markHover,
     reportPlayError,
     reportStarted,
+    reportPlayerCreationFailure,
 
     // Functions for parent
     performCleanup,

@@ -25,6 +25,7 @@ const VideoCard = memo(function VideoCard({
   onVideoPlay,            // (id)
   onVideoPause,           // (id)
   onPlayError,            // (id, error)
+  reportPlayerCreationFailure,
   onVisibilityChange,     // (id, visible)
   onHover,                // (id)
 
@@ -316,6 +317,7 @@ const VideoCard = memo(function VideoCard({
 
         if (terminal && decodeWhileActive && !looksTransientLocal) {
           permanentErrorRef.current = true;
+          reportPlayerCreationFailure?.();
         }
 
         setErrorText(`⚠️ ${looksTransientLocal ? "Temporary read error" : label}`);
