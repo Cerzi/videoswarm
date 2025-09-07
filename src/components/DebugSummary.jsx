@@ -8,6 +8,7 @@ export default function DebugSummary({
   memoryStatus, // { currentMemoryMB, memoryPressure, isNearLimit, safetyMarginMB }
   zoomLevel,
   getMinimumZoomLevel,
+  sortStatus,
 }) {
   return (
     <div
@@ -23,6 +24,8 @@ export default function DebugSummary({
         gap: "0.5rem",
       }}
     >
+      {sortStatus && <span>{sortStatus}</span>}
+      {sortStatus && <span>|</span>}
       <span>🎬 {total} videos</span>
       <span>🎭 {rendered} rendered</span>
       <span>▶️ {playing} playing</span>

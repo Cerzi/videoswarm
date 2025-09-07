@@ -1,6 +1,7 @@
 import React from "react";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
 import { clampZoomIndex } from "../zoom/utils.js";
+import { SortKey } from "../sorting/sorting.js";
 
 export default function HeaderBar({
   version,
@@ -16,6 +17,13 @@ export default function HeaderBar({
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
+  sortKey,
+  sortDir,
+  groupByFolders,
+  onSortKeyChange,
+  onSortDirToggle,
+  onGroupByFoldersToggle,
+  onReshuffle,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -112,6 +120,56 @@ export default function HeaderBar({
           />
           {zoomLevel < minZoomIndex && (
             <span style={{ color: "#ffa726", fontSize: "0.7rem" }}>⚠️</span>
+          )}
+        </div>
+
+        <div
+          className="sort-control"
+          style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+        >
+          <span>↕️</span>
+          <select
+            value={sortKey}
+            onChange={(e) => onSortKeyChange(e.target.value)}
+            disabled={isLoadingFolder}
+          >
+            <option value={SortKey.NAME}>Name</option>
+            <option
+              value={SortKey.CREATED}
+              title="Falls back to Modified time if creation time is unavailable."
+            >
+              Created
+            </option>
+            <option value={SortKey.RANDOM}>Random</option>
+          </select>
+          {sortKey !== SortKey.RANDOM && (
+            <button
+              onClick={onSortDirToggle}
+              disabled={isLoadingFolder}
+              className="toggle-button"
+            >
+              {sortDir === "asc" ? "▲" : "▼"}
+            </button>
+          )}
+          <label
+            style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+          >
+            <input
+              type="checkbox"
+              checked={groupByFolders}
+              onChange={onGroupByFoldersToggle}
+              disabled={isLoadingFolder}
+            />
+            Folders
+          </label>
+          {sortKey === SortKey.RANDOM && (
+            <button
+              onClick={onReshuffle}
+              disabled={isLoadingFolder}
+              className="toggle-button"
+            >
+              🔀
+            </button>
           )}
         </div>
       </div>
