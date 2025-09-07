@@ -3,18 +3,24 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'            # ex: v0.2.0, v0.2.0-rc.1
-  workflow_dispatch:     # allow manual runs
+      - "v*"            # ex: v0.3.0, v0.3.0-rc.1
+  workflow_dispatch:
 
 permissions:
-  contents: write        # needed for gh-release
+  contents: write
   pull-requests: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
 
@@ -27,8 +33,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install
         run: npm ci
@@ -39,7 +45,6 @@ jobs:
           npm -v
           npx electron-builder --version || true
 
-      # Linux-only build deps commonly needed by electron-builder
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: |
@@ -47,21 +52,34 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             icnsutils graphicsmagick xz-utils rpm
 
-      # Build per OS (electron-builder under the hood via your scripts)
       - name: Build (electron-builder)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Optional: more verbose logs
           DEBUG: electron-builder*
         run: npm run electron:dist
 
-      - name: Collect artifacts
+      - name: Collect artifacts (explicit + fallback)
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist_upload
-          # Adjust if your output dir differs (electron-builder defaults to dist/)
-          cp -r dist/* dist_upload/ || true
+
+          # Prefer common electron-builder outputs — adjust if your builder emits different extensions
+          cp -v dist/*.AppImage dist_upload/ 2>/dev/null || true
+          cp -v dist/*.exe dist_upload/ 2>/dev/null || true
+          cp -v dist/*.AppImage z* 2>/dev/null || true || true
+          cp -v dist/*.zip dist_upload/ 2>/dev/null || true
+          cp -v dist/*.yml dist_upload/ 2>/dev/null || true
+          cp -v dist/*.blockmap dist_upload/ 2>/dev/null || true
+
+          # If the specific patterns didn't match, copy everything under dist as a fallback
+          if [ -z "$(ls -A dist_upload 2>/dev/null || true)" ]; then
+            echo "No specific artifacts matched; copying full dist/ as fallback"
+            cp -rv dist/* dist_upload/ || true
+          fi
+
+          echo "Contents of dist_upload:"
+          ls -la dist_upload || true
 
       - name: List dist_upload contents
         shell: bash
@@ -69,57 +87,13 @@ jobs:
           echo "pwd = $(pwd)"
           ls -la dist_upload || true
 
-      # --- Checksums: Unix
-      - name: Generate SHA256 checksums (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: dist_upload
-        run: |
-          set -euo pipefail
-          : > SHA256SUMS.txt
-
-          files=$(find . -maxdepth 1 -type f -printf '%f\n' || true)
-          if [ -z "$files" ]; then
-            echo "No files found to hash" >> SHA256SUMS.txt
-            exit 0
-          fi
-
-          if command -v shasum >/dev/null 2>&1; then
-            for f in $files; do
-              shasum -a 256 "$f" >> SHA256SUMS.txt || true
-            done
-          elif command -v sha256sum >/dev/null 2>&1; then
-            for f in $files; do
-              sha256sum "$f" >> SHA256SUMS.txt || true
-            done
-          else
-            echo "No sha tool found; leaving empty SHA256SUMS.txt"
-          fi
-
-
-      # --- Checksums: Windows (use PowerShell for reliability)
-      - name: Generate SHA256 checksums (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: dist_upload
-        run: |
-          if (!(Test-Path .)) { throw "dist_upload not found" }
-          $files = Get-ChildItem -File
-          if ($files.Count -eq 0) {
-            "No files to hash" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-            exit 0
-          }
-          $lines = foreach ($f in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash
-            "$hash  $($f.Name)"
-          }
-          $lines | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-
       - name: Upload artifacts (per-OS)
         uses: actions/upload-artifact@v4
         with:
           name: videoswarm-${{ runner.os }}-artifacts
           path: dist_upload
+          if-no-files-found: warn
+          retention-days: 14
 
   release:
     name: Draft GitHub Release
@@ -128,11 +102,45 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+
     steps:
-      - name: Download all build artifacts
+      - name: Download all build artifacts (merged)
         uses: actions/download-artifact@v4
         with:
+          # Prefer explicit names to avoid mismatches; keep wildcard as safe fallback
+          pattern: |
+            videoswarm-ubuntu-latest-artifacts
+            videoswarm-windows-latest-artifacts
+            videoswarm-*-artifacts
+          merge-multiple: true
           path: collected
+
+      - name: Ensure collected dir exists + debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Make sure the directory exists so steps with working-directory don't fail
+          mkdir -p collected
+
+          echo "=== Workspace root ==="
+          ls -la || true
+
+          echo "=== collected top-level ==="
+          ls -la collected || true
+
+          # If collected is empty, list workflow artifacts via API for debugging
+          if [ -z "$(ls -A collected 2>/dev/null || true)" ]; then
+            echo "collected/ is empty. Listing workflow artifacts via GitHub API..."
+            gh api -H "Accept: application/vnd.github.v3+json" \
+               /repos/${{ github.repository }}/actions/artifacts \
+               --jq '.artifacts[] | {name: .name, id: .id, expired: .expired}' || true
+            echo "If no artifacts are present, inspect the Build job logs (List dist_upload contents)."
+          fi
+
+      - name: Checkout repository (needed for gh/git commands)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Generate Release Notes (Release Drafter)
         id: notes
@@ -140,44 +148,69 @@ jobs:
         with:
           disable-autolabeler: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Prepare notes file
+      - name: Prepare notes file (fallback if empty)
+        shell: bash
         run: |
           printf "%s" "${{ steps.notes.outputs.body }}" > NOTES.md
+          if [ ! -s NOTES.md ]; then
+            echo "Release ${{ github.ref_name }}" > NOTES.md
+          fi
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Generate unified SHA256SUMS (collected)
+        shell: bash
+        working-directory: collected
+        run: |
+          set -euo pipefail
+          if [ -z "$(ls -A . 2>/dev/null || true)" ]; then
+            echo "collected/ is empty; skipping checksum generation"
+            exit 0
+          fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            find . -type f -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+          else
+            find . -type f -print0 | xargs -0 shasum -a 256 > SHA256SUMS.txt
+          fi
+          echo "SHA256SUMS.txt contents:"
+          cat SHA256SUMS.txt || true
 
       - name: Ensure draft release exists
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${{ github.ref_name }}"
-          # create if missing; otherwise just update metadata
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --draft \
+            gh release create "$TAG" --draft \
               $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
+              --title "$TAG" --notes-file NOTES.md
           else
-            # update notes/title and keep as draft/prerelease as appropriate
-            gh release edit "$TAG" \
-              --draft \
+            gh release edit "$TAG" --draft \
               $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
+              --title "$TAG" --notes-file NOTES.md
           fi
-
-      - name: Upload assets (clobber if they already exist)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: List collected contents before upload
+        shell: bash
         run: |
+          echo "Collected files to upload:"
+          find collected -type f -maxdepth 4 -print || true
+
+      - name: Upload assets (files only; clobber duplicates)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           TAG="${{ github.ref_name }}"
-          shopt -s globstar nullglob
-          files=(collected/**/*)
+          mapfile -d '' files < <(find collected -type f -print0)
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "No files found under collected/**/*"
+            echo "No files found under collected/ — nothing to upload"
             exit 0
           fi
-          # Use forward slashes and upload with clobber to overwrite duplicates
+          echo "Uploading ${#files[@]} files to release $TAG"
           gh release upload "$TAG" "${files[@]}" --clobber
-
