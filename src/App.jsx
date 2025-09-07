@@ -929,6 +929,9 @@ function App() {
             onSortChange={handleSortChange}
             onGroupByFoldersToggle={toggleGroupByFolders}
             onReshuffle={reshuffleRandom}
+            recentFolders={recentFolders}
+            onRecentOpen={(path) => handleElectronFolderSelection(path)}
+            hasOpenFolder={orderedVideos.length > 0}
           />
 
           <DebugSummary
