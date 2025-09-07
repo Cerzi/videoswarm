@@ -70,8 +70,16 @@ const ShuffleIcon = (props) => (
   </Icon>
 );
 
+const SortIcon = (props) => (
+  <Icon {...props}>
+    <path d="M3 9l4-4 4 4" />
+    <path d="M7 5v14" />
+    <path d="M21 15l-4 4-4-4" />
+    <path d="M17 5v14" />
+  </Icon>
+);
+
 export default function HeaderBar({
-  version,
   isLoadingFolder,
   handleFolderSelect,
   handleWebFileSelection,
@@ -152,10 +160,6 @@ export default function HeaderBar({
         )}
       </div>
 
-      <h1>
-        🐝 Video Swarm <span style={{ fontSize: "0.6rem", color: "#666" }}>v{version}</span>
-      </h1>
-
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
         <button
           onClick={toggleFilenames}
@@ -207,6 +211,7 @@ export default function HeaderBar({
         </div>
 
         <div style={dividerStyle}>
+          <SortIcon />
           <select
             className="select-control"
             value={sortSelection}

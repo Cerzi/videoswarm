@@ -105,9 +105,6 @@ const MemoryAlert = ({ memStatus }) => {
 /** --- end split-outs --- */
 
 function App() {
-  const [version, setVersion] = useState(
-    import.meta.env.VITE_APP_VERSION || "dev"
-  );
   const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
@@ -259,15 +256,6 @@ function App() {
     setTimeout(() => {
       if (document.body.contains(el)) document.body.removeChild(el);
     }, 3000);
-  }, []);
-
-  useEffect(() => {
-    if (window.electronAPI?.getAppVersion) {
-      window.electronAPI
-        .getAppVersion()
-        .then((v) => v && setVersion(v))
-        .catch(() => {});
-    }
   }, []);
 
   // --- Composite Video Collection Hook ---
@@ -910,7 +898,6 @@ function App() {
           />
 
           <HeaderBar
-            version={version}
             isLoadingFolder={isLoadingFolder}
             handleFolderSelect={handleFolderSelect}
             handleWebFileSelection={handleWebFileSelection}
