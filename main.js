@@ -84,6 +84,10 @@ const defaultSettings = {
   maxConcurrentPlaying: 50,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
+  sortKey: "name",
+  sortDir: "asc",
+  groupByFolders: true,
+  randomSeed: null,
   windowBounds: {
     width: 1400,
     height: 900,
@@ -134,6 +138,8 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     const stats = await fs.stat(filePath);
     const fileName = path.basename(filePath);
     const ext = path.extname(fileName).toLowerCase();
+    let dirname = path.relative(baseFolderPath, path.dirname(filePath));
+    if (dirname === ".") dirname = "";
 
     return {
       id: filePath,
@@ -145,6 +151,9 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       dateModified: stats.mtime,
       dateCreated: stats.birthtime,
       isElectronFile: true,
+      basename: fileName,
+      dirname,
+      createdMs: stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
       metadata: {
         folder: path.dirname(filePath),
         baseName: path.basename(fileName, ext),
@@ -709,6 +718,8 @@ ipcMain.handle(
             if (videoExtensions.includes(ext)) {
               try {
                 const stats = await fs.stat(fullPath);
+                let dirnameRel = path.relative(folderPath, path.dirname(fullPath));
+                if (dirnameRel === ".") dirnameRel = "";
                 const videoFile = {
                   id: fullPath,
                   name: file.name,
@@ -719,6 +730,10 @@ ipcMain.handle(
                   dateModified: stats.mtime,
                   dateCreated: stats.birthtime,
                   isElectronFile: true,
+                  basename: path.basename(fullPath),
+                  dirname: dirnameRel,
+                  createdMs:
+                    stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
                   metadata: {
                     folder: path.dirname(fullPath),
                     baseName: path.basename(file.name, ext),
@@ -733,6 +748,8 @@ ipcMain.handle(
                   `Error reading file stats for ${fullPath}:`,
                   error.message
                 );
+                let dirnameRel = path.relative(folderPath, path.dirname(fullPath));
+                if (dirnameRel === ".") dirnameRel = "";
                 videoFiles.push({
                   id: fullPath,
                   name: file.name,
@@ -740,6 +757,8 @@ ipcMain.handle(
                   relativePath: path.relative(folderPath, fullPath),
                   extension: ext,
                   isElectronFile: true,
+                  basename: path.basename(fullPath),
+                  dirname: dirnameRel,
                   metadata: { folder: path.dirname(fullPath) },
                 });
               }
