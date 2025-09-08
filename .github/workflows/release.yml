@@ -3,12 +3,15 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'            # ex: v0.2.0, v0.2.0-rc.1
-  workflow_dispatch:     # allow manual runs
+      - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: write        # needed for gh-release
-  pull-requests: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -16,168 +19,191 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact-name: linux
+          - os: windows-latest
+            artifact-name: windows
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
-      - name: Install
+      - name: Install dependencies
         run: npm ci
 
-      - name: Show builder versions
-        run: |
-          node -v
-          npm -v
-          npx electron-builder --version || true
-
-      # Linux-only build deps commonly needed by electron-builder
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             icnsutils graphicsmagick xz-utils rpm
 
-      # Build per OS (electron-builder under the hood via your scripts)
-      - name: Build (electron-builder)
+      - name: Build application
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Optional: more verbose logs
-          DEBUG: electron-builder*
         run: npm run electron:dist
 
-      - name: Collect artifacts
+      - name: Prepare artifacts
         shell: bash
         run: |
-          mkdir -p dist_upload
-          # Adjust if your output dir differs (electron-builder defaults to dist/)
-          cp -r dist/* dist_upload/ || true
-
-      - name: List dist_upload contents
-        shell: bash
-        run: |
-          echo "pwd = $(pwd)"
-          ls -la dist_upload || true
-
-      # --- Checksums: Unix
-      - name: Generate SHA256 checksums (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: dist_upload
-        run: |
-          set -euo pipefail
-          : > SHA256SUMS.txt
-
-          files=$(find . -maxdepth 1 -type f -printf '%f\n' || true)
-          if [ -z "$files" ]; then
-            echo "No files found to hash" >> SHA256SUMS.txt
-            exit 0
-          fi
-
-          if command -v shasum >/dev/null 2>&1; then
-            for f in $files; do
-              shasum -a 256 "$f" >> SHA256SUMS.txt || true
-            done
-          elif command -v sha256sum >/dev/null 2>&1; then
-            for f in $files; do
-              sha256sum "$f" >> SHA256SUMS.txt || true
-            done
+          mkdir -p release-assets
+          
+          # Only copy the final distributable packages, not unpacked files
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            # Linux: AppImage and deb files
+            find dist -name "*.AppImage" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.deb" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.rpm" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || true
           else
-            echo "No sha tool found; leaving empty SHA256SUMS.txt"
+            # Windows: exe installers only
+            find dist -name "*.exe" -not -path "*/unpacked/*" -exec cp {} release-assets/ \; 2>/dev/null || true
+          fi
+          
+          # Generate checksums for the files we actually want
+          cd release-assets
+          if [ -n "$(ls -A . 2>/dev/null)" ]; then
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
+            elif command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
+            fi
           fi
 
-
-      # --- Checksums: Windows (use PowerShell for reliability)
-      - name: Generate SHA256 checksums (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: dist_upload
+      - name: List artifacts
+        shell: bash
         run: |
-          if (!(Test-Path .)) { throw "dist_upload not found" }
-          $files = Get-ChildItem -File
-          if ($files.Count -eq 0) {
-            "No files to hash" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-            exit 0
-          }
-          $lines = foreach ($f in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash
-            "$hash  $($f.Name)"
-          }
-          $lines | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+          echo "Release assets:"
+          ls -la release-assets/ || echo "No release-assets directory found"
 
-      - name: Upload artifacts (per-OS)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: videoswarm-${{ runner.os }}-artifacts
-          path: dist_upload
+          name: videoswarm-${{ matrix.artifact-name }}
+          path: release-assets/
+          if-no-files-found: warn
 
   release:
-    name: Draft GitHub Release
+    name: Create Release
     runs-on: ubuntu-latest
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
+
     steps:
-      - name: Download all build artifacts
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: collected
+          path: all-artifacts
 
-      - name: Generate Release Notes (Release Drafter)
-        id: notes
-        uses: release-drafter/release-drafter@v6
-        with:
-          disable-autolabeler: true
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-files
+          # Flatten all artifacts into release-files directory
+          find all-artifacts -type f -exec cp {} release-files/ \;
+          
+          echo "Final release files:"
+          ls -la release-files/
+
+      - name: Generate release notes with checksums
+        id: release_notes
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Generate checksums for all release files
+          cd release-files
+          
+          # Count different file types for dynamic instructions
+          WINDOWS_COUNT=$(ls *.exe 2>/dev/null | wc -l || echo "0")
+          APPIMAGE_COUNT=$(ls *.AppImage 2>/dev/null | wc -l || echo "0") 
+          DEB_COUNT=$(ls *.deb 2>/dev/null | wc -l || echo "0")
+          RPM_COUNT=$(ls *.rpm 2>/dev/null | wc -l || echo "0")
+          
+          # Build installation instructions dynamically
+          INSTALL_INSTRUCTIONS="## Installation"
+          
+          if [ "$WINDOWS_COUNT" -gt "0" ]; then
+            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+          - **Windows**: 
+            - \`*-win.exe\`: Full installer (recommended)
+            - \`*-Portable.exe\`: Portable version (no installation needed)"
+          fi
+          
+          if [ "$APPIMAGE_COUNT" -gt "0" ] || [ "$DEB_COUNT" -gt "0" ] || [ "$RPM_COUNT" -gt "0" ]; then
+            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+          - **Linux**:"
+            
+            if [ "$DEB_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Ubuntu/Debian: Install the \`.deb\` package"
+            fi
+            
+            if [ "$RPM_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - RHEL/Fedora/openSUSE: Install the \`.rpm\` package"
+            fi
+            
+            if [ "$APPIMAGE_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Any distro: Use the \`.AppImage\` file (portable)"
+            fi
+          fi
+          
+          # Generate checksums
+          echo "## Checksums (SHA256)" > ../checksums.md
+          echo "" >> ../checksums.md
+          echo '```' >> ../checksums.md
+          
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum * >> ../checksums.md 2>/dev/null || true
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 * >> ../checksums.md 2>/dev/null || true
+          fi
+          
+          echo '```' >> ../checksums.md
+          cd ..
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          # VideoSwarm $TAG_NAME
+          
+          $INSTALL_INSTRUCTIONS
+          
+          ## What's Changed
+          See the commit history for detailed changes in this release.
+          
+          $(cat checksums.md)
+          
+          ## Notes
+          - Check the README for system requirements and known limitations
+          - Report issues on our GitHub repository
+          EOF
+
+      - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare notes file
         run: |
-          printf "%s" "${{ steps.notes.outputs.body }}" > NOTES.md
-
-      - name: Ensure draft release exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.ref_name }}"
-          # create if missing; otherwise just update metadata
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --draft \
-              $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
-          else
-            # update notes/title and keep as draft/prerelease as appropriate
-            gh release edit "$TAG" \
-              --draft \
-              $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Determine if this is a prerelease
+          PRERELEASE_FLAG=""
+          if [[ "$TAG_NAME" == *"-rc"* ]] || [[ "$TAG_NAME" == *"-beta"* ]] || [[ "$TAG_NAME" == *"-alpha"* ]]; then
+            PRERELEASE_FLAG="--prerelease"
           fi
-
-      - name: Upload assets (clobber if they already exist)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.ref_name }}"
-          shopt -s globstar nullglob
-          files=(collected/**/*)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No files found under collected/**/*"
-            exit 0
-          fi
-          # Use forward slashes and upload with clobber to overwrite duplicates
-          gh release upload "$TAG" "${files[@]}" --clobber
-
+          
+          # Create the release
+          gh release create "$TAG_NAME" \
+            --draft \
+            $PRERELEASE_FLAG \
+            --title "VideoSwarm $TAG_NAME" \
+            --notes-file release_notes.md \
+            release-files/*
