@@ -114,21 +114,72 @@ jobs:
           echo "Final release files:"
           ls -la release-files/
 
-      - name: Generate release notes
+      - name: Generate release notes with checksums
         id: release_notes
         run: |
           TAG_NAME="${{ github.ref_name }}"
           
-          # Create basic release notes
+          # Generate checksums for all release files
+          cd release-files
+          
+          # Count different file types for dynamic instructions
+          WINDOWS_COUNT=$(ls *.exe 2>/dev/null | wc -l || echo "0")
+          APPIMAGE_COUNT=$(ls *.AppImage 2>/dev/null | wc -l || echo "0") 
+          DEB_COUNT=$(ls *.deb 2>/dev/null | wc -l || echo "0")
+          RPM_COUNT=$(ls *.rpm 2>/dev/null | wc -l || echo "0")
+          
+          # Build installation instructions dynamically
+          INSTALL_INSTRUCTIONS="## Installation"
+          
+          if [ "$WINDOWS_COUNT" -gt "0" ]; then
+            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+          - **Windows**: Download and run the \`.exe\` installer"
+          fi
+          
+          if [ "$APPIMAGE_COUNT" -gt "0" ] || [ "$DEB_COUNT" -gt "0" ] || [ "$RPM_COUNT" -gt "0" ]; then
+            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+          - **Linux**:"
+            
+            if [ "$DEB_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Ubuntu/Debian: Install the \`.deb\` package"
+            fi
+            
+            if [ "$RPM_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - RHEL/Fedora/openSUSE: Install the \`.rpm\` package"
+            fi
+            
+            if [ "$APPIMAGE_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Any distro: Use the \`.AppImage\` file (portable)"
+            fi
+          fi
+          
+          # Generate checksums
+          echo "## Checksums (SHA256)" > ../checksums.md
+          echo "" >> ../checksums.md
+          echo '```' >> ../checksums.md
+          
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum * >> ../checksums.md 2>/dev/null || true
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 * >> ../checksums.md 2>/dev/null || true
+          fi
+          
+          echo '```' >> ../checksums.md
+          cd ..
+          
+          # Create release notes
           cat > release_notes.md << EOF
           # VideoSwarm $TAG_NAME
           
-          ## Installation
-          - **Windows**: Download and run the \`.exe\` installer
-          - **Linux**: Use the \`.AppImage\` file or install via package manager if available
+          $INSTALL_INSTRUCTIONS
           
           ## What's Changed
           See the commit history for detailed changes in this release.
+          
+          $(cat checksums.md)
           
           ## Notes
           - Check the README for system requirements and known limitations
