@@ -100,6 +100,29 @@ jobs:
           merge-multiple: true
           path: collected
 
+      - name: Ensure collected dir exists + debug if empty
+        shell: bash
+        run: |
+          # Make sure the directory exists so later steps that use it don't fatally error
+          mkdir -p collected
+
+          # Show what artifacts GitHub thinks exist for this workflow run (debug)
+          echo "=== Workspace root ==="
+          ls -la || true
+          echo "=== collected (top) ==="
+          ls -la collected || true
+
+          # If collected is empty, list available artifacts via the API to help debug
+          if [ -z "$(ls -A collected)" ]; then
+            echo "collected/ is empty. Listing workflow artifacts via GitHub API..."
+            gh api -H "Accept: application/vnd.github.v3+json" \
+              /repos/${{ github.repository }}/actions/artifacts \
+              --jq '.artifacts[] | {name: .name, id: .id, expired: .expired}' || true
+
+            echo "If there are no artifacts, check the build job logs to confirm upload-artifact succeeded."
+            # don't fail here — later step will detect no files and exit gracefully
+          fi
+
       - name: Checkout repository (needed for gh/git commands)
         uses: actions/checkout@v4
         with:
