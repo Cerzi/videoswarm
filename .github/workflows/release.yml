@@ -3,12 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"            # ex: v0.3.0, v0.3.0-rc.1
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,13 +19,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact-name: linux
+          - os: windows-latest
+            artifact-name: windows
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,154 +35,112 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install
+      - name: Install dependencies
         run: npm ci
 
-      - name: Show builder versions
-        run: |
-          node -v
-          npm -v
-          npx electron-builder --version || true
-
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             icnsutils graphicsmagick xz-utils rpm
 
-      - name: Build (electron-builder)
+      - name: Build application
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          DEBUG: electron-builder*
         run: npm run electron:dist
 
-      - name: Collect artifacts
+      - name: Prepare artifacts
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p dist_upload
-          cp -r dist/* dist_upload/ || true
-
-      - name: List dist_upload contents
-        shell: bash
-        run: |
-          echo "pwd = $(pwd)"
-          ls -la dist_upload || true
-
-      - name: Generate SHA256 checksums (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: dist_upload
-        run: |
-          set -euo pipefail
-          : > SHA256SUMS.txt
-          files=$(find . -maxdepth 1 -type f -printf '%f\n' || true)
-          if [ -z "$files" ]; then
-            echo "No files found to hash" >> SHA256SUMS.txt
-            exit 0
-          fi
-          for f in $files; do
-            if command -v shasum >/dev/null 2>&1; then
-              shasum -a 256 "$f" >> SHA256SUMS.txt || true
-            elif command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "$f" >> SHA256SUMS.txt || true
+          mkdir -p release-assets
+          if [ -d "dist" ]; then
+            # Copy all build artifacts
+            cp -r dist/* release-assets/ 2>/dev/null || true
+            
+            # Generate checksums
+            cd release-assets
+            if command -v sha256sum >/dev/null 2>&1; then
+              find . -type f -exec sha256sum {} \; > SHA256SUMS-${{ matrix.artifact-name }}.txt
+            elif command -v shasum >/dev/null 2>&1; then
+              find . -type f -exec shasum -a 256 {} \; > SHA256SUMS-${{ matrix.artifact-name }}.txt
             fi
-          done
+          fi
 
-      - name: Generate SHA256 checksums (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: dist_upload
+      - name: List artifacts
+        shell: bash
         run: |
-          if (!(Test-Path .)) { throw "dist_upload not found" }
-          $files = Get-ChildItem -File
-          if ($files.Count -eq 0) {
-            "No files to hash" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-            exit 0
-          }
-          $lines = foreach ($f in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash
-            "$hash  $($f.Name)"
-          }
-          $lines | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+          echo "Release assets:"
+          ls -la release-assets/ || echo "No release-assets directory found"
 
-      - name: Upload artifacts (per-OS)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: videoswarm-${{ runner.os }}-artifacts
-          path: dist_upload
+          name: videoswarm-${{ matrix.artifact-name }}
+          path: release-assets/
           if-no-files-found: warn
-          retention-days: 14
 
   release:
-    name: Draft GitHub Release
+    name: Create Release
     runs-on: ubuntu-latest
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Download all build artifacts (merged)
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: videoswarm-*-artifacts
-          merge-multiple: true
-          path: collected
+          path: all-artifacts
 
-      - name: Ensure collected dir exists + debug
+      - name: Prepare release assets
         run: |
-          mkdir -p collected
-          echo "Collected contents:"
-          ls -la collected || true
+          mkdir -p release-files
+          # Flatten all artifacts into release-files directory
+          find all-artifacts -type f -exec cp {} release-files/ \;
+          
+          echo "Final release files:"
+          ls -la release-files/
 
-      - name: Generate Release Notes (Release Drafter)
-        id: notes
-        uses: release-drafter/release-drafter@v6
-        with:
-          disable-autolabeler: true
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Create basic release notes
+          cat > release_notes.md << EOF
+          # VideoSwarm $TAG_NAME
+          
+          ## Installation
+          - **Windows**: Download and run the \`.exe\` installer
+          - **Linux**: Use the \`.AppImage\` file or install via package manager if available
+          
+          ## What's Changed
+          See the commit history for detailed changes in this release.
+          
+          ## Notes
+          - Check the README for system requirements and known limitations
+          - Report issues on our GitHub repository
+          EOF
+
+      - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare notes file (fallback if empty)
-        shell: bash
         run: |
-          printf "%s" "${{ steps.notes.outputs.body }}" > NOTES.md
-          if [ ! -s NOTES.md ]; then
-            echo "Release ${{ github.ref_name }}" > NOTES.md
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Determine if this is a prerelease
+          PRERELEASE_FLAG=""
+          if [[ "$TAG_NAME" == *"-rc"* ]] || [[ "$TAG_NAME" == *"-beta"* ]] || [[ "$TAG_NAME" == *"-alpha"* ]]; then
+            PRERELEASE_FLAG="--prerelease"
           fi
-
-      - name: Ensure draft release exists
-        run: |
-          set -euo pipefail
-          TAG="${{ github.ref_name }}"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft \
-              $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" --notes-file NOTES.md
-          else
-            gh release edit "$TAG" --draft \
-              $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" --notes-file NOTES.md
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload assets (files only; clobber duplicates)
-        run: |
-          set -euo pipefail
-          TAG="${{ github.ref_name }}"
-          mapfile -d '' files < <(find collected -type f -print0 || true)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No files found under collected/"
-            exit 0
-          fi
-          gh release upload "$TAG" "${files[@]}" --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Create the release
+          gh release create "$TAG_NAME" \
+            --draft \
+            $PRERELEASE_FLAG \
+            --title "VideoSwarm $TAG_NAME" \
+            --notes-file release_notes.md \
+            release-files/*
