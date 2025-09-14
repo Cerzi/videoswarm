@@ -54,16 +54,26 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-assets
-          if [ -d "dist" ]; then
-            # Copy all build artifacts
-            cp -r dist/* release-assets/ 2>/dev/null || true
-            
-            # Generate checksums
-            cd release-assets
+          
+          # Only copy the final distributable packages, not unpacked files
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            # Linux: AppImage and deb files
+            find dist -name "*.AppImage" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.deb" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.rpm" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || true
+          else
+            # Windows: exe installers only
+            find dist -name "*.exe" -not -path "*/unpacked/*" -exec cp {} release-assets/ \; 2>/dev/null || true
+          fi
+          
+          # Generate checksums for the files we actually want
+          cd release-assets
+          if [ -n "$(ls -A . 2>/dev/null)" ]; then
             if command -v sha256sum >/dev/null 2>&1; then
-              find . -type f -exec sha256sum {} \; > SHA256SUMS-${{ matrix.artifact-name }}.txt
+              sha256sum * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
             elif command -v shasum >/dev/null 2>&1; then
-              find . -type f -exec shasum -a 256 {} \; > SHA256SUMS-${{ matrix.artifact-name }}.txt
+              shasum -a 256 * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
             fi
           fi
 
