@@ -20,7 +20,9 @@ jobs:
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
 
@@ -74,45 +76,6 @@ jobs:
           echo "pwd = $(pwd)"
           ls -la dist_upload || true
 
-      # --- Checksums: Unix
-      - name: Generate SHA256 checksums (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: dist_upload
-        run: |
-          set -euo pipefail
-          : > SHA256SUMS.txt
-          files=$(find . -maxdepth 1 -type f -printf '%f\n' || true)
-          if [ -z "$files" ]; then
-            echo "No files found to hash" >> SHA256SUMS.txt
-            exit 0
-          fi
-          if command -v shasum >/dev/null 2>&1; then
-            for f in $files; do shasum -a 256 "$f" >> SHA256SUMS.txt || true; done
-          elif command -v sha256sum >/dev/null 2>&1; then
-            for f in $files; do sha256sum "$f" >> SHA256SUMS.txt || true; done
-          else
-            echo "No sha tool found; leaving empty SHA256SUMS.txt"
-          fi
-
-      # --- Checksums: Windows (PowerShell)
-      - name: Generate SHA256 checksums (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: dist_upload
-        run: |
-          if (!(Test-Path .)) { throw "dist_upload not found" }
-          $files = Get-ChildItem -File
-          if ($files.Count -eq 0) {
-            "No files to hash" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-            exit 0
-          }
-          $lines = foreach ($f in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash
-            "$hash  $($f.Name)"
-          }
-          $lines | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
-
       - name: Upload artifacts (per-OS)
         uses: actions/upload-artifact@v4
         with:
@@ -128,27 +91,14 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}   # allows gh to work even without .git (we also checkout)
 
     steps:
-      - name: Checkout (repo context for gh)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download all build artifacts (flatten)
+      - name: Download all build artifacts (merged)
         uses: actions/download-artifact@v4
         with:
+          pattern: videoswarm-*-artifacts
+          merge-multiple: true        # flatten into one folder
           path: collected
-          merge-multiple: true
-
-      - name: List collected contents
-        run: |
-          echo "pwd = $(pwd)"
-          ls -la collected || true
-          find collected -maxdepth 2 -type f -printf "%p\n" || true
 
       - name: Generate Release Notes (Release Drafter)
         id: notes
@@ -156,43 +106,53 @@ jobs:
         with:
           disable-autolabeler: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Prepare notes file
+      - name: Prepare notes file (fallback if empty)
+        shell: bash
         run: |
-          # Fallback to a minimal note if Release Drafter produced nothing
-          body="${{ steps.notes.outputs.body }}"
-          if [ -z "$body" ]; then
-            printf "Automated release for %s\n\n" "${{ github.ref_name }}" > NOTES.md
+          printf "%s" "${{ steps.notes.outputs.body }}" > NOTES.md
+          if [ ! -s NOTES.md ]; then
+            echo "Release ${{ github.ref_name }}" > NOTES.md
+          fi
+
+      - name: Generate unified SHA256SUMS
+        shell: bash
+        working-directory: collected
+        run: |
+          set -euo pipefail
+          if command -v sha256sum >/dev/null 2>&1; then
+            find . -type f -print0 | xargs -0 sha256sum > SHA256SUMS.txt
           else
-            printf "%s" "$body" > NOTES.md
+            # Fallback (macOS style) - not expected on ubuntu-latest, but harmless
+            find . -type f -print0 | xargs -0 shasum -a 256 > SHA256SUMS.txt
           fi
 
       - name: Ensure draft release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --draft \
+            gh release create "$TAG" --draft \
               $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
+              --title "$TAG" --notes-file NOTES.md
           else
-            gh release edit "$TAG" \
-              --draft \
+            gh release edit "$TAG" --draft \
               $([ "$(echo "$TAG" | grep -c -- '-rc')" -gt 0 ] && echo --prerelease) \
-              --title "$TAG" \
-              --notes-file NOTES.md
+              --title "$TAG" --notes-file NOTES.md
           fi
 
-      - name: Upload assets (files only; clobber)
+      - name: Upload assets (files only; clobber duplicates)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-          files=()
-          while IFS= read -r -d '' f; do files+=("$f"); done < <(find collected -type f -print0)
+          mapfile -d '' files < <(find collected -type f -print0)
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "No files found under collected/ (nothing to upload)"; exit 0
+            echo "No files found under collected/"
+            exit 0
           fi
           gh release upload "$TAG" "${files[@]}" --clobber
