@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"            # ex: v0.3.0, v0.3.0-rc.1
+      - "v*" # ex: v0.3.0, v0.3.0-rc.1
   workflow_dispatch:
 
 # Needed for creating/editing releases and uploading assets
@@ -97,8 +97,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: videoswarm-*-artifacts
-          merge-multiple: true        # flatten into one folder
+          merge-multiple: true
           path: collected
+
+      - name: Checkout repository (needed for gh/git commands)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Generate Release Notes (Release Drafter)
         id: notes
