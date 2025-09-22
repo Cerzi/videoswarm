@@ -97,8 +97,8 @@ describe("VideoCard", () => {
       const el = NATIVE_CREATE_ELEMENT(tag, opts);
       if (tag === "video") {
         // Ensure media stubs exist
-        if (!el.pause) el.pause = vi.fn();
-        if (!el.play) el.play = vi.fn().mockResolvedValue(undefined);
+        el.pause = vi.fn();
+        el.play = vi.fn().mockResolvedValue(undefined);
         // Force the initial load() inside runInit to throw ⇒ triggers onErr/UI error immediately
         el.load = vi.fn(() => {
           const err = new Error("load failed");
@@ -296,5 +296,92 @@ describe("VideoCard", () => {
       await Promise.resolve();
     });
     expect(hardTeardownSpy).toHaveBeenCalled();
+  });
+
+  it("invokes onStopLoading exactly once when unmounted with a pending load", async () => {
+    const video = {
+      id: "pending-unmount",
+      name: "pending-unmount",
+      isElectronFile: true,
+      fullPath: "C:/videos/pending-unmount.mp4",
+    };
+
+    const onStopLoading = vi.fn();
+
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        onStopLoading={onStopLoading}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(lastVideoEl).toBeTruthy();
+    expect(onStopLoading).not.toHaveBeenCalled();
+
+    await act(async () => {
+      unmount();
+    });
+
+    expect(onStopLoading).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the loading slot when capacity drops mid-load", async () => {
+    const video = {
+      id: "pending-capacity",
+      name: "pending-capacity",
+      isElectronFile: true,
+      fullPath: "C:/videos/pending-capacity.mp4",
+    };
+
+    const onStopLoading = vi.fn();
+    let canLoad = true;
+
+    const { rerender, unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        onStopLoading={onStopLoading}
+        canLoadMoreVideos={() => canLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(lastVideoEl).toBeTruthy();
+    expect(onStopLoading).not.toHaveBeenCalled();
+
+    canLoad = false;
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        onStopLoading={onStopLoading}
+        canLoadMoreVideos={() => canLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+    expect(onStopLoading).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      unmount();
+    });
+
+    expect(onStopLoading).toHaveBeenCalledTimes(1);
   });
 });

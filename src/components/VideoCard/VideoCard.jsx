@@ -50,6 +50,9 @@ const VideoCard = memo(function VideoCard({
   // local mirrors (parent is source of truth)
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const loadingStateRef = useRef(loading);
+  const isLoadingPropRef = useRef(isLoading);
+  const onStopLoadingRef = useRef(onStopLoading);
 
   // guards
   const loadRequestedRef = useRef(false);
@@ -69,24 +72,37 @@ const VideoCard = memo(function VideoCard({
   }, []);
 
   const runHardTeardown = useCallback(() => {
+    if (isAdoptedByModal()) return;
+
     const el = videoRef.current;
-    if (!el || isAdoptedByModal()) return;
+    const hadPendingLoad =
+      loadRequestedRef.current ||
+      loadingStateRef.current ||
+      isLoadingPropRef.current;
+
+    if (hadPendingLoad) {
+      onStopLoadingRef.current?.(videoId);
+    }
 
     if (loadTimeoutRef.current) {
       clearTimeout(loadTimeoutRef.current);
       loadTimeoutRef.current = null;
     }
 
-    try {
-      suppressErrorsRef.current = true;
-      hardTeardownVideo(el, {
-        objectURL: objectUrlRef.current,
-        listeners: persistentListenersRef.current,
-      });
-    } finally {
-      setTimeout(() => {
-        suppressErrorsRef.current = false;
-      }, 0);
+    if (el) {
+      try {
+        suppressErrorsRef.current = true;
+        hardTeardownVideo(el, {
+          objectURL: objectUrlRef.current,
+          listeners: persistentListenersRef.current,
+        });
+      } finally {
+        setTimeout(() => {
+          suppressErrorsRef.current = false;
+        }, 0);
+      }
+    } else if (objectUrlRef.current) {
+      try { URL.revokeObjectURL(objectUrlRef.current); } catch {}
     }
 
     videoRef.current = null;
@@ -94,13 +110,27 @@ const VideoCard = memo(function VideoCard({
     persistentListenersRef.current = [];
     loadRequestedRef.current = false;
     metaNotifiedRef.current = false;
+    loadingStateRef.current = false;
+    isLoadingPropRef.current = false;
     setLoaded(false);
     setLoading(false);
-  }, [isAdoptedByModal]);
+  }, [
+    isAdoptedByModal,
+    videoId,
+  ]);
 
   // mirror flags
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
+  useEffect(() => {
+    loadingStateRef.current = loading;
+  }, [loading]);
+  useEffect(() => {
+    isLoadingPropRef.current = isLoading;
+  }, [isLoading]);
+  useEffect(() => {
+    onStopLoadingRef.current = onStopLoading;
+  }, [onStopLoading]);
 
   // If file content changed, clear sticky error so we can retry
   useEffect(() => {
@@ -289,6 +319,7 @@ const VideoCard = memo(function VideoCard({
 
     loadRequestedRef.current = true;
     onStartLoading?.(videoId);
+    loadingStateRef.current = true;
     setLoading(true);
 
     const runInit = () => {
@@ -312,6 +343,8 @@ const VideoCard = memo(function VideoCard({
 
       const finishStopLoading = () => {
         onStopLoading?.(videoId);
+        loadingStateRef.current = false;
+        isLoadingPropRef.current = false;
         setLoading(false);
       };
 
