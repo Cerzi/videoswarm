@@ -236,6 +236,44 @@ describe("VideoCard", () => {
     }
   });
 
+  it("clears visibility state on unmount to avoid stale parents", async () => {
+    const video = {
+      id: "visible-cleanup",
+      name: "visible-cleanup",
+      isElectronFile: true,
+      fullPath: "C:/videos/cleanup.mp4",
+    };
+
+    const onVisibilityChange = vi.fn();
+    const observeIntersection = vi.fn((el, maybeId, maybeCb) => {
+      const cb = typeof maybeId === "function" ? maybeId : maybeCb;
+      if (cb) cb(true);
+    });
+    const unobserveIntersection = vi.fn();
+
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        onVisibilityChange={onVisibilityChange}
+        observeIntersection={observeIntersection}
+        unobserveIntersection={unobserveIntersection}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(onVisibilityChange).toHaveBeenCalledWith(video.id, true);
+
+    onVisibilityChange.mockClear();
+
+    unmount();
+
+    expect(onVisibilityChange).toHaveBeenCalledTimes(1);
+    expect(onVisibilityChange).toHaveBeenCalledWith(video.id, false);
+  });
+
   it("tears down aggressively when evicted", async () => {
     const video = {
       id: "victim",
