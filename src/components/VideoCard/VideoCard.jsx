@@ -178,14 +178,15 @@ const VideoCard = memo(function VideoCard({
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
-    const handleVisible = (nowVisible /* boolean */) => {
+    const handleVisible = (nowVisible /* boolean */, entry, info) => {
+      const isNear = info?.near ?? false;
       if (lastVisibilityRef.current !== nowVisible) {
         lastVisibilityRef.current = nowVisible;
         onVisibilityChange?.(videoId, nowVisible);
       }
 
       if (
-        nowVisible &&
+        (nowVisible || isNear) &&
         !loaded &&
         !loading &&
         !loadRequestedRef.current &&
@@ -206,7 +207,7 @@ const VideoCard = memo(function VideoCard({
   // Backup trigger if parent already flags visible
   useEffect(() => {
     if (
-      isVisible &&
+      (isVisible || isVisiblePropRef.current) &&
       !loaded &&
       !loading &&
       !loadRequestedRef.current &&
@@ -216,7 +217,7 @@ const VideoCard = memo(function VideoCard({
     ) {
       Promise.resolve().then(() => {
         if (
-          isVisible &&
+          (isVisible || isVisiblePropRef.current) &&
           !loaded &&
           !loading &&
           !loadRequestedRef.current &&
@@ -489,7 +490,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    if (typeof scheduleInit === "function") {
+    if (typeof scheduleInit === "function" && !isVisiblePropRef.current) {
       scheduleInit(runInit);
     } else {
       runInit();

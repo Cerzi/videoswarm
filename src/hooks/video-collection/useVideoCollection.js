@@ -4,7 +4,7 @@ import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
 
-const MAX_TILES_BUFFER = 48;
+const MAX_TILES_BUFFER = 96;
 
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,
