@@ -976,6 +976,7 @@ function App() {
                   canLoadMoreVideos={() =>
                     videoCollection.canLoadVideo(video.id)
                   }
+                  evictionVictims={videoCollection.evictionVictims}
                   isLoading={loadingVideos.has(video.id)}
                   isLoaded={loadedVideos.has(video.id)}
                   isVisible={visibleVideos.has(video.id)}

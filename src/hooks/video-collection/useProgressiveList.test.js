@@ -32,6 +32,49 @@ describe("useProgressiveList", () => {
     expect(result.current.length).toBe(100);
   });
 
+  it("honors maxRendered cap and clamps when the cap shrinks", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 200 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ cap }) =>
+        useProgressiveList(items, 50, 25, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          maxRendered: cap,
+        }),
+      { initialProps: { cap: 80 } }
+    );
+
+    expect(result.current.length).toBe(50);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBe(75);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBe(80);
+
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.length).toBe(80);
+
+    rerender({ cap: 60 });
+    expect(result.current.length).toBe(60);
+
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.length).toBe(60);
+
+    vi.useRealTimers();
+  });
+
   test("clamps down on shrink, does not reset on growth", () => {
     vi.useFakeTimers();
     let items = Array.from({ length: 120 }, (_, i) => i);

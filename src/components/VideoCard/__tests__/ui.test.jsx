@@ -2,6 +2,7 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import * as mediaModule from "../../../utils/media";
 import VideoCard from "../VideoCard";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
@@ -24,6 +25,7 @@ beforeEach(() => {
 });
 
 let lastVideoEl;
+let hardTeardownSpy;
 
 // --- Base createElement mock: augment a REAL <video> Node so DOM APIs work ---
 beforeEach(() => {
@@ -54,10 +56,15 @@ beforeEach(() => {
     lastVideoEl = el; // capture for assertions in other tests
     return el;
   });
+
+  hardTeardownSpy = vi
+    .spyOn(mediaModule, "hardTeardownVideo")
+    .mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  hardTeardownSpy = undefined;
 });
 
 // --- Common props scaffold ---
@@ -80,6 +87,7 @@ const baseProps = {
   onVisibilityChange: vi.fn(),
   onHover: vi.fn(),
   ioRoot: { current: null },
+  evictionVictims: [],
 };
 
 describe("VideoCard", () => {
@@ -226,5 +234,67 @@ describe("VideoCard", () => {
       // @ts-ignore
       global.IntersectionObserver = PrevIO;
     }
+  });
+
+  it("tears down aggressively when evicted", async () => {
+    const video = {
+      id: "victim",
+      name: "victim",
+      isElectronFile: true,
+      fullPath: "C:/videos/victim.mp4",
+    };
+
+    const { rerender } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        scheduleInit={(fn) => fn()}
+        evictionVictims={[]}
+      />
+    );
+
+    await act(async () => {});
+    await act(async () => {
+      lastVideoEl?.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    expect(hardTeardownSpy).not.toHaveBeenCalled();
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded
+        isLoading={false}
+        scheduleInit={(fn) => fn()}
+        evictionVictims={[]}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hardTeardownSpy).not.toHaveBeenCalled();
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        isLoaded
+        isLoading={false}
+        scheduleInit={(fn) => fn()}
+        evictionVictims={[video.id]}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hardTeardownSpy).toHaveBeenCalled();
   });
 });

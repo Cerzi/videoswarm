@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
+import { hardTeardownVideo } from "../../utils/media";
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -28,6 +29,7 @@ const VideoCard = memo(function VideoCard({
   reportPlayerCreationFailure,
   onVisibilityChange,     // (id, visible)
   onHover,                // (id)
+  evictionVictims = [],
 
   // IO registry
   observeIntersection,    // (el, id, cb)
@@ -39,7 +41,9 @@ const VideoCard = memo(function VideoCard({
   const cardRef = useRef(null);
   const videoContainerRef = useRef(null);
   const videoRef = useRef(null);
-
+  const objectUrlRef = useRef(null);
+  const persistentListenersRef = useRef([]);
+  
   const clickTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
 
@@ -53,6 +57,7 @@ const VideoCard = memo(function VideoCard({
   const permanentErrorRef = useRef(false);
   const retryAttemptsRef   = useRef(0);
   const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
+  const lastCanLoadRef     = useRef(true);
 
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
@@ -62,6 +67,36 @@ const VideoCard = memo(function VideoCard({
     const el = videoRef.current;
     return !!(el && el.dataset && el.dataset.adopted === "modal");
   }, []);
+
+  const runHardTeardown = useCallback(() => {
+    const el = videoRef.current;
+    if (!el || isAdoptedByModal()) return;
+
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
+    }
+
+    try {
+      suppressErrorsRef.current = true;
+      hardTeardownVideo(el, {
+        objectURL: objectUrlRef.current,
+        listeners: persistentListenersRef.current,
+      });
+    } finally {
+      setTimeout(() => {
+        suppressErrorsRef.current = false;
+      }, 0);
+    }
+
+    videoRef.current = null;
+    objectUrlRef.current = null;
+    persistentListenersRef.current = [];
+    loadRequestedRef.current = false;
+    metaNotifiedRef.current = false;
+    setLoaded(false);
+    setLoading(false);
+  }, [isAdoptedByModal]);
 
   // mirror flags
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
@@ -79,28 +114,28 @@ const VideoCard = memo(function VideoCard({
     }
   }, [video.id, video.size, video.dateModified]);
 
+  useEffect(() => {
+    const allowed = canLoadMoreVideos?.() ?? true;
+    const prev = lastCanLoadRef.current;
+    lastCanLoadRef.current = allowed;
+    if (!allowed && prev) {
+      runHardTeardown();
+    }
+  }, [canLoadMoreVideos, runHardTeardown]);
+
   // Teardown when parent says not loaded/not loading (unless adopted by modal)
   useEffect(() => {
-    if (isAdoptedByModal()) return;
-    if (!isLoaded && !isLoading && videoRef.current) {
-      const el = videoRef.current;
-      try {
-        suppressErrorsRef.current = true;
-        if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
-        el.pause();
-        el.removeAttribute("src");
-        el.remove();
-      } catch {}
-      finally {
-        setTimeout(() => { suppressErrorsRef.current = false; }, 0);
-      }
-      videoRef.current = null;
-      loadRequestedRef.current = false;
-      metaNotifiedRef.current = false;
-      setLoaded(false);
-      setLoading(false);
+    if (!isLoaded && !isLoading && videoRef.current && !isAdoptedByModal()) {
+      runHardTeardown();
     }
-  }, [isLoaded, isLoading, isAdoptedByModal]);
+  }, [isLoaded, isLoading, isAdoptedByModal, runHardTeardown]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (!Array.isArray(evictionVictims) || evictionVictims.length === 0) return;
+    if (!evictionVictims.includes(videoId)) return;
+    runHardTeardown();
+  }, [evictionVictims, videoId, runHardTeardown]);
 
   // IO registration for visibility
   useEffect(() => {
@@ -192,9 +227,15 @@ const VideoCard = memo(function VideoCard({
       hardDetach(el);
     };
 
-    el.addEventListener("playing", handlePlaying);
-    el.addEventListener("pause",   handlePause);
-    el.addEventListener("error",   handleError);
+    const listeners = [
+      ["playing", handlePlaying],
+      ["pause", handlePause],
+      ["error", handleError],
+    ];
+    for (const [type, handler] of listeners) {
+      el.addEventListener(type, handler);
+    }
+    persistentListenersRef.current = listeners;
 
     if (isPlaying && isVisible && loaded && !permanentErrorRef.current) {
       const p = el.play();
@@ -204,11 +245,22 @@ const VideoCard = memo(function VideoCard({
     }
 
     return () => {
-      el.removeEventListener("playing", handlePlaying);
-      el.removeEventListener("pause",   handlePause);
-      el.removeEventListener("error",   handleError);
+      for (const [type, handler] of listeners) {
+        el.removeEventListener(type, handler);
+      }
+      if (persistentListenersRef.current === listeners) {
+        persistentListenersRef.current = [];
+      }
     };
-  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
+  }, [
+    isPlaying,
+    isVisible,
+    loaded,
+    videoId,
+    onVideoPlay,
+    onVideoPause,
+    onPlayError,
+  ]);
 
   // Quiet stall watchdog (no visual changes)
   useEffect(() => {
@@ -367,11 +419,22 @@ const VideoCard = memo(function VideoCard({
       el.addEventListener("error",         onErr);
 
       try {
+        const assignObjectURL = (next) => {
+          if (objectUrlRef.current && objectUrlRef.current !== next) {
+            try { URL.revokeObjectURL(objectUrlRef.current); } catch {}
+          }
+          objectUrlRef.current = next;
+        };
+
         if (video.isElectronFile && video.fullPath) {
+          assignObjectURL(null);
           el.src = toFileURL(video.fullPath);
         } else if (video.file) {
-          el.src = URL.createObjectURL(video.file);
+          const url = URL.createObjectURL(video.file);
+          assignObjectURL(url);
+          el.src = url;
         } else if (video.fullPath || video.relativePath) {
+          assignObjectURL(null);
           el.src = video.fullPath || video.relativePath;
         } else {
           throw new Error("No valid video source");
@@ -416,24 +479,9 @@ const VideoCard = memo(function VideoCard({
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
-      const el = videoRef.current;
-      if (el && !(el.dataset?.adopted === "modal")) {
-        try {
-          suppressErrorsRef.current = true;
-          if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
-          el.pause();
-          el.removeAttribute("src");
-          el.remove();
-        } catch {}
-        finally {
-          setTimeout(() => { suppressErrorsRef.current = false; }, 0);
-        }
-      }
-      videoRef.current = null;
-      loadRequestedRef.current = false;
-      metaNotifiedRef.current = false;
+      runHardTeardown();
     };
-  }, []);
+  }, [runHardTeardown]);
 
   // UI handlers (unchanged)
   const handleClick = useCallback((e) => {
