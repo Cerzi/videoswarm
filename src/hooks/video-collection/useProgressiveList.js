@@ -53,8 +53,14 @@ export function useProgressiveList(
     ? Math.max(0, Math.floor(maxRendered))
     : Number.POSITIVE_INFINITY;
   const targetCount = Math.min(safe.length, normalizedMaxRendered);
+  const safeInitial = Number.isFinite(initial)
+    ? Math.max(0, Math.floor(initial))
+    : 0;
+  const baseBatchSize = Number.isFinite(batchSize)
+    ? Math.max(1, Math.floor(batchSize))
+    : 1;
   const [visible, setVisible] = useState(() =>
-    Math.min(initial, targetCount)
+    Math.min(safeInitial, targetCount)
   );
   const prevLenRef = useRef(safe.length);
   const prevTargetRef = useRef(targetCount);
@@ -67,6 +73,8 @@ export function useProgressiveList(
       ? Math.max(0, Math.floor(maxRendered))
       : Number.POSITIVE_INFINITY;
     const nextTarget = Math.min(len, normalized);
+    const prevTarget = prevTargetRef.current;
+    const prevLen = prevLenRef.current;
 
     setVisible((current) => {
       let next = current;
@@ -75,20 +83,28 @@ export function useProgressiveList(
         didInitRef.current = true;
         next = Math.min(current, nextTarget);
       } else {
-        if (len < prevLenRef.current && next > len) {
+        if (len < prevLen && next > len) {
           next = Math.min(next, len);
         }
-        if (nextTarget < prevTargetRef.current && next > nextTarget) {
+        if (nextTarget < prevTarget && next > nextTarget) {
           next = Math.min(next, nextTarget);
+        }
+        if (nextTarget > prevTarget && next < nextTarget) {
+          const delta = Math.max(
+            1,
+            Math.min(baseBatchSize, nextTarget - next)
+          );
+          next = Math.min(nextTarget, next + delta);
         }
       }
 
       prevLenRef.current = len;
       prevTargetRef.current = nextTarget;
-      return next;
+
+      return next === current ? current : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safe.length, maxRendered]);
+  }, [safe.length, maxRendered, baseBatchSize]);
 
   // Short-circuit when fully visible
   const allVisible = visible >= targetCount;
@@ -110,7 +126,16 @@ export function useProgressiveList(
   const longTaskTimeoutRef = useRef(null);
 
   // Adaptive batch (only used by idle path)
-  const dynamicBatchRef = useRef(batchSize);
+  const resolvedMinBatch = Number.isFinite(minBatch)
+    ? Math.max(1, Math.floor(minBatch))
+    : Math.max(1, Math.floor(baseBatchSize / 2));
+  const resolvedMaxBatch = Number.isFinite(maxBatch)
+    ? Math.max(resolvedMinBatch, Math.floor(maxBatch))
+    : Math.max(resolvedMinBatch, baseBatchSize * 3);
+
+  const dynamicBatchRef = useRef(
+    Math.min(resolvedMaxBatch, Math.max(resolvedMinBatch, baseBatchSize))
+  );
 
   // Attach scroll listener (pause while user is scrolling)
   useEffect(() => {
@@ -125,6 +150,7 @@ export function useProgressiveList(
       if (scrollingTimeoutRef.current) clearTimeout(scrollingTimeoutRef.current);
       scrollingTimeoutRef.current = setTimeout(() => {
         isScrollingRef.current = false;
+        scrollingTimeoutRef.current = null;
       }, scrollIdleMs);
     };
 
@@ -184,14 +210,17 @@ export function useProgressiveList(
 
     // If we've been seeing long tasks or actively scrolling, bias small
     if (hadLongTaskRecentlyRef.current || isScrollingRef.current) {
-      b = Math.max(minBatch, Math.floor(b / 2));
+      b = Math.max(resolvedMinBatch, Math.floor(b / 2));
     } else {
       // If things have been calm, grow toward maxBatch
-      b = Math.min(maxBatch, b + Math.max(2, Math.floor(batchSize / 4)));
+      b = Math.min(
+        resolvedMaxBatch,
+        b + Math.max(2, Math.floor(baseBatchSize / 4))
+      );
     }
 
     // Keep within bounds and store
-    b = Math.max(minBatch, Math.min(maxBatch, b));
+    b = Math.max(resolvedMinBatch, Math.min(resolvedMaxBatch, b));
     dynamicBatchRef.current = b;
     return b;
   };
