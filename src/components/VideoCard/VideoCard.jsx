@@ -43,6 +43,8 @@ const VideoCard = memo(function VideoCard({
   const videoRef = useRef(null);
   const objectUrlRef = useRef(null);
   const persistentListenersRef = useRef([]);
+  const lastVisibilityRef = useRef(false);
+  const isVisiblePropRef = useRef(isVisible);
   
   const clickTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
@@ -64,6 +66,10 @@ const VideoCard = memo(function VideoCard({
 
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
+
+  useEffect(() => {
+    isVisiblePropRef.current = isVisible;
+  }, [isVisible]);
 
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
@@ -173,7 +179,10 @@ const VideoCard = memo(function VideoCard({
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
     const handleVisible = (nowVisible /* boolean */) => {
-      onVisibilityChange?.(videoId, nowVisible);
+      if (lastVisibilityRef.current !== nowVisible) {
+        lastVisibilityRef.current = nowVisible;
+        onVisibilityChange?.(videoId, nowVisible);
+      }
 
       if (
         nowVisible &&
@@ -512,9 +521,13 @@ const VideoCard = memo(function VideoCard({
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+      if (lastVisibilityRef.current || isVisiblePropRef.current) {
+        lastVisibilityRef.current = false;
+        onVisibilityChange?.(videoId, false);
+      }
       runHardTeardown();
     };
-  }, [runHardTeardown]);
+  }, [runHardTeardown, onVisibilityChange, videoId]);
 
   // UI handlers (unchanged)
   const handleClick = useCallback((e) => {

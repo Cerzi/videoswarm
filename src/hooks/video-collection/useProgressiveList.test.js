@@ -75,6 +75,38 @@ describe("useProgressiveList", () => {
     vi.useRealTimers();
   });
 
+  it("bumps visible immediately when the render cap grows", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 300 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ cap }) =>
+        useProgressiveList(items, 50, 25, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          maxRendered: cap,
+        }),
+      { initialProps: { cap: 60 } }
+    );
+
+    expect(result.current.length).toBe(50);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBe(60);
+
+    act(() => {
+      rerender({ cap: 120 });
+    });
+
+    // Cap grew by 60, so we should add at least one batch (25 items) immediately
+    expect(result.current.length).toBe(85);
+
+    vi.useRealTimers();
+  });
+
   test("clamps down on shrink, does not reset on growth", () => {
     vi.useFakeTimers();
     let items = Array.from({ length: 120 }, (_, i) => i);
