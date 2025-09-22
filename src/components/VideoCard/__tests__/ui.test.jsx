@@ -59,7 +59,10 @@ beforeEach(() => {
 
   hardTeardownSpy = vi
     .spyOn(mediaModule, "hardTeardownVideo")
-    .mockImplementation(() => {});
+    .mockImplementation((el) => {
+      try { el?.pause?.(); } catch {}
+      try { el?.remove?.(); } catch {}
+    });
 });
 
 afterEach(() => {
@@ -267,6 +270,99 @@ describe("VideoCard", () => {
 
     expect(onStartLoading).toHaveBeenCalledWith(video.id);
     expect(lastVideoEl).toBeTruthy();
+  });
+
+  it("clears stale video elements before attaching a new playback node", async () => {
+    const video = {
+      id: "duplicate-cleanup",
+      name: "duplicate-cleanup",
+      isElectronFile: true,
+      fullPath: "C:/videos/dup.mp4",
+    };
+
+    const createdVideos = [];
+    const baseMock = document.createElement.getMockImplementation();
+    document.createElement.mockImplementation((tag, opts) => {
+      const el = baseMock(tag, opts);
+      if (tag === "video") {
+        createdVideos.push(el);
+      }
+      return el;
+    });
+
+    let canLoad = true;
+    const { rerender, container } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        canLoadMoreVideos={() => canLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    const firstEl = createdVideos[0];
+    expect(firstEl).toBeTruthy();
+
+    await act(async () => {
+      firstEl.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    const cardContainer = container.querySelector(
+      `[data-video-id="${video.id}"] .video-container`
+    );
+    expect(cardContainer).toBeTruthy();
+    expect(cardContainer.querySelectorAll("video").length).toBe(1);
+
+    // Force an unload via capacity drop
+    canLoad = false;
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        canLoadMoreVideos={() => canLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+    await act(async () => {});
+    expect(cardContainer.querySelectorAll("video").length).toBe(0);
+
+    // Allow loads again (triggers a new createElement)
+    canLoad = true;
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        canLoadMoreVideos={() => canLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    const secondEl = createdVideos[1];
+    expect(secondEl).toBeTruthy();
+
+    // Simulate a stale stray <video> left behind by the previous load
+    const stale = NATIVE_CREATE_ELEMENT("video");
+    stale.pause = vi.fn();
+    stale.remove = vi.fn(function () {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    });
+    cardContainer.appendChild(stale);
+    expect(cardContainer.querySelectorAll("video").length).toBe(1);
+
+    await act(async () => {
+      secondEl.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    const attachedVideos = cardContainer.querySelectorAll("video");
+    expect(attachedVideos).toHaveLength(1);
+    expect(attachedVideos[0]).toBe(secondEl);
   });
 
   it("clears visibility state on unmount to avoid stale parents", async () => {
