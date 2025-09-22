@@ -613,6 +613,11 @@ function App() {
 
   const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
     setVisibleVideos((prev) => {
+      const currentlyVisible = prev.has(videoId);
+      if (currentlyVisible === isVisible) {
+        return prev;
+      }
+
       const ns = new Set(prev);
       if (isVisible) ns.add(videoId);
       else ns.delete(videoId);
