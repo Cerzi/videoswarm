@@ -374,12 +374,39 @@ const VideoCard = memo(function VideoCard({
         cleanupListeners();
         finishStopLoading();
         setLoaded(true);
-        videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
-          container.appendChild(el);
+        if (container && !(el.dataset?.adopted === "modal")) {
+          const staleVideos = Array.from(container.querySelectorAll("video"));
+          for (const stale of staleVideos) {
+            if (!stale || stale === el) continue;
+            if (stale.dataset?.adopted === "modal") continue;
+
+            const wasCurrent = stale === videoRef.current;
+            try {
+              hardTeardownVideo(stale, {
+                listeners: wasCurrent ? persistentListenersRef.current : undefined,
+              });
+            } catch {}
+
+            if (stale.parentNode === container) {
+              try { container.removeChild(stale); } catch {}
+            } else {
+              try { stale.remove?.(); } catch {}
+            }
+
+            if (wasCurrent) {
+              videoRef.current = null;
+              persistentListenersRef.current = [];
+            }
+          }
+
+          if (!container.contains(el)) {
+            container.appendChild(el);
+          }
         }
+
+        videoRef.current = el;
       };
 
       const onErr = async (e) => {
