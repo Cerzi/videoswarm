@@ -489,7 +489,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    if (typeof scheduleInit === "function") {
+    if (typeof scheduleInit === "function" && !isVisiblePropRef.current) {
       scheduleInit(runInit);
     } else {
       runInit();

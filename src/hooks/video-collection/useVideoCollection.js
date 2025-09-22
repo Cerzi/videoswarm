@@ -4,7 +4,11 @@ import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
 
-const MAX_TILES_BUFFER = 48;
+// Render a generous number of extra tiles beyond the resource manager caps so
+// that we always have DOM ready when the user scrolls aggressively in either
+// direction. A larger buffer keeps more cards mounted without overwhelming the
+// browser because the resource manager still enforces real loading limits.
+const MAX_TILES_BUFFER = 120;
 
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,

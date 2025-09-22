@@ -129,21 +129,27 @@ function App() {
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
-  const { scheduleInit } = useInitGate({ perFrame: 6 });
+  const { scheduleInit } = useInitGate({ perFrame: 12 });
 
   const gridRef = useRef(null);
 
+  const [ioRootMargin, setIoRootMargin] = useState("2000px 0px");
+
   const ioRegistry = useIntersectionObserverRegistry(gridRef, {
-    rootMargin: "1600px 0px",
+    rootMargin: ioRootMargin,
     threshold: [0, 0.15],
-    nearPx: 900,
+    nearPx: 1200,
   });
 
   useEffect(() => {
     const el = gridRef.current;
     const update = () => {
       const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
+      const nextNear = Math.max(1200, Math.floor(h * 1.8));
+      ioRegistry.setNearPx(nextNear);
+
+      const nextMargin = `${Math.max(2000, Math.floor(h * 3))}px 0px`;
+      setIoRootMargin((prev) => (prev === nextMargin ? prev : nextMargin));
     };
     update();
 
@@ -268,11 +274,12 @@ function App() {
     maxConcurrentPlaying,
     scrollRef: gridRef,
     progressive: {
-      initial: 120,
-      batchSize: 64,
-      intervalMs: 100,
-      pauseOnScroll: true,
+      initial: 180,
+      batchSize: 80,
+      intervalMs: 80,
+      pauseOnScroll: false,
       longTaskAdaptation: true,
+      scrollIdleMs: 80,
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,

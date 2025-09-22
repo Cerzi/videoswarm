@@ -231,7 +231,10 @@ export default function useVideoResourceManager({
 
       // Always allow visible; permit small overflow over loader cap
       if (isVis) {
-        const overflow = Math.max(2, Math.floor(limits.maxConcurrentLoading * 0.25));
+        const overflow = Math.max(
+          4,
+          Math.floor(limits.maxConcurrentLoading * 0.6)
+        );
         if (_loadingVideos.size <= limits.maxConcurrentLoading + overflow) return true;
         return false;
       }

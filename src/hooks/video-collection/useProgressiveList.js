@@ -59,9 +59,9 @@ export function useProgressiveList(
   const baseBatchSize = Number.isFinite(batchSize)
     ? Math.max(1, Math.floor(batchSize))
     : 1;
-  const [visible, setVisible] = useState(() =>
-    Math.min(safeInitial, targetCount)
-  );
+  const initialVisible = Math.min(safeInitial, targetCount);
+  const [visible, setVisible] = useState(initialVisible);
+  const visibleRef = useRef(initialVisible);
   const prevLenRef = useRef(safe.length);
   const prevTargetRef = useRef(targetCount);
   const didInitRef = useRef(false);
@@ -101,7 +101,12 @@ export function useProgressiveList(
       prevLenRef.current = len;
       prevTargetRef.current = nextTarget;
 
-      return next === current ? current : next;
+      if (next !== current) {
+        visibleRef.current = next;
+        return next;
+      }
+      visibleRef.current = current;
+      return current;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length, maxRendered, baseBatchSize]);
@@ -236,17 +241,27 @@ export function useProgressiveList(
 
       // Skip while user actively scrolling to prioritize smoothness
       if (pauseOnScroll && isScrollingRef.current) {
-        rafId = requestAnimationFrame(schedule);
-        return;
+        const progress =
+          targetCount > 0 ? visibleRef.current / targetCount : 1;
+        if (progress >= 0.92) {
+          rafId = requestAnimationFrame(schedule);
+          return;
+        }
       }
 
       const idleCb = () => {
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) =>
-            v < targetCount ? Math.min(v + add, targetCount) : v
-          );
+          setVisible((v) => {
+            if (v >= targetCount) {
+              visibleRef.current = v;
+              return v;
+            }
+            const next = Math.min(v + add, targetCount);
+            if (next !== v) visibleRef.current = next;
+            return next;
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -285,9 +300,15 @@ export function useProgressiveList(
     if (allVisible) return;
 
     const timer = setInterval(() => {
-      setVisible((v) =>
-        v < targetCount ? Math.min(v + batchSize, targetCount) : v
-      );
+      setVisible((v) => {
+        if (v >= targetCount) {
+          visibleRef.current = v;
+          return v;
+        }
+        const next = Math.min(v + batchSize, targetCount);
+        if (next !== v) visibleRef.current = next;
+        return next;
+      });
     }, intervalMs);
 
     return () => clearInterval(timer);

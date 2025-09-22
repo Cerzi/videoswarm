@@ -79,7 +79,7 @@ describe('useVideoResourceManager (current behavior)', () => {
     expect(result.current.canLoadVideo('10')).toBe(false); // near but non-visible → blocked at cap
 
     // Push beyond overflow → now visible is also blocked
-    const overflow = Math.max(2, Math.floor(maxConcurrentLoading * 0.25));
+    const overflow = Math.max(4, Math.floor(maxConcurrentLoading * 0.6));
     for (let i = 0; i < overflow + 1; i++) loading.add(`O${i}`);
     expect(result.current.canLoadVideo('2')).toBe(false);
   });
