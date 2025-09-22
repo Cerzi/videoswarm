@@ -236,6 +236,39 @@ describe("VideoCard", () => {
     }
   });
 
+  it("prefetches once the card is near the viewport", async () => {
+    const video = {
+      id: "near-prefetch",
+      name: "near-prefetch",
+      isElectronFile: true,
+      fullPath: "C:/videos/near.mp4",
+    };
+
+    const observeIntersection = vi.fn((el, maybeId, maybeCb) => {
+      const cb = typeof maybeId === "function" ? maybeId : maybeCb;
+      if (cb) cb(false, null, { visible: false, near: true });
+    });
+    const unobserveIntersection = vi.fn();
+    const onStartLoading = vi.fn();
+
+    render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible={false}
+        observeIntersection={observeIntersection}
+        unobserveIntersection={unobserveIntersection}
+        onStartLoading={onStartLoading}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(onStartLoading).toHaveBeenCalledWith(video.id);
+    expect(lastVideoEl).toBeTruthy();
+  });
+
   it("clears visibility state on unmount to avoid stale parents", async () => {
     const video = {
       id: "visible-cleanup",
@@ -247,7 +280,7 @@ describe("VideoCard", () => {
     const onVisibilityChange = vi.fn();
     const observeIntersection = vi.fn((el, maybeId, maybeCb) => {
       const cb = typeof maybeId === "function" ? maybeId : maybeCb;
-      if (cb) cb(true);
+      if (cb) cb(true, null, { visible: true, near: true });
     });
     const unobserveIntersection = vi.fn();
 
