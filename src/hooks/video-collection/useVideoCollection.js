@@ -1,7 +1,10 @@
 // hooks/video-collection/useVideoCollection.js
+import { useEffect, useState } from "react";
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
+
+const MAX_TILES_BUFFER = 48;
 
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,
@@ -50,6 +53,9 @@ export default function useVideoCollection({
     Number.isFinite(intervalMs) ? intervalMs : PROGRESSIVE_DEFAULTS.intervalMs
   );
 
+  const [renderCap, setRenderCap] = useState(Number.POSITIVE_INFINITY);
+  const [evictionVictims, setEvictionVictims] = useState([]);
+
   // Layer 1: Progressive rendering (React performance)
   const progressiveVideos = useProgressiveList(
     videos,
@@ -62,6 +68,7 @@ export default function useVideoCollection({
       longTaskAdaptation,
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
+      maxRendered: renderCap,
     }
   );
 
@@ -70,6 +77,7 @@ export default function useVideoCollection({
     canLoadVideo,
     performCleanup,
     limits,
+    memoryStatus,
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
     progressiveVideos,
@@ -90,12 +98,61 @@ export default function useVideoCollection({
       maxPlaying: maxConcurrentPlaying,
     });
 
+  const collectionSize = (collection) => {
+    if (!collection) return 0;
+    if (typeof collection.size === "number") return collection.size;
+    if (Array.isArray(collection)) return collection.length;
+    try {
+      return Array.from(collection).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const loadedCount = collectionSize(loadedVideos);
+  const visibleCount = collectionSize(visibleVideos);
+
+  useEffect(() => {
+    const safeMaxLoaded = Number.isFinite(limits?.maxLoaded)
+      ? Math.max(0, limits.maxLoaded)
+      : videos.length;
+    const safeMaxLoading = Number.isFinite(limits?.maxConcurrentLoading)
+      ? Math.max(0, limits.maxConcurrentLoading)
+      : 0;
+
+    const rawCap = safeMaxLoaded + safeMaxLoading + MAX_TILES_BUFFER;
+    const boundedCap = Math.min(videos.length, Math.max(0, Math.floor(rawCap)));
+
+    setRenderCap((prev) => (prev === boundedCap ? prev : boundedCap));
+  }, [videos.length, limits?.maxLoaded, limits?.maxConcurrentLoading]);
+
+  useEffect(() => {
+    if (typeof performCleanup !== "function") {
+      setEvictionVictims((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    const victims = performCleanup() || [];
+    setEvictionVictims((prev) => {
+      if (prev.length === victims.length && prev.every((id, idx) => id === victims[idx])) {
+        return prev;
+      }
+      return victims;
+    });
+  }, [
+    performCleanup,
+    loadedCount,
+    visibleCount,
+    limits?.maxLoaded,
+    limits?.maxConcurrentLoading,
+  ]);
+
   return {
     // What to render
     videosToRender: progressiveVideos,
 
     // Functions for VideoCard
     canLoadVideo,
+    evictionVictims,
     isVideoPlaying: (videoId) => playingSet.has(videoId),
     markHover,
     reportPlayError,
@@ -104,6 +161,7 @@ export default function useVideoCollection({
 
     // Functions for parent
     performCleanup,
+    limits,
 
     // Derived state for UI
     playingVideos: playingSet,
@@ -113,6 +171,8 @@ export default function useVideoCollection({
       playing: playingSet.size,
       loaded: loadedVideos.size,
     },
+
+    memoryStatus,
 
     // Debug info (development only)
     debug:

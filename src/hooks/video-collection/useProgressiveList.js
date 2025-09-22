@@ -43,34 +43,55 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+
+    // Cap the number of rendered (mounted) items regardless of total length
+    maxRendered = Infinity,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
-  const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
+  const normalizedMaxRendered = Number.isFinite(maxRendered)
+    ? Math.max(0, Math.floor(maxRendered))
+    : Number.POSITIVE_INFINITY;
+  const targetCount = Math.min(safe.length, normalizedMaxRendered);
+  const [visible, setVisible] = useState(() =>
+    Math.min(initial, targetCount)
+  );
   const prevLenRef = useRef(safe.length);
+  const prevTargetRef = useRef(targetCount);
   const didInitRef = useRef(false);
 
   // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
   useEffect(() => {
     const len = safe.length;
-    if (!didInitRef.current) {
-      didInitRef.current = true;
-      setVisible((v) => Math.min(v, len));
-      prevLenRef.current = len;
-      return;
-    }
+    const normalized = Number.isFinite(maxRendered)
+      ? Math.max(0, Math.floor(maxRendered))
+      : Number.POSITIVE_INFINITY;
+    const nextTarget = Math.min(len, normalized);
 
-    // If list shrank below currently visible, clamp down.
-    if (len < prevLenRef.current && visible > len) {
-      setVisible(len);
-    }
-    // Do not reset visible on growth.
-    prevLenRef.current = len;
+    setVisible((current) => {
+      let next = current;
+
+      if (!didInitRef.current) {
+        didInitRef.current = true;
+        next = Math.min(current, nextTarget);
+      } else {
+        if (len < prevLenRef.current && next > len) {
+          next = Math.min(next, len);
+        }
+        if (nextTarget < prevTargetRef.current && next > nextTarget) {
+          next = Math.min(next, nextTarget);
+        }
+      }
+
+      prevLenRef.current = len;
+      prevTargetRef.current = nextTarget;
+      return next;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safe.length]);
+  }, [safe.length, maxRendered]);
 
   // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
+  const allVisible = visible >= targetCount;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -194,7 +215,9 @@ export function useProgressiveList(
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) =>
+            v < targetCount ? Math.min(v + add, targetCount) : v
+          );
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -234,12 +257,18 @@ export function useProgressiveList(
 
     const timer = setInterval(() => {
       setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
+        v < targetCount ? Math.min(v + batchSize, targetCount) : v
       );
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+  }, [
+    shouldUseInterval,
+    allVisible,
+    targetCount,
+    batchSize,
+    intervalMs,
+  ]);
 
   return safe.slice(0, visible);
 }
