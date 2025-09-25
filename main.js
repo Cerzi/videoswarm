@@ -12,6 +12,7 @@ const {
   nativeImage,
 } = require("electron");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const fs = require("fs").promises;
 require('./main/ipc-trash')(ipcMain);
 
@@ -713,9 +714,15 @@ ipcMain.handle("start-file-drag", async (event, payload) => {
       }
     }
 
+    const fileUrl = pathToFileURL(filePath).toString();
+    const fileName = path.basename(filePath);
+
     event.sender.startDrag({
       file: filePath,
+      files: [filePath],
       icon,
+      linkURL: fileUrl,
+      linkTitle: fileName,
     });
 
     return { success: true };
