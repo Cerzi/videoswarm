@@ -690,7 +690,7 @@ ipcMain.handle("open-in-external-player", async (_event, filePath) => {
 // Enable dragging files from the renderer into other desktop apps
 ipcMain.handle("start-file-drag", async (event, payload) => {
   try {
-    const { filePath, iconPath } = payload || {};
+    const { filePath, iconPath, includeLinkMetadata } = payload || {};
     if (!filePath) {
       return { success: false, error: "Missing file path" };
     }
@@ -714,16 +714,20 @@ ipcMain.handle("start-file-drag", async (event, payload) => {
       }
     }
 
-    const fileUrl = pathToFileURL(filePath).toString();
-    const fileName = path.basename(filePath);
-
-    event.sender.startDrag({
+    const dragPayload = {
       file: filePath,
       files: [filePath],
       icon,
-      linkURL: fileUrl,
-      linkTitle: fileName,
-    });
+    };
+
+    if (includeLinkMetadata) {
+      const fileUrl = pathToFileURL(filePath).toString();
+      const fileName = path.basename(filePath);
+      dragPayload.linkURL = fileUrl;
+      dragPayload.linkTitle = fileName;
+    }
+
+    event.sender.startDrag(dragPayload);
 
     return { success: true };
   } catch (error) {
