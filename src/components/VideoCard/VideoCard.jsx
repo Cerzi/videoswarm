@@ -466,7 +466,6 @@ const VideoCard = memo(function VideoCard({
   const handleDragStart = useCallback((event) => {
     if (!canExternalDrag) return;
 
-    event.preventDefault();
     event.stopPropagation();
 
     const filePath = video?.fullPath;
