@@ -9,9 +9,12 @@ const {
   ipcMain,
   dialog,
   Menu,
+  nativeImage,
 } = require("electron");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const fs = require("fs").promises;
+const { statSync } = require("fs");
 require('./main/ipc-trash')(ipcMain);
 
 console.log("=== MAIN.JS LOADING ===");
@@ -36,6 +39,13 @@ app.commandLine.appendSwitch("js-flags", "--expose-gc");
 console.log("🧠 Enabled garbage collection access");
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
+
+const transparentDragImage = nativeImage.createFromBuffer(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sXlQt8AAAAASUVORK5CYII=",
+    "base64"
+  )
+);
 
 // Enhanced default zoom detection based on screen size
 function getDefaultZoomForScreen() {
@@ -675,6 +685,57 @@ ipcMain.handle("open-in-external-player", async (_event, filePath) => {
   } catch (error) {
     console.error("Failed to open in external player:", error);
     return { success: false, error: error.message };
+  }
+});
+
+// Enable dragging files from the renderer into other desktop apps
+ipcMain.on("start-file-drag", (event, payload) => {
+  try {
+    const { filePath, iconPath, includeLinkMetadata } = payload || {};
+    if (!filePath) {
+      event.returnValue = { success: false, error: "Missing file path" };
+      return;
+    }
+
+    try {
+      statSync(filePath);
+    } catch (error) {
+      console.warn("Cannot start drag, file missing:", filePath, error.message);
+      event.returnValue = { success: false, error: "File does not exist" };
+      return;
+    }
+
+    let icon = transparentDragImage;
+    if (iconPath) {
+      try {
+        const candidate = nativeImage.createFromPath(iconPath);
+        if (candidate && !candidate.isEmpty()) {
+          icon = candidate;
+        }
+      } catch (error) {
+        console.warn("Failed to load drag icon:", iconPath, error.message);
+      }
+    }
+
+    const dragPayload = {
+      file: filePath,
+      files: [filePath],
+      icon,
+    };
+
+    if (includeLinkMetadata) {
+      const fileUrl = pathToFileURL(filePath).toString();
+      const fileName = path.basename(filePath);
+      dragPayload.linkURL = fileUrl;
+      dragPayload.linkTitle = fileName;
+    }
+
+    event.sender.startDrag(dragPayload);
+
+    event.returnValue = { success: true };
+  } catch (error) {
+    console.error("Failed to start native drag:", error);
+    event.returnValue = { success: false, error: error.message };
   }
 });
 
