@@ -111,6 +111,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("open-in-external-player", filePath);
   },
 
+  // Native drag-and-drop support
+  startDrag: async (filePath, iconPath) => {
+    return await ipcRenderer.invoke("start-file-drag", { filePath, iconPath });
+  },
+
   // Clipboard operations
   copyToClipboard: async (text) => {
     return await ipcRenderer.invoke("copy-to-clipboard", text);
