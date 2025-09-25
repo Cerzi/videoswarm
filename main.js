@@ -9,6 +9,7 @@ const {
   ipcMain,
   dialog,
   Menu,
+  nativeImage,
 } = require("electron");
 const path = require("path");
 const fs = require("fs").promises;
@@ -36,6 +37,13 @@ app.commandLine.appendSwitch("js-flags", "--expose-gc");
 console.log("🧠 Enabled garbage collection access");
 
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
+
+const transparentDragImage = nativeImage.createFromBuffer(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sXlQt8AAAAASUVORK5CYII=",
+    "base64"
+  )
+);
 
 // Enhanced default zoom detection based on screen size
 function getDefaultZoomForScreen() {
@@ -674,6 +682,45 @@ ipcMain.handle("open-in-external-player", async (_event, filePath) => {
     return { success: true };
   } catch (error) {
     console.error("Failed to open in external player:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Enable dragging files from the renderer into other desktop apps
+ipcMain.handle("start-file-drag", async (event, payload) => {
+  try {
+    const { filePath, iconPath } = payload || {};
+    if (!filePath) {
+      return { success: false, error: "Missing file path" };
+    }
+
+    try {
+      await fs.stat(filePath);
+    } catch (error) {
+      console.warn("Cannot start drag, file missing:", filePath, error.message);
+      return { success: false, error: "File does not exist" };
+    }
+
+    let icon = transparentDragImage;
+    if (iconPath) {
+      try {
+        const candidate = nativeImage.createFromPath(iconPath);
+        if (candidate && !candidate.isEmpty()) {
+          icon = candidate;
+        }
+      } catch (error) {
+        console.warn("Failed to load drag icon:", iconPath, error.message);
+      }
+    }
+
+    event.sender.startDrag({
+      file: filePath,
+      icon,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to start native drag:", error);
     return { success: false, error: error.message };
   }
 });

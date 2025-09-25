@@ -1,8 +1,9 @@
 // src/components/VideoCard/VideoCard.test.jsx
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import VideoCard from "../VideoCard";
+import { toFileURL } from "../videoDom";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
 const NATIVE_CREATE_ELEMENT = document.createElement.bind(document);
@@ -132,6 +133,107 @@ describe("VideoCard", () => {
       ([t]) => t === "video"
     ).length;
     expect(createdVideos).toBe(1);
+  });
+
+  describe("native drag integration", () => {
+    let originalElectronApi;
+    let startDragMock;
+
+    beforeEach(() => {
+      originalElectronApi = window.electronAPI;
+      startDragMock = vi.fn().mockResolvedValue({ success: true });
+      window.electronAPI = {
+        startDrag: startDragMock,
+      };
+    });
+
+    afterEach(() => {
+      window.electronAPI = originalElectronApi;
+    });
+
+    it("initiates a native drag with local file payload", () => {
+      const video = {
+        id: "dragme",
+        name: "clip.mp4",
+        fullPath: "/tmp/clip.mp4",
+        isElectronFile: true,
+      };
+
+      const { container } = render(
+        <VideoCard
+          {...baseProps}
+          video={video}
+          isVisible
+          isLoaded={false}
+          isLoading={false}
+          scheduleInit={() => {}}
+        />
+      );
+
+      const card = container.querySelector('[data-video-id="dragme"]');
+      expect(card).toBeTruthy();
+      expect(card?.getAttribute("draggable")).toBe("true");
+
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        setData: vi.fn(),
+      };
+      act(() => {
+        fireEvent.dragStart(card, {
+          dataTransfer,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+      expect(dataTransfer.effectAllowed).toBe("copy");
+      expect(dataTransfer.dropEffect).toBe("copy");
+      expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", video.fullPath);
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/uri-list",
+        toFileURL(video.fullPath)
+      );
+      expect(startDragMock).toHaveBeenCalledWith(video.fullPath);
+    });
+
+    it("ignores native drag when the file is not local", () => {
+      const video = {
+        id: "remotefile",
+        name: "remote.mp4",
+        fullPath: "/mnt/share/remote.mp4",
+        isElectronFile: false,
+      };
+
+      const { container } = render(
+        <VideoCard
+          {...baseProps}
+          video={video}
+          isVisible
+          isLoaded={false}
+          isLoading={false}
+          scheduleInit={() => {}}
+        />
+      );
+
+      const card = container.querySelector('[data-video-id="remotefile"]');
+      expect(card).toBeTruthy();
+      expect(card?.getAttribute("draggable")).toBe("false");
+
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        setData: vi.fn(),
+      };
+      act(() => {
+        fireEvent.dragStart(card, {
+          dataTransfer,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+      expect(dataTransfer.setData).not.toHaveBeenCalled();
+      expect(startDragMock).not.toHaveBeenCalled();
+    });
   });
 
   it("builds proper file:// URL (no %5C)", async () => {

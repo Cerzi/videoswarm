@@ -57,6 +57,13 @@ const VideoCard = memo(function VideoCard({
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
 
+  const electronAPI = typeof window !== "undefined" ? window.electronAPI : undefined;
+  const canExternalDrag = Boolean(
+    electronAPI?.startDrag &&
+    video?.isElectronFile &&
+    video?.fullPath
+  );
+
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
     const el = videoRef.current;
@@ -456,6 +463,35 @@ const VideoCard = memo(function VideoCard({
     onContextMenu?.(e, video);
   }, [onContextMenu, video]);
 
+  const handleDragStart = useCallback((event) => {
+    if (!canExternalDrag) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const filePath = video?.fullPath;
+    if (!filePath) return;
+
+    try {
+      const fileUrl = toFileURL(filePath);
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.dropEffect = "copy";
+        event.dataTransfer.setData("text/plain", filePath);
+        event.dataTransfer.setData("text/uri-list", fileUrl);
+      }
+    } catch {}
+
+    try {
+      const maybePromise = electronAPI.startDrag(filePath);
+      if (maybePromise?.catch) {
+        maybePromise.catch(() => {});
+      }
+    } catch (error) {
+      console.warn("Failed to initiate native drag:", error);
+    }
+  }, [canExternalDrag, electronAPI, video?.fullPath]);
+
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
   const renderPlaceholder = () => (
@@ -488,6 +524,8 @@ const VideoCard = memo(function VideoCard({
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onContextMenu={handleContextMenu}
+      draggable={canExternalDrag}
+      onDragStart={handleDragStart}
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
