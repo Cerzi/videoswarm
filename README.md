@@ -49,6 +49,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Multi-select via Ctrl+Click
 - Adjustable zoom levels (75%, 100%, 150%, 200%)
 - Toggle display of filenames
+- Drag and drop videos directly from VideoSwarm into various apps (directly import into DaVinci Resolve, import metadata workflows into ComfyUI, etc)
 
 ### File System Integration
 - Recursive directory scanning (configurable)
@@ -85,6 +86,10 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - No mobile/touch support
 
 ---
+
+## Linux Limitations
+- Drag and drop functionality for dragging videos from Video Swarm into ComfyUI is not support on Wayland
+- NVIDIA hardware decoding is not currently supported by Electron
 
 ## Roadmap
 
