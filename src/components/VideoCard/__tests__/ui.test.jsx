@@ -188,12 +188,82 @@ describe("VideoCard", () => {
       });
       expect(dataTransfer.effectAllowed).toBe("copy");
       expect(dataTransfer.dropEffect).toBe("copy");
+      const fileUrl = toFileURL(video.fullPath);
       expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", video.fullPath);
+      expect(dataTransfer.setData).toHaveBeenCalledWith("text/uri-list", fileUrl);
       expect(dataTransfer.setData).toHaveBeenCalledWith(
-        "text/uri-list",
-        toFileURL(video.fullPath)
+        "DownloadURL",
+        `video/mp4:clip.mp4:${fileUrl}`
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/x-moz-url",
+        `${fileUrl}\nclip.mp4`
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/x-moz-url-data",
+        fileUrl
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/x-moz-url-desc",
+        "clip.mp4"
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/html",
+        `<a href="${fileUrl}">clip.mp4</a>`
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "application/octet-stream",
+        video.fullPath
       );
       expect(startDragMock).toHaveBeenCalledWith(video.fullPath);
+    });
+
+    it("sanitizes filenames when populating drag payloads", () => {
+      const video = {
+        id: "dragme2",
+        name: "clip:final & <v>.mp4",
+        fullPath: "/tmp/clip:final & <v>.mp4",
+        isElectronFile: true,
+      };
+
+      const { container } = render(
+        <VideoCard
+          {...baseProps}
+          video={video}
+          isVisible
+          isLoaded={false}
+          isLoading={false}
+          scheduleInit={() => {}}
+        />
+      );
+
+      const card = container.querySelector('[data-video-id="dragme2"]');
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        setData: vi.fn(),
+      };
+
+      act(() => {
+        fireEvent.dragStart(card, {
+          dataTransfer,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+
+      const fileUrl = toFileURL(video.fullPath);
+      const calls = new Map(dataTransfer.setData.mock.calls.map(([type, value]) => [type, value]));
+
+      expect(calls.get("DownloadURL")).toBe(
+        `video/mp4:clip_final & <v>.mp4:${fileUrl}`
+      );
+      expect(calls.get("text/html")).toBe(
+        `<a href="${fileUrl}">clip:final &amp; &lt;v&gt;.mp4</a>`
+      );
+      expect(calls.get("text/x-moz-url")).toBe(
+        `${fileUrl}\nclip:final & <v>.mp4`
+      );
     });
 
     it("ignores native drag when the file is not local", () => {

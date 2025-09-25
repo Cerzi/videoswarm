@@ -4,6 +4,58 @@ import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 
+const FALLBACK_MIME_TYPE = "application/octet-stream";
+
+const EXTENSION_TO_MIME = {
+  ".3gp": "video/3gpp",
+  ".3g2": "video/3gpp2",
+  ".avi": "video/x-msvideo",
+  ".flv": "video/x-flv",
+  ".m2t": "video/mp2t",
+  ".m2ts": "video/mp2t",
+  ".m4v": "video/x-m4v",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg",
+  ".mts": "video/mp2t",
+  ".ogv": "video/ogg",
+  ".ts": "video/mp2t",
+  ".webm": "video/webm",
+  ".wmv": "video/x-ms-wmv",
+};
+
+function guessMimeType(fileName) {
+  if (!fileName || typeof fileName !== "string") {
+    return FALLBACK_MIME_TYPE;
+  }
+  const lastDot = fileName.lastIndexOf(".");
+  if (lastDot === -1) {
+    return FALLBACK_MIME_TYPE;
+  }
+  const ext = fileName.slice(lastDot).toLowerCase();
+  return EXTENSION_TO_MIME[ext] || FALLBACK_MIME_TYPE;
+}
+
+function escapeHtmlForDrag(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sanitizeDownloadName(name) {
+  return String(name ?? "").replace(/[:\r\n]/g, "_");
+}
+
+function sanitizeMozLabel(name) {
+  const cleaned = String(name ?? "").replace(/[\r\n]+/g, " ").trim();
+  return cleaned || String(name ?? "");
+}
+
 const VideoCard = memo(function VideoCard({
   video,
   selected,
@@ -463,33 +515,64 @@ const VideoCard = memo(function VideoCard({
     onContextMenu?.(e, video);
   }, [onContextMenu, video]);
 
-  const handleDragStart = useCallback((event) => {
-    if (!canExternalDrag) return;
+  const handleDragStart = useCallback(
+    (event) => {
+      if (!canExternalDrag) return;
 
-    event.stopPropagation();
+      event.stopPropagation();
 
-    const filePath = video?.fullPath;
-    if (!filePath) return;
+      const filePath = video?.fullPath;
+      if (!filePath) return;
 
-    try {
-      const fileUrl = toFileURL(filePath);
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "copy";
-        event.dataTransfer.dropEffect = "copy";
-        event.dataTransfer.setData("text/plain", filePath);
-        event.dataTransfer.setData("text/uri-list", fileUrl);
+      const fallbackName = filePath.split(/[\\/]/).pop() || "video";
+      const displayName = video?.name || fallbackName;
+
+      try {
+        const fileUrl = toFileURL(filePath);
+        const mimeType = guessMimeType(displayName);
+        const safeDownloadName = sanitizeDownloadName(displayName);
+        const mozLabel = sanitizeMozLabel(displayName);
+        const htmlLabel = escapeHtmlForDrag(displayName);
+
+        const { dataTransfer } = event;
+        if (dataTransfer) {
+          dataTransfer.effectAllowed = "copy";
+          dataTransfer.dropEffect = "copy";
+
+          if (typeof dataTransfer.setData === "function") {
+            try { dataTransfer.setData("text/plain", filePath); } catch {}
+            try { dataTransfer.setData("text/uri-list", fileUrl); } catch {}
+            try {
+              dataTransfer.setData(
+                "DownloadURL",
+                `${mimeType}:${safeDownloadName}:${fileUrl}`
+              );
+            } catch {}
+            try { dataTransfer.setData("text/x-moz-url", `${fileUrl}\n${mozLabel}`); } catch {}
+            try { dataTransfer.setData("text/x-moz-url-data", fileUrl); } catch {}
+            try { dataTransfer.setData("text/x-moz-url-desc", mozLabel); } catch {}
+            try {
+              dataTransfer.setData(
+                "text/html",
+                `<a href="${fileUrl}">${htmlLabel}</a>`
+              );
+            } catch {}
+            try { dataTransfer.setData("application/octet-stream", filePath); } catch {}
+          }
+        }
+      } catch {}
+
+      try {
+        const maybePromise = electronAPI.startDrag(filePath);
+        if (maybePromise?.catch) {
+          maybePromise.catch(() => {});
+        }
+      } catch (error) {
+        console.warn("Failed to initiate native drag:", error);
       }
-    } catch {}
-
-    try {
-      const maybePromise = electronAPI.startDrag(filePath);
-      if (maybePromise?.catch) {
-        maybePromise.catch(() => {});
-      }
-    } catch (error) {
-      console.warn("Failed to initiate native drag:", error);
-    }
-  }, [canExternalDrag, electronAPI, video?.fullPath]);
+    },
+    [canExternalDrag, electronAPI, video?.fullPath, video?.name]
+  );
 
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
