@@ -112,8 +112,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Native drag-and-drop support
-  startDrag: async (filePath, iconPath) => {
-    return await ipcRenderer.invoke("start-file-drag", { filePath, iconPath });
+  startDrag: async (filePath, options = {}) => {
+    let iconPath;
+    let includeLinkMetadata;
+
+    if (options && typeof options === "object" && !Array.isArray(options)) {
+      ({ iconPath, includeLinkMetadata } = options);
+    } else {
+      iconPath = options;
+    }
+
+    return await ipcRenderer.invoke("start-file-drag", {
+      filePath,
+      iconPath,
+      includeLinkMetadata,
+    });
   },
 
   // Clipboard operations

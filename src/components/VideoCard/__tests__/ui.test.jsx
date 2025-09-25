@@ -1,7 +1,7 @@
 // src/components/VideoCard/VideoCard.test.jsx
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, createEvent } from "@testing-library/react";
 import VideoCard from "../VideoCard";
 import { toFileURL } from "../videoDom";
 
@@ -151,7 +151,7 @@ describe("VideoCard", () => {
       window.electronAPI = originalElectronApi;
     });
 
-    it("initiates a native drag with local file payload", () => {
+    it("initiates a native drag with web-safe payload by default", () => {
       const video = {
         id: "dragme",
         name: "clip.mp4",
@@ -188,9 +188,66 @@ describe("VideoCard", () => {
       });
       expect(dataTransfer.effectAllowed).toBe("copy");
       expect(dataTransfer.dropEffect).toBe("copy");
+      expect(dataTransfer.setData).not.toHaveBeenCalled();
+      expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
+        includeLinkMetadata: false,
+      });
+    });
+
+    it("adds native-friendly flavors when Alt is held", () => {
+      const video = {
+        id: "dragme-alt",
+        name: "clip.mp4",
+        fullPath: "/tmp/clip.mp4",
+        isElectronFile: true,
+      };
+
+      const { container } = render(
+        <VideoCard
+          {...baseProps}
+          video={video}
+          isVisible
+          isLoaded={false}
+          isLoading={false}
+          scheduleInit={() => {}}
+        />
+      );
+
+      const card = container.querySelector('[data-video-id="dragme-alt"]');
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        setData: vi.fn(),
+      };
+
+      const dragEvent = createEvent.dragStart(card, { dataTransfer });
+      Object.defineProperty(dragEvent, "altKey", { get: () => true });
+      Object.defineProperty(dragEvent, "nativeEvent", {
+        value: {
+          altKey: true,
+          getModifierState: (key) => key === "Alt",
+        },
+      });
+      Object.defineProperty(dragEvent, "getModifierState", {
+        value: (key) => key === "Alt",
+      });
+      Object.defineProperty(dragEvent, "preventDefault", {
+        value: vi.fn(),
+      });
+      Object.defineProperty(dragEvent, "stopPropagation", {
+        value: vi.fn(),
+      });
+
+      act(() => {
+        fireEvent(card, dragEvent);
+      });
+
       const fileUrl = toFileURL(video.fullPath);
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/uri-list",
+        `${fileUrl}\n`
+      );
       expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", video.fullPath);
-      expect(dataTransfer.setData).toHaveBeenCalledWith("text/uri-list", fileUrl);
       expect(dataTransfer.setData).toHaveBeenCalledWith(
         "DownloadURL",
         `video/mp4:clip.mp4:${fileUrl}`
@@ -212,13 +269,19 @@ describe("VideoCard", () => {
         `<a href="${fileUrl}">clip.mp4</a>`
       );
       expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "x-special/gnome-copied-files",
+        `copy\n${fileUrl}\n`
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
         "application/octet-stream",
         video.fullPath
       );
-      expect(startDragMock).toHaveBeenCalledWith(video.fullPath);
+      expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
+        includeLinkMetadata: true,
+      });
     });
 
-    it("sanitizes filenames when populating drag payloads", () => {
+    it("sanitizes filenames when populating native payloads", () => {
       const video = {
         id: "dragme2",
         name: "clip:final & <v>.mp4",
@@ -244,12 +307,26 @@ describe("VideoCard", () => {
         setData: vi.fn(),
       };
 
+      const dragEvent = createEvent.dragStart(card, { dataTransfer });
+      Object.defineProperty(dragEvent, "altKey", { get: () => true });
+      Object.defineProperty(dragEvent, "nativeEvent", {
+        value: {
+          altKey: true,
+          getModifierState: (key) => key === "Alt",
+        },
+      });
+      Object.defineProperty(dragEvent, "getModifierState", {
+        value: (key) => key === "Alt",
+      });
+      Object.defineProperty(dragEvent, "preventDefault", {
+        value: vi.fn(),
+      });
+      Object.defineProperty(dragEvent, "stopPropagation", {
+        value: vi.fn(),
+      });
+
       act(() => {
-        fireEvent.dragStart(card, {
-          dataTransfer,
-          preventDefault: vi.fn(),
-          stopPropagation: vi.fn(),
-        });
+        fireEvent(card, dragEvent);
       });
 
       const fileUrl = toFileURL(video.fullPath);
@@ -264,6 +341,9 @@ describe("VideoCard", () => {
       expect(calls.get("text/x-moz-url")).toBe(
         `${fileUrl}\nclip:final & <v>.mp4`
       );
+      expect(calls.get("text/uri-list")).toBe(`${fileUrl}\n`);
+      expect(calls.get("x-special/gnome-copied-files")).toBe(`copy\n${fileUrl}\n`);
+      expect(calls.get("application/octet-stream")).toBe(video.fullPath);
     });
 
     it("ignores native drag when the file is not local", () => {

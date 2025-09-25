@@ -527,43 +527,58 @@ const VideoCard = memo(function VideoCard({
       const fallbackName = filePath.split(/[\\/]/).pop() || "video";
       const displayName = video?.name || fallbackName;
 
+      const { dataTransfer } = event;
+      if (dataTransfer) {
+        dataTransfer.effectAllowed = "copy";
+        dataTransfer.dropEffect = "copy";
+      }
+
+      const wantsNativeFlavors = Boolean(
+        event.altKey ||
+        event.nativeEvent?.altKey ||
+        event.getModifierState?.("Alt")
+      );
+
+      if (wantsNativeFlavors && dataTransfer && typeof dataTransfer.setData === "function") {
+        try {
+          const fileUrl = toFileURL(filePath);
+          const mimeType = guessMimeType(displayName);
+          const safeDownloadName = sanitizeDownloadName(displayName);
+          const mozLabel = sanitizeMozLabel(displayName);
+          const htmlLabel = escapeHtmlForDrag(displayName);
+          const urlWithNewline = `${fileUrl}\n`;
+
+          try { dataTransfer.setData("text/uri-list", urlWithNewline); } catch {}
+          try { dataTransfer.setData("text/plain", filePath); } catch {}
+          try {
+            dataTransfer.setData(
+              "DownloadURL",
+              `${mimeType}:${safeDownloadName}:${fileUrl}`
+            );
+          } catch {}
+          try { dataTransfer.setData("text/x-moz-url", `${fileUrl}\n${mozLabel}`); } catch {}
+          try { dataTransfer.setData("text/x-moz-url-data", fileUrl); } catch {}
+          try { dataTransfer.setData("text/x-moz-url-desc", mozLabel); } catch {}
+          try {
+            dataTransfer.setData(
+              "text/html",
+              `<a href="${fileUrl}">${htmlLabel}</a>`
+            );
+          } catch {}
+          try { dataTransfer.setData("application/octet-stream", filePath); } catch {}
+          try {
+            dataTransfer.setData(
+              "x-special/gnome-copied-files",
+              `copy\n${fileUrl}\n`
+            );
+          } catch {}
+        } catch {}
+      }
+
       try {
-        const fileUrl = toFileURL(filePath);
-        const mimeType = guessMimeType(displayName);
-        const safeDownloadName = sanitizeDownloadName(displayName);
-        const mozLabel = sanitizeMozLabel(displayName);
-        const htmlLabel = escapeHtmlForDrag(displayName);
-
-        const { dataTransfer } = event;
-        if (dataTransfer) {
-          dataTransfer.effectAllowed = "copy";
-          dataTransfer.dropEffect = "copy";
-
-          if (typeof dataTransfer.setData === "function") {
-            try { dataTransfer.setData("text/plain", filePath); } catch {}
-            try { dataTransfer.setData("text/uri-list", fileUrl); } catch {}
-            try {
-              dataTransfer.setData(
-                "DownloadURL",
-                `${mimeType}:${safeDownloadName}:${fileUrl}`
-              );
-            } catch {}
-            try { dataTransfer.setData("text/x-moz-url", `${fileUrl}\n${mozLabel}`); } catch {}
-            try { dataTransfer.setData("text/x-moz-url-data", fileUrl); } catch {}
-            try { dataTransfer.setData("text/x-moz-url-desc", mozLabel); } catch {}
-            try {
-              dataTransfer.setData(
-                "text/html",
-                `<a href="${fileUrl}">${htmlLabel}</a>`
-              );
-            } catch {}
-            try { dataTransfer.setData("application/octet-stream", filePath); } catch {}
-          }
-        }
-      } catch {}
-
-      try {
-        const maybePromise = electronAPI.startDrag(filePath);
+        const maybePromise = electronAPI.startDrag(filePath, {
+          includeLinkMetadata: wantsNativeFlavors,
+        });
         if (maybePromise?.catch) {
           maybePromise.catch(() => {});
         }
