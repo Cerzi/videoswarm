@@ -179,6 +179,8 @@ const VideoCard = memo(function VideoCard({
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
     const handleVisible = (nowVisible /* boolean */) => {
+      isVisiblePropRef.current = nowVisible;
+
       if (lastVisibilityRef.current !== nowVisible) {
         lastVisibilityRef.current = nowVisible;
         onVisibilityChange?.(videoId, nowVisible);
@@ -193,7 +195,7 @@ const VideoCard = memo(function VideoCard({
         !permanentErrorRef.current &&
         (canLoadMoreVideos?.() ?? true)
       ) {
-        loadVideo();
+        loadVideo({ immediate: true });
       }
     };
 
@@ -224,7 +226,7 @@ const VideoCard = memo(function VideoCard({
           !permanentErrorRef.current &&
           (canLoadMoreVideos?.() ?? true)
         ) {
-          loadVideo();
+          loadVideo({ immediate: true });
         }
       });
     }
@@ -320,7 +322,12 @@ const VideoCard = memo(function VideoCard({
   }, [loaded, isPlaying, isVisible, isAdoptedByModal, videoId]);
 
   // create & load <video>
-  const loadVideo = useCallback(() => {
+  const loadVideo = useCallback((options = {}) => {
+    const immediate =
+      typeof options.immediate === "boolean"
+        ? options.immediate
+        : isVisiblePropRef.current;
+
     if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
     if (!(canLoadMoreVideos?.() ?? true)) return;
     if (permanentErrorRef.current) return;
@@ -332,11 +339,12 @@ const VideoCard = memo(function VideoCard({
     setLoading(true);
 
     const runInit = () => {
+      const currentlyVisible = isVisiblePropRef.current;
       const el = document.createElement("video");
       el.muted = true;
       el.loop = true;
       el.playsInline = true;
-      el.preload = isVisible ? "auto" : "metadata";
+      el.preload = currentlyVisible ? "auto" : "metadata";
       el.className = "video-element";
       el.dataset.videoId = videoId;
       el.style.width = "100%";
@@ -432,7 +440,7 @@ const VideoCard = memo(function VideoCard({
           retryAttemptsRef.current += 1;
           setTimeout(() => {
             if (
-              isVisible &&
+              isVisiblePropRef.current &&
               !loaded &&
               !loading &&
               !loadRequestedRef.current &&
@@ -448,9 +456,11 @@ const VideoCard = memo(function VideoCard({
       // Conditional load-timeout (cancelled when invisible)
       const armLoadTimeout = () => {
         clearTimeout(loadTimeoutRef.current);
-        if (isVisible) {
+        if (isVisiblePropRef.current) {
           loadTimeoutRef.current = setTimeout(() => {
-            if (isVisible) onErr({ target: { error: new Error("Loading timeout") } });
+            if (isVisiblePropRef.current) {
+              onErr({ target: { error: new Error("Loading timeout") } });
+            }
           }, 10000);
         }
       };
@@ -489,7 +499,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    if (typeof scheduleInit === "function") {
+    if (typeof scheduleInit === "function" && !immediate) {
       scheduleInit(runInit);
     } else {
       runInit();
@@ -497,7 +507,6 @@ const VideoCard = memo(function VideoCard({
   }, [
     video,
     videoId,
-    isVisible,
     canLoadMoreVideos,
     loading,
     loaded,

@@ -170,6 +170,36 @@ describe("VideoCard", () => {
     });
   });
 
+  it("starts loading immediately when visible even if scheduler queues", async () => {
+    const video = {
+      id: "visible-no-queue",
+      name: "visible-no-queue",
+      isElectronFile: true,
+      fullPath: "C:/videos/no-queue.mp4",
+    };
+
+    const scheduled = [];
+    const scheduleInit = vi.fn((fn) => {
+      scheduled.push(fn);
+    });
+
+    render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible
+        scheduleInit={scheduleInit}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(scheduleInit).not.toHaveBeenCalled();
+    expect(scheduled).toHaveLength(0);
+    expect(lastVideoEl).toBeTruthy();
+    expect(lastVideoEl.load).toHaveBeenCalled();
+  });
+
   it("loads when parent marks visible even if IntersectionObserver never fires", async () => {
     // Mock IO that never calls the callback (no visibility events)
     const PrevIO = global.IntersectionObserver;
