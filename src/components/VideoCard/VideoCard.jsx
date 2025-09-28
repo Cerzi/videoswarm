@@ -178,14 +178,15 @@ const VideoCard = memo(function VideoCard({
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
-    const handleVisible = (nowVisible /* boolean */) => {
+    const handleVisible = (nowVisible /* boolean */, entry, info) => {
+      const isNear = info?.near ?? false;
       if (lastVisibilityRef.current !== nowVisible) {
         lastVisibilityRef.current = nowVisible;
         onVisibilityChange?.(videoId, nowVisible);
       }
 
       if (
-        nowVisible &&
+        (nowVisible || isNear) &&
         !loaded &&
         !loading &&
         !loadRequestedRef.current &&
@@ -206,7 +207,7 @@ const VideoCard = memo(function VideoCard({
   // Backup trigger if parent already flags visible
   useEffect(() => {
     if (
-      isVisible &&
+      (isVisible || isVisiblePropRef.current) &&
       !loaded &&
       !loading &&
       !loadRequestedRef.current &&
@@ -216,7 +217,7 @@ const VideoCard = memo(function VideoCard({
     ) {
       Promise.resolve().then(() => {
         if (
-          isVisible &&
+          (isVisible || isVisiblePropRef.current) &&
           !loaded &&
           !loading &&
           !loadRequestedRef.current &&
@@ -373,12 +374,39 @@ const VideoCard = memo(function VideoCard({
         cleanupListeners();
         finishStopLoading();
         setLoaded(true);
-        videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
-          container.appendChild(el);
+        if (container && !(el.dataset?.adopted === "modal")) {
+          const staleVideos = Array.from(container.querySelectorAll("video"));
+          for (const stale of staleVideos) {
+            if (!stale || stale === el) continue;
+            if (stale.dataset?.adopted === "modal") continue;
+
+            const wasCurrent = stale === videoRef.current;
+            try {
+              hardTeardownVideo(stale, {
+                listeners: wasCurrent ? persistentListenersRef.current : undefined,
+              });
+            } catch {}
+
+            if (stale.parentNode === container) {
+              try { container.removeChild(stale); } catch {}
+            } else {
+              try { stale.remove?.(); } catch {}
+            }
+
+            if (wasCurrent) {
+              videoRef.current = null;
+              persistentListenersRef.current = [];
+            }
+          }
+
+          if (!container.contains(el)) {
+            container.appendChild(el);
+          }
         }
+
+        videoRef.current = el;
       };
 
       const onErr = async (e) => {
@@ -489,7 +517,7 @@ const VideoCard = memo(function VideoCard({
       }
     };
 
-    if (typeof scheduleInit === "function") {
+    if (typeof scheduleInit === "function" && !isVisiblePropRef.current) {
       scheduleInit(runInit);
     } else {
       runInit();

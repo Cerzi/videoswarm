@@ -65,20 +65,25 @@ export default function useIntersectionObserverRegistry(
   }, []);
 
   // Observer callback: compute visible/near, then notify per-element handler
-  const handleEntries = useCallback((entries) => {
-    const rootRect = getRootRect();
-    for (const entry of entries) {
-      const el = entry.target;
-      const id = idsRef.current.get(el);
-      updateFlags(entry, id, rootRect);
+  const handleEntries = useCallback(
+    (entries) => {
+      const rootRect = getRootRect();
+      for (const entry of entries) {
+        const el = entry.target;
+        const id = idsRef.current.get(el);
+        updateFlags(entry, id, rootRect);
 
-      const cb = handlersRef.current.get(el);
-      if (cb) {
-        // We pass "visible" (true viewport) for clarity
-        cb(visibleIdsRef.current.has(id), entry);
+        const cb = handlersRef.current.get(el);
+        if (cb) {
+          const visible = visibleIdsRef.current.has(id);
+          const near = nearIdsRef.current.has(id);
+          // Pass the raw entry along with derived flags so callers can prefetch
+          cb(visible, entry, { visible, near });
+        }
       }
-    }
-  }, [getRootRect, updateFlags]);
+    },
+    [getRootRect, updateFlags]
+  );
 
   // Build the single observer (or rebuild if root/opts truly change)
   useEffect(() => {
