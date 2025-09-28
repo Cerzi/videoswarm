@@ -62,6 +62,14 @@ export function useProgressiveList(
   const [visible, setVisible] = useState(() =>
     Math.min(safeInitial, targetCount)
   );
+  const visibleRef = useRef(Math.min(safeInitial, targetCount));
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+  const targetCountRef = useRef(targetCount);
+  useEffect(() => {
+    targetCountRef.current = targetCount;
+  }, [targetCount]);
   const prevLenRef = useRef(safe.length);
   const prevTargetRef = useRef(targetCount);
   const didInitRef = useRef(false);
@@ -120,6 +128,7 @@ export function useProgressiveList(
   // State/refs used by idle strategy
   const isScrollingRef = useRef(false);
   const scrollingTimeoutRef = useRef(null);
+  const lastScrollAdvanceRef = useRef(0);
 
   // Unified “recent long task” flag (internal OR external)
   const hadLongTaskRecentlyRef = useRef(false);
@@ -151,6 +160,13 @@ export function useProgressiveList(
       scrollingTimeoutRef.current = setTimeout(() => {
         isScrollingRef.current = false;
         scrollingTimeoutRef.current = null;
+        if (dynamicBatchRef.current < baseBatchSize) {
+          dynamicBatchRef.current = Math.max(
+            baseBatchSize,
+            resolvedMinBatch
+          );
+        }
+        lastScrollAdvanceRef.current = 0;
       }, scrollIdleMs);
     };
 
@@ -235,18 +251,37 @@ export function useProgressiveList(
       if (cancelled) return;
 
       // Skip while user actively scrolling to prioritize smoothness
-      if (pauseOnScroll && isScrollingRef.current) {
-        rafId = requestAnimationFrame(schedule);
-        return;
+      const shouldThrottleScroll = pauseOnScroll && isScrollingRef.current;
+      if (shouldThrottleScroll) {
+        const backlog = Math.max(
+          0,
+          targetCountRef.current - visibleRef.current
+        );
+        if (backlog <= 0) {
+          rafId = requestAnimationFrame(schedule);
+          return;
+        }
+
+        const now =
+          typeof performance !== "undefined" && performance.now
+            ? performance.now()
+            : Date.now();
+        const minInterval = backlog > resolvedMinBatch * 2 ? 32 : 80;
+        if (now - lastScrollAdvanceRef.current < minInterval) {
+          rafId = requestAnimationFrame(schedule);
+          return;
+        }
+        lastScrollAdvanceRef.current = now;
       }
 
       const idleCb = () => {
         if (cancelled) return;
-        if (!allVisible) {
+        if (visibleRef.current < targetCountRef.current) {
           const add = computeNextBatch();
-          setVisible((v) =>
-            v < targetCount ? Math.min(v + add, targetCount) : v
-          );
+          setVisible((v) => {
+            const target = targetCountRef.current;
+            return v < target ? Math.min(v + add, target) : v;
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
