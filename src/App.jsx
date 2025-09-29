@@ -60,6 +60,19 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+const ADMIT_OVERSCAN_PX = 1400;
+const ADMIT_FALLBACK_COUNT = 200;
+
+const setsEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
+};
+
 const LoadingOverlay = ({ show, stage, progress }) => {
   if (!show) return null;
   return (
@@ -128,10 +141,12 @@ function App() {
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+  const [admissibleIds, setAdmissibleIds] = useState(new Set());
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
   const gridRef = useRef(null);
+  const positionsRef = useRef(new Map());
 
   const ioRegistry = useIntersectionObserverRegistry(gridRef, {
     rootMargin: "1600px 0px",
@@ -173,6 +188,39 @@ function App() {
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
   // ----- Masonry hook -----
+  const recomputeAdmissibleWindow = useCallback(() => {
+    const grid = gridRef.current;
+    const positions = positionsRef.current;
+    const next = new Set();
+
+    if (grid && positions && positions.size > 0) {
+      const viewportTop = grid.scrollTop || 0;
+      const viewportHeight = grid.clientHeight || window.innerHeight || 0;
+      const minY = Math.max(0, viewportTop - ADMIT_OVERSCAN_PX);
+      const maxY = viewportTop + viewportHeight + ADMIT_OVERSCAN_PX;
+
+      for (const [id, pos] of positions.entries()) {
+        if (!pos) continue;
+        if (pos.bottom >= minY && pos.top <= maxY) {
+          next.add(id);
+        }
+      }
+    }
+
+    if (next.size === 0 && orderedVideos.length) {
+      const fallback = Math.min(orderedVideos.length, ADMIT_FALLBACK_COUNT);
+      for (let i = 0; i < fallback; i++) {
+        next.add(orderedVideos[i].id);
+      }
+    }
+
+    for (const id of visibleVideos) next.add(id);
+    for (const id of loadingVideos) next.add(id);
+    for (const id of actualPlaying) next.add(id);
+
+    setAdmissibleIds((prev) => (setsEqual(prev, next) ? prev : next));
+  }, [orderedVideos, visibleVideos, loadingVideos, actualPlaying]);
+
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
@@ -183,6 +231,10 @@ function App() {
         ],
 
       onOrderChange: setVisualOrderedIds,
+      onPositionsChange: (map) => {
+        positionsRef.current = map;
+        recomputeAdmissibleWindow();
+      },
     });
 
   // MEMOIZED sorting & grouping
@@ -276,6 +328,7 @@ function App() {
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
+    admissibleIds,
   });
 
   // fullscreen / context menu
@@ -643,6 +696,8 @@ function App() {
         setLoadedVideos(new Set());
         setLoadingVideos(new Set());
         setActualPlaying(new Set());
+        positionsRef.current = new Map();
+        setAdmissibleIds(new Set());
 
         setLoadingStage("Scanning for video files...");
         setLoadingProgress(30);
@@ -712,6 +767,8 @@ function App() {
       setLoadedVideos(new Set());
       setLoadingVideos(new Set());
       setActualPlaying(new Set());
+      positionsRef.current = new Map();
+      setAdmissibleIds(new Set());
     },
     [selection]
   );
@@ -857,7 +914,7 @@ function App() {
   const playingSize = actualPlaying.size;                                  
   const loadingSize = loadingVideos.size;                                   
 
-  useEffect(() => {                                                          
+  useEffect(() => {
     const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
       const victims = videoCollection.performCleanup?.();
       if (Array.isArray(victims) && victims.length) {
@@ -869,7 +926,37 @@ function App() {
       }
     }, 0);
     return () => clearTimeout(id);
-  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
+  }, [
+    maxLoaded,
+    loadedSize,
+    playingSize,
+    loadingSize,
+    admissibleIds,
+    videoCollection.performCleanup,
+  ]);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    let rafId = 0;
+    const handle = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        recomputeAdmissibleWindow();
+      });
+    };
+    grid.addEventListener("scroll", handle, { passive: true });
+    handle();
+    return () => {
+      grid.removeEventListener("scroll", handle);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [recomputeAdmissibleWindow]);
+
+  useEffect(() => {
+    recomputeAdmissibleWindow();
+  }, [orderedVideos.length, recomputeAdmissibleWindow]);
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>

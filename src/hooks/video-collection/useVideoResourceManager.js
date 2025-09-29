@@ -59,7 +59,8 @@ export default function useVideoResourceManager({
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
-  playingCap, 
+  playingCap,
+  admissibleIds = null,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -70,6 +71,7 @@ export default function useVideoResourceManager({
   const _loadedVideos = asSet(loadedVideos);
   const _loadingVideos = asSet(loadingVideos);
   const _playingVideos = asSet(playingVideos);
+  const _admissibleIds = asSet(admissibleIds);
 
   // --- memory sampling ---
   const [mem, setMem] = useState(() => ({
@@ -226,6 +228,12 @@ export default function useVideoResourceManager({
         if (!isVisCapBypass) return false;
       }
 
+      if (_admissibleIds.size > 0 && !_admissibleIds.has(id)) {
+        if (!_visibleVideos.has(id) && !_playingVideos.has(id) && !_loadingVideos.has(id)) {
+          return false;
+        }
+      }
+
       const isVis = _visibleVideos.has(id);
       const near = isNear ? !!isNear(id) : false;
 
@@ -266,7 +274,18 @@ export default function useVideoResourceManager({
     lastCleanupAtRef.current = now;
 
     const overBy = _loadedVideos.size - limits.maxLoaded;
-    if (overBy <= 0) return;
+
+    const forcedVictims = [];
+    if (_admissibleIds.size > 0) {
+      for (const id of _loadedVideos) {
+        if (_visibleVideos.has(id)) continue;
+        if (_playingVideos.has(id)) continue;
+        if (_admissibleIds.has(id)) continue;
+        forcedVictims.push(id);
+      }
+    }
+
+    if (overBy <= 0 && forcedVictims.length === 0) return;
 
     const loaded = Array.from(_loadedVideos);
 
@@ -275,17 +294,30 @@ export default function useVideoResourceManager({
       const vis = _visibleVideos.has(id) ? 2 : 0;
       const play = _playingVideos.has(id) ? 4 : 0;
       const near = isNear ? (isNear(id) ? 1 : 0) : 0;
-      return play + vis + near; // 0 best (not playing, not visible, not near)
+      const windowPenalty =
+        _admissibleIds.size > 0 && !_admissibleIds.has(id) ? -2 : 0;
+      return play + vis + near + windowPenalty; // windowPenalty keeps far tiles lowest
     };
 
     loaded.sort((a, b) => score(a) - score(b));
 
-    let toRemove = overBy;
-    const victims = [];
+    let toRemove = Math.max(0, overBy);
+    const forcedSet = forcedVictims.length ? new Set(forcedVictims) : null;
+    const victims = forcedVictims.length ? [...forcedVictims] : [];
+    toRemove = Math.max(0, toRemove - victims.length);
     for (const id of loaded) {
       if (toRemove <= 0) break;
       if (_playingVideos.has(id)) continue;  // never evict active playback
       if (_visibleVideos.has(id)) continue;  // keep visible loaded
+      if (forcedSet?.has(id)) continue;
+      if (_admissibleIds.size > 0 && _admissibleIds.has(id)) {
+        // Keep admissible tiles unless required for cap
+        if (forcedVictims.length === 0) {
+          // continue until we satisfy overBy strictly
+        } else {
+          continue;
+        }
+      }
       victims.push(id);
       toRemove--;
     }

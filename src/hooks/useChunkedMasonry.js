@@ -10,6 +10,7 @@ export default function useChunkedMasonry({
   chunkSize = 200,
   columnGapFallback = 12,
   onOrderChange,
+  onPositionsChange,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
@@ -170,7 +171,7 @@ export default function useChunkedMasonry({
           // Record position for ordering
           el.dataset.x = String(x);
           el.dataset.y = String(y);
-          positions.push({ id, x, y }); // NEW
+          positions.push({ id, x, y, height: h }); // capture height for virtualization
 
           columnHeights[minIdx] = y + h + columnGap;
         }
@@ -185,9 +186,11 @@ export default function useChunkedMasonry({
           grid.style.position = "relative";
 
           // Compute and publish visual order (top-to-bottom, then left-to-right)
+          const sortedPositions = positions.slice().sort(
+            (a, b) => a.y - b.y || a.x - b.x
+          );
           if (typeof onOrderChange === "function") {
-            positions.sort((a, b) => a.y - b.y || a.x - b.x);
-            const order = positions.map((p) => p.id);
+            const order = sortedPositions.map((p) => p.id);
             const prev = lastOrderRef.current || [];
             // shallow compare to avoid needless updates
             const changed =
@@ -197,6 +200,19 @@ export default function useChunkedMasonry({
               lastOrderRef.current = order;
               onOrderChange(order);
             }
+          }
+
+          if (typeof onPositionsChange === "function") {
+            const map = new Map();
+            for (const pos of sortedPositions) {
+              map.set(pos.id, {
+                x: pos.x,
+                top: pos.y,
+                bottom: pos.y + pos.height,
+                height: pos.height,
+              });
+            }
+            onPositionsChange(map);
           }
 
           isLayingOutRef.current = false;
