@@ -128,6 +128,38 @@ describe('useVideoResourceManager (current behavior)', () => {
       expect(victimsInLoaded.length).toBeLessThanOrEqual(overBy);
     }
   });
+
+  test('admissible window blocks far loads and targets them for eviction', async () => {
+    const progressiveVideos = makeVideos(40);
+    const visible = new Set(['1']);
+    const playing = new Set();
+    const loaded = new Set(['1', '2', '3', '4']);
+    const loading = new Set();
+    const admissible = new Set(['1', '2']);
+
+    const { result } = renderHook(() =>
+      useVideoResourceManager({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: playing,
+        isNear: () => false,
+        playingCap: 24,
+        admissibleIds: admissible,
+      })
+    );
+
+    await flushAsync();
+
+    expect(result.current.canLoadVideo('3')).toBe(false);
+    expect(result.current.canLoadVideo('1')).toBe(true);
+
+    const victims = result.current.performCleanup();
+    expect(victims).toEqual(expect.arrayContaining(['3', '4']));
+    expect(victims).not.toContain('1');
+    expect(victims).not.toContain('2');
+  });
 });
 
 describe('reportPlayerCreationFailure', () => {
