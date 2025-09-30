@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
+const MAX_SUGGESTION_TAGS = 15;
 
 const RatingStars = ({ value, isMixed, onSelect, onClear, disabled }) => {
   return (
@@ -134,15 +135,41 @@ const MetadataPanel = ({
 
   const suggestionTags = useMemo(() => {
     if (!isOpen || !Array.isArray(availableTags)) return [];
+
     const query = inputValue.trim().toLowerCase();
-    const candidates = availableTags.filter((entry) => {
-      if (!entry?.name) return false;
-      if (sharedTagSet.has(entry.name)) return false;
-      if (!query) return true;
-      return entry.name.toLowerCase().includes(query);
+    const deduped = new Map();
+
+    availableTags.forEach((entry) => {
+      const name = entry?.name?.trim();
+      if (!name || sharedTagSet.has(name)) return;
+
+      const usageCount =
+        typeof entry.usageCount === "number" && Number.isFinite(entry.usageCount)
+          ? entry.usageCount
+          : 0;
+
+      const existing = deduped.get(name);
+      if (!existing || (existing.usageCount || 0) < usageCount) {
+        deduped.set(name, { name, usageCount });
+      }
     });
-    return candidates.slice(0, 6);
+
+    let list = Array.from(deduped.values());
+
+    if (query) {
+      list = list.filter((item) => item.name.toLowerCase().includes(query));
+    }
+
+    list.sort((a, b) => {
+      const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
+      if (usageDiff !== 0) return usageDiff;
+      return a.name.localeCompare(b.name);
+    });
+
+    return list.slice(0, MAX_SUGGESTION_TAGS);
   }, [availableTags, inputValue, sharedTagSet, isOpen]);
+
+  const hasSuggestionQuery = inputValue.trim().length > 0;
 
   const handleTagSubmit = () => {
     const tokens = inputValue
@@ -300,7 +327,9 @@ const MetadataPanel = ({
               {suggestionTags.length > 0 && (
                 <div className="metadata-panel__suggestions" aria-live="polite">
                   <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-                    Available tags
+                    {hasSuggestionQuery
+                      ? "Matching tags"
+                      : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
                   </div>
                   <div className="metadata-panel__suggestion-list">
                     {suggestionTags.map((suggestion) => (
