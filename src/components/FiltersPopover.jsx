@@ -19,6 +19,8 @@ const EXACT_RATING_OPTIONS = [
   { value: 5, label: "★★★★★" },
 ];
 
+const MAX_DEFAULT_TAGS = 10;
+
 function renderTagChip(tag, onRemove, variant) {
   return (
     <button
@@ -56,21 +58,58 @@ const FiltersPopover = forwardRef(
 
     const normalizedTags = useMemo(() => {
       const source = Array.isArray(availableTags) ? availableTags : [];
-      const deduped = Array.from(
-        new Set(
-          source
-            .map((tag) => (tag ?? "").toString().trim())
-            .filter(Boolean)
-        )
-      );
-      deduped.sort((a, b) => a.localeCompare(b));
-      if (!tagQuery.trim()) return deduped;
+      const deduped = new Map();
+
+      source.forEach((entry) => {
+        if (entry == null) return;
+        let name = "";
+        let usageCount = 0;
+
+        if (typeof entry === "string") {
+          name = entry.trim();
+        } else if (typeof entry === "object") {
+          name = (entry.name ?? "").toString().trim();
+          if (Number.isFinite(entry.usageCount)) {
+            usageCount = Number(entry.usageCount);
+          }
+        } else {
+          name = entry.toString().trim();
+        }
+
+        if (!name) return;
+        const existing = deduped.get(name);
+        if (!existing || existing.usageCount < usageCount) {
+          deduped.set(name, { name, usageCount });
+        }
+      });
+
+      let list = Array.from(deduped.values());
       const query = tagQuery.trim().toLowerCase();
-      return deduped.filter((tag) => tag.toLowerCase().includes(query));
+
+      if (query) {
+        list = list
+          .filter((item) => item.name.toLowerCase().includes(query))
+          .sort((a, b) => {
+            const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
+            if (usageDiff !== 0) return usageDiff;
+            return a.name.localeCompare(b.name);
+          });
+        return list;
+      }
+
+      list.sort((a, b) => {
+        const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
+        if (usageDiff !== 0) return usageDiff;
+        return a.name.localeCompare(b.name);
+      });
+
+      return list.slice(0, MAX_DEFAULT_TAGS);
     }, [availableTags, tagQuery]);
 
     const includeSet = useMemo(() => new Set(includeTags), [includeTags]);
     const excludeSet = useMemo(() => new Set(excludeTags), [excludeTags]);
+
+    const hasQuery = tagQuery.trim().length > 0;
 
     const cycleInclude = (tag) => {
       if (!tag) return;
@@ -119,17 +158,27 @@ const FiltersPopover = forwardRef(
     };
 
     const handleMinRatingChange = (value) => {
-      onChange((prev) => ({
-        ...prev,
-        minRating: value,
-      }));
+      onChange((prev) => {
+        const nextValue =
+          value === null || value === prev.minRating ? null : value;
+        return {
+          ...prev,
+          minRating: nextValue,
+          exactRating: nextValue !== null ? null : prev.exactRating ?? null,
+        };
+      });
     };
 
     const handleExactRatingChange = (value) => {
-      onChange((prev) => ({
-        ...prev,
-        exactRating: value,
-      }));
+      onChange((prev) => {
+        const nextValue =
+          value === null || value === prev.exactRating ? null : value;
+        return {
+          ...prev,
+          exactRating: nextValue,
+          minRating: nextValue !== null ? null : prev.minRating ?? null,
+        };
+      });
     };
 
     return (
@@ -192,30 +241,42 @@ const FiltersPopover = forwardRef(
             />
           </div>
 
+          <div className="filters-tag-list__header">
+            {hasQuery ? "Matching tags" : `Popular tags (top ${MAX_DEFAULT_TAGS})`}
+          </div>
+
           <div className="filters-tag-list" role="list">
             {normalizedTags.length === 0 ? (
               <span className="filters-empty-hint">No tags found.</span>
             ) : (
               normalizedTags.map((tag) => {
-                const status = includeSet.has(tag)
+                const tagName = tag.name;
+                const status = includeSet.has(tagName)
                   ? "include"
-                  : excludeSet.has(tag)
+                  : excludeSet.has(tagName)
                   ? "exclude"
                   : "none";
                 return (
                   <div
-                    key={tag}
+                    key={tagName}
                     className={`filters-tag-option filters-tag-option--${status}`}
                     role="listitem"
                   >
-                    <span className="filters-tag-option__name">#{tag}</span>
+                    <div className="filters-tag-option__info">
+                      <span className="filters-tag-option__name">#{tagName}</span>
+                      {typeof tag.usageCount === "number" && tag.usageCount > 0 && (
+                        <span className="filters-tag-option__count">
+                          {tag.usageCount}
+                        </span>
+                      )}
+                    </div>
                     <div className="filters-tag-option__actions">
                       <button
                         type="button"
                         className={`filters-pill ${
                           status === "include" ? "filters-pill--active" : ""
                         }`}
-                        onClick={() => cycleInclude(tag)}
+                        onClick={() => cycleInclude(tagName)}
                       >
                         Include
                       </button>
@@ -224,7 +285,7 @@ const FiltersPopover = forwardRef(
                         className={`filters-pill ${
                           status === "exclude" ? "filters-pill--active" : ""
                         }`}
-                        onClick={() => cycleExclude(tag)}
+                        onClick={() => cycleExclude(tagName)}
                       >
                         Exclude
                       </button>

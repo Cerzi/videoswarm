@@ -133,6 +133,15 @@
   padding-right: 0.25rem;
 }
 
+.filters-tag-list__header {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
 .filters-empty-hint {
   font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.45);
@@ -149,6 +158,12 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+.filters-tag-option__info {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .filters-tag-option--include {
   border-color: rgba(81, 207, 102, 0.35);
   background: rgba(81, 207, 102, 0.12);
@@ -162,6 +177,14 @@
 .filters-tag-option__name {
   font-size: 0.85rem;
   font-weight: 500;
+}
+
+.filters-tag-option__count {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
 }
 
 .filters-tag-option__actions {
