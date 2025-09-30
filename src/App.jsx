@@ -436,6 +436,28 @@ function App() {
     setMetadataFocusToken((token) => token + 1);
   }, []);
 
+  const {
+    contextMenu,
+    showOnItem,
+    showOnEmpty,
+    hide: hideContextMenu,
+  } = useContextMenu();
+
+  const deps = useTrashIntegration({
+    electronAPI: window.electronAPI,
+    notify,
+    confirm: window.confirm,
+    releaseVideoHandlesForAsync,
+    setVideos,
+    setSelected: selection.setSelected,
+    setLoadedIds: setLoadedVideos,
+    setPlayingIds: setActualPlaying,
+    setVisibleIds: setVisibleVideos,
+    setLoadingIds: setLoadingVideos,
+  });
+
+  const { runAction } = useActionDispatch(deps, getById);
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
@@ -502,32 +524,6 @@ function App() {
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(orderedVideos, "masonry-vertical", gridRef);
-
-  const {
-    contextMenu,
-    showOnItem,
-    showOnEmpty,
-    hide: hideContextMenu,
-  } = useContextMenu();
-
-  // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
-  const deps = useTrashIntegration({
-    electronAPI: window.electronAPI, // ← was electronAPI
-    notify,
-    confirm: window.confirm,
-    releaseVideoHandlesForAsync,
-
-    // use your real setters
-    setVideos, // ← was setAllVideos
-    setSelected: selection.setSelected,
-    setLoadedIds: setLoadedVideos,
-    setPlayingIds: setActualPlaying,
-
-    // (optional but useful if you want to purge these too)
-    setVisibleIds: setVisibleVideos,
-    setLoadingIds: setLoadingVideos,
-  });
-  const { runAction } = useActionDispatch(deps, getById);
 
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
