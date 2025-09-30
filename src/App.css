@@ -181,13 +181,18 @@ body {
 
 .content-region {
   flex: 1;
-  display: flex;
   min-height: 0;
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .content-region .video-grid {
-  flex: 1;
+  min-width: 0;
+  width: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Ensure React doesn't interfere with existing styles */
@@ -197,10 +202,8 @@ body {
 .video-grid {
   padding: 1rem;
   gap: 4px;
-  width: 100%;
   position: relative;
   flex: 1;
-  overflow-y: auto;
   transition: height 0.3s ease; /* keep single transition */
 }
 
