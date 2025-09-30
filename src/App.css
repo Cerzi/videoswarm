@@ -191,9 +191,19 @@ body {
   flex: 1;
   min-height: 0;
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   overflow: hidden;
+}
+
+.content-region__viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
 }
 
 /* Ensure React doesn't interfere with existing styles */
@@ -206,10 +216,7 @@ body {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow-y: auto;
-  scrollbar-gutter: stable both-edges;
+  min-height: 100%;
   transition: height 0.3s ease; /* keep single transition */
 }
 

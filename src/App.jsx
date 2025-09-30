@@ -164,16 +164,17 @@ function App() {
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
 
+  const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
 
-  const ioRegistry = useIntersectionObserverRegistry(gridRef, {
+  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
     rootMargin: "1600px 0px",
     threshold: [0, 0.15],
     nearPx: 900,
   });
 
   useEffect(() => {
-    const el = gridRef.current;
+    const el = scrollContainerRef.current;
     const update = () => {
       const h = el?.clientHeight || window.innerHeight;
       ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
@@ -190,7 +191,7 @@ function App() {
       ro?.disconnect?.();
       window.removeEventListener("resize", update);
     };
-  }, [gridRef, ioRegistry]);
+  }, [scrollContainerRef, ioRegistry]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -505,7 +506,7 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    scrollRef: gridRef,
+    scrollRef: scrollContainerRef,
     progressive: {
       initial: 120,
       batchSize: 64,
@@ -1192,11 +1193,15 @@ function App() {
           ) : (
             <div className="content-region">
               <div
-                ref={gridRef}
-                className={`video-grid masonry-vertical ${
-                  !showFilenames ? "hide-filenames" : ""
-                } ${zoomClassForLevel(zoomLevel)}`}
+                className="content-region__viewport"
+                ref={scrollContainerRef}
               >
+                <div
+                  ref={gridRef}
+                  className={`video-grid masonry-vertical ${
+                    !showFilenames ? "hide-filenames" : ""
+                  } ${zoomClassForLevel(zoomLevel)}`}
+                >
                 {videoCollection.videosToRender.map((video) => (
                   <VideoCard
                     key={video.id}
@@ -1250,6 +1255,7 @@ function App() {
                     scheduleInit={scheduleInit}
                   />
                 ))}
+                </div>
               </div>
               <MetadataPanel
                 isOpen={isMetadataPanelOpen && selection.size > 0}
