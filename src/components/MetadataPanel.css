@@ -61,6 +61,17 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
+.metadata-panel__toggle:disabled,
+.metadata-panel__toggle--disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.metadata-panel__toggle:disabled:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .metadata-panel__titles {
   display: flex;
   flex-direction: column;
@@ -269,9 +280,19 @@
 
 .metadata-panel__suggestions {
   display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.metadata-panel__suggestions-title {
+  text-transform: none;
+}
+
+.metadata-panel__suggestion-list {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-top: 0.5rem;
 }
 
 .metadata-panel__suggestion {

@@ -151,6 +151,8 @@ const MetadataPanel = ({
     }
   };
 
+  const toggleDisabled = selectionCount === 0;
+
   const panelClass = [
     "metadata-panel",
     isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
@@ -164,10 +166,19 @@ const MetadataPanel = ({
       <div className="metadata-panel__header">
         <button
           type="button"
-          className="metadata-panel__toggle"
-          onClick={() => onToggle?.()}
+          className={`metadata-panel__toggle${
+            toggleDisabled ? " metadata-panel__toggle--disabled" : ""
+          }`}
+          onClick={() => !toggleDisabled && onToggle?.()}
           aria-expanded={isOpen}
-          aria-label={isOpen ? "Collapse metadata panel" : "Expand metadata panel"}
+          aria-label={
+            toggleDisabled
+              ? "Select a video to enable metadata panel"
+              : isOpen
+              ? "Collapse metadata panel"
+              : "Expand metadata panel"
+          }
+          disabled={toggleDisabled}
         >
           {isOpen ? "❯" : "❮"}
         </button>
@@ -277,22 +288,27 @@ const MetadataPanel = ({
               </div>
 
               {suggestionTags.length > 0 && (
-                <div className="metadata-panel__suggestions">
-                  {suggestionTags.map((suggestion) => (
-                    <button
-                      key={suggestion.name}
-                      type="button"
-                      className="metadata-panel__suggestion"
-                      onClick={() => onApplyTagToSelection?.(suggestion.name)}
-                    >
-                      <span>#{suggestion.name}</span>
-                      {typeof suggestion.usageCount === "number" && (
-                        <span className="metadata-panel__suggestion-count">
-                          {suggestion.usageCount}
-                        </span>
-                      )}
-                    </button>
-                  ))}
+                <div className="metadata-panel__suggestions" aria-live="polite">
+                  <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
+                    Available tags
+                  </div>
+                  <div className="metadata-panel__suggestion-list">
+                    {suggestionTags.map((suggestion) => (
+                      <button
+                        key={suggestion.name}
+                        type="button"
+                        className="metadata-panel__suggestion"
+                        onClick={() => onApplyTagToSelection?.(suggestion.name)}
+                      >
+                        <span>#{suggestion.name}</span>
+                        {typeof suggestion.usageCount === "number" && (
+                          <span className="metadata-panel__suggestion-count">
+                            {suggestion.usageCount}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </section>

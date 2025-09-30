@@ -18,6 +18,22 @@ export default function useHotkeys(run, getSelection, opts = {}) {
   // ----- existing key handling (Enter/Ctrl+C/Delete/+/-) stays the same -----
   useEffect(() => {
     const onKey = (e) => {
+      const target = e.target;
+      if (target) {
+        const tag = typeof target.tagName === "string" ? target.tagName.toUpperCase() : "";
+        const isEditable =
+          target.isContentEditable ||
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT";
+        if (isEditable) {
+          return;
+        }
+        if (target.closest?.("[data-hotkey-exempt]")) {
+          return;
+        }
+      }
+
       const sel = getSelection();
       const size = sel?.size ?? 0;
 
