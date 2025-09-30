@@ -53,6 +53,16 @@ const MetadataPanel = ({
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef(null);
 
+  const derivedSelectionCount = useMemo(() => {
+    const numeric = Number(selectionCount);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+    return Array.isArray(selectedVideos) ? selectedVideos.length : 0;
+  }, [selectionCount, selectedVideos]);
+
+  const hasSelection = derivedSelectionCount > 0;
+
   useEffect(() => {
     if (isOpen && focusToken) {
       inputRef.current?.focus();
@@ -79,24 +89,24 @@ const MetadataPanel = ({
   }, [selectedVideos]);
 
   const sharedTags = useMemo(() => {
-    if (!selectionCount) return [];
+    if (!hasSelection) return [];
     const tags = [];
     tagCounts.forEach((count, tag) => {
-      if (count === selectionCount) tags.push(tag);
+      if (count === derivedSelectionCount) tags.push(tag);
     });
     return tags.sort((a, b) => a.localeCompare(b));
-  }, [tagCounts, selectionCount]);
+  }, [tagCounts, derivedSelectionCount, hasSelection]);
 
   const partialTags = useMemo(() => {
-    if (!selectionCount) return [];
+    if (!hasSelection) return [];
     const tags = [];
     tagCounts.forEach((count, tag) => {
-      if (count > 0 && count < selectionCount) {
+      if (count > 0 && count < derivedSelectionCount) {
         tags.push({ tag, count });
       }
     });
     return tags.sort((a, b) => a.tag.localeCompare(b.tag));
-  }, [tagCounts, selectionCount]);
+  }, [tagCounts, derivedSelectionCount, hasSelection]);
 
   const ratingInfo = useMemo(() => {
     if (!selectedVideos.length) {
@@ -151,18 +161,18 @@ const MetadataPanel = ({
     }
   };
 
-  const toggleDisabled = selectionCount === 0;
+  const toggleDisabled = !hasSelection;
 
   const panelClass = [
     "metadata-panel",
     isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
-    selectionCount === 0 ? "metadata-panel--empty" : "",
+    !hasSelection ? "metadata-panel--empty" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <aside className={panelClass} aria-hidden={!isOpen && selectionCount === 0}>
+    <aside className={panelClass} aria-hidden={!isOpen && !hasSelection}>
       <div className="metadata-panel__header">
         <button
           type="button"
@@ -185,13 +195,13 @@ const MetadataPanel = ({
         <div className="metadata-panel__titles">
           <span className="metadata-panel__title">Details</span>
           <span className="metadata-panel__subtitle">
-            {selectionCount ? `${selectionCount} selected` : "No selection"}
+            {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
           </span>
         </div>
       </div>
 
       <div className="metadata-panel__content">
-        {selectionCount === 0 ? (
+        {!hasSelection ? (
           <div className="metadata-panel__empty-state">
             <p>Select one or more videos to tag and rate them.</p>
           </div>
@@ -215,7 +225,7 @@ const MetadataPanel = ({
                 isMixed={ratingInfo.mixed}
                 onSelect={(val) => onSetRating?.(val)}
                 onClear={onClearRating}
-                disabled={!selectionCount}
+                disabled={!hasSelection}
               />
             </section>
 
@@ -256,11 +266,11 @@ const MetadataPanel = ({
                         type="button"
                         className="metadata-panel__chip metadata-panel__chip--ghost"
                         onClick={() => onApplyTagToSelection?.(tag)}
-                        title={`Apply to all (${count}/${selectionCount})`}
+                        title={`Apply to all (${count}/${derivedSelectionCount})`}
                       >
                         <span>#{tag}</span>
                         <span className="metadata-panel__chip-count">
-                          {count}/{selectionCount}
+                          {count}/{derivedSelectionCount}
                         </span>
                       </button>
                     ))}
@@ -276,12 +286,12 @@ const MetadataPanel = ({
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Add tag and press Enter"
-                  disabled={!selectionCount}
+                  disabled={!hasSelection}
                 />
                 <button
                   type="button"
                   onClick={handleTagSubmit}
-                  disabled={!selectionCount || !inputValue.trim()}
+                  disabled={!hasSelection || !inputValue.trim()}
                 >
                   Add
                 </button>
