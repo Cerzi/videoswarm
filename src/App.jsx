@@ -12,6 +12,7 @@ import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
 import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
+import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
@@ -133,10 +134,52 @@ const MemoryAlert = ({ memStatus }) => {
 };
 /** --- end split-outs --- */
 
+const createDefaultFilters = () => ({
+  includeTags: [],
+  excludeTags: [],
+  minRating: null,
+  exactRating: null,
+});
+
+const normalizeTagList = (tags) =>
+  Array.from(
+    new Set(
+      (Array.isArray(tags) ? tags : [])
+        .map((tag) => (tag ?? "").toString().trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+const clampRatingValue = (value, min, max) => {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const rounded = Math.round(num);
+  if (Number.isNaN(rounded)) return null;
+  return Math.min(max, Math.max(min, rounded));
+};
+
+const sanitizeMinRating = (value) => clampRatingValue(value, 1, 5);
+const sanitizeExactRating = (value) => clampRatingValue(value, 0, 5);
+
+const formatStars = (value) => {
+  const safe = clampRatingValue(value, 0, 5);
+  const filled = Math.max(0, safe ?? 0);
+  const empty = Math.max(0, 5 - filled);
+  return `${"★".repeat(filled)}${"☆".repeat(empty)}`;
+};
+
+const formatRatingLabel = (value, mode) => {
+  if (value === null || value === undefined) return null;
+  const stars = formatStars(value);
+  return mode === "min" ? `≥ ${stars}` : `= ${stars}`;
+};
+
 function App() {
   const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
+  const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
@@ -163,9 +206,13 @@ function App() {
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
+  const [filters, setFilters] = useState(() => createDefaultFilters());
+  const [isFiltersOpen, setFiltersOpen] = useState(false);
 
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const filtersButtonRef = useRef(null);
+  const filtersPopoverRef = useRef(null);
 
   const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
     rootMargin: "1600px 0px",
@@ -194,6 +241,208 @@ function App() {
   }, [scrollContainerRef, ioRegistry]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
+
+  const filtersActiveCount = useMemo(() => {
+    const includeCount = filters.includeTags?.length ?? 0;
+    const excludeCount = filters.excludeTags?.length ?? 0;
+    const ratingCount =
+      filters.exactRating !== null && filters.exactRating !== undefined
+        ? 1
+        : filters.minRating !== null && filters.minRating !== undefined
+        ? 1
+        : 0;
+    return includeCount + excludeCount + ratingCount;
+  }, [filters]);
+
+  const updateFilters = useCallback((updater) => {
+    setFilters((prev) => {
+      const resolve = (value, fallback) =>
+        value === undefined ? fallback : value;
+      const draft =
+        typeof updater === "function"
+          ? updater(prev) ?? prev
+          : { ...prev, ...updater };
+
+      const includeTagsRaw = resolve(draft?.includeTags, prev.includeTags);
+      const excludeTagsRaw = resolve(draft?.excludeTags, prev.excludeTags);
+      const minRatingRaw = resolve(draft?.minRating, prev.minRating);
+      const exactRatingRaw = resolve(draft?.exactRating, prev.exactRating);
+
+      return {
+        includeTags: normalizeTagList(includeTagsRaw),
+        excludeTags: normalizeTagList(excludeTagsRaw),
+        minRating: sanitizeMinRating(minRatingRaw),
+        exactRating: sanitizeExactRating(exactRatingRaw),
+      };
+    });
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setFilters(createDefaultFilters());
+  }, []);
+
+  const filteredVideos = useMemo(() => {
+    const includeTags = filters.includeTags ?? [];
+    const excludeTags = filters.excludeTags ?? [];
+    const minRating = sanitizeMinRating(filters.minRating);
+    const exactRating = sanitizeExactRating(filters.exactRating);
+
+    const includeSet = includeTags.length
+      ? new Set(includeTags.map((tag) => tag.toLowerCase()))
+      : null;
+    const excludeSet = excludeTags.length
+      ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
+      : null;
+
+    if (!includeSet && !excludeSet && minRating === null && exactRating === null) {
+      return videos;
+    }
+
+    return videos.filter((video) => {
+      const tagList = Array.isArray(video.tags)
+        ? video.tags
+            .map((tag) => (tag ?? "").toString().trim().toLowerCase())
+            .filter(Boolean)
+        : [];
+
+      if (includeSet) {
+        for (const tag of includeSet) {
+          if (!tagList.includes(tag)) {
+            return false;
+          }
+        }
+      }
+
+      if (excludeSet) {
+        for (const tag of excludeSet) {
+          if (tagList.includes(tag)) {
+            return false;
+          }
+        }
+      }
+
+      const ratingValue = Number.isFinite(video.rating)
+        ? Math.round(video.rating)
+        : null;
+
+      if (exactRating !== null) {
+        return (ratingValue ?? null) === exactRating;
+      }
+
+      if (minRating !== null) {
+        return (ratingValue ?? 0) >= minRating;
+      }
+
+      return true;
+    });
+  }, [videos, filters]);
+
+  const filteredVideoIds = useMemo(
+    () => new Set(filteredVideos.map((video) => video.id)),
+    [filteredVideos]
+  );
+
+  useEffect(() => {
+    if (!selection.size) return;
+    selectionSetSelected((prev) => {
+      let changed = false;
+      const next = new Set();
+      prev.forEach((id) => {
+        if (filteredVideoIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [filteredVideoIds, selection.size, selectionSetSelected]);
+
+  useEffect(() => {
+    if (!isFiltersOpen) return;
+
+    const handlePointerDown = (event) => {
+      const anchor = filtersButtonRef.current;
+      const panel = filtersPopoverRef.current;
+      if (panel?.contains(event.target) || anchor?.contains(event.target)) {
+        return;
+      }
+      setFiltersOpen(false);
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        setFiltersOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [isFiltersOpen]);
+
+  const handleRemoveIncludeFilter = useCallback(
+    (tag) => {
+      if (!tag) return;
+      updateFilters((prev) => ({
+        ...prev,
+        includeTags: (prev.includeTags ?? []).filter((entry) => entry !== tag),
+      }));
+    },
+    [updateFilters]
+  );
+
+  const handleRemoveExcludeFilter = useCallback(
+    (tag) => {
+      if (!tag) return;
+      updateFilters((prev) => ({
+        ...prev,
+        excludeTags: (prev.excludeTags ?? []).filter((entry) => entry !== tag),
+      }));
+    },
+    [updateFilters]
+  );
+
+  const clearMinRatingFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, minRating: null }));
+  }, [updateFilters]);
+
+  const clearExactRatingFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, exactRating: null }));
+  }, [updateFilters]);
+
+  const ratingSummary = useMemo(() => {
+    if (filters.exactRating !== null && filters.exactRating !== undefined) {
+      const label = formatRatingLabel(filters.exactRating, "exact");
+      return label
+        ? {
+            key: "exact",
+            label,
+            onClear: clearExactRatingFilter,
+          }
+        : null;
+    }
+
+    if (filters.minRating !== null && filters.minRating !== undefined) {
+      const label = formatRatingLabel(filters.minRating, "min");
+      return label
+        ? {
+            key: "min",
+            label,
+            onClear: clearMinRatingFilter,
+          }
+        : null;
+    }
+
+    return null;
+  }, [filters.exactRating, filters.minRating, clearExactRatingFilter, clearMinRatingFilter]);
+
 
   // ----- Recent Folders hook -----
   const {
@@ -237,8 +486,8 @@ function App() {
   );
 
   const orderedVideos = useMemo(
-    () => groupAndSort(videos, { groupByFolders, comparator }),
-    [videos, groupByFolders, comparator]
+    () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
+    [filteredVideos, groupByFolders, comparator]
   );
 
   // data order ids (fallback)
@@ -1154,8 +1403,84 @@ function App() {
             onReshuffle={reshuffleRandom}
             recentFolders={recentFolders}
             onRecentOpen={(path) => handleElectronFolderSelection(path)}
-            hasOpenFolder={orderedVideos.length > 0}
+            hasOpenFolder={videos.length > 0}
+            onFiltersToggle={() => setFiltersOpen((open) => !open)}
+            filtersActiveCount={filtersActiveCount}
+            filtersAreOpen={isFiltersOpen}
+            filtersButtonRef={filtersButtonRef}
           />
+
+          {isFiltersOpen && (
+            <FiltersPopover
+              ref={filtersPopoverRef}
+              filters={filters}
+              availableTags={availableTags}
+              onChange={updateFilters}
+              onReset={resetFilters}
+              onClose={() => setFiltersOpen(false)}
+            />
+          )}
+
+          {filtersActiveCount > 0 && (
+            <div className="filters-summary">
+              {filters.includeTags.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Include</span>
+                  <div className="filters-summary__chips">
+                    {filters.includeTags.map((tag) => (
+                      <button
+                        type="button"
+                        key={`include-${tag}`}
+                        className="filters-summary__chip filters-summary__chip--include"
+                        onClick={() => handleRemoveIncludeFilter(tag)}
+                        title={`Remove include filter for ${tag}`}
+                      >
+                        #{tag}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {filters.excludeTags.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Exclude</span>
+                  <div className="filters-summary__chips">
+                    {filters.excludeTags.map((tag) => (
+                      <button
+                        type="button"
+                        key={`exclude-${tag}`}
+                        className="filters-summary__chip filters-summary__chip--exclude"
+                        onClick={() => handleRemoveExcludeFilter(tag)}
+                        title={`Remove exclude filter for ${tag}`}
+                      >
+                        #{tag}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {ratingSummary && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Rating</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--rating"
+                      onClick={ratingSummary.onClear}
+                      title="Clear rating filter"
+                    >
+                      {ratingSummary.label}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <DebugSummary
             total={videoCollection.stats.total}
@@ -1169,7 +1494,7 @@ function App() {
           />
 
           {/* Home state: Recent Locations when nothing is loaded */}
-          {orderedVideos.length === 0 && !isLoadingFolder ? (
+          {videos.length === 0 && !isLoadingFolder ? (
             <>
               <RecentFolders
                 items={recentFolders}
@@ -1198,10 +1523,18 @@ function App() {
               >
                 <div
                   ref={gridRef}
-                  className={`video-grid masonry-vertical ${
+                className={`video-grid masonry-vertical ${
                     !showFilenames ? "hide-filenames" : ""
                   } ${zoomClassForLevel(zoomLevel)}`}
-                >
+              >
+                {orderedVideos.length === 0 &&
+                  videos.length > 0 &&
+                  !isLoadingFolder && (
+                    <div className="filters-empty-state">
+                      No videos match your current filters.
+                    </div>
+                  )}
+
                 {videoCollection.videosToRender.map((video) => (
                   <VideoCard
                     key={video.id}

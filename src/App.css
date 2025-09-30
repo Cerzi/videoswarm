@@ -93,6 +93,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.15s, border-color 0.15s;
+  gap: 0.35rem;
 }
 
 .toggle-button:hover {
@@ -123,6 +124,94 @@ body {
   background-position: right 0.5rem center;
   background-size: 0.8rem;
   padding-right: 1.5rem;
+}
+
+.filters-button-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.filters-button-badge {
+  background: var(--color-accent);
+  color: #051805;
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.filters-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.35rem 1rem 0;
+  padding: 0.4rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.filters-summary__section {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.filters-summary__label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.filters-summary__chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filters-summary__chip {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.filters-summary__chip--include {
+  border-color: rgba(81, 207, 102, 0.45);
+  color: var(--color-accent);
+}
+
+.filters-summary__chip--exclude {
+  border-color: rgba(255, 107, 107, 0.45);
+  color: #ff6b6b;
+}
+
+.filters-summary__chip--rating {
+  border-color: rgba(255, 212, 59, 0.4);
+  color: #ffd43b;
+}
+
+.filters-summary__chip-remove {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.filters-empty-state {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.95rem;
 }
 
 .select-control:disabled {
