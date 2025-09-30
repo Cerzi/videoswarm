@@ -174,7 +174,7 @@ body {
 /* ===== App frame ===== */
 .app {
   width: 100%;
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
@@ -183,16 +183,8 @@ body {
   flex: 1;
   min-height: 0;
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  overflow: hidden;
-}
-
-.content-region .video-grid {
-  min-width: 0;
-  width: auto;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  display: flex;
+  align-items: stretch;
 }
 
 /* Ensure React doesn't interfere with existing styles */
@@ -203,7 +195,10 @@ body {
   padding: 1rem;
   gap: 4px;
   position: relative;
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
   transition: height 0.3s ease; /* keep single transition */
 }
 
