@@ -91,6 +91,31 @@ const ContextMenu = ({
         { id: 'copy-filename',      label: `📄 ${menuLabel('copy-filename')}`,      action: 'copy-filename' },
       );
 
+      // Metadata quick actions
+      items.push(
+        { type: 'separator' },
+        {
+          id: 'metadata-open',
+          label: '🏷️ Add or manage tags',
+          action: 'metadata:open',
+        }
+      );
+
+      const quickRatings = [5, 4, 3, 2, 1];
+      quickRatings.forEach((stars) => {
+        const glyph = '★'.repeat(stars).padEnd(5, '☆');
+        items.push({
+          id: `metadata-rate-${stars}`,
+          label: `⭐ Rate ${glyph}`,
+          action: `metadata:rate:${stars}`,
+        });
+      });
+      items.push({
+        id: 'metadata-rate-clear',
+        label: '☆ Clear rating',
+        action: 'metadata:rate:clear',
+      });
+
       // Properties (CONTEXT_ONLY)
       items.push(
         { type: 'separator' },

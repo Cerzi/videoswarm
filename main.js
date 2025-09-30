@@ -13,6 +13,7 @@ const {
 const path = require("path");
 const fs = require("fs").promises;
 require('./main/ipc-trash')(ipcMain);
+const { initMetadataStore, getMetadataStore } = require("./main/database");
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -141,6 +142,25 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     let dirname = path.relative(baseFolderPath, path.dirname(filePath));
     if (dirname === ".") dirname = "";
 
+    let fingerprint = null;
+    let tags = [];
+    let rating = null;
+    try {
+      const metadataStore = getMetadataStore();
+      const info = await metadataStore.indexFile({ filePath, stats });
+      fingerprint = info?.fingerprint ?? null;
+      tags = Array.isArray(info?.tags) ? info.tags : [];
+      rating =
+        typeof info?.rating === "number" && Number.isFinite(info.rating)
+          ? info.rating
+          : null;
+    } catch (metaError) {
+      console.warn(
+        `[metadata] Failed to index ${filePath}:`,
+        metaError?.message || metaError
+      );
+    }
+
     return {
       id: filePath,
       name: fileName,
@@ -154,6 +174,9 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       basename: fileName,
       dirname,
       createdMs: stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
+      fingerprint,
+      tags,
+      rating,
       metadata: {
         folder: path.dirname(filePath),
         baseName: path.basename(fileName, ext),
@@ -721,50 +744,18 @@ ipcMain.handle(
             const ext = path.extname(file.name).toLowerCase();
             if (videoExtensions.includes(ext)) {
               try {
-                const stats = await fs.stat(fullPath);
-                let dirnameRel = path.relative(folderPath, path.dirname(fullPath));
-                if (dirnameRel === ".") dirnameRel = "";
-                const videoFile = {
-                  id: fullPath,
-                  name: file.name,
-                  fullPath: fullPath,
-                  relativePath: path.relative(folderPath, fullPath),
-                  extension: ext,
-                  size: stats.size,
-                  dateModified: stats.mtime,
-                  dateCreated: stats.birthtime,
-                  isElectronFile: true,
-                  basename: path.basename(fullPath),
-                  dirname: dirnameRel,
-                  createdMs:
-                    stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
-                  metadata: {
-                    folder: path.dirname(fullPath),
-                    baseName: path.basename(file.name, ext),
-                    sizeFormatted: formatFileSize(stats.size),
-                    dateModifiedFormatted: stats.mtime.toLocaleDateString(),
-                    dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
-                  },
-                };
-                videoFiles.push(videoFile);
+                const videoFile = await createVideoFileObject(
+                  fullPath,
+                  folderPath
+                );
+                if (videoFile) {
+                  videoFiles.push(videoFile);
+                }
               } catch (error) {
                 console.warn(
                   `Error reading file stats for ${fullPath}:`,
                   error.message
                 );
-                let dirnameRel = path.relative(folderPath, path.dirname(fullPath));
-                if (dirnameRel === ".") dirnameRel = "";
-                videoFiles.push({
-                  id: fullPath,
-                  name: file.name,
-                  fullPath: fullPath,
-                  relativePath: path.relative(folderPath, fullPath),
-                  extension: ext,
-                  isElectronFile: true,
-                  basename: path.basename(fullPath),
-                  dirname: dirnameRel,
-                  metadata: { folder: path.dirname(fullPath) },
-                });
               }
             }
           } else if (file.isDirectory() && recursive && depth < 10) {
@@ -802,6 +793,99 @@ ipcMain.handle(
     }
   }
 );
+
+ipcMain.handle("metadata:list-tags", async () => {
+  try {
+    const store = getMetadataStore();
+    return { tags: store.listTags() };
+  } catch (error) {
+    console.error("Failed to list tags:", error);
+    return { tags: [], error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle(
+  "metadata:add-tags",
+  async (_event, fingerprints = [], tagNames = []) => {
+    try {
+      const store = getMetadataStore();
+      const cleanFingerprints = Array.isArray(fingerprints)
+        ? fingerprints.filter(Boolean)
+        : [];
+      const cleanNames = Array.isArray(tagNames)
+        ? tagNames
+            .map((name) => (name ?? "").toString().trim())
+            .filter(Boolean)
+        : [];
+      if (!cleanFingerprints.length || !cleanNames.length) {
+        return { updates: {}, tags: store.listTags() };
+      }
+      const updates = store.assignTags(cleanFingerprints, cleanNames);
+      return { updates, tags: store.listTags() };
+    } catch (error) {
+      console.error("Failed to assign tags:", error);
+      return { updates: {}, error: error?.message || String(error) };
+    }
+  }
+);
+
+ipcMain.handle(
+  "metadata:remove-tag",
+  async (_event, fingerprints = [], tagName) => {
+    try {
+      const store = getMetadataStore();
+      const cleanFingerprints = Array.isArray(fingerprints)
+        ? fingerprints.filter(Boolean)
+        : [];
+      const cleanName = (tagName ?? "").toString().trim();
+      if (!cleanFingerprints.length || !cleanName) {
+        return { updates: {}, tags: store.listTags() };
+      }
+      const updates = store.removeTag(cleanFingerprints, cleanName);
+      return { updates, tags: store.listTags() };
+    } catch (error) {
+      console.error("Failed to remove tag:", error);
+      return { updates: {}, error: error?.message || String(error) };
+    }
+  }
+);
+
+ipcMain.handle(
+  "metadata:set-rating",
+  async (_event, fingerprints = [], ratingValue) => {
+    try {
+      const store = getMetadataStore();
+      const cleanFingerprints = Array.isArray(fingerprints)
+        ? fingerprints.filter(Boolean)
+        : [];
+      if (!cleanFingerprints.length) {
+        return { updates: {} };
+      }
+      const rating =
+        ratingValue === null || ratingValue === undefined
+          ? null
+          : Math.max(0, Math.min(5, Math.round(Number(ratingValue))));
+      const updates = store.setRating(cleanFingerprints, rating);
+      return { updates };
+    } catch (error) {
+      console.error("Failed to set rating:", error);
+      return { updates: {}, error: error?.message || String(error) };
+    }
+  }
+);
+
+ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
+  try {
+    const store = getMetadataStore();
+    const cleanFingerprints = Array.isArray(fingerprints)
+      ? fingerprints.filter(Boolean)
+      : [];
+    return { updates: store.getMetadataForFingerprints(cleanFingerprints) };
+  } catch (error) {
+    console.error("Failed to load metadata:", error);
+    return { updates: {}, error: error?.message || String(error) };
+  }
+});
 
 // File info helpers
 ipcMain.handle("get-file-info", async (_event, filePath) => {
@@ -926,6 +1010,7 @@ app.whenReady().then(async () => {
   try {
     console.log("GPU status:", app.getGPUFeatureStatus());
     await initRecentStore(); // safe no-op if it fails
+    await initMetadataStore(app);
     await createWindow();
     createMenu();
   } catch (err) {

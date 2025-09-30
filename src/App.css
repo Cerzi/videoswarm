@@ -179,6 +179,17 @@ body {
   flex-direction: column;
 }
 
+.content-region {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.content-region .video-grid {
+  flex: 1;
+}
+
 /* Ensure React doesn't interfere with existing styles */
 * { box-sizing: border-box; }
 
@@ -206,6 +217,54 @@ body {
   /* Consolidated transitions (drop duplicate blocks later in file) */
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
   will-change: opacity, transform;
+}
+
+.video-item-rating {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  display: flex;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.video-item-rating span {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.video-item-rating span.filled {
+  color: #ffd43b;
+}
+
+.video-item-tags {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.video-item-tags.with-filename {
+  bottom: 44px;
+}
+
+.video-item-tag {
+  background: rgba(0, 0, 0, 0.55);
+  color: #f5f5f5;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.video-item-tag.more {
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .video-item.selected { border-color: #007acc; }

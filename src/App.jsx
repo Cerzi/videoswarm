@@ -10,6 +10,7 @@ import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
+import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import DebugSummary from "./components/DebugSummary";
 
@@ -59,6 +60,34 @@ const path = {
 };
 
 const __DEV__ = import.meta.env.MODE !== "production";
+
+const normalizeVideoFromMain = (video) => {
+  if (!video || typeof video !== "object") return video;
+  const fingerprint =
+    typeof video.fingerprint === "string" && video.fingerprint.length > 0
+      ? video.fingerprint
+      : null;
+  const rating =
+    typeof video.rating === "number" && Number.isFinite(video.rating)
+      ? Math.max(0, Math.min(5, Math.round(video.rating)))
+      : null;
+  const tags = Array.isArray(video.tags)
+    ? Array.from(
+        new Set(
+          video.tags
+            .map((tag) => (tag ?? "").toString().trim())
+            .filter(Boolean)
+        )
+      )
+    : [];
+
+  return {
+    ...video,
+    fingerprint,
+    rating,
+    tags,
+  };
+};
 
 const LoadingOverlay = ({ show, stage, progress }) => {
   if (!show) return null;
@@ -130,6 +159,10 @@ function App() {
   const [loadingVideos, setLoadingVideos] = useState(new Set());
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
+
+  const [availableTags, setAvailableTags] = useState([]);
+  const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
+  const [metadataFocusToken, setMetadataFocusToken] = useState(0);
 
   const gridRef = useRef(null);
 
@@ -221,6 +254,28 @@ function App() {
     [orderedVideos]
   );
 
+  const selectedVideos = useMemo(() => {
+    return Array.from(selection.selected)
+      .map((id) => getById(id))
+      .filter(Boolean);
+  }, [selection.selected, getById]);
+
+  const selectedFingerprints = useMemo(() => {
+    const set = new Set();
+    selectedVideos.forEach((video) => {
+      if (video?.fingerprint) {
+        set.add(video.fingerprint);
+      }
+    });
+    return Array.from(set);
+  }, [selectedVideos]);
+
+  useEffect(() => {
+    if (selection.size > 0) {
+      setMetadataPanelOpen(true);
+    }
+  }, [selection.size]);
+
   const sortStatus = useMemo(() => {
     const keyLabels = {
       [SortKey.NAME]: "Name",
@@ -257,6 +312,168 @@ function App() {
       if (document.body.contains(el)) document.body.removeChild(el);
     }, 3000);
   }, []);
+
+  const refreshTagList = useCallback(async () => {
+    const api = window.electronAPI?.metadata;
+    if (!api?.listTags) return;
+    try {
+      const res = await api.listTags();
+      if (Array.isArray(res?.tags)) {
+        setAvailableTags(res.tags);
+      }
+    } catch (error) {
+      console.warn("Failed to refresh tags:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshTagList();
+  }, [refreshTagList]);
+
+  const applyMetadataPatch = useCallback((updates) => {
+    if (!updates || typeof updates !== "object") return;
+    setVideos((prev) =>
+      prev.map((video) => {
+        const fingerprint = video?.fingerprint;
+        if (!fingerprint || !updates[fingerprint]) return video;
+        return normalizeVideoFromMain({
+          ...video,
+          ...updates[fingerprint],
+          fingerprint,
+        });
+      })
+    );
+  }, []);
+
+  const handleAddTags = useCallback(
+    async (tagNames) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.addTags) return;
+      const fingerprints = selectedFingerprints;
+      if (!fingerprints.length) return;
+      const cleanNames = Array.isArray(tagNames)
+        ? tagNames.map((name) => name.trim()).filter(Boolean)
+        : [];
+      if (!cleanNames.length) return;
+      try {
+        const result = await api.addTags(fingerprints, cleanNames);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
+        notify(
+          `Added ${cleanNames.join(", ")} to ${fingerprints.length} item(s)`,
+          "success"
+        );
+      } catch (error) {
+        console.error("Failed to add tags:", error);
+        notify("Failed to add tags", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleRemoveTag = useCallback(
+    async (tagName) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.removeTag) return;
+      const fingerprints = selectedFingerprints;
+      const cleanName = (tagName ?? "").trim();
+      if (!fingerprints.length || !cleanName) return;
+      try {
+        const result = await api.removeTag(fingerprints, cleanName);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
+        notify(
+          `Removed "${cleanName}" from ${fingerprints.length} item(s)`,
+          "success"
+        );
+      } catch (error) {
+        console.error("Failed to remove tag:", error);
+        notify("Failed to remove tag", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleSetRating = useCallback(
+    async (value, targetFingerprints = selectedFingerprints) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.setRating) return;
+      const fingerprints = (targetFingerprints || []).filter(Boolean);
+      if (!fingerprints.length) return;
+      try {
+        const result = await api.setRating(fingerprints, value);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (value === null || value === undefined) {
+          notify(`Cleared rating for ${fingerprints.length} item(s)`, "success");
+        } else {
+          const safeRating = Math.max(0, Math.min(5, Math.round(Number(value))));
+          notify(
+            `Rated ${fingerprints.length} item(s) ${safeRating} star${
+              safeRating === 1 ? "" : "s"
+            }`,
+            "success"
+          );
+        }
+      } catch (error) {
+        console.error("Failed to update rating:", error);
+        notify("Failed to update rating", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleClearRating = useCallback(() => {
+    handleSetRating(null, selectedFingerprints);
+  }, [handleSetRating, selectedFingerprints]);
+
+  const handleApplyExistingTag = useCallback(
+    (tagName) => handleAddTags([tagName]),
+    [handleAddTags]
+  );
+
+  const openMetadataPanel = useCallback(() => {
+    setMetadataPanelOpen(true);
+    setMetadataFocusToken((token) => token + 1);
+  }, []);
+
+  const handleContextAction = useCallback(
+    (actionId) => {
+      if (!actionId) return;
+      if (actionId === "metadata:open") {
+        openMetadataPanel();
+        return;
+      }
+      if (actionId.startsWith("metadata:rate:")) {
+        if (!selectedFingerprints.length) return;
+        if (actionId === "metadata:rate:clear") {
+          handleSetRating(null, selectedFingerprints);
+        } else {
+          const value = parseInt(actionId.replace("metadata:rate:", ""), 10);
+          if (!Number.isNaN(value)) {
+            handleSetRating(value, selectedFingerprints);
+          }
+        }
+        return;
+      }
+      if (actionId.startsWith("metadata:tag:")) {
+        const tagName = actionId.replace("metadata:tag:", "");
+        if (tagName) {
+          handleApplyExistingTag(tagName);
+        }
+        return;
+      }
+      runAction(actionId, selection.selected, contextMenu.contextId);
+    },
+    [
+      openMetadataPanel,
+      selectedFingerprints,
+      handleSetRating,
+      handleApplyExistingTag,
+      runAction,
+      selection.selected,
+      contextMenu.contextId,
+    ]
+  );
 
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
@@ -527,15 +744,24 @@ function App() {
     if (!api) return;
 
     const handleFileAdded = (videoFile) => {
+      const normalized = normalizeVideoFromMain(videoFile);
       setVideos((prev) => {
-        if (prev.some((v) => v.id === videoFile.id)) return prev;
-        return [...prev, videoFile].sort((a, b) =>
+        const existingIndex = prev.findIndex((v) => v.id === normalized.id);
+        if (existingIndex !== -1) {
+          const next = prev.slice();
+          next[existingIndex] = normalized;
+          return next;
+        }
+        return [...prev, normalized].sort((a, b) =>
           a.basename.localeCompare(b.basename, undefined, {
             numeric: true,
             sensitivity: "base",
           })
         );
       });
+      if (normalized.tags.length) {
+        refreshTagList();
+      }
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
@@ -564,11 +790,16 @@ function App() {
         ns.delete(filePath);
         return ns;
       });
+      refreshTagList();
     };
     const handleFileChanged = (videoFile) => {
+      const normalized = normalizeVideoFromMain(videoFile);
       setVideos((prev) =>
-        prev.map((v) => (v.id === videoFile.id ? videoFile : v))
+        prev.map((v) => (v.id === normalized.id ? normalized : v))
       );
+      if (normalized.tags.length) {
+        refreshTagList();
+      }
     };
 
     api.onFileAdded?.(handleFileAdded);
@@ -578,7 +809,7 @@ function App() {
     return () => {
       api?.stopFolderWatch?.().catch(() => {});
     };
-  }, [selection.setSelected]);
+  }, [selection.setSelected, refreshTagList]);
 
   // relayout when list changes
   useEffect(() => {
@@ -654,6 +885,9 @@ function App() {
         });
         const files = await api.readDirectory(folderPath, recursiveMode);
         console.log("📁 readDirectory returned:", files.length, "files");
+        const normalizedFiles = files.map((file) =>
+          normalizeVideoFromMain(file)
+        );
 
         setLoadingStage(
           `Found ${files.length} videos — initializing masonry...`
@@ -661,13 +895,15 @@ function App() {
         setLoadingProgress(70);
         await new Promise((r) => setTimeout(r, 200));
 
-        setVideos(files);
+        setVideos(normalizedFiles);
         await new Promise((r) => setTimeout(r, 300));
 
         setLoadingStage("Complete!");
         setLoadingProgress(100);
         await new Promise((r) => setTimeout(r, 250));
         setIsLoadingFolder(false);
+
+        refreshTagList();
 
         const watchResult = await api.startFolderWatch?.(folderPath);
         if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
@@ -679,7 +915,7 @@ function App() {
         setIsLoadingFolder(false);
       }
     },
-    [recursiveMode, addRecentFolder, selection]
+    [recursiveMode, addRecentFolder, selection, refreshTagList]
   );
 
   const handleFolderSelect = useCallback(async () => {
@@ -705,6 +941,9 @@ function App() {
         basename: f.name,
         dirname: "",
         createdMs: f.lastModified || 0,
+        fingerprint: null,
+        tags: [],
+        rating: null,
       }));
       setVideos(list);
       selection.clear();
@@ -955,65 +1194,80 @@ function App() {
               </div>
             </>
           ) : (
-            <div
-              ref={gridRef}
-              className={`video-grid masonry-vertical ${
-                !showFilenames ? "hide-filenames" : ""
-              } ${zoomClassForLevel(zoomLevel)}`}
-            >
-              {videoCollection.videosToRender.map((video) => (
-                <VideoCard
-                  key={video.id}
-                  video={video}
-                  ioRoot={gridRef}
-                  observeIntersection={ioRegistry.observe}
-                  unobserveIntersection={ioRegistry.unobserve}
-                  selected={selection.selected.has(video.id)}
-                  onSelect={(...args) => handleVideoSelect(...args)}
-                  onContextMenu={handleCardContextMenu}
-                  showFilenames={showFilenames}
-                  // Video Collection Management
-                  canLoadMoreVideos={() =>
-                    videoCollection.canLoadVideo(video.id)
-                  }
-                  isLoading={loadingVideos.has(video.id)}
-                  isLoaded={loadedVideos.has(video.id)}
-                  isVisible={visibleVideos.has(video.id)}
-                  isPlaying={videoCollection.isVideoPlaying(video.id)}
-                  // Lifecycle callbacks
-                  onStartLoading={handleVideoStartLoading}
-                  onStopLoading={handleVideoStopLoading}
-                  onVideoLoad={handleVideoLoaded}
-                  onVisibilityChange={handleVideoVisibilityChange}
-                  // Media events → update orchestrator + actual playing count
-                  onVideoPlay={(id) => {
-                    videoCollection.reportStarted(id);
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.add(id);
-                      return next;
-                    });
-                  }}
-                  onVideoPause={(id) => {
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.delete(id);
-                      return next;
-                    });
-                  }}
-                  onPlayError={(id) => {
-                    videoCollection.reportPlayError(id);
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.delete(id);
-                      return next;
-                    });
-                  }}
-                  // Hover for priority
-                  onHover={(id) => videoCollection.markHover(id)}
-                  scheduleInit={scheduleInit}
-                />
-              ))}
+            <div className="content-region">
+              <div
+                ref={gridRef}
+                className={`video-grid masonry-vertical ${
+                  !showFilenames ? "hide-filenames" : ""
+                } ${zoomClassForLevel(zoomLevel)}`}
+              >
+                {videoCollection.videosToRender.map((video) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    ioRoot={gridRef}
+                    observeIntersection={ioRegistry.observe}
+                    unobserveIntersection={ioRegistry.unobserve}
+                    selected={selection.selected.has(video.id)}
+                    onSelect={(...args) => handleVideoSelect(...args)}
+                    onContextMenu={handleCardContextMenu}
+                    showFilenames={showFilenames}
+                    // Video Collection Management
+                    canLoadMoreVideos={() =>
+                      videoCollection.canLoadVideo(video.id)
+                    }
+                    isLoading={loadingVideos.has(video.id)}
+                    isLoaded={loadedVideos.has(video.id)}
+                    isVisible={visibleVideos.has(video.id)}
+                    isPlaying={videoCollection.isVideoPlaying(video.id)}
+                    // Lifecycle callbacks
+                    onStartLoading={handleVideoStartLoading}
+                    onStopLoading={handleVideoStopLoading}
+                    onVideoLoad={handleVideoLoaded}
+                    onVisibilityChange={handleVideoVisibilityChange}
+                    // Media events → update orchestrator + actual playing count
+                    onVideoPlay={(id) => {
+                      videoCollection.reportStarted(id);
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.add(id);
+                        return next;
+                      });
+                    }}
+                    onVideoPause={(id) => {
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                      });
+                    }}
+                    onPlayError={(id) => {
+                      videoCollection.reportPlayError(id);
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                      });
+                    }}
+                    // Hover for priority
+                    onHover={(id) => videoCollection.markHover(id)}
+                    scheduleInit={scheduleInit}
+                  />
+                ))}
+              </div>
+              <MetadataPanel
+                isOpen={isMetadataPanelOpen && selection.size > 0}
+                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                selectionCount={selection.size}
+                selectedVideos={selectedVideos}
+                availableTags={availableTags}
+                onAddTag={handleAddTags}
+                onRemoveTag={handleRemoveTag}
+                onApplyTagToSelection={handleApplyExistingTag}
+                onSetRating={handleSetRating}
+                onClearRating={handleClearRating}
+                focusToken={metadataFocusToken}
+              />
             </div>
           )}
 
@@ -1036,9 +1290,7 @@ function App() {
               selectionCount={selection.size}
               electronAPI={window.electronAPI}
               onClose={hideContextMenu}
-              onAction={(actionId) =>
-                runAction(actionId, selection.selected, contextMenu.contextId)
-              }
+              onAction={handleContextAction}
             />
           )}
         </>
