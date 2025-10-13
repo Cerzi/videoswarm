@@ -24,6 +24,7 @@ import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
+import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
@@ -46,6 +47,7 @@ import useHotkeys from "./hooks/selection/useHotkeys";
 import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX, ZOOM_TILE_WIDTHS } from "./zoom/config";
 
 import LoadingProgress from "./components/LoadingProgress";
+import feature from "./config/featureFlags";
 import "./App.css";
 
 // Helper
@@ -522,6 +524,16 @@ function App() {
   // Prefer visual order if we have it
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
+  const { runWithStableAnchor } = useStableViewAnchoring({
+    enabled: feature.stableViewAnchoring,
+    scrollRef: scrollContainerRef,
+    gridRef,
+    selection,
+    orderedIds: orderForRange,
+    anchorMode: "last",
+    settleFrames: 1,
+  });
+
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
     [orderedVideos]
@@ -544,10 +556,12 @@ function App() {
   }, [selectedVideos]);
 
   useEffect(() => {
-    if (selection.size > 0) {
-      setMetadataPanelOpen(true);
+    if (selection.size > 0 && !isMetadataPanelOpen) {
+      runWithStableAnchor("sidebar:auto-open", () => {
+        setMetadataPanelOpen(true);
+      });
     }
-  }, [selection.size]);
+  }, [isMetadataPanelOpen, runWithStableAnchor, selection.size]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -705,9 +719,17 @@ function App() {
   );
 
   const openMetadataPanel = useCallback(() => {
-    setMetadataPanelOpen(true);
-    setMetadataFocusToken((token) => token + 1);
-  }, []);
+    runWithStableAnchor("sidebar:open", () => {
+      setMetadataPanelOpen(true);
+      setMetadataFocusToken((token) => token + 1);
+    });
+  }, [runWithStableAnchor, setMetadataFocusToken]);
+
+  const toggleMetadataPanel = useCallback(() => {
+    runWithStableAnchor("sidebarToggle", () => {
+      setMetadataPanelOpen((open) => !open);
+    });
+  }, [runWithStableAnchor, setMetadataPanelOpen]);
 
   const {
     contextMenu,
@@ -819,19 +841,26 @@ function App() {
     (z) => {
       const clamped = clampZoomIndex(z);
       if (clamped === zoomLevel) return; // no-op if unchanged
-      setZoomLevel(clamped);
-      setZoomClass(clamped);
-      window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: clamped,
-        recursiveMode,
-        maxConcurrentPlaying,
-        showFilenames,
-      });
-      // Nudge masonry after zoom change
-      scheduleLayout?.();
+      runWithStableAnchor(
+        "zoomChange",
+        () => {
+          setZoomLevel(clamped);
+          setZoomClass(clamped);
+          window.electronAPI?.saveSettingsPartial?.({
+            zoomLevel: clamped,
+            recursiveMode,
+            maxConcurrentPlaying,
+            showFilenames,
+          });
+          // Nudge masonry after zoom change
+          scheduleLayout?.();
+        },
+        { settleFrames: 2 }
+      );
     },
     [
       zoomLevel,
+      runWithStableAnchor,
       setZoomClass,
       recursiveMode,
       maxConcurrentPlaying,
@@ -1615,7 +1644,7 @@ function App() {
               </div>
               <MetadataPanel
                 isOpen={isMetadataPanelOpen && selection.size > 0}
-                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                onToggle={toggleMetadataPanel}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}
