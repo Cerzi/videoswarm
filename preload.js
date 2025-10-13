@@ -111,6 +111,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("open-in-external-player", filePath);
   },
 
+  startFileDragSync: (paths) => {
+    const normalize = (value) => {
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string") return [value];
+      if (value && Array.isArray(value.paths)) return value.paths;
+      return [];
+    };
+    const payloadPaths = normalize(paths).filter(
+      (entry) => typeof entry === "string" && entry.trim().length > 0
+    );
+    if (!payloadPaths.length) {
+      return { ok: false, error: "NO_FILE" };
+    }
+    return ipcRenderer.sendSync("drag:start", { paths: payloadPaths });
+  },
+
   // Clipboard operations
   copyToClipboard: async (text) => {
     return await ipcRenderer.invoke("copy-to-clipboard", text);

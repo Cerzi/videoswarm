@@ -9,6 +9,7 @@ const VideoCard = memo(function VideoCard({
   selected,
   onSelect,
   onContextMenu,
+  onNativeDragStart,
 
   // orchestration + metrics
   isPlaying,
@@ -56,6 +57,7 @@ const VideoCard = memo(function VideoCard({
 
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
+  const canStartNativeDrag = Boolean(video?.isElectronFile && video?.fullPath);
 
   const ratingValue =
     typeof video?.rating === "number" && Number.isFinite(video.rating)
@@ -466,6 +468,23 @@ const VideoCard = memo(function VideoCard({
 
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
+  const handleDragStart = useCallback(
+    (reactEvent) => {
+      if (!onNativeDragStart || !canStartNativeDrag) return;
+      reactEvent.preventDefault();
+      reactEvent.stopPropagation();
+      const nativeEvent = reactEvent.nativeEvent;
+      if (nativeEvent?.dataTransfer) {
+        try {
+          nativeEvent.dataTransfer.effectAllowed = "copy";
+          nativeEvent.dataTransfer.dropEffect = "copy";
+        } catch (err) {}
+      }
+      onNativeDragStart(nativeEvent, video);
+    },
+    [onNativeDragStart, video, canStartNativeDrag]
+  );
+
   const renderPlaceholder = () => (
     <div
       className="video-placeholder"
@@ -496,6 +515,8 @@ const VideoCard = memo(function VideoCard({
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onContextMenu={handleContextMenu}
+      onDragStart={handleDragStart}
+      draggable={canStartNativeDrag}
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}

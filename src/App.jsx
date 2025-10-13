@@ -520,6 +520,33 @@ function App() {
     return Array.from(set);
   }, [selectedVideos]);
 
+  const handleNativeDragStart = useCallback(
+    (nativeEvent, video) => {
+      if (!video?.isElectronFile || !video?.fullPath) return;
+      const electronAPI = window?.electronAPI;
+      if (!electronAPI?.startFileDragSync) return;
+
+      const selectedIds = selection?.selected;
+      const isInSelection = selectedIds instanceof Set && selectedIds.has(video.id);
+      const pool = isInSelection ? selectedVideos : [video];
+      const localFiles = pool
+        .filter((entry) => entry?.isElectronFile && entry?.fullPath)
+        .map((entry) => entry.fullPath);
+
+      if (!localFiles.length) return;
+
+      if (nativeEvent?.dataTransfer) {
+        try {
+          nativeEvent.dataTransfer.effectAllowed = "copy";
+          nativeEvent.dataTransfer.dropEffect = "copy";
+        } catch (err) {}
+      }
+
+      electronAPI.startFileDragSync(localFiles);
+    },
+    [selection?.selected, selectedVideos]
+  );
+
   useEffect(() => {
     if (selection.size > 0) {
       setMetadataPanelOpen(true);
@@ -1545,6 +1572,7 @@ function App() {
                     selected={selection.selected.has(video.id)}
                     onSelect={(...args) => handleVideoSelect(...args)}
                     onContextMenu={handleCardContextMenu}
+                    onNativeDragStart={handleNativeDragStart}
                     showFilenames={showFilenames}
                     // Video Collection Management
                     canLoadMoreVideos={() =>
