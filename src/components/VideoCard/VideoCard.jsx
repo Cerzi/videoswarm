@@ -16,6 +16,7 @@ const VideoCard = memo(function VideoCard({
   isLoading,
   isVisible,
   showFilenames = true,
+  aspectRatioHint = null,
 
   // limits & callbacks (owned by parent/orchestrator)
   canLoadMoreVideos,      // () => boolean
@@ -64,6 +65,9 @@ const VideoCard = memo(function VideoCard({
   const hasTags = Array.isArray(video?.tags) && video.tags.length > 0;
   const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
+
+  const effectiveAspectRatio =
+    Number.isFinite(aspectRatioHint) && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
 
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
@@ -506,6 +510,13 @@ const VideoCard = memo(function VideoCard({
     );
   };
 
+  const videoAreaHeight = showFilenames ? "calc(100% - 40px)" : "100%";
+  const videoContainerStyle = {
+    width: "100%",
+    height: videoAreaHeight,
+    aspectRatio: effectiveAspectRatio,
+  };
+
   return (
     <div
       ref={cardRef}
@@ -520,12 +531,12 @@ const VideoCard = memo(function VideoCard({
         userSelect: "none",
         position: "relative",
         width: "100%",
-        height: "100%",
         borderRadius: "8px",
         overflow: "hidden",
         cursor: "pointer",
         border: selected ? "3px solid #007acc" : "1px solid #333",
         background: "#1a1a1a",
+        aspectRatio: effectiveAspectRatio,
       }}
     >
       {ratingValue !== null && (
@@ -557,13 +568,13 @@ const VideoCard = memo(function VideoCard({
       {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
+          style={videoContainerStyle}
           ref={videoContainerRef}
         />
       ) : (
         <div
           className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
+          style={videoContainerStyle}
           ref={videoContainerRef}
         >
           {renderPlaceholder()}

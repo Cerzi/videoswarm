@@ -17,6 +17,7 @@ import DebugSummary from "./components/DebugSummary";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
+import useAspectRatioMemory from "./hooks/useAspectRatioMemory";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
@@ -455,18 +456,31 @@ function App() {
   // Track visual (masonry) order for Shift-range selection
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
-  // ----- Masonry hook -----
-  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
-    useChunkedMasonry({
-      gridRef,
-      zoomClassForLevel, // use shared mapping
-      getTileWidthForLevel: (level) =>
-        ZOOM_TILE_WIDTHS[
-          Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
-        ],
+  // Persisted aspect ratio hints to avoid layout pops
+  const {
+    aspectRatioMapRef,
+    rememberAspectRatio,
+    getAspectRatioHint,
+  } = useAspectRatioMemory();
 
-      onOrderChange: setVisualOrderedIds,
-    });
+  // ----- Masonry hook -----
+  const {
+    updateAspectRatio,
+    onItemsChanged,
+    setZoomClass,
+    scheduleLayout,
+    getAspectRatio,
+  } = useChunkedMasonry({
+    gridRef,
+    zoomClassForLevel, // use shared mapping
+    getTileWidthForLevel: (level) =>
+      ZOOM_TILE_WIDTHS[
+        Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
+      ],
+
+    onOrderChange: setVisualOrderedIds,
+    initialAspectRatios: aspectRatioMapRef.current,
+  });
 
   // MEMOIZED sorting & grouping
   const randomOrderMap = useMemo(
@@ -1071,9 +1085,19 @@ function App() {
   const handleVideoLoaded = useCallback(
     (videoId, aspectRatio) => {
       setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
+      if (Number.isFinite(aspectRatio) && aspectRatio > 0) {
+        updateAspectRatio(videoId, aspectRatio);
+        rememberAspectRatio(videoId, aspectRatio);
+      } else {
+        updateAspectRatio(videoId, aspectRatio);
+      }
     },
-    [updateAspectRatio]
+    [updateAspectRatio, rememberAspectRatio]
+  );
+
+  const getAspectRatioForId = useCallback(
+    (id) => getAspectRatioHint(id) ?? getAspectRatio(id),
+    [getAspectRatioHint, getAspectRatio]
   );
 
   const handleVideoStartLoading = useCallback((videoId) => {
@@ -1586,6 +1610,7 @@ function App() {
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}
+                    aspectRatioHint={getAspectRatioForId(video.id)}
                   />
                 ))}
                 </div>

@@ -10,6 +10,7 @@ export default function useChunkedMasonry({
   chunkSize = 200,
   columnGapFallback = 12,
   onOrderChange,
+  initialAspectRatios = null,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
@@ -21,6 +22,22 @@ export default function useChunkedMasonry({
   const lastUserActionRef = useRef(0);
 
   const resizeTimeoutRef = useRef(null);
+  const seededInitialAspectsRef = useRef(false);
+
+  if (!seededInitialAspectsRef.current && initialAspectRatios) {
+    const source =
+      initialAspectRatios instanceof Map
+        ? initialAspectRatios
+        : new Map(Object.entries(initialAspectRatios));
+    for (const [key, value] of source.entries()) {
+      const ratio = Number(value);
+      if (!key || !Number.isFinite(ratio) || ratio <= 0) continue;
+      if (!aspectRatioCacheRef.current.has(key)) {
+        aspectRatioCacheRef.current.set(key, ratio);
+      }
+    }
+    seededInitialAspectsRef.current = true;
+  }
 
   // ---- helpers ----
   const getColumnCount = useCallback(
@@ -302,10 +319,20 @@ export default function useChunkedMasonry({
     scheduleLayout();
   }, [scheduleLayout]);
 
+  const getAspectRatio = useCallback(
+    (id) => {
+      if (!id) return defaultAspect;
+      const value = aspectRatioCacheRef.current.get(id);
+      return Number.isFinite(value) && value > 0 ? value : defaultAspect;
+    },
+    [defaultAspect]
+  );
+
   return {
     updateAspectRatio,
     onItemsChanged,
     setZoomClass,
     scheduleLayout, // exposed in case you want a manual nudge
+    getAspectRatio,
   };
 }
