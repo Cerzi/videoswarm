@@ -141,7 +141,10 @@ describe("VideoCard", () => {
 
     beforeEach(() => {
       originalElectronApi = window.electronAPI;
-      startDragMock = vi.fn().mockReturnValue({ success: true });
+      startDragMock = vi.fn().mockReturnValue({
+        success: true,
+        browserUrl: "http://127.0.0.1:4000/token/clip.mp4",
+      });
       window.electronAPI = {
         startDrag: startDragMock,
       };
@@ -188,10 +191,73 @@ describe("VideoCard", () => {
       });
       expect(dataTransfer.effectAllowed).toBe("copy");
       expect(dataTransfer.dropEffect).toBe("copy");
-      expect(dataTransfer.setData).not.toHaveBeenCalled();
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/uri-list",
+        "http://127.0.0.1:4000/token/clip.mp4\n"
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/plain",
+        "http://127.0.0.1:4000/token/clip.mp4"
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "DownloadURL",
+        "video/mp4:clip.mp4:http://127.0.0.1:4000/token/clip.mp4"
+      );
+      expect(dataTransfer.setData).toHaveBeenCalledWith(
+        "text/html",
+        '<a href="http://127.0.0.1:4000/token/clip.mp4">clip.mp4</a>'
+      );
       expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
         includeLinkMetadata: false,
+        includeBrowserLink: true,
+        mimeType: "video/mp4",
+        downloadName: "clip.mp4",
       });
+    });
+
+    it("falls back gracefully when the browser URL cannot be created", () => {
+      startDragMock.mockReturnValueOnce({ success: true, browserUrl: null });
+
+      const video = {
+        id: "dragme-fallback",
+        name: "clip.mp4",
+        fullPath: "/tmp/clip.mp4",
+        isElectronFile: true,
+      };
+
+      const { container } = render(
+        <VideoCard
+          {...baseProps}
+          video={video}
+          isVisible
+          isLoaded={false}
+          isLoading={false}
+          scheduleInit={() => {}}
+        />
+      );
+
+      const card = container.querySelector('[data-video-id="dragme-fallback"]');
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        setData: vi.fn(),
+      };
+
+      act(() => {
+        fireEvent.dragStart(card, {
+          dataTransfer,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+
+      expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
+        includeLinkMetadata: false,
+        includeBrowserLink: true,
+        mimeType: "video/mp4",
+        downloadName: "clip.mp4",
+      });
+      expect(dataTransfer.setData).not.toHaveBeenCalled();
     });
 
     it("adds native-friendly flavors when Alt is held", () => {
@@ -278,6 +344,9 @@ describe("VideoCard", () => {
       );
       expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
         includeLinkMetadata: true,
+        includeBrowserLink: false,
+        mimeType: "video/mp4",
+        downloadName: "clip.mp4",
       });
     });
 
@@ -344,6 +413,12 @@ describe("VideoCard", () => {
       expect(calls.get("text/uri-list")).toBe(`${fileUrl}\n`);
       expect(calls.get("x-special/gnome-copied-files")).toBe(`copy\n${fileUrl}\n`);
       expect(calls.get("application/octet-stream")).toBe(video.fullPath);
+      expect(startDragMock).toHaveBeenCalledWith(video.fullPath, {
+        includeLinkMetadata: true,
+        includeBrowserLink: false,
+        mimeType: "video/mp4",
+        downloadName: "clip_final & <v>.mp4",
+      });
     });
 
     it("ignores native drag when the file is not local", () => {

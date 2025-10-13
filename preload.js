@@ -113,20 +113,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Native drag-and-drop support
   startDrag: (filePath, options = {}) => {
-    let iconPath;
-    let includeLinkMetadata;
+    const payload = { filePath };
 
     if (options && typeof options === "object" && !Array.isArray(options)) {
-      ({ iconPath, includeLinkMetadata } = options);
-    } else {
-      iconPath = options;
+      const {
+        iconPath,
+        includeLinkMetadata,
+        includeBrowserLink,
+        mimeType,
+        downloadName,
+      } = options;
+
+      if (iconPath !== undefined) payload.iconPath = iconPath;
+      if (includeLinkMetadata !== undefined) payload.includeLinkMetadata = includeLinkMetadata;
+      if (includeBrowserLink !== undefined) payload.includeBrowserLink = includeBrowserLink;
+      if (mimeType !== undefined) payload.mimeType = mimeType;
+      if (downloadName !== undefined) payload.downloadName = downloadName;
+    } else if (options) {
+      payload.iconPath = options;
     }
 
-    return ipcRenderer.sendSync("start-file-drag", {
-      filePath,
-      iconPath,
-      includeLinkMetadata,
-    });
+    return ipcRenderer.sendSync("start-file-drag", payload);
   },
 
   // Clipboard operations

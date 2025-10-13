@@ -15,6 +15,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const fs = require("fs").promises;
 const { statSync } = require("fs");
+const { createShareURL } = require("./main/fileShareServer");
 require('./main/ipc-trash')(ipcMain);
 
 console.log("=== MAIN.JS LOADING ===");
@@ -691,7 +692,14 @@ ipcMain.handle("open-in-external-player", async (_event, filePath) => {
 // Enable dragging files from the renderer into other desktop apps
 ipcMain.on("start-file-drag", (event, payload) => {
   try {
-    const { filePath, iconPath, includeLinkMetadata } = payload || {};
+    const {
+      filePath,
+      iconPath,
+      includeLinkMetadata,
+      includeBrowserLink,
+      mimeType,
+      downloadName,
+    } = payload || {};
     if (!filePath) {
       event.returnValue = { success: false, error: "Missing file path" };
       return;
@@ -730,9 +738,22 @@ ipcMain.on("start-file-drag", (event, payload) => {
       dragPayload.linkTitle = fileName;
     }
 
+    let browserUrl = null;
+    if (includeBrowserLink) {
+      try {
+        browserUrl = createShareURL({
+          filePath,
+          mimeType,
+          downloadName,
+        });
+      } catch (error) {
+        console.warn("Failed to create browser share URL:", error.message);
+      }
+    }
+
     event.sender.startDrag(dragPayload);
 
-    event.returnValue = { success: true };
+    event.returnValue = { success: true, browserUrl };
   } catch (error) {
     console.error("Failed to start native drag:", error);
     event.returnValue = { success: false, error: error.message };

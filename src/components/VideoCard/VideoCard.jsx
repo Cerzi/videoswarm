@@ -536,10 +536,21 @@ const VideoCard = memo(function VideoCard({
         event.getModifierState?.("Alt")
       );
 
+      const fallbackName = filePath.split(/[\\/]/).pop() || "video";
+      const displayName = video?.name || fallbackName;
+      const mimeType = guessMimeType(displayName);
+      const safeDownloadName = sanitizeDownloadName(displayName);
+      const mozLabel = sanitizeMozLabel(displayName);
+      const htmlLabel = escapeHtmlForDrag(displayName);
+      const wantsBrowserLink = !wantsNativeFlavors;
+
       let dragResponse;
       try {
         dragResponse = electronAPI.startDrag(filePath, {
           includeLinkMetadata: wantsNativeFlavors,
+          includeBrowserLink: wantsBrowserLink,
+          mimeType,
+          downloadName: safeDownloadName,
         });
       } catch (error) {
         console.warn("Failed to initiate native drag:", error);
@@ -550,16 +561,9 @@ const VideoCard = memo(function VideoCard({
         return;
       }
 
-      const fallbackName = filePath.split(/[\\/]/).pop() || "video";
-      const displayName = video?.name || fallbackName;
-
       if (wantsNativeFlavors && dataTransfer && typeof dataTransfer.setData === "function") {
         try {
           const fileUrl = toFileURL(filePath);
-          const mimeType = guessMimeType(displayName);
-          const safeDownloadName = sanitizeDownloadName(displayName);
-          const mozLabel = sanitizeMozLabel(displayName);
-          const htmlLabel = escapeHtmlForDrag(displayName);
           const urlWithNewline = `${fileUrl}\n`;
 
           try { dataTransfer.setData("text/uri-list", urlWithNewline); } catch {}
@@ -586,6 +590,27 @@ const VideoCard = memo(function VideoCard({
               `copy\n${fileUrl}\n`
             );
           } catch {}
+        } catch {}
+      } else if (
+        wantsBrowserLink &&
+        dragResponse.browserUrl &&
+        dataTransfer &&
+        typeof dataTransfer.setData === "function"
+      ) {
+        const httpUrl = dragResponse.browserUrl;
+        try { dataTransfer.setData("text/uri-list", `${httpUrl}\n`); } catch {}
+        try { dataTransfer.setData("text/plain", httpUrl); } catch {}
+        try {
+          dataTransfer.setData(
+            "DownloadURL",
+            `${mimeType}:${safeDownloadName}:${httpUrl}`
+          );
+        } catch {}
+        try {
+          dataTransfer.setData(
+            "text/html",
+            `<a href="${httpUrl}">${htmlLabel}</a>`
+          );
         } catch {}
       }
 
