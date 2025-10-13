@@ -16,7 +16,6 @@ const VideoCard = memo(function VideoCard({
   isLoading,
   isVisible,
   showFilenames = true,
-  aspectRatioHint = null,
 
   // limits & callbacks (owned by parent/orchestrator)
   canLoadMoreVideos,      // () => boolean
@@ -66,8 +65,20 @@ const VideoCard = memo(function VideoCard({
   const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
 
-  const effectiveAspectRatio =
-    Number.isFinite(aspectRatioHint) && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
+  const aspectRatioHint = (() => {
+    const direct = Number(video?.aspectRatio);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const dimRatio = Number(video?.dimensions?.aspectRatio);
+    if (Number.isFinite(dimRatio) && dimRatio > 0) return dimRatio;
+    const width = Number(video?.dimensions?.width);
+    const height = Number(video?.dimensions?.height);
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+      return width / height;
+    }
+    return null;
+  })();
+
+  const effectiveAspectRatio = aspectRatioHint && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
 
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
@@ -470,52 +481,28 @@ const VideoCard = memo(function VideoCard({
 
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
-  const renderPlaceholder = () => {
-    if (errorText) {
-      return (
-        <div className="video-placeholder video-placeholder--error" role="alert">
-          <span className="video-placeholder__label">{errorText}</span>
-        </div>
-      );
-    }
-
-    if (loading) {
-      return (
-        <div
-          className="video-placeholder video-placeholder--loading"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <div className="video-placeholder__spinner" aria-hidden="true" />
-          <span className="video-placeholder__label">Loading video</span>
-        </div>
-      );
-    }
-
-    const canRequestMore = canLoadMoreVideos?.() ?? true;
-
-    return (
-      <div
-        className={`video-placeholder video-placeholder--idle${
-          canRequestMore ? "" : " video-placeholder--waiting"
-        }`}
-        aria-live="polite"
-      >
-        <div className="video-placeholder__skeleton" aria-hidden="true" />
-        <span className="video-placeholder__label">
-          {canRequestMore ? "Scroll to load" : "Waiting for capacity"}
-        </span>
-      </div>
-    );
-  };
-
-  const videoAreaHeight = showFilenames ? "calc(100% - 40px)" : "100%";
-  const videoContainerStyle = {
-    width: "100%",
-    height: videoAreaHeight,
-    aspectRatio: effectiveAspectRatio,
-  };
+  const renderPlaceholder = () => (
+    <div
+      className="video-placeholder"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100%",
+        background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
+        color: "#888",
+        fontSize: "0.9rem",
+      }}
+    >
+      {errorText
+        ? errorText
+        : loading
+        ? "📼 Loading…"
+        : canLoadMoreVideos?.() ?? true
+        ? "📼 Scroll to load"
+        : "⏳ Waiting…"}
+    </div>
+  );
 
   return (
     <div
@@ -527,6 +514,7 @@ const VideoCard = memo(function VideoCard({
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
+      data-aspect-ratio={effectiveAspectRatio}
       style={{
         userSelect: "none",
         position: "relative",
@@ -568,13 +556,13 @@ const VideoCard = memo(function VideoCard({
       {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
-          style={videoContainerStyle}
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
           ref={videoContainerRef}
         />
       ) : (
         <div
           className="video-container"
-          style={videoContainerStyle}
+          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
           ref={videoContainerRef}
         >
           {renderPlaceholder()}

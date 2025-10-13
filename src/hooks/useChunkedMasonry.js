@@ -10,7 +10,6 @@ export default function useChunkedMasonry({
   chunkSize = 200,
   columnGapFallback = 12,
   onOrderChange,
-  initialAspectRatios = null,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
@@ -22,22 +21,6 @@ export default function useChunkedMasonry({
   const lastUserActionRef = useRef(0);
 
   const resizeTimeoutRef = useRef(null);
-  const seededInitialAspectsRef = useRef(false);
-
-  if (!seededInitialAspectsRef.current && initialAspectRatios) {
-    const source =
-      initialAspectRatios instanceof Map
-        ? initialAspectRatios
-        : new Map(Object.entries(initialAspectRatios));
-    for (const [key, value] of source.entries()) {
-      const ratio = Number(value);
-      if (!key || !Number.isFinite(ratio) || ratio <= 0) continue;
-      if (!aspectRatioCacheRef.current.has(key)) {
-        aspectRatioCacheRef.current.set(key, ratio);
-      }
-    }
-    seededInitialAspectsRef.current = true;
-  }
 
   // ---- helpers ----
   const getColumnCount = useCallback(
@@ -143,6 +126,13 @@ export default function useChunkedMasonry({
           const id = el.dataset.videoId || el.dataset.filename || `__idx_${i}`;
           let ar = aspectRatioCacheRef.current.get(id);
           if (!ar) {
+            const datasetRatio = Number(el.dataset?.aspectRatio);
+            if (Number.isFinite(datasetRatio) && datasetRatio > 0) {
+              ar = datasetRatio;
+              aspectRatioCacheRef.current.set(id, ar);
+            }
+          }
+          if (!ar) {
             const v = el.querySelector("video");
             if (v && v.videoWidth && v.videoHeight) {
               ar = v.videoWidth / v.videoHeight;
@@ -241,6 +231,17 @@ export default function useChunkedMasonry({
       const prev = aspectRatioCacheRef.current.get(id);
       if (prev !== ar) {
         aspectRatioCacheRef.current.set(id, ar);
+        const grid = gridRef.current;
+        if (grid) {
+          const selectorId = window.CSS?.escape ? window.CSS.escape(id) : id;
+          const el = selectorId
+            ? grid.querySelector(`[data-video-id="${selectorId}"]`)
+            : null;
+          if (el) {
+            el.dataset.aspectRatio = String(ar);
+            el.style.aspectRatio = String(ar);
+          }
+        }
         // don’t layout immediately; coalesce
         scheduleLayout();
       }
@@ -319,20 +320,10 @@ export default function useChunkedMasonry({
     scheduleLayout();
   }, [scheduleLayout]);
 
-  const getAspectRatio = useCallback(
-    (id) => {
-      if (!id) return defaultAspect;
-      const value = aspectRatioCacheRef.current.get(id);
-      return Number.isFinite(value) && value > 0 ? value : defaultAspect;
-    },
-    [defaultAspect]
-  );
-
   return {
     updateAspectRatio,
     onItemsChanged,
     setZoomClass,
     scheduleLayout, // exposed in case you want a manual nudge
-    getAspectRatio,
   };
 }

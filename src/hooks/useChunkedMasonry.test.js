@@ -240,49 +240,4 @@ describe('useChunkedMasonry – core layout & order', () => {
     });
     expect(onOrderChange).toHaveBeenCalledTimes(1);
   });
-
-  test('seeds aspect ratios from initial map and exposes getter', () => {
-    const grid = makeGrid({ width: 630 });
-    const portrait = makeItem('portrait');
-    const landscape = makeItem('landscape');
-    grid.appendChild(portrait);
-    grid.appendChild(landscape);
-
-    const gridRef = { current: grid };
-    const initial = new Map([
-      ['portrait', 0.5],
-      ['landscape', 2],
-    ]);
-
-    const { result } = renderHook(() =>
-      useChunkedMasonry({
-        gridRef,
-        initialAspectRatios: initial,
-        defaultAspect: 1,
-      })
-    );
-
-    act(() => flushRaf(5));
-
-    expect(result.current.getAspectRatio('portrait')).toBeCloseTo(0.5, 3);
-    expect(result.current.getAspectRatio('landscape')).toBeCloseTo(2, 3);
-
-    const portraitHeight = parseFloat(portrait.style.height);
-    const portraitWidth = parseFloat(portrait.style.width);
-    expect(portraitHeight).toBeGreaterThan(0);
-    expect(portraitWidth).toBeGreaterThan(0);
-    expect(portraitHeight).toBeCloseTo(portraitWidth / 0.5, 1);
-  });
-
-  test('getAspectRatio falls back to default aspect when unknown', () => {
-    const grid = makeGrid({ width: 630 });
-    grid.appendChild(makeItem('a'));
-    const gridRef = { current: grid };
-
-    const { result } = renderHook(() =>
-      useChunkedMasonry({ gridRef, defaultAspect: 1.5 })
-    );
-
-    expect(result.current.getAspectRatio('missing')).toBeCloseTo(1.5, 5);
-  });
 });
