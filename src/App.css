@@ -458,15 +458,18 @@ body {
   gap: 0.75rem;
   height: 100%;
   width: 100%;
-  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.05), transparent 65%),
-    linear-gradient(135deg, #16161d, #23232b);
-  color: #d4d4d8;
+  color: var(--video-placeholder-foreground, rgba(244, 244, 250, 0.82));
   text-align: center;
   font-size: 0.9rem;
-  padding: 1rem;
+  padding: 0.75rem;
   box-sizing: border-box;
   border-radius: inherit;
   position: relative;
+  background: rgba(14, 14, 20, 0.35);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  backdrop-filter: saturate(140%) blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .video-placeholder__media {
@@ -474,44 +477,58 @@ body {
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
-  border-radius: 6px;
+  border-radius: inherit;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(130deg, #1a1a22 0%, #25252f 50%, #1a1a22 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  isolation: isolate;
+  background: rgba(0, 0, 0, 0.18);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .video-placeholder__sheen {
   position: absolute;
   inset: 0;
   background: linear-gradient(
-    120deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.05) 40%,
-    rgba(255, 255, 255, 0.2) 50%,
-    rgba(255, 255, 255, 0.05) 60%,
-    rgba(255, 255, 255, 0) 100%
+    110deg,
+    transparent 10%,
+    rgba(255, 255, 255, 0.12) 45%,
+    rgba(255, 255, 255, 0.2) 55%,
+    transparent 90%
+  );
+  background: linear-gradient(
+    110deg,
+    transparent 10%,
+    color-mix(in srgb, currentColor 18%, transparent) 45%,
+    color-mix(in srgb, currentColor 26%, transparent) 55%,
+    transparent 90%
   );
   transform: translateX(-100%);
+  opacity: 0.75;
+  mix-blend-mode: screen;
   animation: placeholder-shimmer 1.8s ease-in-out infinite;
 }
 
 .video-placeholder__spinner {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.15);
-  border-top-color: rgba(255, 255, 255, 0.85);
-  animation: placeholder-spin 1s linear infinite;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-top-color: rgba(255, 255, 255, 0.75);
+  border-top-color: color-mix(in srgb, currentColor 65%, transparent);
+  animation: placeholder-spin 0.9s linear infinite;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .video-placeholder__spinner--paused {
   animation-play-state: paused;
-  border-top-color: rgba(255, 255, 255, 0.35);
-  opacity: 0.65;
+  border-top-color: rgba(255, 255, 255, 0.36);
+  border-top-color: color-mix(in srgb, currentColor 32%, transparent);
+  opacity: 0.75;
 }
 
 .video-placeholder__text {
@@ -520,19 +537,23 @@ body {
   gap: 0.25rem;
   align-items: center;
   justify-content: center;
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  color: rgba(244, 244, 250, 0.65);
+  color: color-mix(in srgb, currentColor 65%, transparent);
 }
 
 .video-placeholder__message {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(244, 244, 250, 0.82);
+  color: color-mix(in srgb, currentColor 80%, transparent);
 }
 
 .video-placeholder__subtext {
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.72rem;
+  color: rgba(244, 244, 250, 0.55);
+  color: color-mix(in srgb, currentColor 48%, transparent);
 }
 
 .error-indicator {
