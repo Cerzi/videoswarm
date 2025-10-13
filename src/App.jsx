@@ -208,6 +208,18 @@ const escapeAttributeValue = (value) => {
   return str.replace(/["\\]/g, "\\$&");
 };
 
+const isElementVerticallyVisible = (container, element, margin = 0) => {
+  if (!container || !element) return false;
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  return (
+    elementRect.bottom >= containerRect.top + margin &&
+    elementRect.top <= containerRect.bottom - margin
+  );
+};
+
+const MAX_SELECTION_VISIBILITY_ATTEMPTS = 8;
+
 function App() {
   const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
@@ -245,6 +257,7 @@ function App() {
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
   const selectionScrollSnapshotRef = useRef(null);
+  const selectionVisibilityScheduleRef = useRef({ handle: null, attempts: 0 });
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
@@ -296,31 +309,116 @@ function App() {
     return snapshot;
   }, [selection.anchorId, selection.selected, selection.size]);
 
-  const restoreSelectionScrollSnapshot = useCallback(() => {
-    const snapshot = selectionScrollSnapshotRef.current;
-    if (!snapshot) return false;
+  const restoreSelectionScrollSnapshot = useCallback(
+    ({ releaseSnapshot = false, margin = 24 } = {}) => {
+      const container = scrollContainerRef.current;
+      const gridEl = gridRef.current;
+      if (!container || !gridEl) {
+        if (releaseSnapshot) selectionScrollSnapshotRef.current = null;
+        return false;
+      }
 
-    const container = scrollContainerRef.current;
-    const gridEl = gridRef.current;
-    if (!container || !gridEl) {
+      const snapshot = selectionScrollSnapshotRef.current;
+      const selectedId = snapshot?.id
+        ? snapshot.id
+        : selection.anchorId ??
+          (selection.selected.size
+            ? selection.selected.values().next().value
+            : null);
+
+      if (selectedId == null) {
+        if (releaseSnapshot || !selection.size) {
+          selectionScrollSnapshotRef.current = null;
+        }
+        return true;
+      }
+
+      const selector = snapshot?.selector
+        ? snapshot.selector
+        : `[data-video-id="${escapeAttributeValue(selectedId)}"]`;
+      const cardEl = gridEl.querySelector(selector);
+      if (!cardEl) {
+        if (releaseSnapshot) selectionScrollSnapshotRef.current = null;
+        return false;
+      }
+
+      if (snapshot) {
+        const containerRect = container.getBoundingClientRect();
+        const cardRect = cardEl.getBoundingClientRect();
+        const desiredOffset = snapshot.offset;
+        const currentOffset = cardRect.top - containerRect.top;
+        const delta = currentOffset - desiredOffset;
+        if (Math.abs(delta) > 1) {
+          container.scrollTop += delta;
+        }
+      }
+
+      let visible = isElementVerticallyVisible(container, cardEl, margin);
+      if (!visible) {
+        cardEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+        visible = isElementVerticallyVisible(container, cardEl, margin);
+      }
+
+      if (visible || releaseSnapshot) {
+        selectionScrollSnapshotRef.current = null;
+      }
+
+      return visible;
+    },
+    [gridRef, scrollContainerRef, selection.anchorId, selection.selected, selection.size]
+  );
+
+  const scheduleEnsureSelectionVisible = useCallback(() => {
+    if (selection.size === 0) {
       selectionScrollSnapshotRef.current = null;
-      return false;
+      return;
     }
 
-    const cardEl = gridEl.querySelector(snapshot.selector);
-    if (!cardEl) {
-      selectionScrollSnapshotRef.current = null;
-      return false;
-    }
+    const state = selectionVisibilityScheduleRef.current;
+    const raf =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (cb) => setTimeout(cb, 16);
+    const cancelRaf =
+      typeof cancelAnimationFrame === "function"
+        ? cancelAnimationFrame
+        : clearTimeout;
 
-    const containerRect = container.getBoundingClientRect();
-    const cardRect = cardEl.getBoundingClientRect();
-    const delta = cardRect.top - containerRect.top - snapshot.offset;
-    if (Math.abs(delta) > 1) {
-      container.scrollTop += delta;
+    if (state.handle !== null) {
+      cancelRaf(state.handle);
+      state.handle = null;
     }
-    selectionScrollSnapshotRef.current = null;
-    return true;
+    state.attempts = 0;
+
+    const run = () => {
+      state.handle = null;
+      const releaseSnapshot =
+        state.attempts >= MAX_SELECTION_VISIBILITY_ATTEMPTS - 1;
+      const visible = restoreSelectionScrollSnapshot({
+        releaseSnapshot,
+        margin: 32,
+      });
+      state.attempts += 1;
+      if (!visible && state.attempts < MAX_SELECTION_VISIBILITY_ATTEMPTS) {
+        state.handle = raf(run);
+      }
+    };
+
+    state.handle = raf(run);
+  }, [restoreSelectionScrollSnapshot, selection.size]);
+
+  useEffect(() => {
+    const cancelRaf =
+      typeof cancelAnimationFrame === "function"
+        ? cancelAnimationFrame
+        : clearTimeout;
+    return () => {
+      const state = selectionVisibilityScheduleRef.current;
+      if (state.handle !== null) {
+        cancelRaf(state.handle);
+        state.handle = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -642,22 +740,48 @@ function App() {
 
   useLayoutEffect(() => {
     if (!selectionScrollSnapshotRef.current) return;
-
-    const adjustScroll = () => {
-      restoreSelectionScrollSnapshot();
-    };
-
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(adjustScroll);
-    } else {
-      setTimeout(adjustScroll, 0);
-    }
+    scheduleEnsureSelectionVisible();
   }, [
     isMetadataPanelOpen,
     selection.selected,
     zoomLevel,
-    restoreSelectionScrollSnapshot,
+    scheduleEnsureSelectionVisible,
   ]);
+
+  useEffect(() => {
+    const gridEl = gridRef.current;
+    if (!gridEl || typeof ResizeObserver === "undefined") return undefined;
+
+    const raf =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (cb) => setTimeout(cb, 16);
+    const cancelRaf =
+      typeof cancelAnimationFrame === "function"
+        ? cancelAnimationFrame
+        : clearTimeout;
+
+    let pendingHandle = null;
+    const observer = new ResizeObserver(() => {
+      if (!selectionScrollSnapshotRef.current) return;
+      if (pendingHandle !== null) {
+        cancelRaf(pendingHandle);
+      }
+      pendingHandle = raf(() => {
+        pendingHandle = null;
+        scheduleEnsureSelectionVisible();
+      });
+    });
+
+    observer.observe(gridEl);
+
+    return () => {
+      observer.disconnect();
+      if (pendingHandle !== null) {
+        cancelRaf(pendingHandle);
+      }
+    };
+  }, [gridRef, scheduleEnsureSelectionVisible]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -942,6 +1066,9 @@ function App() {
       });
       // Nudge masonry after zoom change
       scheduleLayout?.();
+      if (selection.size > 0) {
+        scheduleEnsureSelectionVisible();
+      }
     },
     [
       zoomLevel,
@@ -952,6 +1079,7 @@ function App() {
       maxConcurrentPlaying,
       showFilenames,
       scheduleLayout,
+      scheduleEnsureSelectionVisible,
     ]
   );
 
@@ -1730,7 +1858,17 @@ function App() {
               </div>
               <MetadataPanel
                 isOpen={isMetadataPanelOpen && selection.size > 0}
-                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                onToggle={() => {
+                  if (!isMetadataPanelOpen && selection.size > 0) {
+                    captureSelectionScrollSnapshot();
+                  } else if (isMetadataPanelOpen) {
+                    selectionScrollSnapshotRef.current = null;
+                  }
+                  setMetadataPanelOpen((open) => !open);
+                  if (!isMetadataPanelOpen && selection.size > 0) {
+                    scheduleEnsureSelectionVisible();
+                  }
+                }}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}
