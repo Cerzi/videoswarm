@@ -481,28 +481,50 @@ const VideoCard = memo(function VideoCard({
 
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
-  const renderPlaceholder = () => (
-    <div
-      className="video-placeholder"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
-        color: "#888",
-        fontSize: "0.9rem",
-      }}
-    >
-      {errorText
-        ? errorText
-        : loading
-        ? "📼 Loading…"
-        : canLoadMoreVideos?.() ?? true
-        ? "📼 Scroll to load"
-        : "⏳ Waiting…"}
-    </div>
-  );
+  const renderPlaceholder = () => {
+    if (errorText) {
+      const sanitizedErrorText = (() => {
+        if (typeof errorText !== "string") return errorText;
+        const stripped = errorText.replace(/^\s*⚠️\s*/u, "").trim();
+        return stripped.length > 0 ? stripped : errorText;
+      })();
+      return (
+        <div className="error-indicator" role="alert">
+          <div className="error-indicator__icon" aria-hidden="true" />
+          <div className="error-indicator__message">{sanitizedErrorText}</div>
+        </div>
+      );
+    }
+
+    const canLoad = canLoadMoreVideos?.() ?? true;
+    const statusText = loading
+      ? "Loading video…"
+      : canLoad
+      ? "Scroll to load"
+      : "Waiting for next chunk";
+    const subtext = loading
+      ? "Preparing playback"
+      : canLoad
+      ? "Keep scrolling to fetch more clips"
+      : "All caught up for now";
+
+    const spinnerClassName = `video-placeholder__spinner${
+      loading ? "" : " video-placeholder__spinner--paused"
+    }`;
+
+    return (
+      <div className="video-placeholder" role="status" aria-live="polite">
+        <div className="video-placeholder__media" aria-hidden="true">
+          <div className="video-placeholder__sheen" />
+          <div className={spinnerClassName} />
+        </div>
+        <div className="video-placeholder__text">
+          <span className="video-placeholder__message">{statusText}</span>
+          <span className="video-placeholder__subtext">{subtext}</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
