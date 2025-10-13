@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useRef,
   useMemo,
+  useLayoutEffect,
 } from "react";
 import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
@@ -198,6 +199,15 @@ const formatRatingLabel = (value, mode) => {
   return mode === "min" ? `≥ ${stars}` : `= ${stars}`;
 };
 
+const escapeAttributeValue = (value) => {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(str);
+  }
+  return str.replace(/["\\]/g, "\\$&");
+};
+
 function App() {
   const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
@@ -234,6 +244,7 @@ function App() {
 
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const selectionScrollSnapshotRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
@@ -242,6 +253,75 @@ function App() {
     threshold: [0, 0.15],
     nearPx: 900,
   });
+
+  const captureSelectionScrollSnapshot = useCallback(() => {
+    if (selection.size === 0) {
+      selectionScrollSnapshotRef.current = null;
+      return null;
+    }
+
+    const container = scrollContainerRef.current;
+    const gridEl = gridRef.current;
+    if (!container || !gridEl) {
+      selectionScrollSnapshotRef.current = null;
+      return null;
+    }
+
+    const firstSelectedId =
+      selection.anchorId ??
+      (selection.selected.size
+        ? selection.selected.values().next().value
+        : null);
+
+    if (firstSelectedId == null) {
+      selectionScrollSnapshotRef.current = null;
+      return null;
+    }
+
+    const selector = `[data-video-id="${escapeAttributeValue(firstSelectedId)}"]`;
+    const cardEl = gridEl.querySelector(selector);
+    if (!cardEl) {
+      selectionScrollSnapshotRef.current = null;
+      return null;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const cardRect = cardEl.getBoundingClientRect();
+    const snapshot = {
+      id: firstSelectedId,
+      selector,
+      offset: cardRect.top - containerRect.top,
+    };
+    selectionScrollSnapshotRef.current = snapshot;
+    return snapshot;
+  }, [selection.anchorId, selection.selected, selection.size]);
+
+  const restoreSelectionScrollSnapshot = useCallback(() => {
+    const snapshot = selectionScrollSnapshotRef.current;
+    if (!snapshot) return false;
+
+    const container = scrollContainerRef.current;
+    const gridEl = gridRef.current;
+    if (!container || !gridEl) {
+      selectionScrollSnapshotRef.current = null;
+      return false;
+    }
+
+    const cardEl = gridEl.querySelector(snapshot.selector);
+    if (!cardEl) {
+      selectionScrollSnapshotRef.current = null;
+      return false;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const cardRect = cardEl.getBoundingClientRect();
+    const delta = cardRect.top - containerRect.top - snapshot.offset;
+    if (Math.abs(delta) > 1) {
+      container.scrollTop += delta;
+    }
+    selectionScrollSnapshotRef.current = null;
+    return true;
+  }, []);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -545,9 +625,39 @@ function App() {
 
   useEffect(() => {
     if (selection.size > 0) {
+      if (!isMetadataPanelOpen) {
+        captureSelectionScrollSnapshot();
+      }
       setMetadataPanelOpen(true);
+    } else {
+      selectionScrollSnapshotRef.current = null;
     }
-  }, [selection.size]);
+  }, [
+    selection.size,
+    selection.anchorId,
+    selection.selected,
+    isMetadataPanelOpen,
+    captureSelectionScrollSnapshot,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!selectionScrollSnapshotRef.current) return;
+
+    const adjustScroll = () => {
+      restoreSelectionScrollSnapshot();
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(adjustScroll);
+    } else {
+      setTimeout(adjustScroll, 0);
+    }
+  }, [
+    isMetadataPanelOpen,
+    selection.selected,
+    zoomLevel,
+    restoreSelectionScrollSnapshot,
+  ]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -819,6 +929,9 @@ function App() {
     (z) => {
       const clamped = clampZoomIndex(z);
       if (clamped === zoomLevel) return; // no-op if unchanged
+      if (selection.size > 0) {
+        captureSelectionScrollSnapshot();
+      }
       setZoomLevel(clamped);
       setZoomClass(clamped);
       window.electronAPI?.saveSettingsPartial?.({
@@ -832,6 +945,8 @@ function App() {
     },
     [
       zoomLevel,
+      selection.size,
+      captureSelectionScrollSnapshot,
       setZoomClass,
       recursiveMode,
       maxConcurrentPlaying,
