@@ -17,7 +17,6 @@ import DebugSummary from "./components/DebugSummary";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import useChunkedMasonry from "./hooks/useChunkedMasonry";
-import useAspectRatioMemory from "./hooks/useAspectRatioMemory";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
@@ -83,11 +82,34 @@ const normalizeVideoFromMain = (video) => {
       )
     : [];
 
+  const rawDimensions = video?.dimensions;
+  const width = Number(rawDimensions?.width);
+  const height = Number(rawDimensions?.height);
+  const sanitizedDimensions =
+    Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+      ? {
+          width: Math.round(width),
+          height: Math.round(height),
+          aspectRatio:
+            Number.isFinite(rawDimensions?.aspectRatio) && rawDimensions.aspectRatio > 0
+              ? rawDimensions.aspectRatio
+              : width / height,
+        }
+      : null;
+
+  const aspectRatio = (() => {
+    const candidate = Number(video?.aspectRatio);
+    if (Number.isFinite(candidate) && candidate > 0) return candidate;
+    return sanitizedDimensions ? sanitizedDimensions.aspectRatio : null;
+  })();
+
   return {
     ...video,
     fingerprint,
     rating,
     tags,
+    dimensions: sanitizedDimensions,
+    aspectRatio,
   };
 };
 
@@ -456,31 +478,18 @@ function App() {
   // Track visual (masonry) order for Shift-range selection
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
-  // Persisted aspect ratio hints to avoid layout pops
-  const {
-    aspectRatioMapRef,
-    rememberAspectRatio,
-    getAspectRatioHint,
-  } = useAspectRatioMemory();
-
   // ----- Masonry hook -----
-  const {
-    updateAspectRatio,
-    onItemsChanged,
-    setZoomClass,
-    scheduleLayout,
-    getAspectRatio,
-  } = useChunkedMasonry({
-    gridRef,
-    zoomClassForLevel, // use shared mapping
-    getTileWidthForLevel: (level) =>
-      ZOOM_TILE_WIDTHS[
-        Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
-      ],
+  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
+    useChunkedMasonry({
+      gridRef,
+      zoomClassForLevel, // use shared mapping
+      getTileWidthForLevel: (level) =>
+        ZOOM_TILE_WIDTHS[
+          Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
+        ],
 
-    onOrderChange: setVisualOrderedIds,
-    initialAspectRatios: aspectRatioMapRef.current,
-  });
+      onOrderChange: setVisualOrderedIds,
+    });
 
   // MEMOIZED sorting & grouping
   const randomOrderMap = useMemo(
@@ -1085,19 +1094,9 @@ function App() {
   const handleVideoLoaded = useCallback(
     (videoId, aspectRatio) => {
       setLoadedVideos((prev) => new Set([...prev, videoId]));
-      if (Number.isFinite(aspectRatio) && aspectRatio > 0) {
-        updateAspectRatio(videoId, aspectRatio);
-        rememberAspectRatio(videoId, aspectRatio);
-      } else {
-        updateAspectRatio(videoId, aspectRatio);
-      }
+      updateAspectRatio(videoId, aspectRatio);
     },
-    [updateAspectRatio, rememberAspectRatio]
-  );
-
-  const getAspectRatioForId = useCallback(
-    (id) => getAspectRatioHint(id) ?? getAspectRatio(id),
-    [getAspectRatioHint, getAspectRatio]
+    [updateAspectRatio]
   );
 
   const handleVideoStartLoading = useCallback((videoId) => {
@@ -1610,7 +1609,6 @@ function App() {
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}
-                    aspectRatioHint={getAspectRatioForId(video.id)}
                   />
                 ))}
                 </div>
