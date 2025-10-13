@@ -75,7 +75,6 @@
   "build": {
     "appId": "com.cerzi.videoswarm",
     "productName": "VideoSwarm",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "afterPack": "./scripts/linux-fix.js",
     "directories": {
       "output": "dist",
@@ -100,8 +99,7 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "ia32"
+            "x64"
           ]
         },
         {
@@ -111,48 +109,25 @@
           ]
         }
       ],
+      "artifactName": "VideoSwarm-${version}-win-${arch}.${ext}",
       "icon": "build/icon.ico",
       "publisherName": "AI Tools",
       "verifyUpdateCodeSignature": false
     },
+    "portable": {
+      "artifactName": "VideoSwarm-${version}-win-${arch}-Portable.${ext}"
+    },
     "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon.icns",
-      "category": "public.app-category.video",
-      "darkModeSupport": true
+      "target": []
     },
     "linux": {
       "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
+        "AppImage",
+        "deb"
       ],
+      "artifactName": "VideoSwarm-${version}-linux.${ext}",
       "icon": "build/icon.png",
-      "category": "Video",
+      "category": "Utility",
       "executableName": "video-swarm",
       "desktop": {
         "Name": "Video Swarm",

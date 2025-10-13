@@ -24,8 +24,6 @@ jobs:
             artifact-name: linux
           - os: windows-latest
             artifact-name: windows
-          - os: macos-latest
-            artifact-name: macos
 
     steps:
       - name: Checkout
@@ -45,7 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            icnsutils graphicsmagick xz-utils rpm
+            icnsutils graphicsmagick xz-utils libarchive-tools
 
       - name: Build application
         env:
@@ -55,32 +53,15 @@ jobs:
       - name: Prepare artifacts
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release-assets
-          
-          # Only copy the final distributable packages, not unpacked files
+
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux: AppImage and deb files
-            find dist -name "*.AppImage" -exec cp {} release-assets/ \; 2>/dev/null || true
-            find dist -name "*.deb" -exec cp {} release-assets/ \; 2>/dev/null || true
-            find dist -name "*.rpm" -exec cp {} release-assets/ \; 2>/dev/null || true
-            find dist -name "*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || true
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS: dmg and zip bundles
-            find dist -name "*.dmg" -exec cp {} release-assets/ \; 2>/dev/null || true
-            find dist -name "*.zip" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.AppImage" -exec cp {} release-assets/ \;
+            find dist -maxdepth 1 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm_*_amd64.deb" \) -exec cp {} release-assets/ \;
           else
-            # Windows: exe installers only
-            find dist -name "*.exe" -not -path "*/unpacked/*" -exec cp {} release-assets/ \; 2>/dev/null || true
-          fi
-          
-          # Generate checksums for the files we actually want
-          cd release-assets
-          if [ -n "$(ls -A . 2>/dev/null)" ]; then
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
-            elif command -v shasum >/dev/null 2>&1; then
-              shasum -a 256 * > SHA256SUMS-${{ matrix.artifact-name }}.txt 2>/dev/null || true
-            fi
+            find dist -maxdepth 1 -type f -name "VideoSwarm-*-win-x64.exe" -exec cp {} release-assets/ \;
+            find dist -maxdepth 1 -type f -name "VideoSwarm-*-win-x64-Portable.exe" -exec cp {} release-assets/ \;
           fi
 
       - name: List artifacts
@@ -94,7 +75,7 @@ jobs:
         with:
           name: videoswarm-${{ matrix.artifact-name }}
           path: release-assets/
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     name: Create Release
@@ -113,102 +94,51 @@ jobs:
 
       - name: Prepare release assets
         run: |
+          set -euo pipefail
+
           mkdir -p release-files
-          # Flatten all artifacts into release-files directory
-          find all-artifacts -type f -exec cp {} release-files/ \;
-          
+
+          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-linux.AppImage" -exec cp {} release-files/ \;
+          find all-artifacts -maxdepth 3 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm_*_amd64.deb" \) -exec cp {} release-files/ \;
+          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64.exe" -exec cp {} release-files/ \;
+          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64-Portable.exe" -exec cp {} release-files/ \;
+
           echo "Final release files:"
           ls -la release-files/
+
+          FILE_COUNT=$(find release-files -type f | wc -l)
+          if [ "$FILE_COUNT" -ne 4 ]; then
+            echo "Expected 4 release files, found $FILE_COUNT"
+            exit 1
+          fi
 
       - name: Generate release notes with checksums
         id: release_notes
         run: |
+          set -euo pipefail
+
           TAG_NAME="${{ github.ref_name }}"
-          
-          # Generate checksums for all release files
-          cd release-files
-          
-          # Count different file types for dynamic instructions
-          WINDOWS_COUNT=$(ls *.exe 2>/dev/null | wc -l || echo "0")
-          APPIMAGE_COUNT=$(ls *.AppImage 2>/dev/null | wc -l || echo "0") 
-          DEB_COUNT=$(ls *.deb 2>/dev/null | wc -l || echo "0")
-          RPM_COUNT=$(ls *.rpm 2>/dev/null | wc -l || echo "0")
-          DMG_COUNT=$(ls *.dmg 2>/dev/null | wc -l || echo "0")
-          MACZIP_COUNT=$(ls *.zip 2>/dev/null | wc -l || echo "0")
-          
-          # Build installation instructions dynamically
-          INSTALL_INSTRUCTIONS="## Installation"
-          
-          if [ "$WINDOWS_COUNT" -gt "0" ]; then
-            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-          - **Windows**: 
-            - \`*-win.exe\`: Full installer (recommended)
-            - \`*-Portable.exe\`: Portable version (no installation needed)"
-          fi
-          
-          if [ "$APPIMAGE_COUNT" -gt "0" ] || [ "$DEB_COUNT" -gt "0" ] || [ "$RPM_COUNT" -gt "0" ]; then
-            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-          - **Linux**:"
-            
-            if [ "$DEB_COUNT" -gt "0" ]; then
-              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-            - Ubuntu/Debian: Install the \`.deb\` package"
-            fi
-            
-            if [ "$RPM_COUNT" -gt "0" ]; then
-              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-            - RHEL/Fedora/openSUSE: Install the \`.rpm\` package"
-            fi
-            
-            if [ "$APPIMAGE_COUNT" -gt "0" ]; then
-              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-            - Any distro: Use the \`.AppImage\` file (portable)"
-            fi
-          fi
 
-          if [ "$DMG_COUNT" -gt "0" ] || [ "$MACZIP_COUNT" -gt "0" ]; then
-            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-          - **macOS**:"
+          pushd release-files >/dev/null
+          sha256sum * | sort > ../checksums.txt
+          popd >/dev/null
 
-            if [ "$DMG_COUNT" -gt "0" ]; then
-              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-            - Install using the \`.dmg\` disk image"
-            fi
-
-            if [ "$MACZIP_COUNT" -gt "0" ]; then
-              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
-            - Portable: unzip the \`.zip\` archive"
-            fi
-          fi
-          
-          # Generate checksums
-          echo "## Checksums (SHA256)" > ../checksums.md
-          echo "" >> ../checksums.md
-          echo '```' >> ../checksums.md
-          
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum * >> ../checksums.md 2>/dev/null || true
-          elif command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 * >> ../checksums.md 2>/dev/null || true
-          fi
-          
-          echo '```' >> ../checksums.md
-          cd ..
-          
-          # Create release notes
           cat > release_notes.md << EOF
           # VideoSwarm $TAG_NAME
-          
-          $INSTALL_INSTRUCTIONS
-          
-          ## What's Changed
-          See the commit history for detailed changes in this release.
-          
-          $(cat checksums.md)
-          
-          ## Notes
-          - Check the README for system requirements and known limitations
-          - Report issues on our GitHub repository
+
+          ## Installation
+          - **Windows**
+            - \`VideoSwarm-*-win-x64.exe\`: Installer (recommended)
+            - \`VideoSwarm-*-win-x64-Portable.exe\`: Portable build (no installation)
+          - **Linux**
+            - \`VideoSwarm-*-linux.deb\`: Install with your package manager
+            - \`VideoSwarm-*-linux.AppImage\`: Make executable and run directly
+
+          ## Checksums (SHA256)
+
+          \`\`\`
+          $(cat checksums.txt)
+          \`\`\`
           EOF
 
       - name: Create Release
