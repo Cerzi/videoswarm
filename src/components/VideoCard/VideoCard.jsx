@@ -466,28 +466,45 @@ const VideoCard = memo(function VideoCard({
 
   const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
 
-  const renderPlaceholder = () => (
-    <div
-      className="video-placeholder"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
-        color: "#888",
-        fontSize: "0.9rem",
-      }}
-    >
-      {errorText
-        ? errorText
-        : loading
-        ? "📼 Loading…"
-        : canLoadMoreVideos?.() ?? true
-        ? "📼 Scroll to load"
-        : "⏳ Waiting…"}
-    </div>
-  );
+  const renderPlaceholder = () => {
+    if (errorText) {
+      return (
+        <div className="video-placeholder video-placeholder--error" role="alert">
+          <span className="video-placeholder__label">{errorText}</span>
+        </div>
+      );
+    }
+
+    if (loading) {
+      return (
+        <div
+          className="video-placeholder video-placeholder--loading"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="video-placeholder__spinner" aria-hidden="true" />
+          <span className="video-placeholder__label">Loading video</span>
+        </div>
+      );
+    }
+
+    const canRequestMore = canLoadMoreVideos?.() ?? true;
+
+    return (
+      <div
+        className={`video-placeholder video-placeholder--idle${
+          canRequestMore ? "" : " video-placeholder--waiting"
+        }`}
+        aria-live="polite"
+      >
+        <div className="video-placeholder__skeleton" aria-hidden="true" />
+        <span className="video-placeholder__label">
+          {canRequestMore ? "Scroll to load" : "Waiting for capacity"}
+        </span>
+      </div>
+    );
+  };
 
   return (
     <div
