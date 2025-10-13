@@ -126,6 +126,13 @@ export default function useChunkedMasonry({
           const id = el.dataset.videoId || el.dataset.filename || `__idx_${i}`;
           let ar = aspectRatioCacheRef.current.get(id);
           if (!ar) {
+            const datasetRatio = Number(el.dataset?.aspectRatio);
+            if (Number.isFinite(datasetRatio) && datasetRatio > 0) {
+              ar = datasetRatio;
+              aspectRatioCacheRef.current.set(id, ar);
+            }
+          }
+          if (!ar) {
             const v = el.querySelector("video");
             if (v && v.videoWidth && v.videoHeight) {
               ar = v.videoWidth / v.videoHeight;
@@ -224,6 +231,17 @@ export default function useChunkedMasonry({
       const prev = aspectRatioCacheRef.current.get(id);
       if (prev !== ar) {
         aspectRatioCacheRef.current.set(id, ar);
+        const grid = gridRef.current;
+        if (grid) {
+          const selectorId = window.CSS?.escape ? window.CSS.escape(id) : id;
+          const el = selectorId
+            ? grid.querySelector(`[data-video-id="${selectorId}"]`)
+            : null;
+          if (el) {
+            el.dataset.aspectRatio = String(ar);
+            el.style.aspectRatio = String(ar);
+          }
+        }
         // don’t layout immediately; coalesce
         scheduleLayout();
       }
