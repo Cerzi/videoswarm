@@ -109,6 +109,10 @@ cd videoswarm
 npm install
 ```
 
+The install step automatically runs `electron-builder install-app-deps`, ensuring native modules
+such as `better-sqlite3` are rebuilt against the bundled Electron runtime on Windows, macOS, and
+Linux with no extra setup.
+
 ### Development
 Run Vite + Electron together with hot reload:
 ```bash
