@@ -42,6 +42,7 @@
     "vite:dev": "vite",
     "vite:build": "vite build",
     "vite:preview": "vite preview",
+    "postinstall": "electron-builder install-app-deps",
     "debug": "electron . --no-sandbox --inspect=9229",
     "clean": "rimraf dist dist-react",
     "rebuild": "npm run clean && npm install",

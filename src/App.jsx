@@ -10,7 +10,9 @@ import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
+import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
+import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
@@ -60,6 +62,34 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+const normalizeVideoFromMain = (video) => {
+  if (!video || typeof video !== "object") return video;
+  const fingerprint =
+    typeof video.fingerprint === "string" && video.fingerprint.length > 0
+      ? video.fingerprint
+      : null;
+  const rating =
+    typeof video.rating === "number" && Number.isFinite(video.rating)
+      ? Math.max(0, Math.min(5, Math.round(video.rating)))
+      : null;
+  const tags = Array.isArray(video.tags)
+    ? Array.from(
+        new Set(
+          video.tags
+            .map((tag) => (tag ?? "").toString().trim())
+            .filter(Boolean)
+        )
+      )
+    : [];
+
+  return {
+    ...video,
+    fingerprint,
+    rating,
+    tags,
+  };
+};
+
 const LoadingOverlay = ({ show, stage, progress }) => {
   if (!show) return null;
   return (
@@ -104,10 +134,52 @@ const MemoryAlert = ({ memStatus }) => {
 };
 /** --- end split-outs --- */
 
+const createDefaultFilters = () => ({
+  includeTags: [],
+  excludeTags: [],
+  minRating: null,
+  exactRating: null,
+});
+
+const normalizeTagList = (tags) =>
+  Array.from(
+    new Set(
+      (Array.isArray(tags) ? tags : [])
+        .map((tag) => (tag ?? "").toString().trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+const clampRatingValue = (value, min, max) => {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const rounded = Math.round(num);
+  if (Number.isNaN(rounded)) return null;
+  return Math.min(max, Math.max(min, rounded));
+};
+
+const sanitizeMinRating = (value) => clampRatingValue(value, 1, 5);
+const sanitizeExactRating = (value) => clampRatingValue(value, 0, 5);
+
+const formatStars = (value) => {
+  const safe = clampRatingValue(value, 0, 5);
+  const filled = Math.max(0, safe ?? 0);
+  const empty = Math.max(0, 5 - filled);
+  return `${"★".repeat(filled)}${"☆".repeat(empty)}`;
+};
+
+const formatRatingLabel = (value, mode) => {
+  if (value === null || value === undefined) return null;
+  const stars = formatStars(value);
+  return mode === "min" ? `≥ ${stars}` : `= ${stars}`;
+};
+
 function App() {
   const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
+  const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
@@ -131,16 +203,25 @@ function App() {
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
-  const gridRef = useRef(null);
+  const [availableTags, setAvailableTags] = useState([]);
+  const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
+  const [metadataFocusToken, setMetadataFocusToken] = useState(0);
+  const [filters, setFilters] = useState(() => createDefaultFilters());
+  const [isFiltersOpen, setFiltersOpen] = useState(false);
 
-  const ioRegistry = useIntersectionObserverRegistry(gridRef, {
+  const scrollContainerRef = useRef(null);
+  const gridRef = useRef(null);
+  const filtersButtonRef = useRef(null);
+  const filtersPopoverRef = useRef(null);
+
+  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
     rootMargin: "1600px 0px",
     threshold: [0, 0.15],
     nearPx: 900,
   });
 
   useEffect(() => {
-    const el = gridRef.current;
+    const el = scrollContainerRef.current;
     const update = () => {
       const h = el?.clientHeight || window.innerHeight;
       ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
@@ -157,9 +238,211 @@ function App() {
       ro?.disconnect?.();
       window.removeEventListener("resize", update);
     };
-  }, [gridRef, ioRegistry]);
+  }, [scrollContainerRef, ioRegistry]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
+
+  const filtersActiveCount = useMemo(() => {
+    const includeCount = filters.includeTags?.length ?? 0;
+    const excludeCount = filters.excludeTags?.length ?? 0;
+    const ratingCount =
+      filters.exactRating !== null && filters.exactRating !== undefined
+        ? 1
+        : filters.minRating !== null && filters.minRating !== undefined
+        ? 1
+        : 0;
+    return includeCount + excludeCount + ratingCount;
+  }, [filters]);
+
+  const updateFilters = useCallback((updater) => {
+    setFilters((prev) => {
+      const resolve = (value, fallback) =>
+        value === undefined ? fallback : value;
+      const draft =
+        typeof updater === "function"
+          ? updater(prev) ?? prev
+          : { ...prev, ...updater };
+
+      const includeTagsRaw = resolve(draft?.includeTags, prev.includeTags);
+      const excludeTagsRaw = resolve(draft?.excludeTags, prev.excludeTags);
+      const minRatingRaw = resolve(draft?.minRating, prev.minRating);
+      const exactRatingRaw = resolve(draft?.exactRating, prev.exactRating);
+
+      return {
+        includeTags: normalizeTagList(includeTagsRaw),
+        excludeTags: normalizeTagList(excludeTagsRaw),
+        minRating: sanitizeMinRating(minRatingRaw),
+        exactRating: sanitizeExactRating(exactRatingRaw),
+      };
+    });
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setFilters(createDefaultFilters());
+  }, []);
+
+  const filteredVideos = useMemo(() => {
+    const includeTags = filters.includeTags ?? [];
+    const excludeTags = filters.excludeTags ?? [];
+    const minRating = sanitizeMinRating(filters.minRating);
+    const exactRating = sanitizeExactRating(filters.exactRating);
+
+    const includeSet = includeTags.length
+      ? new Set(includeTags.map((tag) => tag.toLowerCase()))
+      : null;
+    const excludeSet = excludeTags.length
+      ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
+      : null;
+
+    if (!includeSet && !excludeSet && minRating === null && exactRating === null) {
+      return videos;
+    }
+
+    return videos.filter((video) => {
+      const tagList = Array.isArray(video.tags)
+        ? video.tags
+            .map((tag) => (tag ?? "").toString().trim().toLowerCase())
+            .filter(Boolean)
+        : [];
+
+      if (includeSet) {
+        for (const tag of includeSet) {
+          if (!tagList.includes(tag)) {
+            return false;
+          }
+        }
+      }
+
+      if (excludeSet) {
+        for (const tag of excludeSet) {
+          if (tagList.includes(tag)) {
+            return false;
+          }
+        }
+      }
+
+      const ratingValue = Number.isFinite(video.rating)
+        ? Math.round(video.rating)
+        : null;
+
+      if (exactRating !== null) {
+        return (ratingValue ?? null) === exactRating;
+      }
+
+      if (minRating !== null) {
+        return (ratingValue ?? 0) >= minRating;
+      }
+
+      return true;
+    });
+  }, [videos, filters]);
+
+  const filteredVideoIds = useMemo(
+    () => new Set(filteredVideos.map((video) => video.id)),
+    [filteredVideos]
+  );
+
+  useEffect(() => {
+    if (!selection.size) return;
+    selectionSetSelected((prev) => {
+      let changed = false;
+      const next = new Set();
+      prev.forEach((id) => {
+        if (filteredVideoIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [filteredVideoIds, selection.size, selectionSetSelected]);
+
+  useEffect(() => {
+    if (!isFiltersOpen) return;
+
+    const handlePointerDown = (event) => {
+      const anchor = filtersButtonRef.current;
+      const panel = filtersPopoverRef.current;
+      if (panel?.contains(event.target) || anchor?.contains(event.target)) {
+        return;
+      }
+      setFiltersOpen(false);
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        setFiltersOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [isFiltersOpen]);
+
+  const handleRemoveIncludeFilter = useCallback(
+    (tag) => {
+      if (!tag) return;
+      updateFilters((prev) => ({
+        ...prev,
+        includeTags: (prev.includeTags ?? []).filter((entry) => entry !== tag),
+      }));
+    },
+    [updateFilters]
+  );
+
+  const handleRemoveExcludeFilter = useCallback(
+    (tag) => {
+      if (!tag) return;
+      updateFilters((prev) => ({
+        ...prev,
+        excludeTags: (prev.excludeTags ?? []).filter((entry) => entry !== tag),
+      }));
+    },
+    [updateFilters]
+  );
+
+  const clearMinRatingFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, minRating: null }));
+  }, [updateFilters]);
+
+  const clearExactRatingFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, exactRating: null }));
+  }, [updateFilters]);
+
+  const ratingSummary = useMemo(() => {
+    if (filters.exactRating !== null && filters.exactRating !== undefined) {
+      const label = formatRatingLabel(filters.exactRating, "exact");
+      return label
+        ? {
+            key: "exact",
+            label,
+            onClear: clearExactRatingFilter,
+          }
+        : null;
+    }
+
+    if (filters.minRating !== null && filters.minRating !== undefined) {
+      const label = formatRatingLabel(filters.minRating, "min");
+      return label
+        ? {
+            key: "min",
+            label,
+            onClear: clearMinRatingFilter,
+          }
+        : null;
+    }
+
+    return null;
+  }, [filters.exactRating, filters.minRating, clearExactRatingFilter, clearMinRatingFilter]);
+
 
   // ----- Recent Folders hook -----
   const {
@@ -203,8 +486,8 @@ function App() {
   );
 
   const orderedVideos = useMemo(
-    () => groupAndSort(videos, { groupByFolders, comparator }),
-    [videos, groupByFolders, comparator]
+    () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
+    [filteredVideos, groupByFolders, comparator]
   );
 
   // data order ids (fallback)
@@ -220,6 +503,28 @@ function App() {
     (id) => orderedVideos.find((v) => v.id === id),
     [orderedVideos]
   );
+
+  const selectedVideos = useMemo(() => {
+    return Array.from(selection.selected)
+      .map((id) => getById(id))
+      .filter(Boolean);
+  }, [selection.selected, getById]);
+
+  const selectedFingerprints = useMemo(() => {
+    const set = new Set();
+    selectedVideos.forEach((video) => {
+      if (video?.fingerprint) {
+        set.add(video.fingerprint);
+      }
+    });
+    return Array.from(set);
+  }, [selectedVideos]);
+
+  useEffect(() => {
+    if (selection.size > 0) {
+      setMetadataPanelOpen(true);
+    }
+  }, [selection.size]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -258,6 +563,190 @@ function App() {
     }, 3000);
   }, []);
 
+  const refreshTagList = useCallback(async () => {
+    const api = window.electronAPI?.metadata;
+    if (!api?.listTags) return;
+    try {
+      const res = await api.listTags();
+      if (Array.isArray(res?.tags)) {
+        setAvailableTags(res.tags);
+      }
+    } catch (error) {
+      console.warn("Failed to refresh tags:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshTagList();
+  }, [refreshTagList]);
+
+  const applyMetadataPatch = useCallback((updates) => {
+    if (!updates || typeof updates !== "object") return;
+    setVideos((prev) =>
+      prev.map((video) => {
+        const fingerprint = video?.fingerprint;
+        if (!fingerprint || !updates[fingerprint]) return video;
+        return normalizeVideoFromMain({
+          ...video,
+          ...updates[fingerprint],
+          fingerprint,
+        });
+      })
+    );
+  }, []);
+
+  const handleAddTags = useCallback(
+    async (tagNames) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.addTags) return;
+      const fingerprints = selectedFingerprints;
+      if (!fingerprints.length) return;
+      const cleanNames = Array.isArray(tagNames)
+        ? tagNames.map((name) => name.trim()).filter(Boolean)
+        : [];
+      if (!cleanNames.length) return;
+      try {
+        const result = await api.addTags(fingerprints, cleanNames);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
+        notify(
+          `Added ${cleanNames.join(", ")} to ${fingerprints.length} item(s)`,
+          "success"
+        );
+      } catch (error) {
+        console.error("Failed to add tags:", error);
+        notify("Failed to add tags", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleRemoveTag = useCallback(
+    async (tagName) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.removeTag) return;
+      const fingerprints = selectedFingerprints;
+      const cleanName = (tagName ?? "").trim();
+      if (!fingerprints.length || !cleanName) return;
+      try {
+        const result = await api.removeTag(fingerprints, cleanName);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
+        notify(
+          `Removed "${cleanName}" from ${fingerprints.length} item(s)`,
+          "success"
+        );
+      } catch (error) {
+        console.error("Failed to remove tag:", error);
+        notify("Failed to remove tag", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleSetRating = useCallback(
+    async (value, targetFingerprints = selectedFingerprints) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.setRating) return;
+      const fingerprints = (targetFingerprints || []).filter(Boolean);
+      if (!fingerprints.length) return;
+      try {
+        const result = await api.setRating(fingerprints, value);
+        if (result?.updates) applyMetadataPatch(result.updates);
+        if (value === null || value === undefined) {
+          notify(`Cleared rating for ${fingerprints.length} item(s)`, "success");
+        } else {
+          const safeRating = Math.max(0, Math.min(5, Math.round(Number(value))));
+          notify(
+            `Rated ${fingerprints.length} item(s) ${safeRating} star${
+              safeRating === 1 ? "" : "s"
+            }`,
+            "success"
+          );
+        }
+      } catch (error) {
+        console.error("Failed to update rating:", error);
+        notify("Failed to update rating", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleClearRating = useCallback(() => {
+    handleSetRating(null, selectedFingerprints);
+  }, [handleSetRating, selectedFingerprints]);
+
+  const handleApplyExistingTag = useCallback(
+    (tagName) => handleAddTags([tagName]),
+    [handleAddTags]
+  );
+
+  const openMetadataPanel = useCallback(() => {
+    setMetadataPanelOpen(true);
+    setMetadataFocusToken((token) => token + 1);
+  }, []);
+
+  const {
+    contextMenu,
+    showOnItem,
+    showOnEmpty,
+    hide: hideContextMenu,
+  } = useContextMenu();
+
+  const deps = useTrashIntegration({
+    electronAPI: window.electronAPI,
+    notify,
+    confirm: window.confirm,
+    releaseVideoHandlesForAsync,
+    setVideos,
+    setSelected: selection.setSelected,
+    setLoadedIds: setLoadedVideos,
+    setPlayingIds: setActualPlaying,
+    setVisibleIds: setVisibleVideos,
+    setLoadingIds: setLoadingVideos,
+  });
+
+  const { runAction } = useActionDispatch(deps, getById);
+
+  const handleContextAction = useCallback(
+    (actionId) => {
+      if (!actionId) return;
+      if (actionId === "metadata:open") {
+        openMetadataPanel();
+        return;
+      }
+      if (actionId.startsWith("metadata:rate:")) {
+        if (!selectedFingerprints.length) return;
+        if (actionId === "metadata:rate:clear") {
+          handleSetRating(null, selectedFingerprints);
+        } else {
+          const value = parseInt(actionId.replace("metadata:rate:", ""), 10);
+          if (!Number.isNaN(value)) {
+            handleSetRating(value, selectedFingerprints);
+          }
+        }
+        return;
+      }
+      if (actionId.startsWith("metadata:tag:")) {
+        const tagName = actionId.replace("metadata:tag:", "");
+        if (tagName) {
+          handleApplyExistingTag(tagName);
+        }
+        return;
+      }
+      runAction(actionId, selection.selected, contextMenu.contextId);
+    },
+    [
+      openMetadataPanel,
+      selectedFingerprints,
+      handleSetRating,
+      handleApplyExistingTag,
+      runAction,
+      selection.selected,
+      contextMenu.contextId,
+    ]
+  );
+
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
     videos: orderedVideos,
@@ -266,7 +755,7 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    scrollRef: gridRef,
+    scrollRef: scrollContainerRef,
     progressive: {
       initial: 120,
       batchSize: 64,
@@ -285,32 +774,6 @@ function App() {
     closeFullScreen,
     navigateFullScreen,
   } = useFullScreenModal(orderedVideos, "masonry-vertical", gridRef);
-
-  const {
-    contextMenu,
-    showOnItem,
-    showOnEmpty,
-    hide: hideContextMenu,
-  } = useContextMenu();
-
-  // Actions dispatcher (single pipeline for menu/hotkeys/toolbar)
-  const deps = useTrashIntegration({
-    electronAPI: window.electronAPI, // ← was electronAPI
-    notify,
-    confirm: window.confirm,
-    releaseVideoHandlesForAsync,
-
-    // use your real setters
-    setVideos, // ← was setAllVideos
-    setSelected: selection.setSelected,
-    setLoadedIds: setLoadedVideos,
-    setPlayingIds: setActualPlaying,
-
-    // (optional but useful if you want to purge these too)
-    setVisibleIds: setVisibleVideos,
-    setLoadingIds: setLoadingVideos,
-  });
-  const { runAction } = useActionDispatch(deps, getById);
 
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
@@ -527,15 +990,24 @@ function App() {
     if (!api) return;
 
     const handleFileAdded = (videoFile) => {
+      const normalized = normalizeVideoFromMain(videoFile);
       setVideos((prev) => {
-        if (prev.some((v) => v.id === videoFile.id)) return prev;
-        return [...prev, videoFile].sort((a, b) =>
+        const existingIndex = prev.findIndex((v) => v.id === normalized.id);
+        if (existingIndex !== -1) {
+          const next = prev.slice();
+          next[existingIndex] = normalized;
+          return next;
+        }
+        return [...prev, normalized].sort((a, b) =>
           a.basename.localeCompare(b.basename, undefined, {
             numeric: true,
             sensitivity: "base",
           })
         );
       });
+      if (normalized.tags.length) {
+        refreshTagList();
+      }
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
@@ -564,11 +1036,16 @@ function App() {
         ns.delete(filePath);
         return ns;
       });
+      refreshTagList();
     };
     const handleFileChanged = (videoFile) => {
+      const normalized = normalizeVideoFromMain(videoFile);
       setVideos((prev) =>
-        prev.map((v) => (v.id === videoFile.id ? videoFile : v))
+        prev.map((v) => (v.id === normalized.id ? normalized : v))
       );
+      if (normalized.tags.length) {
+        refreshTagList();
+      }
     };
 
     api.onFileAdded?.(handleFileAdded);
@@ -578,7 +1055,7 @@ function App() {
     return () => {
       api?.stopFolderWatch?.().catch(() => {});
     };
-  }, [selection.setSelected]);
+  }, [selection.setSelected, refreshTagList]);
 
   // relayout when list changes
   useEffect(() => {
@@ -654,6 +1131,9 @@ function App() {
         });
         const files = await api.readDirectory(folderPath, recursiveMode);
         console.log("📁 readDirectory returned:", files.length, "files");
+        const normalizedFiles = files.map((file) =>
+          normalizeVideoFromMain(file)
+        );
 
         setLoadingStage(
           `Found ${files.length} videos — initializing masonry...`
@@ -661,13 +1141,15 @@ function App() {
         setLoadingProgress(70);
         await new Promise((r) => setTimeout(r, 200));
 
-        setVideos(files);
+        setVideos(normalizedFiles);
         await new Promise((r) => setTimeout(r, 300));
 
         setLoadingStage("Complete!");
         setLoadingProgress(100);
         await new Promise((r) => setTimeout(r, 250));
         setIsLoadingFolder(false);
+
+        refreshTagList();
 
         const watchResult = await api.startFolderWatch?.(folderPath);
         if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
@@ -679,7 +1161,7 @@ function App() {
         setIsLoadingFolder(false);
       }
     },
-    [recursiveMode, addRecentFolder, selection]
+    [recursiveMode, addRecentFolder, selection, refreshTagList]
   );
 
   const handleFolderSelect = useCallback(async () => {
@@ -705,6 +1187,9 @@ function App() {
         basename: f.name,
         dirname: "",
         createdMs: f.lastModified || 0,
+        fingerprint: null,
+        tags: [],
+        rating: null,
       }));
       setVideos(list);
       selection.clear();
@@ -918,8 +1403,84 @@ function App() {
             onReshuffle={reshuffleRandom}
             recentFolders={recentFolders}
             onRecentOpen={(path) => handleElectronFolderSelection(path)}
-            hasOpenFolder={orderedVideos.length > 0}
+            hasOpenFolder={videos.length > 0}
+            onFiltersToggle={() => setFiltersOpen((open) => !open)}
+            filtersActiveCount={filtersActiveCount}
+            filtersAreOpen={isFiltersOpen}
+            filtersButtonRef={filtersButtonRef}
           />
+
+          {isFiltersOpen && (
+            <FiltersPopover
+              ref={filtersPopoverRef}
+              filters={filters}
+              availableTags={availableTags}
+              onChange={updateFilters}
+              onReset={resetFilters}
+              onClose={() => setFiltersOpen(false)}
+            />
+          )}
+
+          {filtersActiveCount > 0 && (
+            <div className="filters-summary">
+              {filters.includeTags.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Include</span>
+                  <div className="filters-summary__chips">
+                    {filters.includeTags.map((tag) => (
+                      <button
+                        type="button"
+                        key={`include-${tag}`}
+                        className="filters-summary__chip filters-summary__chip--include"
+                        onClick={() => handleRemoveIncludeFilter(tag)}
+                        title={`Remove include filter for ${tag}`}
+                      >
+                        #{tag}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {filters.excludeTags.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Exclude</span>
+                  <div className="filters-summary__chips">
+                    {filters.excludeTags.map((tag) => (
+                      <button
+                        type="button"
+                        key={`exclude-${tag}`}
+                        className="filters-summary__chip filters-summary__chip--exclude"
+                        onClick={() => handleRemoveExcludeFilter(tag)}
+                        title={`Remove exclude filter for ${tag}`}
+                      >
+                        #{tag}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {ratingSummary && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Rating</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--rating"
+                      onClick={ratingSummary.onClear}
+                      title="Clear rating filter"
+                    >
+                      {ratingSummary.label}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <DebugSummary
             total={videoCollection.stats.total}
@@ -933,7 +1494,7 @@ function App() {
           />
 
           {/* Home state: Recent Locations when nothing is loaded */}
-          {orderedVideos.length === 0 && !isLoadingFolder ? (
+          {videos.length === 0 && !isLoadingFolder ? (
             <>
               <RecentFolders
                 items={recentFolders}
@@ -955,65 +1516,93 @@ function App() {
               </div>
             </>
           ) : (
-            <div
-              ref={gridRef}
-              className={`video-grid masonry-vertical ${
-                !showFilenames ? "hide-filenames" : ""
-              } ${zoomClassForLevel(zoomLevel)}`}
-            >
-              {videoCollection.videosToRender.map((video) => (
-                <VideoCard
-                  key={video.id}
-                  video={video}
-                  ioRoot={gridRef}
-                  observeIntersection={ioRegistry.observe}
-                  unobserveIntersection={ioRegistry.unobserve}
-                  selected={selection.selected.has(video.id)}
-                  onSelect={(...args) => handleVideoSelect(...args)}
-                  onContextMenu={handleCardContextMenu}
-                  showFilenames={showFilenames}
-                  // Video Collection Management
-                  canLoadMoreVideos={() =>
-                    videoCollection.canLoadVideo(video.id)
-                  }
-                  isLoading={loadingVideos.has(video.id)}
-                  isLoaded={loadedVideos.has(video.id)}
-                  isVisible={visibleVideos.has(video.id)}
-                  isPlaying={videoCollection.isVideoPlaying(video.id)}
-                  // Lifecycle callbacks
-                  onStartLoading={handleVideoStartLoading}
-                  onStopLoading={handleVideoStopLoading}
-                  onVideoLoad={handleVideoLoaded}
-                  onVisibilityChange={handleVideoVisibilityChange}
-                  // Media events → update orchestrator + actual playing count
-                  onVideoPlay={(id) => {
-                    videoCollection.reportStarted(id);
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.add(id);
-                      return next;
-                    });
-                  }}
-                  onVideoPause={(id) => {
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.delete(id);
-                      return next;
-                    });
-                  }}
-                  onPlayError={(id) => {
-                    videoCollection.reportPlayError(id);
-                    setActualPlaying((prev) => {
-                      const next = new Set(prev);
-                      next.delete(id);
-                      return next;
-                    });
-                  }}
-                  // Hover for priority
-                  onHover={(id) => videoCollection.markHover(id)}
-                  scheduleInit={scheduleInit}
-                />
-              ))}
+            <div className="content-region">
+              <div
+                className="content-region__viewport"
+                ref={scrollContainerRef}
+              >
+                <div
+                  ref={gridRef}
+                className={`video-grid masonry-vertical ${
+                    !showFilenames ? "hide-filenames" : ""
+                  } ${zoomClassForLevel(zoomLevel)}`}
+              >
+                {orderedVideos.length === 0 &&
+                  videos.length > 0 &&
+                  !isLoadingFolder && (
+                    <div className="filters-empty-state">
+                      No videos match your current filters.
+                    </div>
+                  )}
+
+                {videoCollection.videosToRender.map((video) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    ioRoot={gridRef}
+                    observeIntersection={ioRegistry.observe}
+                    unobserveIntersection={ioRegistry.unobserve}
+                    selected={selection.selected.has(video.id)}
+                    onSelect={(...args) => handleVideoSelect(...args)}
+                    onContextMenu={handleCardContextMenu}
+                    showFilenames={showFilenames}
+                    // Video Collection Management
+                    canLoadMoreVideos={() =>
+                      videoCollection.canLoadVideo(video.id)
+                    }
+                    isLoading={loadingVideos.has(video.id)}
+                    isLoaded={loadedVideos.has(video.id)}
+                    isVisible={visibleVideos.has(video.id)}
+                    isPlaying={videoCollection.isVideoPlaying(video.id)}
+                    // Lifecycle callbacks
+                    onStartLoading={handleVideoStartLoading}
+                    onStopLoading={handleVideoStopLoading}
+                    onVideoLoad={handleVideoLoaded}
+                    onVisibilityChange={handleVideoVisibilityChange}
+                    // Media events → update orchestrator + actual playing count
+                    onVideoPlay={(id) => {
+                      videoCollection.reportStarted(id);
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.add(id);
+                        return next;
+                      });
+                    }}
+                    onVideoPause={(id) => {
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                      });
+                    }}
+                    onPlayError={(id) => {
+                      videoCollection.reportPlayError(id);
+                      setActualPlaying((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                      });
+                    }}
+                    // Hover for priority
+                    onHover={(id) => videoCollection.markHover(id)}
+                    scheduleInit={scheduleInit}
+                  />
+                ))}
+                </div>
+              </div>
+              <MetadataPanel
+                isOpen={isMetadataPanelOpen && selection.size > 0}
+                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                selectionCount={selection.size}
+                selectedVideos={selectedVideos}
+                availableTags={availableTags}
+                onAddTag={handleAddTags}
+                onRemoveTag={handleRemoveTag}
+                onApplyTagToSelection={handleApplyExistingTag}
+                onSetRating={handleSetRating}
+                onClearRating={handleClearRating}
+                focusToken={metadataFocusToken}
+              />
             </div>
           )}
 
@@ -1036,9 +1625,7 @@ function App() {
               selectionCount={selection.size}
               electronAPI={window.electronAPI}
               onClose={hideContextMenu}
-              onAction={(actionId) =>
-                runAction(actionId, selection.selected, contextMenu.contextId)
-              }
+              onAction={handleContextAction}
             />
           )}
         </>

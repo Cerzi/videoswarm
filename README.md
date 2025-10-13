@@ -49,6 +49,14 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Multi-select via Ctrl+Click
 - Adjustable zoom levels (75%, 100%, 150%, 200%)
 - Toggle display of filenames
+- Header controls for sorting and filtering by tags or rating
+
+### Tagging, Ratings, and Metadata
+- Collapsible metadata panel for managing the active selection
+- Custom tag creation with auto-complete suggestions and bulk apply/remove actions
+- Five-star rating system with overlays on video cards
+- Popular tag shortcuts and searchable tag catalog for quick tagging
+- Persistent metadata storage backed by SQLite, shared across sessions
 
 ### File System Integration
 - Recursive directory scanning (configurable)
@@ -56,6 +64,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Recent Folders list: automatically tracks and persists recently opened folders
 - Rich metadata: size, modification time, creation time
 - Native file operations (show, open, delete, copy) - show in folder is particularly useful for ComfyUI users for quickly accessing the video in order to re-use workflows
+- Fingerprint-based file tracking keeps tags and ratings attached even if files move
 
 ### Settings
 - Persistent settings stored in Electron’s userData directory (JSON)
@@ -90,8 +99,8 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 Planned for upcoming versions:
 
-- **Tagging and database system** – persist metadata, ratings, and custom tags across sessions
-- Enhanced search and filtering
+- Smart collections and saved filter presets
+- Enhanced search (text + metadata)
 - Further performance improvements
 
 ---
@@ -108,6 +117,10 @@ git clone https://github.com/Cerzi/videoswarm.git
 cd videoswarm
 npm install
 ```
+
+The install step automatically runs `electron-builder install-app-deps`, ensuring native modules
+such as `better-sqlite3` are rebuilt against the bundled Electron runtime on Windows, macOS, and
+Linux with no extra setup.
 
 ### Development
 Run Vite + Electron together with hot reload:

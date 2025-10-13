@@ -79,6 +79,15 @@ const SortIcon = (props) => (
   </Icon>
 );
 
+const FilterIcon = (props) => (
+  <Icon {...props}>
+    <path d="M4 4h16" />
+    <path d="M6 9h12" />
+    <path d="M10 14h4" />
+    <path d="M12 14v6" />
+  </Icon>
+);
+
 export default function HeaderBar({
   isLoadingFolder,
   handleFolderSelect,
@@ -101,6 +110,10 @@ export default function HeaderBar({
   recentFolders = [],
   onRecentOpen,
   hasOpenFolder = false,
+  onFiltersToggle,
+  filtersActiveCount = 0,
+  filtersAreOpen = false,
+  filtersButtonRef,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -255,6 +268,29 @@ export default function HeaderBar({
               <ShuffleIcon />
             </button>
           )}
+
+          <div style={{ position: "relative" }}>
+            <button
+              ref={filtersButtonRef}
+              onClick={onFiltersToggle}
+              disabled={isLoadingFolder}
+              className={`toggle-button ${
+                filtersActiveCount > 0 || filtersAreOpen ? "active" : ""
+              }`}
+              title={
+                filtersActiveCount > 0
+                  ? `Filters active (${filtersActiveCount})`
+                  : "Open filters"
+              }
+              type="button"
+            >
+              <FilterIcon />
+              <span className="filters-button-label">Filters</span>
+              {filtersActiveCount > 0 && (
+                <span className="filters-button-badge">{filtersActiveCount}</span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

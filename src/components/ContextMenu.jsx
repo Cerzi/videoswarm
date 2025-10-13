@@ -73,46 +73,79 @@ const ContextMenu = ({
   const menuItems = useMemo(() => {
     const items = [];
 
+    const pushSection = (sectionItems = []) => {
+      const filtered = sectionItems.filter(Boolean);
+      if (!filtered.length) return;
+      if (items.length) {
+        items.push({ type: 'separator' });
+      }
+      items.push(...filtered);
+    };
+
     // If we right-clicked an item (contextId present)
     if (contextId) {
+      const primaryActions = [];
       if (isElectron && canSingleFileOps) {
-        // Single-item verbs (operate on CONTEXT_ONLY when multi-selected)
-        items.push(
+        primaryActions.push(
           { id: 'show-in-folder', label: `📁 ${menuLabel('show-in-folder')}`, action: 'show-in-folder' },
-          { id: 'open-external',  label: `🎬 ${menuLabel('open-external')}`,  action: 'open-external' },
+          { id: 'open-external', label: `🎬 ${menuLabel('open-external')}`, action: 'open-external' }
         );
       }
-
-      // Copy actions (ALL_SELECTED)
-      items.push(
-        { type: 'separator' },
-        { id: 'copy-path',          label: `📋 ${menuLabel('copy-path')}`,          action: 'copy-path' },
-        { id: 'copy-relative-path', label: `📋 ${menuLabel('copy-relative-path')}`, action: 'copy-relative-path' },
-        { id: 'copy-filename',      label: `📄 ${menuLabel('copy-filename')}`,      action: 'copy-filename' },
-      );
-
-      // Properties (CONTEXT_ONLY)
-      items.push(
-        { type: 'separator' },
-        { id: 'file-properties',    label: `📊 ${menuLabel('file-properties')}`,    action: 'file-properties' },
-      );
-
-      // Destructive (ALL_SELECTED)
       if (isElectron) {
-        items.push(
-          { type: 'separator' },
-          { id: 'move-to-trash', label: `🗑️ ${menuLabel('move-to-trash')}`, action: 'move-to-trash', dangerous: true }
-        );
+        primaryActions.push({
+          id: 'move-to-trash',
+          label: `🗑️ ${menuLabel('move-to-trash')}`,
+          action: 'move-to-trash',
+          dangerous: true,
+        });
       }
+      pushSection(primaryActions);
+
+      pushSection([
+        { id: 'copy-path', label: `📋 ${menuLabel('copy-path')}`, action: 'copy-path' },
+        { id: 'copy-relative-path', label: `📋 ${menuLabel('copy-relative-path')}`, action: 'copy-relative-path' },
+        { id: 'copy-filename', label: `📄 ${menuLabel('copy-filename')}`, action: 'copy-filename' },
+      ]);
+
+      const metadataActions = [
+        {
+          id: 'metadata-open',
+          label: '🏷️ Add or manage tags',
+          action: 'metadata:open',
+        },
+      ];
+      const quickRatings = [5, 4, 3, 2, 1];
+      quickRatings.forEach((stars) => {
+        const glyph = '★'.repeat(stars).padEnd(5, '☆');
+        metadataActions.push({
+          id: `metadata-rate-${stars}`,
+          label: `⭐ Rate ${glyph}`,
+          action: `metadata:rate:${stars}`,
+        });
+      });
+      metadataActions.push({
+        id: 'metadata-rate-clear',
+        label: '☆ Clear rating',
+        action: 'metadata:rate:clear',
+      });
+      pushSection(metadataActions);
+
+      pushSection([
+        { id: 'file-properties', label: `📊 ${menuLabel('file-properties')}`, action: 'file-properties' },
+      ]);
+
       return items;
     }
 
     // Background context (no contextId): keep minimal
-    items.push(
-      { id: 'copy-filename', label: '📄 Copy Filename', action: 'copy-filename', disabled: true }
-    );
+    items.push({
+      id: 'copy-filename',
+      label: '📄 Copy Filename',
+      action: 'copy-filename',
+      disabled: true,
+    });
     return items;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextId, selectionCount, isElectron, canSingleFileOps]);
 
   const handleAction = (action) => {

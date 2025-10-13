@@ -13,8 +13,20 @@ template: |
   $CHANGES
 
   ## Installation
-  - Windows: run the `.exe`
-  - Linux: use the `.AppImage` or your distro package if available
+  - **Windows**
+    - `*-Setup.exe`: Standard installer (recommended)
+    - `*-Portable.exe`: Portable build that runs without installation
+  - **Linux**
+    - `.AppImage`: Portable image, mark executable and run
+    - `.deb` / `.rpm`: Install with your distro’s package manager
+    - `.tar.gz`: Extractable archive for manual installs
+  - **macOS**
+    - `.dmg`: Drag-and-drop installer
+    - `.zip`: Portable archive
+
+  ## Assets & checksums
+  - All installers and portable builds are attached to the draft release by the CI workflow.
+  - A `SHA256SUMS-*.txt` file is provided for each platform so you can verify downloads.
 
   ## Notes
   - See README for system support and known limitations.

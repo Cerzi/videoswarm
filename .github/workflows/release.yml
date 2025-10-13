@@ -24,6 +24,8 @@ jobs:
             artifact-name: linux
           - os: windows-latest
             artifact-name: windows
+          - os: macos-latest
+            artifact-name: macos
 
     steps:
       - name: Checkout
@@ -62,6 +64,10 @@ jobs:
             find dist -name "*.deb" -exec cp {} release-assets/ \; 2>/dev/null || true
             find dist -name "*.rpm" -exec cp {} release-assets/ \; 2>/dev/null || true
             find dist -name "*.tar.gz" -exec cp {} release-assets/ \; 2>/dev/null || true
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS: dmg and zip bundles
+            find dist -name "*.dmg" -exec cp {} release-assets/ \; 2>/dev/null || true
+            find dist -name "*.zip" -exec cp {} release-assets/ \; 2>/dev/null || true
           else
             # Windows: exe installers only
             find dist -name "*.exe" -not -path "*/unpacked/*" -exec cp {} release-assets/ \; 2>/dev/null || true
@@ -127,6 +133,8 @@ jobs:
           APPIMAGE_COUNT=$(ls *.AppImage 2>/dev/null | wc -l || echo "0") 
           DEB_COUNT=$(ls *.deb 2>/dev/null | wc -l || echo "0")
           RPM_COUNT=$(ls *.rpm 2>/dev/null | wc -l || echo "0")
+          DMG_COUNT=$(ls *.dmg 2>/dev/null | wc -l || echo "0")
+          MACZIP_COUNT=$(ls *.zip 2>/dev/null | wc -l || echo "0")
           
           # Build installation instructions dynamically
           INSTALL_INSTRUCTIONS="## Installation"
@@ -155,6 +163,21 @@ jobs:
             if [ "$APPIMAGE_COUNT" -gt "0" ]; then
               INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
             - Any distro: Use the \`.AppImage\` file (portable)"
+            fi
+          fi
+
+          if [ "$DMG_COUNT" -gt "0" ] || [ "$MACZIP_COUNT" -gt "0" ]; then
+            INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+          - **macOS**:"
+
+            if [ "$DMG_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Install using the \`.dmg\` disk image"
+            fi
+
+            if [ "$MACZIP_COUNT" -gt "0" ]; then
+              INSTALL_INSTRUCTIONS="$INSTALL_INSTRUCTIONS
+            - Portable: unzip the \`.zip\` archive"
             fi
           fi
           

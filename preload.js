@@ -118,6 +118,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
 
 
+  metadata: {
+    listTags: async () => ipcRenderer.invoke("metadata:list-tags"),
+    addTags: async (fingerprints, tagNames) =>
+      ipcRenderer.invoke("metadata:add-tags", fingerprints, tagNames),
+    removeTag: async (fingerprints, tagName) =>
+      ipcRenderer.invoke("metadata:remove-tag", fingerprints, tagName),
+    setRating: async (fingerprints, rating) =>
+      ipcRenderer.invoke("metadata:set-rating", fingerprints, rating),
+    get: async (fingerprints) =>
+      ipcRenderer.invoke("metadata:get", fingerprints),
+  },
+
   recent: {
     get: async () => ipcRenderer.invoke("recent:get"),
     add: async (folderPath) => ipcRenderer.invoke("recent:add", folderPath),

@@ -57,6 +57,14 @@ const VideoCard = memo(function VideoCard({
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
 
+  const ratingValue =
+    typeof video?.rating === "number" && Number.isFinite(video.rating)
+      ? Math.max(0, Math.min(5, Math.round(video.rating)))
+      : null;
+  const hasTags = Array.isArray(video?.tags) && video.tags.length > 0;
+  const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
+  const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
+
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
     const el = videoRef.current;
@@ -503,6 +511,32 @@ const VideoCard = memo(function VideoCard({
         background: "#1a1a1a",
       }}
     >
+      {ratingValue !== null && (
+        <div className="video-item-rating" title={`Rated ${ratingValue} / 5`}>
+          {Array.from({ length: 5 }).map((_, index) => (
+            <span key={index} className={index < ratingValue ? "filled" : ""}>
+              ★
+            </span>
+          ))}
+        </div>
+      )}
+
+      {hasTags && (
+        <div
+          className={`video-item-tags ${showFilenames ? "with-filename" : ""}`}
+          title={video.tags.join(", ")}
+        >
+          {tagPreview.map((tag) => (
+            <span key={tag} className="video-item-tag">
+              #{tag}
+            </span>
+          ))}
+          {extraTagCount > 0 && (
+            <span className="video-item-tag more">+{extraTagCount}</span>
+          )}
+        </div>
+      )}
+
       {loaded && videoRef.current && !isAdoptedByModal() ? (
         <div
           className="video-container"
