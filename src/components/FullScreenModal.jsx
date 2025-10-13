@@ -41,11 +41,15 @@ const FullScreenModal = ({
 
         // style + controls for modal
         existingVideo.controls = true;
-        existingVideo.style.maxWidth = '100%';
-        existingVideo.style.maxHeight = '80vh';
+        existingVideo.style.display = 'block';
+        existingVideo.style.width = 'auto';
+        existingVideo.style.height = '90vh';
+        existingVideo.style.maxWidth = '90vw';
+        existingVideo.style.maxHeight = '90vh';
         existingVideo.style.objectFit = 'contain';
         existingVideo.style.borderRadius = '8px';
         existingVideo.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.8)';
+        existingVideo.style.margin = '0 auto';
 
         // play (muted already from tile)
         existingVideo.play?.().catch(() => {});
@@ -69,11 +73,15 @@ const FullScreenModal = ({
     try {
       // revert styles/controls
       el.controls = false;
+      el.style.display = '';
+      el.style.width = '';
+      el.style.height = '';
       el.style.maxWidth = '';
       el.style.maxHeight = '';
       el.style.objectFit = '';
       el.style.borderRadius = '';
       el.style.boxShadow = '';
+      el.style.margin = '';
       if (el.dataset) delete el.dataset.adopted;
 
       const parent = originalParentRef.current;
@@ -360,9 +368,12 @@ const FullScreenModal = ({
           <div
             ref={adoptHostRef}
             style={{
-              display: usingAdopted ? 'block' : 'none',
-              maxWidth: '100%',
-              maxHeight: '80vh'
+              display: usingAdopted ? 'flex' : 'none',
+              maxWidth: '90vw',
+              maxHeight: '90vh',
+              width: '100%',
+              alignItems: 'center',
+              justifyContent: 'center'
             }}
             onClick={(e) => e.stopPropagation()}
           />
@@ -376,8 +387,10 @@ const FullScreenModal = ({
             playsInline
             style={{
               display: usingAdopted ? 'none' : 'block',
-              maxWidth: '100%',
-              maxHeight: '80vh',
+              width: 'auto',
+              height: '90vh',
+              maxWidth: '90vw',
+              maxHeight: '90vh',
               objectFit: 'contain',
               borderRadius: '8px',
               boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)'
