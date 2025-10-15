@@ -24,6 +24,7 @@ import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
+import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
@@ -46,6 +47,7 @@ import useHotkeys from "./hooks/selection/useHotkeys";
 import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX, ZOOM_TILE_WIDTHS } from "./zoom/config";
 
 import LoadingProgress from "./components/LoadingProgress";
+import feature from "./config/featureFlags";
 import "./App.css";
 
 // Helper
@@ -234,6 +236,8 @@ function App() {
 
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const contentRegionRef = useRef(null);
+  const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
@@ -522,6 +526,136 @@ function App() {
   // Prefer visual order if we have it
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
+  const anchorDefaults = useMemo(
+    () =>
+      feature.stableViewFixes
+        ? { settleFrames: 2, stabilizeFrames: 2, maxWaitMs: 700 }
+        : { settleFrames: 1, stabilizeFrames: 1, maxWaitMs: 400 },
+    []
+  );
+
+  const sidebarAnchorOptions = useMemo(
+    () => ({
+      capture: "fresh",
+      settleFrames: anchorDefaults.settleFrames,
+      stabilizeFrames: anchorDefaults.stabilizeFrames,
+      maxWaitMs: anchorDefaults.maxWaitMs,
+    }),
+    [
+      anchorDefaults.maxWaitMs,
+      anchorDefaults.settleFrames,
+      anchorDefaults.stabilizeFrames,
+    ]
+  );
+
+  const zoomAnchorOptions = useMemo(
+    () =>
+      feature.stableViewFixes
+        ? { capture: "fresh", settleFrames: 1, stabilizeFrames: 2, maxWaitMs: 600 }
+        : { capture: "fresh", settleFrames: 1, stabilizeFrames: 1, maxWaitMs: 400 },
+    []
+  );
+
+  const { runWithStableAnchor } = useStableViewAnchoring({
+    enabled: feature.stableViewAnchoring,
+    scrollRef: scrollContainerRef,
+    gridRef,
+    observeRef: contentRegionRef,
+    selection,
+    orderedIds: orderForRange,
+    anchorMode: "last",
+    settleFrames: anchorDefaults.settleFrames,
+    stabilizeFrames: anchorDefaults.stabilizeFrames,
+    maxWaitMs: anchorDefaults.maxWaitMs,
+  });
+
+  const waitForTransitionEnd = useCallback(
+    (element, properties = ["width"], timeoutMs = anchorDefaults.maxWaitMs) => {
+      if (!feature.stableViewFixes) return Promise.resolve();
+      if (!element || typeof window === "undefined") return Promise.resolve();
+
+      let computed;
+      try {
+        computed = window.getComputedStyle(element);
+      } catch (error) {
+        console.debug("[stable-anchor] Failed to read computed style", error);
+        return Promise.resolve();
+      }
+
+      const parseTime = (value) => {
+        if (!value) return 0;
+        const trimmed = String(value).trim();
+        if (!trimmed) return 0;
+        if (trimmed.endsWith("ms")) return parseFloat(trimmed);
+        if (trimmed.endsWith("s")) return parseFloat(trimmed) * 1000;
+        const parsed = parseFloat(trimmed);
+        return Number.isFinite(parsed) ? parsed * 1000 : 0;
+      };
+
+      const durations = (computed?.transitionDuration || "")
+        .split(",")
+        .map(parseTime);
+      const delays = (computed?.transitionDelay || "")
+        .split(",")
+        .map(parseTime);
+      const hasDuration = durations.some((duration, index) => {
+        const delay = delays[index] ?? delays[delays.length - 1] ?? 0;
+        return duration + delay > 0;
+      });
+      if (!hasDuration) {
+        return Promise.resolve();
+      }
+
+      const propertySet = Array.isArray(properties) && properties.length > 0
+        ? new Set(properties.filter(Boolean))
+        : null;
+
+      return new Promise((resolve) => {
+        if (!element) {
+          resolve();
+          return;
+        }
+
+        let resolved = false;
+        let timer = null;
+
+        function cleanup() {
+          if (!element) return;
+          element.removeEventListener("transitionend", onTransitionDone);
+          element.removeEventListener("transitioncancel", onTransitionDone);
+          if (timer != null) {
+            window.clearTimeout(timer);
+          }
+        }
+
+        function finalize() {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          resolve();
+        }
+
+        function onTransitionDone(event) {
+          if (propertySet && propertySet.size && !propertySet.has(event.propertyName)) {
+            return;
+          }
+          if (propertySet && propertySet.size) {
+            propertySet.delete(event.propertyName);
+            if (propertySet.size > 0) {
+              return;
+            }
+          }
+          finalize();
+        }
+
+        element.addEventListener("transitionend", onTransitionDone);
+        element.addEventListener("transitioncancel", onTransitionDone);
+        timer = window.setTimeout(finalize, timeoutMs ?? anchorDefaults.maxWaitMs);
+      });
+    },
+    [anchorDefaults.maxWaitMs]
+  );
+
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
     [orderedVideos]
@@ -571,10 +705,33 @@ function App() {
   );
 
   useEffect(() => {
-    if (selection.size > 0) {
-      setMetadataPanelOpen(true);
+    if (selection.size > 0 && !isMetadataPanelOpen) {
+      runWithStableAnchor(
+        "sidebar:auto-open",
+        () => {
+          const promise = waitForTransitionEnd(
+            metadataPanelRef.current,
+            ["width"],
+            anchorDefaults.maxWaitMs
+          );
+          setMetadataPanelOpen(true);
+          scheduleLayout?.();
+          return promise;
+        },
+        sidebarAnchorOptions
+      );
     }
-  }, [selection.size]);
+  }, [
+    anchorDefaults.maxWaitMs,
+    isMetadataPanelOpen,
+    metadataPanelRef,
+    runWithStableAnchor,
+    scheduleLayout,
+    setMetadataPanelOpen,
+    selection.size,
+    sidebarAnchorOptions,
+    waitForTransitionEnd,
+  ]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -732,9 +889,56 @@ function App() {
   );
 
   const openMetadataPanel = useCallback(() => {
-    setMetadataPanelOpen(true);
-    setMetadataFocusToken((token) => token + 1);
-  }, []);
+    runWithStableAnchor(
+      "sidebar:open",
+      () => {
+        const promise = waitForTransitionEnd(
+          metadataPanelRef.current,
+          ["width"],
+          anchorDefaults.maxWaitMs
+        );
+        setMetadataPanelOpen(true);
+        setMetadataFocusToken((token) => token + 1);
+        scheduleLayout?.();
+        return promise;
+      },
+      sidebarAnchorOptions
+    );
+  }, [
+    anchorDefaults.maxWaitMs,
+    metadataPanelRef,
+    runWithStableAnchor,
+    scheduleLayout,
+    setMetadataPanelOpen,
+    setMetadataFocusToken,
+    sidebarAnchorOptions,
+    waitForTransitionEnd,
+  ]);
+
+  const toggleMetadataPanel = useCallback(() => {
+    runWithStableAnchor(
+      "sidebarToggle",
+      () => {
+        const promise = waitForTransitionEnd(
+          metadataPanelRef.current,
+          ["width"],
+          anchorDefaults.maxWaitMs
+        );
+        setMetadataPanelOpen((open) => !open);
+        scheduleLayout?.();
+        return promise;
+      },
+      sidebarAnchorOptions
+    );
+  }, [
+    anchorDefaults.maxWaitMs,
+    metadataPanelRef,
+    runWithStableAnchor,
+    scheduleLayout,
+    setMetadataPanelOpen,
+    sidebarAnchorOptions,
+    waitForTransitionEnd,
+  ]);
 
   const {
     contextMenu,
@@ -846,24 +1050,32 @@ function App() {
     (z) => {
       const clamped = clampZoomIndex(z);
       if (clamped === zoomLevel) return; // no-op if unchanged
-      setZoomLevel(clamped);
-      setZoomClass(clamped);
-      window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: clamped,
-        recursiveMode,
-        maxConcurrentPlaying,
-        showFilenames,
-      });
-      // Nudge masonry after zoom change
-      scheduleLayout?.();
+      runWithStableAnchor(
+        "zoomChange",
+        () => {
+          setZoomLevel(clamped);
+          setZoomClass(clamped);
+          window.electronAPI?.saveSettingsPartial?.({
+            zoomLevel: clamped,
+            recursiveMode,
+            maxConcurrentPlaying,
+            showFilenames,
+          });
+          // Nudge masonry after zoom change
+          scheduleLayout?.();
+        },
+        zoomAnchorOptions
+      );
     },
     [
       zoomLevel,
+      runWithStableAnchor,
       setZoomClass,
       recursiveMode,
       maxConcurrentPlaying,
       showFilenames,
       scheduleLayout,
+      zoomAnchorOptions,
     ]
   );
 
@@ -1566,7 +1778,7 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="content-region">
+            <div className="content-region" ref={contentRegionRef}>
               <div
                 className="content-region__viewport"
                 ref={scrollContainerRef}
@@ -1642,8 +1854,9 @@ function App() {
                 </div>
               </div>
               <MetadataPanel
+                ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen && selection.size > 0}
-                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                onToggle={toggleMetadataPanel}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}

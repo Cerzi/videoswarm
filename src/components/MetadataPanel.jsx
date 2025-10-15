@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef, forwardRef } from "react";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -38,19 +38,22 @@ const RatingStars = ({ value, isMixed, onSelect, onClear, disabled }) => {
   );
 };
 
-const MetadataPanel = ({
-  isOpen,
-  onToggle,
-  selectionCount,
-  selectedVideos = [],
-  availableTags = [],
-  onAddTag,
-  onRemoveTag,
-  onApplyTagToSelection,
-  onSetRating,
-  onClearRating,
-  focusToken,
-}) => {
+const MetadataPanel = forwardRef((
+  {
+    isOpen,
+    onToggle,
+    selectionCount,
+    selectedVideos = [],
+    availableTags = [],
+    onAddTag,
+    onRemoveTag,
+    onApplyTagToSelection,
+    onSetRating,
+    onClearRating,
+    focusToken,
+  },
+  ref
+) => {
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef(null);
 
@@ -199,7 +202,11 @@ const MetadataPanel = ({
     .join(" ");
 
   return (
-    <aside className={panelClass} aria-hidden={!isOpen && !hasSelection}>
+    <aside
+      ref={ref}
+      className={panelClass}
+      aria-hidden={!isOpen && !hasSelection}
+    >
       <div className="metadata-panel__header">
         <button
           type="button"
@@ -356,6 +363,8 @@ const MetadataPanel = ({
       </div>
     </aside>
   );
-};
+});
+
+MetadataPanel.displayName = "MetadataPanel";
 
 export default MetadataPanel;
