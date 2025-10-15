@@ -17,6 +17,7 @@ const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore } = require("./main/database");
+const { thumbnailCache } = require("./main/thumb-cache");
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -669,8 +670,50 @@ async function clearRecentFolders() {
 // ===== IPC Handlers =====
 ipcMain.handle("get-app-version", () => app.getVersion());
 
-ipcMain.on("drag:start", (event, payload) => {
-  const asArray = (value) => {
+ipcMain.on("thumb:put", (event, payload) => {
+  try {
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+    const result = thumbnailCache.put(nativeImage, payload);
+    event.returnValue = result;
+  } catch (error) {
+    console.error("[thumb-cache] put failed", error);
+    event.returnValue = {
+      ok: false,
+      error: error?.message || "UNKNOWN_ERROR",
+    };
+  }
+});
+
+ipcMain.on("thumb:get", (event, payload) => {
+  try {
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+    const pathKey = payload?.path;
+    const signature = payload?.signature;
+    const result = thumbnailCache.has(pathKey, signature);
+    event.returnValue = result;
+  } catch (error) {
+    console.error("[thumb-cache] get failed", error);
+    event.returnValue = {
+      ok: false,
+      error: error?.message || "UNKNOWN_ERROR",
+    };
+  }
+});
+
+ipcMain.on("dnd:start-file", (event, payload) => {
+  const normalize = (value) => {
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object" && Array.isArray(value.paths)) {
       return value.paths;
@@ -682,8 +725,16 @@ ipcMain.on("drag:start", (event, payload) => {
   };
 
   try {
-    const candidates = asArray(payload).filter(
-      (p) => typeof p === "string" && p.trim().length > 0
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+
+    const candidates = normalize(payload).filter(
+      (entry) => typeof entry === "string" && entry.trim().length > 0
     );
     const filePath = candidates[0];
     if (!filePath) {
@@ -691,7 +742,11 @@ ipcMain.on("drag:start", (event, payload) => {
       return;
     }
 
-    const icon = getEmbeddedDragIcon(nativeImage);
+    let icon = thumbnailCache.getForDrag(nativeImage, filePath);
+    if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
+      icon = getEmbeddedDragIcon(nativeImage);
+    }
+
     if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
       event.returnValue = { ok: false, error: "NO_ICON" };
       return;
@@ -1094,6 +1149,11 @@ app.on("window-all-closed", () => {
 app.whenReady().then(async () => {
   try {
     console.log("GPU status:", app.getGPUFeatureStatus());
+    try {
+      thumbnailCache.init(app);
+    } catch (thumbErr) {
+      console.warn("[thumb-cache] init failed", thumbErr);
+    }
     await initRecentStore(); // safe no-op if it fails
     await initMetadataStore(app);
     await createWindow();
@@ -1111,4 +1171,11 @@ app.on("activate", () => {
 
 // Ensure watcher cleanup on quit
 app.on("before-quit", async () => { await folderWatcher.stop(); });
-app.on("will-quit", async () => { await folderWatcher.stop(); });
+app.on("will-quit", async () => {
+  await folderWatcher.stop();
+  try {
+    thumbnailCache.shutdown();
+  } catch (error) {
+    console.warn("[thumb-cache] shutdown failed", error);
+  }
+});

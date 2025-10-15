@@ -1,8 +1,9 @@
 // src/components/VideoCard/VideoCard.jsx
-import React, { useState, useEffect, useRef, useCallback, memo } from "react";
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from "react";
 import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
+import { thumbService, signatureForVideo } from "../../services/thumbService";
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -40,6 +41,9 @@ const VideoCard = memo(function VideoCard({
   const cardRef = useRef(null);
   const videoContainerRef = useRef(null);
   const videoRef = useRef(null);
+  const visibilityRef = useRef(Boolean(isVisible));
+  const fullPathRef = useRef(video?.fullPath ?? null);
+  const signatureRef = useRef(null);
 
   const clickTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
@@ -57,6 +61,12 @@ const VideoCard = memo(function VideoCard({
 
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
+  const fullPath = video?.fullPath ?? null;
+  const thumbSignature = useMemo(() => signatureForVideo(video), [
+    video.fullPath,
+    video.size,
+    video.dateModified,
+  ]);
   const canStartNativeDrag = Boolean(video?.isElectronFile && video?.fullPath);
 
   const ratingValue =
@@ -88,9 +98,53 @@ const VideoCard = memo(function VideoCard({
     return !!(el && el.dataset && el.dataset.adopted === "modal");
   }, []);
 
+  useEffect(() => {
+    visibilityRef.current = Boolean(isVisible);
+  }, [isVisible]);
+
+  useEffect(() => {
+    fullPathRef.current = fullPath;
+  }, [fullPath]);
+
+  useEffect(() => {
+    signatureRef.current = thumbSignature;
+    if (fullPath && thumbSignature) {
+      thumbService.noteVideoMetadata(fullPath, thumbSignature);
+    }
+  }, [fullPath, thumbSignature]);
+
+  const requestThumbnail = useCallback(
+    (reason) => {
+      if (!canStartNativeDrag) return;
+      const path = fullPathRef.current;
+      const signature = signatureRef.current;
+      const element = videoRef.current;
+      if (!path || !signature || !element) return;
+      thumbService.requestCapture({
+        path,
+        signature,
+        videoElement: element,
+        isVisible: () => visibilityRef.current,
+        reason,
+      });
+    },
+    [canStartNativeDrag]
+  );
+
   // mirror flags
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
+
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (visibilityRef.current && isPlayingRef.current) {
+      requestThumbnail("visible-change");
+    }
+  }, [isVisible, requestThumbnail]);
 
   // If file content changed, clear sticky error so we can retry
   useEffect(() => {
@@ -186,7 +240,10 @@ const VideoCard = memo(function VideoCard({
     const el = videoRef.current;
     if (!el) return;
 
-    const handlePlaying = () => onVideoPlay?.(videoId);
+    const handlePlaying = () => {
+      onVideoPlay?.(videoId);
+      requestThumbnail("playing-event");
+    };
     const handlePause   = () => onVideoPause?.(videoId);
 
     const handleError = async (e) => {
