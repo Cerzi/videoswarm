@@ -82,11 +82,34 @@ const normalizeVideoFromMain = (video) => {
       )
     : [];
 
+  const rawDimensions = video?.dimensions;
+  const width = Number(rawDimensions?.width);
+  const height = Number(rawDimensions?.height);
+  const sanitizedDimensions =
+    Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+      ? {
+          width: Math.round(width),
+          height: Math.round(height),
+          aspectRatio:
+            Number.isFinite(rawDimensions?.aspectRatio) && rawDimensions.aspectRatio > 0
+              ? rawDimensions.aspectRatio
+              : width / height,
+        }
+      : null;
+
+  const aspectRatio = (() => {
+    const candidate = Number(video?.aspectRatio);
+    if (Number.isFinite(candidate) && candidate > 0) return candidate;
+    return sanitizedDimensions ? sanitizedDimensions.aspectRatio : null;
+  })();
+
   return {
     ...video,
     fingerprint,
     rating,
     tags,
+    dimensions: sanitizedDimensions,
+    aspectRatio,
   };
 };
 

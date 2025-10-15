@@ -14,6 +14,7 @@ const {
 const path = require("path");
 const fs = require("fs").promises;
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
+const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore } = require("./main/database");
 
@@ -147,6 +148,11 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     let fingerprint = null;
     let tags = [];
     let rating = null;
+    let dimensions = null;
+
+    const isValidDimensions = (dims) =>
+      dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0;
+
     try {
       const metadataStore = getMetadataStore();
       const info = await metadataStore.indexFile({ filePath, stats });
@@ -156,6 +162,25 @@ async function createVideoFileObject(filePath, baseFolderPath) {
         typeof info?.rating === "number" && Number.isFinite(info.rating)
           ? info.rating
           : null;
+
+      if (isValidDimensions(info?.dimensions)) {
+        dimensions = info.dimensions;
+      } else if (fingerprint) {
+        const storedDims = metadataStore.getDimensions(fingerprint);
+        if (isValidDimensions(storedDims)) {
+          dimensions = storedDims;
+        }
+      }
+
+      if (!isValidDimensions(dimensions)) {
+        const computed = await getVideoDimensions(filePath, stats);
+        if (isValidDimensions(computed)) {
+          dimensions = computed;
+          if (fingerprint) {
+            metadataStore.setDimensions(fingerprint, computed);
+          }
+        }
+      }
     } catch (metaError) {
       console.warn(
         `[metadata] Failed to index ${filePath}:`,
@@ -179,6 +204,22 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       fingerprint,
       tags,
       rating,
+      dimensions: dimensions
+        ? {
+            width: Math.round(dimensions.width),
+            height: Math.round(dimensions.height),
+            aspectRatio:
+              Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
+                ? dimensions.aspectRatio
+                : dimensions.width / dimensions.height,
+          }
+        : null,
+      aspectRatio:
+        dimensions && isValidDimensions(dimensions)
+          ? (Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
+              ? dimensions.aspectRatio
+              : dimensions.width / dimensions.height)
+          : null,
       metadata: {
         folder: path.dirname(filePath),
         baseName: path.basename(fileName, ext),

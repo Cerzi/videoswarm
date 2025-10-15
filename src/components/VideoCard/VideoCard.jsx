@@ -67,6 +67,21 @@ const VideoCard = memo(function VideoCard({
   const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
 
+  const aspectRatioHint = (() => {
+    const direct = Number(video?.aspectRatio);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const dimRatio = Number(video?.dimensions?.aspectRatio);
+    if (Number.isFinite(dimRatio) && dimRatio > 0) return dimRatio;
+    const width = Number(video?.dimensions?.width);
+    const height = Number(video?.dimensions?.height);
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+      return width / height;
+    }
+    return null;
+  })();
+
+  const effectiveAspectRatio = aspectRatioHint && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
+
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {
     const el = videoRef.current;
@@ -485,28 +500,50 @@ const VideoCard = memo(function VideoCard({
     [onNativeDragStart, video, canStartNativeDrag]
   );
 
-  const renderPlaceholder = () => (
-    <div
-      className="video-placeholder"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        background: "linear-gradient(135deg, #1a1a1a, #2d2d2d)",
-        color: "#888",
-        fontSize: "0.9rem",
-      }}
-    >
-      {errorText
-        ? errorText
-        : loading
-        ? "📼 Loading…"
-        : canLoadMoreVideos?.() ?? true
-        ? "📼 Scroll to load"
-        : "⏳ Waiting…"}
-    </div>
-  );
+  const renderPlaceholder = () => {
+    if (errorText) {
+      const sanitizedErrorText = (() => {
+        if (typeof errorText !== "string") return errorText;
+        const stripped = errorText.replace(/^\s*⚠️\s*/u, "").trim();
+        return stripped.length > 0 ? stripped : errorText;
+      })();
+      return (
+        <div className="error-indicator" role="alert">
+          <div className="error-indicator__icon" aria-hidden="true" />
+          <div className="error-indicator__message">{sanitizedErrorText}</div>
+        </div>
+      );
+    }
+
+    const canLoad = canLoadMoreVideos?.() ?? true;
+    const statusText = loading
+      ? "Loading video…"
+      : canLoad
+      ? "Scroll to load"
+      : "Waiting for next chunk";
+    const subtext = loading
+      ? "Preparing playback"
+      : canLoad
+      ? "Keep scrolling to fetch more clips"
+      : "All caught up for now";
+
+    const spinnerClassName = `video-placeholder__spinner${
+      loading ? "" : " video-placeholder__spinner--paused"
+    }`;
+
+    return (
+      <div className="video-placeholder" role="status" aria-live="polite">
+        <div className="video-placeholder__media" aria-hidden="true">
+          <div className="video-placeholder__sheen" />
+          <div className={spinnerClassName} />
+        </div>
+        <div className="video-placeholder__text">
+          <span className="video-placeholder__message">{statusText}</span>
+          <span className="video-placeholder__subtext">{subtext}</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -520,16 +557,17 @@ const VideoCard = memo(function VideoCard({
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
+      data-aspect-ratio={effectiveAspectRatio}
       style={{
         userSelect: "none",
         position: "relative",
         width: "100%",
-        height: "100%",
         borderRadius: "8px",
         overflow: "hidden",
         cursor: "pointer",
         border: selected ? "3px solid #007acc" : "1px solid #333",
         background: "#1a1a1a",
+        aspectRatio: effectiveAspectRatio,
       }}
     >
       {ratingValue !== null && (
