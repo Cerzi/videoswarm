@@ -34,6 +34,7 @@ const VideoCard = memo(function VideoCard({
   // IO registry
   observeIntersection,    // (el, id, cb)
   unobserveIntersection,  // (el)=>void
+  isNear = () => true,
 
   // optional init scheduler
   scheduleInit = null,
@@ -49,6 +50,7 @@ const VideoCard = memo(function VideoCard({
   const loadTimeoutRef = useRef(null);
 
   // local mirrors (parent is source of truth)
+  const videoId = video.id || video.fullPath || video.name;
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -60,7 +62,9 @@ const VideoCard = memo(function VideoCard({
   const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
 
   const [errorText, setErrorText] = useState(null);
-  const videoId = video.id || video.fullPath || video.name;
+  const [isNearViewport, setIsNearViewport] = useState(() =>
+    (isNear?.(videoId) ?? true) === true
+  );
   const fullPath = video?.fullPath ?? null;
   const thumbSignature = useMemo(() => signatureForVideo(video), [
     video.fullPath,
@@ -105,6 +109,10 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => {
     fullPathRef.current = fullPath;
   }, [fullPath]);
+
+  useEffect(() => {
+    setIsNearViewport((isNear?.(videoId) ?? true) === true);
+  }, [isNear, videoId]);
 
   useEffect(() => {
     signatureRef.current = thumbSignature;
@@ -186,7 +194,10 @@ const VideoCard = memo(function VideoCard({
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
-    const handleVisible = (nowVisible /* boolean */) => {
+    const handleVisible = (nowVisible /* boolean */, entry) => {
+      if (entry) {
+        setIsNearViewport((isNear?.(videoId) ?? true) === true);
+      }
       onVisibilityChange?.(videoId, nowVisible);
 
       if (
@@ -583,6 +594,28 @@ const VideoCard = memo(function VideoCard({
       : canLoad
       ? "Keep scrolling to fetch more clips"
       : "All caught up for now";
+
+    if (!isNearViewport) {
+      return (
+        <div
+          className="video-placeholder video-placeholder--static"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="video-placeholder__media" aria-hidden="true">
+            <div className="video-placeholder__static-block" />
+          </div>
+          <div className="video-placeholder__text">
+            <span className="video-placeholder__message">
+              {canLoad ? "Scroll closer to load" : statusText}
+            </span>
+            <span className="video-placeholder__subtext">
+              Thumbnails idle until you're nearby
+            </span>
+          </div>
+        </div>
+      );
+    }
 
     const spinnerClassName = `video-placeholder__spinner${
       loading ? "" : " video-placeholder__spinner--paused"

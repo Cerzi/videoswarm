@@ -10,10 +10,12 @@ export default function useChunkedMasonry({
   chunkSize = 200,
   columnGapFallback = 12,
   onOrderChange,
+  onMetricsChange,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
   const lastOrderRef = useRef(null);
+  const lastMetricsRef = useRef(null);
 
   const isLayingOutRef = useRef(false);
   const relayoutRequestedRef = useRef(false);
@@ -21,6 +23,9 @@ export default function useChunkedMasonry({
   const lastUserActionRef = useRef(0);
 
   const resizeTimeoutRef = useRef(null);
+  const pendingZoomLevelRef = useRef(null);
+  const zoomFrameRef = useRef(0);
+  const currentZoomLevelRef = useRef(null);
 
   // ---- helpers ----
   const getColumnCount = useCallback(
@@ -85,7 +90,27 @@ export default function useChunkedMasonry({
       columnGap,
       gridWidth: availableWidth,
     };
-  }, [gridRef, getColumnCount, columnGapFallback]);
+
+    if (typeof onMetricsChange === "function") {
+      const next = {
+        columnWidth,
+        columnCount,
+        columnGap,
+        gridWidth: availableWidth,
+      };
+      const prev = lastMetricsRef.current;
+      const changed =
+        !prev ||
+        prev.columnWidth !== next.columnWidth ||
+        prev.columnCount !== next.columnCount ||
+        prev.columnGap !== next.columnGap ||
+        prev.gridWidth !== next.gridWidth;
+      if (changed) {
+        lastMetricsRef.current = next;
+        onMetricsChange(next);
+      }
+    }
+  }, [gridRef, getColumnCount, columnGapFallback, onMetricsChange]);
 
   const scheduleLayout = useCallback(() => {
     // coalesce concurrent requests
@@ -259,24 +284,49 @@ export default function useChunkedMasonry({
   // zoom: swap classes & relayout
   const setZoomClass = useCallback(
     (level) => {
-      const grid = gridRef.current;
-      if (!grid) return;
+      const desired = Math.max(0, Math.floor(level));
+      pendingZoomLevelRef.current = desired;
 
-      // remove all known zoom classes and add the desired one
-      const classes = [
-        "zoom-small",
-        "zoom-medium",
-        "zoom-large",
-        "zoom-xlarge",
-        "zoom-xxlarge",
-      ];
-      classes.forEach((c) => grid.classList.remove(c));
-      grid.classList.add(zoomClassForLevelProp(level));
-      cachedGridMeasurementsRef.current = null;
-      scheduleLayout();
+      if (zoomFrameRef.current) return;
+
+      zoomFrameRef.current = requestAnimationFrame(() => {
+        zoomFrameRef.current = 0;
+        const target = pendingZoomLevelRef.current;
+        pendingZoomLevelRef.current = null;
+
+        if (!Number.isFinite(target)) return;
+
+        const grid = gridRef.current;
+        if (!grid) return;
+
+        if (currentZoomLevelRef.current === target) return;
+        currentZoomLevelRef.current = target;
+
+        const classes = [
+          "zoom-small",
+          "zoom-medium",
+          "zoom-large",
+          "zoom-xlarge",
+          "zoom-xxlarge",
+        ];
+        classes.forEach((c) => grid.classList.remove(c));
+        grid.classList.add(zoomClassForLevelProp(target));
+        cachedGridMeasurementsRef.current = null;
+        updateCachedGridMeasurements();
+        scheduleLayout();
+      });
     },
-    [gridRef, zoomClassForLevelProp, scheduleLayout]
+    [gridRef, zoomClassForLevelProp, scheduleLayout, updateCachedGridMeasurements]
   );
+
+  useEffect(() => {
+    return () => {
+      if (zoomFrameRef.current) {
+        cancelAnimationFrame(zoomFrameRef.current);
+        zoomFrameRef.current = 0;
+      }
+    };
+  }, []);
 
   // scroll tracking — avoid thrashing while user is scrolling
   useEffect(() => {
