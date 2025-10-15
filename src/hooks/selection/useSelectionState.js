@@ -8,8 +8,19 @@ export default function useSelectionState() {
   const size = selected.size;
 
   const selectOnly = useCallback((id) => {
-    setSelected(new Set([id]));
-    setAnchorId(id); // set anchor for shift-range
+    setSelected((prev) => {
+      const alreadyOnly = prev.size === 1 && prev.has(id);
+      if (alreadyOnly) {
+        setAnchorId(null);
+        return new Set();
+      }
+
+      // If the item was part of a larger selection we collapse down to just it;
+      // a subsequent click will hit the early return above and clear everything.
+      const next = new Set([id]);
+      setAnchorId(id); // set anchor for shift-range
+      return next;
+    });
   }, []);
 
   const toggle = useCallback((id) => {
