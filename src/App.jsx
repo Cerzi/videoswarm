@@ -29,6 +29,10 @@ import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
+import {
+  getMetadataPanelToggleState,
+  shouldAutoOpenMetadataPanel,
+} from "./utils/metadataPanelState";
 
 import {
   SortKey,
@@ -705,7 +709,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (selection.size > 0 && !isMetadataPanelOpen) {
+    if (shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)) {
       runWithStableAnchor(
         "sidebar:auto-open",
         () => {
@@ -732,6 +736,12 @@ function App() {
     sidebarAnchorOptions,
     waitForTransitionEnd,
   ]);
+
+  useEffect(() => {
+    if (selection.size === 0 && isMetadataPanelOpen) {
+      setMetadataPanelOpen(false);
+    }
+  }, [isMetadataPanelOpen, selection.size, setMetadataPanelOpen]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -924,7 +934,16 @@ function App() {
           ["width"],
           anchorDefaults.maxWaitMs
         );
-        setMetadataPanelOpen((open) => !open);
+        setMetadataPanelOpen((open) => {
+          const { nextOpen, shouldClear } = getMetadataPanelToggleState(
+            open,
+            selection.size
+          );
+          if (shouldClear) {
+            selection.clear();
+          }
+          return nextOpen;
+        });
         scheduleLayout?.();
         return promise;
       },
@@ -935,6 +954,8 @@ function App() {
     metadataPanelRef,
     runWithStableAnchor,
     scheduleLayout,
+    selection.clear,
+    selection.size,
     setMetadataPanelOpen,
     sidebarAnchorOptions,
     waitForTransitionEnd,
