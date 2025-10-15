@@ -43,34 +43,43 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+
+    // Optional clamp: maximum number of items that should be visible at once.
+    // Used by viewport-aware callers to keep the rendered list bounded.
+    maxVisible,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
-  const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
-  const prevLenRef = useRef(safe.length);
+  const clampTarget =
+    Number.isFinite(maxVisible) && maxVisible > 0
+      ? Math.max(0, Math.floor(maxVisible))
+      : Infinity;
+  const [visible, setVisible] = useState(() =>
+    Math.min(initial, safe.length, clampTarget)
+  );
   const didInitRef = useRef(false);
 
-  // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
+  // ---- Clamp logic: initialize once; clamp on shrink or tighter maxVisible ----
   useEffect(() => {
     const len = safe.length;
+    const maxAllowed =
+      clampTarget === Infinity ? len : Math.min(len, clampTarget);
+
     if (!didInitRef.current) {
       didInitRef.current = true;
-      setVisible((v) => Math.min(v, len));
-      prevLenRef.current = len;
+      setVisible((v) => Math.min(v, maxAllowed));
       return;
     }
 
-    // If list shrank below currently visible, clamp down.
-    if (len < prevLenRef.current && visible > len) {
-      setVisible(len);
-    }
-    // Do not reset visible on growth.
-    prevLenRef.current = len;
+    setVisible((v) => (v > maxAllowed ? maxAllowed : v));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safe.length]);
+  }, [safe.length, clampTarget]);
 
-  // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
+  const maxAllowed =
+    clampTarget === Infinity ? safe.length : Math.min(safe.length, clampTarget);
+
+  // Short-circuit when fully visible (respecting clamp)
+  const allVisible = visible >= maxAllowed;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -194,7 +203,10 @@ export function useProgressiveList(
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) => {
+            if (v >= maxAllowed) return v;
+            return Math.min(v + add, maxAllowed);
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -223,6 +235,7 @@ export function useProgressiveList(
     allVisible,
     pauseOnScroll,
     shouldUseInterval,
+    maxAllowed,
     // note: do not depend on visible/safe.length here; the setVisible closure handles it
   ]);
 
@@ -234,12 +247,18 @@ export function useProgressiveList(
 
     const timer = setInterval(() => {
       setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
+        v < maxAllowed ? Math.min(v + batchSize, maxAllowed) : v
       );
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+  }, [
+    shouldUseInterval,
+    allVisible,
+    maxAllowed,
+    batchSize,
+    intervalMs,
+  ]);
 
   return safe.slice(0, visible);
 }

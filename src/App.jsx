@@ -68,6 +68,148 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+const FALLBACK_ASPECT_RATIO = 16 / 9;
+const FALLBACK_INVERSE_ASPECT_RATIO = 1 / FALLBACK_ASPECT_RATIO;
+const APPROX_COLUMN_GAP = 12;
+const MAX_ASPECT_SAMPLES = 500;
+
+const clampNumber = (value, min, max) =>
+  Math.min(Math.max(value, min), max);
+
+const deriveAspectStats = (videos = []) => {
+  if (!Array.isArray(videos) || videos.length === 0) {
+    return {
+      average: FALLBACK_ASPECT_RATIO,
+      inverseAverage: FALLBACK_INVERSE_ASPECT_RATIO,
+    };
+  }
+
+  const sampleCap = Math.min(MAX_ASPECT_SAMPLES, videos.length);
+  const stride = Math.max(1, Math.floor(videos.length / sampleCap));
+
+  let sum = 0;
+  let invSum = 0;
+  let count = 0;
+
+  for (let i = 0; i < videos.length && count < sampleCap; i += stride) {
+    const video = videos[i];
+    const explicit = Number(video?.aspectRatio);
+    const metadata = Number(video?.dimensions?.aspectRatio);
+    const computed = (() => {
+      const width = Number(video?.dimensions?.width);
+      const height = Number(video?.dimensions?.height);
+      if (
+        Number.isFinite(width) &&
+        width > 0 &&
+        Number.isFinite(height) &&
+        height > 0
+      ) {
+        return width / height;
+      }
+      return NaN;
+    })();
+
+    const candidate =
+      Number.isFinite(explicit) && explicit > 0
+        ? explicit
+        : Number.isFinite(metadata) && metadata > 0
+        ? metadata
+        : computed;
+
+    if (Number.isFinite(candidate) && candidate > 0.05) {
+      const clamped = clampNumber(candidate, 0.25, 4);
+      sum += clamped;
+      invSum += 1 / clamped;
+      count += 1;
+    }
+  }
+
+  if (!count) {
+    return {
+      average: FALLBACK_ASPECT_RATIO,
+      inverseAverage: FALLBACK_INVERSE_ASPECT_RATIO,
+    };
+  }
+
+  const average = clampNumber(sum / count, 0.3, 4);
+  const inverseAverage = clampNumber(invSum / count, 0.35, 3);
+
+  return { average, inverseAverage };
+};
+
+const computeViewportDensity = (size, zoomIndex, aspectStats) => {
+  const width = Math.max(0, Math.floor(size?.width ?? 0));
+  const height = Math.max(0, Math.floor(size?.height ?? 0));
+
+  const clampedZoom = clampNumber(
+    Number.isFinite(zoomIndex) ? Math.round(zoomIndex) : 0,
+    ZOOM_MIN_INDEX,
+    ZOOM_MAX_INDEX
+  );
+  const tileWidth = ZOOM_TILE_WIDTHS[clampedZoom] ?? 200;
+  const inverseAspect = clampNumber(
+    aspectStats?.inverseAverage ?? FALLBACK_INVERSE_ASPECT_RATIO,
+    0.35,
+    3
+  );
+
+  const tileHeight = Math.max(
+    80,
+    Math.min(tileWidth * inverseAspect, tileWidth * 2.8)
+  );
+
+  if (!width || !height) {
+    return {
+      columns: 1,
+      rows: 1,
+      viewportCapacity: 1,
+      bufferRows: 2,
+      tileWidth,
+      tileHeight,
+      nearPx: 900,
+      rootMargin: "1600px 0px",
+      maxVisible: Infinity,
+    };
+  }
+
+  const columnCount = Math.max(
+    1,
+    Math.floor((width + APPROX_COLUMN_GAP) / (tileWidth + APPROX_COLUMN_GAP))
+  );
+  const rowsInViewport = Math.max(1, Math.ceil(height / tileHeight));
+  const bufferRows = Math.max(2, Math.ceil(rowsInViewport * 1.1));
+  const totalRows = rowsInViewport + bufferRows;
+  const maxVisible = columnCount * totalRows;
+
+  const bufferMultiplier = Math.min(
+    bufferRows,
+    Math.max(2, Math.ceil(rowsInViewport * 0.25))
+  );
+  const primaryLookahead = height * 0.6;
+  const nearPx = clampNumber(
+    Math.round(primaryLookahead + tileHeight * bufferMultiplier),
+    280,
+    1400
+  );
+  const rootMarginPx = clampNumber(
+    Math.round(Math.max(nearPx * 0.9, height * 0.75)),
+    320,
+    1600
+  );
+
+  return {
+    columns: columnCount,
+    rows: rowsInViewport,
+    viewportCapacity: columnCount * rowsInViewport,
+    bufferRows,
+    tileWidth,
+    tileHeight,
+    nearPx,
+    rootMargin: `${rootMarginPx}px 0px`,
+    maxVisible,
+  };
+};
+
 const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
   const fingerprint =
@@ -237,6 +379,7 @@ function App() {
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
@@ -245,33 +388,47 @@ function App() {
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
-  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
-    rootMargin: "1600px 0px",
-    threshold: [0, 0.15],
-    nearPx: 900,
-  });
-
   useEffect(() => {
-    const el = scrollContainerRef.current;
-    const update = () => {
-      const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
-    };
-    update();
+    let raf = 0;
 
-    const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    if (ro && el) ro.observe(el);
-    window.addEventListener("resize", update);
+    const measure = () => {
+      const node = scrollContainerRef.current;
+      if (!node) return;
+      const nextWidth = Math.round(node.clientWidth || node.offsetWidth || 0);
+      const nextHeight = Math.round(node.clientHeight || node.offsetHeight || 0);
+      setViewportSize((prev) =>
+        prev.width === nextWidth && prev.height === nextHeight
+          ? prev
+          : { width: nextWidth, height: nextHeight }
+      );
+    };
+
+    const onResize = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+
+    measure();
+
+    window.addEventListener("resize", onResize);
+    const node = scrollContainerRef.current;
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && node) {
+      ro = new ResizeObserver(onResize);
+      ro.observe(node);
+    }
 
     return () => {
-      if (ro && el) ro.unobserve(el);
+      window.removeEventListener("resize", onResize);
+      if (raf) cancelAnimationFrame(raf);
+      if (ro && node) {
+        try {
+          ro.unobserve(node);
+        } catch {}
+      }
       ro?.disconnect?.();
-      window.removeEventListener("resize", update);
     };
-  }, [scrollContainerRef, ioRegistry]);
-
-  const { hadLongTaskRecently } = useLongTaskFlag();
+  }, [scrollContainerRef]);
 
   const filtersActiveCount = useMemo(() => {
     const includeCount = filters.includeTags?.length ?? 0;
@@ -367,6 +524,28 @@ function App() {
       return true;
     });
   }, [videos, filters]);
+
+  const aspectStats = useMemo(
+    () => deriveAspectStats(filteredVideos),
+    [filteredVideos]
+  );
+
+  const viewportDensity = useMemo(
+    () => computeViewportDensity(viewportSize, zoomLevel, aspectStats),
+    [viewportSize, zoomLevel, aspectStats]
+  );
+
+  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
+    rootMargin: viewportDensity.rootMargin,
+    threshold: [0, 0.15],
+    nearPx: viewportDensity.nearPx,
+  });
+
+  useEffect(() => {
+    ioRegistry.setNearPx(viewportDensity.nearPx);
+  }, [ioRegistry, viewportDensity.nearPx]);
+
+  const { hadLongTaskRecently } = useLongTaskFlag();
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),
@@ -520,6 +699,15 @@ function App() {
     () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
     [filteredVideos, groupByFolders, comparator]
   );
+
+  const progressiveClamp = useMemo(() => {
+    const rawMax = viewportDensity?.maxVisible;
+    const max = Math.floor(Number.isFinite(rawMax) ? rawMax : 0);
+    if (!Number.isFinite(max) || max <= 0) return undefined;
+    const total = orderedVideos.length;
+    if (!total) return Math.max(1, max);
+    return Math.max(1, Math.min(total, max));
+  }, [viewportDensity?.maxVisible, orderedVideos.length]);
 
   // data order ids (fallback)
   const orderedIds = useMemo(
@@ -1022,6 +1210,18 @@ function App() {
     ]
   );
 
+  const progressiveOptions = useMemo(
+    () => ({
+      initial: 120,
+      batchSize: 64,
+      intervalMs: 100,
+      pauseOnScroll: true,
+      longTaskAdaptation: true,
+      maxVisible: progressiveClamp,
+    }),
+    [progressiveClamp]
+  );
+
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
     videos: orderedVideos,
@@ -1031,13 +1231,7 @@ function App() {
     actualPlaying,
     maxConcurrentPlaying,
     scrollRef: scrollContainerRef,
-    progressive: {
-      initial: 120,
-      batchSize: 64,
-      intervalMs: 100,
-      pauseOnScroll: true,
-      longTaskAdaptation: true,
-    },
+    progressive: progressiveOptions,
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
   });

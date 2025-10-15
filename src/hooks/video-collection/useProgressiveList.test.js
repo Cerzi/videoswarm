@@ -60,4 +60,43 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("honors maxVisible clamp and adapts when loosened or tightened", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 400 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ limit }) =>
+        useProgressiveList(items, 150, 60, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          maxVisible: limit,
+        }),
+      { initialProps: { limit: 90 } }
+    );
+
+    // Initial slice is clamped to the provided maxVisible
+    expect(result.current.length).toBe(90);
+
+    // Interval ticks do not exceed the clamp
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.length).toBe(90);
+
+    // Loosen the clamp — hook should allow growth up to the new ceiling
+    rerender({ limit: 180 });
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBeGreaterThan(90);
+    expect(result.current.length).toBeLessThanOrEqual(180);
+
+    // Tighten clamp — visible count should shrink immediately
+    rerender({ limit: 70 });
+    expect(result.current.length).toBe(70);
+
+    vi.useRealTimers();
+  });
 });
