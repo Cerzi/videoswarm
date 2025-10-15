@@ -50,6 +50,7 @@ const MetadataPanel = ({
   onSetRating,
   onClearRating,
   focusToken,
+  onScrollToSelection,
 }) => {
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef(null);
@@ -63,6 +64,10 @@ const MetadataPanel = ({
   }, [selectionCount, selectedVideos]);
 
   const hasSelection = derivedSelectionCount > 0;
+  const canScrollSelection = hasSelection && typeof onScrollToSelection === "function";
+  const scrollButtonLabel = derivedSelectionCount > 1
+    ? "Focus next selected video"
+    : "Focus selected video";
 
   useEffect(() => {
     if (isOpen && focusToken) {
@@ -225,6 +230,19 @@ const MetadataPanel = ({
             {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
           </span>
         </div>
+        {canScrollSelection ? (
+          <div className="metadata-panel__header-actions">
+            <button
+              type="button"
+              className="metadata-panel__scroll-button"
+              onClick={() => onScrollToSelection?.()}
+              aria-label={scrollButtonLabel}
+              title={scrollButtonLabel}
+            >
+              Focus
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="metadata-panel__content">
