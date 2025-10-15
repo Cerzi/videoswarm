@@ -1,4 +1,5 @@
 // hooks/video-collection/useVideoCollection.js
+import { useMemo } from "react";
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
@@ -35,6 +36,7 @@ export default function useVideoCollection({
     longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
     forceInterval,
   } = progressive || {};
+  const clampOptions = progressive?.clamp ?? null;
 
   // Normalize to safe numbers
   const safeInitial = Math.max(
@@ -50,6 +52,35 @@ export default function useVideoCollection({
     Number.isFinite(intervalMs) ? intervalMs : PROGRESSIVE_DEFAULTS.intervalMs
   );
 
+  const idToIndexMap = useMemo(() => {
+    const map = new Map();
+    videos.forEach((video, index) => {
+      const id = video?.id;
+      if (id != null) map.set(id, index);
+    });
+    return map;
+  }, [videos]);
+
+  const highestVisibleIndex = useMemo(() => {
+    if (!visibleVideos || typeof visibleVideos.forEach !== "function") return -1;
+    let max = -1;
+    visibleVideos.forEach((id) => {
+      const idx = idToIndexMap.get(id);
+      if (typeof idx === "number" && idx > max) {
+        max = idx;
+      }
+    });
+    return max;
+  }, [visibleVideos, idToIndexMap]);
+
+  const progressiveClamp = useMemo(() => {
+    if (!clampOptions) return null;
+    return {
+      ...clampOptions,
+      sentinelIndex: highestVisibleIndex,
+    };
+  }, [clampOptions, highestVisibleIndex]);
+
   // Layer 1: Progressive rendering (React performance)
   const progressiveVideos = useProgressiveList(
     videos,
@@ -62,6 +93,7 @@ export default function useVideoCollection({
       longTaskAdaptation,
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
+      clamp: progressiveClamp ?? undefined,
     }
   );
 

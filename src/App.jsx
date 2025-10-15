@@ -68,6 +68,20 @@ const path = {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+const DEFAULT_VIEWPORT_CLAMP = {
+  targetVisible: Infinity,
+  nearPx: 900,
+  rootMargin: "1600px 0px",
+  columns: 4,
+  bufferRows: 8,
+  viewportRows: 4,
+};
+
+const MASONRY_DEFAULT_ASPECT = 16 / 9;
+const MIN_TILE_WIDTH = 80;
+const MIN_NEAR_PX = 240;
+const MAX_NEAR_PX = 3200;
+
 const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
   const fingerprint =
@@ -245,33 +259,188 @@ function App() {
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
+  const [viewportClamp, setViewportClamp] = useState(DEFAULT_VIEWPORT_CLAMP);
+
+  const recomputeViewportClamp = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    const scrollEl = scrollContainerRef.current;
+    const gridEl = gridRef.current;
+
+    const viewportHeight = Math.max(
+      0,
+      scrollEl?.clientHeight ?? window.innerHeight ?? 0
+    );
+
+    const rawGridWidth = (() => {
+      if (gridEl?.clientWidth) return gridEl.clientWidth;
+      if (gridEl?.getBoundingClientRect)
+        return gridEl.getBoundingClientRect().width;
+      if (scrollEl?.clientWidth) return scrollEl.clientWidth;
+      return window.innerWidth ?? 0;
+    })();
+
+    let availableWidth = rawGridWidth;
+    let gap = 4;
+    let horizontalPadding = 0;
+
+    if (gridEl && typeof window !== "undefined") {
+      try {
+        const style = window.getComputedStyle(gridEl);
+        gap = parseFloat(style.columnGap || style.gap || "4") || 4;
+        horizontalPadding =
+          (parseFloat(style.paddingLeft) || 0) +
+          (parseFloat(style.paddingRight) || 0);
+        if (gridEl.clientWidth) {
+          availableWidth = gridEl.clientWidth;
+        }
+      } catch {}
+    } else if (scrollEl?.clientWidth) {
+      availableWidth = scrollEl.clientWidth;
+    }
+
+    availableWidth = Math.max(0, availableWidth - horizontalPadding);
+
+    if (availableWidth <= 0 || viewportHeight <= 0) {
+      return;
+    }
+
+    const zoomIndex = Math.max(
+      0,
+      Math.min(zoomLevel, ZOOM_TILE_WIDTHS.length - 1)
+    );
+    const desiredWidth = ZOOM_TILE_WIDTHS[zoomIndex] ?? ZOOM_TILE_WIDTHS[0];
+    const safeDesired = Math.max(MIN_TILE_WIDTH, Math.floor(desiredWidth));
+    const safeGap = Number.isFinite(gap) ? gap : 4;
+
+    const columns = Math.max(
+      1,
+      Math.floor((availableWidth + safeGap) / (safeDesired + safeGap))
+    );
+
+    const columnWidth = Math.max(
+      MIN_TILE_WIDTH,
+      Math.floor(
+        (availableWidth - safeGap * Math.max(0, columns - 1)) /
+          Math.max(1, columns)
+      )
+    );
+
+    const tileHeight = Math.max(
+      40,
+      Math.round(columnWidth / MASONRY_DEFAULT_ASPECT)
+    );
+
+    const viewportRows = Math.max(
+      1,
+      Math.ceil(viewportHeight / Math.max(tileHeight, 1))
+    );
+
+    const bufferRows = Math.max(3, Math.round(viewportRows * 1.5));
+
+    const rawTarget = columns * Math.max(
+      viewportRows + bufferRows,
+      viewportRows * 2 + 2
+    );
+
+    const overscanRows = Math.max(
+      bufferRows,
+      Math.ceil(viewportRows * 0.75)
+    );
+
+    const nearPx = Math.max(
+      MIN_NEAR_PX,
+      Math.min(
+        MAX_NEAR_PX,
+        Math.round(tileHeight * overscanRows)
+      )
+    );
+
+    const rootMarginValue = Math.max(
+      nearPx,
+      Math.min(
+        MAX_NEAR_PX,
+        Math.round(tileHeight * (viewportRows + bufferRows))
+      )
+    );
+
+    setViewportClamp((prev) => {
+      const next = {
+        targetVisible: Math.max(rawTarget, columns * viewportRows),
+        nearPx,
+        rootMargin: `${rootMarginValue}px 0px`,
+        columns,
+        bufferRows,
+        viewportRows,
+      };
+      if (
+        prev.targetVisible === next.targetVisible &&
+        prev.nearPx === next.nearPx &&
+        prev.rootMargin === next.rootMargin &&
+        prev.columns === next.columns &&
+        prev.bufferRows === next.bufferRows &&
+        prev.viewportRows === next.viewportRows
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [scrollContainerRef, gridRef, zoomLevel]);
+
   const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
-    rootMargin: "1600px 0px",
+    rootMargin: viewportClamp.rootMargin,
     threshold: [0, 0.15],
-    nearPx: 900,
+    nearPx: viewportClamp.nearPx,
   });
 
   useEffect(() => {
-    const el = scrollContainerRef.current;
-    const update = () => {
-      const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
-    };
-    update();
+    if (typeof window === "undefined") return;
 
-    const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    if (ro && el) ro.observe(el);
-    window.addEventListener("resize", update);
+    recomputeViewportClamp();
+
+    const handleResize = () => recomputeViewportClamp();
+
+    let observer = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(handleResize);
+      const scrollEl = scrollContainerRef.current;
+      const gridEl = gridRef.current;
+      if (scrollEl) observer.observe(scrollEl);
+      if (gridEl && gridEl !== scrollEl) observer.observe(gridEl);
+    }
+
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      if (ro && el) ro.unobserve(el);
-      ro?.disconnect?.();
-      window.removeEventListener("resize", update);
+      window.removeEventListener("resize", handleResize);
+      if (observer) {
+        try {
+          observer.disconnect();
+        } catch {}
+      }
     };
-  }, [scrollContainerRef, ioRegistry]);
+  }, [recomputeViewportClamp, scrollContainerRef, gridRef]);
+
+  useEffect(() => {
+    ioRegistry.setNearPx(Math.max(0, Math.floor(viewportClamp.nearPx)));
+  }, [ioRegistry, viewportClamp.nearPx]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
+
+  const progressiveClamp = useMemo(
+    () => ({
+      targetVisible: viewportClamp.targetVisible,
+      columns: viewportClamp.columns,
+      bufferRows: viewportClamp.bufferRows,
+      viewportRows: viewportClamp.viewportRows,
+    }),
+    [
+      viewportClamp.targetVisible,
+      viewportClamp.columns,
+      viewportClamp.bufferRows,
+      viewportClamp.viewportRows,
+    ]
+  );
 
   const filtersActiveCount = useMemo(() => {
     const includeCount = filters.includeTags?.length ?? 0;
@@ -1037,6 +1206,7 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
+      clamp: progressiveClamp,
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,

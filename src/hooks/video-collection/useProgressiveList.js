@@ -14,6 +14,16 @@ import { useEffect, useRef, useState } from "react";
  *
  * Test/SSR environments (no rIC): falls back to setInterval using `intervalMs`,
  * so existing tests that use fake timers still pass (deterministic).
+ *
+ * Options.clamp?: {
+ *   targetVisible: number,
+ *   columns?: number,
+ *   bufferRows?: number,
+ *   viewportRows?: number,
+ *   sentinelIndex?: number,
+ * }
+ *   - Limits progressive growth to a viewport-sized window unless the
+ *     sentinel index (highest visible item) advances.
  */
 export function useProgressiveList(
   items = [],
@@ -43,6 +53,9 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+
+    // Viewport-aware clamp configuration
+    clamp: clampOptions = null,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
@@ -55,22 +68,23 @@ export function useProgressiveList(
     const len = safe.length;
     if (!didInitRef.current) {
       didInitRef.current = true;
-      setVisible((v) => Math.min(v, len));
+      setVisible((v) => {
+        const cap = Math.min(len, effectiveCapRef.current || len);
+        return v > cap ? cap : Math.min(v, len);
+      });
       prevLenRef.current = len;
       return;
     }
 
     // If list shrank below currently visible, clamp down.
     if (len < prevLenRef.current && visible > len) {
-      setVisible(len);
+      const cap = Math.min(len, effectiveCapRef.current || len);
+      setVisible(cap);
     }
     // Do not reset visible on growth.
     prevLenRef.current = len;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length]);
-
-  // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -90,6 +104,79 @@ export function useProgressiveList(
 
   // Adaptive batch (only used by idle path)
   const dynamicBatchRef = useRef(batchSize);
+
+  // Viewport clamp sanitization
+  const clampTargetRaw = clampOptions?.targetVisible;
+  const clampColumnsRaw = clampOptions?.columns;
+  const clampBufferRowsRaw = clampOptions?.bufferRows;
+  const clampViewportRowsRaw = clampOptions?.viewportRows;
+  const clampSentinelRaw = clampOptions?.sentinelIndex;
+
+  const clampTarget =
+    Number.isFinite(clampTargetRaw) && clampTargetRaw > 0
+      ? clampTargetRaw
+      : Infinity;
+  const clampColumns =
+    Number.isFinite(clampColumnsRaw) && clampColumnsRaw > 0
+      ? Math.max(1, Math.floor(clampColumnsRaw))
+      : null;
+  const clampBufferRows =
+    Number.isFinite(clampBufferRowsRaw) && clampBufferRowsRaw >= 0
+      ? Math.max(0, Math.floor(clampBufferRowsRaw))
+      : null;
+  const clampViewportRows =
+    Number.isFinite(clampViewportRowsRaw) && clampViewportRowsRaw > 0
+      ? Math.max(1, Math.floor(clampViewportRowsRaw))
+      : null;
+  const clampSentinelIndex =
+    Number.isFinite(clampSentinelRaw) && clampSentinelRaw >= 0
+      ? Math.floor(clampSentinelRaw)
+      : -1;
+
+  const clampBase = Number.isFinite(clampTarget)
+    ? Math.max(initial, Math.floor(clampTarget))
+    : Infinity;
+
+  const sentinelRowAllowance = (() => {
+    const viewport = clampViewportRows ?? 0;
+    const buffer = clampBufferRows ?? 0;
+    if (viewport && buffer) return viewport + buffer;
+    if (viewport) return Math.max(viewport * 2, viewport + 2);
+    if (buffer) return Math.max(buffer, 2);
+    return 6;
+  })();
+  const sentinelColumns = clampColumns ?? 1;
+
+  const sentinelAllowance =
+    clampSentinelIndex >= 0
+      ? clampSentinelIndex + sentinelColumns * sentinelRowAllowance
+      : -1;
+
+  const clampLimit = (() => {
+    if (!Number.isFinite(clampBase) && clampSentinelIndex < 0) {
+      return Infinity;
+    }
+    const candidate = Math.max(
+      Number.isFinite(clampBase) ? clampBase : -Infinity,
+      sentinelAllowance
+    );
+    if (!Number.isFinite(candidate)) return Infinity;
+    return Math.max(initial, Math.floor(candidate));
+  })();
+
+  const effectiveCapRef = useRef(Infinity);
+
+  // Short-circuit when we've reached the effective clamp limit
+  const effectiveCap = Math.min(safe.length, clampLimit);
+  const atEffectiveCap = visible >= effectiveCap;
+
+  useEffect(() => {
+    effectiveCapRef.current = effectiveCap;
+  }, [effectiveCap]);
+
+  useEffect(() => {
+    setVisible((prev) => (prev > effectiveCap ? effectiveCap : prev));
+  }, [effectiveCap]);
 
   // Attach scroll listener (pause while user is scrolling)
   useEffect(() => {
@@ -177,7 +264,7 @@ export function useProgressiveList(
 
   // Idle growth scheduler (preferred in real browsers)
   useEffect(() => {
-    if (allVisible || shouldUseInterval) return;
+    if (atEffectiveCap || shouldUseInterval) return;
 
     let cancelled = false;
 
@@ -192,9 +279,15 @@ export function useProgressiveList(
 
       const idleCb = () => {
         if (cancelled) return;
-        if (!allVisible) {
+        if (!atEffectiveCap) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) => {
+            const cap = effectiveCapRef.current;
+            const limit = Math.min(safe.length, Number.isFinite(cap) ? cap : safe.length);
+            if (v >= limit) return v;
+            const next = Math.min(v + add, limit);
+            return next === v ? v : next;
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -220,7 +313,7 @@ export function useProgressiveList(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    allVisible,
+    atEffectiveCap,
     pauseOnScroll,
     shouldUseInterval,
     // note: do not depend on visible/safe.length here; the setVisible closure handles it
@@ -230,16 +323,20 @@ export function useProgressiveList(
   // (kept fixed for backward-compat with existing tests)
   useEffect(() => {
     if (!shouldUseInterval) return;
-    if (allVisible) return;
+    if (atEffectiveCap) return;
 
     const timer = setInterval(() => {
-      setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
-      );
+      setVisible((v) => {
+        const cap = effectiveCapRef.current;
+        const limit = Math.min(safe.length, Number.isFinite(cap) ? cap : safe.length);
+        if (v >= limit) return v;
+        const next = Math.min(v + batchSize, limit);
+        return next === v ? v : next;
+      });
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+  }, [shouldUseInterval, atEffectiveCap, safe.length, batchSize, intervalMs]);
 
   return safe.slice(0, visible);
 }

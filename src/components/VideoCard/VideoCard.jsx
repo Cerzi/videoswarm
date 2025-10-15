@@ -51,6 +51,7 @@ const VideoCard = memo(function VideoCard({
   // local mirrors (parent is source of truth)
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isNearViewport, setIsNearViewport] = useState(true);
 
   // guards
   const loadRequestedRef = useRef(false);
@@ -58,6 +59,7 @@ const VideoCard = memo(function VideoCard({
   const permanentErrorRef = useRef(false);
   const retryAttemptsRef   = useRef(0);
   const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
+  const nearRef = useRef(true);
 
   const [errorText, setErrorText] = useState(null);
   const videoId = video.id || video.fullPath || video.name;
@@ -186,7 +188,13 @@ const VideoCard = memo(function VideoCard({
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
-    const handleVisible = (nowVisible /* boolean */) => {
+    const handleVisible = (nowVisible /* boolean */, entry, near) => {
+      const nearValue = typeof near === "boolean" ? near : nowVisible;
+      if (nearRef.current !== nearValue) {
+        nearRef.current = nearValue;
+        setIsNearViewport(nearValue);
+      }
+
       onVisibilityChange?.(videoId, nowVisible);
 
       if (
@@ -207,6 +215,13 @@ const VideoCard = memo(function VideoCard({
       unobserveIntersection(el);
     };
   }, [observeIntersection, unobserveIntersection, videoId, loaded, loading, canLoadMoreVideos, onVisibilityChange]);
+
+  useEffect(() => {
+    if (isVisible && !nearRef.current) {
+      nearRef.current = true;
+      setIsNearViewport(true);
+    }
+  }, [isVisible]);
 
   // Backup trigger if parent already flags visible
   useEffect(() => {
@@ -587,12 +602,19 @@ const VideoCard = memo(function VideoCard({
     const spinnerClassName = `video-placeholder__spinner${
       loading ? "" : " video-placeholder__spinner--paused"
     }`;
+    const placeholderClassName = `video-placeholder${
+      isNearViewport ? "" : " video-placeholder--static"
+    }`;
 
     return (
-      <div className="video-placeholder" role="status" aria-live="polite">
+      <div className={placeholderClassName} role="status" aria-live="polite">
         <div className="video-placeholder__media" aria-hidden="true">
-          <div className="video-placeholder__sheen" />
-          <div className={spinnerClassName} />
+          {isNearViewport ? (
+            <>
+              <div className="video-placeholder__sheen" />
+              <div className={spinnerClassName} />
+            </>
+          ) : null}
         </div>
         <div className="video-placeholder__text">
           <span className="video-placeholder__message">{statusText}</span>

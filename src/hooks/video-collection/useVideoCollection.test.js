@@ -60,4 +60,56 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.stats.rendered)
       .toBe(PROGRESSIVE_DEFAULTS.initial);
   });
+
+  it("applies viewport clamp and expands when visible range advances", () => {
+    const videos = makeVideos(300);
+    const clamp = {
+      targetVisible: 80,
+      columns: 5,
+      bufferRows: 6,
+      viewportRows: 4,
+    };
+
+    const { result, rerender } = renderHook(
+      ({ visible }) =>
+        useVideoCollection({
+          videos,
+          visibleVideos: visible,
+          progressive: {
+            initial: 40,
+            batchSize: 20,
+            intervalMs: 1,
+            forceInterval: true,
+            pauseOnScroll: false,
+            longTaskAdaptation: false,
+            clamp,
+          },
+        }),
+      { initialProps: { visible: new Set() } }
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    expect(result.current.videosToRender.length).toBeLessThanOrEqual(
+      clamp.targetVisible
+    );
+
+    const farVisible = new Set([`v150`]);
+    rerender({ visible: farVisible });
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.videosToRender.length).toBeGreaterThan(
+      clamp.targetVisible
+    );
+
+    rerender({ visible: new Set() });
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.videosToRender.length).toBeLessThanOrEqual(
+      clamp.targetVisible
+    );
+  });
 });

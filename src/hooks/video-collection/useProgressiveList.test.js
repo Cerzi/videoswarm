@@ -60,4 +60,46 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("respects clamp target until sentinel advances", () => {
+    vi.useFakeTimers();
+
+    const items = Array.from({ length: 400 }, (_, i) => i);
+    const clamp = {
+      targetVisible: 120,
+      columns: 6,
+      bufferRows: 6,
+      viewportRows: 4,
+    };
+
+    const { result, rerender } = renderHook(
+      ({ sentinel }) =>
+        useProgressiveList(items, 80, 40, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          clamp: { ...clamp, sentinelIndex: sentinel },
+        }),
+      { initialProps: { sentinel: -1 } }
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    expect(result.current.length).toBeLessThanOrEqual(clamp.targetVisible);
+
+    rerender({ sentinel: 110 });
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBeGreaterThan(clamp.targetVisible);
+
+    rerender({ sentinel: 10 });
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.length).toBeLessThanOrEqual(clamp.targetVisible);
+
+    vi.useRealTimers();
+  });
 });

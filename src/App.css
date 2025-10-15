@@ -533,6 +533,26 @@ body {
   opacity: 0.75;
 }
 
+.video-placeholder--static {
+  --video-placeholder-foreground: rgba(244, 244, 250, 0.72);
+}
+
+.video-placeholder--static .video-placeholder__media {
+  background: rgba(14, 14, 20, 0.42);
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-color: rgba(255, 255, 255, 0.04);
+  border-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.video-placeholder--static .video-placeholder__sheen,
+.video-placeholder--static .video-placeholder__spinner {
+  display: none;
+}
+
+.video-placeholder--static .video-placeholder__text {
+  opacity: 0.85;
+}
+
 .video-placeholder__text {
   display: flex;
   flex-direction: column;

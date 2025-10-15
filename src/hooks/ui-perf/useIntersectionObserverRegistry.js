@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useCallback } from "react";
  *
  * API:
  *   const io = useIntersectionObserverRegistry(gridRef, { threshold, rootMargin, nearPx });
- *   io.observe(el, id, (visible, entry) => { ... }); // id optional; back-compat: observe(el, cb)
+ *   io.observe(el, id, (visible, entry, near) => { ... }); // id optional; back-compat: observe(el, cb)
  *   io.unobserve(el);
  *   io.isVisible(id) -> boolean
  *   io.isNear(id)    -> boolean
@@ -48,7 +48,16 @@ export default function useIntersectionObserverRegistry(
   const updateFlags = useCallback((entry, id, rootRect) => {
     if (id == null) return;
     const r = entry.boundingClientRect;
-    if (!r) return;
+    if (!r) {
+      if (entry.isIntersecting) {
+        visibleIdsRef.current.add(id);
+        nearIdsRef.current.add(id);
+      } else {
+        visibleIdsRef.current.delete(id);
+        nearIdsRef.current.delete(id);
+      }
+      return;
+    }
 
     // Visible = overlap with actual viewport
     const isVisible =
@@ -75,7 +84,13 @@ export default function useIntersectionObserverRegistry(
       const cb = handlersRef.current.get(el);
       if (cb) {
         // We pass "visible" (true viewport) for clarity
-        cb(visibleIdsRef.current.has(id), entry);
+        const visibleNow = id != null
+          ? visibleIdsRef.current.has(id)
+          : !!entry.isIntersecting;
+        const nearNow = id != null
+          ? nearIdsRef.current.has(id)
+          : !!entry.isIntersecting;
+        cb(visibleNow, entry, nearNow);
       }
     }
   }, [getRootRect, updateFlags]);
