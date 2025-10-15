@@ -34,6 +34,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  overflow-anchor: none;
 }
 
 .nav-left {
@@ -293,6 +294,7 @@ body {
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
+  overflow-anchor: auto;
 }
 
 /* Ensure React doesn't interfere with existing styles */

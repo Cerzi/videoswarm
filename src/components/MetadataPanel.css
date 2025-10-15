@@ -4,6 +4,7 @@
   transform: translateX(0);
   transition: width 0.25s ease, opacity 0.2s ease, transform 0.25s ease;
   overflow: hidden;
+  overflow-anchor: none;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(24, 24, 24, 0.85);
   backdrop-filter: blur(6px);
