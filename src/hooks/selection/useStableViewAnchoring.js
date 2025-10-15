@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 const DEFAULT_SETTLE_FRAMES = 1;
+const DEFAULT_STABILIZE_FRAMES = 2;
+const DEFAULT_MAX_WAIT_MS = 600;
 const MAX_RETRY_FRAMES = 2;
+const STABLE_EPSILON = 0.5;
+
+const now = () => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
+};
 
 const cssEscape = (value) => {
   if (typeof value !== "string") {
@@ -55,21 +65,39 @@ export default function useStableViewAnchoring({
   enabled = false,
   scrollRef,
   gridRef,
+  observeRef,
   selection,
   orderedIds = [],
   anchorMode = "last",
   settleFrames = DEFAULT_SETTLE_FRAMES,
+  stabilizeFrames = DEFAULT_STABILIZE_FRAMES,
+  maxWaitMs = DEFAULT_MAX_WAIT_MS,
 } = {}) {
   const pendingRef = useRef(null);
   const lastMeasurementRef = useRef(null);
   const settleFramesRef = useRef(settleFrames);
+  const stabilizeFramesRef = useRef(stabilizeFrames);
+  const maxWaitRef = useRef(maxWaitMs);
   const lastKnownTriggerRef = useRef(null);
+  const didWarnScrollRef = useRef(false);
 
   useEffect(() => {
     settleFramesRef.current = Number.isFinite(settleFrames)
       ? Math.max(0, Math.floor(settleFrames))
       : DEFAULT_SETTLE_FRAMES;
   }, [settleFrames]);
+
+  useEffect(() => {
+    stabilizeFramesRef.current = Number.isFinite(stabilizeFrames)
+      ? Math.max(0, Math.floor(stabilizeFrames))
+      : DEFAULT_STABILIZE_FRAMES;
+  }, [stabilizeFrames]);
+
+  useEffect(() => {
+    maxWaitRef.current = Number.isFinite(maxWaitMs)
+      ? Math.max(0, Math.floor(maxWaitMs))
+      : DEFAULT_MAX_WAIT_MS;
+  }, [maxWaitMs]);
 
   const resolveOrderedSelection = useCallback(() => {
     const selectedSet = selection?.selected;
@@ -236,20 +264,33 @@ export default function useStableViewAnchoring({
       const pending = pendingRef.current;
       if (!pending || pending.token !== token) return;
 
-      let frames = 0;
+      const settleTarget = Number.isFinite(pending.settleFrames)
+        ? Math.max(0, Math.floor(pending.settleFrames))
+        : settleFramesRef.current || DEFAULT_SETTLE_FRAMES;
+      const stabilizeTargetRaw = Number.isFinite(pending.stabilizeFrames)
+        ? Math.max(0, Math.floor(pending.stabilizeFrames))
+        : stabilizeFramesRef.current || DEFAULT_STABILIZE_FRAMES;
+      const stabilizeTarget = Math.max(1, stabilizeTargetRaw);
+      const maxWait = Number.isFinite(pending.maxWaitMs)
+        ? Math.max(0, pending.maxWaitMs)
+        : maxWaitRef.current || DEFAULT_MAX_WAIT_MS;
+
+      let settleCountdown = settleTarget;
+      let stableFrames = 0;
+      let lastAfter = null;
+      let retries = pending.retryCount || 0;
+      const startedAt = now();
+
       const step = () => {
         const state = pendingRef.current;
         if (!state || state.token !== token) return;
-        if (frames < state.settleFrames) {
-          frames += 1;
-          requestAnimationFrame(step);
-          return;
-        }
 
         const after = measureAnchor();
         if (!after) {
-          if ((state.retryCount || 0) < MAX_RETRY_FRAMES) {
-            state.retryCount = (state.retryCount || 0) + 1;
+          const elapsed = now() - startedAt;
+          if (retries < MAX_RETRY_FRAMES && elapsed < maxWait) {
+            retries += 1;
+            state.retryCount = retries;
             requestAnimationFrame(step);
             return;
           }
@@ -257,6 +298,38 @@ export default function useStableViewAnchoring({
             `[stable-anchor] Anchor not found after ${state.triggerType}; skipping compensation.`
           );
           pendingRef.current = null;
+          return;
+        }
+
+        if (lastAfter) {
+          const deltaY = Math.abs(after.viewportY - lastAfter.viewportY);
+          const deltaHeight = Math.abs(after.height - lastAfter.height);
+          if (deltaY <= STABLE_EPSILON && deltaHeight <= STABLE_EPSILON) {
+            stableFrames += 1;
+          } else {
+            stableFrames = 1;
+          }
+        } else {
+          stableFrames = 1;
+        }
+
+        lastAfter = after;
+
+        const elapsed = now() - startedAt;
+        if (stableFrames < stabilizeTarget && elapsed < maxWait) {
+          requestAnimationFrame(step);
+          return;
+        }
+
+        if (stableFrames < stabilizeTarget) {
+          console.debug(
+            `[stable-anchor] Forcing finalize after ${state.triggerType}; layout did not stabilize within ${maxWait}ms.`
+          );
+        }
+
+        if (settleCountdown > 0) {
+          settleCountdown -= 1;
+          requestAnimationFrame(step);
           return;
         }
 
@@ -281,7 +354,15 @@ export default function useStableViewAnchoring({
 
       requestAnimationFrame(step);
     },
-    [adjustScroll, enabled, ensureVisible, measureAnchor]
+    [
+      adjustScroll,
+      enabled,
+      ensureVisible,
+      maxWaitRef,
+      measureAnchor,
+      stabilizeFramesRef,
+      settleFramesRef,
+    ]
   );
 
   const begin = useCallback(
@@ -289,16 +370,34 @@ export default function useStableViewAnchoring({
       if (!enabled) {
         return () => {};
       }
-      const before =
-        options.capture === "fresh"
-          ? measureAnchor()
-          : lastMeasurementRef.current || measureAnchor();
+
+      const captureMode = options.capture || "fresh";
+      let before = null;
+      if (captureMode === "reuse" && lastMeasurementRef.current) {
+        before = lastMeasurementRef.current;
+      } else if (captureMode === "reuse-visible" && lastMeasurementRef.current) {
+        before = lastMeasurementRef.current.isVisible
+          ? lastMeasurementRef.current
+          : measureAnchor();
+      } else {
+        before = measureAnchor();
+      }
+
       if (!before || before.isVisible === false) {
         return () => {};
       }
+
+      lastMeasurementRef.current = before;
+
       const settle = Number.isFinite(options.settleFrames)
         ? Math.max(0, Math.floor(options.settleFrames))
         : settleFramesRef.current || DEFAULT_SETTLE_FRAMES;
+      const stabilizeValue = Number.isFinite(options.stabilizeFrames)
+        ? Math.max(0, Math.floor(options.stabilizeFrames))
+        : stabilizeFramesRef.current || DEFAULT_STABILIZE_FRAMES;
+      const maxWaitValue = Number.isFinite(options.maxWaitMs)
+        ? Math.max(0, options.maxWaitMs)
+        : maxWaitRef.current || DEFAULT_MAX_WAIT_MS;
       const token = Symbol(triggerType || "layout-change");
       lastKnownTriggerRef.current = triggerType;
 
@@ -309,17 +408,22 @@ export default function useStableViewAnchoring({
           triggerType,
           before,
           settleFrames: settle,
+          stabilizeFrames: stabilizeValue,
+          maxWaitMs: maxWaitValue,
           retryCount: 0,
         };
         finalizeForToken(token);
       };
     },
-    [enabled, finalizeForToken, measureAnchor]
+    [enabled, finalizeForToken, maxWaitRef, measureAnchor, stabilizeFramesRef]
   );
 
   const notifyLayoutChange = useCallback(
     (triggerType, options = {}) => {
-      const finish = begin(triggerType, options);
+      const finish = begin(triggerType, {
+        ...options,
+        capture: options.capture ?? "fresh",
+      });
       finish();
     },
     [begin]
@@ -374,6 +478,27 @@ export default function useStableViewAnchoring({
   }, [enabled, scrollRef]);
 
   useEffect(() => {
+    if (!enabled || didWarnScrollRef.current) return;
+    const scrollEl = scrollRef?.current;
+    if (!scrollEl) return;
+    const original = scrollEl.scrollTop;
+    try {
+      scrollEl.scrollTop = original + 1;
+      const changed = scrollEl.scrollTop !== original;
+      scrollEl.scrollTop = original;
+      if (!changed) {
+        console.warn(
+          "[stable-anchor] scrollRef does not appear to control scrollTop; compensation may fail."
+        );
+        didWarnScrollRef.current = true;
+      }
+    } catch (error) {
+      console.warn("[stable-anchor] Unable to write to scrollTop on provided scrollRef", error);
+      didWarnScrollRef.current = true;
+    }
+  }, [enabled, scrollRef]);
+
+  useEffect(() => {
     if (!enabled) return undefined;
     let raf = null;
     const handleResize = () => {
@@ -392,10 +517,10 @@ export default function useStableViewAnchoring({
   useEffect(() => {
     if (!enabled) return undefined;
     if (typeof ResizeObserver === "undefined") return undefined;
-    const gridEl = gridRef?.current;
-    if (!gridEl) return undefined;
+    const target = observeRef?.current || gridRef?.current;
+    if (!target) return undefined;
 
-    let lastWidth = gridEl.getBoundingClientRect().width;
+    let lastWidth = target.getBoundingClientRect().width;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = entry.contentRect?.width;
@@ -411,9 +536,9 @@ export default function useStableViewAnchoring({
       }
     });
 
-    observer.observe(gridEl);
+    observer.observe(target);
     return () => observer.disconnect();
-  }, [enabled, gridRef, notifyLayoutChange]);
+  }, [enabled, gridRef, notifyLayoutChange, observeRef]);
 
   return {
     runWithStableAnchor,

@@ -279,4 +279,48 @@ describe('useStableViewAnchoring', () => {
 
     expect(scrollEl.scrollTop).toBeCloseTo(180, 1);
   });
+
+  it('waits for anchor measurements to stabilize across frames before compensating', () => {
+    const item = document.createElement('div');
+    item.dataset.videoId = 'a';
+    gridEl.appendChild(item);
+
+    let offset = 200;
+    const transitions = [260, 320, 340, 340, 340];
+    item.getBoundingClientRect = vi.fn(() =>
+      makeRect({ offset, height: 100, scrollTop: scrollEl.scrollTop })
+    );
+
+    const { result } = renderHook(() =>
+      useStableViewAnchoring({
+        enabled: true,
+        scrollRef: { current: scrollEl },
+        gridRef: { current: gridEl },
+        selection,
+        orderedIds,
+        settleFrames: 0,
+        stabilizeFrames: 2,
+      })
+    );
+
+    act(() => {
+      result.current.runWithStableAnchor('sidebarToggle', () => {});
+    });
+
+    act(() => {
+      while (rafQueue.length) {
+        offset = transitions.shift() ?? offset;
+        const queue = rafQueue.slice();
+        rafQueue.length = 0;
+        queue.forEach((cb) => {
+          if (typeof cb === 'function') {
+            cb(performance.now());
+          }
+        });
+      }
+    });
+
+    expect(scrollEl.scrollTop).toBeCloseTo(140, 1);
+    expect(item.getBoundingClientRect.mock.calls.length).toBeGreaterThan(3);
+  });
 });
