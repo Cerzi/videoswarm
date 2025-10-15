@@ -134,6 +134,106 @@ const MetadataPanel = forwardRef((
     return { value: null, mixed: true, hasAny };
   }, [selectedVideos]);
 
+  const singleSelectionInfo = useMemo(() => {
+    if (derivedSelectionCount !== 1 || !selectedVideos.length) {
+      return null;
+    }
+
+    const video = selectedVideos[0];
+    if (!video) return null;
+
+    const parseToDate = (value) => {
+      if (!value) return null;
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value;
+      }
+      if (typeof value === "number") {
+        if (!Number.isFinite(value) || value <= 0) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      if (typeof value === "string" && value.trim()) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      return null;
+    };
+
+    const createdDate =
+      parseToDate(video?.metadata?.dateCreatedFormatted) ||
+      parseToDate(video?.createdMs) ||
+      parseToDate(video?.dateCreated) ||
+      parseToDate(video?.metadata?.dateCreated);
+
+    const formatDateTime = (date) => {
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return null;
+      }
+
+      try {
+        return new Intl.DateTimeFormat(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }).format(date);
+      } catch (err) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+          date.getDate()
+        )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+          date.getSeconds()
+        )}`;
+      }
+    };
+
+    let createdDisplay = formatDateTime(createdDate);
+    if (!createdDisplay && typeof video?.metadata?.dateCreatedFormatted === "string") {
+      createdDisplay = video.metadata.dateCreatedFormatted;
+    }
+
+    const deriveFilename = () => {
+      const fromMetadata = video?.metadata?.filename || video?.metadata?.fileName;
+      const primary =
+        video?.name ||
+        video?.filename ||
+        video?.fileName ||
+        fromMetadata;
+
+      if (primary) return primary;
+
+      const path = video?.fullPath || video?.path || video?.sourcePath;
+      if (typeof path === "string" && path.trim()) {
+        const segments = path.split(/[\\/]/).filter(Boolean);
+        if (segments.length) {
+          return segments[segments.length - 1];
+        }
+      }
+
+      return null;
+    };
+
+    const filename = deriveFilename();
+
+    const width = Number(video?.dimensions?.width);
+    const height = Number(video?.dimensions?.height);
+    const hasResolution =
+      Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const resolution = hasResolution ? `${width}×${height}` : null;
+
+    if (!filename && !createdDisplay && !resolution) {
+      return null;
+    }
+
+    return {
+      filename,
+      created: createdDisplay,
+      resolution,
+    };
+  }, [derivedSelectionCount, selectedVideos]);
+
   const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
 
   const suggestionTags = useMemo(() => {
@@ -241,6 +341,36 @@ const MetadataPanel = forwardRef((
           </div>
         ) : (
           <>
+            {singleSelectionInfo && (
+              <section className="metadata-panel__section metadata-panel__info">
+                <div className="metadata-panel__info-grid">
+                  {singleSelectionInfo.filename && (
+                    <div className="metadata-panel__info-item metadata-panel__info-item--filename">
+                      <span className="metadata-panel__info-label">Filename</span>
+                      <span className="metadata-panel__info-value" title={singleSelectionInfo.filename}>
+                        {singleSelectionInfo.filename}
+                      </span>
+                    </div>
+                  )}
+                  {singleSelectionInfo.created && (
+                    <div className="metadata-panel__info-item">
+                      <span className="metadata-panel__info-label">Date created</span>
+                      <span className="metadata-panel__info-value">
+                        {singleSelectionInfo.created}
+                      </span>
+                    </div>
+                  )}
+                  {singleSelectionInfo.resolution && (
+                    <div className="metadata-panel__info-item">
+                      <span className="metadata-panel__info-label">Resolution</span>
+                      <span className="metadata-panel__info-value">
+                        {singleSelectionInfo.resolution}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
             <section className="metadata-panel__section">
               <div className="metadata-panel__section-header">
                 <span>Rating</span>
