@@ -37,6 +37,7 @@ const VideoCard = memo(function VideoCard({
 
   // optional init scheduler
   scheduleInit = null,
+  isNear = true,
 }) {
   const cardRef = useRef(null);
   const videoContainerRef = useRef(null);
@@ -589,10 +590,20 @@ const VideoCard = memo(function VideoCard({
     }`;
 
     return (
-      <div className="video-placeholder" role="status" aria-live="polite">
+      <div
+        className={`video-placeholder${isNear ? "" : " video-placeholder--static"}`}
+        role="status"
+        aria-live="polite"
+      >
         <div className="video-placeholder__media" aria-hidden="true">
-          <div className="video-placeholder__sheen" />
-          <div className={spinnerClassName} />
+          {isNear ? (
+            <>
+              <div className="video-placeholder__sheen" />
+              <div className={spinnerClassName} />
+            </>
+          ) : (
+            <div className="video-placeholder__still" />
+          )}
         </div>
         <div className="video-placeholder__text">
           <span className="video-placeholder__message">{statusText}</span>

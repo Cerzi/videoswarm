@@ -20,6 +20,7 @@ import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
+import useMasonryViewportMetrics from "./hooks/ui-perf/useMasonryViewportMetrics.js";
 import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
 
@@ -229,6 +230,7 @@ function App() {
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+  const [nearVideos, setNearVideos] = useState(new Set());
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
@@ -245,31 +247,66 @@ function App() {
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
+  const viewportMetrics = useMasonryViewportMetrics({
+    gridRef,
+    scrollRef: scrollContainerRef,
+    zoomLevel,
+    bufferRows: 3,
+  });
+
   const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
-    rootMargin: "1600px 0px",
+    rootMargin: viewportMetrics.rootMargin,
     threshold: [0, 0.15],
-    nearPx: 900,
+    nearPx: viewportMetrics.nearPx,
   });
 
   useEffect(() => {
-    const el = scrollContainerRef.current;
-    const update = () => {
-      const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
-    };
-    update();
+    const nearPx = Math.round(viewportMetrics.nearPx ?? 900);
+    if (Number.isFinite(nearPx)) {
+      ioRegistry.setNearPx(nearPx);
+    }
+  }, [ioRegistry, viewportMetrics.nearPx]);
 
-    const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    if (ro && el) ro.observe(el);
-    window.addEventListener("resize", update);
+  const observeWithNear = useCallback(
+    (el, idOrCb, maybeCb) => {
+      ioRegistry.observe(el, idOrCb, (visible, entry) => {
+        const id = typeof idOrCb === "function" ? null : idOrCb;
+        if (id != null) {
+          const isNearNow = ioRegistry.isNear(id);
+          setNearVideos((prev) => {
+            const has = prev.has(id);
+            if (has === isNearNow) return prev;
+            const next = new Set(prev);
+            if (isNearNow) next.add(id);
+            else next.delete(id);
+            return next;
+          });
+        }
+        const cb = typeof idOrCb === "function" ? idOrCb : maybeCb;
+        if (typeof cb === "function") {
+          cb(visible, entry);
+        }
+      });
+    },
+    [ioRegistry]
+  );
 
-    return () => {
-      if (ro && el) ro.unobserve(el);
-      ro?.disconnect?.();
-      window.removeEventListener("resize", update);
-    };
-  }, [scrollContainerRef, ioRegistry]);
+  const unobserveWithNear = useCallback(
+    (el) => {
+      if (!el) return;
+      const id = el.dataset?.videoId;
+      if (id != null) {
+        setNearVideos((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+      ioRegistry.unobserve(el);
+    },
+    [ioRegistry]
+  );
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -520,6 +557,48 @@ function App() {
     () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
     [filteredVideos, groupByFolders, comparator]
   );
+
+  const idToIndexMap = useMemo(() => {
+    const map = new Map();
+    orderedVideos.forEach((video, idx) => {
+      if (video?.id != null) {
+        map.set(video.id, idx);
+      }
+    });
+    return map;
+  }, [orderedVideos]);
+
+  const highestNearIndex = useMemo(() => {
+    if (!nearVideos.size) return 0;
+    let max = 0;
+    let found = false;
+    nearVideos.forEach((id) => {
+      const idx = idToIndexMap.get(id);
+      if (typeof idx === "number") {
+        found = true;
+        if (idx > max) max = idx;
+      }
+    });
+    return found ? max + 1 : 0;
+  }, [nearVideos, idToIndexMap]);
+
+  useEffect(() => {
+    if (!nearVideos.size) return;
+    const validIds = new Set(orderedVideos.map((video) => video.id));
+    setNearVideos((prev) => {
+      if (!prev.size) return prev;
+      let changed = false;
+      const next = new Set();
+      prev.forEach((id) => {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [orderedVideos, nearVideos]);
 
   // data order ids (fallback)
   const orderedIds = useMemo(
@@ -1037,6 +1116,9 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
+      targetVisible: viewportMetrics.targetVisible,
+      trailingBuffer: viewportMetrics.trailingBuffer,
+      advanceIndex: highestNearIndex,
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
@@ -1823,9 +1905,10 @@ function App() {
                     key={video.id}
                     video={video}
                     ioRoot={gridRef}
-                    observeIntersection={ioRegistry.observe}
-                    unobserveIntersection={ioRegistry.unobserve}
+                    observeIntersection={observeWithNear}
+                    unobserveIntersection={unobserveWithNear}
                     selected={selection.selected.has(video.id)}
+                    isNear={nearVideos.has(video.id)}
                     onSelect={(...args) => handleVideoSelect(...args)}
                     onContextMenu={handleCardContextMenu}
                     onNativeDragStart={handleNativeDragStart}

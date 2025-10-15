@@ -34,6 +34,9 @@ export default function useVideoCollection({
     pauseOnScroll = PROGRESSIVE_DEFAULTS.pauseOnScroll,
     longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
     forceInterval,
+    targetVisible,
+    trailingBuffer,
+    advanceIndex,
   } = progressive || {};
 
   // Normalize to safe numbers
@@ -62,6 +65,9 @@ export default function useVideoCollection({
       longTaskAdaptation,
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
+      targetVisible,
+      trailingBuffer,
+      advanceIndex,
     }
   );
 

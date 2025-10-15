@@ -16,6 +16,7 @@ export default function useChunkedMasonry({
   const lastOrderRef = useRef(null);
 
   const isLayingOutRef = useRef(false);
+  const pendingFrameRef = useRef(0);
   const relayoutRequestedRef = useRef(false);
   const isUserScrollingRef = useRef(false);
   const lastUserActionRef = useRef(0);
@@ -88,14 +89,20 @@ export default function useChunkedMasonry({
   }, [gridRef, getColumnCount, columnGapFallback]);
 
   const scheduleLayout = useCallback(() => {
-    // coalesce concurrent requests
-    if (isLayingOutRef.current) {
-      relayoutRequestedRef.current = true;
+    // If a frame is already queued, allow that pass to pick up latest data
+    if (pendingFrameRef.current) {
       return;
     }
-    isLayingOutRef.current = true;
 
-    requestAnimationFrame(() => {
+    const raf = requestAnimationFrame(() => {
+      pendingFrameRef.current = 0;
+
+      if (isLayingOutRef.current) {
+        relayoutRequestedRef.current = true;
+        return;
+      }
+      isLayingOutRef.current = true;
+
       const grid = gridRef.current;
       if (!grid) {
         isLayingOutRef.current = false;
@@ -216,6 +223,7 @@ export default function useChunkedMasonry({
 
       step();
     });
+    pendingFrameRef.current = raf;
   }, [
     gridRef,
     updateCachedGridMeasurements,
@@ -255,6 +263,13 @@ export default function useChunkedMasonry({
     cachedGridMeasurementsRef.current = null;
     scheduleLayout();
   }, [scheduleLayout]);
+
+  useEffect(() => () => {
+    if (pendingFrameRef.current) {
+      cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = 0;
+    }
+  }, []);
 
   // zoom: swap classes & relayout
   const setZoomClass = useCallback(

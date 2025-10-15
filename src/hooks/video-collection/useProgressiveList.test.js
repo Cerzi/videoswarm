@@ -60,4 +60,44 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("respects viewport target until advance index increases", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 500 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ advance }) =>
+        useProgressiveList(items, 120, 60, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          targetVisible: 150,
+          trailingBuffer: 40,
+          advanceIndex: advance,
+        }),
+      { initialProps: { advance: 0 } }
+    );
+
+    // grows to the viewport target but no further
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.length).toBe(150);
+
+    // still clamped despite more ticks
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    expect(result.current.length).toBe(150);
+
+    // When advance index jumps forward, we allow more growth (up to trailing buffer)
+    rerender({ advance: 200 });
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    expect(result.current.length).toBeGreaterThan(150);
+    expect(result.current.length).toBeLessThanOrEqual(240);
+
+    vi.useRealTimers();
+  });
 });

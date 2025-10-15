@@ -491,6 +491,29 @@ body {
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
 }
 
+.video-placeholder--static {
+  backdrop-filter: none;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+.video-placeholder--static .video-placeholder__media {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.video-placeholder--static .video-placeholder__sheen,
+.video-placeholder--static .video-placeholder__spinner {
+  display: none;
+}
+
+.video-placeholder__still {
+  width: 60%;
+  max-width: 180px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  opacity: 0.9;
+}
+
 .video-placeholder__sheen {
   position: absolute;
   inset: 0;

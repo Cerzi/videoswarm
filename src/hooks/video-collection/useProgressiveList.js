@@ -1,5 +1,5 @@
 // hooks/video-collection/useProgressiveList.js
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Frame-budget aware progressive list.
@@ -43,12 +43,50 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+    targetVisible: targetVisibleOption = null,
+    trailingBuffer: trailingBufferOption = null,
+    advanceIndex: advanceIndexOption = null,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
   const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
   const prevLenRef = useRef(safe.length);
   const didInitRef = useRef(false);
+
+  const baseBatch = Math.max(1, Math.floor(batchSize));
+
+  const normalizedTarget = Number.isFinite(targetVisibleOption)
+    ? Math.max(1, Math.floor(targetVisibleOption))
+    : null;
+  const normalizedTrailingBuffer = Number.isFinite(trailingBufferOption)
+    ? Math.max(0, Math.floor(trailingBufferOption))
+    : null;
+
+  const effectiveCapRef = useRef(
+    Math.min(safe.length, normalizedTarget ?? safe.length)
+  );
+  const maxAdvanceIndexRef = useRef(0);
+
+  const resolvedTrailingBuffer =
+    normalizedTrailingBuffer ??
+    Math.max(
+      baseBatch * 2,
+      normalizedTarget ? Math.floor(normalizedTarget * 0.5) : baseBatch * 2
+    );
+
+  const computeEffectiveCap = useCallback(() => {
+    const baseCap = normalizedTarget != null ? normalizedTarget : safe.length;
+    const progressCandidate =
+      maxAdvanceIndexRef.current > 0
+        ? maxAdvanceIndexRef.current + resolvedTrailingBuffer
+        : baseCap;
+    const cap = Math.min(
+      safe.length,
+      Math.max(baseCap, progressCandidate)
+    );
+    effectiveCapRef.current = cap;
+    return cap;
+  }, [normalizedTarget, resolvedTrailingBuffer, safe.length]);
 
   // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
   useEffect(() => {
@@ -69,8 +107,28 @@ export function useProgressiveList(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length]);
 
+  if (Number.isFinite(advanceIndexOption)) {
+    const idxCandidate = Math.max(0, Math.floor(advanceIndexOption));
+    if (idxCandidate > maxAdvanceIndexRef.current) {
+      maxAdvanceIndexRef.current = idxCandidate;
+    }
+  }
+  if (maxAdvanceIndexRef.current > safe.length) {
+    maxAdvanceIndexRef.current = safe.length;
+  }
+
+  const capFromState = computeEffectiveCap();
+  const effectiveCap = Math.min(
+    safe.length,
+    capFromState ?? safe.length
+  );
+
+  useEffect(() => {
+    setVisible((current) => (current > effectiveCap ? effectiveCap : current));
+  }, [effectiveCap]);
+
   // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
+  const allVisible = visible >= effectiveCap;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -89,7 +147,7 @@ export function useProgressiveList(
   const longTaskTimeoutRef = useRef(null);
 
   // Adaptive batch (only used by idle path)
-  const dynamicBatchRef = useRef(batchSize);
+  const dynamicBatchRef = useRef(baseBatch);
 
   // Attach scroll listener (pause while user is scrolling)
   useEffect(() => {
@@ -166,7 +224,7 @@ export function useProgressiveList(
       b = Math.max(minBatch, Math.floor(b / 2));
     } else {
       // If things have been calm, grow toward maxBatch
-      b = Math.min(maxBatch, b + Math.max(2, Math.floor(batchSize / 4)));
+      b = Math.min(maxBatch, b + Math.max(2, Math.floor(baseBatch / 4)));
     }
 
     // Keep within bounds and store
@@ -194,7 +252,14 @@ export function useProgressiveList(
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) => {
+            const capNow = Math.min(
+              safe.length,
+              effectiveCapRef.current ?? safe.length
+            );
+            if (v >= capNow) return v;
+            return v < safe.length ? Math.min(v + add, capNow) : v;
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -233,13 +298,18 @@ export function useProgressiveList(
     if (allVisible) return;
 
     const timer = setInterval(() => {
-      setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
-      );
+      setVisible((v) => {
+        const capNow = Math.min(
+          safe.length,
+          effectiveCapRef.current ?? safe.length
+        );
+        if (v >= capNow) return v;
+        return v < safe.length ? Math.min(v + baseBatch, capNow) : v;
+      });
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+  }, [shouldUseInterval, allVisible, safe.length, baseBatch, intervalMs]);
 
   return safe.slice(0, visible);
 }
