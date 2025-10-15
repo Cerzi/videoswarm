@@ -124,7 +124,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     if (!payloadPaths.length) {
       return { ok: false, error: "NO_FILE" };
     }
-    return ipcRenderer.sendSync("drag:start", { paths: payloadPaths });
+    return ipcRenderer.sendSync("dnd:start-file", { paths: payloadPaths });
+  },
+
+  thumbs: {
+    put: (payload) => ipcRenderer.sendSync("thumb:put", payload),
+    get: (payload) => ipcRenderer.sendSync("thumb:get", payload),
   },
 
   // Clipboard operations
