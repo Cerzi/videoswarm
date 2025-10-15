@@ -265,6 +265,40 @@ function App() {
     nearPx: ioConfig.nearPx,
   });
 
+  const [layoutHoldCount, setLayoutHoldCount] = useState(0);
+
+  const beginLayoutHold = useCallback(() => {
+    let released = false;
+    setLayoutHoldCount((count) => count + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setLayoutHoldCount((count) => Math.max(0, count - 1));
+    };
+  }, []);
+
+  const withLayoutHold = useCallback(
+    (fn) => {
+      const release = beginLayoutHold();
+      let result;
+      try {
+        result = typeof fn === "function" ? fn() : undefined;
+      } catch (error) {
+        release();
+        throw error;
+      }
+      if (result && typeof result.then === "function") {
+        result.then(release, release);
+      } else {
+        release();
+      }
+      return result;
+    },
+    [beginLayoutHold]
+  );
+
+  const isLayoutTransitioning = layoutHoldCount > 0;
+
   useEffect(() => {
     const scrollEl = scrollContainerRef.current;
     const gridEl = gridRef.current;
@@ -884,6 +918,37 @@ function App() {
     [anchorDefaults.maxWaitMs]
   );
 
+  const runSidebarTransition = useCallback(
+    (triggerType, applyState) =>
+      withLayoutHold(() =>
+        runWithStableAnchor(
+          triggerType,
+          () => {
+            const promise = waitForTransitionEnd(
+              metadataPanelRef.current,
+              ["width"],
+              anchorDefaults.maxWaitMs
+            );
+            if (typeof applyState === "function") {
+              applyState();
+            }
+            scheduleLayout?.();
+            return promise;
+          },
+          sidebarAnchorOptions
+        )
+      ),
+    [
+      anchorDefaults.maxWaitMs,
+      metadataPanelRef,
+      runWithStableAnchor,
+      scheduleLayout,
+      sidebarAnchorOptions,
+      waitForTransitionEnd,
+      withLayoutHold,
+    ]
+  );
+
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
     [orderedVideos]
@@ -934,38 +999,32 @@ function App() {
 
   useEffect(() => {
     if (shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)) {
-      runWithStableAnchor(
-        "sidebar:auto-open",
-        () => {
-          const promise = waitForTransitionEnd(
-            metadataPanelRef.current,
-            ["width"],
-            anchorDefaults.maxWaitMs
-          );
-          setMetadataPanelOpen(true);
-          scheduleLayout?.();
-          return promise;
-        },
-        sidebarAnchorOptions
-      );
+      runSidebarTransition("sidebar:auto-open", () => {
+        setMetadataPanelOpen(true);
+        setMetadataFocusToken((token) => token + 1);
+      });
     }
   }, [
-    anchorDefaults.maxWaitMs,
     isMetadataPanelOpen,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    setMetadataPanelOpen,
+    runSidebarTransition,
     selection.size,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
+    setMetadataFocusToken,
+    setMetadataPanelOpen,
+    shouldAutoOpenMetadataPanel,
   ]);
 
   useEffect(() => {
     if (selection.size === 0 && isMetadataPanelOpen) {
-      setMetadataPanelOpen(false);
+      runSidebarTransition("sidebar:auto-close", () => {
+        setMetadataPanelOpen(false);
+      });
     }
-  }, [isMetadataPanelOpen, selection.size, setMetadataPanelOpen]);
+  }, [
+    isMetadataPanelOpen,
+    runSidebarTransition,
+    selection.size,
+    setMetadataPanelOpen,
+  ]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -1123,67 +1182,26 @@ function App() {
   );
 
   const openMetadataPanel = useCallback(() => {
-    runWithStableAnchor(
-      "sidebar:open",
-      () => {
-        const promise = waitForTransitionEnd(
-          metadataPanelRef.current,
-          ["width"],
-          anchorDefaults.maxWaitMs
-        );
-        setMetadataPanelOpen(true);
-        setMetadataFocusToken((token) => token + 1);
-        scheduleLayout?.();
-        return promise;
-      },
-      sidebarAnchorOptions
-    );
-  }, [
-    anchorDefaults.maxWaitMs,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    setMetadataPanelOpen,
-    setMetadataFocusToken,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
-  ]);
+    runSidebarTransition("sidebar:open", () => {
+      setMetadataPanelOpen(true);
+      setMetadataFocusToken((token) => token + 1);
+    });
+  }, [runSidebarTransition, setMetadataFocusToken, setMetadataPanelOpen]);
 
   const toggleMetadataPanel = useCallback(() => {
-    runWithStableAnchor(
-      "sidebarToggle",
-      () => {
-        const promise = waitForTransitionEnd(
-          metadataPanelRef.current,
-          ["width"],
-          anchorDefaults.maxWaitMs
+    runSidebarTransition("sidebarToggle", () => {
+      setMetadataPanelOpen((open) => {
+        const { nextOpen, shouldClear } = getMetadataPanelToggleState(
+          open,
+          selection.size
         );
-        setMetadataPanelOpen((open) => {
-          const { nextOpen, shouldClear } = getMetadataPanelToggleState(
-            open,
-            selection.size
-          );
-          if (shouldClear) {
-            selection.clear();
-          }
-          return nextOpen;
-        });
-        scheduleLayout?.();
-        return promise;
-      },
-      sidebarAnchorOptions
-    );
-  }, [
-    anchorDefaults.maxWaitMs,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    selection.clear,
-    selection.size,
-    setMetadataPanelOpen,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
-  ]);
+        if (shouldClear) {
+          selection.clear();
+        }
+        return nextOpen;
+      });
+    });
+  }, [runSidebarTransition, selection.clear, selection.size, setMetadataPanelOpen]);
 
   const {
     contextMenu,
@@ -1265,6 +1283,7 @@ function App() {
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
+    suspendEvictions: isLayoutTransitioning,
   });
 
   // fullscreen / context menu
@@ -1296,21 +1315,23 @@ function App() {
     (z) => {
       const clamped = clampZoomIndex(z);
       if (clamped === zoomLevel) return; // no-op if unchanged
-      runWithStableAnchor(
-        "zoomChange",
-        () => {
-          setZoomLevel(clamped);
-          setZoomClass(clamped);
-          window.electronAPI?.saveSettingsPartial?.({
-            zoomLevel: clamped,
-            recursiveMode,
-            maxConcurrentPlaying,
-            showFilenames,
-          });
-          // Nudge masonry after zoom change
-          scheduleLayout?.();
-        },
-        zoomAnchorOptions
+      withLayoutHold(() =>
+        runWithStableAnchor(
+          "zoomChange",
+          () => {
+            setZoomLevel(clamped);
+            setZoomClass(clamped);
+            window.electronAPI?.saveSettingsPartial?.({
+              zoomLevel: clamped,
+              recursiveMode,
+              maxConcurrentPlaying,
+              showFilenames,
+            });
+            // Nudge masonry after zoom change
+            scheduleLayout?.();
+          },
+          zoomAnchorOptions
+        )
       );
     },
     [
@@ -1322,6 +1343,7 @@ function App() {
       showFilenames,
       scheduleLayout,
       zoomAnchorOptions,
+      withLayoutHold,
     ]
   );
 
@@ -1850,8 +1872,9 @@ function App() {
   const playingSize = actualPlaying.size;                                  
   const loadingSize = loadingVideos.size;                                   
 
-  useEffect(() => {                                                          
-    const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
+  useEffect(() => {
+    if (isLayoutTransitioning) return undefined;
+    const id = setTimeout(() => {
       const victims = videoCollection.performCleanup?.();
       if (Array.isArray(victims) && victims.length) {
         setLoadedVideos((prev) => {
@@ -1862,7 +1885,14 @@ function App() {
       }
     }, 0);
     return () => clearTimeout(id);
-  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
+  }, [
+    isLayoutTransitioning,
+    maxLoaded,
+    loadedSize,
+    playingSize,
+    loadingSize,
+    videoCollection.performCleanup,
+  ]);
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>

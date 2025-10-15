@@ -26,6 +26,7 @@ export default function useVideoCollection({
   progressive = {},
   hadLongTaskRecently = false,
   isNear,
+  suspendEvictions = false,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -82,6 +83,7 @@ export default function useVideoCollection({
     hadLongTaskRecently,
     isNear,
     playingCap: maxConcurrentPlaying,
+    suspendEvictions,
   });
 
   // Layer 3: Play orchestration (Business logic)
