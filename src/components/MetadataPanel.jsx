@@ -131,6 +131,67 @@ const MetadataPanel = ({
     return { value: null, mixed: true, hasAny };
   }, [selectedVideos]);
 
+  const singleSelectionInfo = useMemo(() => {
+    if (derivedSelectionCount !== 1 || !selectedVideos.length) {
+      return null;
+    }
+
+    const video = selectedVideos[0];
+    if (!video) return null;
+
+    const parseToDate = (value) => {
+      if (!value) return null;
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value;
+      }
+      if (typeof value === "number") {
+        if (!Number.isFinite(value) || value <= 0) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      if (typeof value === "string" && value.trim()) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      return null;
+    };
+
+    const createdDate =
+      parseToDate(video?.createdMs) ||
+      parseToDate(video?.dateCreated) ||
+      parseToDate(video?.metadata?.dateCreated);
+
+    let createdDisplay = null;
+    if (typeof video?.metadata?.dateCreatedFormatted === "string") {
+      createdDisplay = video.metadata.dateCreatedFormatted;
+    } else if (createdDate) {
+      try {
+        createdDisplay = new Intl.DateTimeFormat(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }).format(createdDate);
+      } catch (err) {
+        createdDisplay = createdDate.toLocaleDateString();
+      }
+    }
+
+    const width = Number(video?.dimensions?.width);
+    const height = Number(video?.dimensions?.height);
+    const hasResolution =
+      Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const resolution = hasResolution ? `${width}×${height}` : null;
+
+    if (!createdDisplay && !resolution) {
+      return null;
+    }
+
+    return {
+      created: createdDisplay,
+      resolution,
+    };
+  }, [derivedSelectionCount, selectedVideos]);
+
   const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
 
   const suggestionTags = useMemo(() => {
@@ -234,6 +295,28 @@ const MetadataPanel = ({
           </div>
         ) : (
           <>
+            {singleSelectionInfo && (
+              <section className="metadata-panel__section metadata-panel__info">
+                <div className="metadata-panel__info-grid">
+                  {singleSelectionInfo.created && (
+                    <div className="metadata-panel__info-item">
+                      <span className="metadata-panel__info-label">Date created</span>
+                      <span className="metadata-panel__info-value">
+                        {singleSelectionInfo.created}
+                      </span>
+                    </div>
+                  )}
+                  {singleSelectionInfo.resolution && (
+                    <div className="metadata-panel__info-item">
+                      <span className="metadata-panel__info-label">Resolution</span>
+                      <span className="metadata-panel__info-value">
+                        {singleSelectionInfo.resolution}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
             <section className="metadata-panel__section">
               <div className="metadata-panel__section-header">
                 <span>Rating</span>
