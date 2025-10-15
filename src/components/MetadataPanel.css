@@ -103,34 +103,57 @@
   padding: 0.5rem 0;
 }
 
+
 .metadata-panel__section {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
+.metadata-panel__info {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(10, 10, 10, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  padding: 0.6rem 0.75rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
 .metadata-panel__info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.72rem;
 }
 
 .metadata-panel__info-item {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .metadata-panel__info-label {
-  font-size: 0.7rem;
-  opacity: 0.65;
-  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  opacity: 0.6;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .metadata-panel__info-value {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 500;
+  text-align: right;
+  opacity: 0.85;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.metadata-panel__info-item--filename .metadata-panel__info-value {
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  opacity: 0.75;
 }
 
 .metadata-panel__section-header {

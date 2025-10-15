@@ -157,24 +157,62 @@ const MetadataPanel = ({
     };
 
     const createdDate =
+      parseToDate(video?.metadata?.dateCreatedFormatted) ||
       parseToDate(video?.createdMs) ||
       parseToDate(video?.dateCreated) ||
       parseToDate(video?.metadata?.dateCreated);
 
-    let createdDisplay = null;
-    if (typeof video?.metadata?.dateCreatedFormatted === "string") {
-      createdDisplay = video.metadata.dateCreatedFormatted;
-    } else if (createdDate) {
+    const formatDateTime = (date) => {
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return null;
+      }
+
       try {
-        createdDisplay = new Intl.DateTimeFormat(undefined, {
+        return new Intl.DateTimeFormat(undefined, {
           year: "numeric",
           month: "short",
-          day: "numeric",
-        }).format(createdDate);
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }).format(date);
       } catch (err) {
-        createdDisplay = createdDate.toLocaleDateString();
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+          date.getDate()
+        )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+          date.getSeconds()
+        )}`;
       }
+    };
+
+    let createdDisplay = formatDateTime(createdDate);
+    if (!createdDisplay && typeof video?.metadata?.dateCreatedFormatted === "string") {
+      createdDisplay = video.metadata.dateCreatedFormatted;
     }
+
+    const deriveFilename = () => {
+      const fromMetadata = video?.metadata?.filename || video?.metadata?.fileName;
+      const primary =
+        video?.name ||
+        video?.filename ||
+        video?.fileName ||
+        fromMetadata;
+
+      if (primary) return primary;
+
+      const path = video?.fullPath || video?.path || video?.sourcePath;
+      if (typeof path === "string" && path.trim()) {
+        const segments = path.split(/[\\/]/).filter(Boolean);
+        if (segments.length) {
+          return segments[segments.length - 1];
+        }
+      }
+
+      return null;
+    };
+
+    const filename = deriveFilename();
 
     const width = Number(video?.dimensions?.width);
     const height = Number(video?.dimensions?.height);
@@ -182,11 +220,12 @@ const MetadataPanel = ({
       Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
     const resolution = hasResolution ? `${width}×${height}` : null;
 
-    if (!createdDisplay && !resolution) {
+    if (!filename && !createdDisplay && !resolution) {
       return null;
     }
 
     return {
+      filename,
       created: createdDisplay,
       resolution,
     };
@@ -298,6 +337,14 @@ const MetadataPanel = ({
             {singleSelectionInfo && (
               <section className="metadata-panel__section metadata-panel__info">
                 <div className="metadata-panel__info-grid">
+                  {singleSelectionInfo.filename && (
+                    <div className="metadata-panel__info-item metadata-panel__info-item--filename">
+                      <span className="metadata-panel__info-label">Filename</span>
+                      <span className="metadata-panel__info-value" title={singleSelectionInfo.filename}>
+                        {singleSelectionInfo.filename}
+                      </span>
+                    </div>
+                  )}
                   {singleSelectionInfo.created && (
                     <div className="metadata-panel__info-item">
                       <span className="metadata-panel__info-label">Date created</span>

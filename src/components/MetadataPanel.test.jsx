@@ -16,23 +16,38 @@ const renderPanel = (props = {}) =>
   );
 
 describe('MetadataPanel single-selection info', () => {
-  it('shows creation date and resolution for a single video when provided', () => {
+  const formatExpectedDate = (value) =>
+    new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(value);
+
+  it('shows filename, creation date with seconds, and resolution for a single video', () => {
+    const createdDate = new Date('2023-04-05T14:03:02Z');
+
     renderPanel({
       selectedVideos: [
         {
-          metadata: { dateCreatedFormatted: 'April 5, 2023' },
+          name: 'clip-one.mp4',
+          metadata: { dateCreated: createdDate.toISOString() },
           dimensions: { width: 1920, height: 1080 },
         },
       ],
     });
 
+    expect(screen.getByText('Filename')).toBeInTheDocument();
+    expect(screen.getByText('clip-one.mp4')).toBeInTheDocument();
     expect(screen.getByText('Date created')).toBeInTheDocument();
-    expect(screen.getByText('April 5, 2023')).toBeInTheDocument();
+    expect(screen.getByText(formatExpectedDate(createdDate))).toBeInTheDocument();
     expect(screen.getByText('Resolution')).toBeInTheDocument();
     expect(screen.getByText('1920×1080')).toBeInTheDocument();
   });
 
-  it('omits the info section when no metadata is available', () => {
+  it('omits the info section when no identifying details are available', () => {
     renderPanel({
       selectedVideos: [
         {
@@ -42,6 +57,7 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
+    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
   });
@@ -51,16 +67,19 @@ describe('MetadataPanel single-selection info', () => {
       selectionCount: 2,
       selectedVideos: [
         {
+          name: 'clip-one.mp4',
           metadata: { dateCreatedFormatted: 'April 5, 2023' },
           dimensions: { width: 1920, height: 1080 },
         },
         {
+          name: 'clip-two.mp4',
           metadata: { dateCreatedFormatted: 'June 1, 2023' },
           dimensions: { width: 1280, height: 720 },
         },
       ],
     });
 
+    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
   });
