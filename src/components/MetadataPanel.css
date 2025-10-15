@@ -127,10 +127,11 @@
 }
 
 .metadata-panel__info-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
+  column-gap: 0.75rem;
+  min-width: 0;
 }
 
 .metadata-panel__info-label {
@@ -146,8 +147,12 @@
   font-weight: 500;
   text-align: right;
   opacity: 0.85;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  justify-self: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .metadata-panel__info-item--filename .metadata-panel__info-value {
