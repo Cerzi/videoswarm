@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import MetadataPanel from './MetadataPanel';
 
 const renderPanel = (props = {}) =>
@@ -82,5 +82,32 @@ describe('MetadataPanel single-selection info', () => {
     expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+  });
+});
+
+describe('MetadataPanel scroll control', () => {
+  it('disables the scroll button when there is no selection', () => {
+    renderPanel({ selectedVideos: [] });
+
+    const button = screen.getByRole('button', { name: /scroll to selected item/i });
+    expect(button).toBeDisabled();
+  });
+
+  it('enables the scroll button and invokes the handler when provided', () => {
+    const handleScroll = vi.fn();
+
+    renderPanel({
+      selectedVideos: [
+        { metadata: {}, dimensions: { width: 0, height: 0 } },
+        { metadata: {}, dimensions: { width: 0, height: 0 } },
+      ],
+      onScrollToSelection: handleScroll,
+    });
+
+    const button = screen.getByRole('button', { name: /scroll to next selected item/i });
+    expect(button).not.toBeDisabled();
+
+    fireEvent.click(button);
+    expect(handleScroll).toHaveBeenCalled();
   });
 });

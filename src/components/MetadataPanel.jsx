@@ -51,6 +51,7 @@ const MetadataPanel = forwardRef((
     onSetRating,
     onClearRating,
     focusToken,
+    onScrollToSelection,
   },
   ref
 ) => {
@@ -301,6 +302,12 @@ const MetadataPanel = forwardRef((
     .filter(Boolean)
     .join(" ");
 
+  const scrollButtonLabel = hasSelection
+    ? derivedSelectionCount > 1
+      ? "Scroll to next selected item"
+      : "Scroll to selected item"
+    : "Scroll to selected item";
+
   return (
     <aside
       ref={ref}
@@ -331,6 +338,18 @@ const MetadataPanel = forwardRef((
           <span className="metadata-panel__subtitle">
             {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
           </span>
+        </div>
+        <div className="metadata-panel__actions">
+          <button
+            type="button"
+            className="metadata-panel__action metadata-panel__action--scroll"
+            onClick={() => onScrollToSelection?.()}
+            disabled={!hasSelection || !onScrollToSelection}
+            aria-label={scrollButtonLabel}
+            title={scrollButtonLabel}
+          >
+            ⌖
+          </button>
         </div>
       </div>
 
