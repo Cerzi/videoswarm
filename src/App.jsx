@@ -25,6 +25,7 @@ import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
+import useSelectionScroller from "./hooks/selection/useSelectionScroller";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
@@ -954,11 +955,40 @@ function App() {
     [orderedVideos]
   );
 
+  const orderedSelectionIds = useMemo(() => {
+    const selectedSet = selection?.selected;
+    if (!(selectedSet instanceof Set) || selectedSet.size === 0) return [];
+
+    const ids = [];
+    if (visualOrderedIds.length) {
+      visualOrderedIds.forEach((id) => {
+        if (selectedSet.has(id)) ids.push(id);
+      });
+    } else if (orderedVideos.length) {
+      orderedVideos.forEach((video) => {
+        if (video && selectedSet.has(video.id)) ids.push(video.id);
+      });
+    }
+
+    if (!ids.length) {
+      selectedSet.forEach((id) => ids.push(id));
+    }
+
+    return ids;
+  }, [orderedVideos, selection.selected, visualOrderedIds]);
+
   const selectedVideos = useMemo(() => {
     return Array.from(selection.selected)
       .map((id) => getById(id))
       .filter(Boolean);
   }, [selection.selected, getById]);
+
+  const { scrollToNextSelected } = useSelectionScroller({
+    orderedIds: orderedSelectionIds,
+    gridRef,
+    scrollRef: scrollContainerRef,
+    runWithStableAnchor,
+  });
 
   const selectedFingerprints = useMemo(() => {
     const set = new Set();
@@ -2143,6 +2173,9 @@ function App() {
                 onSetRating={handleSetRating}
                 onClearRating={handleClearRating}
                 focusToken={metadataFocusToken}
+                onScrollToSelection={
+                  orderedSelectionIds.length ? scrollToNextSelected : undefined
+                }
               />
             </div>
           )}
