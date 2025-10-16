@@ -101,11 +101,18 @@ export default function usePlayOrchestrator({
       let next = new Set(prev);
       let hasChanges = false;
 
-      // Only remove videos that are no longer visible
+      // Only remove videos that are no longer visible **or** no longer loaded.
+      // A relayout can temporarily tear down media elements which clears the
+      // loaded set even though the tile remains visible. Keeping those ids in
+      // the playing set makes the debug summary report them as active and
+      // prevents other tiles from being admitted. Drop them until they reload.
       for (const id of next) {
-        if (!visibleIds.has(id)) {
+        if (!visibleIds.has(id) || !loadedIds.has(id)) {
           next.delete(id);
           hasChanges = true;
+          if (startOrderRef.current.length) {
+            startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
+          }
         }
       }
 

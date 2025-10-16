@@ -86,4 +86,27 @@ describe('usePlayOrchestrator', () => {
     expect(result.current.playingSet.has('b')).toBe(true);
     expect(result.current.playingSet.has('c')).toBe(true);
   });
+
+  test('drops tiles from playing set when they lose their loaded state', () => {
+    const visible = setOf(['keep', 'reload']);
+    const loaded = setOf(['keep', 'reload']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      { initialProps: { visibleIds: visible, loadedIds: loaded, maxPlaying: 3 } }
+    );
+
+    act(() => {
+      result.current.reportStarted('keep');
+      result.current.reportStarted('reload');
+    });
+
+    expect(result.current.playingSet.has('keep')).toBe(true);
+    expect(result.current.playingSet.has('reload')).toBe(true);
+
+    const nextLoaded = setOf(['keep']);
+    rerender({ visibleIds: visible, loadedIds: nextLoaded, maxPlaying: 3 });
+
+    expect(result.current.playingSet.has('keep')).toBe(true);
+    expect(result.current.playingSet.has('reload')).toBe(false);
+  });
 });
