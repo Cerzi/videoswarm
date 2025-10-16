@@ -259,4 +259,38 @@ describe("VideoCard", () => {
       global.IntersectionObserver = PrevIO;
     }
   });
+
+  it("treats assumeVisible override as a hard admission when DOM shows in-view", async () => {
+    const gate = vi.fn((opts) => Boolean(opts?.assumeVisible));
+
+    const { container } = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "v-gate", name: "v-gate" }}
+        isVisible
+        canLoadMoreVideos={gate}
+      />
+    );
+
+    const card = container.querySelector(".video-item");
+    expect(card).toBeTruthy();
+    if (card) {
+      card.getBoundingClientRect = () => ({
+        top: 100,
+        bottom: 260,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 160,
+      });
+    }
+
+    await act(async () => {});
+
+    expect(gate).toHaveBeenCalledWith({ assumeVisible: true });
+    const createdVideos = document.createElement.mock.calls.filter(
+      ([tag]) => tag === "video"
+    ).length;
+    expect(createdVideos).toBeGreaterThan(0);
+  });
 });

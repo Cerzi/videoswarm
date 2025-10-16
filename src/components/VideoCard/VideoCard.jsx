@@ -20,7 +20,7 @@ const VideoCard = memo(function VideoCard({
   showFilenames = true,
 
   // limits & callbacks (owned by parent/orchestrator)
-  canLoadMoreVideos,      // () => boolean
+  canLoadMoreVideos,      // (options?) => boolean
   onStartLoading,         // (id)
   onStopLoading,          // (id)
   onVideoLoad,            // (id, aspectRatio)
@@ -269,9 +269,10 @@ const VideoCard = memo(function VideoCard({
   }, [loaded, isPlaying, isVisible, isAdoptedByModal, videoId]);
 
   // create & load <video>
-  const loadVideo = useCallback(() => {
+  const loadVideo = useCallback((options = {}) => {
     if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
-    if (!(canLoadMoreVideos?.() ?? true)) return;
+    const allowLoad = canLoadMoreVideos?.(options);
+    if (allowLoad === false) return;
     if (permanentErrorRef.current) return;
     setErrorText(null);
 
@@ -388,9 +389,9 @@ const VideoCard = memo(function VideoCard({
               !loading &&
               !loadRequestedRef.current &&
               !videoRef.current &&
-              (canLoadMoreVideos?.() ?? true)
+              (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
             ) {
-              loadVideo();
+              loadVideo({ assumeVisible: true });
             }
           }, 1200);
         }
@@ -453,7 +454,6 @@ const VideoCard = memo(function VideoCard({
       return false;
     }
     if (permanentErrorRef.current) return false;
-    if (!(canLoadMoreVideos?.() ?? true)) return false;
     const lastFailureAt = lastFailureAtRef.current;
     if (lastFailureAt && Date.now() - lastFailureAt < 2000) return false;
 
@@ -472,20 +472,25 @@ const VideoCard = memo(function VideoCard({
     }
 
     const inView = rect.bottom > top && rect.top < bottom;
+    let assumeVisible = inView;
     if (!inView) {
       const degenerateHeight = Math.abs(rect.bottom - rect.top);
       const degenerateWidth = Math.abs(rect.right - rect.left);
       const isDegenerate = degenerateHeight < 1 && degenerateWidth < 1;
-      if (!isDegenerate || !visibilityRef.current) {
+      if (isDegenerate && visibilityRef.current) {
+        assumeVisible = true;
+      } else {
         return false;
       }
     }
 
-    loadVideo();
+    const allow = canLoadMoreVideos?.(assumeVisible ? { assumeVisible: true } : undefined);
+    if (allow === false) return false;
+
+    loadVideo(assumeVisible ? { assumeVisible: true } : undefined);
     return true;
   }, [
     canLoadMoreVideos,
-    errorText,
     loadVideo,
     loaded,
     loading,
@@ -547,7 +552,7 @@ const VideoCard = memo(function VideoCard({
       !loadRequestedRef.current &&
       !videoRef.current &&
       !permanentErrorRef.current &&
-      (canLoadMoreVideos?.() ?? true)
+      (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
     ) {
       Promise.resolve().then(() => {
         if (
@@ -557,7 +562,7 @@ const VideoCard = memo(function VideoCard({
           !loadRequestedRef.current &&
           !videoRef.current &&
           !permanentErrorRef.current &&
-          (canLoadMoreVideos?.() ?? true)
+          (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
         ) {
           ensureVisibleAndLoad();
         }
@@ -658,7 +663,9 @@ const VideoCard = memo(function VideoCard({
       );
     }
 
-    const canLoad = canLoadMoreVideos?.() ?? true;
+    const canLoad = canLoadMoreVideos?.(
+      isVisible ? { assumeVisible: true } : undefined
+    ) ?? true;
     const statusText = loading
       ? "Loading video…"
       : canLoad

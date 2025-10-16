@@ -218,17 +218,20 @@ export default function useVideoResourceManager({
 
   // --- admission control (relaxed + visible priority) ---
   const canLoadVideo = useCallback(
-    (id) => {
+    (id, options = {}) => {
       if (!id) return false;
+
+      const assumeVisible = Boolean(options?.assumeVisible);
+      const assumeNear = assumeVisible || Boolean(options?.assumeNear);
 
       // Hard cap on *loaded* to avoid runaway memory; let visible bypass to reload if needed
       if (_loadedVideos.size >= limits.maxLoaded) {
-        const isVisCapBypass = _visibleVideos.has(id);
+        const isVisCapBypass = assumeVisible || _visibleVideos.has(id);
         if (!isVisCapBypass) return false;
       }
 
-      const isVis = _visibleVideos.has(id);
-      const near = isNear ? !!isNear(id) : false;
+      const isVis = assumeVisible || _visibleVideos.has(id);
+      const near = assumeNear || (isNear ? !!isNear(id) : false);
 
       // Always allow visible; permit small overflow over loader cap
       if (isVis) {

@@ -304,7 +304,10 @@ function App() {
         const visible = rect.bottom > top && rect.top < bottom;
         if (!visible) return;
 
-        if (typeof canLoadVideo === "function" && !canLoadVideo(id)) {
+        if (
+          typeof canLoadVideo === "function" &&
+          !canLoadVideo(id, { assumeVisible: true })
+        ) {
           if (!cleanupTriggered) {
             cleanupTriggered = true;
             const victims = performCleanup?.();
@@ -316,7 +319,10 @@ function App() {
               });
             }
           }
-          if (typeof canLoadVideo === "function" && !canLoadVideo(id)) {
+          if (
+            typeof canLoadVideo === "function" &&
+            !canLoadVideo(id, { assumeVisible: true })
+          ) {
             return;
           }
         }
@@ -2232,8 +2238,8 @@ function App() {
                     onNativeDragStart={handleNativeDragStart}
                     showFilenames={showFilenames}
                     // Video Collection Management
-                    canLoadMoreVideos={() =>
-                      videoCollection.canLoadVideo(video.id)
+                    canLoadMoreVideos={(opts) =>
+                      videoCollection.canLoadVideo(video.id, opts)
                     }
                     isLoading={loadingVideos.has(video.id)}
                     isLoaded={loadedVideos.has(video.id)}
