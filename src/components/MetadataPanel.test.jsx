@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import MetadataPanel from './MetadataPanel';
 
 const renderPanel = (props = {}) =>
@@ -82,5 +82,43 @@ describe('MetadataPanel single-selection info', () => {
     expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+  });
+});
+
+describe('MetadataPanel focus button', () => {
+  it('shows a focus button when selection is available', () => {
+    const onFocusSelection = vi.fn().mockReturnValue(true);
+
+    renderPanel({
+      selectionCount: 2,
+      selectedVideos: [{ id: 'a' }, { id: 'b' }],
+      onFocusSelection,
+    });
+
+    const button = screen.getByRole('button', {
+      name: 'Scroll viewport to selected item',
+    });
+    fireEvent.click(button);
+    expect(onFocusSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the focus button when no callback is provided', () => {
+    renderPanel({
+      selectionCount: 1,
+      selectedVideos: [{ id: 'a' }],
+      onFocusSelection: null,
+    });
+
+    expect(
+      screen.queryByRole('button', { name: 'Scroll viewport to selected item' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not show the focus button when there is no selection', () => {
+    renderPanel({ selectionCount: 0, selectedVideos: [], onFocusSelection: vi.fn() });
+
+    expect(
+      screen.queryByRole('button', { name: 'Scroll viewport to selected item' })
+    ).not.toBeInTheDocument();
   });
 });
