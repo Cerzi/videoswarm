@@ -60,4 +60,46 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("respects maxVisible clamp and expands when raised", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 300 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ cap }) =>
+        useProgressiveList(items, 60, 30, 1, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          maxVisible: cap,
+        }),
+      { initialProps: { cap: 90 } }
+    );
+
+    expect(result.current.length).toBe(60);
+
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+
+    expect(result.current.length).toBe(90);
+
+    // Lower the cap → visible count shrinks immediately
+    act(() => {
+      rerender({ cap: 45 });
+    });
+    expect(result.current.length).toBe(45);
+
+    // Raise the cap and ensure growth resumes
+    act(() => {
+      rerender({ cap: 150 });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(12);
+    });
+    expect(result.current.length).toBeGreaterThan(90);
+
+    vi.useRealTimers();
+  });
 });

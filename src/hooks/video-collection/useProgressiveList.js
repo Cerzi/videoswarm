@@ -43,12 +43,23 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+
+    // Optional viewport-aware clamp.
+    maxVisible: maxVisibleOption = null,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
-  const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
+  const resolvedMaxVisible =
+    Number.isFinite(maxVisibleOption) && maxVisibleOption > 0
+      ? Math.max(1, Math.floor(maxVisibleOption))
+      : null;
+
+  const [visible, setVisible] = useState(() =>
+    Math.min(initial, safe.length, resolvedMaxVisible ?? safe.length)
+  );
   const prevLenRef = useRef(safe.length);
   const didInitRef = useRef(false);
+  const maxVisibleRef = useRef(resolvedMaxVisible ?? Infinity);
 
   // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
   useEffect(() => {
@@ -69,8 +80,24 @@ export function useProgressiveList(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length]);
 
+  useEffect(() => {
+    maxVisibleRef.current = resolvedMaxVisible ?? Infinity;
+    if (resolvedMaxVisible != null || safe.length < prevLenRef.current) {
+      setVisible((v) => {
+        const cap = Math.min(safe.length, maxVisibleRef.current);
+        return v > cap ? cap : v;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedMaxVisible, safe.length]);
+
+  const maxCapForRender =
+    resolvedMaxVisible != null
+      ? Math.min(safe.length, resolvedMaxVisible)
+      : safe.length;
+
   // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
+  const allVisible = visible >= maxCapForRender;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -194,7 +221,11 @@ export function useProgressiveList(
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) => {
+            const cap = Math.min(safe.length, maxVisibleRef.current);
+            if (v >= cap) return v;
+            return Math.min(v + add, cap);
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -233,9 +264,12 @@ export function useProgressiveList(
     if (allVisible) return;
 
     const timer = setInterval(() => {
-      setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
-      );
+      setVisible((v) => {
+        const cap = Math.min(safe.length, maxVisibleRef.current);
+        if (v >= cap) return v;
+        const next = v + batchSize;
+        return next >= cap ? cap : next;
+      });
     }, intervalMs);
 
     return () => clearInterval(timer);

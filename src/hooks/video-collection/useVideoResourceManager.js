@@ -59,7 +59,9 @@ export default function useVideoResourceManager({
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
-  playingCap, 
+  playingCap,
+  suspendEvictions = false,
+  preferredMaxLoaded = null,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -157,11 +159,33 @@ export default function useVideoResourceManager({
       Math.min(baseByDM, maxByMem) * pressureScale * longTaskScale
     );
 
-    // Bound by collection size (plus small buffer)
-    const listBound = Math.max(
+    const renderedCount = progressiveVideos?.length || 0;
+    const dataBound = Math.max(
       CONFIG.MIN_MAX_LOADED,
-      Math.min(want, (progressiveVideos?.length || 0) + 20)
+      Math.min(renderedCount + 20, CONFIG.MAX_LOADED_SOFT_CAP)
     );
+
+    const playingFloor =
+      typeof playingCap === "number" && playingCap > 0
+        ? playingCap + CONFIG.PLAY_PRELOAD_BUFFER
+        : CONFIG.MIN_MAX_LOADED;
+
+    const preferredCap =
+      Number.isFinite(preferredMaxLoaded) && preferredMaxLoaded > 0
+        ? Math.max(playingFloor, Math.floor(preferredMaxLoaded))
+        : Infinity;
+
+    let listBound = Math.max(
+      CONFIG.MIN_MAX_LOADED,
+      Math.min(want, dataBound)
+    );
+
+    if (preferredCap !== Infinity) {
+      listBound = Math.max(
+        CONFIG.MIN_MAX_LOADED,
+        Math.min(listBound, preferredCap)
+      );
+    }
 
     // Smooth step from previous to avoid oscillation
     const prev = prevLimitsRef.current.maxLoaded || CONFIG.MIN_MAX_LOADED;
@@ -213,6 +237,7 @@ export default function useVideoResourceManager({
     hadLongTaskRecently,
     playingCap, // re-evaluate if user cap changes
     limitMultiplier,
+    preferredMaxLoaded,
   ]);
 
   // --- admission control (relaxed + visible priority) ---
@@ -260,6 +285,7 @@ export default function useVideoResourceManager({
   // Evict to meet limits (prefer to free non-visible, non-playing first; never evict visible/playing)
   const lastCleanupAtRef = useRef(0);
   const performCleanup = useCallback(() => {
+    if (suspendEvictions) return;
     // basic throttle (avoid floods from callers/effects)
     const now = Date.now();
     if (now - lastCleanupAtRef.current < 500) return;
@@ -295,7 +321,14 @@ export default function useVideoResourceManager({
       console.warn(`♻️ Evicting ${victims.length} tiles to meet limits (${limits.maxLoaded}).`);
     }
     return victims.length > 0 ? victims : undefined;
-  }, [_loadedVideos, limits.maxLoaded, _visibleVideos, _playingVideos, isNear]);
+  }, [
+    _loadedVideos,
+    limits.maxLoaded,
+    _visibleVideos,
+    _playingVideos,
+    isNear,
+    suspendEvictions,
+  ]);
 
   // Reduce limits after catastrophic player creation failures
   const reportPlayerCreationFailure = useCallback(() => {
