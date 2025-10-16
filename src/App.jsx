@@ -245,31 +245,102 @@ function App() {
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
 
-  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [masonryMetrics, setMasonryMetrics] = useState({
+    columnWidth: 0,
+    columnCount: 0,
+    columnGap: 0,
+    gridWidth: 0,
+  });
+  const [scrollRowsEstimate, setScrollRowsEstimate] = useState(0);
+  const metadataAspectCacheRef = useRef(new Map());
+  const [ioConfig, setIoConfig] = useState({
     rootMargin: "1600px 0px",
-    threshold: [0, 0.15],
     nearPx: 900,
   });
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    const update = () => {
-      const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
+  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
+    rootMargin: ioConfig.rootMargin,
+    threshold: [0, 0.15],
+    nearPx: ioConfig.nearPx,
+  });
+
+  const [layoutHoldCount, setLayoutHoldCount] = useState(0);
+
+  const beginLayoutHold = useCallback(() => {
+    let released = false;
+    setLayoutHoldCount((count) => count + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setLayoutHoldCount((count) => Math.max(0, count - 1));
     };
-    update();
+  }, []);
+
+  const withLayoutHold = useCallback(
+    (fn) => {
+      const release = beginLayoutHold();
+      let result;
+      try {
+        result = typeof fn === "function" ? fn() : undefined;
+      } catch (error) {
+        release();
+        throw error;
+      }
+      if (result && typeof result.then === "function") {
+        result.then(release, release);
+      } else {
+        release();
+      }
+      return result;
+    },
+    [beginLayoutHold]
+  );
+
+  const isLayoutTransitioning = layoutHoldCount > 0;
+
+  useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    const gridEl = gridRef.current;
+
+    const compute = () => {
+      const currentScroll = scrollContainerRef.current;
+      const currentGrid = gridRef.current;
+      const height =
+        currentScroll?.clientHeight ||
+        (typeof window !== "undefined" ? window.innerHeight : 0);
+      const width =
+        currentGrid?.clientWidth ||
+        currentScroll?.clientWidth ||
+        (typeof window !== "undefined" ? window.innerWidth : 0);
+
+      setViewportSize((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height }
+      );
+    };
+
+    compute();
 
     const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    if (ro && el) ro.observe(el);
-    window.addEventListener("resize", update);
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => compute())
+        : null;
+    if (ro) {
+      if (scrollEl) ro.observe(scrollEl);
+      if (gridEl && gridEl !== scrollEl) ro.observe(gridEl);
+    }
+
+    window.addEventListener("resize", compute);
 
     return () => {
-      if (ro && el) ro.unobserve(el);
-      ro?.disconnect?.();
-      window.removeEventListener("resize", update);
+      window.removeEventListener("resize", compute);
+      if (ro) {
+        if (scrollEl) ro.unobserve(scrollEl);
+        if (gridEl && gridEl !== scrollEl) ro.unobserve(gridEl);
+        ro.disconnect();
+      }
     };
-  }, [scrollContainerRef, ioRegistry]);
+  }, [scrollContainerRef, gridRef]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -487,6 +558,17 @@ function App() {
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
 
   // ----- Masonry hook -----
+  const handleMasonryMetrics = useCallback((metrics) => {
+    setMasonryMetrics((prev) =>
+      prev.columnWidth === metrics.columnWidth &&
+      prev.columnCount === metrics.columnCount &&
+      prev.columnGap === metrics.columnGap &&
+      prev.gridWidth === metrics.gridWidth
+        ? prev
+        : metrics
+    );
+  }, []);
+
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
@@ -497,6 +579,7 @@ function App() {
         ],
 
       onOrderChange: setVisualOrderedIds,
+      onMetricsChange: handleMasonryMetrics,
     });
 
   // MEMOIZED sorting & grouping
@@ -520,6 +603,181 @@ function App() {
     () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
     [filteredVideos, groupByFolders, comparator]
   );
+
+  const averageAspectRatio = useMemo(() => {
+    const sampleLimit = 80;
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < orderedVideos.length && count < sampleLimit; i += 1) {
+      const video = orderedVideos[i];
+      if (!video) continue;
+      const direct = Number(video?.aspectRatio);
+      if (Number.isFinite(direct) && direct > 0) {
+        sum += direct;
+        count += 1;
+        continue;
+      }
+      const meta = Number(video?.dimensions?.aspectRatio);
+      if (Number.isFinite(meta) && meta > 0) {
+        sum += meta;
+        count += 1;
+      }
+    }
+    if (!count) return 16 / 9;
+    const avg = sum / count;
+    return Math.min(3.5, Math.max(0.5, avg));
+  }, [orderedVideos]);
+
+  const fallbackTileWidth = useMemo(
+    () => ZOOM_TILE_WIDTHS[clampZoomIndex(zoomLevel)] ?? 200,
+    [zoomLevel]
+  );
+
+  const effectiveColumnWidth =
+    masonryMetrics.columnWidth && masonryMetrics.columnWidth > 0
+      ? masonryMetrics.columnWidth
+      : fallbackTileWidth;
+
+  const approxTileHeight = useMemo(
+    () => Math.max(48, effectiveColumnWidth / averageAspectRatio),
+    [effectiveColumnWidth, averageAspectRatio]
+  );
+
+  const viewportHeight =
+    viewportSize.height || (typeof window !== "undefined" ? window.innerHeight : 0);
+  const viewportWidth =
+    viewportSize.width ||
+    (typeof window !== "undefined" ? window.innerWidth : effectiveColumnWidth);
+
+  const derivedColumnCount = useMemo(() => {
+    if (masonryMetrics.columnCount && masonryMetrics.columnCount > 0) {
+      return masonryMetrics.columnCount;
+    }
+    const available =
+      masonryMetrics.gridWidth && masonryMetrics.gridWidth > 0
+        ? masonryMetrics.gridWidth
+        : viewportWidth;
+    return Math.max(1, Math.floor(available / Math.max(1, effectiveColumnWidth)));
+  }, [
+    masonryMetrics.columnCount,
+    masonryMetrics.gridWidth,
+    viewportWidth,
+    effectiveColumnWidth,
+  ]);
+
+  const viewportRows = useMemo(
+    () => Math.max(1, Math.ceil(viewportHeight / Math.max(1, approxTileHeight))),
+    [viewportHeight, approxTileHeight]
+  );
+
+  const bufferRows = useMemo(
+    () => Math.max(3, Math.ceil(viewportRows)),
+    [viewportRows]
+  );
+
+  const progressiveMaxVisible = useMemo(() => {
+    if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
+      return null;
+    }
+    const baseRows = viewportRows + bufferRows;
+    const targetRows = Math.max(baseRows, scrollRowsEstimate + bufferRows);
+    return derivedColumnCount * targetRows;
+  }, [derivedColumnCount, viewportRows, bufferRows, scrollRowsEstimate]);
+
+  const progressiveMaxVisibleNumber = Number.isFinite(progressiveMaxVisible)
+    ? Math.max(1, Math.floor(progressiveMaxVisible))
+    : undefined;
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    let rafId = 0;
+    const measure = () => {
+      rafId = 0;
+      const top = el.scrollTop || 0;
+      const rows = Math.max(
+        viewportRows,
+        Math.ceil((top + viewportHeight) / Math.max(1, approxTileHeight))
+      );
+      setScrollRowsEstimate((prev) => (prev !== rows ? rows : prev));
+    };
+
+    measure();
+
+    const onScroll = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(measure);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [scrollContainerRef, approxTileHeight, viewportHeight, viewportRows]);
+
+  useEffect(() => {
+    const mediumWidth = ZOOM_TILE_WIDTHS[1] ?? ZOOM_TILE_WIDTHS[0] ?? 200;
+    const tileWidth = Math.max(80, effectiveColumnWidth || mediumWidth);
+    const height = viewportHeight;
+    const scale = Math.max(0.45, Math.min(1.6, tileWidth / mediumWidth));
+    const nearPx = Math.max(360, Math.round(Math.max(480, height * 0.85) * scale));
+    const rootMarginPx = Math.max(600, Math.round(1100 * scale));
+    const rootMargin = `${rootMarginPx}px 0px`;
+    setIoConfig((prev) =>
+      prev.nearPx === nearPx && prev.rootMargin === rootMargin
+        ? prev
+        : { nearPx, rootMargin }
+    );
+  }, [effectiveColumnWidth, viewportHeight]);
+
+  useEffect(() => {
+    if (!orderedVideos.length) return;
+    const cache = metadataAspectCacheRef.current;
+    const queue = [];
+    for (const video of orderedVideos) {
+      if (!video?.id) continue;
+      const direct = Number(video?.aspectRatio);
+      const meta = Number(video?.dimensions?.aspectRatio);
+      const ratio =
+        Number.isFinite(direct) && direct > 0
+          ? direct
+          : Number.isFinite(meta) && meta > 0
+          ? meta
+          : null;
+      if (!ratio) continue;
+      if (cache.get(video.id) === ratio) continue;
+      cache.set(video.id, ratio);
+      queue.push([video.id, ratio]);
+    }
+
+    if (!queue.length) return;
+
+    const processChunk = () => {
+      const chunk = queue.splice(0, 120);
+      chunk.forEach(([id, ratio]) => updateAspectRatio(id, ratio));
+      if (queue.length) {
+        if (
+          typeof window !== "undefined" &&
+          typeof window.requestIdleCallback === "function"
+        ) {
+          window.requestIdleCallback(processChunk, { timeout: 200 });
+        } else {
+          setTimeout(processChunk, 0);
+        }
+      }
+    };
+
+    if (
+      typeof window !== "undefined" &&
+      typeof window.requestIdleCallback === "function"
+    ) {
+      window.requestIdleCallback(processChunk, { timeout: 200 });
+    } else {
+      setTimeout(processChunk, 0);
+    }
+  }, [orderedVideos, updateAspectRatio]);
 
   // data order ids (fallback)
   const orderedIds = useMemo(
@@ -660,6 +918,37 @@ function App() {
     [anchorDefaults.maxWaitMs]
   );
 
+  const runSidebarTransition = useCallback(
+    (triggerType, applyState) =>
+      withLayoutHold(() =>
+        runWithStableAnchor(
+          triggerType,
+          () => {
+            const promise = waitForTransitionEnd(
+              metadataPanelRef.current,
+              ["width"],
+              anchorDefaults.maxWaitMs
+            );
+            if (typeof applyState === "function") {
+              applyState();
+            }
+            scheduleLayout?.();
+            return promise;
+          },
+          sidebarAnchorOptions
+        )
+      ),
+    [
+      anchorDefaults.maxWaitMs,
+      metadataPanelRef,
+      runWithStableAnchor,
+      scheduleLayout,
+      sidebarAnchorOptions,
+      waitForTransitionEnd,
+      withLayoutHold,
+    ]
+  );
+
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
     [orderedVideos]
@@ -710,38 +999,32 @@ function App() {
 
   useEffect(() => {
     if (shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)) {
-      runWithStableAnchor(
-        "sidebar:auto-open",
-        () => {
-          const promise = waitForTransitionEnd(
-            metadataPanelRef.current,
-            ["width"],
-            anchorDefaults.maxWaitMs
-          );
-          setMetadataPanelOpen(true);
-          scheduleLayout?.();
-          return promise;
-        },
-        sidebarAnchorOptions
-      );
+      runSidebarTransition("sidebar:auto-open", () => {
+        setMetadataPanelOpen(true);
+        setMetadataFocusToken((token) => token + 1);
+      });
     }
   }, [
-    anchorDefaults.maxWaitMs,
     isMetadataPanelOpen,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    setMetadataPanelOpen,
+    runSidebarTransition,
     selection.size,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
+    setMetadataFocusToken,
+    setMetadataPanelOpen,
+    shouldAutoOpenMetadataPanel,
   ]);
 
   useEffect(() => {
     if (selection.size === 0 && isMetadataPanelOpen) {
-      setMetadataPanelOpen(false);
+      runSidebarTransition("sidebar:auto-close", () => {
+        setMetadataPanelOpen(false);
+      });
     }
-  }, [isMetadataPanelOpen, selection.size, setMetadataPanelOpen]);
+  }, [
+    isMetadataPanelOpen,
+    runSidebarTransition,
+    selection.size,
+    setMetadataPanelOpen,
+  ]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -899,67 +1182,26 @@ function App() {
   );
 
   const openMetadataPanel = useCallback(() => {
-    runWithStableAnchor(
-      "sidebar:open",
-      () => {
-        const promise = waitForTransitionEnd(
-          metadataPanelRef.current,
-          ["width"],
-          anchorDefaults.maxWaitMs
-        );
-        setMetadataPanelOpen(true);
-        setMetadataFocusToken((token) => token + 1);
-        scheduleLayout?.();
-        return promise;
-      },
-      sidebarAnchorOptions
-    );
-  }, [
-    anchorDefaults.maxWaitMs,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    setMetadataPanelOpen,
-    setMetadataFocusToken,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
-  ]);
+    runSidebarTransition("sidebar:open", () => {
+      setMetadataPanelOpen(true);
+      setMetadataFocusToken((token) => token + 1);
+    });
+  }, [runSidebarTransition, setMetadataFocusToken, setMetadataPanelOpen]);
 
   const toggleMetadataPanel = useCallback(() => {
-    runWithStableAnchor(
-      "sidebarToggle",
-      () => {
-        const promise = waitForTransitionEnd(
-          metadataPanelRef.current,
-          ["width"],
-          anchorDefaults.maxWaitMs
+    runSidebarTransition("sidebarToggle", () => {
+      setMetadataPanelOpen((open) => {
+        const { nextOpen, shouldClear } = getMetadataPanelToggleState(
+          open,
+          selection.size
         );
-        setMetadataPanelOpen((open) => {
-          const { nextOpen, shouldClear } = getMetadataPanelToggleState(
-            open,
-            selection.size
-          );
-          if (shouldClear) {
-            selection.clear();
-          }
-          return nextOpen;
-        });
-        scheduleLayout?.();
-        return promise;
-      },
-      sidebarAnchorOptions
-    );
-  }, [
-    anchorDefaults.maxWaitMs,
-    metadataPanelRef,
-    runWithStableAnchor,
-    scheduleLayout,
-    selection.clear,
-    selection.size,
-    setMetadataPanelOpen,
-    sidebarAnchorOptions,
-    waitForTransitionEnd,
-  ]);
+        if (shouldClear) {
+          selection.clear();
+        }
+        return nextOpen;
+      });
+    });
+  }, [runSidebarTransition, selection.clear, selection.size, setMetadataPanelOpen]);
 
   const {
     contextMenu,
@@ -1037,9 +1279,11 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
+      maxVisible: progressiveMaxVisibleNumber,
     },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
+    suspendEvictions: isLayoutTransitioning,
   });
 
   // fullscreen / context menu
@@ -1071,21 +1315,23 @@ function App() {
     (z) => {
       const clamped = clampZoomIndex(z);
       if (clamped === zoomLevel) return; // no-op if unchanged
-      runWithStableAnchor(
-        "zoomChange",
-        () => {
-          setZoomLevel(clamped);
-          setZoomClass(clamped);
-          window.electronAPI?.saveSettingsPartial?.({
-            zoomLevel: clamped,
-            recursiveMode,
-            maxConcurrentPlaying,
-            showFilenames,
-          });
-          // Nudge masonry after zoom change
-          scheduleLayout?.();
-        },
-        zoomAnchorOptions
+      withLayoutHold(() =>
+        runWithStableAnchor(
+          "zoomChange",
+          () => {
+            setZoomLevel(clamped);
+            setZoomClass(clamped);
+            window.electronAPI?.saveSettingsPartial?.({
+              zoomLevel: clamped,
+              recursiveMode,
+              maxConcurrentPlaying,
+              showFilenames,
+            });
+            // Nudge masonry after zoom change
+            scheduleLayout?.();
+          },
+          zoomAnchorOptions
+        )
       );
     },
     [
@@ -1097,6 +1343,7 @@ function App() {
       showFilenames,
       scheduleLayout,
       zoomAnchorOptions,
+      withLayoutHold,
     ]
   );
 
@@ -1625,8 +1872,9 @@ function App() {
   const playingSize = actualPlaying.size;                                  
   const loadingSize = loadingVideos.size;                                   
 
-  useEffect(() => {                                                          
-    const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
+  useEffect(() => {
+    if (isLayoutTransitioning) return undefined;
+    const id = setTimeout(() => {
       const victims = videoCollection.performCleanup?.();
       if (Array.isArray(victims) && victims.length) {
         setLoadedVideos((prev) => {
@@ -1637,7 +1885,14 @@ function App() {
       }
     }, 0);
     return () => clearTimeout(id);
-  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
+  }, [
+    isLayoutTransitioning,
+    maxLoaded,
+    loadedSize,
+    playingSize,
+    loadingSize,
+    videoCollection.performCleanup,
+  ]);
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
@@ -1838,6 +2093,7 @@ function App() {
                     isLoaded={loadedVideos.has(video.id)}
                     isVisible={visibleVideos.has(video.id)}
                     isPlaying={videoCollection.isVideoPlaying(video.id)}
+                    isNear={ioRegistry.isNear}
                     // Lifecycle callbacks
                     onStartLoading={handleVideoStartLoading}
                     onStopLoading={handleVideoStopLoading}

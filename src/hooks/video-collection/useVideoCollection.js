@@ -26,6 +26,7 @@ export default function useVideoCollection({
   progressive = {},
   hadLongTaskRecently = false,
   isNear,
+  suspendEvictions = false,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -34,6 +35,7 @@ export default function useVideoCollection({
     pauseOnScroll = PROGRESSIVE_DEFAULTS.pauseOnScroll,
     longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
     forceInterval,
+    maxVisible,
   } = progressive || {};
 
   // Normalize to safe numbers
@@ -62,6 +64,7 @@ export default function useVideoCollection({
       longTaskAdaptation,
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
+      maxVisible,
     }
   );
 
@@ -80,6 +83,7 @@ export default function useVideoCollection({
     hadLongTaskRecently,
     isNear,
     playingCap: maxConcurrentPlaying,
+    suspendEvictions,
   });
 
   // Layer 3: Play orchestration (Business logic)

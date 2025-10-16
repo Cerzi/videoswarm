@@ -59,7 +59,8 @@ export default function useVideoResourceManager({
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
-  playingCap, 
+  playingCap,
+  suspendEvictions = false,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -260,6 +261,7 @@ export default function useVideoResourceManager({
   // Evict to meet limits (prefer to free non-visible, non-playing first; never evict visible/playing)
   const lastCleanupAtRef = useRef(0);
   const performCleanup = useCallback(() => {
+    if (suspendEvictions) return;
     // basic throttle (avoid floods from callers/effects)
     const now = Date.now();
     if (now - lastCleanupAtRef.current < 500) return;
@@ -295,7 +297,14 @@ export default function useVideoResourceManager({
       console.warn(`♻️ Evicting ${victims.length} tiles to meet limits (${limits.maxLoaded}).`);
     }
     return victims.length > 0 ? victims : undefined;
-  }, [_loadedVideos, limits.maxLoaded, _visibleVideos, _playingVideos, isNear]);
+  }, [
+    _loadedVideos,
+    limits.maxLoaded,
+    _visibleVideos,
+    _playingVideos,
+    isNear,
+    suspendEvictions,
+  ]);
 
   // Reduce limits after catastrophic player creation failures
   const reportPlayerCreationFailure = useCallback(() => {
