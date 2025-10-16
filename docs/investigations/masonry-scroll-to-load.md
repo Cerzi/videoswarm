@@ -1,7 +1,7 @@
 # Masonry "Scroll to load" Regression Investigation
 
 ## Summary
-Recent fixes introduced a layout epoch signal and tightened the play orchestrator, but the regression where certain visible tiles stay stuck on the _“Scroll to load”_ placeholder after every masonry rebuild remains. A review of the loading pipeline shows that the current implementation still relies on a single synchronous geometry check that can bail out while the masonry grid is in the middle of its multi-frame relayout. When that happens no subsequent trigger re-runs the load admission for that tile, so the placeholder never advances even though the card is visible and counted in the debug metrics.
+Recent fixes introduced a layout epoch signal and tightened the play orchestrator, but the regression where certain visible tiles stay stuck on the _“Scroll to load”_ placeholder after every masonry rebuild remains. A review of the loading pipeline shows that the current implementation still relies on a single synchronous geometry check that can bail out while the masonry grid is in the middle of its multi-frame relayout. When that happens no subsequent trigger re-runs the load admission for that tile, so the placeholder never advances even though the card is visible. The debug status bar reflects this confusion: it reports the affected tiles as both _visible_ and _playing_, even though the UI is still showing “Scroll to load,” confirming that higher-level orchestration still believes playback is active for the stuck cards.
 
 ## How loading is supposed to work
 1. **IntersectionObserver** – `VideoCard` registers with the shared observer and updates `visibleVideos` in app state through `handleVisible` whenever a tile crosses the viewport.【F:src/components/VideoCard/VideoCard.jsx†L520-L545】【F:src/hooks/ui-perf/useIntersectionObserverRegistry.js†L71-L150】
@@ -17,7 +17,7 @@ Recent fixes introduced a layout epoch signal and tightened the play orchestrato
 
 ## Why other subsystems are not the root cause
 * **Resource manager limits** – Visible tiles bypass the loaded cap and can overflow the concurrent loader budget slightly, so the admission layer is not preventing the retry once geometry is ready.【F:src/hooks/video-collection/useVideoResourceManager.js†L227-L240】
-* **Play orchestrator** – The latest patch already evicts tiles that lose their loaded media, preventing inflated playing counts. The stuck cards are not re-requesting their media, so the orchestrator never hears a `reportStarted` event and simply shows fewer active players.
+* **Play orchestrator** – The orchestrator tracks a _desired_ playing set driven by visibility and the `loadedIds` snapshot. During the regression, tiles that previously had video elements remain in the `loadedIds` set even after their DOM is torn down, so they stay counted as playing in the debug bar despite the “Scroll to load” placeholder. The orchestrator therefore isn’t what blocks recovery—it simply mirrors the stale resource state that never gets refreshed because the card stopped requesting media.
 * **Layout epoch refresh** – `bumpLayoutEpoch()` only runs once per rebuild (and again on viewport resize), but because the epoch effect only schedules a single `requestAnimationFrame` callback it does not persistently poll after a bailout.【F:src/App.jsx†L575-L611】【F:src/components/VideoCard/VideoCard.jsx†L500-L517】
 
 ## Hypothesis
