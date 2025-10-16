@@ -65,13 +65,9 @@ describe('useIntersectionObserverRegistry', () => {
     result.current.observe(element, 'video-1', handler);
 
     expect(lastObserver).not.toBeNull();
-    lastObserver.emit([
-      {
-        target: element,
-        boundingClientRect: rect,
-      },
-    ]);
 
+    // Immediate evaluation reflects the current (off-screen) position
+    expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(false, expect.objectContaining({ target: element }));
     expect(result.current.isVisible('video-1')).toBe(false);
 
@@ -101,15 +97,11 @@ describe('useIntersectionObserverRegistry', () => {
       { initialProps: { nearPx: 50 } }
     );
 
-    result.current.observe(element, 'video-2', vi.fn());
+    const handler = vi.fn();
+    result.current.observe(element, 'video-2', handler);
     expect(lastObserver).not.toBeNull();
-    lastObserver.emit([
-      {
-        target: element,
-        boundingClientRect: makeRect(),
-      },
-    ]);
 
+    expect(handler).toHaveBeenCalledTimes(1);
     expect(result.current.isNear('video-2')).toBe(false);
     expect(result.current.getNearPx()).toBe(50);
 
@@ -121,5 +113,27 @@ describe('useIntersectionObserverRegistry', () => {
 
     expect(result.current.getNearPx()).toBe(220);
     expect(result.current.isNear('video-2')).toBe(true);
+  });
+
+  test('observe immediately reports visibility for in-view elements', () => {
+    const root = document.createElement('div');
+    root.getBoundingClientRect = () => ({ top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600 });
+    const rootRef = { current: root };
+
+    const handler = vi.fn();
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => ({ top: 20, bottom: 180, left: 0, right: 100, width: 100, height: 160 });
+
+    const { result } = renderHook(() =>
+      useIntersectionObserverRegistry(rootRef, { rootMargin: '0px 0px', threshold: [0], nearPx: 100 })
+    );
+
+    act(() => {
+      result.current.observe(element, 'video-3', handler);
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0]).toBe(true);
+    expect(result.current.isVisible('video-3')).toBe(true);
   });
 });
