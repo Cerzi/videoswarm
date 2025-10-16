@@ -31,6 +31,33 @@ const clampScrollTop = (value) => {
   return value;
 };
 
+const SCROLL_EPSILON = 0.5;
+
+const dispatchSyntheticScroll = (element) => {
+  if (!element?.dispatchEvent || typeof element.dispatchEvent !== "function") {
+    return;
+  }
+  try {
+    const event = new Event("scroll", { bubbles: false });
+    element.dispatchEvent(event);
+  } catch (error) {
+    console.debug("[selection-cycler] Failed to dispatch scroll event", error);
+  }
+};
+
+const commitScrollTop = (element, nextValue, previousValue) => {
+  if (!element) return false;
+  const clamped = clampScrollTop(nextValue);
+  element.scrollTop = clamped;
+  const finalValue = element.scrollTop ?? clamped;
+  if (!Number.isFinite(finalValue)) return false;
+  if (Math.abs(finalValue - (previousValue ?? 0)) < SCROLL_EPSILON) {
+    return false;
+  }
+  dispatchSyntheticScroll(element);
+  return true;
+};
+
 export default function useSelectionCycler({
   orderedSelectionIds = [],
   scrollRef,
@@ -98,22 +125,22 @@ export default function useSelectionCycler({
       const currentTop = scrollEl.scrollTop ?? 0;
 
       if (topOffset < upperBound) {
-        const nextTop = clampScrollTop(currentTop + topOffset - upperBound);
-        scrollEl.scrollTop = nextTop;
+        const nextTop = currentTop + topOffset - upperBound;
+        commitScrollTop(scrollEl, nextTop, currentTop);
         return true;
       }
 
       if (bottomOffset > lowerBound) {
-        const nextTop = clampScrollTop(currentTop + bottomOffset - lowerBound);
-        scrollEl.scrollTop = nextTop;
+        const nextTop = currentTop + bottomOffset - lowerBound;
+        commitScrollTop(scrollEl, nextTop, currentTop);
         return true;
       }
 
       const available = viewportHeight - padding.top - padding.bottom - targetRect.height;
       if (Number.isFinite(available) && available > 0) {
         const delta = topOffset - padding.top - available / 2;
-        const nextTop = clampScrollTop(currentTop + delta);
-        scrollEl.scrollTop = nextTop;
+        const nextTop = currentTop + delta;
+        commitScrollTop(scrollEl, nextTop, currentTop);
       }
 
       return true;

@@ -99,20 +99,26 @@ describe("useSelectionCycler", () => {
     );
 
     const { scrollEl } = setupDom(selectionIds, positions);
+    scrollEl.dispatchEvent = vi.fn(() => true);
     const button = screen.getByRole("button", { name: "focus" });
     const result = screen.getByTestId("result");
 
     fireEvent.click(button);
     expect(result.textContent).toBe("true");
     expect(scrollEl.scrollTop).toBe(0);
+    expect(scrollEl.dispatchEvent).not.toHaveBeenCalled();
 
     fireEvent.click(button);
     expect(result.textContent).toBe("true");
     expect(scrollEl.scrollTop).toBeCloseTo(180, 1);
+    expect(scrollEl.dispatchEvent).toHaveBeenCalledTimes(1);
+    expect(scrollEl.dispatchEvent.mock.calls[0][0]).toBeInstanceOf(Event);
+    expect(scrollEl.dispatchEvent.mock.calls[0][0].type).toBe("scroll");
 
     fireEvent.click(button);
     expect(result.textContent).toBe("true");
     expect(scrollEl.scrollTop).toBeCloseTo(440, 1);
+    expect(scrollEl.dispatchEvent).toHaveBeenCalledTimes(2);
 
     fireEvent.click(button);
     expect(result.textContent).toBe("true");
@@ -177,5 +183,31 @@ describe("useSelectionCycler", () => {
     fireEvent.click(button);
     expect(result.textContent).toBe("false");
     expect(runWithStableAnchor).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a synthetic scroll event when programmatic scroll occurs", () => {
+    const selectionIds = ["2"];
+    const positions = new Map([["2", 260]]);
+    const runWithStableAnchor = vi.fn((_, fn) => fn());
+
+    render(
+      <TestHarness
+        selectionIds={selectionIds}
+        runWithStableAnchor={runWithStableAnchor}
+      />
+    );
+
+    const { scrollEl } = setupDom(selectionIds, positions);
+    const dispatchSpy = vi.fn(() => true);
+    scrollEl.dispatchEvent = dispatchSpy;
+
+    const button = screen.getByRole("button", { name: "focus" });
+    fireEvent.click(button);
+
+    expect(scrollEl.scrollTop).toBeCloseTo(180, 1);
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    const [event] = dispatchSpy.mock.calls[0];
+    expect(event).toBeInstanceOf(Event);
+    expect(event.type).toBe("scroll");
   });
 });
