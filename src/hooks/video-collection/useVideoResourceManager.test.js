@@ -128,6 +128,83 @@ describe('useVideoResourceManager (current behavior)', () => {
       expect(victimsInLoaded.length).toBeLessThanOrEqual(overBy);
     }
   });
+
+  test('preferredMaxLoaded caps the computed limit near the requested window size', async () => {
+    const progressiveVideos = makeVideos(500);
+    const visible = new Set();
+    const loaded = new Set();
+    const loading = new Set();
+
+    const { result } = renderHook(() =>
+      useVideoResourceManager({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear: () => false,
+        playingCap: 32,
+        preferredMaxLoaded: 90,
+      })
+    );
+
+    await flushAsync(3);
+
+    expect(result.current.limits.maxLoaded).toBeLessThanOrEqual(90);
+  });
+
+  test('performCleanup is suppressed while evictions are suspended', async () => {
+    const progressiveVideos = makeVideos(120);
+    const visible = new Set(['1']);
+    const loaded = new Set();
+    const loading = new Set();
+    const isNear = () => false;
+
+    const { result, rerender } = renderHook(
+      (props) => useVideoResourceManager(props),
+      {
+        initialProps: {
+          progressiveVideos,
+          visibleVideos: visible,
+          loadedVideos: loaded,
+          loadingVideos: loading,
+          playingVideos: new Set(),
+          isNear,
+          playingCap: 32,
+          suspendEvictions: true,
+        },
+      }
+    );
+
+    await flushAsync();
+
+    const { maxLoaded } = result.current.limits;
+    for (let i = 0; i < maxLoaded + 10; i++) {
+      loaded.add(String(i + 1));
+    }
+
+    expect(result.current.performCleanup()).toBeUndefined();
+
+    await flushAsync();
+
+    act(() => {
+      rerender({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear,
+        playingCap: 32,
+        suspendEvictions: false,
+      });
+    });
+
+    await flushAsync();
+
+    const victims = result.current.performCleanup();
+    expect(Array.isArray(victims) && victims.length > 0).toBe(true);
+  });
 });
 
 describe('reportPlayerCreationFailure', () => {
