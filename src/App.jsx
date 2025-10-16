@@ -849,6 +849,7 @@ function App() {
     gridRef,
     runWithStableAnchor,
     anchorOptions: zoomAnchorOptions,
+    refreshIntersections: ioRegistry.refresh,
   });
 
   const waitForTransitionEnd = useCallback(

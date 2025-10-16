@@ -65,6 +65,7 @@ export default function useSelectionCycler({
   runWithStableAnchor,
   anchorOptions,
   triggerType = DEFAULT_TRIGGER,
+  refreshIntersections,
 } = {}) {
   const selectionKey = useMemo(() => {
     if (!Array.isArray(orderedSelectionIds) || orderedSelectionIds.length === 0) {
@@ -78,6 +79,39 @@ export default function useSelectionCycler({
   useEffect(() => {
     cycleStateRef.current = { key: selectionKey, index: -1 };
   }, [selectionKey]);
+
+  const refreshRef = useRef(null);
+  useEffect(() => {
+    refreshRef.current =
+      typeof refreshIntersections === "function" ? refreshIntersections : null;
+  }, [refreshIntersections]);
+
+  const scheduleRefresh = useCallback(() => {
+    const fn = refreshRef.current;
+    if (typeof fn !== "function") return;
+    try {
+      fn();
+    } catch (error) {
+      console.debug("[selection-cycler] Failed to refresh intersections", error);
+    }
+    if (
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function"
+    ) {
+      window.requestAnimationFrame(() => {
+        const again = refreshRef.current;
+        if (typeof again !== "function") return;
+        try {
+          again();
+        } catch (error) {
+          console.debug(
+            "[selection-cycler] Failed to refresh intersections (rAF)",
+            error
+          );
+        }
+      });
+    }
+  }, []);
 
   return useCallback(() => {
     const ids = Array.isArray(orderedSelectionIds) ? orderedSelectionIds : [];
@@ -154,10 +188,20 @@ export default function useSelectionCycler({
     if (didScroll) {
       state.index = nextIndex;
       state.key = selectionKey;
+      scheduleRefresh();
     } else {
       state.index = previousIndex;
     }
 
     return didScroll;
-  }, [anchorOptions, gridRef, orderedSelectionIds, runWithStableAnchor, scrollRef, selectionKey, triggerType]);
+  }, [
+    anchorOptions,
+    gridRef,
+    orderedSelectionIds,
+    runWithStableAnchor,
+    scheduleRefresh,
+    scrollRef,
+    selectionKey,
+    triggerType,
+  ]);
 }

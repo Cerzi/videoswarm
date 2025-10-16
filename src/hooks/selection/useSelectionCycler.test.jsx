@@ -8,6 +8,7 @@ const TestHarness = ({
   renderedIds = selectionIds,
   runWithStableAnchor = (_, fn) => fn(),
   anchorOptions,
+  refreshIntersections,
 }) => {
   const scrollRef = useRef(null);
   const gridRef = useRef(null);
@@ -19,6 +20,7 @@ const TestHarness = ({
     gridRef,
     runWithStableAnchor,
     anchorOptions,
+    refreshIntersections,
   });
 
   return (
@@ -209,5 +211,36 @@ describe("useSelectionCycler", () => {
     const [event] = dispatchSpy.mock.calls[0];
     expect(event).toBeInstanceOf(Event);
     expect(event.type).toBe("scroll");
+  });
+
+  it("refreshes intersection observers after a successful scroll", () => {
+    const selectionIds = ["2"];
+    const positions = new Map([["2", 260]]);
+    const refreshIntersections = vi.fn();
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        cb();
+        return 1;
+      });
+
+    try {
+      render(
+        <TestHarness
+          selectionIds={selectionIds}
+          refreshIntersections={refreshIntersections}
+        />
+      );
+
+      const { scrollEl } = setupDom(selectionIds, positions);
+      scrollEl.dispatchEvent = vi.fn(() => true);
+
+      const button = screen.getByRole("button", { name: "focus" });
+      fireEvent.click(button);
+
+      expect(refreshIntersections).toHaveBeenCalledTimes(2);
+    } finally {
+      rafSpy.mockRestore();
+    }
   });
 });
