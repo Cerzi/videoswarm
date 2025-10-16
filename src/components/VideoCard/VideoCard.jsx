@@ -36,7 +36,7 @@ const VideoCard = memo(function VideoCard({
   unobserveIntersection,  // (el)=>void
   isNear = () => true,
   scrollRootRef = null,
-  forceLoadEpoch = 0,
+  layoutEpoch = 0,
 
   // optional init scheduler
   scheduleInit = null,
@@ -498,22 +498,23 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   useEffect(() => {
-    const shouldCheck = visibilityRef.current || forceLoadEpoch > 0;
-    if (!shouldCheck) return undefined;
+    let raf = 0;
+    const run = () => {
+      ensureVisibleAndLoad();
+    };
 
-    ensureVisibleAndLoad();
     if (typeof requestAnimationFrame === "function") {
-      const raf = requestAnimationFrame(() => {
-        ensureVisibleAndLoad();
-      });
+      raf = requestAnimationFrame(run);
       return () => {
-        if (typeof cancelAnimationFrame === "function") {
+        if (raf && typeof cancelAnimationFrame === "function") {
           cancelAnimationFrame(raf);
         }
       };
     }
+
+    run();
     return undefined;
-  }, [ensureVisibleAndLoad, forceLoadEpoch]);
+  }, [ensureVisibleAndLoad, layoutEpoch]);
 
   // IO registration for visibility
   useEffect(() => {

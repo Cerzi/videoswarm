@@ -22,7 +22,6 @@ import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
 import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
-import useStuckCardAuditor from "./hooks/ui-perf/useStuckCardAuditor";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
@@ -267,85 +266,7 @@ function App() {
     nearPx: ioConfig.nearPx,
   });
 
-  const videoCollectionAccessRef = useRef({
-    canLoadVideo: null,
-    performCleanup: null,
-  });
-
-  const stuckAudit = useStuckCardAuditor({
-    getCandidates: useCallback(() => {
-      const gridEl = gridRef.current;
-      const scrollRoot = scrollContainerRef.current;
-      if (!gridEl || !scrollRoot) return [];
-
-      const rootRect = scrollRoot.getBoundingClientRect?.();
-      const top = rootRect?.top ?? 0;
-      const bottom =
-        rootRect?.bottom ??
-        (typeof window !== "undefined" ? window.innerHeight : 0);
-      if (!Number.isFinite(bottom) || bottom <= top) return [];
-
-      const nodes = gridEl.querySelectorAll?.(".video-item");
-      if (!nodes || !nodes.length) return [];
-
-      const stuck = [];
-      let cleanupTriggered = false;
-
-      const { canLoadVideo, performCleanup } = videoCollectionAccessRef.current;
-
-      nodes.forEach((node) => {
-        const el = node;
-        const id = el?.dataset?.videoId;
-        if (!id) return;
-        if (loadedVideos.has(id) || loadingVideos.has(id)) return;
-
-        const rect = el.getBoundingClientRect?.();
-        if (!rect) return;
-        const visible = rect.bottom > top && rect.top < bottom;
-        if (!visible) return;
-
-        if (
-          typeof canLoadVideo === "function" &&
-          !canLoadVideo(id, { assumeVisible: true })
-        ) {
-          if (!cleanupTriggered) {
-            cleanupTriggered = true;
-            const victims = performCleanup?.();
-            if (Array.isArray(victims) && victims.length) {
-              setLoadedVideos((prev) => {
-                const ns = new Set(prev);
-                victims.forEach((victimId) => ns.delete(victimId));
-                return ns;
-              });
-            }
-          }
-          if (
-            typeof canLoadVideo === "function" &&
-            !canLoadVideo(id, { assumeVisible: true })
-          ) {
-            return;
-          }
-        }
-
-        stuck.push(id);
-      });
-
-      return stuck;
-    }, [
-      gridRef,
-      scrollContainerRef,
-      loadedVideos,
-      loadingVideos,
-      videoCollectionAccessRef,
-      setLoadedVideos,
-    ]),
-    loadedIds: loadedVideos,
-    loadingIds: loadingVideos,
-    throttleMs: 250,
-  });
-
-  const triggerStuckAudit = stuckAudit?.triggerAudit;
-  const forcedLoadMap = stuckAudit?.forcedMap;
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
 
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
 
@@ -651,20 +572,29 @@ function App() {
     );
   }, []);
 
+  const bumpLayoutEpoch = useCallback(() => {
+    setLayoutEpoch((prev) => (prev >= Number.MAX_SAFE_INTEGER ? 1 : prev + 1));
+  }, []);
+
   const handleMasonryLayoutComplete = useCallback(() => {
-    if (!ioRegistry || typeof ioRegistry.refresh !== "function") {
-      if (triggerStuckAudit) triggerStuckAudit({ force: true });
-      return;
-    }
     if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
       cancelAnimationFrame(masonryRefreshRafRef.current);
     }
-    masonryRefreshRafRef.current = requestAnimationFrame(() => {
+
+    const runRefresh = () => {
       masonryRefreshRafRef.current = 0;
-      ioRegistry.refresh();
-      triggerStuckAudit?.({ force: true });
-    });
-  }, [ioRegistry, triggerStuckAudit]);
+      if (ioRegistry?.refresh) {
+        ioRegistry.refresh();
+      }
+      bumpLayoutEpoch();
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
+    } else {
+      runRefresh();
+    }
+  }, [ioRegistry, bumpLayoutEpoch]);
 
   useEffect(() => () => {
     if (
@@ -677,20 +607,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!triggerStuckAudit) return undefined;
-    const id = setInterval(() => {
-      triggerStuckAudit();
-    }, 1200);
-    return () => clearInterval(id);
-  }, [triggerStuckAudit]);
-
-  useEffect(() => {
-    if (!triggerStuckAudit) return undefined;
-    const timeout = setTimeout(() => {
-      triggerStuckAudit({ force: true });
-    }, 120);
-    return () => clearTimeout(timeout);
-  }, [viewportSize.width, viewportSize.height, triggerStuckAudit]);
+    bumpLayoutEpoch();
+  }, [viewportSize.width, viewportSize.height, bumpLayoutEpoch]);
 
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
@@ -1427,16 +1345,6 @@ function App() {
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
   });
-
-  const videoCollectionCanLoad = videoCollection?.canLoadVideo;
-  const videoCollectionPerformCleanup = videoCollection?.performCleanup;
-
-  useEffect(() => {
-    videoCollectionAccessRef.current = {
-      canLoadVideo: videoCollectionCanLoad,
-      performCleanup: videoCollectionPerformCleanup,
-    };
-  }, [videoCollectionCanLoad, videoCollectionPerformCleanup]);
 
   // fullscreen / context menu
   const {
@@ -2246,7 +2154,7 @@ function App() {
                     isVisible={visibleVideos.has(video.id)}
                     isPlaying={videoCollection.isVideoPlaying(video.id)}
                     isNear={ioRegistry.isNear}
-                    forceLoadEpoch={forcedLoadMap?.get(video.id) ?? 0}
+                    layoutEpoch={layoutEpoch}
                     // Lifecycle callbacks
                     onStartLoading={handleVideoStartLoading}
                     onStopLoading={handleVideoStopLoading}

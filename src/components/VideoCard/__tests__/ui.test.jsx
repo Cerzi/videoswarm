@@ -105,12 +105,12 @@ const baseProps = {
   onVisibilityChange: vi.fn(),
   onHover: vi.fn(),
   scrollRootRef: makeScrollRootRef(),
-  forceLoadEpoch: 0,
+  layoutEpoch: 0,
 };
 
 beforeEach(() => {
   baseProps.scrollRootRef = makeScrollRootRef();
-  baseProps.forceLoadEpoch = 0;
+  baseProps.layoutEpoch = 0;
 });
 
 describe("VideoCard", () => {
@@ -120,7 +120,7 @@ describe("VideoCard", () => {
       const el = NATIVE_CREATE_ELEMENT(tag, opts);
       if (tag === "video") {
         // Ensure media stubs exist
-        if (!el.pause) el.pause = vi.fn();
+        el.pause = vi.fn();
         if (!el.play) el.play = vi.fn().mockResolvedValue(undefined);
         // Force the initial load() inside runInit to throw ⇒ triggers onErr/UI error immediately
         el.load = vi.fn(() => {
@@ -292,5 +292,56 @@ describe("VideoCard", () => {
       ([tag]) => tag === "video"
     ).length;
     expect(createdVideos).toBeGreaterThan(0);
+  });
+
+  it("re-evaluates geometry when layout epoch changes", async () => {
+    const gate = vi.fn(() => true);
+    const video = {
+      id: "layout-check",
+      name: "layout-check",
+      isElectronFile: true,
+      fullPath: "C:/videos/layout-check.mp4",
+    };
+
+    const { container, rerender } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible={false}
+        layoutEpoch={0}
+        canLoadMoreVideos={gate}
+      />
+    );
+
+    const card = container.querySelector(".video-item");
+    expect(card).toBeTruthy();
+    if (card) {
+      card.getBoundingClientRect = () => ({
+        top: 120,
+        bottom: 320,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 200,
+      });
+    }
+
+    await act(async () => {});
+    expect(lastVideoEl).toBeUndefined();
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isVisible={false}
+        layoutEpoch={1}
+        canLoadMoreVideos={gate}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(gate).toHaveBeenCalledWith({ assumeVisible: true });
+    expect(lastVideoEl).toBeTruthy();
   });
 });
