@@ -51,6 +51,7 @@ const MetadataPanel = forwardRef((
     onSetRating,
     onClearRating,
     focusToken,
+    onFocusSelection,
   },
   ref
 ) => {
@@ -301,6 +302,8 @@ const MetadataPanel = forwardRef((
     .filter(Boolean)
     .join(" ");
 
+  const canFocusSelection = hasSelection && typeof onFocusSelection === "function";
+
   return (
     <aside
       ref={ref}
@@ -326,11 +329,27 @@ const MetadataPanel = forwardRef((
         >
           {isOpen ? "❯" : "❮"}
         </button>
-        <div className="metadata-panel__titles">
-          <span className="metadata-panel__title">Details</span>
-          <span className="metadata-panel__subtitle">
-            {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
-          </span>
+        <div className="metadata-panel__header-main">
+          <div className="metadata-panel__titles">
+            <span className="metadata-panel__title">Details</span>
+            <span className="metadata-panel__subtitle">
+              {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
+            </span>
+          </div>
+          {canFocusSelection && (
+            <button
+              type="button"
+              className="metadata-panel__header-action"
+              onClick={() => onFocusSelection?.()}
+              title="Scroll to selected item"
+              aria-label="Scroll viewport to selected item"
+            >
+              <span className="metadata-panel__header-action-icon" aria-hidden="true">
+                🎯
+              </span>
+              <span className="metadata-panel__header-action-label">Focus</span>
+            </button>
+          )}
         </div>
       </div>
 

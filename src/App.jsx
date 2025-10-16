@@ -25,6 +25,7 @@ import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
+import useSelectionCycler from "./hooks/selection/useSelectionCycler";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
@@ -829,6 +830,25 @@ function App() {
     settleFrames: anchorDefaults.settleFrames,
     stabilizeFrames: anchorDefaults.stabilizeFrames,
     maxWaitMs: anchorDefaults.maxWaitMs,
+  });
+
+  const orderedSelectionIds = useMemo(() => {
+    if (!selection?.selected?.size) return [];
+    const next = [];
+    for (const id of orderForRange) {
+      if (selection.selected.has(id)) {
+        next.push(id);
+      }
+    }
+    return next;
+  }, [orderForRange, selection?.selected]);
+
+  const focusNextSelection = useSelectionCycler({
+    orderedSelectionIds,
+    scrollRef: scrollContainerRef,
+    gridRef,
+    runWithStableAnchor,
+    anchorOptions: zoomAnchorOptions,
   });
 
   const waitForTransitionEnd = useCallback(
@@ -2143,6 +2163,7 @@ function App() {
                 onSetRating={handleSetRating}
                 onClearRating={handleClearRating}
                 focusToken={metadataFocusToken}
+                onFocusSelection={focusNextSelection}
               />
             </div>
           )}
