@@ -68,6 +68,22 @@ const VideoCard = memo(function VideoCard({
   const [isNearViewport, setIsNearViewport] = useState(() =>
     (isNear?.(videoId) ?? true) === true
   );
+
+  const hasRenderableVideo = useCallback(() => {
+    const el = videoRef.current;
+    if (!el) return false;
+    if (el.dataset?.adopted === "modal") return true;
+
+    const container = videoContainerRef.current;
+    if (!container) {
+      return typeof el.isConnected === "boolean" ? el.isConnected : true;
+    }
+
+    if (!container.contains(el)) return false;
+    if (typeof el.isConnected === "boolean" && !el.isConnected) return false;
+
+    return true;
+  }, []);
   const fullPath = video?.fullPath ?? null;
   const thumbSignature = useMemo(() => signatureForVideo(video), [
     video.fullPath,
@@ -270,7 +286,8 @@ const VideoCard = memo(function VideoCard({
 
   // create & load <video>
   const loadVideo = useCallback((options = {}) => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
+    if (loading || loadRequestedRef.current) return;
+    if (hasRenderableVideo()) return;
     const allowLoad = canLoadMoreVideos?.(options);
     if (allowLoad === false) return;
     if (permanentErrorRef.current) return;
@@ -441,7 +458,7 @@ const VideoCard = memo(function VideoCard({
     isVisible,
     canLoadMoreVideos,
     loading,
-    loaded,
+    hasRenderableVideo,
     onStartLoading,
     onStopLoading,
     onVideoLoad,
@@ -450,7 +467,7 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   const ensureVisibleAndLoad = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current) {
+    if (loading || loadRequestedRef.current || hasRenderableVideo()) {
       return false;
     }
     if (permanentErrorRef.current) return false;
@@ -492,10 +509,24 @@ const VideoCard = memo(function VideoCard({
   }, [
     canLoadMoreVideos,
     loadVideo,
-    loaded,
     loading,
     scrollRootRef,
+    hasRenderableVideo,
   ]);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    const container = videoContainerRef.current;
+    if (!el || !container) return;
+    if (el.dataset?.adopted === "modal") return;
+
+    if (!container.contains(el)) {
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      container.appendChild(el);
+    }
+  }, [layoutEpoch, loaded, showFilenames]);
 
   useEffect(() => {
     let raf = 0;

@@ -344,4 +344,87 @@ describe("VideoCard", () => {
     expect(gate).toHaveBeenCalledWith({ assumeVisible: true });
     expect(lastVideoEl).toBeTruthy();
   });
+
+  it("rehydrates when flagged as loaded but missing a video element", async () => {
+    const canLoad = vi.fn().mockReturnValue(true);
+    const onStart = vi.fn();
+
+    render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "rehydrate",
+          name: "rehydrate",
+          fullPath: "/rehydrate.mp4",
+          isElectronFile: false,
+        }}
+        isLoaded={true}
+        isLoading={false}
+        canLoadMoreVideos={canLoad}
+        onStartLoading={onStart}
+      />
+    );
+
+    await act(async () => {});
+
+    expect(canLoad).toHaveBeenCalled();
+    expect(onStart).toHaveBeenCalled();
+    const createdVideos = document.createElement.mock.calls.filter(
+      ([tag]) => tag === "video"
+    ).length;
+    expect(createdVideos).toBeGreaterThan(0);
+  });
+
+  it("re-parents an existing video back into the container after relayout", async () => {
+    const canLoad = vi.fn().mockReturnValue(true);
+    const onVideoLoad = vi.fn();
+
+    let props = {
+      ...baseProps,
+      video: {
+        id: "persist",
+        name: "persist",
+        fullPath: "/persist.mp4",
+        isElectronFile: false,
+      },
+      canLoadMoreVideos: canLoad,
+      onVideoLoad,
+      layoutEpoch: 0,
+      isLoaded: false,
+      isLoading: false,
+    };
+
+    const { rerender } = render(<VideoCard {...props} />);
+
+    await act(async () => {});
+
+    const created = lastVideoEl;
+    expect(created).toBeTruthy();
+
+    await act(async () => {
+      created.dispatchEvent?.(new Event("loadedmetadata"));
+      created.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    expect(onVideoLoad).toHaveBeenCalledWith("persist", expect.any(Number));
+
+    props = { ...props, isLoaded: true };
+    rerender(<VideoCard {...props} />);
+
+    let containerEl = document.querySelector(".video-container");
+    expect(containerEl).toBeTruthy();
+
+    if (containerEl && created.parentNode === containerEl) {
+      containerEl.removeChild(created);
+    }
+    expect(containerEl?.contains(created)).toBe(false);
+
+    props = { ...props, layoutEpoch: 1 };
+    rerender(<VideoCard {...props} />);
+
+    await act(async () => {});
+
+    containerEl = document.querySelector(".video-container");
+    expect(containerEl?.contains(created)).toBe(true);
+  });
 });
