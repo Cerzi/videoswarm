@@ -80,6 +80,39 @@ export default function useIntersectionObserverRegistry(
     }
   }, [getRootRect, updateFlags]);
 
+  const refresh = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const rootRect = getRootRect();
+    for (const [el, cb] of handlersRef.current.entries()) {
+      if (!el || typeof el.getBoundingClientRect !== "function") continue;
+      const id = idsRef.current.get(el);
+      if (id == null) continue;
+      const rect = el.getBoundingClientRect();
+      const syntheticEntry = {
+        target: el,
+        boundingClientRect: rect,
+        rootBounds: rootRect,
+        intersectionRect: undefined,
+        isIntersecting: false,
+        intersectionRatio: 0,
+      };
+      updateFlags(syntheticEntry, id, rootRect);
+      if (cb) {
+        const visible = visibleIdsRef.current.has(id);
+        syntheticEntry.isIntersecting = visible;
+        syntheticEntry.intersectionRatio = visible ? 1 : 0;
+        try {
+          cb(visible, syntheticEntry);
+        } catch (error) {
+          console.debug(
+            "[io-registry] Handler threw during refresh; continuing",
+            error
+          );
+        }
+      }
+    }
+  }, [getRootRect, updateFlags]);
+
   // Build the single observer (or rebuild if root/opts truly change)
   useEffect(() => {
     // Disconnect old
@@ -163,5 +196,15 @@ export default function useIntersectionObserverRegistry(
     setNearPx,
     getNearPx,
     getRootMargin,
-  }), [observe, unobserve, isVisible, isNear, setNearPx, getNearPx, getRootMargin]);
+    refresh,
+  }), [
+    observe,
+    unobserve,
+    isVisible,
+    isNear,
+    setNearPx,
+    getNearPx,
+    getRootMargin,
+    refresh,
+  ]);
 }
