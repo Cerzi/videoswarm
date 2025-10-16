@@ -121,6 +121,36 @@ const VideoCard = memo(function VideoCard({
     return !!(el && el.dataset && el.dataset.adopted === "modal");
   }, []);
 
+  const syncVideoIntoContainer = useCallback((container, el) => {
+    if (!container || !el) return;
+    if (el.dataset?.adopted === "modal") return;
+
+    const nodes = Array.from(container.childNodes || []);
+    for (const node of nodes) {
+      if (node === el) continue;
+      const isVideoNode =
+        typeof node?.nodeName === "string" && node.nodeName.toLowerCase() === "video";
+      if (isVideoNode && node?.parentNode === container) {
+        try {
+          container.removeChild(node);
+        } catch {}
+      }
+    }
+
+    const parent = el.parentNode;
+    if (parent && parent !== container && parent.contains?.(el)) {
+      try {
+        parent.removeChild(el);
+      } catch {}
+    }
+
+    if (el.parentNode !== container) {
+      container.appendChild(el);
+    } else if (container.lastChild !== el) {
+      container.appendChild(el);
+    }
+  }, []);
+
   useEffect(() => {
     visibilityRef.current = Boolean(isVisible);
   }, [isVisible]);
@@ -341,9 +371,7 @@ const VideoCard = memo(function VideoCard({
         videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
-          container.appendChild(el);
-        }
+        syncVideoIntoContainer(container, el);
       };
 
       const onErr = async (e) => {
@@ -464,6 +492,7 @@ const VideoCard = memo(function VideoCard({
     onVideoLoad,
     onPlayError,
     scheduleInit,
+    syncVideoIntoContainer,
   ]);
 
   const ensureVisibleAndLoad = useCallback(() => {
@@ -517,16 +546,8 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => {
     const el = videoRef.current;
     const container = videoContainerRef.current;
-    if (!el || !container) return;
-    if (el.dataset?.adopted === "modal") return;
-
-    if (!container.contains(el)) {
-      while (container.firstChild) {
-        container.removeChild(container.firstChild);
-      }
-      container.appendChild(el);
-    }
-  }, [layoutEpoch, loaded, showFilenames]);
+    syncVideoIntoContainer(container, el);
+  }, [layoutEpoch, loaded, showFilenames, syncVideoIntoContainer]);
 
   useEffect(() => {
     let raf = 0;

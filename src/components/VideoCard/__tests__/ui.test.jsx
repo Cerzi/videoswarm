@@ -228,6 +228,77 @@ describe("VideoCard", () => {
     }
   });
 
+  it("removes stray video elements when load completes", async () => {
+    const video = {
+      id: "v3",
+      name: "v3",
+      isElectronFile: false,
+      fullPath: "/remote/v3.mp4",
+    };
+
+    render(<VideoCard {...baseProps} video={video} />);
+
+    await act(async () => {});
+
+    expect(lastVideoEl).toBeTruthy();
+
+    const cardVideo = lastVideoEl;
+
+    const container = document.querySelector(".video-container");
+    expect(container).toBeTruthy();
+
+    const stray = document.createElement("video");
+    stray.className = "video-element stray";
+    container.appendChild(stray);
+
+    await act(async () => {
+      cardVideo.dispatchEvent?.(new Event("loadedmetadata"));
+      cardVideo.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    const videos = container.querySelectorAll("video");
+    expect(videos).toHaveLength(1);
+    expect(videos[0]).toBe(cardVideo);
+  });
+
+  it("cleans up stray videos on layout epoch changes", async () => {
+    const video = {
+      id: "v4",
+      name: "v4",
+      isElectronFile: false,
+      fullPath: "/remote/v4.mp4",
+    };
+
+    const { rerender } = render(
+      <VideoCard {...baseProps} video={video} layoutEpoch={0} />
+    );
+
+    await act(async () => {
+      lastVideoEl.dispatchEvent?.(new Event("loadedmetadata"));
+      lastVideoEl.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    expect(lastVideoEl).toBeTruthy();
+
+    const cardVideo = lastVideoEl;
+
+    const container = document.querySelector(".video-container");
+    expect(container).toBeTruthy();
+
+    const stray = document.createElement("video");
+    stray.className = "video-element stray";
+    container.appendChild(stray);
+    expect(container.querySelectorAll("video")).toHaveLength(2);
+
+    await act(async () => {
+      rerender(<VideoCard {...baseProps} video={video} layoutEpoch={1} />);
+    });
+
+    const videos = container.querySelectorAll("video");
+    expect(videos).toHaveLength(1);
+    expect(videos[0]).toBe(cardVideo);
+  });
+
   it("does not auto-load if not visible and IntersectionObserver never fires", async () => {
     // Mock IO that never calls the callback (no visibility events)
     const PrevIO = global.IntersectionObserver;
