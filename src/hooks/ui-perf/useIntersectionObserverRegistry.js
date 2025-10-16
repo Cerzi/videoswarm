@@ -80,6 +80,34 @@ export default function useIntersectionObserverRegistry(
     }
   }, [getRootRect, updateFlags]);
 
+  const emitImmediateState = useCallback(
+    (el, id) => {
+      if (!el) return;
+      const cb = handlersRef.current.get(el);
+      const rect = el.getBoundingClientRect?.();
+      if (!rect) return;
+
+      if (id != null) {
+        const rootRect = getRootRect();
+        updateFlags({ target: el, boundingClientRect: rect }, id, rootRect);
+        if (cb) {
+          cb(visibleIdsRef.current.has(id), {
+            target: el,
+            boundingClientRect: rect,
+          });
+        }
+        return;
+      }
+
+      if (cb) {
+        const rootRect = getRootRect();
+        const isVisible = rect.bottom > rootRect.top && rect.top < rootRect.bottom;
+        cb(isVisible, { target: el, boundingClientRect: rect });
+      }
+    },
+    [getRootRect, updateFlags]
+  );
+
   // Build the single observer (or rebuild if root/opts truly change)
   useEffect(() => {
     // Disconnect old
@@ -100,13 +128,15 @@ export default function useIntersectionObserverRegistry(
     // Re-observe all registered elements
     for (const el of handlersRef.current.keys()) {
       try { obs.observe(el); } catch {}
+      const id = idsRef.current.get(el);
+      emitImmediateState(el, id);
     }
 
     return () => {
       try { observerRef.current?.disconnect(); } catch {}
       observerRef.current = null;
     };
-  }, [rootRef, rootMargin, threshold, handleEntries]);
+  }, [rootRef, rootMargin, threshold, handleEntries, emitImmediateState]);
 
   // Public API: observe supports (el, cb) and (el, id, cb)
   const observe = useCallback((el, idOrCb, maybeCb) => {
@@ -125,9 +155,19 @@ export default function useIntersectionObserverRegistry(
     if (id != null) idsRef.current.set(el, id);
 
     if (observerRef.current) {
-      try { observerRef.current.observe(el); } catch {}
+      try {
+        observerRef.current.observe(el);
+      } catch {}
+      const pending = observerRef.current?.takeRecords?.();
+      if (pending?.length) {
+        handleEntries(pending);
+      } else {
+        emitImmediateState(el, id);
+      }
+    } else {
+      emitImmediateState(el, id);
     }
-  }, []);
+  }, [handleEntries, emitImmediateState]);
 
   const unobserve = useCallback((el) => {
     if (!el) return;
@@ -155,13 +195,31 @@ export default function useIntersectionObserverRegistry(
   const getNearPx = useCallback(() => nearPxRef.current, []);
   const getRootMargin = useCallback(() => currentRootMarginRef.current, []);
 
-  return useMemo(() => ({
-    observe,
-    unobserve,
-    isVisible,
-    isNear,
-    setNearPx,
-    getNearPx,
-    getRootMargin,
-  }), [observe, unobserve, isVisible, isNear, setNearPx, getNearPx, getRootMargin]);
+  const getVisibleIds = useCallback(
+    () => new Set(visibleIdsRef.current),
+    []
+  );
+
+  return useMemo(
+    () => ({
+      observe,
+      unobserve,
+      isVisible,
+      isNear,
+      setNearPx,
+      getNearPx,
+      getRootMargin,
+      getVisibleIds,
+    }),
+    [
+      observe,
+      unobserve,
+      isVisible,
+      isNear,
+      setNearPx,
+      getNearPx,
+      getRootMargin,
+      getVisibleIds,
+    ]
+  );
 }
