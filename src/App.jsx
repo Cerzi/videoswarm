@@ -267,6 +267,11 @@ function App() {
     nearPx: ioConfig.nearPx,
   });
 
+  const videoCollectionAccessRef = useRef({
+    canLoadVideo: null,
+    performCleanup: null,
+  });
+
   const stuckAudit = useStuckCardAuditor({
     getCandidates: useCallback(() => {
       const gridEl = gridRef.current;
@@ -286,6 +291,8 @@ function App() {
       const stuck = [];
       let cleanupTriggered = false;
 
+      const { canLoadVideo, performCleanup } = videoCollectionAccessRef.current;
+
       nodes.forEach((node) => {
         const el = node;
         const id = el?.dataset?.videoId;
@@ -297,13 +304,10 @@ function App() {
         const visible = rect.bottom > top && rect.top < bottom;
         if (!visible) return;
 
-        if (
-          typeof videoCollection?.canLoadVideo === "function" &&
-          !videoCollection.canLoadVideo(id)
-        ) {
+        if (typeof canLoadVideo === "function" && !canLoadVideo(id)) {
           if (!cleanupTriggered) {
             cleanupTriggered = true;
-            const victims = videoCollection?.performCleanup?.();
+            const victims = performCleanup?.();
             if (Array.isArray(victims) && victims.length) {
               setLoadedVideos((prev) => {
                 const ns = new Set(prev);
@@ -312,10 +316,7 @@ function App() {
               });
             }
           }
-          if (
-            typeof videoCollection?.canLoadVideo === "function" &&
-            !videoCollection.canLoadVideo(id)
-          ) {
+          if (typeof canLoadVideo === "function" && !canLoadVideo(id)) {
             return;
           }
         }
@@ -329,8 +330,7 @@ function App() {
       scrollContainerRef,
       loadedVideos,
       loadingVideos,
-      videoCollection?.canLoadVideo,
-      videoCollection?.performCleanup,
+      videoCollectionAccessRef,
       setLoadedVideos,
     ]),
     loadedIds: loadedVideos,
@@ -1421,6 +1421,16 @@ function App() {
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
   });
+
+  const videoCollectionCanLoad = videoCollection?.canLoadVideo;
+  const videoCollectionPerformCleanup = videoCollection?.performCleanup;
+
+  useEffect(() => {
+    videoCollectionAccessRef.current = {
+      canLoadVideo: videoCollectionCanLoad,
+      performCleanup: videoCollectionPerformCleanup,
+    };
+  }, [videoCollectionCanLoad, videoCollectionPerformCleanup]);
 
   // fullscreen / context menu
   const {
