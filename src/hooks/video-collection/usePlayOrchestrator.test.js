@@ -36,18 +36,6 @@ describe('usePlayOrchestrator', () => {
       result.current.markHover('y'); // prioritizes y
       result.current.reportStarted('y');
     });
-    // Both may momentarily be allowed, but after reconcile the hovered stays
-    // Trigger reconcile by simulating set size changes (effect depends on sizes)
-    const rerenderVisible = setOf(['x', 'y', 'z']); // increase size to trigger effect
-    const rerenderLoaded = setOf(['x', 'y', 'z']);
-    // Re-render to trigger reconcile
-    const { rerender } = renderHook(
-      (props) => usePlayOrchestrator(props),
-      { initialProps: { visibleIds: visible, loadedIds: loaded, maxPlaying: 1 } }
-    );
-    rerender({ visibleIds: rerenderVisible, loadedIds: rerenderLoaded, maxPlaying: 1 });
-
-    // Expect 'y' (hovered) to be in desired set
     expect(result.current.playingSet.has('y')).toBe(true);
   });
 
@@ -73,5 +61,29 @@ describe('usePlayOrchestrator', () => {
 
     // Expect eviction back toward cap (2)
     expect(result.current.playingSet.size).toBeLessThanOrEqual(2);
+  });
+
+  test('reconcile reacts when visible ids swap without size change', () => {
+    const visible = setOf(['a', 'b']);
+    const loaded = setOf(['a', 'b']);
+    const { result, rerender } = renderHook((props) => usePlayOrchestrator(props), {
+      initialProps: { visibleIds: visible, loadedIds: loaded, maxPlaying: 2 },
+    });
+
+    act(() => {
+      result.current.reportStarted('a');
+    });
+    expect(result.current.playingSet.has('a')).toBe(true);
+
+    const nextVisible = setOf(['b', 'c']);
+    const nextLoaded = setOf(['b', 'c']);
+
+    act(() => {
+      rerender({ visibleIds: nextVisible, loadedIds: nextLoaded, maxPlaying: 2 });
+    });
+
+    expect(result.current.playingSet.has('a')).toBe(false);
+    expect(result.current.playingSet.has('b')).toBe(true);
+    expect(result.current.playingSet.has('c')).toBe(true);
   });
 });

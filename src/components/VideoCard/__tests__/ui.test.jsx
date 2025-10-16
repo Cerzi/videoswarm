@@ -18,9 +18,19 @@ class IO {
   disconnect = () => {};
 }
 
+let prevRAF;
+let prevCAF;
+
 beforeEach(() => {
   // @ts-ignore
   global.IntersectionObserver = IO;
+  prevRAF = global.requestAnimationFrame;
+  prevCAF = global.cancelAnimationFrame;
+  global.requestAnimationFrame = (cb) => {
+    cb(0);
+    return 0;
+  };
+  global.cancelAnimationFrame = () => {};
 });
 
 let lastVideoEl;
@@ -57,10 +67,25 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  global.requestAnimationFrame = prevRAF;
+  global.cancelAnimationFrame = prevCAF;
   vi.restoreAllMocks();
 });
 
 // --- Common props scaffold ---
+const makeScrollRootRef = () => {
+  const el = document.createElement("div");
+  el.getBoundingClientRect = () => ({
+    top: 0,
+    bottom: 1200,
+    left: 0,
+    right: 1920,
+    width: 1920,
+    height: 1200,
+  });
+  return { current: el };
+};
+
 const baseProps = {
   selected: false,
   onSelect: vi.fn(),
@@ -79,8 +104,14 @@ const baseProps = {
   onPlayError: vi.fn(),
   onVisibilityChange: vi.fn(),
   onHover: vi.fn(),
-  ioRoot: { current: null },
+  scrollRootRef: makeScrollRootRef(),
+  forceLoadEpoch: 0,
 };
+
+beforeEach(() => {
+  baseProps.scrollRootRef = makeScrollRootRef();
+  baseProps.forceLoadEpoch = 0;
+});
 
 describe("VideoCard", () => {
   it("shows terminal error for non-local code 4 and does not retry", async () => {
@@ -115,6 +146,7 @@ describe("VideoCard", () => {
         isLoading={false}
         scheduleInit={(fn) => fn()}
         canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
       />
     );
 

@@ -23,14 +23,6 @@ export default function usePlayOrchestrator({
     startOrderRef.current.push(id);
   }, []);
 
-  // FIXED: More conservative hover handling to prevent video disruption
-  const markHover = useCallback((id) => {
-    // Only update if hover actually changed
-    if (hoveredRef.current === id) return;
-
-    hoveredRef.current = id;
-  }, []);
-
   // Media actually started - FIXED to prevent infinite loops
   const reportStarted = useCallback(
     (id) => {
@@ -150,10 +142,19 @@ export default function usePlayOrchestrator({
     });
   }, [visibleIds, loadedIds, maxPlaying, evictIfNeeded, pushStartOrder]);
 
+  const markHover = useCallback(
+    (id) => {
+      if (hoveredRef.current === id) return;
+      hoveredRef.current = id;
+      reconcile();
+    },
+    [reconcile]
+  );
+
   // FIXED: Add proper dependency management for reconcile
   useEffect(() => {
     reconcile();
-  }, [visibleIds.size, loadedIds.size, maxPlaying]); // Only depend on sizes, not the sets themselves
+  }, [reconcile, visibleIds, loadedIds, maxPlaying]);
 
   // Expire "recently errored" entries so they can retry later
   useEffect(() => {

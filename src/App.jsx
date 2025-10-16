@@ -22,6 +22,7 @@ import useRecentFolders from "./hooks/useRecentFolders";
 import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
 import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
+import useStuckCardAuditor from "./hooks/ui-perf/useStuckCardAuditor";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
@@ -265,6 +266,80 @@ function App() {
     threshold: [0, 0.15],
     nearPx: ioConfig.nearPx,
   });
+
+  const stuckAudit = useStuckCardAuditor({
+    getCandidates: useCallback(() => {
+      const gridEl = gridRef.current;
+      const scrollRoot = scrollContainerRef.current;
+      if (!gridEl || !scrollRoot) return [];
+
+      const rootRect = scrollRoot.getBoundingClientRect?.();
+      const top = rootRect?.top ?? 0;
+      const bottom =
+        rootRect?.bottom ??
+        (typeof window !== "undefined" ? window.innerHeight : 0);
+      if (!Number.isFinite(bottom) || bottom <= top) return [];
+
+      const nodes = gridEl.querySelectorAll?.(".video-item");
+      if (!nodes || !nodes.length) return [];
+
+      const stuck = [];
+      let cleanupTriggered = false;
+
+      nodes.forEach((node) => {
+        const el = node;
+        const id = el?.dataset?.videoId;
+        if (!id) return;
+        if (loadedVideos.has(id) || loadingVideos.has(id)) return;
+
+        const rect = el.getBoundingClientRect?.();
+        if (!rect) return;
+        const visible = rect.bottom > top && rect.top < bottom;
+        if (!visible) return;
+
+        if (
+          typeof videoCollection?.canLoadVideo === "function" &&
+          !videoCollection.canLoadVideo(id)
+        ) {
+          if (!cleanupTriggered) {
+            cleanupTriggered = true;
+            const victims = videoCollection?.performCleanup?.();
+            if (Array.isArray(victims) && victims.length) {
+              setLoadedVideos((prev) => {
+                const ns = new Set(prev);
+                victims.forEach((victimId) => ns.delete(victimId));
+                return ns;
+              });
+            }
+          }
+          if (
+            typeof videoCollection?.canLoadVideo === "function" &&
+            !videoCollection.canLoadVideo(id)
+          ) {
+            return;
+          }
+        }
+
+        stuck.push(id);
+      });
+
+      return stuck;
+    }, [
+      gridRef,
+      scrollContainerRef,
+      loadedVideos,
+      loadingVideos,
+      videoCollection?.canLoadVideo,
+      videoCollection?.performCleanup,
+      setLoadedVideos,
+    ]),
+    loadedIds: loadedVideos,
+    loadingIds: loadingVideos,
+    throttleMs: 250,
+  });
+
+  const triggerStuckAudit = stuckAudit?.triggerAudit;
+  const forcedLoadMap = stuckAudit?.forcedMap;
 
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
 
@@ -571,15 +646,19 @@ function App() {
   }, []);
 
   const handleMasonryLayoutComplete = useCallback(() => {
-    if (!ioRegistry || typeof ioRegistry.refresh !== "function") return;
+    if (!ioRegistry || typeof ioRegistry.refresh !== "function") {
+      if (triggerStuckAudit) triggerStuckAudit({ force: true });
+      return;
+    }
     if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
       cancelAnimationFrame(masonryRefreshRafRef.current);
     }
     masonryRefreshRafRef.current = requestAnimationFrame(() => {
       masonryRefreshRafRef.current = 0;
       ioRegistry.refresh();
+      triggerStuckAudit?.({ force: true });
     });
-  }, [ioRegistry]);
+  }, [ioRegistry, triggerStuckAudit]);
 
   useEffect(() => () => {
     if (
@@ -590,6 +669,22 @@ function App() {
       masonryRefreshRafRef.current = 0;
     }
   }, []);
+
+  useEffect(() => {
+    if (!triggerStuckAudit) return undefined;
+    const id = setInterval(() => {
+      triggerStuckAudit();
+    }, 1200);
+    return () => clearInterval(id);
+  }, [triggerStuckAudit]);
+
+  useEffect(() => {
+    if (!triggerStuckAudit) return undefined;
+    const timeout = setTimeout(() => {
+      triggerStuckAudit({ force: true });
+    }, 120);
+    return () => clearTimeout(timeout);
+  }, [viewportSize.width, viewportSize.height, triggerStuckAudit]);
 
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
@@ -2118,9 +2213,9 @@ function App() {
                   <VideoCard
                     key={video.id}
                     video={video}
-                    ioRoot={gridRef}
                     observeIntersection={ioRegistry.observe}
                     unobserveIntersection={ioRegistry.unobserve}
+                    scrollRootRef={scrollContainerRef}
                     selected={selection.selected.has(video.id)}
                     onSelect={(...args) => handleVideoSelect(...args)}
                     onContextMenu={handleCardContextMenu}
@@ -2135,6 +2230,7 @@ function App() {
                     isVisible={visibleVideos.has(video.id)}
                     isPlaying={videoCollection.isVideoPlaying(video.id)}
                     isNear={ioRegistry.isNear}
+                    forceLoadEpoch={forcedLoadMap?.get(video.id) ?? 0}
                     // Lifecycle callbacks
                     onStartLoading={handleVideoStartLoading}
                     onStopLoading={handleVideoStopLoading}
