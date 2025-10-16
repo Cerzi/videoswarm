@@ -254,6 +254,7 @@ function App() {
   });
   const [scrollRowsEstimate, setScrollRowsEstimate] = useState(0);
   const metadataAspectCacheRef = useRef(new Map());
+  const masonryRefreshRafRef = useRef(0);
   const [ioConfig, setIoConfig] = useState({
     rootMargin: "1600px 0px",
     nearPx: 900,
@@ -569,6 +570,27 @@ function App() {
     );
   }, []);
 
+  const handleMasonryLayoutComplete = useCallback(() => {
+    if (!ioRegistry || typeof ioRegistry.refresh !== "function") return;
+    if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(masonryRefreshRafRef.current);
+    }
+    masonryRefreshRafRef.current = requestAnimationFrame(() => {
+      masonryRefreshRafRef.current = 0;
+      ioRegistry.refresh();
+    });
+  }, [ioRegistry]);
+
+  useEffect(() => () => {
+    if (
+      masonryRefreshRafRef.current &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(masonryRefreshRafRef.current);
+      masonryRefreshRafRef.current = 0;
+    }
+  }, []);
+
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
@@ -580,6 +602,7 @@ function App() {
 
       onOrderChange: setVisualOrderedIds,
       onMetricsChange: handleMasonryMetrics,
+      onLayoutComplete: handleMasonryLayoutComplete,
     });
 
   // MEMOIZED sorting & grouping
@@ -731,6 +754,24 @@ function App() {
         : { nearPx, rootMargin }
     );
   }, [effectiveColumnWidth, viewportHeight]);
+
+  useEffect(() => {
+    if (!ioRegistry) return;
+    if (typeof ioRegistry.setNearPx === "function") {
+      ioRegistry.setNearPx(ioConfig.nearPx);
+    }
+    if (typeof ioRegistry.refresh === "function") {
+      const raf = requestAnimationFrame(() => {
+        ioRegistry.refresh();
+      });
+      return () => {
+        if (typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(raf);
+        }
+      };
+    }
+    return undefined;
+  }, [ioRegistry, ioConfig.nearPx, ioConfig.rootMargin]);
 
   useEffect(() => {
     if (!orderedVideos.length) return;

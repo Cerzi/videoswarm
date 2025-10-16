@@ -35,6 +35,10 @@ export default function useIntersectionObserverRegistry(
   const currentRootMarginRef = useRef(rootMargin);
   const nearPxRef = useRef(nearPx);
 
+  useEffect(() => {
+    nearPxRef.current = Math.max(0, Number.isFinite(nearPx) ? nearPx : 0);
+  }, [nearPx]);
+
   // Resolve current root viewport rect (for visibility/near checks)
   const getRootRect = useCallback(() => {
     const rootEl = rootRef?.current ?? null;
@@ -149,11 +153,46 @@ export default function useIntersectionObserverRegistry(
 
   // Tuning knobs (no observer rebuild for nearPx)
   const setNearPx = useCallback((px) => {
-    const v = Math.max(0, (px | 0));
+    const v = Math.max(0, Number.isFinite(px) ? Math.floor(px) : 0);
     nearPxRef.current = v;
   }, []);
   const getNearPx = useCallback(() => nearPxRef.current, []);
   const getRootMargin = useCallback(() => currentRootMarginRef.current, []);
+
+  const refresh = useCallback(() => {
+    const rootRect = getRootRect();
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+
+    for (const [el, cb] of handlersRef.current.entries()) {
+      if (!el) continue;
+      const id = idsRef.current.get(el);
+      if (id == null) continue;
+      const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!rect) continue;
+
+      const entry = {
+        target: el,
+        boundingClientRect: rect,
+        intersectionRect: rect,
+        isIntersecting: false,
+        intersectionRatio: 0,
+        time: now,
+      };
+
+      updateFlags(entry, id, rootRect);
+
+      const isVisible = visibleIdsRef.current.has(id);
+      entry.isIntersecting = isVisible;
+      entry.intersectionRatio = isVisible ? 1 : 0;
+
+      if (cb) {
+        cb(isVisible, entry);
+      }
+    }
+  }, [getRootRect, updateFlags]);
 
   return useMemo(() => ({
     observe,
@@ -163,5 +202,15 @@ export default function useIntersectionObserverRegistry(
     setNearPx,
     getNearPx,
     getRootMargin,
-  }), [observe, unobserve, isVisible, isNear, setNearPx, getNearPx, getRootMargin]);
+    refresh,
+  }), [
+    observe,
+    unobserve,
+    isVisible,
+    isNear,
+    setNearPx,
+    getNearPx,
+    getRootMargin,
+    refresh,
+  ]);
 }
