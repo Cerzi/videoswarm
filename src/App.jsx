@@ -28,6 +28,7 @@ import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
+import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 import {
   getMetadataPanelToggleState,
@@ -1601,31 +1602,15 @@ function App() {
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      selection.setSelected((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setActualPlaying((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadedVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadingVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setVisibleVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
+        selection.setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(filePath);
+          return next;
+        });
+        setActualPlaying((prev) => updateSetMembership(prev, filePath, false));
+        setLoadedVideos((prev) => updateSetMembership(prev, filePath, false));
+        setLoadingVideos((prev) => updateSetMembership(prev, filePath, false));
+        setVisibleVideos((prev) => updateSetMembership(prev, filePath, false));
       refreshTagList();
     };
     const handleFileChanged = (videoFile) => {
@@ -1658,34 +1643,25 @@ function App() {
   }, [zoomLevel, setZoomClass]);
 
   // aspect ratio updates from cards
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
-    },
-    [updateAspectRatio]
-  );
+    const handleVideoLoaded = useCallback(
+      (videoId, aspectRatio) => {
+        setLoadedVideos((prev) => updateSetMembership(prev, videoId, true));
+        updateAspectRatio(videoId, aspectRatio);
+      },
+      [updateAspectRatio]
+    );
 
-  const handleVideoStartLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
+    const handleVideoStartLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, true));
+    }, []);
 
-  const handleVideoStopLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => {
-      const ns = new Set(prev);
-      ns.delete(videoId);
-      return ns;
-    });
-  }, []);
+    const handleVideoStopLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+    }, []);
 
-  const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
-    setVisibleVideos((prev) => {
-      const ns = new Set(prev);
-      if (isVisible) ns.add(videoId);
-      else ns.delete(videoId);
-      return ns;
-    });
-  }, []);
+    const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
+      setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
+    }, []);
 
   const handleElectronFolderSelection = useCallback(
     async (folderPath) => {
@@ -1936,13 +1912,9 @@ function App() {
     if (isLayoutTransitioning) return undefined;
     const id = setTimeout(() => {
       const victims = videoCollection.performCleanup?.();
-      if (Array.isArray(victims) && victims.length) {
-        setLoadedVideos((prev) => {
-          const ns = new Set(prev);
-          for (const vid of victims) ns.delete(vid);
-          return ns;
-        });
-      }
+        if (Array.isArray(victims) && victims.length) {
+          setLoadedVideos((prev) => removeManyFromSet(prev, victims));
+        }
     }, 0);
     return () => clearTimeout(id);
   }, [
@@ -2161,29 +2133,17 @@ function App() {
                     onVideoLoad={handleVideoLoaded}
                     onVisibilityChange={handleVideoVisibilityChange}
                     // Media events → update orchestrator + actual playing count
-                    onVideoPlay={(id) => {
-                      videoCollection.reportStarted(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.add(id);
-                        return next;
-                      });
-                    }}
-                    onVideoPause={(id) => {
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
-                    onPlayError={(id) => {
-                      videoCollection.reportPlayError(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
+                      onVideoPlay={(id) => {
+                        videoCollection.reportStarted(id);
+                        setActualPlaying((prev) => updateSetMembership(prev, id, true));
+                      }}
+                      onVideoPause={(id) => {
+                        setActualPlaying((prev) => updateSetMembership(prev, id, false));
+                      }}
+                      onPlayError={(id) => {
+                        videoCollection.reportPlayError(id);
+                        setActualPlaying((prev) => updateSetMembership(prev, id, false));
+                      }}
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}

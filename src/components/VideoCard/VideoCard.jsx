@@ -65,9 +65,11 @@ const VideoCard = memo(function VideoCard({
   const lastFailureAtRef   = useRef(0);
 
   const [errorText, setErrorText] = useState(null);
-  const [isNearViewport, setIsNearViewport] = useState(() =>
-    (isNear?.(videoId) ?? true) === true
-  );
+  const initialNear = (isNear?.(videoId) ?? true) === true;
+  const [isNearViewport, setIsNearViewport] = useState(initialNear);
+  const nearStateRef = useRef(initialNear);
+  
+  const lastObservedVisibilityRef = useRef(Boolean(isVisible));
 
   const hasRenderableVideo = useCallback(() => {
     const el = videoRef.current;
@@ -152,7 +154,9 @@ const VideoCard = memo(function VideoCard({
   }, []);
 
   useEffect(() => {
-    visibilityRef.current = Boolean(isVisible);
+    const nextVisible = Boolean(isVisible);
+    visibilityRef.current = nextVisible;
+    lastObservedVisibilityRef.current = nextVisible;
   }, [isVisible]);
 
   useEffect(() => {
@@ -160,7 +164,9 @@ const VideoCard = memo(function VideoCard({
   }, [fullPath]);
 
   useEffect(() => {
-    setIsNearViewport((isNear?.(videoId) ?? true) === true);
+    const nextNear = (isNear?.(videoId) ?? true) === true;
+    nearStateRef.current = nextNear;
+    setIsNearViewport((prev) => (prev === nextNear ? prev : nextNear));
   }, [isNear, videoId]);
 
   useEffect(() => {
@@ -575,9 +581,17 @@ const VideoCard = memo(function VideoCard({
 
     const handleVisible = (nowVisible /* boolean */, entry) => {
       if (entry) {
-        setIsNearViewport((isNear?.(videoId) ?? true) === true);
+        const nextNear = (isNear?.(videoId) ?? true) === true;
+        if (nearStateRef.current !== nextNear) {
+          nearStateRef.current = nextNear;
+          setIsNearViewport((prev) => (prev === nextNear ? prev : nextNear));
+        }
       }
-      onVisibilityChange?.(videoId, nowVisible);
+
+      if (lastObservedVisibilityRef.current !== nowVisible) {
+        lastObservedVisibilityRef.current = nowVisible;
+        onVisibilityChange?.(videoId, nowVisible);
+      }
 
       if (nowVisible) {
         ensureVisibleAndLoad();

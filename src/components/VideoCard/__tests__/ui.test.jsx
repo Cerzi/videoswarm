@@ -166,6 +166,49 @@ describe("VideoCard", () => {
     expect(createdVideos).toBe(1);
   });
 
+  it("does not emit redundant visibility change notifications", async () => {
+    let handler = null;
+    const observeIntersection = vi.fn((el, _id, cb) => {
+      handler = cb;
+    });
+    const unobserveIntersection = vi.fn();
+    const onVisibilityChange = vi.fn();
+
+    render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "vid-1", name: "Video" }}
+        isVisible={false}
+        canLoadMoreVideos={() => false}
+        observeIntersection={observeIntersection}
+        unobserveIntersection={unobserveIntersection}
+        onVisibilityChange={onVisibilityChange}
+      />
+    );
+
+    expect(observeIntersection).toHaveBeenCalled();
+    expect(typeof handler).toBe("function");
+
+    await act(async () => {
+      handler(true, { boundingClientRect: { top: 0, bottom: 100 } });
+    });
+    expect(onVisibilityChange).toHaveBeenCalledTimes(1);
+    expect(onVisibilityChange).toHaveBeenLastCalledWith("vid-1", true);
+
+    onVisibilityChange.mockClear();
+
+    await act(async () => {
+      handler(true, { boundingClientRect: { top: 0, bottom: 100 } });
+    });
+    expect(onVisibilityChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      handler(false, { boundingClientRect: { top: 0, bottom: 100 } });
+    });
+    expect(onVisibilityChange).toHaveBeenCalledTimes(1);
+    expect(onVisibilityChange).toHaveBeenLastCalledWith("vid-1", false);
+  });
+
   it("builds proper file:// URL (no %5C)", async () => {
     const video = {
       id: "v2",
