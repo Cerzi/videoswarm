@@ -88,6 +88,10 @@ const masonryReturn = {
   progressiveMaxVisibleNumber: 0,
   withLayoutHold: (fn) => (typeof fn === "function" ? fn() : undefined),
   isLayoutTransitioning: false,
+  getEstimatedOffsetForIndex: vi.fn(() => 0),
+  getEstimatedIndexForOffset: vi.fn(() => 0),
+  getScrollHeightEstimate: vi.fn(() => 0),
+  viewportHeightPx: 0,
 };
 const useMasonryLayoutMock = vi.fn(() => masonryReturn);
 
