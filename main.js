@@ -236,7 +236,8 @@ async function createVideoFileObject(filePath, baseFolderPath) {
 }
 
 // Scan folder and detect changes (used by watcher in polling mode)
-async function scanFolderForChanges(folderPath) {
+async function scanFolderForChanges(folderPath, options = {}) {
+  const { recursive = true } = options;
   try {
     const videoExtensions = [
       ".mp4",
@@ -253,7 +254,8 @@ async function scanFolderForChanges(folderPath) {
     const currentFiles = new Map();
 
     async function scanDirectory(dirPath, depth = 0) {
-      if (depth > 10) return; // Limit depth
+      if (!recursive && depth > 0) return;
+      if (recursive && depth > 10) return; // Limit depth when recursing
       const files = await fs.readdir(dirPath, { withFileTypes: true });
 
       for (const file of files) {
@@ -272,7 +274,12 @@ async function scanFolderForChanges(folderPath) {
               // File might have been deleted while scanning
             }
           }
-        } else if (file.isDirectory() && !file.name.startsWith(".")) {
+        } else if (
+          recursive &&
+          file.isDirectory() &&
+          depth < 10 &&
+          !file.name.startsWith(".")
+        ) {
           await scanDirectory(fullPath, depth + 1);
         }
       }
@@ -1085,10 +1092,16 @@ ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFold
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 // Watcher IPC (delegated to file watcher module)
-ipcMain.handle("start-folder-watch", async (_event, folderPath) => {
+ipcMain.handle("start-folder-watch", async (_event, folderPath, recursive) => {
   try {
-    const result = await folderWatcher.start(folderPath);
-    return { success: true, mode: result.mode };
+    const result = await folderWatcher.start(folderPath, {
+      recursive: recursive ?? true,
+    });
+    return {
+      success: true,
+      mode: result.mode,
+      recursive: result.recursive,
+    };
   } catch (e) {
     console.error("Error starting folder watch:", e);
     return { success: false, error: e.message || String(e) };

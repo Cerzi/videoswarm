@@ -20,8 +20,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // File system watching
-  startFolderWatch: async (folderPath) => {
-    return await ipcRenderer.invoke("start-folder-watch", folderPath);
+  startFolderWatch: async (folderPath, recursive) => {
+    return await ipcRenderer.invoke(
+      "start-folder-watch",
+      folderPath,
+      recursive
+    );
   },
 
   stopFolderWatch: async () => {

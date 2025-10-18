@@ -85,7 +85,10 @@ export function useElectronFolderLifecycle({
 
         refreshTagList();
 
-        const watchResult = await api.startFolderWatch?.(folderPath);
+        const watchResult = await api.startFolderWatch?.(
+          folderPath,
+          recursiveMode
+        );
         if (watchResult?.success && __DEV__) {
           console.log("👁️ watching folder");
         }
