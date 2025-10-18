@@ -300,6 +300,61 @@ describe("useElectronFolderLifecycle", () => {
     expect(window.electronAPI.stopFolderWatch).toHaveBeenCalled();
   });
 
+  it("keeps watcher subscriptions active when selection identity changes", async () => {
+    const clear = vi.fn();
+    const setSelected = vi.fn((updater) => {
+      const base = new Set(["persist"]);
+      return typeof updater === "function" ? updater(base) : base;
+    });
+
+    const baseSelection = { clear, setSelected };
+
+    const { rerender, unmount } = renderHook(
+      ({ selectionProp }) =>
+        useElectronFolderLifecycle({
+          selection: selectionProp,
+          recursiveMode: false,
+          setRecursiveMode: vi.fn(),
+          setShowFilenames: vi.fn(),
+          maxConcurrentPlaying: 5,
+          setMaxConcurrentPlaying: vi.fn(),
+          setSortKey: vi.fn(),
+          setSortDir: vi.fn(),
+          groupByFolders: true,
+          setGroupByFolders: vi.fn(),
+          setRandomSeed: vi.fn(),
+          setZoomLevelFromSettings: vi.fn(),
+          setVisibleVideos: setVisibleVideosMock.setter,
+          setLoadedVideos: setLoadedVideosMock.setter,
+          setLoadingVideos: setLoadingVideosMock.setter,
+          setActualPlaying: setActualPlayingMock.setter,
+          refreshTagList,
+          addRecentFolder,
+          delayFn: () => Promise.resolve(),
+        }),
+      { initialProps: { selectionProp: baseSelection } }
+    );
+
+    await waitFor(() =>
+      expect(window.electronAPI.onFileAdded).toHaveBeenCalledTimes(1)
+    );
+
+    rerender({ selectionProp: { clear, setSelected } });
+
+    expect(disposeAdded).not.toHaveBeenCalled();
+    expect(disposeRemoved).not.toHaveBeenCalled();
+    expect(disposeChanged).not.toHaveBeenCalled();
+    expect(window.electronAPI.stopFolderWatch).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(disposeAdded).toHaveBeenCalledTimes(1);
+    expect(disposeRemoved).toHaveBeenCalledTimes(1);
+    expect(disposeChanged).toHaveBeenCalledTimes(1);
+    expect(disposeError).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.stopFolderWatch).toHaveBeenCalledTimes(1);
+  });
+
   it("loads web files when selected", async () => {
     const { result } = renderHook(() =>
       useElectronFolderLifecycle({

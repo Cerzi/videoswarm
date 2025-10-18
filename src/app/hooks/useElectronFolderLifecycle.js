@@ -33,6 +33,7 @@ export function useElectronFolderLifecycle({
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const { clear: clearSelection, setSelected: setSelection } = selection;
   const setterRefs = useRef({
     setRecursiveMode,
     setShowFilenames,
@@ -67,13 +68,13 @@ export function useElectronFolderLifecycle({
   ]);
 
   const resetDerivedVideoState = useCallback(() => {
-    selection.clear();
+    clearSelection();
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
     setLoadingVideos(new Set());
     setActualPlaying(new Set());
   }, [
-    selection,
+    clearSelection,
     setActualPlaying,
     setLoadedVideos,
     setLoadingVideos,
@@ -260,7 +261,7 @@ export function useElectronFolderLifecycle({
 
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      selection.setSelected((prev) => {
+      setSelection((prev) => {
         const next = new Set(prev);
         next.delete(filePath);
         return next;
@@ -314,10 +315,10 @@ export function useElectronFolderLifecycle({
     };
   }, [
     refreshTagList,
-    selection,
     setActualPlaying,
     setLoadedVideos,
     setLoadingVideos,
+    setSelection,
     setVisibleVideos,
   ]);
 
