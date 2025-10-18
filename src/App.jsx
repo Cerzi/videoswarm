@@ -71,6 +71,8 @@ function App() {
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
   const [isTimelineScrubbing, setIsTimelineScrubbing] = useState(false);
+  const isTimelineScrubbingRef = useRef(false);
+  const [scrubTargetIndex, setScrubTargetIndex] = useState(null);
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
@@ -181,25 +183,63 @@ function App() {
   });
 
   const adjustedMaxVisible = useMemo(() => {
-    if (!Number.isFinite(progressiveMaxVisibleNumber)) return undefined;
-    if (!isTimelineScrubbing) return progressiveMaxVisibleNumber;
-    const boosted = Math.max(
+    if (!Number.isFinite(progressiveMaxVisibleNumber)) {
+      if (isTimelineScrubbing && scrubTargetIndex != null) {
+        return orderedVideos.length > 0 ? orderedVideos.length : undefined;
+      }
+      return undefined;
+    }
+
+    if (!isTimelineScrubbing) {
+      return progressiveMaxVisibleNumber;
+    }
+
+    let desired = Math.max(
       progressiveMaxVisibleNumber,
       Math.round(progressiveMaxVisibleNumber * 1.5)
     );
-    return orderedVideos.length > 0
-      ? Math.min(boosted, orderedVideos.length)
-      : boosted;
+
+    if (scrubTargetIndex != null) {
+      desired = Math.max(desired, scrubTargetIndex + 1 + 80);
+    }
+
+    if (orderedVideos.length > 0) {
+      desired = Math.min(desired, orderedVideos.length);
+    }
+
+    return desired;
   }, [
     isTimelineScrubbing,
     progressiveMaxVisibleNumber,
+    scrubTargetIndex,
     orderedVideos.length,
   ]);
+
+  const desiredVisibleDuringScrub = useMemo(() => {
+    if (!isTimelineScrubbing) return null;
+    if (scrubTargetIndex == null) return null;
+    const base = scrubTargetIndex + 1 + 60;
+    return orderedVideos.length > 0 ? Math.min(orderedVideos.length, base) : base;
+  }, [isTimelineScrubbing, scrubTargetIndex, orderedVideos.length]);
+
+  const handleScrubStateChange = useCallback((active) => {
+    isTimelineScrubbingRef.current = active;
+    setIsTimelineScrubbing(active);
+    if (!active) {
+      setScrubTargetIndex(null);
+    }
+  }, []);
+
+  const handleScrollRailIndexChange = useCallback((index) => {
+    if (!Number.isFinite(index)) return;
+    if (!isTimelineScrubbingRef.current) return;
+    setScrubTargetIndex((prev) => (prev === index ? prev : index));
+  }, []);
 
   const progressiveOptions = useMemo(
     () => ({
       initial: 120,
-      batchSize: 64,
+      batchSize: isTimelineScrubbing ? 160 : 64,
       intervalMs: 100,
       pauseOnScroll: !isTimelineScrubbing,
       longTaskAdaptation: true,
@@ -208,11 +248,13 @@ function App() {
           ? adjustedMaxVisible
           : progressiveMaxVisibleNumber,
       forceInterval: isTimelineScrubbing,
+      desiredVisible: desiredVisibleDuringScrub,
     }),
     [
       isTimelineScrubbing,
       adjustedMaxVisible,
       progressiveMaxVisibleNumber,
+      desiredVisibleDuringScrub,
     ]
   );
 
@@ -1152,7 +1194,8 @@ function App() {
                   getEstimatedIndexForOffset={getEstimatedIndexForOffset}
                   getScrollHeightEstimate={getScrollHeightEstimate}
                   viewportHeightPx={viewportHeightPx}
-                  onScrubStateChange={setIsTimelineScrubbing}
+                  onScrubStateChange={handleScrubStateChange}
+                  onActiveIndexChange={handleScrollRailIndexChange}
                 />
               </div>
               <MetadataPanel

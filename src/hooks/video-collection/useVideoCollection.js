@@ -36,6 +36,7 @@ export default function useVideoCollection({
     longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
     forceInterval,
     maxVisible,
+    desiredVisible,
   } = progressive || {};
 
   // Normalize to safe numbers
@@ -65,6 +66,7 @@ export default function useVideoCollection({
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
       maxVisible,
+      desiredVisible,
     }
   );
 

@@ -46,6 +46,9 @@ export function useProgressiveList(
 
     // Optional viewport-aware clamp.
     maxVisible: maxVisibleOption = null,
+
+    // Optional hint to eagerly reveal more items.
+    desiredVisible: desiredVisibleOption = null,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
@@ -90,6 +93,16 @@ export function useProgressiveList(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedMaxVisible, safe.length]);
+
+  useEffect(() => {
+    if (!Number.isFinite(desiredVisibleOption)) return;
+    const target = Math.max(0, Math.floor(desiredVisibleOption));
+    setVisible((current) => {
+      const cap = Math.min(safe.length, maxVisibleRef.current);
+      const bounded = Math.min(cap, target);
+      return bounded > current ? bounded : current;
+    });
+  }, [desiredVisibleOption, safe.length, resolvedMaxVisible]);
 
   const maxCapForRender =
     resolvedMaxVisible != null

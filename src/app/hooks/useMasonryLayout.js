@@ -554,6 +554,42 @@ export function useMasonryLayout({
     orderForRange.length,
   ]);
 
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const summary = layoutSummaryRef.current;
+    const columnGap = Number.isFinite(masonryMetrics.columnGap)
+      ? masonryMetrics.columnGap
+      : 0;
+    const columnCount = Math.max(1, derivedColumnCount || 1);
+    const approxRows = Math.ceil(orderForRange.length / columnCount);
+    const approxHeight = approxRows * (approxTileHeight + columnGap);
+    const measuredHeight = Number.isFinite(summary.totalHeight)
+      ? summary.totalHeight
+      : 0;
+    const targetHeight = Math.max(0, measuredHeight, approxHeight);
+
+    if (!targetHeight) {
+      if (grid.style.minHeight) {
+        grid.style.minHeight = "";
+      }
+      return;
+    }
+
+    const px = `${Math.ceil(targetHeight)}px`;
+    if (grid.style.minHeight !== px) {
+      grid.style.minHeight = px;
+    }
+  }, [
+    gridRef,
+    approxTileHeight,
+    derivedColumnCount,
+    masonryMetrics.columnGap,
+    orderForRange.length,
+    layoutEpoch,
+  ]);
+
   return {
     orderedVideos,
     orderedIds,
