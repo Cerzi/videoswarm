@@ -20,6 +20,10 @@ describe("useElectronFolderLifecycle", () => {
   let onFileAddedHandler;
   let onFileRemovedHandler;
   let onFileChangedHandler;
+  let disposeAdded;
+  let disposeRemoved;
+  let disposeChanged;
+  let disposeError;
 
   beforeEach(() => {
     selection = {
@@ -39,6 +43,10 @@ describe("useElectronFolderLifecycle", () => {
     onFileAddedHandler = undefined;
     onFileRemovedHandler = undefined;
     onFileChangedHandler = undefined;
+    disposeAdded = vi.fn();
+    disposeRemoved = vi.fn();
+    disposeChanged = vi.fn();
+    disposeError = vi.fn();
 
     window.electronAPI = {
       getSettings: vi.fn().mockResolvedValue({
@@ -65,15 +73,58 @@ describe("useElectronFolderLifecycle", () => {
       startFolderWatch: vi.fn().mockResolvedValue({ success: true }),
       onFileAdded: vi.fn((cb) => {
         onFileAddedHandler = cb;
+        return disposeAdded;
       }),
       onFileRemoved: vi.fn((cb) => {
         onFileRemovedHandler = cb;
+        return disposeRemoved;
       }),
       onFileChanged: vi.fn((cb) => {
         onFileChangedHandler = cb;
+        return disposeChanged;
       }),
+      onFileWatchError: vi.fn(() => disposeError),
       selectFolder: vi.fn(),
     };
+  });
+
+  it("does not refetch settings when setter identities change", async () => {
+    const setRecursiveMode = vi.fn();
+    const { rerender } = renderHook(
+      ({ setZoomLevelFromSettings }) =>
+        useElectronFolderLifecycle({
+          selection,
+          recursiveMode: false,
+          setRecursiveMode,
+          setShowFilenames: vi.fn(),
+          maxConcurrentPlaying: 5,
+          setMaxConcurrentPlaying: vi.fn(),
+          setSortKey: vi.fn(),
+          setSortDir: vi.fn(),
+          groupByFolders: true,
+          setGroupByFolders: vi.fn(),
+          setRandomSeed: vi.fn(),
+          setZoomLevelFromSettings,
+          setVisibleVideos: setVisibleVideosMock.setter,
+          setLoadedVideos: setLoadedVideosMock.setter,
+          setLoadingVideos: setLoadingVideosMock.setter,
+          setActualPlaying: setActualPlayingMock.setter,
+          refreshTagList,
+          addRecentFolder,
+          delayFn: () => Promise.resolve(),
+        }),
+      { initialProps: { setZoomLevelFromSettings: vi.fn() } }
+    );
+
+    await waitFor(() =>
+      expect(window.electronAPI.getSettings).toHaveBeenCalledTimes(1)
+    );
+
+    rerender({ setZoomLevelFromSettings: vi.fn() });
+
+    await waitFor(() =>
+      expect(window.electronAPI.getSettings).toHaveBeenCalledTimes(1)
+    );
   });
 
   afterEach(() => {
@@ -174,7 +225,7 @@ describe("useElectronFolderLifecycle", () => {
   });
 
   it("propagates watcher events into local state", async () => {
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useElectronFolderLifecycle({
         selection,
         recursiveMode: false,
@@ -240,6 +291,13 @@ describe("useElectronFolderLifecycle", () => {
     expect(result.current.videos.map((v) => v.id)).toEqual(["file2"]);
     expect(selection.setSelected).toHaveBeenCalled();
     expect(refreshTagList).toHaveBeenCalledTimes(3);
+
+    unmount();
+    expect(disposeAdded).toHaveBeenCalled();
+    expect(disposeRemoved).toHaveBeenCalled();
+    expect(disposeChanged).toHaveBeenCalled();
+    expect(disposeError).toHaveBeenCalled();
+    expect(window.electronAPI.stopFolderWatch).toHaveBeenCalled();
   });
 
   it("loads web files when selected", async () => {

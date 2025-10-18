@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { normalizeVideoFromMain } from "../videoNormalization";
 
 const __DEV__ = import.meta.env.MODE !== "production";
@@ -33,6 +33,38 @@ export function useElectronFolderLifecycle({
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const setterRefs = useRef({
+    setRecursiveMode,
+    setShowFilenames,
+    setMaxConcurrentPlaying,
+    setSortKey,
+    setSortDir,
+    setGroupByFolders,
+    setRandomSeed,
+    setZoomLevelFromSettings,
+  });
+
+  useEffect(() => {
+    setterRefs.current = {
+      setRecursiveMode,
+      setShowFilenames,
+      setMaxConcurrentPlaying,
+      setSortKey,
+      setSortDir,
+      setGroupByFolders,
+      setRandomSeed,
+      setZoomLevelFromSettings,
+    };
+  }, [
+    setRecursiveMode,
+    setShowFilenames,
+    setMaxConcurrentPlaying,
+    setSortKey,
+    setSortDir,
+    setGroupByFolders,
+    setRandomSeed,
+    setZoomLevelFromSettings,
+  ]);
 
   const resetDerivedVideoState = useCallback(() => {
     selection.clear();
@@ -154,20 +186,31 @@ export function useElectronFolderLifecycle({
 
       try {
         const settings = await api.getSettings();
+        const {
+          setRecursiveMode: applyRecursiveMode,
+          setShowFilenames: applyShowFilenames,
+          setMaxConcurrentPlaying: applyMaxConcurrentPlaying,
+          setSortKey: applySortKey,
+          setSortDir: applySortDir,
+          setGroupByFolders: applyGroupByFolders,
+          setRandomSeed: applyRandomSeed,
+          setZoomLevelFromSettings: applyZoomLevelFromSettings,
+        } = setterRefs.current;
+
         if (settings.recursiveMode !== undefined)
-          setRecursiveMode(settings.recursiveMode);
+          applyRecursiveMode(settings.recursiveMode);
         if (settings.showFilenames !== undefined)
-          setShowFilenames(settings.showFilenames);
+          applyShowFilenames(settings.showFilenames);
         if (settings.maxConcurrentPlaying !== undefined)
-          setMaxConcurrentPlaying(settings.maxConcurrentPlaying);
+          applyMaxConcurrentPlaying(settings.maxConcurrentPlaying);
         if (settings.zoomLevel !== undefined)
-          setZoomLevelFromSettings(settings.zoomLevel);
-        if (settings.sortKey) setSortKey(settings.sortKey);
-        if (settings.sortDir) setSortDir(settings.sortDir);
+          applyZoomLevelFromSettings(settings.zoomLevel);
+        if (settings.sortKey) applySortKey(settings.sortKey);
+        if (settings.sortDir) applySortDir(settings.sortDir);
         if (settings.groupByFolders !== undefined)
-          setGroupByFolders(settings.groupByFolders);
+          applyGroupByFolders(settings.groupByFolders);
         if (settings.randomSeed !== undefined)
-          setRandomSeed(settings.randomSeed);
+          applyRandomSeed(settings.randomSeed);
       } catch (error) {
         console.error("Failed to load settings", error);
       }
@@ -176,30 +219,19 @@ export function useElectronFolderLifecycle({
     };
 
     loadSettings();
+  }, []);
 
-    const cleanup = window.electronAPI?.onFolderSelected?.(
-      (folderPath) => {
-        handleElectronFolderSelection(folderPath);
-      },
-      [handleElectronFolderSelection]
-    );
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onFolderSelected?.((folderPath) => {
+      handleElectronFolderSelection(folderPath);
+    });
 
     return () => {
       if (typeof cleanup === "function") {
         cleanup();
       }
     };
-  }, [
-    setZoomLevelFromSettings,
-    handleElectronFolderSelection,
-    setGroupByFolders,
-    setMaxConcurrentPlaying,
-    setRandomSeed,
-    setRecursiveMode,
-    setShowFilenames,
-    setSortDir,
-    setSortKey,
-  ]);
+  }, [handleElectronFolderSelection]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -266,11 +298,18 @@ export function useElectronFolderLifecycle({
       }
     };
 
-    api.onFileAdded?.(handleFileAdded);
-    api.onFileRemoved?.(handleFileRemoved);
-    api.onFileChanged?.(handleFileChanged);
+    const disposeAdded = api.onFileAdded?.(handleFileAdded);
+    const disposeRemoved = api.onFileRemoved?.(handleFileRemoved);
+    const disposeChanged = api.onFileChanged?.(handleFileChanged);
+    const disposeError = api.onFileWatchError?.((error) => {
+      console.error("File watch error:", error);
+    });
 
     return () => {
+      disposeAdded?.();
+      disposeRemoved?.();
+      disposeChanged?.();
+      disposeError?.();
       api?.stopFolderWatch?.().catch(() => {});
     };
   }, [
