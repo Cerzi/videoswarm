@@ -35,6 +35,9 @@ export function useMasonryLayout({
   const [ioConfig, setIoConfig] = useState({ rootMargin: "1600px 0px", nearPx: 900 });
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
+  const layoutSummaryRef = useRef({ totalHeight: 0, metrics: null });
+  const measuredPositionsRef = useRef([]);
+  const itemPositionMapRef = useRef(new Map());
 
   const beginLayoutHold = useCallback(() => {
     let released = false;
@@ -132,12 +135,35 @@ export function useMasonryLayout({
     setLayoutEpoch((prev) => (prev >= Number.MAX_SAFE_INTEGER ? 1 : prev + 1));
   }, []);
 
-  const handleMasonryLayoutComplete = useCallback(() => {
-    if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(masonryRefreshRafRef.current);
-    }
+  const handleMasonryLayoutComplete = useCallback(
+    (info = {}) => {
+      if (info && Array.isArray(info.positions)) {
+        const map = itemPositionMapRef.current;
+        info.positions.forEach((pos) => {
+          if (!pos || !pos.id) return;
+          map.set(pos.id, {
+            y: Number.isFinite(pos.y) ? pos.y : 0,
+            height: Number.isFinite(pos.height) ? pos.height : 0,
+          });
+        });
+        measuredPositionsRef.current = info.positions.slice();
+      }
 
-    const runRefresh = () => {
+      if (info && (Number.isFinite(info.maxHeight) || info.metrics)) {
+        const nextSummary = {
+          totalHeight: Number.isFinite(info.maxHeight)
+            ? info.maxHeight
+            : layoutSummaryRef.current.totalHeight,
+          metrics: info.metrics || layoutSummaryRef.current.metrics,
+        };
+        layoutSummaryRef.current = nextSummary;
+      }
+
+      if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(masonryRefreshRafRef.current);
+      }
+
+      const runRefresh = () => {
       masonryRefreshRafRef.current = 0;
       if (ioRegistry?.refresh) {
         ioRegistry.refresh();
@@ -145,12 +171,14 @@ export function useMasonryLayout({
       bumpLayoutEpoch();
     };
 
-    if (typeof requestAnimationFrame === "function") {
-      masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
-    } else {
-      runRefresh();
-    }
-  }, [ioRegistry, bumpLayoutEpoch]);
+      if (typeof requestAnimationFrame === "function") {
+        masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
+      } else {
+        runRefresh();
+      }
+    },
+    [ioRegistry, bumpLayoutEpoch]
+  );
 
   useEffect(
     () => () => {
@@ -337,6 +365,15 @@ export function useMasonryLayout({
 
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
+  const orderIndexMap = useMemo(() => {
+    const map = new Map();
+    orderForRange.forEach((id, idx) => {
+      if (!id) return;
+      map.set(id, idx);
+    });
+    return map;
+  }, [orderForRange]);
+
   useEffect(() => {
     if (!orderedVideos.length) return;
     const cache = metadataAspectCacheRef.current;
@@ -384,6 +421,139 @@ export function useMasonryLayout({
     }
   }, [orderedVideos, updateAspectRatio]);
 
+  const getEstimatedOffsetForIndex = useCallback(
+    (index) => {
+      if (!orderForRange.length) return 0;
+      const clampedIndex = Math.max(
+        0,
+        Math.min(orderForRange.length - 1, Math.floor(index ?? 0))
+      );
+      const id = orderForRange[clampedIndex];
+      if (id) {
+        const pos = itemPositionMapRef.current.get(id);
+        if (pos && Number.isFinite(pos.y)) {
+          return pos.y;
+        }
+      }
+
+      const summary = layoutSummaryRef.current;
+      const metrics = summary.metrics || masonryMetrics;
+      const columnCount = Math.max(
+        1,
+        Number.isFinite(metrics?.columnCount)
+          ? metrics.columnCount
+          : derivedColumnCount || 1
+      );
+      const columnGap = Number.isFinite(metrics?.columnGap)
+        ? metrics.columnGap
+        : Number.isFinite(masonryMetrics.columnGap)
+        ? masonryMetrics.columnGap
+        : 0;
+      const approxHeight = approxTileHeight + columnGap;
+      const approxRow = Math.floor(clampedIndex / Math.max(1, columnCount));
+      return approxRow * Math.max(1, approxHeight);
+    },
+    [
+      orderForRange,
+      approxTileHeight,
+      derivedColumnCount,
+      masonryMetrics.columnGap,
+    ]
+  );
+
+  const getEstimatedIndexForOffset = useCallback(
+    (offset) => {
+      if (!orderForRange.length || !Number.isFinite(offset)) {
+        return 0;
+      }
+
+      const measured = measuredPositionsRef.current;
+      if (measured.length) {
+        const first = measured[0];
+        const last = measured[measured.length - 1];
+        if (first && Number.isFinite(first.y) && offset <= first.y) {
+          const idx = orderIndexMap.get(first.id);
+          if (typeof idx === "number") {
+            return idx;
+          }
+        }
+        if (last && Number.isFinite(last.y) && offset >= last.y) {
+          const idx = orderIndexMap.get(last.id);
+          if (typeof idx === "number") {
+            return idx;
+          }
+        }
+
+        let low = 0;
+        let high = measured.length - 1;
+        let bestIdx = 0;
+        while (low <= high) {
+          const mid = Math.floor((low + high) / 2);
+          const value = measured[mid]?.y ?? 0;
+          if (value <= offset) {
+            bestIdx = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        const candidate = measured[Math.min(bestIdx, measured.length - 1)];
+        if (candidate) {
+          const idx = orderIndexMap.get(candidate.id);
+          if (typeof idx === "number") {
+            return idx;
+          }
+        }
+      }
+
+      const summary = layoutSummaryRef.current;
+      const metrics = summary.metrics || masonryMetrics;
+      const columnCount = Math.max(
+        1,
+        Number.isFinite(metrics?.columnCount)
+          ? metrics.columnCount
+          : derivedColumnCount || 1
+      );
+      const columnGap = Number.isFinite(metrics?.columnGap)
+        ? metrics.columnGap
+        : Number.isFinite(masonryMetrics.columnGap)
+        ? masonryMetrics.columnGap
+        : 0;
+      const approxHeight = approxTileHeight + columnGap;
+      const approxRow = Math.floor(offset / Math.max(1, approxHeight));
+      const approxIndex = approxRow * Math.max(1, columnCount);
+      return Math.max(
+        0,
+        Math.min(orderForRange.length - 1, Math.floor(approxIndex))
+      );
+    },
+    [
+      orderForRange,
+      orderIndexMap,
+      approxTileHeight,
+      derivedColumnCount,
+      masonryMetrics.columnGap,
+    ]
+  );
+
+  const getScrollHeightEstimate = useCallback(() => {
+    const summary = layoutSummaryRef.current;
+    if (Number.isFinite(summary.totalHeight) && summary.totalHeight > 0) {
+      return summary.totalHeight;
+    }
+    const columnGap = Number.isFinite(masonryMetrics.columnGap)
+      ? masonryMetrics.columnGap
+      : 0;
+    const columnCount = Math.max(1, derivedColumnCount || 1);
+    const approxRows = Math.ceil(orderForRange.length / columnCount);
+    return approxRows * (approxTileHeight + columnGap);
+  }, [
+    approxTileHeight,
+    derivedColumnCount,
+    masonryMetrics.columnGap,
+    orderForRange.length,
+  ]);
+
   return {
     orderedVideos,
     orderedIds,
@@ -398,5 +568,9 @@ export function useMasonryLayout({
     progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    getEstimatedOffsetForIndex,
+    getEstimatedIndexForOffset,
+    getScrollHeightEstimate,
+    viewportHeightPx: viewportHeight,
   };
 }

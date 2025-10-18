@@ -14,6 +14,7 @@ import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
+import ScrollRail from "./components/ScrollRail.jsx";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -69,6 +70,7 @@ function App() {
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+  const [isTimelineScrubbing, setIsTimelineScrubbing] = useState(false);
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
@@ -162,6 +164,10 @@ function App() {
     progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    getEstimatedOffsetForIndex,
+    getEstimatedIndexForOffset,
+    getScrollHeightEstimate,
+    viewportHeightPx,
   } = useMasonryLayout({
     videos,
     filteredVideos,
@@ -173,6 +179,42 @@ function App() {
     scrollContainerRef,
     gridRef,
   });
+
+  const adjustedMaxVisible = useMemo(() => {
+    if (!Number.isFinite(progressiveMaxVisibleNumber)) return undefined;
+    if (!isTimelineScrubbing) return progressiveMaxVisibleNumber;
+    const boosted = Math.max(
+      progressiveMaxVisibleNumber,
+      Math.round(progressiveMaxVisibleNumber * 1.5)
+    );
+    return orderedVideos.length > 0
+      ? Math.min(boosted, orderedVideos.length)
+      : boosted;
+  }, [
+    isTimelineScrubbing,
+    progressiveMaxVisibleNumber,
+    orderedVideos.length,
+  ]);
+
+  const progressiveOptions = useMemo(
+    () => ({
+      initial: 120,
+      batchSize: 64,
+      intervalMs: 100,
+      pauseOnScroll: !isTimelineScrubbing,
+      longTaskAdaptation: true,
+      maxVisible:
+        Number.isFinite(adjustedMaxVisible) && adjustedMaxVisible > 0
+          ? adjustedMaxVisible
+          : progressiveMaxVisibleNumber,
+      forceInterval: isTimelineScrubbing,
+    }),
+    [
+      isTimelineScrubbing,
+      adjustedMaxVisible,
+      progressiveMaxVisibleNumber,
+    ]
+  );
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -606,14 +648,7 @@ function App() {
     actualPlaying,
     maxConcurrentPlaying,
     scrollRef: scrollContainerRef,
-    progressive: {
-      initial: 120,
-      batchSize: 64,
-      intervalMs: 100,
-      pauseOnScroll: true,
-      longTaskAdaptation: true,
-      maxVisible: progressiveMaxVisibleNumber,
-    },
+    progressive: progressiveOptions,
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
@@ -1051,20 +1086,20 @@ function App() {
               >
                 <div
                   ref={gridRef}
-                className={`video-grid masonry-vertical ${
+                  className={`video-grid masonry-vertical ${
                     !showFilenames ? "hide-filenames" : ""
                   } ${zoomClassForLevel(zoomLevel)}`}
-              >
-                {orderedVideos.length === 0 &&
-                  videos.length > 0 &&
-                  !isLoadingFolder && (
-                    <div className="filters-empty-state">
-                      No videos match your current filters.
-                    </div>
-                  )}
+                >
+                  {orderedVideos.length === 0 &&
+                    videos.length > 0 &&
+                    !isLoadingFolder && (
+                      <div className="filters-empty-state">
+                        No videos match your current filters.
+                      </div>
+                    )}
 
-                {videoCollection.videosToRender.map((video) => (
-                  <VideoCard
+                  {videoCollection.videosToRender.map((video) => (
+                    <VideoCard
                     key={video.id}
                     video={video}
                     observeIntersection={ioRegistry.observe}
@@ -1108,6 +1143,17 @@ function App() {
                   />
                 ))}
                 </div>
+                <ScrollRail
+                  scrollRef={scrollContainerRef}
+                  orderedVideos={orderedVideos}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  getEstimatedOffsetForIndex={getEstimatedOffsetForIndex}
+                  getEstimatedIndexForOffset={getEstimatedIndexForOffset}
+                  getScrollHeightEstimate={getScrollHeightEstimate}
+                  viewportHeightPx={viewportHeightPx}
+                  onScrubStateChange={setIsTimelineScrubbing}
+                />
               </div>
               <MetadataPanel
                 ref={metadataPanelRef}

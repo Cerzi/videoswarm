@@ -203,7 +203,7 @@ export default function useChunkedMasonry({
           // Record position for ordering
           el.dataset.x = String(x);
           el.dataset.y = String(y);
-          positions.push({ id, x, y }); // NEW
+          positions.push({ id, x, y, height: h });
 
           columnHeights[minIdx] = y + h + columnGap;
         }
@@ -218,9 +218,13 @@ export default function useChunkedMasonry({
           grid.style.position = "relative";
 
           // Compute and publish visual order (top-to-bottom, then left-to-right)
+          let sortedPositions = positions;
+          if (typeof onOrderChange === "function" || typeof onLayoutComplete === "function") {
+            sortedPositions = positions.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+          }
+
           if (typeof onOrderChange === "function") {
-            positions.sort((a, b) => a.y - b.y || a.x - b.x);
-            const order = positions.map((p) => p.id);
+            const order = sortedPositions.map((p) => p.id);
             const prev = lastOrderRef.current || [];
             // shallow compare to avoid needless updates
             const changed =
@@ -240,6 +244,12 @@ export default function useChunkedMasonry({
                 columnHeights: columnHeights.slice(),
                 maxHeight,
                 metrics,
+                positions: sortedPositions.map((pos) => ({
+                  id: pos.id,
+                  x: pos.x,
+                  y: pos.y,
+                  height: pos.height,
+                })),
               });
             } catch (err) {
               if (process.env.NODE_ENV !== "production") {

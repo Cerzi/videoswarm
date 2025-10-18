@@ -295,6 +295,12 @@ body {
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
   overflow-anchor: auto;
+  scrollbar-width: none;
+}
+
+.content-region__viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* Ensure React doesn't interfere with existing styles */
