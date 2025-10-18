@@ -82,12 +82,55 @@ function App() {
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
   const refreshTagListRef = useRef(() => {});
+  const applyZoomFromSettingsRef = useRef((value) => {
+    setZoomLevel(clampZoomIndex(value));
+  });
   const invokeRefreshTagList = useCallback(() => {
     const fn = refreshTagListRef.current;
     if (typeof fn === "function") {
       fn();
     }
   }, []);
+  // ----- Recent Folders hook -----
+  const {
+    items: recentFolders,
+    add: addRecentFolder,
+    remove: removeRecentFolder,
+    clear: clearRecentFolders,
+  } = useRecentFolders();
+
+  const {
+    videos,
+    setVideos,
+    isLoadingFolder,
+    loadingStage,
+    loadingProgress,
+    settingsLoaded,
+    handleElectronFolderSelection,
+    handleFolderSelect,
+    handleWebFileSelection,
+  } = useElectronFolderLifecycle({
+    selection,
+    recursiveMode,
+    setRecursiveMode,
+    setShowFilenames,
+    maxConcurrentPlaying,
+    setMaxConcurrentPlaying,
+    setSortKey,
+    setSortDir,
+    groupByFolders,
+    setGroupByFolders,
+    setRandomSeed,
+    setZoomLevelFromSettings: (value) =>
+      applyZoomFromSettingsRef.current?.(value),
+    setVisibleVideos,
+    setLoadedVideos,
+    setLoadingVideos,
+    setActualPlaying,
+    refreshTagList: invokeRefreshTagList,
+    addRecentFolder,
+  });
+
   const {
     filters,
     setFiltersOpen,
@@ -131,20 +174,6 @@ function App() {
     gridRef,
   });
 
-  const { handleZoomChangeSafe, getMinimumZoomLevel } = useZoomControls({
-    zoomLevel,
-    setZoomLevel,
-    orderedVideoCount: orderedVideos.length,
-    recursiveMode,
-    maxConcurrentPlaying,
-    showFilenames,
-    setZoomClass,
-    scheduleLayout,
-    runWithStableAnchor,
-    withLayoutHold,
-    zoomAnchorOptions,
-  });
-
   const { hadLongTaskRecently } = useLongTaskFlag();
 
   useEffect(() => {
@@ -162,45 +191,6 @@ function App() {
       return changed ? next : prev;
     });
   }, [filteredVideoIds, selection.size, selectionSetSelected]);
-
-  // ----- Recent Folders hook -----
-  const {
-    items: recentFolders,
-    add: addRecentFolder,
-    remove: removeRecentFolder,
-    clear: clearRecentFolders,
-  } = useRecentFolders();
-
-  const {
-    videos,
-    setVideos,
-    isLoadingFolder,
-    loadingStage,
-    loadingProgress,
-    settingsLoaded,
-    handleElectronFolderSelection,
-    handleFolderSelect,
-    handleWebFileSelection,
-  } = useElectronFolderLifecycle({
-    selection,
-    recursiveMode,
-    setRecursiveMode,
-    setShowFilenames,
-    maxConcurrentPlaying,
-    setMaxConcurrentPlaying,
-    setSortKey,
-    setSortDir,
-    groupByFolders,
-    setGroupByFolders,
-    setRandomSeed,
-    setZoomLevelFromSettings: (value) => setZoomLevel(clampZoomIndex(value)),
-    setVisibleVideos,
-    setLoadedVideos,
-    setLoadingVideos,
-    setActualPlaying,
-    refreshTagList: invokeRefreshTagList,
-    addRecentFolder,
-  });
 
 
   const anchorDefaults = useMemo(
@@ -245,6 +235,31 @@ function App() {
     stabilizeFrames: anchorDefaults.stabilizeFrames,
     maxWaitMs: anchorDefaults.maxWaitMs,
   });
+
+  const {
+    handleZoomChangeSafe,
+    getMinimumZoomLevel,
+    applyZoomFromSettings,
+  } = useZoomControls({
+    zoomLevel,
+    setZoomLevel,
+    orderedVideoCount: orderedVideos.length,
+    recursiveMode,
+    maxConcurrentPlaying,
+    showFilenames,
+    setZoomClass,
+    scheduleLayout,
+    runWithStableAnchor,
+    withLayoutHold,
+    zoomAnchorOptions,
+  });
+
+  useEffect(() => {
+    applyZoomFromSettingsRef.current =
+      typeof applyZoomFromSettings === "function"
+        ? applyZoomFromSettings
+        : (value) => setZoomLevel(clampZoomIndex(value));
+  }, [applyZoomFromSettings]);
 
   const waitForTransitionEnd = useCallback(
     (element, properties = ["width"], timeoutMs = anchorDefaults.maxWaitMs) => {
