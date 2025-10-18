@@ -34,6 +34,7 @@ export default function ScrollRail({
   getScrollHeightEstimate,
   viewportHeightPx,
   onScrubStateChange = () => {},
+  onActiveIndexChange = () => {},
 }) {
   const trackRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -85,17 +86,20 @@ export default function ScrollRail({
     const viewport = el.clientHeight || viewportHeightPx || 1;
     const scrollHeight = el.scrollHeight || 0;
     const estimate = getScrollHeightEstimate();
-    const maxScrollRaw = scrollHeight > viewport ? scrollHeight - viewport : estimate - viewport;
+    const effectiveHeight = Math.max(scrollHeight, estimate || 0);
+    const maxScrollRaw = effectiveHeight > viewport ? effectiveHeight - viewport : 0;
     const maxScroll = Math.max(1, maxScrollRaw || 1);
     const top = clamp(el.scrollTop || 0, 0, maxScroll);
     setProgress(top / maxScroll);
     const idx = getEstimatedIndexForOffset(top);
     setActiveIndex(idx);
+    onActiveIndexChange(idx);
   }, [
     scrollRef,
     viewportHeightPx,
     getScrollHeightEstimate,
     getEstimatedIndexForOffset,
+    onActiveIndexChange,
   ]);
 
   useEffect(() => {
@@ -137,12 +141,15 @@ export default function ScrollRail({
       if (!totalCount) return;
       const index = clamp(Math.round(rel * (totalCount - 1)), 0, totalCount - 1);
       setActiveIndex(index);
+      onActiveIndexChange(index);
       const el = scrollRef.current;
       if (!el) return;
       const estimatedOffset = getEstimatedOffsetForIndex(index);
       const viewport = el.clientHeight || viewportHeightPx || 0;
-      const scrollHeight = el.scrollHeight || getScrollHeightEstimate();
-      const maxScroll = Math.max(0, (scrollHeight || 0) - viewport);
+      const scrollHeight = el.scrollHeight || 0;
+      const estimate = getScrollHeightEstimate();
+      const effectiveHeight = Math.max(scrollHeight, estimate || 0);
+      const maxScroll = Math.max(0, effectiveHeight - viewport);
       const target = clamp(estimatedOffset, 0, maxScroll);
       el.scrollTo({ top: target, behavior: "auto" });
     },
@@ -152,6 +159,7 @@ export default function ScrollRail({
       getEstimatedOffsetForIndex,
       viewportHeightPx,
       getScrollHeightEstimate,
+      onActiveIndexChange,
     ]
   );
 
