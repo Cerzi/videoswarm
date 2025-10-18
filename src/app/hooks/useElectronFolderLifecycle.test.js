@@ -17,6 +17,13 @@ describe("useElectronFolderLifecycle", () => {
   let setActualPlayingMock;
   let addRecentFolder;
   let refreshTagList;
+  let onFileAddedHandler;
+  let onFileRemovedHandler;
+  let onFileChangedHandler;
+  let disposeAdded;
+  let disposeRemoved;
+  let disposeChanged;
+  let disposeError;
 
   beforeEach(() => {
     selection = {
@@ -33,6 +40,13 @@ describe("useElectronFolderLifecycle", () => {
     setActualPlayingMock = createSetStateMock();
     addRecentFolder = vi.fn();
     refreshTagList = vi.fn();
+    onFileAddedHandler = undefined;
+    onFileRemovedHandler = undefined;
+    onFileChangedHandler = undefined;
+    disposeAdded = vi.fn();
+    disposeRemoved = vi.fn();
+    disposeChanged = vi.fn();
+    disposeError = vi.fn();
 
     window.electronAPI = {
       getSettings: vi.fn().mockResolvedValue({
@@ -47,20 +61,78 @@ describe("useElectronFolderLifecycle", () => {
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
       readDirectory: vi.fn().mockResolvedValue([
-        { id: "file1", name: "file1", path: "file1" },
+        {
+          id: "file1",
+          name: "file1",
+          path: "file1",
+          basename: "file1",
+          tags: [],
+        },
       ]),
       stopFolderWatch: vi.fn().mockResolvedValue(),
       startFolderWatch: vi.fn().mockResolvedValue({ success: true }),
-      onFileAdded: vi.fn(),
-      onFileRemoved: vi.fn(),
-      onFileChanged: vi.fn(),
+      onFileAdded: vi.fn((cb) => {
+        onFileAddedHandler = cb;
+        return disposeAdded;
+      }),
+      onFileRemoved: vi.fn((cb) => {
+        onFileRemovedHandler = cb;
+        return disposeRemoved;
+      }),
+      onFileChanged: vi.fn((cb) => {
+        onFileChangedHandler = cb;
+        return disposeChanged;
+      }),
+      onFileWatchError: vi.fn(() => disposeError),
       selectFolder: vi.fn(),
     };
+  });
+
+  it("does not refetch settings when setter identities change", async () => {
+    const setRecursiveMode = vi.fn();
+    const { rerender } = renderHook(
+      ({ setZoomLevelFromSettings }) =>
+        useElectronFolderLifecycle({
+          selection,
+          recursiveMode: false,
+          setRecursiveMode,
+          setShowFilenames: vi.fn(),
+          maxConcurrentPlaying: 5,
+          setMaxConcurrentPlaying: vi.fn(),
+          setSortKey: vi.fn(),
+          setSortDir: vi.fn(),
+          groupByFolders: true,
+          setGroupByFolders: vi.fn(),
+          setRandomSeed: vi.fn(),
+          setZoomLevelFromSettings,
+          setVisibleVideos: setVisibleVideosMock.setter,
+          setLoadedVideos: setLoadedVideosMock.setter,
+          setLoadingVideos: setLoadingVideosMock.setter,
+          setActualPlaying: setActualPlayingMock.setter,
+          refreshTagList,
+          addRecentFolder,
+          delayFn: () => Promise.resolve(),
+        }),
+      { initialProps: { setZoomLevelFromSettings: vi.fn() } }
+    );
+
+    await waitFor(() =>
+      expect(window.electronAPI.getSettings).toHaveBeenCalledTimes(1)
+    );
+
+    rerender({ setZoomLevelFromSettings: vi.fn() });
+
+    await waitFor(() =>
+      expect(window.electronAPI.getSettings).toHaveBeenCalledTimes(1)
+    );
   });
 
   afterEach(() => {
     vi.useRealTimers();
     delete window.electronAPI;
+    onFileAddedHandler = undefined;
+    onFileRemovedHandler = undefined;
+    onFileChangedHandler = undefined;
   });
 
   it("loads persisted settings on mount", async () => {
@@ -143,9 +215,144 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(selection.clear).toHaveBeenCalled();
     expect(window.electronAPI.readDirectory).toHaveBeenCalledWith("/videos", false);
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/videos",
+      false
+    );
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
     expect(result.current.isLoadingFolder).toBe(false);
+  });
+
+  it("propagates watcher events into local state", async () => {
+    const { result, unmount } = renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        maxConcurrentPlaying: 5,
+        setMaxConcurrentPlaying: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+        delayFn: () => Promise.resolve(),
+      })
+    );
+
+    await waitFor(() => expect(window.electronAPI.getSettings).toHaveBeenCalled());
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+
+    expect(typeof onFileAddedHandler).toBe("function");
+    expect(typeof onFileRemovedHandler).toBe("function");
+    expect(typeof onFileChangedHandler).toBe("function");
+
+    act(() => {
+      onFileAddedHandler?.({
+        id: "file2",
+        basename: "file2",
+        tags: [],
+      });
+    });
+
+    expect(result.current.videos.map((v) => v.id)).toEqual([
+      "file1",
+      "file2",
+    ]);
+
+    act(() => {
+      onFileChangedHandler?.({
+        id: "file2",
+        basename: "file2",
+        tags: ["new"],
+      });
+    });
+
+    expect(result.current.videos.find((v) => v.id === "file2")?.tags).toEqual([
+      "new",
+    ]);
+
+    act(() => {
+      onFileRemovedHandler?.("file1");
+    });
+
+    expect(result.current.videos.map((v) => v.id)).toEqual(["file2"]);
+    expect(selection.setSelected).toHaveBeenCalled();
+    expect(refreshTagList).toHaveBeenCalledTimes(3);
+
+    unmount();
+    expect(disposeAdded).toHaveBeenCalled();
+    expect(disposeRemoved).toHaveBeenCalled();
+    expect(disposeChanged).toHaveBeenCalled();
+    expect(disposeError).toHaveBeenCalled();
+    expect(window.electronAPI.stopFolderWatch).toHaveBeenCalled();
+  });
+
+  it("keeps watcher subscriptions active when selection identity changes", async () => {
+    const clear = vi.fn();
+    const setSelected = vi.fn((updater) => {
+      const base = new Set(["persist"]);
+      return typeof updater === "function" ? updater(base) : base;
+    });
+
+    const baseSelection = { clear, setSelected };
+
+    const { rerender, unmount } = renderHook(
+      ({ selectionProp }) =>
+        useElectronFolderLifecycle({
+          selection: selectionProp,
+          recursiveMode: false,
+          setRecursiveMode: vi.fn(),
+          setShowFilenames: vi.fn(),
+          maxConcurrentPlaying: 5,
+          setMaxConcurrentPlaying: vi.fn(),
+          setSortKey: vi.fn(),
+          setSortDir: vi.fn(),
+          groupByFolders: true,
+          setGroupByFolders: vi.fn(),
+          setRandomSeed: vi.fn(),
+          setZoomLevelFromSettings: vi.fn(),
+          setVisibleVideos: setVisibleVideosMock.setter,
+          setLoadedVideos: setLoadedVideosMock.setter,
+          setLoadingVideos: setLoadingVideosMock.setter,
+          setActualPlaying: setActualPlayingMock.setter,
+          refreshTagList,
+          addRecentFolder,
+          delayFn: () => Promise.resolve(),
+        }),
+      { initialProps: { selectionProp: baseSelection } }
+    );
+
+    await waitFor(() =>
+      expect(window.electronAPI.onFileAdded).toHaveBeenCalledTimes(1)
+    );
+
+    rerender({ selectionProp: { clear, setSelected } });
+
+    expect(disposeAdded).not.toHaveBeenCalled();
+    expect(disposeRemoved).not.toHaveBeenCalled();
+    expect(disposeChanged).not.toHaveBeenCalled();
+    expect(window.electronAPI.stopFolderWatch).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(disposeAdded).toHaveBeenCalledTimes(1);
+    expect(disposeRemoved).toHaveBeenCalledTimes(1);
+    expect(disposeChanged).toHaveBeenCalledTimes(1);
+    expect(disposeError).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.stopFolderWatch).toHaveBeenCalledTimes(1);
   });
 
   it("loads web files when selected", async () => {
@@ -193,5 +400,58 @@ describe("useElectronFolderLifecycle", () => {
     expect(setLoadedVideosMock.setter).toHaveBeenCalled();
     expect(setLoadingVideosMock.setter).toHaveBeenCalled();
     expect(setActualPlayingMock.setter).toHaveBeenCalled();
+  });
+
+  it("passes the recursive flag when starting folder watch", async () => {
+    const setRecursiveMode = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ recursiveMode }) =>
+        useElectronFolderLifecycle({
+          selection,
+          recursiveMode,
+          setRecursiveMode,
+          setShowFilenames: vi.fn(),
+          maxConcurrentPlaying: 5,
+          setMaxConcurrentPlaying: vi.fn(),
+          setSortKey: vi.fn(),
+          setSortDir: vi.fn(),
+          groupByFolders: true,
+          setGroupByFolders: vi.fn(),
+          setRandomSeed: vi.fn(),
+          setZoomLevelFromSettings: vi.fn(),
+          setVisibleVideos: setVisibleVideosMock.setter,
+          setLoadedVideos: setLoadedVideosMock.setter,
+          setLoadingVideos: setLoadingVideosMock.setter,
+          setActualPlaying: setActualPlayingMock.setter,
+          refreshTagList,
+          addRecentFolder,
+          delayFn: () => Promise.resolve(),
+        }),
+      { initialProps: { recursiveMode: false } }
+    );
+
+    await waitFor(() => expect(window.electronAPI.getSettings).toHaveBeenCalled());
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+
+    expect(window.electronAPI.startFolderWatch).toHaveBeenLastCalledWith(
+      "/videos",
+      false
+    );
+
+    window.electronAPI.startFolderWatch.mockClear();
+
+    rerender({ recursiveMode: true });
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+
+    expect(window.electronAPI.startFolderWatch).toHaveBeenLastCalledWith(
+      "/videos",
+      true
+    );
   });
 });

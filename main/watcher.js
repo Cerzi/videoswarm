@@ -25,11 +25,12 @@ function createFolderWatcher({
 
   const events = new EventEmitter();
 
-  let fileWatcher = null;          // active chokidar watcher (native events)
-  let pollingInterval = null;      // setInterval id (polling fallback)
-  let currentFolder = null;        // current root
+  let fileWatcher = null; // active chokidar watcher (native events)
+  let pollingInterval = null; // setInterval id (polling fallback)
+  let currentFolder = null; // current root
   let fellBackThisSession = false; // one-shot fallback flag per folder
-  const changeTimeouts = new Map();// debounce timers per file
+  let currentOptions = { recursive: true }; // last requested options
+  const changeTimeouts = new Map(); // debounce timers per file
 
   // ---- helpers ----
   function isPolling() {
@@ -61,19 +62,34 @@ function createFolderWatcher({
     }
 
     clearChangeDebouncers();
+    currentFolder = null;
+    currentOptions = { recursive: true };
   }
 
-  function startPollingMode(folderPath) {
+  function startPollingMode(folderPath, options = currentOptions) {
+    const resolvedOptions = {
+      recursive: true,
+      ...options,
+    };
     // Ensure single instance
     stop().catch(() => {});
     currentFolder = folderPath;
+    currentOptions = resolvedOptions;
 
-    logger.log("[watch] Starting polling mode:", folderPath);
-    events.emit("mode", { mode: "polling", folderPath });
+    logger.log(
+      "[watch] Starting polling mode:",
+      folderPath,
+      `(recursive=${resolvedOptions.recursive})`
+    );
+    events.emit("mode", {
+      mode: "polling",
+      folderPath,
+      recursive: resolvedOptions.recursive,
+    });
 
     // Initial scan
     try {
-      scanFolderForChanges(folderPath);
+      scanFolderForChanges(folderPath, resolvedOptions);
     } catch (e) {
       logger.error("[watch] Polling initial scan failed:", e);
       events.emit("error", e);
@@ -82,24 +98,30 @@ function createFolderWatcher({
     // Poll every 5 seconds (matches your previous behavior)
     pollingInterval = setInterval(() => {
       try {
-        scanFolderForChanges(folderPath);
+        scanFolderForChanges(folderPath, resolvedOptions);
       } catch (e) {
         logger.error("[watch] Polling scan failed:", e);
         events.emit("error", e);
       }
     }, 5000);
 
-    return { success: true, mode: "polling" };
+    return { success: true, mode: "polling", recursive: resolvedOptions.recursive };
   }
 
-  async function start(folderPath) {
+  async function start(folderPath, options = {}) {
+    const { recursive = true } = options;
     // If already watching the same folder, return current mode
-    if (currentFolder === folderPath && (fileWatcher || pollingInterval)) {
+    if (
+      currentFolder === folderPath &&
+      currentOptions.recursive === recursive &&
+      (fileWatcher || pollingInterval)
+    ) {
       return { success: true, mode: isPolling() ? "polling" : "watch" };
     }
 
     await stop();
     currentFolder = folderPath;
+    currentOptions = { recursive };
     fellBackThisSession = false; // allow native attempt on each new folder
 
     // Create chokidar watcher (native events)
@@ -111,7 +133,9 @@ function createFolderWatcher({
       ],
       persistent: true,
       ignoreInitial: true,
-      depth,                  // recursion limit (unchanged)
+      ...(recursive
+        ? { depth }
+        : { depth: 0 }), // follow recursion preference
 
       // Prefer native events
       usePolling: false,
@@ -137,7 +161,11 @@ function createFolderWatcher({
         let files = 0; for (const d in watched) files += watched[d].length;
         logger.log(`[watch] ready: dirs=${dirs} files=${files}`);
       } catch {}
-      events.emit("mode", { mode: "watch", folderPath });
+      events.emit("mode", {
+        mode: "watch",
+        folderPath,
+        recursive: currentOptions.recursive,
+      });
       events.emit("ready", { folderPath });
       logger.log("[watch] Watching:", folderPath);
     });
@@ -190,15 +218,22 @@ function createFolderWatcher({
       if (isLimitError && !fellBackThisSession) {
         fellBackThisSession = true; // one-shot per folder
         logger.warn("[watch] Limit hit:", code, "→ switching to polling");
+        // Preserve context before tearing down
+        const prevFolder = currentFolder;
+        const prevOptions = currentOptions;
         // Close partially-initialized watcher before falling back
         try {
           await stop();
         } catch {}
-
-        // Start polling for the same folder
-        startPollingMode(currentFolder);
         // Emit mode explicitly because 'ready' may never fire when erroring early
-        events.emit("mode", { mode: "polling", folderPath: currentFolder });
+        events.emit("mode", {
+          mode: "polling",
+          folderPath: prevFolder,
+          recursive: prevOptions.recursive,
+        });
+        if (prevFolder) {
+          startPollingMode(prevFolder, prevOptions);
+        }
         // Optional UI hint
         events.emit("error", new Error("Switched to polling mode"));
         return;
@@ -209,7 +244,7 @@ function createFolderWatcher({
       events.emit("error", error);
     });
 
-    return { success: true, mode: "watch" };
+    return { success: true, mode: "watch", recursive };
   }
 
   // public API

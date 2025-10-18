@@ -20,8 +20,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // File system watching
-  startFolderWatch: async (folderPath) => {
-    return await ipcRenderer.invoke("start-folder-watch", folderPath);
+  startFolderWatch: async (folderPath, recursive) => {
+    return await ipcRenderer.invoke(
+      "start-folder-watch",
+      folderPath,
+      recursive
+    );
   },
 
   stopFolderWatch: async () => {
@@ -30,19 +34,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // File system events
   onFileAdded: (callback) => {
-    ipcRenderer.on("file-added", (event, videoFile) => callback(videoFile));
+    const handler = (_event, videoFile) => callback(videoFile);
+    ipcRenderer.on("file-added", handler);
+    return () => ipcRenderer.removeListener("file-added", handler);
   },
 
   onFileRemoved: (callback) => {
-    ipcRenderer.on("file-removed", (event, filePath) => callback(filePath));
+    const handler = (_event, filePath) => callback(filePath);
+    ipcRenderer.on("file-removed", handler);
+    return () => ipcRenderer.removeListener("file-removed", handler);
   },
 
   onFileChanged: (callback) => {
-    ipcRenderer.on("file-changed", (event, videoFile) => callback(videoFile));
+    const handler = (_event, videoFile) => callback(videoFile);
+    ipcRenderer.on("file-changed", handler);
+    return () => ipcRenderer.removeListener("file-changed", handler);
   },
 
   onFileWatchError: (callback) => {
-    ipcRenderer.on("file-watch-error", (event, error) => callback(error));
+    const handler = (_event, error) => callback(error);
+    ipcRenderer.on("file-watch-error", handler);
+    return () => ipcRenderer.removeListener("file-watch-error", handler);
   },
 
   // Get file info
@@ -57,9 +69,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Listen for folder selection from menu
   onFolderSelected: (callback) => {
-    ipcRenderer.on("folder-selected", (event, folderPath) => {
+    const handler = (_event, folderPath) => {
       callback(folderPath);
-    });
+    };
+    ipcRenderer.on("folder-selected", handler);
+    return () => ipcRenderer.removeListener("folder-selected", handler);
   },
 
   // Settings management - existing methods
