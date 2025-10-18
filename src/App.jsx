@@ -28,6 +28,7 @@ import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
+import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 import {
   getMetadataPanelToggleState,
@@ -254,6 +255,7 @@ function App() {
   });
   const [scrollRowsEstimate, setScrollRowsEstimate] = useState(0);
   const metadataAspectCacheRef = useRef(new Map());
+  const masonryRefreshRafRef = useRef(0);
   const [ioConfig, setIoConfig] = useState({
     rootMargin: "1600px 0px",
     nearPx: 900,
@@ -264,6 +266,8 @@ function App() {
     threshold: [0, 0.15],
     nearPx: ioConfig.nearPx,
   });
+
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
 
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
 
@@ -569,6 +573,44 @@ function App() {
     );
   }, []);
 
+  const bumpLayoutEpoch = useCallback(() => {
+    setLayoutEpoch((prev) => (prev >= Number.MAX_SAFE_INTEGER ? 1 : prev + 1));
+  }, []);
+
+  const handleMasonryLayoutComplete = useCallback(() => {
+    if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(masonryRefreshRafRef.current);
+    }
+
+    const runRefresh = () => {
+      masonryRefreshRafRef.current = 0;
+      if (ioRegistry?.refresh) {
+        ioRegistry.refresh();
+      }
+      bumpLayoutEpoch();
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
+    } else {
+      runRefresh();
+    }
+  }, [ioRegistry, bumpLayoutEpoch]);
+
+  useEffect(() => () => {
+    if (
+      masonryRefreshRafRef.current &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(masonryRefreshRafRef.current);
+      masonryRefreshRafRef.current = 0;
+    }
+  }, []);
+
+  useEffect(() => {
+    bumpLayoutEpoch();
+  }, [viewportSize.width, viewportSize.height, bumpLayoutEpoch]);
+
   const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
     useChunkedMasonry({
       gridRef,
@@ -580,6 +622,7 @@ function App() {
 
       onOrderChange: setVisualOrderedIds,
       onMetricsChange: handleMasonryMetrics,
+      onLayoutComplete: handleMasonryLayoutComplete,
     });
 
   // MEMOIZED sorting & grouping
@@ -731,6 +774,24 @@ function App() {
         : { nearPx, rootMargin }
     );
   }, [effectiveColumnWidth, viewportHeight]);
+
+  useEffect(() => {
+    if (!ioRegistry) return;
+    if (typeof ioRegistry.setNearPx === "function") {
+      ioRegistry.setNearPx(ioConfig.nearPx);
+    }
+    if (typeof ioRegistry.refresh === "function") {
+      const raf = requestAnimationFrame(() => {
+        ioRegistry.refresh();
+      });
+      return () => {
+        if (typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(raf);
+        }
+      };
+    }
+    return undefined;
+  }, [ioRegistry, ioConfig.nearPx, ioConfig.rootMargin]);
 
   useEffect(() => {
     if (!orderedVideos.length) return;
@@ -1541,31 +1602,15 @@ function App() {
     };
     const handleFileRemoved = (filePath) => {
       setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      selection.setSelected((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setActualPlaying((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadedVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadingVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setVisibleVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
+        selection.setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(filePath);
+          return next;
+        });
+        setActualPlaying((prev) => updateSetMembership(prev, filePath, false));
+        setLoadedVideos((prev) => updateSetMembership(prev, filePath, false));
+        setLoadingVideos((prev) => updateSetMembership(prev, filePath, false));
+        setVisibleVideos((prev) => updateSetMembership(prev, filePath, false));
       refreshTagList();
     };
     const handleFileChanged = (videoFile) => {
@@ -1598,34 +1643,25 @@ function App() {
   }, [zoomLevel, setZoomClass]);
 
   // aspect ratio updates from cards
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
-    },
-    [updateAspectRatio]
-  );
+    const handleVideoLoaded = useCallback(
+      (videoId, aspectRatio) => {
+        setLoadedVideos((prev) => updateSetMembership(prev, videoId, true));
+        updateAspectRatio(videoId, aspectRatio);
+      },
+      [updateAspectRatio]
+    );
 
-  const handleVideoStartLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
+    const handleVideoStartLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, true));
+    }, []);
 
-  const handleVideoStopLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => {
-      const ns = new Set(prev);
-      ns.delete(videoId);
-      return ns;
-    });
-  }, []);
+    const handleVideoStopLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+    }, []);
 
-  const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
-    setVisibleVideos((prev) => {
-      const ns = new Set(prev);
-      if (isVisible) ns.add(videoId);
-      else ns.delete(videoId);
-      return ns;
-    });
-  }, []);
+    const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
+      setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
+    }, []);
 
   const handleElectronFolderSelection = useCallback(
     async (folderPath) => {
@@ -1876,13 +1912,9 @@ function App() {
     if (isLayoutTransitioning) return undefined;
     const id = setTimeout(() => {
       const victims = videoCollection.performCleanup?.();
-      if (Array.isArray(victims) && victims.length) {
-        setLoadedVideos((prev) => {
-          const ns = new Set(prev);
-          for (const vid of victims) ns.delete(vid);
-          return ns;
-        });
-      }
+        if (Array.isArray(victims) && victims.length) {
+          setLoadedVideos((prev) => removeManyFromSet(prev, victims));
+        }
     }, 0);
     return () => clearTimeout(id);
   }, [
@@ -2077,52 +2109,41 @@ function App() {
                   <VideoCard
                     key={video.id}
                     video={video}
-                    ioRoot={gridRef}
                     observeIntersection={ioRegistry.observe}
                     unobserveIntersection={ioRegistry.unobserve}
+                    scrollRootRef={scrollContainerRef}
                     selected={selection.selected.has(video.id)}
                     onSelect={(...args) => handleVideoSelect(...args)}
                     onContextMenu={handleCardContextMenu}
                     onNativeDragStart={handleNativeDragStart}
                     showFilenames={showFilenames}
                     // Video Collection Management
-                    canLoadMoreVideos={() =>
-                      videoCollection.canLoadVideo(video.id)
+                    canLoadMoreVideos={(opts) =>
+                      videoCollection.canLoadVideo(video.id, opts)
                     }
                     isLoading={loadingVideos.has(video.id)}
                     isLoaded={loadedVideos.has(video.id)}
                     isVisible={visibleVideos.has(video.id)}
                     isPlaying={videoCollection.isVideoPlaying(video.id)}
                     isNear={ioRegistry.isNear}
+                    layoutEpoch={layoutEpoch}
                     // Lifecycle callbacks
                     onStartLoading={handleVideoStartLoading}
                     onStopLoading={handleVideoStopLoading}
                     onVideoLoad={handleVideoLoaded}
                     onVisibilityChange={handleVideoVisibilityChange}
                     // Media events → update orchestrator + actual playing count
-                    onVideoPlay={(id) => {
-                      videoCollection.reportStarted(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.add(id);
-                        return next;
-                      });
-                    }}
-                    onVideoPause={(id) => {
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
-                    onPlayError={(id) => {
-                      videoCollection.reportPlayError(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
-                    }}
+                      onVideoPlay={(id) => {
+                        videoCollection.reportStarted(id);
+                        setActualPlaying((prev) => updateSetMembership(prev, id, true));
+                      }}
+                      onVideoPause={(id) => {
+                        setActualPlaying((prev) => updateSetMembership(prev, id, false));
+                      }}
+                      onPlayError={(id) => {
+                        videoCollection.reportPlayError(id);
+                        setActualPlaying((prev) => updateSetMembership(prev, id, false));
+                      }}
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}

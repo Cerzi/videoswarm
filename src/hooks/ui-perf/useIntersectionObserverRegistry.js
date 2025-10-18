@@ -35,6 +35,10 @@ export default function useIntersectionObserverRegistry(
   const currentRootMarginRef = useRef(rootMargin);
   const nearPxRef = useRef(nearPx);
 
+  useEffect(() => {
+    nearPxRef.current = Math.max(0, Number.isFinite(nearPx) ? nearPx : 0);
+  }, [nearPx]);
+
   // Resolve current root viewport rect (for visibility/near checks)
   const getRootRect = useCallback(() => {
     const rootEl = rootRef?.current ?? null;
@@ -108,6 +112,46 @@ export default function useIntersectionObserverRegistry(
     };
   }, [rootRef, rootMargin, threshold, handleEntries]);
 
+  const evaluateTarget = useCallback(
+    (el, rootRect, time) => {
+      if (!el) return;
+
+      const id = idsRef.current.get(el);
+      if (id == null) return;
+
+      const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!rect) return;
+
+      const cb = handlersRef.current.get(el);
+      const resolvedRootRect = rootRect || getRootRect();
+      const timestamp =
+        time ??
+        (typeof performance !== "undefined" && typeof performance.now === "function"
+          ? performance.now()
+          : Date.now());
+
+      const entry = {
+        target: el,
+        boundingClientRect: rect,
+        intersectionRect: rect,
+        isIntersecting: false,
+        intersectionRatio: 0,
+        time: timestamp,
+      };
+
+      updateFlags(entry, id, resolvedRootRect);
+
+      const isVisible = visibleIdsRef.current.has(id);
+      entry.isIntersecting = isVisible;
+      entry.intersectionRatio = isVisible ? 1 : 0;
+
+      if (cb) {
+        cb(isVisible, entry);
+      }
+    },
+    [getRootRect, updateFlags]
+  );
+
   // Public API: observe supports (el, cb) and (el, id, cb)
   const observe = useCallback((el, idOrCb, maybeCb) => {
     if (!el) return;
@@ -127,7 +171,10 @@ export default function useIntersectionObserverRegistry(
     if (observerRef.current) {
       try { observerRef.current.observe(el); } catch {}
     }
-  }, []);
+
+    // Immediately evaluate the target so visibility reflects current layout
+    evaluateTarget(el);
+  }, [evaluateTarget]);
 
   const unobserve = useCallback((el) => {
     if (!el) return;
@@ -149,11 +196,23 @@ export default function useIntersectionObserverRegistry(
 
   // Tuning knobs (no observer rebuild for nearPx)
   const setNearPx = useCallback((px) => {
-    const v = Math.max(0, (px | 0));
+    const v = Math.max(0, Number.isFinite(px) ? Math.floor(px) : 0);
     nearPxRef.current = v;
   }, []);
   const getNearPx = useCallback(() => nearPxRef.current, []);
   const getRootMargin = useCallback(() => currentRootMarginRef.current, []);
+
+  const refresh = useCallback(() => {
+    const rootRect = getRootRect();
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+
+    for (const el of handlersRef.current.keys()) {
+      evaluateTarget(el, rootRect, now);
+    }
+  }, [evaluateTarget, getRootRect]);
 
   return useMemo(() => ({
     observe,
@@ -163,5 +222,15 @@ export default function useIntersectionObserverRegistry(
     setNearPx,
     getNearPx,
     getRootMargin,
-  }), [observe, unobserve, isVisible, isNear, setNearPx, getNearPx, getRootMargin]);
+    refresh,
+  }), [
+    observe,
+    unobserve,
+    isVisible,
+    isNear,
+    setNearPx,
+    getNearPx,
+    getRootMargin,
+    refresh,
+  ]);
 }

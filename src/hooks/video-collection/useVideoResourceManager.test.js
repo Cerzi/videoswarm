@@ -84,6 +84,35 @@ describe('useVideoResourceManager (current behavior)', () => {
     expect(result.current.canLoadVideo('2')).toBe(false);
   });
 
+  test('canLoadVideo treats assumeVisible option as a visibility override', async () => {
+    const progressiveVideos = makeVideos(40);
+    const visible = new Set();
+    const loaded = new Set();
+    const loading = new Set();
+
+    const { result } = renderHook(() =>
+      useVideoResourceManager({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear: () => false,
+        playingCap: 24,
+      })
+    );
+
+    await flushAsync();
+
+    // Without override the id is considered far and blocked once loaders are saturated
+    const { maxConcurrentLoading } = result.current.limits;
+    for (let i = 0; i < maxConcurrentLoading; i++) loading.add(`L${i}`);
+    expect(result.current.canLoadVideo('v-stuck')).toBe(false);
+
+    // With assumeVisible it is treated like a visible tile and allowed despite loader usage
+    expect(result.current.canLoadVideo('v-stuck', { assumeVisible: true })).toBe(true);
+  });
+
   test('performCleanup returns victim ids when over the limit; never evicts playing or visible', async () => {
     const progressiveVideos = makeVideos(200);
     const visible = new Set(['1', '2', '3']);

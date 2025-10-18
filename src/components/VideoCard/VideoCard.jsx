@@ -20,7 +20,7 @@ const VideoCard = memo(function VideoCard({
   showFilenames = true,
 
   // limits & callbacks (owned by parent/orchestrator)
-  canLoadMoreVideos,      // () => boolean
+  canLoadMoreVideos,      // (options?) => boolean
   onStartLoading,         // (id)
   onStopLoading,          // (id)
   onVideoLoad,            // (id, aspectRatio)
@@ -35,6 +35,8 @@ const VideoCard = memo(function VideoCard({
   observeIntersection,    // (el, id, cb)
   unobserveIntersection,  // (el)=>void
   isNear = () => true,
+  scrollRootRef = null,
+  layoutEpoch = 0,
 
   // optional init scheduler
   scheduleInit = null,
@@ -60,11 +62,30 @@ const VideoCard = memo(function VideoCard({
   const permanentErrorRef = useRef(false);
   const retryAttemptsRef   = useRef(0);
   const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
+  const lastFailureAtRef   = useRef(0);
 
   const [errorText, setErrorText] = useState(null);
-  const [isNearViewport, setIsNearViewport] = useState(() =>
-    (isNear?.(videoId) ?? true) === true
-  );
+  const initialNear = (isNear?.(videoId) ?? true) === true;
+  const [isNearViewport, setIsNearViewport] = useState(initialNear);
+  const nearStateRef = useRef(initialNear);
+  
+  const lastObservedVisibilityRef = useRef(Boolean(isVisible));
+
+  const hasRenderableVideo = useCallback(() => {
+    const el = videoRef.current;
+    if (!el) return false;
+    if (el.dataset?.adopted === "modal") return true;
+
+    const container = videoContainerRef.current;
+    if (!container) {
+      return typeof el.isConnected === "boolean" ? el.isConnected : true;
+    }
+
+    if (!container.contains(el)) return false;
+    if (typeof el.isConnected === "boolean" && !el.isConnected) return false;
+
+    return true;
+  }, []);
   const fullPath = video?.fullPath ?? null;
   const thumbSignature = useMemo(() => signatureForVideo(video), [
     video.fullPath,
@@ -102,8 +123,40 @@ const VideoCard = memo(function VideoCard({
     return !!(el && el.dataset && el.dataset.adopted === "modal");
   }, []);
 
+  const syncVideoIntoContainer = useCallback((container, el) => {
+    if (!container || !el) return;
+    if (el.dataset?.adopted === "modal") return;
+
+    const nodes = Array.from(container.childNodes || []);
+    for (const node of nodes) {
+      if (node === el) continue;
+      const isVideoNode =
+        typeof node?.nodeName === "string" && node.nodeName.toLowerCase() === "video";
+      if (isVideoNode && node?.parentNode === container) {
+        try {
+          container.removeChild(node);
+        } catch {}
+      }
+    }
+
+    const parent = el.parentNode;
+    if (parent && parent !== container && parent.contains?.(el)) {
+      try {
+        parent.removeChild(el);
+      } catch {}
+    }
+
+    if (el.parentNode !== container) {
+      container.appendChild(el);
+    } else if (container.lastChild !== el) {
+      container.appendChild(el);
+    }
+  }, []);
+
   useEffect(() => {
-    visibilityRef.current = Boolean(isVisible);
+    const nextVisible = Boolean(isVisible);
+    visibilityRef.current = nextVisible;
+    lastObservedVisibilityRef.current = nextVisible;
   }, [isVisible]);
 
   useEffect(() => {
@@ -111,7 +164,9 @@ const VideoCard = memo(function VideoCard({
   }, [fullPath]);
 
   useEffect(() => {
-    setIsNearViewport((isNear?.(videoId) ?? true) === true);
+    const nextNear = (isNear?.(videoId) ?? true) === true;
+    nearStateRef.current = nextNear;
+    setIsNearViewport((prev) => (prev === nextNear ? prev : nextNear));
   }, [isNear, videoId]);
 
   useEffect(() => {
@@ -163,6 +218,7 @@ const VideoCard = memo(function VideoCard({
       loadRequestedRef.current = false;
       setLoaded(false);
       setLoading(false);
+      lastFailureAtRef.current = 0;
     }
   }, [video.id, video.size, video.dateModified]);
 
@@ -188,63 +244,6 @@ const VideoCard = memo(function VideoCard({
       setLoading(false);
     }
   }, [isLoaded, isLoading, isAdoptedByModal]);
-
-  // IO registration for visibility
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el || !observeIntersection || !unobserveIntersection) return;
-
-    const handleVisible = (nowVisible /* boolean */, entry) => {
-      if (entry) {
-        setIsNearViewport((isNear?.(videoId) ?? true) === true);
-      }
-      onVisibilityChange?.(videoId, nowVisible);
-
-      if (
-        nowVisible &&
-        !loaded &&
-        !loading &&
-        !loadRequestedRef.current &&
-        !videoRef.current &&
-        !permanentErrorRef.current &&
-        (canLoadMoreVideos?.() ?? true)
-      ) {
-        loadVideo();
-      }
-    };
-
-    observeIntersection(el, videoId, handleVisible);
-    return () => {
-      unobserveIntersection(el);
-    };
-  }, [observeIntersection, unobserveIntersection, videoId, loaded, loading, canLoadMoreVideos, onVisibilityChange]);
-
-  // Backup trigger if parent already flags visible
-  useEffect(() => {
-    if (
-      isVisible &&
-      !loaded &&
-      !loading &&
-      !loadRequestedRef.current &&
-      !videoRef.current &&
-      !permanentErrorRef.current &&
-      (canLoadMoreVideos?.() ?? true)
-    ) {
-      Promise.resolve().then(() => {
-        if (
-          isVisible &&
-          !loaded &&
-          !loading &&
-          !loadRequestedRef.current &&
-          !videoRef.current &&
-          !permanentErrorRef.current &&
-          (canLoadMoreVideos?.() ?? true)
-        ) {
-          loadVideo();
-        }
-      });
-    }
-  }, [isVisible, loaded, loading, canLoadMoreVideos]);
 
   // Orchestrated play/pause + error handling
   useEffect(() => {
@@ -322,9 +321,11 @@ const VideoCard = memo(function VideoCard({
   }, [loaded, isPlaying, isVisible, isAdoptedByModal, videoId]);
 
   // create & load <video>
-  const loadVideo = useCallback(() => {
-    if (loading || loaded || loadRequestedRef.current || videoRef.current) return;
-    if (!(canLoadMoreVideos?.() ?? true)) return;
+  const loadVideo = useCallback((options = {}) => {
+    if (loading || loadRequestedRef.current) return;
+    if (hasRenderableVideo()) return;
+    const allowLoad = canLoadMoreVideos?.(options);
+    if (allowLoad === false) return;
     if (permanentErrorRef.current) return;
     setErrorText(null);
 
@@ -354,6 +355,7 @@ const VideoCard = memo(function VideoCard({
       const finishStopLoading = () => {
         onStopLoading?.(videoId);
         setLoading(false);
+        lastFailureAtRef.current = 0;
       };
 
       const onMeta = () => {
@@ -375,9 +377,7 @@ const VideoCard = memo(function VideoCard({
         videoRef.current = el;
 
         const container = videoContainerRef.current;
-        if (container && !container.contains(el) && !(el.dataset?.adopted === "modal")) {
-          container.appendChild(el);
-        }
+        syncVideoIntoContainer(container, el);
       };
 
       const onErr = async (e) => {
@@ -393,6 +393,10 @@ const VideoCard = memo(function VideoCard({
         const code = err?.code ?? null;
         const isLocal = Boolean(video.isElectronFile && video.fullPath);
         const looksTransientLocal = isLocal && code === 4 && retryAttemptsRef.current < 2;
+
+        if (!looksTransientLocal) {
+          lastFailureAtRef.current = Date.now();
+        }
 
         // Soft recover once
         try {
@@ -436,9 +440,9 @@ const VideoCard = memo(function VideoCard({
               !loading &&
               !loadRequestedRef.current &&
               !videoRef.current &&
-              (canLoadMoreVideos?.() ?? true)
+              (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
             ) {
-              loadVideo();
+              loadVideo({ assumeVisible: true });
             }
           }, 1200);
         }
@@ -488,12 +492,155 @@ const VideoCard = memo(function VideoCard({
     isVisible,
     canLoadMoreVideos,
     loading,
-    loaded,
+    hasRenderableVideo,
     onStartLoading,
     onStopLoading,
     onVideoLoad,
     onPlayError,
     scheduleInit,
+    syncVideoIntoContainer,
+  ]);
+
+  const ensureVisibleAndLoad = useCallback(() => {
+    if (loading || loadRequestedRef.current || hasRenderableVideo()) {
+      return false;
+    }
+    if (permanentErrorRef.current) return false;
+    const lastFailureAt = lastFailureAtRef.current;
+    if (lastFailureAt && Date.now() - lastFailureAt < 2000) return false;
+
+    const card = cardRef.current;
+    if (!card || typeof card.getBoundingClientRect !== "function") return false;
+
+    const rect = card.getBoundingClientRect();
+    const rootEl = scrollRootRef?.current;
+    let top = 0;
+    let bottom = typeof window !== "undefined" ? window.innerHeight : 0;
+
+    if (rootEl && typeof rootEl.getBoundingClientRect === "function") {
+      const rootRect = rootEl.getBoundingClientRect();
+      top = rootRect.top;
+      bottom = rootRect.bottom;
+    }
+
+    const inView = rect.bottom > top && rect.top < bottom;
+    let assumeVisible = inView;
+    if (!inView) {
+      const degenerateHeight = Math.abs(rect.bottom - rect.top);
+      const degenerateWidth = Math.abs(rect.right - rect.left);
+      const isDegenerate = degenerateHeight < 1 && degenerateWidth < 1;
+      if (isDegenerate && visibilityRef.current) {
+        assumeVisible = true;
+      } else {
+        return false;
+      }
+    }
+
+    const allow = canLoadMoreVideos?.(assumeVisible ? { assumeVisible: true } : undefined);
+    if (allow === false) return false;
+
+    loadVideo(assumeVisible ? { assumeVisible: true } : undefined);
+    return true;
+  }, [
+    canLoadMoreVideos,
+    loadVideo,
+    loading,
+    scrollRootRef,
+    hasRenderableVideo,
+  ]);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    const container = videoContainerRef.current;
+    syncVideoIntoContainer(container, el);
+  }, [layoutEpoch, loaded, showFilenames, syncVideoIntoContainer]);
+
+  useEffect(() => {
+    let raf = 0;
+    const run = () => {
+      ensureVisibleAndLoad();
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      raf = requestAnimationFrame(run);
+      return () => {
+        if (raf && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(raf);
+        }
+      };
+    }
+
+    run();
+    return undefined;
+  }, [ensureVisibleAndLoad, layoutEpoch]);
+
+  // IO registration for visibility
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !observeIntersection || !unobserveIntersection) return;
+
+    const handleVisible = (nowVisible /* boolean */, entry) => {
+      if (entry) {
+        const nextNear = (isNear?.(videoId) ?? true) === true;
+        if (nearStateRef.current !== nextNear) {
+          nearStateRef.current = nextNear;
+          setIsNearViewport((prev) => (prev === nextNear ? prev : nextNear));
+        }
+      }
+
+      if (lastObservedVisibilityRef.current !== nowVisible) {
+        lastObservedVisibilityRef.current = nowVisible;
+        onVisibilityChange?.(videoId, nowVisible);
+      }
+
+      if (nowVisible) {
+        ensureVisibleAndLoad();
+      }
+    };
+
+    observeIntersection(el, videoId, handleVisible);
+    return () => {
+      unobserveIntersection(el);
+    };
+  }, [
+    observeIntersection,
+    unobserveIntersection,
+    videoId,
+    onVisibilityChange,
+    ensureVisibleAndLoad,
+  ]);
+
+  // Backup trigger if parent already flags visible
+  useEffect(() => {
+    if (
+      isVisible &&
+      !loaded &&
+      !loading &&
+      !loadRequestedRef.current &&
+      !videoRef.current &&
+      !permanentErrorRef.current &&
+      (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
+    ) {
+      Promise.resolve().then(() => {
+        if (
+          isVisible &&
+          !loaded &&
+          !loading &&
+          !loadRequestedRef.current &&
+          !videoRef.current &&
+          !permanentErrorRef.current &&
+          (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
+        ) {
+          ensureVisibleAndLoad();
+        }
+      });
+    }
+  }, [
+    isVisible,
+    loaded,
+    loading,
+    canLoadMoreVideos,
+    ensureVisibleAndLoad,
   ]);
 
   // Cancel load timeout if we become invisible
@@ -583,7 +730,9 @@ const VideoCard = memo(function VideoCard({
       );
     }
 
-    const canLoad = canLoadMoreVideos?.() ?? true;
+    const canLoad = canLoadMoreVideos?.(
+      isVisible ? { assumeVisible: true } : undefined
+    ) ?? true;
     const statusText = loading
       ? "Loading video…"
       : canLoad
@@ -647,6 +796,7 @@ const VideoCard = memo(function VideoCard({
       data-filename={video.name}
       data-video-id={videoId}
       data-loaded={loaded.toString()}
+      data-loading={loading.toString()}
       data-aspect-ratio={effectiveAspectRatio}
       style={{
         userSelect: "none",

@@ -11,6 +11,7 @@ export default function useChunkedMasonry({
   columnGapFallback = 12,
   onOrderChange,
   onMetricsChange,
+  onLayoutComplete,
 }) {
   const aspectRatioCacheRef = useRef(new Map());
   const cachedGridMeasurementsRef = useRef(null);
@@ -232,6 +233,21 @@ export default function useChunkedMasonry({
           }
 
           isLayingOutRef.current = false;
+          if (typeof onLayoutComplete === "function") {
+            try {
+              const metrics = cachedGridMeasurementsRef.current || null;
+              onLayoutComplete({
+                columnHeights: columnHeights.slice(),
+                maxHeight,
+                metrics,
+              });
+            } catch (err) {
+              if (process.env.NODE_ENV !== "production") {
+                // eslint-disable-next-line no-console
+                console.error("useChunkedMasonry onLayoutComplete error", err);
+              }
+            }
+          }
           if (relayoutRequestedRef.current) {
             relayoutRequestedRef.current = false;
             scheduleLayout();
@@ -247,6 +263,7 @@ export default function useChunkedMasonry({
     chunkSize,
     defaultAspect,
     onOrderChange,
+    onLayoutComplete,
   ]);
 
   // public API: call when item AR becomes known

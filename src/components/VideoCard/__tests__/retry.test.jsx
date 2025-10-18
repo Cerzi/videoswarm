@@ -50,6 +50,19 @@ async function waitListener(listeners, name, steps = 12, stepMs = 50) {
   throw new Error(`Listener '${name}' not attached`);
 }
 
+const makeScrollRootRef = () => ({
+  current: {
+    getBoundingClientRect: () => ({
+      top: 0,
+      bottom: 1200,
+      left: 0,
+      right: 1920,
+      width: 1920,
+      height: 1200,
+    }),
+  },
+});
+
 describe("VideoCard local transient errors", () => {
   let createSpy, realCreate, realRAF, realCAF;
 
@@ -103,6 +116,7 @@ describe("VideoCard local transient errors", () => {
         isLoaded={false}
         isLoading={false}
         canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
         // onVideoLoad not asserted anymore (no longer guaranteed)
       />
     );
@@ -178,6 +192,7 @@ describe("VideoCard local transient errors", () => {
         isLoaded={false}
         isLoading={false}
         canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
       />
     );
 
@@ -232,6 +247,7 @@ describe("VideoCard local transient errors", () => {
         isLoaded={false}
         isLoading={false}
         canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
       />
     );
 
@@ -256,6 +272,7 @@ describe("VideoCard local transient errors", () => {
         isLoaded={false}
         isLoading={false}
         canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
       />
     );
 
