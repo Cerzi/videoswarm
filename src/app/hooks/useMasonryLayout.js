@@ -38,6 +38,7 @@ export function useMasonryLayout({
   const layoutSummaryRef = useRef({ totalHeight: 0, metrics: null });
   const measuredPositionsRef = useRef([]);
   const itemPositionMapRef = useRef(new Map());
+  const logicalIndexMapRef = useRef(new Map());
 
   const beginLayoutHold = useCallback(() => {
     let released = false;
@@ -139,14 +140,29 @@ export function useMasonryLayout({
     (info = {}) => {
       if (info && Array.isArray(info.positions)) {
         const map = itemPositionMapRef.current;
+        const indexLookup = logicalIndexMapRef.current;
+        const nextMeasured = [];
         info.positions.forEach((pos) => {
           if (!pos || !pos.id) return;
+          const logicalIndex = indexLookup.get(pos.id);
+          const y = Number.isFinite(pos.y) ? pos.y : 0;
+          const height = Number.isFinite(pos.height) ? pos.height : 0;
           map.set(pos.id, {
-            y: Number.isFinite(pos.y) ? pos.y : 0,
-            height: Number.isFinite(pos.height) ? pos.height : 0,
+            index: typeof logicalIndex === "number" ? logicalIndex : null,
+            y,
+            height,
           });
+          if (typeof logicalIndex === "number") {
+            nextMeasured.push({
+              id: pos.id,
+              index: logicalIndex,
+              y,
+              height,
+            });
+          }
         });
-        measuredPositionsRef.current = info.positions.slice();
+        nextMeasured.sort((a, b) => a.y - b.y || a.index - b.index);
+        measuredPositionsRef.current = nextMeasured;
       }
 
       if (info && (Number.isFinite(info.maxHeight) || info.metrics)) {
@@ -164,12 +180,12 @@ export function useMasonryLayout({
       }
 
       const runRefresh = () => {
-      masonryRefreshRafRef.current = 0;
-      if (ioRegistry?.refresh) {
-        ioRegistry.refresh();
-      }
-      bumpLayoutEpoch();
-    };
+        masonryRefreshRafRef.current = 0;
+        if (ioRegistry?.refresh) {
+          ioRegistry.refresh();
+        }
+        bumpLayoutEpoch();
+      };
 
       if (typeof requestAnimationFrame === "function") {
         masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
@@ -224,6 +240,43 @@ export function useMasonryLayout({
   );
 
   const orderedIds = useMemo(() => orderedVideos.map((v) => v.id), [orderedVideos]);
+
+  const logicalIndexMap = useMemo(() => {
+    const map = new Map();
+    orderedIds.forEach((id, idx) => {
+      if (!id) return;
+      map.set(id, idx);
+    });
+    return map;
+  }, [orderedIds]);
+
+  useEffect(() => {
+    logicalIndexMapRef.current = logicalIndexMap;
+    const measured = measuredPositionsRef.current;
+    if (measured.length) {
+      measuredPositionsRef.current = measured
+        .filter((pos) => logicalIndexMap.has(pos.id))
+        .map((pos) => ({
+          id: pos.id,
+          index: logicalIndexMap.get(pos.id) ?? pos.index,
+          y: pos.y,
+          height: pos.height,
+        }));
+    }
+    const positionMap = itemPositionMapRef.current;
+    positionMap.forEach((value, id) => {
+      if (!logicalIndexMap.has(id)) {
+        positionMap.delete(id);
+        return;
+      }
+      const logicalIndex = logicalIndexMap.get(id);
+      positionMap.set(id, {
+        index: typeof logicalIndex === "number" ? logicalIndex : null,
+        y: value?.y ?? 0,
+        height: value?.height ?? 0,
+      });
+    });
+  }, [logicalIndexMap]);
 
   const averageAspectRatio = useMemo(() => {
     const sampleLimit = 80;
@@ -365,15 +418,6 @@ export function useMasonryLayout({
 
   const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
 
-  const orderIndexMap = useMemo(() => {
-    const map = new Map();
-    orderForRange.forEach((id, idx) => {
-      if (!id) return;
-      map.set(id, idx);
-    });
-    return map;
-  }, [orderForRange]);
-
   useEffect(() => {
     if (!orderedVideos.length) return;
     const cache = metadataAspectCacheRef.current;
@@ -423,12 +467,12 @@ export function useMasonryLayout({
 
   const getEstimatedOffsetForIndex = useCallback(
     (index) => {
-      if (!orderForRange.length) return 0;
+      if (!orderedIds.length) return 0;
       const clampedIndex = Math.max(
         0,
-        Math.min(orderForRange.length - 1, Math.floor(index ?? 0))
+        Math.min(orderedIds.length - 1, Math.floor(index ?? 0))
       );
-      const id = orderForRange[clampedIndex];
+      const id = orderedIds[clampedIndex];
       if (id) {
         const pos = itemPositionMapRef.current.get(id);
         if (pos && Number.isFinite(pos.y)) {
@@ -454,7 +498,7 @@ export function useMasonryLayout({
       return approxRow * Math.max(1, approxHeight);
     },
     [
-      orderForRange,
+      orderedIds,
       approxTileHeight,
       derivedColumnCount,
       masonryMetrics.columnGap,
@@ -463,24 +507,18 @@ export function useMasonryLayout({
 
   const getEstimatedIndexForOffset = useCallback(
     (offset) => {
-      if (!orderForRange.length || !Number.isFinite(offset)) {
+      if (!orderedIds.length || !Number.isFinite(offset)) {
         return 0;
       }
 
       const measured = measuredPositionsRef.current;
+      const indexLookup = logicalIndexMapRef.current;
       if (measured.length) {
         const first = measured[0];
-        const last = measured[measured.length - 1];
         if (first && Number.isFinite(first.y) && offset <= first.y) {
-          const idx = orderIndexMap.get(first.id);
+          const idx = first.index ?? indexLookup.get(first.id);
           if (typeof idx === "number") {
-            return idx;
-          }
-        }
-        if (last && Number.isFinite(last.y) && offset >= last.y) {
-          const idx = orderIndexMap.get(last.id);
-          if (typeof idx === "number") {
-            return idx;
+            return Math.max(0, Math.min(idx, orderedIds.length - 1));
           }
         }
 
@@ -497,12 +535,34 @@ export function useMasonryLayout({
             high = mid - 1;
           }
         }
+
         const candidate = measured[Math.min(bestIdx, measured.length - 1)];
         if (candidate) {
-          const idx = orderIndexMap.get(candidate.id);
-          if (typeof idx === "number") {
-            return idx;
-          }
+          const idx =
+            candidate.index ?? indexLookup.get(candidate.id) ?? 0;
+          const baseIndex = Math.max(0, Math.min(idx, orderedIds.length - 1));
+          const baseY = Number.isFinite(candidate.y) ? candidate.y : 0;
+
+          const summary = layoutSummaryRef.current;
+          const metrics = summary.metrics || masonryMetrics;
+          const columnCount = Math.max(
+            1,
+            Number.isFinite(metrics?.columnCount)
+              ? metrics.columnCount
+              : derivedColumnCount || 1
+          );
+          const columnGap = Number.isFinite(metrics?.columnGap)
+            ? metrics.columnGap
+            : Number.isFinite(masonryMetrics.columnGap)
+            ? masonryMetrics.columnGap
+            : 0;
+          const approxHeight = approxTileHeight + columnGap;
+          const delta = Math.max(0, offset - baseY);
+          const approxRows = delta / Math.max(1, approxHeight);
+          const approxIndex = Math.floor(
+            baseIndex + approxRows * Math.max(1, columnCount)
+          );
+          return Math.max(0, Math.min(orderedIds.length - 1, approxIndex));
         }
       }
 
@@ -524,12 +584,11 @@ export function useMasonryLayout({
       const approxIndex = approxRow * Math.max(1, columnCount);
       return Math.max(
         0,
-        Math.min(orderForRange.length - 1, Math.floor(approxIndex))
+        Math.min(orderedIds.length - 1, Math.floor(approxIndex))
       );
     },
     [
-      orderForRange,
-      orderIndexMap,
+      orderedIds,
       approxTileHeight,
       derivedColumnCount,
       masonryMetrics.columnGap,
@@ -545,13 +604,13 @@ export function useMasonryLayout({
       ? masonryMetrics.columnGap
       : 0;
     const columnCount = Math.max(1, derivedColumnCount || 1);
-    const approxRows = Math.ceil(orderForRange.length / columnCount);
+    const approxRows = Math.ceil(orderedIds.length / columnCount);
     return approxRows * (approxTileHeight + columnGap);
   }, [
     approxTileHeight,
     derivedColumnCount,
     masonryMetrics.columnGap,
-    orderForRange.length,
+    orderedIds.length,
   ]);
 
   useEffect(() => {
@@ -563,7 +622,7 @@ export function useMasonryLayout({
       ? masonryMetrics.columnGap
       : 0;
     const columnCount = Math.max(1, derivedColumnCount || 1);
-    const approxRows = Math.ceil(orderForRange.length / columnCount);
+    const approxRows = Math.ceil(orderedIds.length / columnCount);
     const approxHeight = approxRows * (approxTileHeight + columnGap);
     const measuredHeight = Number.isFinite(summary.totalHeight)
       ? summary.totalHeight
@@ -601,7 +660,7 @@ export function useMasonryLayout({
     approxTileHeight,
     derivedColumnCount,
     masonryMetrics.columnGap,
-    orderForRange.length,
+    orderedIds.length,
     layoutEpoch,
   ]);
 
