@@ -571,15 +571,30 @@ export function useMasonryLayout({
     const targetHeight = Math.max(0, measuredHeight, approxHeight);
 
     if (!targetHeight) {
+      if (grid.dataset?.estimatedHeight) {
+        delete grid.dataset.estimatedHeight;
+      }
       if (grid.style.minHeight) {
         grid.style.minHeight = "";
+      }
+      if (grid.style.height) {
+        grid.style.height = "";
       }
       return;
     }
 
-    const px = `${Math.ceil(targetHeight)}px`;
+    const nextHeight = Math.ceil(targetHeight);
+    const px = `${nextHeight}px`;
+
+    if (grid.dataset) {
+      grid.dataset.estimatedHeight = String(nextHeight);
+    }
+
     if (grid.style.minHeight !== px) {
       grid.style.minHeight = px;
+    }
+    if (grid.style.height !== px) {
+      grid.style.height = px;
     }
   }, [
     gridRef,

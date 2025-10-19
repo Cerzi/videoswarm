@@ -216,6 +216,32 @@ describe('useChunkedMasonry – core layout & order', () => {
     expect(order2).not.toEqual(order1);
   });
 
+  test('grid height respects estimated height dataset during layout', () => {
+    const grid = makeGrid({ width: 630 });
+    ['a', 'b', 'c'].forEach((id) => grid.appendChild(makeItem(id)));
+    grid.dataset.estimatedHeight = '4800';
+
+    const gridRef = { current: grid };
+    const { result } = renderHook(() =>
+      useChunkedMasonry({
+        gridRef,
+        defaultAspect: 1,
+      })
+    );
+
+    act(() => flushRaf(5));
+    expect(parseFloat(grid.style.height)).toBeGreaterThanOrEqual(4800);
+
+    grid.dataset.estimatedHeight = '6200';
+    act(() => {
+      result.current.onItemsChanged();
+      flushRaf(5);
+    });
+    expect(parseFloat(grid.style.height)).toBeGreaterThanOrEqual(6200);
+
+    grid.remove();
+  });
+
   test('does not emit onOrderChange if computed visual order is identical', () => {
     const grid = makeGrid({ width: 630 });
     ['a', 'b', 'c'].forEach((id) => grid.appendChild(makeItem(id)));
