@@ -214,7 +214,10 @@ export default function useChunkedMasonry({
           const maxHeight = columnHeights.length
             ? Math.max(...columnHeights)
             : 0;
-          grid.style.height = `${maxHeight}px`;
+          const estimated = Number.parseFloat(grid.dataset?.estimatedHeight || "");
+          const enforcedHeight = Number.isFinite(estimated) ? estimated : 0;
+          const finalHeight = Math.max(maxHeight, enforcedHeight, 0);
+          grid.style.height = `${Math.ceil(finalHeight)}px`;
           grid.style.position = "relative";
 
           // Compute and publish visual order (top-to-bottom, then left-to-right)
