@@ -613,21 +613,34 @@ export function useMasonryLayout({
     orderedIds.length,
   ]);
 
-  useEffect(() => {
-    const grid = gridRef.current;
-    if (!grid) return;
-
+  const estimatedScrollHeight = useMemo(() => {
     const summary = layoutSummaryRef.current;
+    const measuredHeight = Number.isFinite(summary.totalHeight)
+      ? summary.totalHeight
+      : 0;
     const columnGap = Number.isFinite(masonryMetrics.columnGap)
       ? masonryMetrics.columnGap
       : 0;
     const columnCount = Math.max(1, derivedColumnCount || 1);
     const approxRows = Math.ceil(orderedIds.length / columnCount);
     const approxHeight = approxRows * (approxTileHeight + columnGap);
+    return Math.max(measuredHeight, approxHeight, 0);
+  }, [
+    approxTileHeight,
+    derivedColumnCount,
+    masonryMetrics.columnGap,
+    orderedIds.length,
+  ]);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const summary = layoutSummaryRef.current;
     const measuredHeight = Number.isFinite(summary.totalHeight)
       ? summary.totalHeight
       : 0;
-    const targetHeight = Math.max(0, measuredHeight, approxHeight);
+    const targetHeight = estimatedScrollHeight;
 
     if (!targetHeight) {
       if (grid.dataset?.estimatedHeight) {
@@ -655,12 +668,10 @@ export function useMasonryLayout({
     if (grid.style.height !== px) {
       grid.style.height = px;
     }
+
   }, [
     gridRef,
-    approxTileHeight,
-    derivedColumnCount,
-    masonryMetrics.columnGap,
-    orderedIds.length,
+    estimatedScrollHeight,
     layoutEpoch,
   ]);
 
@@ -681,6 +692,7 @@ export function useMasonryLayout({
     getEstimatedOffsetForIndex,
     getEstimatedIndexForOffset,
     getScrollHeightEstimate,
+    estimatedScrollHeight,
     viewportHeightPx: viewportHeight,
   };
 }
