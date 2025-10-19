@@ -434,6 +434,15 @@ body {
 .video-grid.masonry-vertical,
 .video-grid.masonry-horizontal { position: relative; }
 
+.masonry-scroll-sentinel {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  opacity: 0;
+}
+
 /* Hide unpositioned items while measuring/placing */
 .video-grid.masonry-vertical .video-item,
 .video-grid.masonry-horizontal .video-item {

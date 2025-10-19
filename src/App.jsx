@@ -169,6 +169,7 @@ function App() {
     getEstimatedOffsetForIndex,
     getEstimatedIndexForOffset,
     getScrollHeightEstimate,
+    estimatedScrollHeight,
     viewportHeightPx,
   } = useMasonryLayout({
     videos,
@@ -221,6 +222,12 @@ function App() {
     const base = scrubTargetIndex + 1 + 60;
     return orderedVideos.length > 0 ? Math.min(orderedVideos.length, base) : base;
   }, [isTimelineScrubbing, scrubTargetIndex, orderedVideos.length]);
+
+  const scrollSentinelOffset = useMemo(() => {
+    if (!Number.isFinite(estimatedScrollHeight)) return 0;
+    const value = Math.floor(estimatedScrollHeight);
+    return value > 0 ? value - 1 : 0;
+  }, [estimatedScrollHeight]);
 
   const handleScrubStateChange = useCallback((active) => {
     isTimelineScrubbingRef.current = active;
@@ -1184,6 +1191,13 @@ function App() {
                     scheduleInit={scheduleInit}
                   />
                 ))}
+                {scrollSentinelOffset > 0 ? (
+                  <div
+                    className="masonry-scroll-sentinel"
+                    aria-hidden="true"
+                    style={{ top: `${scrollSentinelOffset}px` }}
+                  />
+                ) : null}
                 </div>
                 <ScrollRail
                   scrollRef={scrollContainerRef}
