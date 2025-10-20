@@ -68,4 +68,44 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.logicalOrder[0]).toBe("v0");
     expect(result.current.idToIndex.get("v5")).toBe(5);
   });
+
+  it("ensures visible range with temporary budget boosts", () => {
+    const videos = makeVideos(200);
+
+    const { result } = renderHook(() =>
+      useVideoCollection({
+        videos,
+        progressive: {
+          initial: 20,
+          batchSize: 10,
+          intervalMs: 1,
+          forceInterval: true,
+          maxVisible: 60,
+        },
+      })
+    );
+
+    expect(result.current.videosToRender.length).toBe(20);
+
+    act(() => {
+      result.current.ensureVisibleRange(40, 80, { priority: "rail" });
+    });
+    expect(result.current.videosToRender.length).toBeGreaterThanOrEqual(100);
+
+    act(() => {
+      vi.advanceTimersByTime(900);
+    });
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(result.current.videosToRender.length).toBeGreaterThanOrEqual(60);
+
+    act(() => {
+      vi.advanceTimersByTime(640);
+    });
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(result.current.videosToRender.length).toBeLessThanOrEqual(62);
+  });
 });

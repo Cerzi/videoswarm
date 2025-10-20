@@ -78,6 +78,12 @@ function App() {
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const ensureVisibleRangeRef = useRef(null);
+  const ensureVisibleRange = useCallback(
+    (start, end, options) =>
+      ensureVisibleRangeRef.current?.(start, end, options),
+    []
+  );
   const contentRegionRef = useRef(null);
   const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
@@ -180,6 +186,7 @@ function App() {
     zoomLevel,
     scrollContainerRef,
     gridRef,
+    ensureVisibleRange,
   });
 
   const layoutProjectionModel = _layoutProjectionModel;
@@ -725,6 +732,7 @@ function App() {
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
   });
+  ensureVisibleRangeRef.current = videoCollection.ensureVisibleRange;
 
   // fullscreen / context menu
   const {

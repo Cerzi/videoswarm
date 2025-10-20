@@ -1,5 +1,5 @@
 // hooks/video-collection/useProgressiveList.js
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Frame-budget aware progressive list.
@@ -46,6 +46,7 @@ export function useProgressiveList(
 
     // Optional viewport-aware clamp.
     maxVisible: maxVisibleOption = null,
+    controllerRef = null,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
@@ -57,9 +58,42 @@ export function useProgressiveList(
   const [visible, setVisible] = useState(() =>
     Math.min(initial, safe.length, resolvedMaxVisible ?? safe.length)
   );
+  const visibleRef = useRef(visible);
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+
+  const overrideRef = useRef(null);
+  const baseCapRef = useRef(
+    resolvedMaxVisible != null
+      ? Math.max(1, Math.floor(resolvedMaxVisible))
+      : Infinity
+  );
   const prevLenRef = useRef(safe.length);
   const didInitRef = useRef(false);
-  const maxVisibleRef = useRef(resolvedMaxVisible ?? Infinity);
+  const maxVisibleRef = useRef(
+    resolvedMaxVisible != null
+      ? Math.max(1, Math.floor(resolvedMaxVisible))
+      : Infinity
+  );
+
+  const refreshCap = useCallback(() => {
+    const base = baseCapRef.current;
+    const override = overrideRef.current;
+    let cap = base;
+    if (override != null && Number.isFinite(override) && override > 0) {
+      cap = Math.max(base, Math.floor(override));
+    }
+    if (Number.isFinite(cap)) {
+      const limited = safe.length ? Math.min(cap, safe.length) : cap;
+      maxVisibleRef.current = limited;
+      if (visibleRef.current > limited) {
+        setVisible(limited);
+      }
+    } else {
+      maxVisibleRef.current = safe.length || Infinity;
+    }
+  }, [safe.length]);
 
   // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
   useEffect(() => {
@@ -81,15 +115,13 @@ export function useProgressiveList(
   }, [safe.length]);
 
   useEffect(() => {
-    maxVisibleRef.current = resolvedMaxVisible ?? Infinity;
-    if (resolvedMaxVisible != null || safe.length < prevLenRef.current) {
-      setVisible((v) => {
-        const cap = Math.min(safe.length, maxVisibleRef.current);
-        return v > cap ? cap : v;
-      });
-    }
+    baseCapRef.current =
+      resolvedMaxVisible != null
+        ? Math.max(1, Math.floor(resolvedMaxVisible))
+        : Infinity;
+    refreshCap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedMaxVisible, safe.length]);
+  }, [resolvedMaxVisible, safe.length, refreshCap]);
 
   const maxCapForRender =
     resolvedMaxVisible != null
@@ -274,6 +306,50 @@ export function useProgressiveList(
 
     return () => clearInterval(timer);
   }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+
+  const setOverride = useCallback(
+    (cap) => {
+      if (cap == null) {
+        overrideRef.current = null;
+      } else {
+        const numeric = Math.floor(Number(cap));
+        overrideRef.current = Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+      }
+      refreshCap();
+    },
+    [refreshCap]
+  );
+
+  const ensureVisible = useCallback(
+    (count) => {
+      const desired = Math.max(0, Math.floor(Number(count) || 0));
+      if (desired <= 0) return visibleRef.current;
+      if (
+        Number.isFinite(maxVisibleRef.current) &&
+        desired > maxVisibleRef.current
+      ) {
+        setOverride(desired);
+      }
+      const cap = Number.isFinite(maxVisibleRef.current)
+        ? Math.min(maxVisibleRef.current, safe.length)
+        : safe.length;
+      const target = Math.min(cap || safe.length, desired);
+      setVisible((current) => (current >= target ? current : target));
+      return target;
+    },
+    [safe.length, setOverride]
+  );
+
+  useEffect(() => {
+    if (!controllerRef) return;
+    controllerRef.current = {
+      ensureVisible,
+      setMaxVisibleOverride: setOverride,
+      clearOverride: () => setOverride(null),
+      getVisible: () => visibleRef.current,
+      getCap: () => maxVisibleRef.current,
+    };
+  }, [controllerRef, ensureVisible, setOverride]);
 
   return safe.slice(0, visible);
 }
