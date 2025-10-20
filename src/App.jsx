@@ -260,6 +260,27 @@ function App() {
     orderedVideos.length > 0 &&
     scrollRailTotalHeight > 0;
 
+  const scrollRailGuardRef = useRef(null);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    if (!layoutProjectionEnabled) return;
+    const snapshot = {
+      enabled: layoutProjectionEnabled,
+      hasModel: Boolean(layoutProjectionModel),
+      total: orderedVideos.length,
+      totalHeight: Math.round(scrollRailTotalHeight),
+    };
+    const serialized = JSON.stringify(snapshot);
+    if (scrollRailGuardRef.current === serialized) return;
+    scrollRailGuardRef.current = serialized;
+    console.debug("[ScrollRail] guard", snapshot);
+  }, [
+    layoutProjectionEnabled,
+    layoutProjectionModel,
+    orderedVideos.length,
+    scrollRailTotalHeight,
+  ]);
+
   const { hadLongTaskRecently } = useLongTaskFlag();
 
   useEffect(() => {

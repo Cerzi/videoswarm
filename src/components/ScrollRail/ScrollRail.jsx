@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import "./ScrollRail.css";
 
 const clamp01 = (value) => {
@@ -7,6 +14,9 @@ const clamp01 = (value) => {
   if (value >= 1) return 1;
   return value;
 };
+
+const THUMB_HEIGHT = 24;
+const PREVIEW_HEIGHT = 36;
 
 export default function ScrollRail({
   total = 0,
@@ -26,6 +36,42 @@ export default function ScrollRail({
   const [preview, setPreview] = useState(null);
   const previewRef = useRef(null);
   const [focusIndex, setFocusIndex] = useState(0);
+  const [trackHeight, setTrackHeight] = useState(0);
+
+  const measureTrack = useCallback(() => {
+    const node = trackRef.current;
+    if (!node) return;
+    try {
+      const rect = node.getBoundingClientRect?.();
+      const nextHeight = rect && Number.isFinite(rect.height) ? rect.height : 0;
+      setTrackHeight((prev) => (Math.abs(prev - nextHeight) > 0.5 ? nextHeight : prev));
+    } catch {
+      setTrackHeight((prev) => (prev > 0 ? prev : 0));
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!hasItems) {
+      setTrackHeight(0);
+      return undefined;
+    }
+    measureTrack();
+    const node = trackRef.current;
+    let resizeObserver;
+    if (typeof ResizeObserver !== "undefined" && node) {
+      resizeObserver = new ResizeObserver(() => measureTrack());
+      resizeObserver.observe(node);
+    } else if (typeof window !== "undefined") {
+      window.addEventListener("resize", measureTrack);
+    }
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else if (typeof window !== "undefined") {
+        window.removeEventListener("resize", measureTrack);
+      }
+    };
+  }, [hasItems, measureTrack]);
 
   const clampIndex = useCallback(
     (index) => {
@@ -207,6 +253,17 @@ export default function ScrollRail({
     ? clamp01(activeEntry.offset / totalHeight)
     : activeIndex / Math.max(1, total);
 
+  const clampToTrack = useCallback(
+    (value, pad = 0) => {
+      if (!(trackHeight > 0)) return null;
+      const max = Math.max(trackHeight - pad, 0);
+      if (value < 0) return 0;
+      if (value > max) return max;
+      return value;
+    },
+    [trackHeight]
+  );
+
   const highlightStyle = useMemo(() => {
     if (!hasItems) return { top: "0%", height: "0%" };
     const startIndex = clampIndex(Math.min(rangeStart, rangeEnd));
@@ -222,6 +279,17 @@ export default function ScrollRail({
       ? clamp01(endOffset / totalHeight)
       : (endIndex + 1) / Math.max(1, total);
     const diff = Math.max(0.015, endRatio - startRatio);
+
+    if (trackHeight > 0) {
+      const startPx = clampToTrack(startRatio * trackHeight);
+      const endPx = clampToTrack(endRatio * trackHeight, 0);
+      const heightPx = Math.max(trackHeight * 0.015, (endPx ?? 0) - (startPx ?? 0));
+      return {
+        top: `${startPx ?? 0}px`,
+        height: `${Math.min(trackHeight, heightPx)}px`,
+      };
+    }
+
     return {
       top: `${startRatio * 100}%`,
       height: `${diff * 100}%`,
@@ -234,21 +302,31 @@ export default function ScrollRail({
     resolveEntryOffset,
     totalHeight,
     total,
+    trackHeight,
+    clampToTrack,
   ]);
 
   const thumbStyle = useMemo(
-    () => ({
-      top: `calc(${activeRatio * 100}% - 12px)`,
-    }),
-    [activeRatio]
+    () => {
+      const centered = activeRatio * trackHeight - THUMB_HEIGHT / 2;
+      const clamped = clampToTrack(centered, THUMB_HEIGHT);
+      if (clamped == null) {
+        return { top: `calc(${activeRatio * 100}% - ${THUMB_HEIGHT / 2}px)` };
+      }
+      return { top: `${clamped}px` };
+    },
+    [activeRatio, clampToTrack, trackHeight]
   );
 
   const previewStyle = useMemo(() => {
     if (!preview) return null;
-    return {
-      top: `calc(${preview.ratio * 100}% - 18px)`,
-    };
-  }, [preview]);
+    const centered = preview.ratio * trackHeight - PREVIEW_HEIGHT / 2;
+    const clamped = clampToTrack(centered, PREVIEW_HEIGHT);
+    if (clamped == null) {
+      return { top: `calc(${preview.ratio * 100}% - ${PREVIEW_HEIGHT / 2}px)` };
+    }
+    return { top: `${clamped}px` };
+  }, [preview, clampToTrack, trackHeight]);
 
   const ariaLabel = useMemo(() => {
     const base = preview?.label || (labelForIndex ? labelForIndex(activeIndex) : "Scroll position");

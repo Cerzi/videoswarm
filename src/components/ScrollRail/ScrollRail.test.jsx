@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import ScrollRail from "./ScrollRail";
 
 describe("ScrollRail", () => {
@@ -48,5 +48,30 @@ describe("ScrollRail", () => {
     const { getByRole } = render(<ScrollRail {...props} />);
     const slider = getByRole("slider", { hidden: true });
     expect(slider).toHaveAttribute("aria-valuemax", "0");
+  });
+
+  it("keeps the thumb within the track bounds when measured", async () => {
+    const props = buildProps();
+    const { getByRole, container } = render(<ScrollRail {...props} />);
+    const slider = getByRole("slider");
+    slider.getBoundingClientRect = () => ({
+      top: 0,
+      height: 200,
+      bottom: 200,
+      left: 0,
+      right: 10,
+      width: 10,
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    const thumb = container.querySelector(".scroll-rail__thumb");
+    await waitFor(() => {
+      const initial = parseFloat(thumb.style.top);
+      expect(initial).toBeCloseTo(28, 0);
+    });
+
   });
 });
