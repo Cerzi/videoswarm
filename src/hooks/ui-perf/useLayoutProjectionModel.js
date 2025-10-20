@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createLayoutProjectionModel } from "./layoutProjectionModel";
 
 function buildSignature({ logicalOrder, columnCount, columnWidth, gapX, gapY }) {
@@ -27,6 +27,7 @@ export function useLayoutProjectionModel({
   defaultHeight,
 } = {}) {
   const modelRef = useRef(null);
+  const [model, setModel] = useState(null);
   const enabledRef = useRef(enabled);
 
   const params = useMemo(
@@ -46,10 +47,13 @@ export function useLayoutProjectionModel({
     enabledRef.current = enabled;
     if (!enabled) {
       modelRef.current = null;
+      setModel(null);
       return undefined;
     }
 
-    modelRef.current = createLayoutProjectionModel(params);
+    const instance = createLayoutProjectionModel(params);
+    modelRef.current = instance;
+    setModel(instance);
 
     const unsubscribe = measurementStore?.subscribe?.((event) => {
       if (!enabledRef.current) return;
@@ -76,7 +80,7 @@ export function useLayoutProjectionModel({
     modelRef.current.reset();
   }, [logicalOrder, columnCount, columnWidth, gapX, gapY]);
 
-  return modelRef.current;
+  return model;
 }
 
 export default useLayoutProjectionModel;
