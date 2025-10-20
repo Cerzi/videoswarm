@@ -74,6 +74,8 @@ describe("createRangeCoordinator", () => {
     expect(diagnostics.range).toEqual(range);
     expect(diagnostics.hasModel).toBe(true);
     expect(diagnostics.totalCount).toBe(50);
+    const span = range.end - range.start + 1;
+    expect(diagnostics.viewportSpan).toBe(span);
   });
 
   it("updates bounds when collection shrinks", () => {
@@ -155,5 +157,23 @@ describe("createRangeCoordinator", () => {
     expect(handler).toHaveBeenCalled();
     const { priority } = handler.mock.calls[0][0];
     expect(priority).toBe("nav");
+  });
+
+  it("clamps rail materialization to a bounded window", () => {
+    const model = buildModel({ total: 4000, heights: [120] });
+    const coordinator = createRangeCoordinator({ model, totalCount: 4000 });
+    const handler = vi.fn();
+    coordinator.setMaterializeHandler(handler);
+
+    coordinator.updateViewport(0, 800);
+    handler.mockClear();
+
+    const preview = coordinator.onScrub(3200, { pad: 20 });
+    expect(preview.index).toBe(3200);
+    expect(handler).toHaveBeenCalled();
+    const call = handler.mock.calls[0][0];
+    const span = call.end - call.start + 1;
+    expect(span).toBeLessThanOrEqual(1200);
+    expect(call.priority).toBe("rail");
   });
 });

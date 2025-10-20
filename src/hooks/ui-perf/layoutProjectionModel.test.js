@@ -90,4 +90,33 @@ describe("createLayoutProjectionModel", () => {
     expect(fallback?.height).toBeGreaterThan(0);
     expect(fallback?.y).toBeGreaterThanOrEqual(0);
   });
+
+  it("applies batched measurements starting from the earliest index", () => {
+    const measure = createMeasurementStore();
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const model = createLayoutProjectionModel({
+      logicalOrder: ids,
+      columnCount: 2,
+      columnWidth: 180,
+      gapY: 10,
+      measure,
+      defaultHeight: 150,
+    });
+
+    model.ensureProjected(0, ids.length - 1);
+    const before = model.indexToOffset(4).y;
+
+    measure.upsert("b", 220, { column: 1 });
+    measure.upsert("e", 90, { column: 0 });
+    model.applyMeasurements([
+      { id: "e", height: 90 },
+      { id: "b", height: 220 },
+    ]);
+
+    const afterB = model.indexToOffset(1).y;
+    const afterE = model.indexToOffset(4).y;
+    expect(afterB).toBe(0);
+    expect(afterE).not.toBe(before);
+    expect(afterE).toBeGreaterThanOrEqual(afterB);
+  });
 });
