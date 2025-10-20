@@ -93,19 +93,19 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.videosToRender.length).toBeGreaterThanOrEqual(100);
 
     act(() => {
-      vi.advanceTimersByTime(900);
-    });
-    act(() => {
       vi.advanceTimersByTime(320);
     });
-    expect(result.current.videosToRender.length).toBeGreaterThanOrEqual(60);
+    act(() => {
+      vi.advanceTimersByTime(280);
+    });
+    expect(result.current.videosToRender.length).toBeGreaterThanOrEqual(70);
 
-    act(() => {
-      vi.advanceTimersByTime(640);
-    });
-    act(() => {
-      vi.advanceTimersByTime(320);
-    });
+    for (let i = 0; i < 6; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(280);
+      });
+    }
+
     expect(result.current.videosToRender.length).toBeLessThanOrEqual(62);
   });
 });

@@ -12,6 +12,9 @@ export const PROGRESSIVE_DEFAULTS = {
   longTaskAdaptation: true,
 };
 
+const MAX_RAIL_OVERRIDE = 1200;
+const MIN_RAIL_WINDOW = 180;
+
 /**
  * Composite hook that coordinates the 3-layer video collection system
  * Handles React performance, browser resources, and play orchestration
@@ -107,8 +110,8 @@ export default function useVideoCollection({
       const controller = progressiveControllerRef.current;
       if (!controller) return;
       const baseline = baselineMaxVisible || videos.length || 0;
-      const stepDelay = priority === "rail" ? 320 : 480;
-      const initialDelay = priority === "rail" ? 900 : 1200;
+      const stepDelay = priority === "rail" ? 280 : 420;
+      const initialDelay = priority === "rail" ? 320 : 600;
 
       if (decayTimerRef.current) {
         clearTimeout(decayTimerRef.current);
@@ -158,19 +161,28 @@ export default function useVideoCollection({
       );
       const span = safeEnd - safeStart + 1;
       const baseline = baselineMaxVisible || total;
+      const safeSpan = Math.max(1, span);
 
-      let buffer;
+      let targetWindow = safeSpan;
       if (priority === "rail") {
-        buffer = Math.max(span, Math.round(span * 0.75));
-        buffer = Math.max(buffer, Math.min(total, Math.floor(total * 0.1)));
+        const padded = safeSpan + Math.max(Math.floor(safeSpan * 0.75), 48);
+        const minimum = Math.max(MIN_RAIL_WINDOW, safeSpan);
+        const limit = Math.min(MAX_RAIL_OVERRIDE, Math.max(minimum, padded));
+        targetWindow = Math.min(limit, padded);
       } else if (priority === "nav") {
-        buffer = Math.max(24, Math.floor(span * 0.5));
+        const padded = safeSpan + Math.max(Math.floor(safeSpan * 0.5), 36);
+        const minimum = Math.max(Math.floor(MIN_RAIL_WINDOW * 0.75), safeSpan);
+        const limit = Math.min(MAX_RAIL_OVERRIDE, Math.max(minimum, padded));
+        targetWindow = Math.min(limit, padded);
       } else {
-        buffer = Math.max(12, Math.floor(span * 0.25));
+        const padded = safeSpan + Math.max(Math.floor(safeSpan * 0.25), 24);
+        const minimum = Math.max(Math.floor(MIN_RAIL_WINDOW / 2), safeSpan);
+        const limit = Math.min(Math.floor(MAX_RAIL_OVERRIDE / 2), Math.max(minimum, padded));
+        targetWindow = Math.min(limit, padded);
       }
 
-      const desired = Math.min(total, safeEnd + 1 + buffer);
-      const override = Math.max(baseline, desired);
+      const targetEnd = Math.min(total - 1, safeStart + targetWindow - 1);
+      const override = Math.min(total, Math.max(baseline, targetEnd + 1));
       overrideTargetRef.current = override;
       controller.setMaxVisibleOverride?.(override);
       controller.ensureVisible?.(override);
