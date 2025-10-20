@@ -206,49 +206,6 @@ export function useMasonryLayout({
 
   const orderedIds = useMemo(() => orderedVideos.map((v) => v.id), [orderedVideos]);
 
-  const lpmEnabled = Boolean(feature.experimentalLayoutProjection);
-  const layoutProjectionModel = useLayoutProjectionModel({
-    enabled: lpmEnabled,
-    logicalOrder: orderedIds,
-    columnCount: Math.max(1, derivedColumnCount),
-    columnWidth: Math.max(1, effectiveColumnWidth),
-    gapX: estimatedGap,
-    gapY: estimatedGap,
-    measurementStore,
-    defaultHeight: Math.max(48, Math.round(approxTileHeight)),
-  });
-
-  useEffect(() => {
-    if (!lpmEnabled || !layoutProjectionModel || !orderedIds.length) return;
-    const projectedRows = viewportRows + bufferRows;
-    const span = Math.max(0, Math.min(orderedIds.length - 1, projectedRows * derivedColumnCount));
-    layoutProjectionModel.ensureProjected(0, span);
-
-    if (process.env.NODE_ENV !== "production") {
-      try {
-        const totalHeight = layoutProjectionModel.getTotalHeight();
-        const measuredCount = measurementStore?.count?.() ?? 0;
-        const projectedRange = layoutProjectionModel.getProjectedRange?.();
-        console.debug("[LPM] shadow run", {
-          totalHeight: Math.round(totalHeight),
-          measuredCount,
-          projectedRange,
-          logical: orderedIds.length,
-        });
-      } catch (error) {
-        console.debug("[LPM] shadow run error", error);
-      }
-    }
-  }, [
-    lpmEnabled,
-    layoutProjectionModel,
-    orderedIds,
-    viewportRows,
-    bufferRows,
-    derivedColumnCount,
-    measurementStore,
-  ]);
-
   const averageAspectRatio = useMemo(() => {
     const sampleLimit = 80;
     let sum = 0;
@@ -334,6 +291,52 @@ export function useMasonryLayout({
   }, [measurementStore, effectiveColumnWidth, derivedColumnCount, estimatedGap]);
 
   const bufferRows = useMemo(() => Math.max(3, Math.ceil(viewportRows)), [viewportRows]);
+
+  const lpmEnabled = Boolean(feature.experimentalLayoutProjection);
+  const layoutProjectionModel = useLayoutProjectionModel({
+    enabled: lpmEnabled,
+    logicalOrder: orderedIds,
+    columnCount: Math.max(1, derivedColumnCount),
+    columnWidth: Math.max(1, effectiveColumnWidth),
+    gapX: estimatedGap,
+    gapY: estimatedGap,
+    measurementStore,
+    defaultHeight: Math.max(48, Math.round(approxTileHeight)),
+  });
+
+  useEffect(() => {
+    if (!lpmEnabled || !layoutProjectionModel || !orderedIds.length) return;
+    const projectedRows = viewportRows + bufferRows;
+    const span = Math.max(
+      0,
+      Math.min(orderedIds.length - 1, projectedRows * derivedColumnCount)
+    );
+    layoutProjectionModel.ensureProjected(0, span);
+
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        const totalHeight = layoutProjectionModel.getTotalHeight();
+        const measuredCount = measurementStore?.count?.() ?? 0;
+        const projectedRange = layoutProjectionModel.getProjectedRange?.();
+        console.debug("[LPM] shadow run", {
+          totalHeight: Math.round(totalHeight),
+          measuredCount,
+          projectedRange,
+          logical: orderedIds.length,
+        });
+      } catch (error) {
+        console.debug("[LPM] shadow run error", error);
+      }
+    }
+  }, [
+    lpmEnabled,
+    layoutProjectionModel,
+    orderedIds,
+    viewportRows,
+    bufferRows,
+    derivedColumnCount,
+    measurementStore,
+  ]);
 
   const rangeOverscanPx = useMemo(
     () => Math.max(0, Math.round(bufferRows * approxTileHeight)),
@@ -631,10 +634,10 @@ export function useMasonryLayout({
 
   const orderForRange = useMemo(() => {
     if (lpmEnabled) {
-      return logicalRangeIds ?? [];
+      return orderedIds;
     }
     return visualOrderedIds.length ? visualOrderedIds : orderedIds;
-  }, [lpmEnabled, logicalRangeIds, visualOrderedIds, orderedIds]);
+  }, [lpmEnabled, orderedIds, visualOrderedIds]);
 
   const progressiveMaxVisibleNumber = useMemo(() => {
     if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
@@ -778,6 +781,7 @@ export function useMasonryLayout({
     orderedVideos,
     orderedIds,
     visualOrderedIds,
+    logicalRangeIds,
     orderForRange,
     ioRegistry,
     layoutEpoch,
