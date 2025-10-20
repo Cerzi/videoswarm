@@ -1,19 +1,22 @@
 
+
 .scroll-rail-overlay-root {
   pointer-events: none;
 }
 
 .scroll-rail-overlay {
   position: fixed;
-  top: var(--scroll-rail-top, 88px);
-  right: 20px;
-  bottom: 32px;
-  width: 64px;
+  top: var(--scroll-rail-top, 72px);
+  bottom: var(--scroll-rail-bottom, 16px);
+  right: var(--scroll-rail-right, 12px);
+  width: var(--scroll-rail-width, 20px);
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
   pointer-events: none;
-  z-index: 1200;
+  z-index: 2147483000;
+  overflow: hidden;
+  touch-action: none;
 }
 
 .scroll-rail-overlay[aria-hidden="true"] {
@@ -23,17 +26,18 @@
 .scroll-rail {
   position: relative;
   width: 100%;
+  height: 100%;
   min-height: 160px;
-  flex: 1 1 auto;
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
   pointer-events: none;
+  user-select: none;
 }
 
 .scroll-rail__track {
   position: relative;
-  width: 16px;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);

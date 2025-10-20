@@ -202,6 +202,13 @@ export default function ScrollRail({
       if (!hasItems) return;
       event.preventDefault();
       event.stopPropagation();
+      if (typeof event.currentTarget.focus === "function") {
+        try {
+          event.currentTarget.focus({ preventScroll: true });
+        } catch {
+          event.currentTarget.focus();
+        }
+      }
       const index = deriveIndexFromPointer(event);
       setIsActive(true);
       updatePreview(index);
