@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import "./ScrollRail.css";
 
 const clamp01 = (value) => {
@@ -17,6 +18,19 @@ const clamp01 = (value) => {
 
 const THUMB_HEIGHT = 24;
 const PREVIEW_HEIGHT = 36;
+const OVERLAY_ROOT_ID = "vs-scroll-rail-overlay-root";
+
+const ensureOverlayHost = () => {
+  if (typeof document === "undefined") return null;
+  let host = document.getElementById(OVERLAY_ROOT_ID);
+  if (!host) {
+    host = document.createElement("div");
+    host.id = OVERLAY_ROOT_ID;
+    host.className = "scroll-rail-overlay-root";
+    document.body.appendChild(host);
+  }
+  return host;
+};
 
 export default function ScrollRail({
   total = 0,
@@ -31,12 +45,22 @@ export default function ScrollRail({
   onCommit,
 }) {
   const hasItems = total > 0;
+  const [overlayHost, setOverlayHost] = useState(() => ensureOverlayHost());
   const trackRef = useRef(null);
   const [isActive, setIsActive] = useState(false);
   const [preview, setPreview] = useState(null);
   const previewRef = useRef(null);
   const [focusIndex, setFocusIndex] = useState(0);
   const [trackHeight, setTrackHeight] = useState(0);
+
+  useEffect(() => {
+    if (overlayHost || typeof document === "undefined") return undefined;
+    const host = ensureOverlayHost();
+    if (host) {
+      setOverlayHost(host);
+    }
+    return undefined;
+  }, [overlayHost]);
 
   const measureTrack = useCallback(() => {
     const node = trackRef.current;
@@ -190,6 +214,7 @@ export default function ScrollRail({
     (event) => {
       if (!isActive) return;
       event.preventDefault();
+      event.stopPropagation();
       const index = deriveIndexFromPointer(event);
       updatePreview(index);
     },
@@ -333,31 +358,38 @@ export default function ScrollRail({
     return base;
   }, [activeIndex, labelForIndex, preview]);
 
-  return (
-    <div className="scroll-rail" aria-hidden={!hasItems}>
-      <div
-        className="scroll-rail__track"
-        ref={trackRef}
-        role="slider"
-        tabIndex={hasItems ? 0 : -1}
-        aria-valuemin={hasItems ? 1 : 0}
-        aria-valuemax={hasItems ? total : 0}
-        aria-valuenow={hasItems ? activeIndex + 1 : 0}
-        aria-label={ariaLabel}
-        onKeyDown={handleKeyDown}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
-      >
-        <div className="scroll-rail__range" style={highlightStyle} />
-        <div className="scroll-rail__thumb" style={thumbStyle} />
-      </div>
-      {preview && (
-        <div className="scroll-rail__label" style={previewStyle}>
-          <span>{preview.label}</span>
+  if (!overlayHost) {
+    return null;
+  }
+
+  return createPortal(
+    <div className="scroll-rail-overlay" aria-hidden={!hasItems}>
+      <div className="scroll-rail">
+        <div
+          className="scroll-rail__track"
+          ref={trackRef}
+          role="slider"
+          tabIndex={hasItems ? 0 : -1}
+          aria-valuemin={hasItems ? 1 : 0}
+          aria-valuemax={hasItems ? total : 0}
+          aria-valuenow={hasItems ? activeIndex + 1 : 0}
+          aria-label={ariaLabel}
+          onKeyDown={handleKeyDown}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+        >
+          <div className="scroll-rail__range" style={highlightStyle} />
+          <div className="scroll-rail__thumb" style={thumbStyle} />
         </div>
-      )}
-    </div>
+        {preview && (
+          <div className="scroll-rail__label" style={previewStyle}>
+            <span>{preview.label}</span>
+          </div>
+        )}
+      </div>
+    </div>,
+    overlayHost
   );
 }
