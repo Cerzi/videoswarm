@@ -74,7 +74,7 @@ const useFilterStateMock = vi.fn(() => filterStateReturn);
 const masonryReturn = {
   orderedVideos: [],
   orderedIds: [],
-  orderForRange: () => [],
+  orderForRange: [],
   ioRegistry: {
     isNear: () => false,
     observe: vi.fn(),
@@ -88,6 +88,14 @@ const masonryReturn = {
   progressiveMaxVisibleNumber: 0,
   withLayoutHold: (fn) => (typeof fn === "function" ? fn() : undefined),
   isLayoutTransitioning: false,
+  measurementStore: null,
+  layoutProjectionModel: null,
+  logicalRange: { start: 0, end: -1 },
+  rangeDiagnostics: null,
+  layoutProjectionEnabled: false,
+  previewLogicalIndex: vi.fn(() => ({ index: 0, offset: 0, height: 0 })),
+  scrollToLogicalIndex: vi.fn(),
+  viewportHeight: 0,
 };
 const useMasonryLayoutMock = vi.fn(() => masonryReturn);
 

@@ -14,6 +14,7 @@ import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
+import ScrollRail from "./components/ScrollRail/ScrollRail";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -162,6 +163,13 @@ function App() {
     progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    measurementStore,
+    layoutProjectionModel: _layoutProjectionModel,
+    logicalRange,
+    layoutProjectionEnabled: layoutProjectionEnabled,
+    previewLogicalIndex,
+    scrollToLogicalIndex,
+    viewportHeight: layoutViewportHeight,
   } = useMasonryLayout({
     videos,
     filteredVideos,
@@ -173,6 +181,84 @@ function App() {
     scrollContainerRef,
     gridRef,
   });
+
+  const layoutProjectionModel = _layoutProjectionModel;
+
+  const scrollRailTotalHeight = useMemo(() => {
+    if (!layoutProjectionEnabled || !layoutProjectionModel) return 0;
+    try {
+      const total = layoutProjectionModel.getTotalHeight?.();
+      return Number.isFinite(total) ? total : 0;
+    } catch (error) {
+      console.debug("[ScrollRail] failed to read total height", error);
+      return 0;
+    }
+  }, [
+    layoutProjectionEnabled,
+    layoutProjectionModel,
+    measurementStore?.version,
+    orderedVideos.length,
+    layoutViewportHeight,
+    layoutEpoch,
+  ]);
+
+  const scrollRailLabelForIndex = useCallback(
+    (index) => {
+      if (!orderedVideos.length) return "";
+      const clamped = Math.max(
+        0,
+        Math.min(orderedVideos.length - 1, Math.floor(Number.isFinite(index) ? index : 0))
+      );
+      const video = orderedVideos[clamped];
+      if (!video) {
+        return `${clamped + 1} of ${orderedVideos.length}`;
+      }
+      const baseName = video.basename || video.name || video.fullPath || video.id;
+      let label = baseName || `${clamped + 1} of ${orderedVideos.length}`;
+
+      if (sortKey === SortKey.CREATED && Number.isFinite(video?.createdMs)) {
+        const created = new Date(video.createdMs);
+        if (!Number.isNaN(created.getTime())) {
+          const formatted = created.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+          label = `${formatted} — ${label}`;
+        }
+      }
+
+      const rating = Number.isFinite(video?.rating) ? Math.round(video.rating) : null;
+      if (rating && rating > 0) {
+        label = `${label} · ★${rating}`;
+      }
+
+      return label;
+    },
+    [orderedVideos, sortKey]
+  );
+
+  const handleRailScrub = useCallback(
+    (targetIndex) => {
+      if (!layoutProjectionEnabled || typeof previewLogicalIndex !== "function") return null;
+      return previewLogicalIndex(targetIndex);
+    },
+    [layoutProjectionEnabled, previewLogicalIndex]
+  );
+
+  const handleRailCommit = useCallback(
+    (targetIndex) => {
+      if (!layoutProjectionEnabled || typeof scrollToLogicalIndex !== "function") return;
+      scrollToLogicalIndex(targetIndex, { align: "start", behavior: "auto" });
+    },
+    [layoutProjectionEnabled, scrollToLogicalIndex]
+  );
+
+  const shouldShowScrollRail =
+    layoutProjectionEnabled &&
+    !!layoutProjectionModel &&
+    orderedVideos.length > 0 &&
+    scrollRailTotalHeight > 0;
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -1105,11 +1191,26 @@ function App() {
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}
+                    measurementStore={measurementStore}
                   />
                 ))}
-                </div>
+                {shouldShowScrollRail && layoutProjectionModel && (
+                  <ScrollRail
+                    total={orderedVideos.length}
+                    rangeStart={logicalRange?.start ?? 0}
+                    rangeEnd={logicalRange?.end ?? 0}
+                    indexToOffset={layoutProjectionModel.indexToOffset}
+                    getEntry={layoutProjectionModel.getEntry}
+                    offsetToIndex={layoutProjectionModel.offsetToIndex}
+                    totalHeight={scrollRailTotalHeight}
+                    labelForIndex={scrollRailLabelForIndex}
+                    onScrub={handleRailScrub}
+                    onCommit={handleRailCommit}
+                  />
+                )}
               </div>
-              <MetadataPanel
+            </div>
+            <MetadataPanel
                 ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen && selection.size > 0}
                 onToggle={toggleMetadataPanel}
