@@ -43,10 +43,13 @@ export const feature = resolveFeatureFlags({
   metaEnv: capturedMetaEnv,
 });
 
+const resolvedNodeEnv =
+  typeof process !== "undefined" ? process.env?.NODE_ENV : undefined;
+
 if (
   typeof window !== "undefined" &&
   typeof console !== "undefined" &&
-  process?.env?.NODE_ENV !== "test"
+  resolvedNodeEnv !== "test"
 ) {
   console.info(
     "[features] experimentalLayoutProjection =",
