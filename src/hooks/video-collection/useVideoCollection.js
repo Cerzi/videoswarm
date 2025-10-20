@@ -1,5 +1,5 @@
 // hooks/video-collection/useVideoCollection.js
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
@@ -39,6 +39,17 @@ export default function useVideoCollection({
     maxVisible,
   } = progressive || {};
 
+  const progressiveControllerRef = useRef(null);
+  const baselineMaxVisible = useMemo(() => {
+    if (Number.isFinite(maxVisible) && maxVisible > 0) {
+      return Math.floor(maxVisible);
+    }
+    return videos.length;
+  }, [maxVisible, videos.length]);
+
+  const overrideTargetRef = useRef(null);
+  const decayTimerRef = useRef(null);
+
   // Normalize to safe numbers
   const safeInitial = Math.max(
     0,
@@ -66,7 +77,107 @@ export default function useVideoCollection({
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
       maxVisible,
+      controllerRef: progressiveControllerRef,
     }
+  );
+
+  useEffect(() => {
+    const controller = progressiveControllerRef.current;
+    if (!controller) return;
+    if (overrideTargetRef.current != null) {
+      controller.setMaxVisibleOverride?.(overrideTargetRef.current);
+      controller.ensureVisible?.(overrideTargetRef.current);
+    } else {
+      controller.setMaxVisibleOverride?.(null);
+    }
+  }, [baselineMaxVisible, videos.length]);
+
+  useEffect(
+    () => () => {
+      if (decayTimerRef.current) {
+        clearTimeout(decayTimerRef.current);
+        decayTimerRef.current = null;
+      }
+    },
+    []
+  );
+
+  const scheduleBudgetDecay = useCallback(
+    (priority = "idle") => {
+      const controller = progressiveControllerRef.current;
+      if (!controller) return;
+      const baseline = baselineMaxVisible || videos.length || 0;
+      const stepDelay = priority === "rail" ? 320 : 480;
+      const initialDelay = priority === "rail" ? 900 : 1200;
+
+      if (decayTimerRef.current) {
+        clearTimeout(decayTimerRef.current);
+      }
+
+      const runStep = () => {
+        const currentOverride = overrideTargetRef.current;
+        if (currentOverride == null || currentOverride <= baseline) {
+          overrideTargetRef.current = null;
+          controller.setMaxVisibleOverride?.(null);
+          decayTimerRef.current = null;
+          return;
+        }
+        const next = Math.max(
+          baseline,
+          Math.floor((currentOverride + baseline) / 2)
+        );
+        if (next <= baseline || next === currentOverride) {
+          overrideTargetRef.current = null;
+          controller.setMaxVisibleOverride?.(null);
+          decayTimerRef.current = null;
+          return;
+        }
+        overrideTargetRef.current = next;
+        controller.setMaxVisibleOverride?.(next);
+        decayTimerRef.current = setTimeout(runStep, stepDelay);
+      };
+
+      decayTimerRef.current = setTimeout(runStep, initialDelay);
+    },
+    [baselineMaxVisible, videos.length]
+  );
+
+  const ensureVisibleRange = useCallback(
+    (start, end, { priority = "nav" } = {}) => {
+      const controller = progressiveControllerRef.current;
+      const total = videos.length;
+      if (!controller || !total) return;
+
+      const safeStart = Math.max(
+        0,
+        Math.min(total - 1, Math.floor(Number.isFinite(start) ? start : 0))
+      );
+      const safeEnd = Math.max(
+        safeStart,
+        Math.min(total - 1, Math.floor(Number.isFinite(end) ? end : safeStart))
+      );
+      const span = safeEnd - safeStart + 1;
+      const baseline = baselineMaxVisible || total;
+
+      let buffer;
+      if (priority === "rail") {
+        buffer = Math.max(span, Math.round(span * 0.75));
+        buffer = Math.max(buffer, Math.min(total, Math.floor(total * 0.1)));
+      } else if (priority === "nav") {
+        buffer = Math.max(24, Math.floor(span * 0.5));
+      } else {
+        buffer = Math.max(12, Math.floor(span * 0.25));
+      }
+
+      const desired = Math.min(total, safeEnd + 1 + buffer);
+      const override = Math.max(baseline, desired);
+      overrideTargetRef.current = override;
+      controller.setMaxVisibleOverride?.(override);
+      controller.ensureVisible?.(override);
+      scheduleBudgetDecay(priority);
+      return override;
+    },
+    [baselineMaxVisible, videos.length, scheduleBudgetDecay]
   );
 
   // Layer 2: Resource management (Browser performance)
@@ -146,6 +257,7 @@ export default function useVideoCollection({
 
     logicalOrder,
     idToIndex,
+    ensureVisibleRange,
 
     // Debug info (development only)
     debug:

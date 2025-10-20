@@ -81,7 +81,28 @@ export function createRangeCoordinator({
     lastRange: { start: 0, end: normalizeCount(totalCount) - 1 },
     lastComputedAt: 0,
     materializeHandler: null,
+    lastMaterialized: { start: 0, end: -1, priority: "idle" },
   };
+
+  function dispatchMaterialize(start, end, priority = "nav") {
+    if (!state.materializeHandler) return;
+    const count = state.totalCount;
+    if (!count) return;
+    const safeStart = clampIndex(Math.floor(toFinite(start, 0)), count);
+    const safeEnd = clampIndex(Math.floor(toFinite(end, safeStart)), count);
+    const normalizedEnd = safeEnd < safeStart ? safeStart : safeEnd;
+    const prev = state.lastMaterialized;
+    if (
+      prev &&
+      prev.start <= safeStart &&
+      prev.end >= normalizedEnd &&
+      (priority === "idle" || prev.priority === priority)
+    ) {
+      return;
+    }
+    state.materializeHandler({ start: safeStart, end: normalizedEnd, priority });
+    state.lastMaterialized = { start: safeStart, end: normalizedEnd, priority };
+  }
 
   function refreshRange(viewTop = 0, viewHeight = 0, overscanOverride) {
     const next = computeRange({
@@ -94,6 +115,9 @@ export function createRangeCoordinator({
     });
     state.lastRange = next;
     state.lastComputedAt = Date.now();
+    if (state.totalCount > 0) {
+      dispatchMaterialize(next.start, next.end, "idle");
+    }
     return next;
   }
 
@@ -142,12 +166,10 @@ export function createRangeCoordinator({
     },
     setMaterializeHandler(handler) {
       state.materializeHandler = typeof handler === "function" ? handler : null;
+      state.lastMaterialized = { start: 0, end: -1, priority: "idle" };
     },
     requestMaterialize(start, end, priority = "nav") {
-      if (!state.materializeHandler) return;
-      const safeStart = clampIndex(Math.floor(toFinite(start, 0)), state.totalCount);
-      const safeEnd = clampIndex(Math.floor(toFinite(end, safeStart)), state.totalCount);
-      state.materializeHandler({ start: safeStart, end: safeEnd, priority });
+      dispatchMaterialize(start, end, priority);
     },
     onScrub(targetIndex, { pad = 48 } = {}) {
       const count = state.totalCount;
@@ -165,6 +187,7 @@ export function createRangeCoordinator({
       if (typeof state.model.ensureProjected === "function") {
         state.model.ensureProjected(start, end);
       }
+      dispatchMaterialize(start, end, "rail");
 
       const entry = state.model.getEntry?.(index);
       if (entry) {
@@ -174,7 +197,10 @@ export function createRangeCoordinator({
       const { y } = state.model.indexToOffset(index);
       return { index, offset: y ?? 0, height: 0 };
     },
-    jumpToIndex(targetIndex, { align = "start", viewportHeight = 0 } = {}) {
+    jumpToIndex(
+      targetIndex,
+      { align = "start", viewportHeight = 0, pad = 96 } = {}
+    ) {
       const count = state.totalCount;
       if (!count || !state.model || typeof state.model.indexToOffset !== "function") {
         return 0;
@@ -183,6 +209,14 @@ export function createRangeCoordinator({
       const index = clampIndex(Math.floor(toFinite(targetIndex, 0)), count);
       if (typeof state.model.ensureProjected === "function") {
         state.model.ensureProjected(index, index);
+      }
+      const jumpPad = normalizeCount(pad);
+      if (jumpPad > 0) {
+        const start = Math.max(0, index - jumpPad);
+        const end = Math.min(count - 1, index + jumpPad);
+        dispatchMaterialize(start, end, "nav");
+      } else {
+        dispatchMaterialize(index, index, "nav");
       }
 
       const entry = state.model.getEntry?.(index);

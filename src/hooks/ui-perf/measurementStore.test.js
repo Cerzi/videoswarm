@@ -13,8 +13,11 @@ describe("createMeasurementStore", () => {
 
     const stats0 = store.statsForColumn(0);
     expect(stats0.p50).toBe(120);
+    expect(stats0.trimmedMean).toBe(120);
     const statsAll = store.statsForColumn(null);
     expect(statsAll.count).toBe(2);
+    expect(statsAll.trimmedMean).toBeCloseTo(135, 5);
+    expect(statsAll.p10).toBeGreaterThan(0);
   });
 
   it("clears measurements when layout signature changes", () => {

@@ -102,4 +102,41 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("controllerRef can override visibility immediately", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 200 }, (_, i) => i);
+    const controllerRef = { current: null };
+
+    const { result } = renderHook(() =>
+      useProgressiveList(items, 20, 10, 1, {
+        forceInterval: true,
+        pauseOnScroll: false,
+        longTaskAdaptation: false,
+        maxVisible: 60,
+        controllerRef,
+      })
+    );
+
+    expect(controllerRef.current).toBeTruthy();
+    expect(result.current.length).toBe(20);
+
+    act(() => {
+      controllerRef.current.ensureVisible(50);
+    });
+    expect(result.current.length).toBe(50);
+
+    act(() => {
+      controllerRef.current.setMaxVisibleOverride(120);
+      controllerRef.current.ensureVisible(120);
+    });
+    expect(result.current.length).toBe(120);
+
+    act(() => {
+      controllerRef.current.setMaxVisibleOverride(null);
+    });
+    expect(result.current.length).toBeLessThanOrEqual(60);
+
+    vi.useRealTimers();
+  });
 });

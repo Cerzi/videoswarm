@@ -24,6 +24,7 @@ export function useMasonryLayout({
   zoomLevel,
   scrollContainerRef,
   gridRef,
+  ensureVisibleRange,
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [masonryMetrics, setMasonryMetrics] = useState({
@@ -425,14 +426,22 @@ export function useMasonryLayout({
       rangeCoordinator.setMaterializeHandler(null);
       return undefined;
     }
-    const handler = ({ start, end }) => {
+    const handler = ({ start, end, priority }) => {
       layoutProjectionModel.ensureProjected?.(start, end);
+      if (typeof ensureVisibleRange === "function") {
+        ensureVisibleRange(start, end, { priority });
+      }
     };
     rangeCoordinator.setMaterializeHandler(handler);
     return () => {
       rangeCoordinator.setMaterializeHandler(null);
     };
-  }, [rangeCoordinator, lpmEnabled, layoutProjectionModel]);
+  }, [
+    rangeCoordinator,
+    lpmEnabled,
+    layoutProjectionModel,
+    ensureVisibleRange,
+  ]);
 
   const scrubPad = useMemo(
     () => Math.max(24, (derivedColumnCount || 0) * 4),
@@ -580,6 +589,7 @@ export function useMasonryLayout({
         const offset = rangeCoordinator.jumpToIndex(normalizedIndex, {
           align,
           viewportHeight,
+          pad: scrubPad,
         });
         if (Number.isFinite(offset)) {
           top = offset;

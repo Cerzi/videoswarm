@@ -11,7 +11,31 @@ function resolveEstimate(store, column, fallback) {
   if (!store) return fallback;
   const stats = store.statsForColumn(column);
   if (stats && stats.count > 0) {
-    return Math.max(1, Math.round(stats.p50 || stats.avg || fallback));
+    const median = Number.isFinite(stats.p50) && stats.p50 > 0 ? stats.p50 : null;
+    const trimmed =
+      Number.isFinite(stats.trimmedMean) && stats.trimmedMean > 0
+        ? stats.trimmedMean
+        : null;
+    const avg = Number.isFinite(stats.avg) && stats.avg > 0 ? stats.avg : null;
+    const p90 = Number.isFinite(stats.p90) && stats.p90 > 0 ? stats.p90 : null;
+    const p10 = Number.isFinite(stats.p10) && stats.p10 > 0 ? stats.p10 : null;
+
+    let candidate = trimmed ?? median ?? avg ?? fallback;
+    if (median && trimmed) {
+      const delta = Math.abs(trimmed - median) / Math.max(1, median);
+      if (delta > 0.25) {
+        candidate = median;
+      } else {
+        const upper = p90 ?? Math.max(median, trimmed);
+        const lower = p10 ?? Math.min(median, trimmed);
+        const clamped = Math.min(Math.max(candidate, lower), upper);
+        candidate = clamped;
+      }
+    } else if (median) {
+      candidate = median;
+    }
+
+    return Math.max(1, Math.round(candidate || fallback));
   }
   return fallback;
 }

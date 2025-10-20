@@ -102,8 +102,16 @@ describe("createRangeCoordinator", () => {
     expect(model.ensureProjected).toHaveBeenCalled();
     expect(preview.offset).toBeGreaterThanOrEqual(0);
 
-    coordinator.requestMaterialize(10, 14, "rail");
-    expect(handler).toHaveBeenCalledWith({ start: 10, end: 14, priority: "rail" });
+    expect(handler).toHaveBeenCalled();
+    expect(handler.mock.calls[0][0]).toEqual({
+      start: 8,
+      end: 16,
+      priority: "rail",
+    });
+    handler.mockClear();
+
+    coordinator.requestMaterialize(0, 20, "rail");
+    expect(handler).toHaveBeenCalledWith({ start: 0, end: 20, priority: "rail" });
   });
 
   it("computes jump offsets with alignment and clamps to bounds", () => {
@@ -125,5 +133,27 @@ describe("createRangeCoordinator", () => {
     });
     const totalHeight = model.getTotalHeight();
     expect(endOffset).toBeLessThanOrEqual(totalHeight);
+  });
+
+  it("materializes viewport and jump ranges with priorities", () => {
+    const model = buildModel({ total: 40, heights: [100] });
+    const coordinator = createRangeCoordinator({
+      model,
+      totalCount: 40,
+      overscanPx: 200,
+    });
+    const handler = vi.fn();
+    coordinator.setMaterializeHandler(handler);
+
+    coordinator.updateViewport(200, 600);
+    expect(handler).toHaveBeenCalled();
+    const firstCall = handler.mock.calls[0][0];
+    expect(firstCall.priority).toBe("idle");
+
+    handler.mockClear();
+    coordinator.jumpToIndex(20, { viewportHeight: 500, pad: 40 });
+    expect(handler).toHaveBeenCalled();
+    const { priority } = handler.mock.calls[0][0];
+    expect(priority).toBe("nav");
   });
 });

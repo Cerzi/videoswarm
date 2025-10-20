@@ -39,16 +39,31 @@ function aggregateHeights(entries, column) {
       count: 0,
       avg: 0,
       p50: 0,
+      p10: 0,
       p90: 0,
+      trimmedMean: 0,
     };
   }
   list.sort((a, b) => a - b);
   const sum = list.reduce((acc, value) => acc + value, 0);
+  const lowerIndex = Math.max(0, Math.floor(list.length * 0.1));
+  const upperIndex = Math.max(lowerIndex, Math.ceil(list.length * 0.9));
+  let trimmedSum = 0;
+  let trimmedCount = 0;
+  for (let i = lowerIndex; i < upperIndex; i += 1) {
+    const value = list[i];
+    if (!Number.isFinite(value)) continue;
+    trimmedSum += value;
+    trimmedCount += 1;
+  }
+  const trimmedMean = trimmedCount ? trimmedSum / trimmedCount : sum / list.length;
   return {
     count: list.length,
     avg: sum / list.length,
+    p10: quantile(list, 0.1),
     p50: quantile(list, 0.5),
     p90: quantile(list, 0.9),
+    trimmedMean,
   };
 }
 
@@ -153,8 +168,10 @@ export function createMeasurementStore({
       return {
         count: 0,
         avg: defaultHeight,
+        p10: defaultHeight,
         p50: defaultHeight,
         p90: defaultHeight,
+        trimmedMean: defaultHeight,
       };
     },
     getAll() {
