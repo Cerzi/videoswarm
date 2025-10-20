@@ -31,6 +31,12 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.videosToRender.length).toBe(20);
     expect(result.current.stats.total).toBe(120);
     expect(result.current.stats.rendered).toBe(20);
+    expect(result.current.logicalOrder.slice(0, 3)).toEqual([
+      "v0",
+      "v1",
+      "v2",
+    ]);
+    expect(result.current.idToIndex.get("v10")).toBe(10);
 
     // Advance one interval => add one batch
     act(() => {
@@ -59,5 +65,7 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.stats.total).toBe(120);
     expect(result.current.stats.rendered)
       .toBe(PROGRESSIVE_DEFAULTS.initial);
+    expect(result.current.logicalOrder[0]).toBe("v0");
+    expect(result.current.idToIndex.get("v5")).toBe(5);
   });
 });

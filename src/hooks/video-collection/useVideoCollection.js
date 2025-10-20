@@ -1,4 +1,5 @@
 // hooks/video-collection/useVideoCollection.js
+import { useMemo } from "react";
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
@@ -94,6 +95,31 @@ export default function useVideoCollection({
       maxPlaying: maxConcurrentPlaying,
     });
 
+  const logicalOrder = useMemo(
+    () =>
+      videos.map((video, index) => {
+        if (!video) return `__index_${index}`;
+        return (
+          video.id ||
+          video.fullPath ||
+          video.name ||
+          `__index_${index}`
+        );
+      }),
+    [videos]
+  );
+
+  const idToIndex = useMemo(() => {
+    const map = new Map();
+    logicalOrder.forEach((id, index) => {
+      if (id == null) return;
+      if (!map.has(id)) {
+        map.set(id, index);
+      }
+    });
+    return map;
+  }, [logicalOrder]);
+
   return {
     // What to render
     videosToRender: progressiveVideos,
@@ -117,6 +143,9 @@ export default function useVideoCollection({
       playing: playingSet.size,
       loaded: loadedVideos.size,
     },
+
+    logicalOrder,
+    idToIndex,
 
     // Debug info (development only)
     debug:

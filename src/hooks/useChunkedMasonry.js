@@ -189,6 +189,7 @@ export default function useChunkedMasonry({
           el.style.width = `${columnWidth}px`;
           el.style.height = `${h}px`;
           el.style.transform = `translate(${x}px, ${y}px)`;
+          el.dataset.column = String(minIdx);
 
           const vc = el.querySelector(
             ".video-container, .video-placeholder, .error-indicator"

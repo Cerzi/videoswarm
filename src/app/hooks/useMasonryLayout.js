@@ -1,6 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import useChunkedMasonry from "../../hooks/useChunkedMasonry";
 import useIntersectionObserverRegistry from "../../hooks/ui-perf/useIntersectionObserverRegistry";
+import { createMeasurementStore } from "../../hooks/ui-perf/measurementStore";
+import useLayoutProjectionModel from "../../hooks/ui-perf/useLayoutProjectionModel";
+import { createRangeCoordinator } from "../../hooks/ui-perf/rangeCoordinator";
 import {
   SortKey,
   buildComparator,
@@ -9,6 +12,7 @@ import {
 } from "../../sorting/sorting.js";
 import { clampZoomIndex, zoomClassForLevel } from "../../zoom/utils.js";
 import { ZOOM_TILE_WIDTHS } from "../../zoom/config";
+import feature from "../../config/featureFlags";
 
 export function useMasonryLayout({
   videos,
@@ -35,6 +39,11 @@ export function useMasonryLayout({
   const [ioConfig, setIoConfig] = useState({ rootMargin: "1600px 0px", nearPx: 900 });
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
+  const measurementStoreRef = useRef(null);
+  if (!measurementStoreRef.current) {
+    measurementStoreRef.current = createMeasurementStore();
+  }
+  const measurementStore = measurementStoreRef.current;
 
   const beginLayoutHold = useCallback(() => {
     let released = false;
@@ -197,6 +206,49 @@ export function useMasonryLayout({
 
   const orderedIds = useMemo(() => orderedVideos.map((v) => v.id), [orderedVideos]);
 
+  const lpmEnabled = Boolean(feature.experimentalLayoutProjection);
+  const layoutProjectionModel = useLayoutProjectionModel({
+    enabled: lpmEnabled,
+    logicalOrder: orderedIds,
+    columnCount: Math.max(1, derivedColumnCount),
+    columnWidth: Math.max(1, effectiveColumnWidth),
+    gapX: estimatedGap,
+    gapY: estimatedGap,
+    measurementStore,
+    defaultHeight: Math.max(48, Math.round(approxTileHeight)),
+  });
+
+  useEffect(() => {
+    if (!lpmEnabled || !layoutProjectionModel || !orderedIds.length) return;
+    const projectedRows = viewportRows + bufferRows;
+    const span = Math.max(0, Math.min(orderedIds.length - 1, projectedRows * derivedColumnCount));
+    layoutProjectionModel.ensureProjected(0, span);
+
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        const totalHeight = layoutProjectionModel.getTotalHeight();
+        const measuredCount = measurementStore?.count?.() ?? 0;
+        const projectedRange = layoutProjectionModel.getProjectedRange?.();
+        console.debug("[LPM] shadow run", {
+          totalHeight: Math.round(totalHeight),
+          measuredCount,
+          projectedRange,
+          logical: orderedIds.length,
+        });
+      } catch (error) {
+        console.debug("[LPM] shadow run error", error);
+      }
+    }
+  }, [
+    lpmEnabled,
+    layoutProjectionModel,
+    orderedIds,
+    viewportRows,
+    bufferRows,
+    derivedColumnCount,
+    measurementStore,
+  ]);
+
   const averageAspectRatio = useMemo(() => {
     const sampleLimit = 80;
     let sum = 0;
@@ -236,6 +288,11 @@ export function useMasonryLayout({
     [effectiveColumnWidth, averageAspectRatio]
   );
 
+  useEffect(() => {
+    if (!measurementStore) return;
+    measurementStore.setDefaultEstimate(Math.max(48, Math.round(approxTileHeight)));
+  }, [measurementStore, approxTileHeight]);
+
   const viewportHeight =
     viewportSize.height || (typeof window !== "undefined" ? window.innerHeight : 0);
   const viewportWidth =
@@ -258,20 +315,30 @@ export function useMasonryLayout({
     [viewportHeight, approxTileHeight]
   );
 
+  const estimatedGap = useMemo(
+    () =>
+      Number.isFinite(masonryMetrics.columnGap) && masonryMetrics.columnGap > 0
+        ? masonryMetrics.columnGap
+        : 12,
+    [masonryMetrics.columnGap]
+  );
+
+  useEffect(() => {
+    if (!measurementStore) return;
+    measurementStore.updateLayoutSignature({
+      columnWidth: Math.max(1, Math.round(effectiveColumnWidth || 0)),
+      columnCount: Math.max(1, derivedColumnCount),
+      gapY: estimatedGap,
+      gapX: estimatedGap,
+    });
+  }, [measurementStore, effectiveColumnWidth, derivedColumnCount, estimatedGap]);
+
   const bufferRows = useMemo(() => Math.max(3, Math.ceil(viewportRows)), [viewportRows]);
 
-  const progressiveMaxVisible = useMemo(() => {
-    if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
-      return null;
-    }
-    const baseRows = viewportRows + bufferRows;
-    const targetRows = Math.max(baseRows, scrollRowsEstimate + bufferRows);
-    return derivedColumnCount * targetRows;
-  }, [derivedColumnCount, viewportRows, bufferRows, scrollRowsEstimate]);
-
-  const progressiveMaxVisibleNumber = Number.isFinite(progressiveMaxVisible)
-    ? Math.max(1, Math.floor(progressiveMaxVisible))
-    : undefined;
+  const rangeOverscanPx = useMemo(
+    () => Math.max(0, Math.round(bufferRows * approxTileHeight)),
+    [bufferRows, approxTileHeight]
+  );
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -335,7 +402,330 @@ export function useMasonryLayout({
     return undefined;
   }, [ioRegistry, ioConfig.nearPx, ioConfig.rootMargin]);
 
-  const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
+  const rangeCoordinatorRef = useRef(null);
+  if (!rangeCoordinatorRef.current) {
+    rangeCoordinatorRef.current = createRangeCoordinator({
+      model: lpmEnabled ? layoutProjectionModel : null,
+      totalCount: orderedIds.length,
+      overscanPx: rangeOverscanPx,
+    });
+  } else {
+    rangeCoordinatorRef.current.setModel(lpmEnabled ? layoutProjectionModel : null);
+    rangeCoordinatorRef.current.setTotalCount(orderedIds.length);
+    rangeCoordinatorRef.current.setOverscanPx(rangeOverscanPx);
+  }
+
+  const rangeCoordinator = rangeCoordinatorRef.current;
+  useEffect(() => {
+    if (!rangeCoordinator?.setMaterializeHandler) return undefined;
+    if (!lpmEnabled || !layoutProjectionModel) {
+      rangeCoordinator.setMaterializeHandler(null);
+      return undefined;
+    }
+    const handler = ({ start, end }) => {
+      layoutProjectionModel.ensureProjected?.(start, end);
+    };
+    rangeCoordinator.setMaterializeHandler(handler);
+    return () => {
+      rangeCoordinator.setMaterializeHandler(null);
+    };
+  }, [rangeCoordinator, lpmEnabled, layoutProjectionModel]);
+
+  const scrubPad = useMemo(
+    () => Math.max(24, (derivedColumnCount || 0) * 4),
+    [derivedColumnCount]
+  );
+
+  const [logicalRange, setLogicalRange] = useState(() =>
+    rangeCoordinator?.getRange?.() ?? { start: 0, end: orderedIds.length - 1 }
+  );
+
+  const syncLogicalRange = useCallback(
+    (overscanOverride) => {
+      if (!rangeCoordinator) {
+        const fallbackEnd = orderedIds.length ? orderedIds.length - 1 : -1;
+        const fallback = { start: 0, end: fallbackEnd };
+        setLogicalRange((prev) =>
+          prev.start === fallback.start && prev.end === fallback.end ? prev : fallback
+        );
+        return fallback;
+      }
+      if (!lpmEnabled || !layoutProjectionModel) {
+        const fallbackEnd = orderedIds.length ? orderedIds.length - 1 : -1;
+        const fallback = { start: 0, end: fallbackEnd };
+        setLogicalRange((prev) =>
+          prev.start === fallback.start && prev.end === fallback.end ? prev : fallback
+        );
+        return fallback;
+      }
+      const container = scrollContainerRef.current;
+      const top = container?.scrollTop ?? 0;
+      const next = rangeCoordinator.updateViewport(
+        top,
+        viewportHeight,
+        overscanOverride
+      );
+      setLogicalRange((prev) =>
+        prev.start === next.start && prev.end === next.end ? prev : next
+      );
+      return next;
+    },
+    [
+      rangeCoordinator,
+      orderedIds.length,
+      lpmEnabled,
+      layoutProjectionModel,
+      scrollContainerRef,
+      viewportHeight,
+    ]
+  );
+
+  useEffect(() => {
+    if (!lpmEnabled || !layoutProjectionModel) {
+      syncLogicalRange();
+      return undefined;
+    }
+    syncLogicalRange();
+    const container = scrollContainerRef.current;
+    if (!container) return undefined;
+    const onScroll = () => {
+      syncLogicalRange();
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+    };
+  }, [
+    lpmEnabled,
+    layoutProjectionModel,
+    scrollContainerRef,
+    orderedIds.length,
+    syncLogicalRange,
+  ]);
+
+  useEffect(() => {
+    if (!lpmEnabled || !layoutProjectionModel) return;
+    syncLogicalRange();
+  }, [
+    lpmEnabled,
+    layoutProjectionModel,
+    viewportHeight,
+    rangeOverscanPx,
+    measurementStore?.version,
+    layoutEpoch,
+    syncLogicalRange,
+  ]);
+
+  const previewLogicalIndex = useCallback(
+    (targetIndex) => {
+      const count = orderedIds.length;
+      if (!count) {
+        return { index: 0, offset: 0, height: 0 };
+      }
+      const normalizedIndex = Math.max(
+        0,
+        Math.min(count - 1, Math.floor(Number.isFinite(targetIndex) ? targetIndex : 0))
+      );
+
+      if (!lpmEnabled || !layoutProjectionModel || !rangeCoordinator?.onScrub) {
+        const rows = Math.floor(normalizedIndex / Math.max(1, derivedColumnCount));
+        const offset = rows * approxTileHeight;
+        return { index: normalizedIndex, offset, height: approxTileHeight };
+      }
+
+      const result = rangeCoordinator.onScrub(normalizedIndex, { pad: scrubPad });
+      if (result && typeof result === "object") {
+        return result;
+      }
+
+      const entry = layoutProjectionModel.getEntry?.(normalizedIndex);
+      if (entry) {
+        return {
+          index: normalizedIndex,
+          offset: entry.y ?? 0,
+          height: entry.height ?? approxTileHeight,
+        };
+      }
+
+      const { y } = layoutProjectionModel.indexToOffset(normalizedIndex);
+      return { index: normalizedIndex, offset: y ?? 0, height: approxTileHeight };
+    },
+    [
+      orderedIds.length,
+      lpmEnabled,
+      layoutProjectionModel,
+      rangeCoordinator,
+      scrubPad,
+      derivedColumnCount,
+      approxTileHeight,
+    ]
+  );
+
+  const scrollToLogicalIndex = useCallback(
+    (targetIndex, { align = "start", behavior = "auto" } = {}) => {
+      const container = scrollContainerRef?.current;
+      if (!container) return;
+      const count = orderedIds.length;
+      if (!count) return;
+      const normalizedIndex = Math.max(
+        0,
+        Math.min(count - 1, Math.floor(Number.isFinite(targetIndex) ? targetIndex : 0))
+      );
+
+      let top = 0;
+      if (lpmEnabled && layoutProjectionModel && rangeCoordinator?.jumpToIndex) {
+        const offset = rangeCoordinator.jumpToIndex(normalizedIndex, {
+          align,
+          viewportHeight,
+        });
+        if (Number.isFinite(offset)) {
+          top = offset;
+        } else {
+          const entry = layoutProjectionModel.getEntry?.(normalizedIndex);
+          if (entry && Number.isFinite(entry.y)) {
+            top = entry.y;
+          } else {
+            const { y } = layoutProjectionModel.indexToOffset(normalizedIndex);
+            top = Number.isFinite(y) ? y : 0;
+          }
+        }
+      } else {
+        const rows = Math.floor(normalizedIndex / Math.max(1, derivedColumnCount));
+        top = rows * approxTileHeight;
+      }
+
+      container.scrollTo({ top, behavior });
+      if (lpmEnabled && layoutProjectionModel) {
+        syncLogicalRange();
+      }
+    },
+    [
+      scrollContainerRef,
+      orderedIds.length,
+      lpmEnabled,
+      layoutProjectionModel,
+      rangeCoordinator,
+      viewportHeight,
+      derivedColumnCount,
+      approxTileHeight,
+      syncLogicalRange,
+    ]
+  );
+
+  const logicalRangeIds = useMemo(() => {
+    if (!lpmEnabled) return null;
+    if (!orderedIds.length) return [];
+    const start = Math.max(
+      0,
+      Math.min(orderedIds.length - 1, Number.isFinite(logicalRange.start) ? logicalRange.start : 0)
+    );
+    const end = Math.max(
+      start,
+      Math.min(
+        orderedIds.length - 1,
+        Number.isFinite(logicalRange.end) ? logicalRange.end : logicalRange.start ?? start
+      )
+    );
+    return orderedIds.slice(start, end + 1);
+  }, [lpmEnabled, orderedIds, logicalRange.start, logicalRange.end]);
+
+  const orderForRange = useMemo(() => {
+    if (lpmEnabled) {
+      return logicalRangeIds ?? [];
+    }
+    return visualOrderedIds.length ? visualOrderedIds : orderedIds;
+  }, [lpmEnabled, logicalRangeIds, visualOrderedIds, orderedIds]);
+
+  const progressiveMaxVisibleNumber = useMemo(() => {
+    if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
+      return undefined;
+    }
+    const baseRows = viewportRows + bufferRows;
+    const targetRows = Math.max(baseRows, scrollRowsEstimate + bufferRows);
+    const baseline = derivedColumnCount * targetRows;
+    if (!Number.isFinite(baseline)) {
+      return undefined;
+    }
+    let result = Math.max(1, Math.floor(baseline));
+    if (lpmEnabled) {
+      const endIndex = logicalRange?.end;
+      if (Number.isFinite(endIndex) && endIndex >= 0) {
+        result = Math.max(result, Math.floor(endIndex + 1));
+      }
+    }
+    if (orderedIds.length) {
+      result = Math.min(result, orderedIds.length);
+    }
+    return result;
+  }, [
+    derivedColumnCount,
+    viewportRows,
+    bufferRows,
+    scrollRowsEstimate,
+    lpmEnabled,
+    logicalRange?.end,
+    orderedIds.length,
+  ]);
+
+  useEffect(() => {
+    if (!lpmEnabled || process.env.NODE_ENV === "production") return;
+    const size = Number.isFinite(logicalRange.end) && Number.isFinite(logicalRange.start)
+      ? Math.max(0, logicalRange.end - logicalRange.start + 1)
+      : 0;
+    if (
+      Number.isFinite(progressiveMaxVisibleNumber) &&
+      size > progressiveMaxVisibleNumber
+    ) {
+      console.warn("[RangeCoordinator] window exceeds progressive budget", {
+        size,
+        budget: progressiveMaxVisibleNumber,
+      });
+    }
+  }, [lpmEnabled, logicalRange.start, logicalRange.end, progressiveMaxVisibleNumber]);
+
+  const rangeDiagnostics = useMemo(() => {
+    if (!lpmEnabled || !rangeCoordinator?.getDiagnostics) return null;
+    const diagnostics = rangeCoordinator.getDiagnostics();
+    if (!diagnostics?.range) return null;
+    const { start, end } = diagnostics.range;
+    const size = Number.isFinite(end) && Number.isFinite(start) && end >= start
+      ? end - start + 1
+      : 0;
+    return {
+      start,
+      end,
+      size,
+      overscanPx: diagnostics.overscanPx,
+      totalCount: diagnostics.totalCount,
+      lastComputedAt: diagnostics.lastComputedAt,
+    };
+  }, [lpmEnabled, rangeCoordinator, logicalRange.start, logicalRange.end]);
+
+  const lastLoggedRangeRef = useRef({ start: null, end: null });
+  useEffect(() => {
+    if (!lpmEnabled || process.env.NODE_ENV === "production") return;
+    const diagnostics = rangeCoordinator?.getDiagnostics?.();
+    if (!diagnostics?.range) return;
+    const { start, end } = diagnostics.range;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    const prev = lastLoggedRangeRef.current;
+    if (prev.start === start && prev.end === end) return;
+    lastLoggedRangeRef.current = { start, end };
+    const size = end >= start ? end - start + 1 : 0;
+    console.debug("[RangeCoordinator] window", {
+      start,
+      end,
+      size,
+      overscanPx: diagnostics.overscanPx,
+      projected: layoutProjectionModel?.getProjectedRange?.(),
+    });
+  }, [
+    lpmEnabled,
+    rangeCoordinator,
+    logicalRange.start,
+    logicalRange.end,
+    layoutProjectionModel,
+  ]);
 
   useEffect(() => {
     if (!orderedVideos.length) return;
@@ -398,5 +788,14 @@ export function useMasonryLayout({
     progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    measurementStore,
+    layoutProjectionModel,
+    rangeCoordinator,
+    logicalRange,
+    rangeDiagnostics,
+    layoutProjectionEnabled: lpmEnabled,
+    previewLogicalIndex,
+    scrollToLogicalIndex,
+    viewportHeight,
   };
 }
