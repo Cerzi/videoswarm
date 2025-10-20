@@ -15,7 +15,7 @@
   justify-content: flex-end;
   pointer-events: none;
   z-index: 2147483000;
-  overflow: hidden;
+  overflow: visible;
   touch-action: none;
 }
 
