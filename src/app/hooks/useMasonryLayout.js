@@ -291,39 +291,6 @@ export function useMasonryLayout({
     viewportSize.width ||
     (typeof window !== "undefined" ? window.innerWidth : effectiveColumnWidth);
 
-  const clampScrollTarget = useCallback(
-    (value) => {
-      let next = Number.isFinite(value) ? value : 0;
-      if (next < 0) next = 0;
-      if (lpmEnabled && layoutProjectionModel?.getTotalHeight) {
-        const totalHeight = layoutProjectionModel.getTotalHeight();
-        if (Number.isFinite(totalHeight) && viewportHeight > 0) {
-          const maxScroll = Math.max(0, totalHeight - viewportHeight);
-          if (next > maxScroll) {
-            next = maxScroll;
-          }
-        }
-      }
-      return next;
-    },
-    [lpmEnabled, layoutProjectionModel, viewportHeight]
-  );
-
-  const computeAlignedOffset = useCallback(
-    (offset, height, alignMode) => {
-      const base = Number.isFinite(offset) ? offset : 0;
-      const itemHeight = Number.isFinite(height) && height > 0 ? height : approxTileHeight;
-      if (alignMode === "center" && viewportHeight > 0) {
-        return base - Math.max(0, viewportHeight / 2 - itemHeight / 2);
-      }
-      if (alignMode === "end" && viewportHeight > 0) {
-        return base - Math.max(0, viewportHeight - itemHeight);
-      }
-      return base;
-    },
-    [approxTileHeight, viewportHeight]
-  );
-
   const derivedColumnCount = useMemo(() => {
     if (masonryMetrics.columnCount && masonryMetrics.columnCount > 0) {
       return masonryMetrics.columnCount;
@@ -360,6 +327,8 @@ export function useMasonryLayout({
 
   useEffect(() => cancelPendingCorrection, [cancelPendingCorrection]);
 
+  const lpmEnabled = Boolean(feature.experimentalLayoutProjection);
+
   useEffect(() => {
     if (!lpmEnabled) {
       cancelPendingCorrection();
@@ -367,8 +336,6 @@ export function useMasonryLayout({
   }, [lpmEnabled, cancelPendingCorrection]);
 
   const bufferRows = useMemo(() => Math.max(3, Math.ceil(viewportRows)), [viewportRows]);
-
-  const lpmEnabled = Boolean(feature.experimentalLayoutProjection);
   const layoutProjectionModel = useLayoutProjectionModel({
     enabled: lpmEnabled,
     logicalOrder: orderedIds,
@@ -379,6 +346,39 @@ export function useMasonryLayout({
     measurementStore,
     defaultHeight: Math.max(48, Math.round(approxTileHeight)),
   });
+
+  const clampScrollTarget = useCallback(
+    (value) => {
+      let next = Number.isFinite(value) ? value : 0;
+      if (next < 0) next = 0;
+      if (lpmEnabled && layoutProjectionModel?.getTotalHeight) {
+        const totalHeight = layoutProjectionModel.getTotalHeight();
+        if (Number.isFinite(totalHeight) && viewportHeight > 0) {
+          const maxScroll = Math.max(0, totalHeight - viewportHeight);
+          if (next > maxScroll) {
+            next = maxScroll;
+          }
+        }
+      }
+      return next;
+    },
+    [lpmEnabled, layoutProjectionModel, viewportHeight]
+  );
+
+  const computeAlignedOffset = useCallback(
+    (offset, height, alignMode) => {
+      const base = Number.isFinite(offset) ? offset : 0;
+      const itemHeight = Number.isFinite(height) && height > 0 ? height : approxTileHeight;
+      if (alignMode === "center" && viewportHeight > 0) {
+        return base - Math.max(0, viewportHeight / 2 - itemHeight / 2);
+      }
+      if (alignMode === "end" && viewportHeight > 0) {
+        return base - Math.max(0, viewportHeight - itemHeight);
+      }
+      return base;
+    },
+    [approxTileHeight, viewportHeight]
+  );
 
   const schedulePostMaterializeCorrection = useCallback(
     (targetIndex, alignMode) => {
