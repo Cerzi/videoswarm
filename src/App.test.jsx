@@ -74,6 +74,7 @@ const useFilterStateMock = vi.fn(() => filterStateReturn);
 const masonryReturn = {
   orderedVideos: [],
   orderedIds: [],
+  logicalRangeIds: [],
   orderForRange: [],
   ioRegistry: {
     isNear: () => false,
