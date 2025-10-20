@@ -1,9 +1,24 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import ScrollRail from "./ScrollRail";
 
 describe("ScrollRail", () => {
+  beforeEach(() => {
+    if (!document.getElementById("vs-scroll-rail-overlay-root")) {
+      const host = document.createElement("div");
+      host.id = "vs-scroll-rail-overlay-root";
+      document.body.appendChild(host);
+    }
+  });
+
+  afterEach(() => {
+    const host = document.getElementById("vs-scroll-rail-overlay-root");
+    if (host) {
+      host.remove();
+    }
+  });
+
   const buildProps = (overrides = {}) => ({
     total: 10,
     rangeStart: 0,
@@ -52,7 +67,7 @@ describe("ScrollRail", () => {
 
   it("keeps the thumb within the track bounds when measured", async () => {
     const props = buildProps();
-    const { getByRole, container } = render(<ScrollRail {...props} />);
+    const { getByRole } = render(<ScrollRail {...props} />);
     const slider = getByRole("slider");
     slider.getBoundingClientRect = () => ({
       top: 0,
@@ -67,7 +82,7 @@ describe("ScrollRail", () => {
       window.dispatchEvent(new Event("resize"));
     });
 
-    const thumb = container.querySelector(".scroll-rail__thumb");
+    const thumb = document.querySelector(".scroll-rail__thumb");
     await waitFor(() => {
       const initial = parseFloat(thumb.style.top);
       expect(initial).toBeCloseTo(28, 0);
