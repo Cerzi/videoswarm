@@ -1,43 +1,62 @@
-let capturedMetaEnv;
-try {
-  // eslint-disable-next-line no-undef
-  capturedMetaEnv = import.meta?.env;
-} catch {
-  capturedMetaEnv = undefined;
-}
+const truthy = (value) => {
+  if (value === true) return true;
+  if (value === false) return false;
+  if (value == null) return false;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized === "1" || normalized === "true" || normalized === "yes";
+  }
+  return Boolean(value);
+};
 
-const capturedProcessEnv =
-  (typeof process !== "undefined" && process?.env) || undefined;
-
-export const resolveFeatureFlags = ({ processEnv, metaEnv } = {}) => {
-  const env = {
-    ...(metaEnv || {}),
-    ...(processEnv || {}),
-  };
-
-  const isEnabled = (key) => {
-    const value = env?.[key];
-    if (value == null) return false;
-    if (value === true) return true;
-    if (value === false) return false;
-    if (typeof value === "string") {
-      const normalized = value.toLowerCase();
-      return normalized === "1" || normalized === "true" || normalized === "yes";
-    }
-    return Boolean(value);
-  };
+export const resolveFeatureFlags = ({ processEnv = {}, metaEnv = {} } = {}) => {
+  const env = { ...metaEnv, ...processEnv };
 
   return {
     stableViewAnchoring: true,
     stableViewFixes: true,
     experimentalLayoutProjection:
-      isEnabled("VS_EXP_LPM") || isEnabled("VITE_VS_EXP_LPM"),
+      truthy(env.VS_EXP_LPM) || truthy(env.VITE_VS_EXP_LPM),
   };
 };
+
+let capturedProcessEnv = {};
+try {
+  if (typeof process !== "undefined" && process?.env) {
+    capturedProcessEnv = process.env;
+  }
+} catch {
+  capturedProcessEnv = {};
+}
+
+let capturedMetaEnv = {};
+try {
+  // eslint-disable-next-line no-undef
+  capturedMetaEnv = import.meta && import.meta.env ? import.meta.env : {};
+} catch {
+  capturedMetaEnv = {};
+}
 
 export const feature = resolveFeatureFlags({
   processEnv: capturedProcessEnv,
   metaEnv: capturedMetaEnv,
 });
+
+if (
+  typeof window !== "undefined" &&
+  typeof console !== "undefined" &&
+  process?.env?.NODE_ENV !== "test"
+) {
+  console.info(
+    "[features] experimentalLayoutProjection =",
+    feature.experimentalLayoutProjection,
+    "(VS_EXP_LPM =",
+    capturedProcessEnv?.VS_EXP_LPM,
+    ", VITE_VS_EXP_LPM =",
+    capturedMetaEnv?.VITE_VS_EXP_LPM,
+    ")"
+  );
+}
 
 export default feature;
