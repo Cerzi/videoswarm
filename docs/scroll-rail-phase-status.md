@@ -1,19 +1,19 @@
-# Scroll Rail Feature Status (Phases A–C)
+# Scroll Rail Feature Status — Full DOM Mode
 
 ## Visibility expectations
-- The ScrollRail UI is guarded by the `experimentalLayoutProjection` feature flag. By default the flag resolves to `false` unless `VS_EXP_LPM` (or `VITE_VS_EXP_LPM`) is set to a truthy value in the environment. Without that flag, `useMasonryLayout` reports `layoutProjectionEnabled = false`, which prevents the rail from rendering even though the component code is present.
-- When the flag is enabled, `shouldShowScrollRail` additionally checks that the layout projection model is hydrated and reports a positive `totalHeight` before rendering the component.
+- The ScrollRail is now driven by the real masonry DOM. By default the rail is enabled and renders whenever the collection contains items and the wall has a measurable height.
+- The `fullDomMasonry` feature flag (derived from `VS_DEWINDOW` / `VITE_VS_DEWINDOW` or the absence of the `VS_KEEP_WINDOWING` override) controls whether the app uses the simplified full-DOM layout. Disabling the flag restores the legacy windowed stack.
+- `App.jsx` reads scroll metrics from `useMasonryLayout` and only requires a positive `totalHeight` before mounting the rail overlay.
 
-### Relevant code
-- `feature.experimentalLayoutProjection` is computed from the environment variables in `src/config/featureFlags.js`.
-- `useMasonryLayout` exposes `layoutProjectionEnabled` which simply mirrors that flag, and `App.jsx` requires it to be `true` for the rail to mount.
+## Current behaviour (post Phase D)
+1. All videos render as lightweight card shells. Playback resources are still throttled by the existing intersection observer and resource manager.
+2. ScrollRail operations (`onScrub`/`onCommit`) map directly to DOM offsets, producing deterministic jumps without background materialisation.
+3. The rail overlay is fixed to the viewport and remains visible while the wall scrolls.
 
-## Phase D prerequisites
-1. **Range materialisation wiring** – Hook `onScrub`/`onCommit` callbacks into the collection loader via `requestMaterialize` so distant targets mount promptly during scrubs.
-2. **Budget governor** – Allow temporary oversubscription of progressive rendering budgets when scrubbing or after jump requests, decaying back to steady-state limits once idle.
-3. **Estimator robustness** – Tune measurement estimators (e.g., trimmed mean/median per column) to reduce thumb drift until unseen items are measured.
-4. **Observability** – Add projection/budget watchdog metrics (estimation error, rail boost state) to detect divergence during prolonged sessions.
+## Guardrails
+- Development builds log a `[ScrollRail] guard` snapshot summarising item count, total height, and whether index→offset hooks are available.
+- The masonry hook exposes `scrollMetrics` (`indexToOffset`, `offsetToIndex`, `totalHeight`) and `visibleRange` so downstream components can build additional diagnostics if needed.
 
 ## Recommendation
-- To preview the ScrollRail during development, launch the app with `VS_EXP_LPM=1` (or `VITE_VS_EXP_LPM=true` in Vite) so that the projection stack and rail UI activate.
-- Keep Phase D tasks behind the same flag until range materialisation and budgeting changes are validated.
+- Run `VS_DEWINDOW=1 VITE_VS_DEWINDOW=1 npm run electron:dev` to explicitly exercise the full DOM path.
+- If you encounter performance regressions on extremely large libraries, set `VS_KEEP_WINDOWING=1` while collecting traces so we can compare against the legacy virtualised implementation.

@@ -166,16 +166,12 @@ function App() {
     updateAspectRatio,
     onItemsChanged,
     setZoomClass,
-    progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
-    measurementStore,
-    layoutProjectionModel: _layoutProjectionModel,
-    logicalRange,
-    layoutProjectionEnabled: layoutProjectionEnabled,
     previewLogicalIndex,
     scrollToLogicalIndex,
-    viewportHeight: layoutViewportHeight,
+    scrollMetrics,
+    visibleRange,
   } = useMasonryLayout({
     videos,
     filteredVideos,
@@ -186,28 +182,7 @@ function App() {
     zoomLevel,
     scrollContainerRef,
     gridRef,
-    ensureVisibleRange,
   });
-
-  const layoutProjectionModel = _layoutProjectionModel;
-
-  const scrollRailTotalHeight = useMemo(() => {
-    if (!layoutProjectionEnabled || !layoutProjectionModel) return 0;
-    try {
-      const total = layoutProjectionModel.getTotalHeight?.();
-      return Number.isFinite(total) ? total : 0;
-    } catch (error) {
-      console.debug("[ScrollRail] failed to read total height", error);
-      return 0;
-    }
-  }, [
-    layoutProjectionEnabled,
-    layoutProjectionModel,
-    measurementStore?.version,
-    orderedVideos.length,
-    layoutViewportHeight,
-    layoutEpoch,
-  ]);
 
   const scrollRailLabelForIndex = useCallback(
     (index) => {
@@ -245,47 +220,46 @@ function App() {
     [orderedVideos, sortKey]
   );
 
+  const scrollRailTotalHeight = useMemo(() => {
+    const total = scrollMetrics?.totalHeight ?? 0;
+    return Number.isFinite(total) ? total : 0;
+  }, [scrollMetrics?.totalHeight, orderedVideos.length, layoutEpoch]);
+
   const handleRailScrub = useCallback(
     (targetIndex) => {
-      if (!layoutProjectionEnabled || typeof previewLogicalIndex !== "function") return null;
+      if (typeof previewLogicalIndex !== "function") return null;
       return previewLogicalIndex(targetIndex);
     },
-    [layoutProjectionEnabled, previewLogicalIndex]
+    [previewLogicalIndex]
   );
 
   const handleRailCommit = useCallback(
     (targetIndex) => {
-      if (!layoutProjectionEnabled || typeof scrollToLogicalIndex !== "function") return;
+      if (typeof scrollToLogicalIndex !== "function") return;
       scrollToLogicalIndex(targetIndex, { align: "start", behavior: "auto" });
     },
-    [layoutProjectionEnabled, scrollToLogicalIndex]
+    [scrollToLogicalIndex]
   );
 
   const shouldShowScrollRail =
-    layoutProjectionEnabled &&
-    !!layoutProjectionModel &&
-    orderedVideos.length > 0 &&
-    scrollRailTotalHeight > 0;
+    orderedVideos.length > 0 && scrollRailTotalHeight > 0;
 
   const scrollRailGuardRef = useRef(null);
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
-    if (!layoutProjectionEnabled) return;
     const snapshot = {
-      enabled: layoutProjectionEnabled,
-      hasModel: Boolean(layoutProjectionModel),
       total: orderedVideos.length,
       totalHeight: Math.round(scrollRailTotalHeight),
+      hasOffsets: typeof scrollMetrics?.indexToOffset === "function",
     };
     const serialized = JSON.stringify(snapshot);
     if (scrollRailGuardRef.current === serialized) return;
     scrollRailGuardRef.current = serialized;
     console.debug("[ScrollRail] guard", snapshot);
   }, [
-    layoutProjectionEnabled,
-    layoutProjectionModel,
     orderedVideos.length,
     scrollRailTotalHeight,
+    scrollMetrics?.indexToOffset,
   ]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
@@ -339,7 +313,6 @@ function App() {
 
   const { runWithStableAnchor } = useStableViewAnchoring({
     enabled: feature.stableViewAnchoring,
-    scrollRef: scrollContainerRef,
     gridRef,
     observeRef: contentRegionRef,
     selection,
@@ -719,15 +692,6 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    scrollRef: scrollContainerRef,
-    progressive: {
-      initial: 120,
-      batchSize: 64,
-      intervalMs: 100,
-      pauseOnScroll: true,
-      longTaskAdaptation: true,
-      maxVisible: progressiveMaxVisibleNumber,
-    },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
@@ -1220,17 +1184,15 @@ function App() {
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
                     scheduleInit={scheduleInit}
-                    measurementStore={measurementStore}
                   />
                 ))}
-                {shouldShowScrollRail && layoutProjectionModel && (
+                {shouldShowScrollRail && (
                   <ScrollRail
                     total={orderedVideos.length}
-                    rangeStart={logicalRange?.start ?? 0}
-                    rangeEnd={logicalRange?.end ?? 0}
-                    indexToOffset={layoutProjectionModel.indexToOffset}
-                    getEntry={layoutProjectionModel.getEntry}
-                    offsetToIndex={layoutProjectionModel.offsetToIndex}
+                    rangeStart={visibleRange?.start ?? 0}
+                    rangeEnd={visibleRange?.end ?? 0}
+                    indexToOffset={scrollMetrics.indexToOffset}
+                    offsetToIndex={scrollMetrics.offsetToIndex}
                     totalHeight={scrollRailTotalHeight}
                     labelForIndex={scrollRailLabelForIndex}
                     onScrub={handleRailScrub}

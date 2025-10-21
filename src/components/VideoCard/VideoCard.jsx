@@ -4,7 +4,6 @@ import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
-import { useReportMeasuredHeight } from "../../hooks/ui-perf/useReportMeasuredHeight";
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -41,7 +40,6 @@ const VideoCard = memo(function VideoCard({
 
   // optional init scheduler
   scheduleInit = null,
-  measurementStore = null,
 }) {
   const cardRef = useRef(null);
   const videoContainerRef = useRef(null);
@@ -119,12 +117,6 @@ const VideoCard = memo(function VideoCard({
 
   const effectiveAspectRatio = aspectRatioHint && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
 
-  useReportMeasuredHeight({
-    id: videoId,
-    elementRef: cardRef,
-    measurementStore,
-    layoutEpoch,
-  });
 
   // Is this <video> currently adopted by the fullscreen modal?
   const isAdoptedByModal = useCallback(() => {

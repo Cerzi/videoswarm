@@ -37,7 +37,6 @@ export default function ScrollRail({
   rangeStart = 0,
   rangeEnd = 0,
   indexToOffset,
-  getEntry,
   offsetToIndex,
   totalHeight = 0,
   labelForIndex,
@@ -118,19 +117,16 @@ export default function ScrollRail({
   const resolveEntryOffset = useCallback(
     (index) => {
       if (!hasItems) return { offset: 0, height: 0 };
-      const entry = getEntry?.(index);
-      if (entry) {
-        const offset = Number.isFinite(entry.y) ? entry.y : 0;
-        const height = Number.isFinite(entry.height) ? entry.height : 0;
-        return { offset, height };
-      }
       if (typeof indexToOffset === "function") {
-        const { y = 0 } = indexToOffset(index) || {};
-        return { offset: Number.isFinite(y) ? y : 0, height: 0 };
+        const { y = 0, height = 0 } = indexToOffset(index) || {};
+        return {
+          offset: Number.isFinite(y) ? y : 0,
+          height: Number.isFinite(height) ? height : 0,
+        };
       }
       return { offset: 0, height: 0 };
     },
-    [getEntry, hasItems, indexToOffset]
+    [hasItems, indexToOffset]
   );
 
   const updatePreview = useCallback(

@@ -13,11 +13,15 @@ const truthy = (value) => {
 export const resolveFeatureFlags = ({ processEnv = {}, metaEnv = {} } = {}) => {
   const env = { ...metaEnv, ...processEnv };
 
+  const keepWindowing =
+    truthy(env.VS_KEEP_WINDOWING) || truthy(env.VITE_VS_KEEP_WINDOWING);
+  const enableDeWindow =
+    truthy(env.VS_DEWINDOW) || truthy(env.VITE_VS_DEWINDOW);
+
   return {
     stableViewAnchoring: true,
     stableViewFixes: true,
-    experimentalLayoutProjection:
-      truthy(env.VS_EXP_LPM) || truthy(env.VITE_VS_EXP_LPM),
+    fullDomMasonry: keepWindowing ? false : enableDeWindow || true,
   };
 };
 
@@ -52,12 +56,16 @@ if (
   resolvedNodeEnv !== "test"
 ) {
   console.info(
-    "[features] experimentalLayoutProjection =",
-    feature.experimentalLayoutProjection,
-    "(VS_EXP_LPM =",
-    capturedProcessEnv?.VS_EXP_LPM,
-    ", VITE_VS_EXP_LPM =",
-    capturedMetaEnv?.VITE_VS_EXP_LPM,
+    "[features] fullDomMasonry =",
+    feature.fullDomMasonry,
+    "(VS_DEWINDOW =",
+    capturedProcessEnv?.VS_DEWINDOW,
+    ", VITE_VS_DEWINDOW =",
+    capturedMetaEnv?.VITE_VS_DEWINDOW,
+    ", VS_KEEP_WINDOWING =",
+    capturedProcessEnv?.VS_KEEP_WINDOWING,
+    ", VITE_VS_KEEP_WINDOWING =",
+    capturedMetaEnv?.VITE_VS_KEEP_WINDOWING,
     ")"
   );
 }

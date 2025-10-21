@@ -1,167 +1,125 @@
-# VideoSwarm Scroll Rail Audit & Refactor Plan
+# De-Windowing Plan — Full DOM + Smart Playback (ScrollRail Simplification)
 
-## 0. Executive Summary
-- Existing rail math is bound to DOM order and the mounted subset, causing scrubbing to clamp at the currently rendered window.
-- Introduce a layout projection model (LPM) that offers global index-to-offset mappings backed by measurements and estimations.
-- Progressive rendering must become range-addressable with the ability to temporarily exceed budgets during scrubs and long-distance jumps.
-- Masonry hooks should publish both logical and DOM order while sharing a central measurement store.
-- Deliver the ScrollRail UI as a thin layer over a new projection and range coordination system.
+**Goal:** Remove render-window/virtualization, render the **entire masonry wall** (3k+ items) as lightweight DOM, **only attach video players near the viewport**, and simplify ScrollRail to operate on the real DOM (no projection/model materialisation).
 
-**Outcome:** Deterministic rail scrubbing across the full collection, stable contextual labels, predictable jump/seek behaviour, and preserved wall performance.
+**Why:** Earlier builds proved full DOM is acceptable for your datasets. The windowing stack adds complexity (rail, projection, budgets) and is the main source of anchoring bugs. We’ll keep performance by lazy-instantiating `<video>` players while letting the DOM exist for layout and anchors.
 
-## 1. Current Pain Points
-1. Helpers such as `orderForRange` and `visualOrderedIds` only operate on the mounted subset, so the rail cannot address unseen items.
-2. Progressive budgets cannot target high indices, causing hints for distant items to be clamped before rendering.
-3. Height reservation hacks mirror truncated knowledge, so scroll height never reflects the full logical collection.
+---
 
-**Conclusion:** A global projection model is required; incremental patches cannot recover the missing data.
+## 0) Success Criteria
 
-## 2. Target Architecture
-### 2.1 LayoutProjectionModel (LPM)
-- Maintains a render-independent mapping between logical indices, columns, and offsets.
-- Inputs: logical order, grid geometry (column count/width, gaps), measurement store, estimators for unseen items.
-- APIs: `indexToOffset`, `offsetToIndex`, `ensureProjected`, `updateMeasurement`, `getTotalHeight`.
-- Behaviour: place items using logical order, maintain per-column tails, use estimators until actual measurements arrive, rebuild on parameter changes.
+- All items (3k+) exist as **DOM nodes** after initial layout (cards render as lightweight shells with poster/thumb + metadata).
+- Near-viewport items (e.g., within 1.5–2.0× viewport) get live `<video>` elements; others keep image/thumb or an inert `<video preload="none">` without sources.
+- ScrollRail jumps **directly** to DOM anchors (item offsets) and lands accurately on date or index without a second correction pass in the common case.
+- Steady 60fps scroll on modern hardware; no long (>50 ms) main-thread stalls during scrubs/jumps.
 
-### 2.2 MeasurementStore
-- Versioned map of id to height with staleness policies.
-- Provides column statistics (avg, p50, p90) to feed estimators.
+---
 
-### 2.3 RangeCoordinator
-- Bridges the LPM with the masonry renderer and progressive loader.
-- APIs for viewport-to-range mapping, materialisation requests, rail scrubbing, and jump-to-index behaviour.
-- Integrates with a budget governor that temporarily raises limits and decays them after idle.
+## 1) Scope of Removal (Windowing/Progressive)
 
-### 2.4 MasonryRenderer
-- Renders the DOM window derived from logical indices.
-- Emits measurements back into the store.
+**Remove/neutralize:**
+- `useProgressiveList` budgets and any range materialisation.
+- `RangeCoordinator.requestMaterialize` and boost/decay logic.
+- DOM window calculations in `useChunkedMasonry` (or replace with full map).
+- Any LPM-dependent code used only to **predict** offsets or total height.
 
-### 2.5 ScrollRail
-- Consumes total count, projection APIs, and contextual label provider.
-- Emits scrubs and commits (jump requests) to the coordinator.
+**Keep:**
+- **Sorting/logicalOrder** source of truth in `useVideoCollection`.
+- **IntersectionObserverRegistry** and playback throttling.
+- **MeasurementStore** (optional) for debug & precise anchors, but no longer required for rendering order.
 
-## 3. Refactor Plan
-### Phase A – Extract the Model
-1. Introduce `MeasurementStore` and a `useReportMeasuredHeight` hook that routes card measurements.
-2. Add `logicalOrder` and `id→logicalIndex` mappings to the collection layer.
-3. Implement the LPM as a pure module with a `useLPM` wrapper and optional visualiser.
-4. Run the LPM in parallel for telemetry while keeping existing rendering.
+---
 
-### Phase B – Swap Rendering to LPM (Feature Flag)
-5. Build a simple `RangeCoordinator` that maps viewport bounds to logical index ranges.
-6. Replace DOM-order helpers with LPM-powered range selection.
-7. Add parity metrics and watchdogs to ensure stability.
+## 2) Architecture After De-Windowing
 
-### Phase C – Scroll Rail on LPM
-8. Implement an index-driven `ScrollRail` that uses the projection APIs and contextual labels.
-9. Add keyboard and accessibility affordances.
+### 2.1 Rendering
+- **Full render:** map `logicalOrder` → `<VideoCardShell id=.../>` for all items.
+- **Card shell** renders: poster/thumb (static), title/meta, fixed container with known width; **no active `<video>`** by default.
+- **Near-viewport activation:** IO callback swaps shell → live `<video>` (attach `src`, `autoplay`, etc.). On exit (beyond offscreen threshold), detach `src` or recycle to pool.
 
-### Phase D – Progressive Coordination & Polish
-10. Implement range materialisation requests with elevated priorities during scrubs.
-11. Introduce a decay policy for elevated budgets.
-12. Tune estimators to use robust statistics (trimmed mean, median).
+### 2.2 ScrollRail
+- Reads **real offsets** from the container:
+  - `totalHeight = scrollContainer.scrollHeight`.
+  - `indexToOffset(i) = cardRefs[i].offsetTop` (or cached from `getBoundingClientRect` + container scrollTop).
+  - `offsetToIndex(y)` by **binary search** (or block samples every 64 cards, then scan locally).
+- Date-aware labels: `labelForIndex(i)` reads the actual card’s date from the data model.
+- Commit: `scrollContainer.scrollTo({ top: indexToOffset(iAlign), behavior: 'instant'|'smooth' })`.
 
-## 4. Proposed Interfaces (TypeScript)
-```ts
-interface MeasurementStore {
-  version: number;
-  get(id: string): number | undefined;
-  upsert(id: string, height: number): void;
-  statsForColumn(col: number): { avg: number; p50: number; p90: number };
-}
+### 2.3 Observers & Reflow Safety
+- Use a **single** `IntersectionObserver` (root: scroll container) feeding a **PlaybackManager** that mounts/unmounts `<video>`.
+- Add a **ResizeObserver** on the grid to update offset caches when a card’s height changes (e.g., image loads). Batched per-frame.
 
-interface LPMParams {
-  logicalOrder: string[];
-  columnCount: number;
-  columnWidth: number;
-  gapX: number;
-  gapY: number;
-  measure: MeasurementStore;
-}
+---
 
-interface LayoutProjectionModel {
-  indexToOffset(i: number): { y: number; column: number };
-  offsetToIndex(y: number): number;
-  getTotalHeight(): number;
-  ensureProjected(i0: number, i1: number): void;
-  updateMeasurement(id: string, h: number): void;
-}
+## 3) Step-By-Step Refactor Plan (PR-sized chunks)
 
-interface RangeCoordinator {
-  viewportToDesiredRange(viewTop: number, viewH: number, overscan: number): [number, number];
-  onScrub(targetIndex: number): void;
-  jumpToIndex(i: number, align?: 'start' | 'center' | 'end'): void;
-  requestMaterialize(i0: number, i1: number, priority: 'rail' | 'nav' | 'idle'): void;
-}
+### PR-1: Feature flag & Read-only metrics
+- Add `VS_DEWINDOW=1` (or reuse experimental flag) to select the new path.
+- Log: total items, scrollHeight, average card height.
 
-interface VideoCollection {
-  logicalOrder: string[];
-  idToIndex: Map<string, number>;
-  ensureVisibleRange(i0: number, i1: number, opts?: { priority: 'rail' | 'nav' }): void;
-}
+### PR-2: Full DOM path
+- **`useMasonryLayout`**: replace windowed range with full map.
+- Remove `ensureVisibleRange` calls.
+- Ensure the grid container uses **containment** to reduce layout cost.
 
-interface ScrollRailProps {
-  total: number;
-  indexToOffset: (i: number) => { y: number };
-  offsetToIndex: (y: number) => number;
-  totalHeight: number;
-  labelForIndex: (i: number) => string;
-  onScrub: (i: number) => void;
-  onCommit: (i: number) => void;
-}
-```
+### PR-3: Card Shell + Activation
+- **VideoCardShell** renders poster/thumb and metadata, only attaching `<video>` when activated.
+- **PlaybackManager** drives activation/deactivation based on IO with generous root margins.
 
-## 5. Algorithms & Data
-- Column assignment uses a greedy min-tail heuristic with gap adjustments.
-- Estimators seed with global medians, clamp to robust ranges, and rebuild on geometry changes.
-- `offsetToIndex` uses block-based binary search over column tails.
-- Budget governor temporarily inflates visible ranges during scrubs and decays budgets when idle.
+### PR-4: ScrollRail rewire (DOM-based)
+- `totalHeight`: from scroll container.
+- `indexToOffset`/`offsetToIndex`: use DOM offsets + block summaries.
+- Commit flows rely on DOM anchors with optional date-to-index lookup.
+- `ResizeObserver` updates cached offsets after layout changes.
 
-## 6. Integration Points
-- `hooks/useChunkedMasonry`: replace DOM-order helpers with logical range inputs from the coordinator.
-- `hooks/video-collection`: own logical sort, expose `ensureVisibleRange` with high-priority paths.
-- `hooks/ui-perf/useIntersectionObserverRegistry`: continue gating playback by visibility.
-- `components/VideoCard/*`: report measurements via the store.
-- `components/ScrollRail`: shift to index-driven math.
-- `FullScreenModal` navigation: reuse `idToIndex` for left/right navigation under logical ordering.
+### PR-5: Remove old windowing code paths
+- Strip `useProgressiveList` and range budgets; delete `RangeCoordinator.requestMaterialize` and boost/decay.
+- Keep only what’s needed for ScrollRail input and index/date helpers.
 
-## 7. Observability & Guardrails
-- Perf counters: total height, measurement counts, estimation error quantiles, rail boost state, budget levels.
-- Watchdogs: react to high estimation error and post-jump misalignment.
-- Optional telemetry for anonymised size distributions and scrub distances.
+---
 
-## 8. Testing Strategy
-- Unit: LPM inverses and estimator stability.
-- Integration: priority range materialisation responsiveness.
-- UI: keyboard accessibility, ARIA feedback, jump accuracy after sort or metadata changes.
+## 4) File-Level To-Dos (indicative)
+- `src/hooks/useChunkedMasonry.ts` → retire chunk logic; return full `logicalOrder` with masonry positions.
+- `src/hooks/video-collection.ts` → keep `logicalOrder`, `idToIndex`, sort changes.
+- `src/hooks/ui-perf/useIntersectionObserverRegistry.ts` → ensure it supports **one global IO** used by PlaybackManager.
+- `src/components/VideoCard/VideoCard.tsx` → split into `VideoCardShell` + activation hook; move auto-play logic to manager.
+- `src/components/ScrollRail/*` → make it **DOM-offset based**; delete dependency on projection/materialisation.
+- `src/config/featureFlags.js` → add `deWindow` flag; default **on** for dev testing.
 
-## 9. Migration & Rollout
-1. Phase A under a feature flag for shadow mode.
-2. Compare DOM versus LPM selection logs in canary builds.
-3. Switch rendering under flag, monitor watchdogs, then enable by default.
-4. Ship ScrollRail UI, gather feedback, and tune budgets/labels.
+---
 
-## 10. Risks & Mitigations
-- Estimator drift: robust stats and idle re-measurements.
-- Memory growth: sparse projection storage (block summaries) and on-demand calculations.
-- Sort changes during edits: versioned logical order and incremental rebuilds anchored by ID.
+## 5) Performance Guardrails (Full DOM)
+- **DOM weight:** Keep shells light (avoid heavy per-card hooks/effects; memoize props; avoid frequent React re-renders).
+- **CSS:** Prefer GPU-friendly properties; avoid triggering layout on scroll; use `will-change: transform` sparingly.
+- **Images:** Use sized thumbnails; avoid layout shift.
+- **Videos:** Attach sources only when active; cap concurrent decoders; consider pooling.
+- **Observers:** Single IO instance; batch RO/IO callbacks with `requestAnimationFrame`.
 
-## 11. Implementation Checklist
-- [ ] MeasurementStore module and measurement hook.
-- [ ] Logical order and index mapping in the collection hook.
-- [ ] Layout projection model with tests and dev overlay.
-- [ ] Range coordinator and budget governor.
-- [ ] Update chunked masonry to consume logical ranges.
-- [ ] Fast-path `ensureVisibleRange` for high-priority requests.
-- [ ] ScrollRail component with contextual labels.
-- [ ] Watchdogs and counters.
-- [ ] E2E scenarios with large synthetic datasets.
+---
 
-## 12. Developer Notes
-- Keep index math in logical space; DOM is a projection.
-- Recompute from the LPM on resize/zoom rather than storing pixels.
-- ScrollRail should remain stateless, emitting target indices only.
-- Prioritise determinism; small post-jump corrections are acceptable as measurements refine.
+## 6) ScrollRail UX Details (DOM mode)
+- Track is fixed overlay; thumb normalized to [0,1].
+- Keyboard: PgUp/PgDn = ± viewport; Home/End = 0/N-1.
+- Hide native scrollbar in the wall (flagged) while keeping wheel/keys.
 
-## 13. Conclusion
-A global, sort-aware projection plus range coordination enables rail scrubbing across any collection size while preserving performance. Build the model first, then layer ScrollRail behaviour on top, avoiding DOM-order coupling.
+---
+
+## 7) Risks & Mitigations
+- **Memory:** 3k shells still cost memory → ensure shells have minimal overhead.
+- **Layout jitter:** Image load may change card height → use placeholders and fixed aspect ratios; refresh offsets via RO.
+- **Large reflows:** Debounce operations on container width/column changes.
+- **Future features:** Keep legacy path behind flag as escape hatch for huge datasets.
+
+---
+
+## 8) Accept/QA Checklist
+- [ ] 3k-item folder renders full DOM in < 2–3 seconds without freezing UI.
+- [ ] Scrolling remains smooth; FPS stable.
+- [ ] Only near-viewport items have live video; others are thumbs.
+- [ ] ScrollRail jumps accurately to date/index (± one item), no secondary correction needed typically.
+- [ ] No layout shift on rail drag/commit; no native scrollbar visible when flag is on.
+
+---
+
+## 9) Recommendation
+- Ship the full-DOM architecture as default while keeping a flag to restore windowing if required for ultra-large datasets. Focus ongoing tuning on activation heuristics and ScrollRail UX rather than projection math.
