@@ -283,8 +283,10 @@ export function createLayoutProjectionModel({
     },
     getTotalHeight() {
       if (!ids.length) return 0;
-      if (state.projectedUntil < 0) {
-        ensureProjectedRange(0, Math.min(ids.length - 1, BLOCK_SIZE - 1));
+      const maxIndex = ids.length - 1;
+      if (state.projectedUntil < maxIndex) {
+        const start = Math.max(0, state.projectedUntil + 1);
+        ensureProjectedRange(start, maxIndex);
       }
       const last = state.blockSummaries[state.blockSummaries.length - 1];
       if (last && Number.isFinite(last.maxY)) {
