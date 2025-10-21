@@ -28,11 +28,14 @@ export function useMasonryLayout({
     columnGap: 0,
     gridWidth: 0,
   });
-  const [scrollRowsEstimate, setScrollRowsEstimate] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
   const metadataAspectCacheRef = useRef(new Map());
   const masonryRefreshRafRef = useRef(0);
-  const [ioConfig, setIoConfig] = useState({ rootMargin: "1600px 0px", nearPx: 900 });
+  const [ioConfig, setIoConfig] = useState({
+    rootMargin: "100% 0px 100% 0px",
+    nearPx: 900,
+  });
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
 
@@ -86,6 +89,11 @@ export function useMasonryLayout({
       setViewportSize((prev) =>
         prev.width === width && prev.height === height ? prev : { width, height }
       );
+
+      if (currentScroll) {
+        const top = currentScroll.scrollTop || 0;
+        setScrollTop((prev) => (Math.abs(prev - top) > 0.5 ? top : prev));
+      }
     };
 
     compute();
@@ -258,41 +266,42 @@ export function useMasonryLayout({
     [viewportHeight, approxTileHeight]
   );
 
-  const bufferRows = useMemo(() => Math.max(3, Math.ceil(viewportRows)), [viewportRows]);
-
-  const progressiveMaxVisible = useMemo(() => {
+  const viewportItems = useMemo(() => {
     if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
       return null;
     }
-    const baseRows = viewportRows + bufferRows;
-    const targetRows = Math.max(baseRows, scrollRowsEstimate + bufferRows);
-    return derivedColumnCount * targetRows;
-  }, [derivedColumnCount, viewportRows, bufferRows, scrollRowsEstimate]);
+    return derivedColumnCount * viewportRows;
+  }, [derivedColumnCount, viewportRows]);
 
-  const progressiveMaxVisibleNumber = Number.isFinite(progressiveMaxVisible)
-    ? Math.max(1, Math.floor(progressiveMaxVisible))
-    : undefined;
+  const activationTarget = useMemo(() => {
+    if (!Number.isFinite(viewportItems) || viewportItems <= 0) {
+      return null;
+    }
+    const multiplier = 2;
+    const desired = Math.ceil(viewportItems * multiplier);
+    const min = 100;
+    const max = 600;
+    return Math.max(min, Math.min(max, desired));
+  }, [viewportItems]);
+
+  const progressiveMaxVisibleNumber = activationTarget || undefined;
 
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
 
     let rafId = 0;
-    const measure = () => {
+    const updateScroll = () => {
       rafId = 0;
       const top = el.scrollTop || 0;
-      const rows = Math.max(
-        viewportRows,
-        Math.ceil((top + viewportHeight) / Math.max(1, approxTileHeight))
-      );
-      setScrollRowsEstimate((prev) => (prev !== rows ? rows : prev));
+      setScrollTop((prev) => (Math.abs(prev - top) > 0.5 ? top : prev));
     };
 
-    measure();
+    updateScroll();
 
     const onScroll = () => {
       if (rafId) return;
-      rafId = requestAnimationFrame(measure);
+      rafId = requestAnimationFrame(updateScroll);
     };
 
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -300,16 +309,15 @@ export function useMasonryLayout({
       el.removeEventListener("scroll", onScroll);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [scrollContainerRef, approxTileHeight, viewportHeight, viewportRows]);
+  }, [scrollContainerRef]);
 
   useEffect(() => {
     const mediumWidth = ZOOM_TILE_WIDTHS[1] ?? ZOOM_TILE_WIDTHS[0] ?? 200;
     const tileWidth = Math.max(80, effectiveColumnWidth || mediumWidth);
     const height = viewportHeight;
     const scale = Math.max(0.45, Math.min(1.6, tileWidth / mediumWidth));
-    const nearPx = Math.max(360, Math.round(Math.max(480, height * 0.85) * scale));
-    const rootMarginPx = Math.max(600, Math.round(1100 * scale));
-    const rootMargin = `${rootMarginPx}px 0px`;
+    const nearPx = Math.max(360, Math.round(Math.max(480, height) * scale));
+    const rootMargin = "100% 0px 100% 0px";
     setIoConfig((prev) =>
       prev.nearPx === nearPx && prev.rootMargin === rootMargin
         ? prev
@@ -384,6 +392,17 @@ export function useMasonryLayout({
     }
   }, [orderedVideos, updateAspectRatio]);
 
+  const viewportMetrics = useMemo(
+    () => ({
+      columnCount: derivedColumnCount,
+      viewportRows,
+      approxTileHeight,
+      viewportHeight,
+      scrollTop,
+    }),
+    [derivedColumnCount, viewportRows, approxTileHeight, viewportHeight, scrollTop]
+  );
+
   return {
     orderedVideos,
     orderedIds,
@@ -396,6 +415,8 @@ export function useMasonryLayout({
     onItemsChanged,
     setZoomClass,
     progressiveMaxVisibleNumber,
+    activationTarget,
+    viewportMetrics,
     withLayoutHold,
     isLayoutTransitioning,
   };

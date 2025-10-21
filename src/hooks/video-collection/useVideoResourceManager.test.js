@@ -247,10 +247,8 @@ describe('reportPlayerCreationFailure', () => {
     const { maxLoaded: afterLoaded, maxConcurrentLoading: afterLoading } =
       result.current.limits;
 
-    const SMOOTH_STEP = 12; // mirror internal tuning
-    const expectedLoaded = Math.floor((beforeLoaded + SMOOTH_STEP) / 2);
-    const baseLoaders = Math.max(4, Math.floor((beforeLoaded + SMOOTH_STEP) / 8));
-    const expectedLoading = Math.floor(baseLoaders / 2);
+    const expectedLoaded = Math.floor(beforeLoaded * 0.5);
+    const expectedLoading = Math.max(2, Math.floor(beforeLoading * 0.5));
 
     expect(afterLoaded).toBe(expectedLoaded);
     expect(afterLoading).toBe(expectedLoading);

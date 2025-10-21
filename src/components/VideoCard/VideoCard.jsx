@@ -232,6 +232,7 @@ const VideoCard = memo(function VideoCard({
         if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
         el.pause();
         el.removeAttribute("src");
+        try { el.load(); } catch {}
         el.remove();
       } catch {}
       finally {

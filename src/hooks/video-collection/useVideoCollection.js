@@ -26,6 +26,8 @@ export default function useVideoCollection({
   progressive = {},
   hadLongTaskRecently = false,
   isNear,
+  activationTarget = null,
+  activationWindowIds = [],
   suspendEvictions = false,
 }) {
   const {
@@ -79,6 +81,23 @@ export default function useVideoCollection({
       ? progressiveState.targetCount
       : videos.length;
 
+  const desiredActiveCount = Number.isFinite(activationTarget) && activationTarget > 0
+    ? Math.max(1, Math.floor(activationTarget))
+    : progressiveVisibleCount;
+
+  const activationWindowSize = (() => {
+    if (activationWindowIds instanceof Set) return activationWindowIds.size;
+    if (Array.isArray(activationWindowIds)) return activationWindowIds.length;
+    if (activationWindowIds && typeof activationWindowIds[Symbol.iterator] === "function") {
+      let count = 0;
+      for (const _ of activationWindowIds) {
+        count += 1;
+      }
+      return count;
+    }
+    return 0;
+  })();
+
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
@@ -88,8 +107,9 @@ export default function useVideoCollection({
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
     progressiveVideos,
-    progressiveVisibleCount,
-    progressiveTargetCount,
+    progressiveVisibleCount: desiredActiveCount,
+    progressiveTargetCount: desiredActiveCount,
+    desiredActiveCount,
     visibleVideos,
     loadedVideos,
     loadingVideos,
@@ -131,6 +151,8 @@ export default function useVideoCollection({
       playing: playingSet.size,
       loaded: loadedVideos.size,
       progressiveVisible: progressiveVisibleCount,
+      activationTarget: desiredActiveCount,
+      activeWindow: activationWindowSize,
     },
 
     memoryStatus,

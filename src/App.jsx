@@ -51,6 +51,75 @@ import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 
+const clampNumber = (value, min, max) =>
+  Math.max(min, Math.min(max, value));
+
+function computeActivationWindow(orderedIds, metrics = {}, explicitTarget) {
+  const list = Array.isArray(orderedIds) ? orderedIds : [];
+  const total = list.length;
+  const columnCount = Math.max(
+    1,
+    Math.floor(Number(metrics.columnCount) || 1)
+  );
+  const approxHeight = Math.max(1, Number(metrics.approxTileHeight) || 1);
+  const scrollTop = Math.max(0, Number(metrics.scrollTop) || 0);
+  const viewportRows = Math.max(
+    1,
+    Math.floor(Number(metrics.viewportRows) || 1)
+  );
+
+  if (total === 0) {
+    const safeTarget = Number.isFinite(explicitTarget)
+      ? Math.max(0, Math.floor(explicitTarget))
+      : 0;
+    return { ids: [], startIndex: 0, endIndex: 0, target: safeTarget };
+  }
+
+  const fallbackTarget = columnCount * viewportRows * 2;
+  const desiredTarget = Number.isFinite(explicitTarget) && explicitTarget > 0
+    ? Math.floor(explicitTarget)
+    : fallbackTarget;
+  const safeTarget = clampNumber(desiredTarget, 1, Math.min(600, total));
+
+  const topRow = Math.max(0, Math.floor(scrollTop / approxHeight));
+  const bufferRows = viewportRows;
+  let startRow = Math.max(0, topRow - bufferRows);
+  const rowsNeeded = Math.max(
+    Math.ceil(safeTarget / columnCount),
+    viewportRows * 2
+  );
+  let endRow = startRow + rowsNeeded;
+
+  let startIndex = Math.min(total, startRow * columnCount);
+  let endIndex = Math.min(total, endRow * columnCount);
+
+  if (endIndex - startIndex < safeTarget) {
+    const deficit = safeTarget - (endIndex - startIndex);
+    endIndex = Math.min(total, endIndex + deficit);
+  }
+
+  if (endIndex - startIndex < safeTarget) {
+    const deficit = safeTarget - (endIndex - startIndex);
+    startIndex = Math.max(0, startIndex - deficit);
+  }
+
+  if (endIndex - startIndex > safeTarget) {
+    endIndex = Math.min(total, startIndex + safeTarget);
+  }
+
+  if (endIndex - startIndex > safeTarget) {
+    startIndex = Math.max(0, endIndex - safeTarget);
+  }
+
+  if (startIndex >= endIndex) {
+    startIndex = Math.max(0, Math.min(total, startIndex));
+    endIndex = Math.min(total, Math.max(startIndex, startIndex + safeTarget));
+  }
+
+  const ids = list.slice(startIndex, endIndex);
+  return { ids, startIndex, endIndex, target: safeTarget };
+}
+
 function App() {
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
@@ -160,6 +229,8 @@ function App() {
     onItemsChanged,
     setZoomClass,
     progressiveMaxVisibleNumber,
+    activationTarget: activationTargetCount,
+    viewportMetrics,
     withLayoutHold,
     isLayoutTransitioning,
   } = useMasonryLayout({
@@ -173,6 +244,31 @@ function App() {
     scrollContainerRef,
     gridRef,
   });
+
+  const activationWindow = useMemo(
+    () =>
+      computeActivationWindow(
+        orderedIds,
+        viewportMetrics,
+        activationTargetCount
+      ),
+    [orderedIds, viewportMetrics, activationTargetCount]
+  );
+
+  const activationWindowSet = useMemo(
+    () => new Set(activationWindow.ids),
+    [activationWindow]
+  );
+
+  const activationWindowRef = useRef(activationWindowSet);
+  useEffect(() => {
+    activationWindowRef.current = activationWindowSet;
+  }, [activationWindowSet]);
+
+  const isWithinActivation = useCallback(
+    (id) => activationWindowRef.current.has(id),
+    []
+  );
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -615,7 +711,9 @@ function App() {
       maxVisible: progressiveMaxVisibleNumber,
     },
     hadLongTaskRecently,
-    isNear: ioRegistry.isNear,
+    isNear: isWithinActivation,
+    activationTarget: activationWindow.target,
+    activationWindowIds: activationWindow.ids,
     suspendEvictions: isLayoutTransitioning,
   });
 
@@ -1015,6 +1113,8 @@ function App() {
             rendered={videoCollection.stats.rendered}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
+            activeWindow={activationWindow.ids.length}
+            activationTarget={activationWindow.target}
             progressiveVisible={videoCollection.stats.progressiveVisible}
             memoryStatus={videoCollection.memoryStatus}
             zoomLevel={zoomLevel}
