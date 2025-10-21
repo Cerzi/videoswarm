@@ -113,7 +113,7 @@ const useVideoCollectionMock = vi.fn(() => ({
   playingVideos: [],
   limits: { maxLoaded: 0 },
   performCleanup: vi.fn(() => []),
-  stats: { total: 0, rendered: 0, playing: 0 },
+  stats: { total: 0, rendered: 0, playing: 0, progressiveVisible: 0 },
   videosToRender: [],
   canLoadVideo: vi.fn(() => true),
   isVideoPlaying: vi.fn(() => false),

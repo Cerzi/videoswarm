@@ -1015,6 +1015,7 @@ function App() {
             rendered={videoCollection.stats.rendered}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
+            progressiveVisible={videoCollection.stats.progressiveVisible}
             memoryStatus={videoCollection.memoryStatus}
             zoomLevel={zoomLevel}
             getMinimumZoomLevel={getMinimumZoomLevel}

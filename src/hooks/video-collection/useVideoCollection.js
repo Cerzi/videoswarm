@@ -53,7 +53,7 @@ export default function useVideoCollection({
   );
 
   // Layer 1: Progressive rendering (React performance)
-  const progressiveVideos = useProgressiveList(
+  const progressiveState = useProgressiveList(
     videos,
     safeInitial,
     safeBatchSize,
@@ -65,17 +65,31 @@ export default function useVideoCollection({
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
       maxVisible,
+      materializeAll: true,
     }
   );
+
+  const progressiveVideos = progressiveState.items || videos;
+  const progressiveVisibleCount =
+    typeof progressiveState.visibleCount === "number"
+      ? progressiveState.visibleCount
+      : videos.length;
+  const progressiveTargetCount =
+    typeof progressiveState.targetCount === "number"
+      ? progressiveState.targetCount
+      : videos.length;
 
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
     performCleanup,
     limits,
+    memoryStatus,
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
     progressiveVideos,
+    progressiveVisibleCount,
+    progressiveTargetCount,
     visibleVideos,
     loadedVideos,
     loadingVideos,
@@ -116,7 +130,10 @@ export default function useVideoCollection({
       rendered: progressiveVideos.length,
       playing: playingSet.size,
       loaded: loadedVideos.size,
+      progressiveVisible: progressiveVisibleCount,
     },
+
+    memoryStatus,
 
     // Debug info (development only)
     debug:

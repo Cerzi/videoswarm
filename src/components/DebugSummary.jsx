@@ -5,6 +5,7 @@ export default function DebugSummary({
   rendered,
   playing,
   inView,
+  progressiveVisible,
   memoryStatus, // { currentMemoryMB, memoryPressure, isNearLimit, safetyMarginMB }
   zoomLevel,
   getMinimumZoomLevel,
@@ -28,6 +29,9 @@ export default function DebugSummary({
       {sortStatus && <span>|</span>}
       <span>🎬 {total} videos</span>
       <span>🎭 {rendered} rendered</span>
+      {typeof progressiveVisible === "number" && (
+        <span>🪄 {progressiveVisible} active window</span>
+      )}
       <span>▶️ {playing} playing</span>
       <span>👁️ {inView} in view</span>
 

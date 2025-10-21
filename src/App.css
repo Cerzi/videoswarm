@@ -309,6 +309,7 @@ body {
   min-width: 0;
   min-height: 100%;
   transition: height 0.3s ease; /* keep single transition */
+  contain: layout paint style;
 }
 
 /* Video card */

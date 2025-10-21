@@ -53,6 +53,8 @@ const CONFIG = {
 
 export default function useVideoResourceManager({
   progressiveVideos,
+  progressiveVisibleCount = progressiveVideos?.length || 0,
+  progressiveTargetCount = progressiveVideos?.length || 0,
   visibleVideos,
   loadedVideos,
   loadingVideos,
@@ -159,9 +161,27 @@ export default function useVideoResourceManager({
     );
 
     // Bound by collection size (plus small buffer)
+    const progressiveLength = progressiveVideos?.length || 0;
+    const targetBudget =
+      Number.isFinite(progressiveTargetCount) && progressiveTargetCount > 0
+        ? Math.floor(progressiveTargetCount)
+        : null;
+    const visibleBudget =
+      Number.isFinite(progressiveVisibleCount) && progressiveVisibleCount > 0
+        ? Math.floor(progressiveVisibleCount)
+        : 0;
+
+    let windowBudget = progressiveLength;
+    if (targetBudget != null) {
+      windowBudget = Math.min(windowBudget, targetBudget);
+    }
+    if (visibleBudget > 0) {
+      windowBudget = Math.max(windowBudget, visibleBudget);
+    }
+
     const listBound = Math.max(
       CONFIG.MIN_MAX_LOADED,
-      Math.min(want, (progressiveVideos?.length || 0) + 20)
+      Math.min(want, windowBudget + 20)
     );
 
     // Smooth step from previous to avoid oscillation
@@ -208,6 +228,8 @@ export default function useVideoResourceManager({
     return computed;
   }, [
     progressiveVideos?.length,
+    progressiveVisibleCount,
+    progressiveTargetCount,
     mem.source,
     mem.currentMemoryMB,
     mem.totalMemoryMB,
