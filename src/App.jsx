@@ -14,6 +14,7 @@ import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
+import ScrollRail from "./components/ScrollRail/ScrollRail";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -77,6 +78,12 @@ function App() {
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const ensureVisibleRangeRef = useRef(null);
+  const ensureVisibleRange = useCallback(
+    (start, end, options) =>
+      ensureVisibleRangeRef.current?.(start, end, options),
+    []
+  );
   const contentRegionRef = useRef(null);
   const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
@@ -159,9 +166,12 @@ function App() {
     updateAspectRatio,
     onItemsChanged,
     setZoomClass,
-    progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    previewLogicalIndex,
+    scrollToLogicalIndex,
+    scrollMetrics,
+    visibleRange,
   } = useMasonryLayout({
     videos,
     filteredVideos,
@@ -173,6 +183,84 @@ function App() {
     scrollContainerRef,
     gridRef,
   });
+
+  const scrollRailLabelForIndex = useCallback(
+    (index) => {
+      if (!orderedVideos.length) return "";
+      const clamped = Math.max(
+        0,
+        Math.min(orderedVideos.length - 1, Math.floor(Number.isFinite(index) ? index : 0))
+      );
+      const video = orderedVideos[clamped];
+      if (!video) {
+        return `${clamped + 1} of ${orderedVideos.length}`;
+      }
+      const baseName = video.basename || video.name || video.fullPath || video.id;
+      let label = baseName || `${clamped + 1} of ${orderedVideos.length}`;
+
+      if (sortKey === SortKey.CREATED && Number.isFinite(video?.createdMs)) {
+        const created = new Date(video.createdMs);
+        if (!Number.isNaN(created.getTime())) {
+          const formatted = created.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+          label = `${formatted} — ${label}`;
+        }
+      }
+
+      const rating = Number.isFinite(video?.rating) ? Math.round(video.rating) : null;
+      if (rating && rating > 0) {
+        label = `${label} · ★${rating}`;
+      }
+
+      return label;
+    },
+    [orderedVideos, sortKey]
+  );
+
+  const scrollRailTotalHeight = useMemo(() => {
+    const total = scrollMetrics?.totalHeight ?? 0;
+    return Number.isFinite(total) ? total : 0;
+  }, [scrollMetrics?.totalHeight, orderedVideos.length, layoutEpoch]);
+
+  const handleRailScrub = useCallback(
+    (targetIndex) => {
+      if (typeof previewLogicalIndex !== "function") return null;
+      return previewLogicalIndex(targetIndex);
+    },
+    [previewLogicalIndex]
+  );
+
+  const handleRailCommit = useCallback(
+    (targetIndex) => {
+      if (typeof scrollToLogicalIndex !== "function") return;
+      scrollToLogicalIndex(targetIndex, { align: "start", behavior: "auto" });
+    },
+    [scrollToLogicalIndex]
+  );
+
+  const shouldShowScrollRail =
+    orderedVideos.length > 0 && scrollRailTotalHeight > 0;
+
+  const scrollRailGuardRef = useRef(null);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const snapshot = {
+      total: orderedVideos.length,
+      totalHeight: Math.round(scrollRailTotalHeight),
+      hasOffsets: typeof scrollMetrics?.indexToOffset === "function",
+    };
+    const serialized = JSON.stringify(snapshot);
+    if (scrollRailGuardRef.current === serialized) return;
+    scrollRailGuardRef.current = serialized;
+    console.debug("[ScrollRail] guard", snapshot);
+  }, [
+    orderedVideos.length,
+    scrollRailTotalHeight,
+    scrollMetrics?.indexToOffset,
+  ]);
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
@@ -225,7 +313,6 @@ function App() {
 
   const { runWithStableAnchor } = useStableViewAnchoring({
     enabled: feature.stableViewAnchoring,
-    scrollRef: scrollContainerRef,
     gridRef,
     observeRef: contentRegionRef,
     selection,
@@ -605,19 +692,11 @@ function App() {
     loadingVideos,
     actualPlaying,
     maxConcurrentPlaying,
-    scrollRef: scrollContainerRef,
-    progressive: {
-      initial: 120,
-      batchSize: 64,
-      intervalMs: 100,
-      pauseOnScroll: true,
-      longTaskAdaptation: true,
-      maxVisible: progressiveMaxVisibleNumber,
-    },
     hadLongTaskRecently,
     isNear: ioRegistry.isNear,
     suspendEvictions: isLayoutTransitioning,
   });
+  ensureVisibleRangeRef.current = videoCollection.ensureVisibleRange;
 
   // fullscreen / context menu
   const {
@@ -1107,9 +1186,22 @@ function App() {
                     scheduleInit={scheduleInit}
                   />
                 ))}
-                </div>
+                {shouldShowScrollRail && (
+                  <ScrollRail
+                    total={orderedVideos.length}
+                    rangeStart={visibleRange?.start ?? 0}
+                    rangeEnd={visibleRange?.end ?? 0}
+                    indexToOffset={scrollMetrics.indexToOffset}
+                    offsetToIndex={scrollMetrics.offsetToIndex}
+                    totalHeight={scrollRailTotalHeight}
+                    labelForIndex={scrollRailLabelForIndex}
+                    onScrub={handleRailScrub}
+                    onCommit={handleRailCommit}
+                  />
+                )}
               </div>
-              <MetadataPanel
+            </div>
+            <MetadataPanel
                 ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen && selection.size > 0}
                 onToggle={toggleMetadataPanel}

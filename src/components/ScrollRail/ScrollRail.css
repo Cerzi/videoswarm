@@ -1,0 +1,104 @@
+
+
+.scroll-rail-overlay-root {
+  pointer-events: none;
+}
+
+.scroll-rail-overlay {
+  position: fixed;
+  top: var(--scroll-rail-top, 72px);
+  bottom: var(--scroll-rail-bottom, 16px);
+  right: var(--scroll-rail-right, 12px);
+  width: var(--scroll-rail-width, 20px);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 2147483000;
+  overflow: visible;
+  touch-action: none;
+}
+
+.scroll-rail-overlay[aria-hidden="true"] {
+  display: none;
+}
+
+.scroll-rail {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  pointer-events: none;
+  user-select: none;
+}
+
+.scroll-rail__track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  flex: 0 0 auto;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease;
+}
+
+.scroll-rail__track:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.scroll-rail__track:focus-visible {
+  box-shadow: 0 0 0 2px rgba(81, 207, 102, 0.45);
+}
+
+.scroll-rail__range {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 999px;
+  background: rgba(95, 210, 130, 0.7);
+  min-height: 10px;
+}
+
+.scroll-rail__thumb {
+  position: absolute;
+  left: 50%;
+  width: 20px;
+  height: 24px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  transform: translate(-50%, 0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.scroll-rail__label {
+  position: absolute;
+  right: calc(100% + 12px);
+  min-width: 120px;
+  max-width: 240px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.scroll-rail__label span {
+  display: inline-block;
+  padding: 0.4rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(15, 15, 15, 0.9);
+  color: #f5f5f5;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-width: 100%;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}

@@ -74,7 +74,7 @@ const useFilterStateMock = vi.fn(() => filterStateReturn);
 const masonryReturn = {
   orderedVideos: [],
   orderedIds: [],
-  orderForRange: () => [],
+  orderForRange: [],
   ioRegistry: {
     isNear: () => false,
     observe: vi.fn(),
@@ -85,9 +85,17 @@ const masonryReturn = {
   updateAspectRatio: vi.fn(),
   onItemsChanged: vi.fn(),
   setZoomClass: vi.fn(),
-  progressiveMaxVisibleNumber: 0,
   withLayoutHold: (fn) => (typeof fn === "function" ? fn() : undefined),
   isLayoutTransitioning: false,
+  viewportHeight: 0,
+  previewLogicalIndex: vi.fn(() => ({ index: 0, offset: 0, height: 0 })),
+  scrollToLogicalIndex: vi.fn(),
+  scrollMetrics: {
+    totalHeight: 0,
+    indexToOffset: vi.fn(() => ({ y: 0, height: 0 })),
+    offsetToIndex: vi.fn(() => 0),
+  },
+  visibleRange: { start: 0, end: -1 },
 };
 const useMasonryLayoutMock = vi.fn(() => masonryReturn);
 
@@ -120,6 +128,7 @@ const useVideoCollectionMock = vi.fn(() => ({
   reportStarted: vi.fn(),
   reportPlayError: vi.fn(),
   markHover: vi.fn(),
+  ensureVisibleRange: vi.fn(),
 }));
 
 vi.mock("./components/VideoCard/VideoCard", () => ({

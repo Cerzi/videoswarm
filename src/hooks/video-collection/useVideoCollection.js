@@ -1,19 +1,12 @@
 // hooks/video-collection/useVideoCollection.js
-import { useProgressiveList } from "./useProgressiveList";
+import { useCallback, useMemo } from "react";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
 
-export const PROGRESSIVE_DEFAULTS = {
-  initial: 100,
-  batchSize: 50,
-  intervalMs: 100,
-  pauseOnScroll: true,
-  longTaskAdaptation: true,
-};
-
 /**
- * Composite hook that coordinates the 3-layer video collection system
- * Handles React performance, browser resources, and play orchestration
+ * Composite hook that coordinates the video collection system.
+ * With full DOM rendering we simply render all videos and rely on
+ * resource and playback orchestration to keep the experience smooth.
  */
 export default function useVideoCollection({
   videos = [],
@@ -22,51 +15,11 @@ export default function useVideoCollection({
   loadingVideos = new Set(),
   actualPlaying = new Set(),
   maxConcurrentPlaying = 250,
-  scrollRef = null,
-  progressive = {},
   hadLongTaskRecently = false,
   isNear,
   suspendEvictions = false,
 }) {
-  const {
-    initial = PROGRESSIVE_DEFAULTS.initial,
-    batchSize = PROGRESSIVE_DEFAULTS.batchSize,
-    intervalMs = PROGRESSIVE_DEFAULTS.intervalMs,
-    pauseOnScroll = PROGRESSIVE_DEFAULTS.pauseOnScroll,
-    longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
-    forceInterval,
-    maxVisible,
-  } = progressive || {};
-
-  // Normalize to safe numbers
-  const safeInitial = Math.max(
-    0,
-    Number.isFinite(initial) ? initial : PROGRESSIVE_DEFAULTS.initial
-  );
-  const safeBatchSize = Math.max(
-    1,
-    Number.isFinite(batchSize) ? batchSize : PROGRESSIVE_DEFAULTS.batchSize
-  );
-  const safeInterval = Math.max(
-    1,
-    Number.isFinite(intervalMs) ? intervalMs : PROGRESSIVE_DEFAULTS.intervalMs
-  );
-
-  // Layer 1: Progressive rendering (React performance)
-  const progressiveVideos = useProgressiveList(
-    videos,
-    safeInitial,
-    safeBatchSize,
-    safeInterval,
-    {
-      scrollRef,
-      pauseOnScroll,
-      longTaskAdaptation,
-      hadLongTaskRecently,
-      forceInterval: !!forceInterval,
-      maxVisible,
-    }
-  );
+  const progressiveVideos = videos;
 
   // Layer 2: Resource management (Browser performance)
   const {
@@ -94,6 +47,33 @@ export default function useVideoCollection({
       maxPlaying: maxConcurrentPlaying,
     });
 
+  const logicalOrder = useMemo(
+    () =>
+      videos.map((video, index) => {
+        if (!video) return `__index_${index}`;
+        return (
+          video.id ||
+          video.fullPath ||
+          video.name ||
+          `__index_${index}`
+        );
+      }),
+    [videos]
+  );
+
+  const idToIndex = useMemo(() => {
+    const map = new Map();
+    logicalOrder.forEach((id, index) => {
+      if (id == null) return;
+      if (!map.has(id)) {
+        map.set(id, index);
+      }
+    });
+    return map;
+  }, [logicalOrder]);
+
+  const ensureVisibleRange = useCallback(() => {}, []);
+
   return {
     // What to render
     videosToRender: progressiveVideos,
@@ -117,6 +97,10 @@ export default function useVideoCollection({
       playing: playingSet.size,
       loaded: loadedVideos.size,
     },
+
+    logicalOrder,
+    idToIndex,
+    ensureVisibleRange,
 
     // Debug info (development only)
     debug:

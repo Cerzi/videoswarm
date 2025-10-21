@@ -10,6 +10,45 @@ import {
 import { clampZoomIndex, zoomClassForLevel } from "../../zoom/utils.js";
 import { ZOOM_TILE_WIDTHS } from "../../zoom/config";
 
+const BLOCK_SIZE = 64;
+
+const clampIndex = (index, length) => {
+  if (!Number.isFinite(index) || length <= 0) return 0;
+  if (index <= 0) return 0;
+  if (index >= length) return length - 1;
+  return index;
+};
+
+const alignOffset = (offset, height, align, viewport) => {
+  const targetViewport = Math.max(1, viewport || 0);
+  const itemHeight = Math.max(1, height || 0);
+  if (align === "center") {
+    return offset - Math.max(0, (targetViewport - itemHeight) / 2);
+  }
+  if (align === "end") {
+    return offset - Math.max(0, targetViewport - itemHeight);
+  }
+  return offset;
+};
+
+const getNodeHeight = (node, fallback) => {
+  if (!node) return fallback;
+  const styleHeight = Number.parseFloat(node.style?.height);
+  if (Number.isFinite(styleHeight) && styleHeight > 0) {
+    return styleHeight;
+  }
+  if (typeof node.getBoundingClientRect === "function") {
+    const rect = node.getBoundingClientRect();
+    if (Number.isFinite(rect?.height) && rect.height > 0) {
+      return rect.height;
+    }
+  }
+  return fallback;
+};
+
+const maybeNumber = (value, fallback = 0) =>
+  Number.isFinite(value) ? value : fallback;
+
 export function useMasonryLayout({
   videos,
   filteredVideos,
@@ -28,13 +67,30 @@ export function useMasonryLayout({
     columnGap: 0,
     gridWidth: 0,
   });
-  const [scrollRowsEstimate, setScrollRowsEstimate] = useState(0);
-  const [visualOrderedIds, setVisualOrderedIds] = useState([]);
-  const metadataAspectCacheRef = useRef(new Map());
-  const masonryRefreshRafRef = useRef(0);
-  const [ioConfig, setIoConfig] = useState({ rootMargin: "1600px 0px", nearPx: 900 });
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 0 });
+  const metadataAspectCacheRef = useRef(new Map());
+  const masonryRefreshRafRef = useRef(0);
+  const scrollMetricsRef = useRef({ entries: [], blocks: [], totalHeight: 0 });
+  const [scrollMetricsVersion, setScrollMetricsVersion] = useState(0);
+  const [ioConfig] = useState({ rootMargin: "1600px 0px", nearPx: 900 });
+
+  const scheduleFrame = useCallback((cb) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(cb);
+    }
+    return setTimeout(cb, 16);
+  }, []);
+
+  const cancelFrame = useCallback((handle) => {
+    if (handle == null) return;
+    if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(handle);
+    } else {
+      clearTimeout(handle);
+    }
+  }, []);
 
   const beginLayoutHold = useCallback(() => {
     let released = false;
@@ -132,51 +188,6 @@ export function useMasonryLayout({
     setLayoutEpoch((prev) => (prev >= Number.MAX_SAFE_INTEGER ? 1 : prev + 1));
   }, []);
 
-  const handleMasonryLayoutComplete = useCallback(() => {
-    if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(masonryRefreshRafRef.current);
-    }
-
-    const runRefresh = () => {
-      masonryRefreshRafRef.current = 0;
-      if (ioRegistry?.refresh) {
-        ioRegistry.refresh();
-      }
-      bumpLayoutEpoch();
-    };
-
-    if (typeof requestAnimationFrame === "function") {
-      masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
-    } else {
-      runRefresh();
-    }
-  }, [ioRegistry, bumpLayoutEpoch]);
-
-  useEffect(
-    () => () => {
-      if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
-        cancelAnimationFrame(masonryRefreshRafRef.current);
-        masonryRefreshRafRef.current = 0;
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    bumpLayoutEpoch();
-  }, [viewportSize.width, viewportSize.height, bumpLayoutEpoch]);
-
-  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
-    useChunkedMasonry({
-      gridRef,
-      zoomClassForLevel,
-      getTileWidthForLevel: (level) =>
-        ZOOM_TILE_WIDTHS[Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))],
-      onOrderChange: setVisualOrderedIds,
-      onMetricsChange: handleMasonryMetrics,
-      onLayoutComplete: handleMasonryLayoutComplete,
-    });
-
   const randomOrderMap = useMemo(
     () =>
       sortKey === SortKey.RANDOM
@@ -253,89 +264,343 @@ export function useMasonryLayout({
     return Math.max(1, Math.floor(available / Math.max(1, effectiveColumnWidth)));
   }, [masonryMetrics.columnCount, masonryMetrics.gridWidth, viewportWidth, effectiveColumnWidth]);
 
-  const viewportRows = useMemo(
-    () => Math.max(1, Math.ceil(viewportHeight / Math.max(1, approxTileHeight))),
-    [viewportHeight, approxTileHeight]
-  );
-
-  const bufferRows = useMemo(() => Math.max(3, Math.ceil(viewportRows)), [viewportRows]);
-
-  const progressiveMaxVisible = useMemo(() => {
-    if (!Number.isFinite(derivedColumnCount) || derivedColumnCount <= 0) {
-      return null;
+  const recomputeScrollMetrics = useCallback(() => {
+    const gridEl = gridRef.current;
+    if (!gridEl) return;
+    const nodes = Array.from(gridEl.querySelectorAll(".video-item"));
+    const map = new Map();
+    for (const node of nodes) {
+      const id = node.dataset.videoId || node.dataset.filename || node.dataset.id;
+      if (!id) continue;
+      const datasetY = Number.parseFloat(node.dataset?.y);
+      const offset = Number.isFinite(datasetY) ? datasetY : maybeNumber(node.offsetTop, 0);
+      const height = getNodeHeight(node, approxTileHeight);
+      const safeHeight = height > 0 ? height : approxTileHeight;
+      map.set(id, {
+        offset,
+        height: safeHeight,
+        bottom: offset + Math.max(0, safeHeight),
+      });
     }
-    const baseRows = viewportRows + bufferRows;
-    const targetRows = Math.max(baseRows, scrollRowsEstimate + bufferRows);
-    return derivedColumnCount * targetRows;
-  }, [derivedColumnCount, viewportRows, bufferRows, scrollRowsEstimate]);
 
-  const progressiveMaxVisibleNumber = Number.isFinite(progressiveMaxVisible)
-    ? Math.max(1, Math.floor(progressiveMaxVisible))
-    : undefined;
+    const entries = [];
+    for (let index = 0; index < orderedIds.length; index += 1) {
+      const id = orderedIds[index];
+      const record = id ? map.get(id) : null;
+      const fallbackRow = Math.floor(index / Math.max(1, derivedColumnCount));
+      const fallbackOffset = fallbackRow * approxTileHeight;
+      const height = record?.height ?? approxTileHeight;
+      const offset = record?.offset ?? fallbackOffset;
+      entries.push({
+        index,
+        id,
+        offset,
+        height,
+        bottom: offset + Math.max(0, height),
+      });
+    }
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
+    const blocks = [];
+    for (let i = 0; i < entries.length; i += BLOCK_SIZE) {
+      blocks.push({ index: entries[i].index, offset: entries[i].offset });
+    }
 
-    let rafId = 0;
-    const measure = () => {
-      rafId = 0;
-      const top = el.scrollTop || 0;
-      const rows = Math.max(
-        viewportRows,
-        Math.ceil((top + viewportHeight) / Math.max(1, approxTileHeight))
+    let totalHeight = 0;
+    if (entries.length) {
+      const last = entries[entries.length - 1];
+      totalHeight = Math.max(
+        maybeNumber(Number.parseFloat(gridEl.style?.height), 0),
+        maybeNumber(gridEl.scrollHeight, 0),
+        last.bottom
       );
-      setScrollRowsEstimate((prev) => (prev !== rows ? rows : prev));
+    } else {
+      totalHeight = maybeNumber(Number.parseFloat(gridEl.style?.height), 0);
+    }
+
+    scrollMetricsRef.current = { entries, blocks, totalHeight };
+    setScrollMetricsVersion((version) => version + 1);
+  }, [gridRef, orderedIds, derivedColumnCount, approxTileHeight]);
+
+  const handleMasonryLayoutComplete = useCallback(() => {
+    if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(masonryRefreshRafRef.current);
+    }
+
+    const runRefresh = () => {
+      masonryRefreshRafRef.current = 0;
+      recomputeScrollMetrics();
+      if (ioRegistry?.refresh) {
+        ioRegistry.refresh();
+      }
+      bumpLayoutEpoch();
     };
 
-    measure();
+    if (typeof requestAnimationFrame === "function") {
+      masonryRefreshRafRef.current = requestAnimationFrame(runRefresh);
+    } else {
+      runRefresh();
+    }
+  }, [ioRegistry, bumpLayoutEpoch, recomputeScrollMetrics]);
+
+  useEffect(
+    () => () => {
+      if (masonryRefreshRafRef.current && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(masonryRefreshRafRef.current);
+        masonryRefreshRafRef.current = 0;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    bumpLayoutEpoch();
+  }, [viewportSize.width, viewportSize.height, bumpLayoutEpoch]);
+
+  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
+    useChunkedMasonry({
+      gridRef,
+      zoomClassForLevel,
+      getTileWidthForLevel: (level) =>
+        ZOOM_TILE_WIDTHS[Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))],
+      onOrderChange: recomputeScrollMetrics,
+      onMetricsChange: handleMasonryMetrics,
+      onLayoutComplete: handleMasonryLayoutComplete,
+    });
+
+  const rebuildMetrics = useCallback(() => {
+    recomputeScrollMetrics();
+  }, [recomputeScrollMetrics]);
+
+  useEffect(() => {
+    rebuildMetrics();
+  }, [orderedIds.length, rebuildMetrics]);
+
+  useEffect(() => {
+    rebuildMetrics();
+  }, [derivedColumnCount, approxTileHeight, rebuildMetrics]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return undefined;
+
+    let rafId = 0;
+    const updateRange = () => {
+      rafId = 0;
+      const metrics = scrollMetricsRef.current;
+      const entries = metrics.entries;
+      if (!entries.length) {
+        setVisibleRange({ start: 0, end: 0 });
+        return;
+      }
+      const top = container.scrollTop || 0;
+      const bottom = top + (container.clientHeight || viewportHeight || 0);
+
+      let start = 0;
+      let end = entries.length - 1;
+
+      let lo = 0;
+      let hi = entries.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (entries[mid].bottom <= top) {
+          lo = mid + 1;
+        } else {
+          start = mid;
+          hi = mid - 1;
+        }
+      }
+
+      lo = start;
+      hi = entries.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (entries[mid].offset < bottom) {
+          end = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      setVisibleRange((prev) =>
+        prev.start === start && prev.end === end ? prev : { start, end }
+      );
+    };
+
+    updateRange();
 
     const onScroll = () => {
       if (rafId) return;
-      rafId = requestAnimationFrame(measure);
+      rafId = scheduleFrame(updateRange);
     };
 
-    el.addEventListener("scroll", onScroll, { passive: true });
+    container.addEventListener("scroll", onScroll, { passive: true });
+
     return () => {
-      el.removeEventListener("scroll", onScroll);
-      if (rafId) cancelAnimationFrame(rafId);
+      container.removeEventListener("scroll", onScroll);
+      if (rafId) {
+        cancelFrame(rafId);
+      }
     };
-  }, [scrollContainerRef, approxTileHeight, viewportHeight, viewportRows]);
+  }, [scrollContainerRef, scheduleFrame, cancelFrame, viewportHeight, scrollMetricsVersion]);
 
   useEffect(() => {
-    const mediumWidth = ZOOM_TILE_WIDTHS[1] ?? ZOOM_TILE_WIDTHS[0] ?? 200;
-    const tileWidth = Math.max(80, effectiveColumnWidth || mediumWidth);
-    const height = viewportHeight;
-    const scale = Math.max(0.45, Math.min(1.6, tileWidth / mediumWidth));
-    const nearPx = Math.max(360, Math.round(Math.max(480, height * 0.85) * scale));
-    const rootMarginPx = Math.max(600, Math.round(1100 * scale));
-    const rootMargin = `${rootMarginPx}px 0px`;
-    setIoConfig((prev) =>
-      prev.nearPx === nearPx && prev.rootMargin === rootMargin
-        ? prev
-        : { nearPx, rootMargin }
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const metrics = scrollMetricsRef.current;
+    const entries = metrics.entries;
+    if (!entries.length) {
+      setVisibleRange({ start: 0, end: 0 });
+      return;
+    }
+    const top = container.scrollTop || 0;
+    const bottom = top + (container.clientHeight || viewportHeight || 0);
+
+    let start = 0;
+    let end = entries.length - 1;
+
+    let lo = 0;
+    let hi = entries.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (entries[mid].bottom <= top) {
+        lo = mid + 1;
+      } else {
+        start = mid;
+        hi = mid - 1;
+      }
+    }
+
+    lo = start;
+    hi = entries.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (entries[mid].offset < bottom) {
+        end = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+
+    setVisibleRange((prev) =>
+      prev.start === start && prev.end === end ? prev : { start, end }
     );
-  }, [effectiveColumnWidth, viewportHeight]);
+  }, [scrollMetricsVersion, scrollContainerRef, viewportHeight]);
 
-  useEffect(() => {
-    if (!ioRegistry) return undefined;
-    if (typeof ioRegistry.setNearPx === "function") {
-      ioRegistry.setNearPx(ioConfig.nearPx);
-    }
-    if (typeof ioRegistry.refresh === "function") {
-      const raf = requestAnimationFrame(() => {
-        ioRegistry.refresh();
-      });
-      return () => {
-        if (typeof cancelAnimationFrame === "function") {
-          cancelAnimationFrame(raf);
+  const clampScrollTarget = useCallback(
+    (value) => {
+      const container = scrollContainerRef.current;
+      if (!container) return value;
+      const total = scrollMetricsRef.current.totalHeight;
+      const viewport = container.clientHeight || viewportHeight || 0;
+      const max = Math.max(0, total - viewport);
+      if (!Number.isFinite(value)) return 0;
+      if (value < 0) return 0;
+      if (value > max) return max;
+      return value;
+    },
+    [scrollContainerRef, viewportHeight]
+  );
+
+  const indexToOffset = useCallback(
+    (index) => {
+      const metrics = scrollMetricsRef.current;
+      const entries = metrics.entries;
+      if (!entries.length) {
+        return { y: 0, height: approxTileHeight };
+      }
+      const clamped = clampIndex(index, entries.length);
+      const entry = entries[clamped];
+      if (entry) {
+        return { y: entry.offset, height: entry.height };
+      }
+      const row = Math.floor(clamped / Math.max(1, derivedColumnCount));
+      const fallbackOffset = row * approxTileHeight;
+      return { y: fallbackOffset, height: approxTileHeight };
+    },
+    [scrollMetricsVersion, approxTileHeight, derivedColumnCount]
+  );
+
+  const offsetToIndex = useCallback(
+    (offset) => {
+      const metrics = scrollMetricsRef.current;
+      const entries = metrics.entries;
+      if (!entries.length) return 0;
+      const blocks = metrics.blocks;
+      let startIndex = 0;
+      if (blocks.length) {
+        let lo = 0;
+        let hi = blocks.length - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (blocks[mid].offset <= offset) {
+            startIndex = blocks[mid].index;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
         }
-      };
-    }
-    return undefined;
-  }, [ioRegistry, ioConfig.nearPx, ioConfig.rootMargin]);
+      }
+      let index = startIndex;
+      const limit = Math.min(entries.length, startIndex + BLOCK_SIZE + 1);
+      for (let i = startIndex; i < limit; i += 1) {
+        if (entries[i].offset <= offset) {
+          index = i;
+        } else {
+          break;
+        }
+      }
+      return index;
+    },
+    [scrollMetricsVersion]
+  );
 
-  const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
+  const previewLogicalIndex = useCallback(
+    (targetIndex) => {
+      const count = orderedIds.length;
+      if (!count) {
+        return { index: 0, offset: 0, height: approxTileHeight };
+      }
+      const normalized = clampIndex(
+        Math.floor(Number.isFinite(targetIndex) ? targetIndex : 0),
+        count
+      );
+      const entry = indexToOffset(normalized);
+      return { index: normalized, offset: entry.y ?? 0, height: entry.height ?? approxTileHeight };
+    },
+    [orderedIds.length, indexToOffset, approxTileHeight]
+  );
+
+  const scrollToLogicalIndex = useCallback(
+    (targetIndex, { align = "start", behavior = "auto" } = {}) => {
+      const container = scrollContainerRef?.current;
+      if (!container) return;
+      const count = orderedIds.length;
+      if (!count) return;
+      const normalized = clampIndex(
+        Math.floor(Number.isFinite(targetIndex) ? targetIndex : 0),
+        count
+      );
+      const entry = indexToOffset(normalized);
+      const aligned = alignOffset(
+        entry.y ?? 0,
+        entry.height ?? approxTileHeight,
+        align,
+        container.clientHeight || viewportHeight || 0
+      );
+      const clampedTop = clampScrollTarget(aligned);
+      container.scrollTo({ top: clampedTop, behavior });
+    },
+    [
+      scrollContainerRef,
+      orderedIds.length,
+      indexToOffset,
+      approxTileHeight,
+      viewportHeight,
+      clampScrollTarget,
+    ]
+  );
 
   useEffect(() => {
     if (!orderedVideos.length) return;
@@ -384,10 +649,16 @@ export function useMasonryLayout({
     }
   }, [orderedVideos, updateAspectRatio]);
 
+  const totalHeight = useMemo(
+    () => scrollMetricsRef.current.totalHeight,
+    [scrollMetricsVersion]
+  );
+
+  const orderForRange = useMemo(() => orderedIds, [orderedIds]);
+
   return {
     orderedVideos,
     orderedIds,
-    visualOrderedIds,
     orderForRange,
     ioRegistry,
     layoutEpoch,
@@ -395,8 +666,18 @@ export function useMasonryLayout({
     updateAspectRatio,
     onItemsChanged,
     setZoomClass,
-    progressiveMaxVisibleNumber,
     withLayoutHold,
     isLayoutTransitioning,
+    viewportHeight,
+    previewLogicalIndex,
+    scrollToLogicalIndex,
+    scrollMetrics: {
+      totalHeight,
+      indexToOffset,
+      offsetToIndex,
+    },
+    visibleRange,
   };
 }
+
+export default useMasonryLayout;
