@@ -7,6 +7,16 @@ import { useEffect, useRef, useState } from "react";
  * Back-compat signature:
  *   useProgressiveList(items, initial=100, batchSize=50, intervalMs=100, options?)
  *
+ * Returns an object describing the current progressive budget:
+ *   {
+ *     items: Array,            // slice of `items` (or full list if materializeAll)
+ *     visibleCount: number,    // how many items the scheduler considers materialized
+ *     targetCount: number,     // clamp target (maxVisible or list length)
+ *     totalCount: number,      // total items provided
+ *     materializedCount: number, // actual length of `items`
+ *     isComplete: boolean,
+ *   }
+ *
  * Default behavior in real browsers:
  *   - Uses requestIdleCallback (fallback rAF) to grow only when the main thread is idle.
  *   - Pauses growth while the user is actively scrolling.
@@ -46,6 +56,10 @@ export function useProgressiveList(
 
     // Optional viewport-aware clamp.
     maxVisible: maxVisibleOption = null,
+
+    // When true, return the full list while still tracking the progressive budget.
+    // Useful for de-windowed DOM renders that still want scheduler metrics.
+    materializeAll = false,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
@@ -275,5 +289,15 @@ export function useProgressiveList(
     return () => clearInterval(timer);
   }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
 
-  return safe.slice(0, visible);
+  const sliceCount = Math.min(visible, maxCapForRender);
+  const materializedItems = materializeAll ? safe : safe.slice(0, sliceCount);
+
+  return {
+    items: materializedItems,
+    visibleCount: sliceCount,
+    targetCount: maxCapForRender,
+    totalCount: safe.length,
+    materializedCount: materializeAll ? safe.length : materializedItems.length,
+    isComplete: sliceCount >= maxCapForRender,
+  };
 }

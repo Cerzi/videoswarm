@@ -18,6 +18,10 @@ import { useEffect, useMemo, useRef, useCallback } from "react";
  *
  * NOTE: Avoid changing rootMargin per scroll; use a generous fixed margin.
  */
+const MAX_SYNC_EVALUATIONS = 32;
+const MAX_PER_FRAME = 160;
+const REFRESH_SYNC_CHUNK = 96;
+
 export default function useIntersectionObserverRegistry(
   rootRef,
   {
@@ -31,6 +35,13 @@ export default function useIntersectionObserverRegistry(
   const visibleIdsRef = useRef(new Set()); // Set<id>
   const nearIdsRef = useRef(new Set());    // Set<id>
   const observerRef = useRef(null);
+  const pendingEntriesRef = useRef(new Map()); // Map<Element, IntersectionObserverEntry>
+  const pendingFrameRef = useRef(null);
+  const pendingFrameIsTimeoutRef = useRef(false);
+  const pendingEvaluateRef = useRef(new Set());
+  const evaluateFrameRef = useRef(null);
+  const evaluateFrameIsTimeoutRef = useRef(false);
+  const immediateBudgetRef = useRef(MAX_SYNC_EVALUATIONS);
 
   const currentRootMarginRef = useRef(rootMargin);
   const nearPxRef = useRef(nearPx);
@@ -69,48 +80,60 @@ export default function useIntersectionObserverRegistry(
   }, []);
 
   // Observer callback: compute visible/near, then notify per-element handler
-  const handleEntries = useCallback((entries) => {
+  const flushPending = useCallback(() => {
+    const pending = pendingEntriesRef.current;
+    if (!pending.size) {
+      pendingFrameRef.current = null;
+      return;
+    }
+
+    pendingEntriesRef.current = new Map();
+    pendingFrameRef.current = null;
+
     const rootRect = getRootRect();
-    for (const entry of entries) {
-      const el = entry.target;
+    for (const [el, entry] of pending.entries()) {
       const id = idsRef.current.get(el);
       updateFlags(entry, id, rootRect);
 
       const cb = handlersRef.current.get(el);
       if (cb) {
-        // We pass "visible" (true viewport) for clarity
         cb(visibleIdsRef.current.has(id), entry);
       }
     }
   }, [getRootRect, updateFlags]);
 
-  // Build the single observer (or rebuild if root/opts truly change)
-  useEffect(() => {
-    // Disconnect old
-    if (observerRef.current) {
-      try { observerRef.current.disconnect(); } catch {}
-      observerRef.current = null;
-    }
+  const scheduleFlush = useCallback(() => {
+    if (pendingFrameRef.current != null) return;
 
-    currentRootMarginRef.current = rootMargin;
-
-    const obs = new IntersectionObserver(handleEntries, {
-      root: rootRef?.current ?? null,
-      rootMargin: currentRootMarginRef.current,
-      threshold,
-    });
-    observerRef.current = obs;
-
-    // Re-observe all registered elements
-    for (const el of handlersRef.current.keys()) {
-      try { obs.observe(el); } catch {}
-    }
-
-    return () => {
-      try { observerRef.current?.disconnect(); } catch {}
-      observerRef.current = null;
+    const run = () => {
+      pendingFrameRef.current = null;
+      flushPending();
     };
-  }, [rootRef, rootMargin, threshold, handleEntries]);
+
+    if (typeof requestAnimationFrame === "function") {
+      pendingFrameIsTimeoutRef.current = false;
+      pendingFrameRef.current = requestAnimationFrame(run);
+    } else {
+      pendingFrameIsTimeoutRef.current = true;
+      pendingFrameRef.current = setTimeout(run, 16);
+    }
+  }, [flushPending]);
+
+  useEffect(
+    () => () => {
+      const handle = pendingFrameRef.current;
+      if (handle == null) return;
+      if (pendingFrameIsTimeoutRef.current) {
+        clearTimeout(handle);
+      } else if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(handle);
+      }
+      pendingFrameRef.current = null;
+      pendingFrameIsTimeoutRef.current = false;
+      pendingEntriesRef.current = new Map();
+    },
+    []
+  );
 
   const evaluateTarget = useCallback(
     (el, rootRect, time) => {
@@ -152,6 +175,122 @@ export default function useIntersectionObserverRegistry(
     [getRootRect, updateFlags]
   );
 
+  const flushQueuedEvaluations = useCallback(
+    (limit = MAX_PER_FRAME, rootRectOverride = null, timeOverride = null) => {
+      const pending = pendingEvaluateRef.current;
+      if (!pending.size) return 0;
+
+      const rootRect = rootRectOverride || getRootRect();
+      const now =
+        timeOverride ??
+        (typeof performance !== "undefined" && typeof performance.now === "function"
+          ? performance.now()
+          : Date.now());
+
+      const chunk = [];
+      for (const el of pending) {
+        chunk.push(el);
+        if (chunk.length >= limit) break;
+      }
+
+      if (!chunk.length) return 0;
+
+      for (const el of chunk) {
+        pending.delete(el);
+      }
+
+      for (const el of chunk) {
+        evaluateTarget(el, rootRect, now);
+      }
+
+      return chunk.length;
+    },
+    [evaluateTarget, getRootRect]
+  );
+
+  const scheduleEvaluateFlush = useCallback(() => {
+    if (evaluateFrameRef.current != null) return;
+
+    const run = () => {
+      evaluateFrameRef.current = null;
+      flushQueuedEvaluations();
+      if (pendingEvaluateRef.current.size) {
+        scheduleEvaluateFlush();
+      }
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      evaluateFrameIsTimeoutRef.current = false;
+      evaluateFrameRef.current = requestAnimationFrame(run);
+    } else {
+      evaluateFrameIsTimeoutRef.current = true;
+      evaluateFrameRef.current = setTimeout(run, 16);
+    }
+  }, [flushQueuedEvaluations]);
+
+  useEffect(
+    () => () => {
+      const handle = evaluateFrameRef.current;
+      if (handle == null) return;
+      if (evaluateFrameIsTimeoutRef.current) {
+        clearTimeout(handle);
+      } else if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(handle);
+      }
+      evaluateFrameRef.current = null;
+      evaluateFrameIsTimeoutRef.current = false;
+      pendingEvaluateRef.current.clear();
+    },
+    []
+  );
+
+  const queueEvaluate = useCallback(
+    (el) => {
+      if (!el) return;
+      pendingEvaluateRef.current.add(el);
+      scheduleEvaluateFlush();
+    },
+    [scheduleEvaluateFlush]
+  );
+
+  const handleEntries = useCallback((entries) => {
+    if (!entries || entries.length === 0) return;
+    const pending = pendingEntriesRef.current;
+    for (const entry of entries) {
+      if (!entry || !entry.target) continue;
+      pending.set(entry.target, entry);
+    }
+    scheduleFlush();
+  }, [scheduleFlush]);
+
+  // Build the single observer (or rebuild if root/opts truly change)
+  useEffect(() => {
+    // Disconnect old
+    if (observerRef.current) {
+      try { observerRef.current.disconnect(); } catch {}
+      observerRef.current = null;
+    }
+
+    currentRootMarginRef.current = rootMargin;
+
+    const obs = new IntersectionObserver(handleEntries, {
+      root: rootRef?.current ?? null,
+      rootMargin: currentRootMarginRef.current,
+      threshold,
+    });
+    observerRef.current = obs;
+
+    // Re-observe all registered elements
+    for (const el of handlersRef.current.keys()) {
+      try { obs.observe(el); } catch {}
+    }
+
+    return () => {
+      try { observerRef.current?.disconnect(); } catch {}
+      observerRef.current = null;
+    };
+  }, [rootRef, rootMargin, threshold, handleEntries]);
+
   // Public API: observe supports (el, cb) and (el, id, cb)
   const observe = useCallback((el, idOrCb, maybeCb) => {
     if (!el) return;
@@ -173,8 +312,13 @@ export default function useIntersectionObserverRegistry(
     }
 
     // Immediately evaluate the target so visibility reflects current layout
-    evaluateTarget(el);
-  }, [evaluateTarget]);
+    if (immediateBudgetRef.current > 0) {
+      immediateBudgetRef.current -= 1;
+      evaluateTarget(el);
+    } else {
+      queueEvaluate(el);
+    }
+  }, [evaluateTarget, queueEvaluate]);
 
   const unobserve = useCallback((el) => {
     if (!el) return;
@@ -203,6 +347,7 @@ export default function useIntersectionObserverRegistry(
   const getRootMargin = useCallback(() => currentRootMarginRef.current, []);
 
   const refresh = useCallback(() => {
+    flushPending();
     const rootRect = getRootRect();
     const now =
       typeof performance !== "undefined" && typeof performance.now === "function"
@@ -210,9 +355,16 @@ export default function useIntersectionObserverRegistry(
         : Date.now();
 
     for (const el of handlersRef.current.keys()) {
-      evaluateTarget(el, rootRect, now);
+      pendingEvaluateRef.current.add(el);
     }
-  }, [evaluateTarget, getRootRect]);
+
+    const processed = flushQueuedEvaluations(REFRESH_SYNC_CHUNK, rootRect, now);
+    if (pendingEvaluateRef.current.size) {
+      scheduleEvaluateFlush();
+    }
+
+    return processed;
+  }, [flushPending, getRootRect, flushQueuedEvaluations, scheduleEvaluateFlush]);
 
   return useMemo(() => ({
     observe,

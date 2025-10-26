@@ -5,6 +5,8 @@ import useIntersectionObserverRegistry from './useIntersectionObserverRegistry';
 
 let lastObserver = null;
 let originalIntersectionObserver;
+let originalRAF;
+let originalCancelRAF;
 
 class MockIntersectionObserver {
   constructor(callback, options) {
@@ -35,6 +37,13 @@ beforeEach(() => {
   originalIntersectionObserver = global.IntersectionObserver;
   global.IntersectionObserver = MockIntersectionObserver;
   lastObserver = null;
+  originalRAF = global.requestAnimationFrame;
+  originalCancelRAF = global.cancelAnimationFrame;
+  global.requestAnimationFrame = (cb) => {
+    cb(0);
+    return 1;
+  };
+  global.cancelAnimationFrame = () => {};
 });
 
 afterEach(() => {
@@ -42,6 +51,16 @@ afterEach(() => {
     global.IntersectionObserver = originalIntersectionObserver;
   } else {
     delete global.IntersectionObserver;
+  }
+  if (originalRAF) {
+    global.requestAnimationFrame = originalRAF;
+  } else {
+    delete global.requestAnimationFrame;
+  }
+  if (originalCancelRAF) {
+    global.cancelAnimationFrame = originalCancelRAF;
+  } else {
+    delete global.cancelAnimationFrame;
   }
   vi.restoreAllMocks();
   lastObserver = null;

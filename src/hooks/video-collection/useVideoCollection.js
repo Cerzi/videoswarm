@@ -26,6 +26,8 @@ export default function useVideoCollection({
   progressive = {},
   hadLongTaskRecently = false,
   isNear,
+  activationTarget = null,
+  activationWindowIds = [],
   suspendEvictions = false,
 }) {
   const {
@@ -53,7 +55,7 @@ export default function useVideoCollection({
   );
 
   // Layer 1: Progressive rendering (React performance)
-  const progressiveVideos = useProgressiveList(
+  const progressiveState = useProgressiveList(
     videos,
     safeInitial,
     safeBatchSize,
@@ -65,17 +67,49 @@ export default function useVideoCollection({
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
       maxVisible,
+      materializeAll: true,
     }
   );
+
+  const progressiveVideos = progressiveState.items || videos;
+  const progressiveVisibleCount =
+    typeof progressiveState.visibleCount === "number"
+      ? progressiveState.visibleCount
+      : videos.length;
+  const progressiveTargetCount =
+    typeof progressiveState.targetCount === "number"
+      ? progressiveState.targetCount
+      : videos.length;
+
+  const desiredActiveCount = Number.isFinite(activationTarget) && activationTarget > 0
+    ? Math.max(1, Math.floor(activationTarget))
+    : progressiveVisibleCount;
+
+  const activationWindowSize = (() => {
+    if (activationWindowIds instanceof Set) return activationWindowIds.size;
+    if (Array.isArray(activationWindowIds)) return activationWindowIds.length;
+    if (activationWindowIds && typeof activationWindowIds[Symbol.iterator] === "function") {
+      let count = 0;
+      for (const _ of activationWindowIds) {
+        count += 1;
+      }
+      return count;
+    }
+    return 0;
+  })();
 
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
     performCleanup,
     limits,
+    memoryStatus,
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
     progressiveVideos,
+    progressiveVisibleCount: desiredActiveCount,
+    progressiveTargetCount: desiredActiveCount,
+    desiredActiveCount,
     visibleVideos,
     loadedVideos,
     loadingVideos,
@@ -116,7 +150,12 @@ export default function useVideoCollection({
       rendered: progressiveVideos.length,
       playing: playingSet.size,
       loaded: loadedVideos.size,
+      progressiveVisible: progressiveVisibleCount,
+      activationTarget: desiredActiveCount,
+      activeWindow: activationWindowSize,
     },
+
+    memoryStatus,
 
     // Debug info (development only)
     debug:

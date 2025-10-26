@@ -309,12 +309,14 @@ body {
   min-width: 0;
   min-height: 100%;
   transition: height 0.3s ease; /* keep single transition */
+  contain: layout paint style;
 }
 
 /* Video card */
 .video-item {
   content-visibility: auto;
   contain-intrinsic-size: 140px 250px;
+  contain: layout paint style;
   border: 2px solid transparent;
   border-radius: 8px;
   overflow: hidden;
@@ -323,7 +325,6 @@ body {
   position: relative;
   /* Consolidated transitions (drop duplicate blocks later in file) */
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  will-change: opacity, transform;
 }
 
 .video-item-rating {

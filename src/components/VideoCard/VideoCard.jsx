@@ -68,8 +68,10 @@ const VideoCard = memo(function VideoCard({
   const initialNear = (isNear?.(videoId) ?? true) === true;
   const [isNearViewport, setIsNearViewport] = useState(initialNear);
   const nearStateRef = useRef(initialNear);
-  
+
   const lastObservedVisibilityRef = useRef(Boolean(isVisible));
+
+  const shouldEnsureLoad = isVisible || isNearViewport;
 
   const hasRenderableVideo = useCallback(() => {
     const el = videoRef.current;
@@ -171,10 +173,11 @@ const VideoCard = memo(function VideoCard({
 
   useEffect(() => {
     signatureRef.current = thumbSignature;
+    if (!shouldEnsureLoad) return;
     if (fullPath && thumbSignature) {
       thumbService.noteVideoMetadata(fullPath, thumbSignature);
     }
-  }, [fullPath, thumbSignature]);
+  }, [fullPath, thumbSignature, shouldEnsureLoad]);
 
   const requestThumbnail = useCallback(
     (reason) => {
@@ -232,6 +235,7 @@ const VideoCard = memo(function VideoCard({
         if (el.src?.startsWith("blob:")) URL.revokeObjectURL(el.src);
         el.pause();
         el.removeAttribute("src");
+        try { el.load(); } catch {}
         el.remove();
       } catch {}
       finally {
@@ -502,6 +506,9 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   const ensureVisibleAndLoad = useCallback(() => {
+    if (!isVisible && !nearStateRef.current) {
+      return false;
+    }
     if (loading || loadRequestedRef.current || hasRenderableVideo()) {
       return false;
     }
@@ -547,6 +554,7 @@ const VideoCard = memo(function VideoCard({
     loading,
     scrollRootRef,
     hasRenderableVideo,
+    isVisible,
   ]);
 
   useEffect(() => {
@@ -556,8 +564,11 @@ const VideoCard = memo(function VideoCard({
   }, [layoutEpoch, loaded, showFilenames, syncVideoIntoContainer]);
 
   useEffect(() => {
+    if (!shouldEnsureLoad) return undefined;
+
     let raf = 0;
     const run = () => {
+      raf = 0;
       ensureVisibleAndLoad();
     };
 
@@ -572,7 +583,7 @@ const VideoCard = memo(function VideoCard({
 
     run();
     return undefined;
-  }, [ensureVisibleAndLoad, layoutEpoch]);
+  }, [ensureVisibleAndLoad, layoutEpoch, shouldEnsureLoad]);
 
   // IO registration for visibility
   useEffect(() => {

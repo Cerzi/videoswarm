@@ -27,24 +27,25 @@ describe("useVideoCollection (composite)", () => {
       })
     );
 
-    // Initial progressive list length
-    expect(result.current.videosToRender.length).toBe(20);
+    // Full list is materialized, but progressiveVisible tracks the scheduler
+    expect(result.current.videosToRender.length).toBe(120);
     expect(result.current.stats.total).toBe(120);
-    expect(result.current.stats.rendered).toBe(20);
+    expect(result.current.stats.rendered).toBe(120);
+    expect(result.current.stats.progressiveVisible).toBe(20);
 
     // Advance one interval => add one batch
     act(() => {
       vi.advanceTimersByTime(1);
     });
-    expect(result.current.videosToRender.length).toBe(40);
-    expect(result.current.stats.rendered).toBe(40);
+    expect(result.current.videosToRender.length).toBe(120);
+    expect(result.current.stats.progressiveVisible).toBe(40);
 
     // Advance two more intervals => 80
     act(() => {
       vi.advanceTimersByTime(2);
     });
-    expect(result.current.videosToRender.length).toBe(80);
-    expect(result.current.stats.rendered).toBe(80);
+    expect(result.current.videosToRender.length).toBe(120);
+    expect(result.current.stats.progressiveVisible).toBe(80);
   });
 
   it("uses defaults when progressive not provided", () => {
@@ -54,10 +55,10 @@ describe("useVideoCollection (composite)", () => {
       useVideoCollection({ videos })
     );
 
-    expect(result.current.videosToRender.length)
-      .toBe(PROGRESSIVE_DEFAULTS.initial);
     expect(result.current.stats.total).toBe(120);
-    expect(result.current.stats.rendered)
+    expect(result.current.videosToRender.length).toBe(120);
+    expect(result.current.stats.rendered).toBe(120);
+    expect(result.current.stats.progressiveVisible)
       .toBe(PROGRESSIVE_DEFAULTS.initial);
   });
 });
