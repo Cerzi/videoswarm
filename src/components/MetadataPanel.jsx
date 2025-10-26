@@ -51,6 +51,7 @@ const MetadataPanel = forwardRef((
     onSetRating,
     onClearRating,
     focusToken,
+    onFocusSelection,
   },
   ref
 ) => {
@@ -301,6 +302,8 @@ const MetadataPanel = forwardRef((
     .filter(Boolean)
     .join(" ");
 
+  const showFocusButton = hasSelection && typeof onFocusSelection === "function";
+
   return (
     <aside
       ref={ref}
@@ -332,6 +335,17 @@ const MetadataPanel = forwardRef((
             {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
           </span>
         </div>
+        {showFocusButton && (
+          <button
+            type="button"
+            className="metadata-panel__focus"
+            onClick={onFocusSelection}
+            aria-label="Focus selection in grid"
+            title="Scroll to selected videos"
+          >
+            Focus
+          </button>
+        )}
       </div>
 
       <div className="metadata-panel__content">

@@ -77,11 +77,45 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .metadata-panel__title {
   font-size: 0.95rem;
   font-weight: 600;
+}
+
+.metadata-panel__focus {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: inherit;
+  height: 28px;
+  padding: 0 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.metadata-panel__focus:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.metadata-panel__focus:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+
+.metadata-panel__focus:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .metadata-panel__subtitle {

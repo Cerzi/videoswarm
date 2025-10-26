@@ -258,6 +258,45 @@ export default function useStableViewAnchoring({
     [adjustScroll, enabled, scrollRef]
   );
 
+  const focusCurrentAnchor = useCallback(
+    ({ align = "auto" } = {}) => {
+      if (!enabled) return false;
+      const scrollEl = scrollRef?.current;
+      if (!scrollEl) return false;
+
+      let measurement = measureAnchor();
+      if (!measurement) return false;
+
+      const viewportHeight = scrollEl.clientHeight;
+      if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return false;
+
+      const { top: paddingTop, bottom: paddingBottom } = getScrollPadding(scrollEl);
+      const shouldCenter =
+        align === "center" || (align === "auto" && measurement.isVisible === false);
+
+      if (shouldCenter) {
+        const interiorHeight = viewportHeight - paddingTop - paddingBottom;
+        if (interiorHeight > 0) {
+          const anchorCenter = measurement.top + measurement.height / 2;
+          const viewportFocusY = paddingTop + interiorHeight / 2;
+          const delta = anchorCenter - viewportFocusY;
+          if (Math.abs(delta) > 0.25) {
+            adjustScroll(delta);
+            const updated = measureAnchor();
+            if (updated) {
+              measurement = updated;
+            }
+          }
+        }
+      }
+
+      ensureVisible(measurement);
+      lastMeasurementRef.current = measurement;
+      return true;
+    },
+    [adjustScroll, enabled, ensureVisible, measureAnchor, scrollRef]
+  );
+
   const finalizeForToken = useCallback(
     (token) => {
       if (!enabled) return;
@@ -545,5 +584,6 @@ export default function useStableViewAnchoring({
     notifyLayoutChange,
     beginLayoutChange: begin,
     lastKnownTrigger: lastKnownTriggerRef.current,
+    focusCurrentAnchor,
   };
 }

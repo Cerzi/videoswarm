@@ -23,7 +23,11 @@ const recentFoldersMock = {
 const useRecentFoldersMock = vi.fn(() => recentFoldersMock);
 
 const runWithStableAnchorMock = vi.fn((_, fn) => (typeof fn === "function" ? fn() : undefined));
-const useStableViewAnchoringMock = vi.fn(() => ({ runWithStableAnchor: runWithStableAnchorMock }));
+const focusCurrentAnchorMock = vi.fn(() => false);
+const useStableViewAnchoringMock = vi.fn(() => ({
+  runWithStableAnchor: runWithStableAnchorMock,
+  focusCurrentAnchor: focusCurrentAnchorMock,
+}));
 
 const useInitGateMock = vi.fn(() => ({ scheduleInit: vi.fn() }));
 const useLongTaskFlagMock = vi.fn(() => ({ hadLongTaskRecently: false }));
