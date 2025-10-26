@@ -323,4 +323,82 @@ describe('useStableViewAnchoring', () => {
     expect(scrollEl.scrollTop).toBeCloseTo(140, 1);
     expect(item.getBoundingClientRect.mock.calls.length).toBeGreaterThan(3);
   });
+
+  it('focusCurrentAnchor recenters the anchor when it is outside the viewport', () => {
+    const item = document.createElement('div');
+    item.dataset.videoId = 'a';
+    gridEl.appendChild(item);
+
+    selection = {
+      selected: new Set(['a']),
+      anchorId: 'a',
+    };
+    orderedIds = ['a'];
+
+    let offset = 900;
+    const height = 100;
+
+    item.getBoundingClientRect = vi.fn(() =>
+      makeRect({ offset, height, scrollTop: scrollEl.scrollTop })
+    );
+
+    const { result } = renderHook(() =>
+      useStableViewAnchoring({
+        enabled: true,
+        scrollRef: { current: scrollEl },
+        gridRef: { current: gridEl },
+        selection,
+        orderedIds,
+      })
+    );
+
+    let focused = false;
+    act(() => {
+      focused = result.current.focusCurrentAnchor({ align: 'center' });
+    });
+
+    expect(focused).toBe(true);
+    expect(scrollEl.scrollTop).toBeCloseTo(650, 1);
+    expect(item.getBoundingClientRect).toHaveBeenCalled();
+  });
+
+  it('focusCurrentAnchor keeps the anchor visible without recentring when already in view', () => {
+    const item = document.createElement('div');
+    item.dataset.videoId = 'a';
+    gridEl.appendChild(item);
+
+    selection = {
+      selected: new Set(['a']),
+      anchorId: 'a',
+    };
+    orderedIds = ['a'];
+
+    let offset = 200;
+    const height = 120;
+
+    item.getBoundingClientRect = vi.fn(() =>
+      makeRect({ offset, height, scrollTop: scrollEl.scrollTop })
+    );
+
+    const { result } = renderHook(() =>
+      useStableViewAnchoring({
+        enabled: true,
+        scrollRef: { current: scrollEl },
+        gridRef: { current: gridEl },
+        selection,
+        orderedIds,
+      })
+    );
+
+    scrollEl.scrollTop = 0;
+
+    let focused = false;
+    act(() => {
+      focused = result.current.focusCurrentAnchor();
+    });
+
+    expect(focused).toBe(true);
+    expect(scrollEl.scrollTop).toBeCloseTo(0, 5);
+    expect(item.getBoundingClientRect).toHaveBeenCalled();
+  });
 });

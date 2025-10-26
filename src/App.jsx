@@ -321,7 +321,7 @@ function App() {
     []
   );
 
-  const { runWithStableAnchor } = useStableViewAnchoring({
+  const { runWithStableAnchor, focusCurrentAnchor } = useStableViewAnchoring({
     enabled: feature.stableViewAnchoring,
     scrollRef: scrollContainerRef,
     gridRef,
@@ -476,6 +476,70 @@ function App() {
       withLayoutHold,
     ]
   );
+
+  const focusSelection = useCallback(() => {
+    const selectedSet = selection?.selected;
+    if (!(selectedSet instanceof Set) || selectedSet.size === 0) {
+      return;
+    }
+
+    if (typeof focusCurrentAnchor === "function") {
+      const handled = focusCurrentAnchor({ align: "center" });
+      if (handled) {
+        return;
+      }
+    }
+
+    const scrollEl = scrollContainerRef?.current;
+    const gridEl = gridRef?.current;
+    if (!scrollEl || !gridEl) return;
+
+    let fallbackId = null;
+    if (selection?.anchorId && selectedSet.has(selection.anchorId)) {
+      fallbackId = selection.anchorId;
+    } else {
+      const iterator = selectedSet.values();
+      const next = iterator.next();
+      fallbackId = next?.value ?? null;
+    }
+
+    if (!fallbackId) return;
+
+    const nodes = gridEl.querySelectorAll("[data-video-id]");
+    let target = null;
+    for (const node of nodes) {
+      if (node?.dataset?.videoId === String(fallbackId)) {
+        target = node;
+        break;
+      }
+    }
+
+    if (!target) return;
+
+    const viewportRect =
+      typeof scrollEl.getBoundingClientRect === "function"
+        ? scrollEl.getBoundingClientRect()
+        : null;
+
+    if (viewportRect) {
+      const rect =
+        typeof target.getBoundingClientRect === "function"
+          ? target.getBoundingClientRect()
+          : null;
+      if (rect) {
+        const delta =
+          rect.top - viewportRect.top - viewportRect.height / 2 + rect.height / 2;
+        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+          scrollEl.scrollTop += delta;
+        }
+        return;
+      }
+    }
+
+    if (typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+    }
+  }, [focusCurrentAnchor, gridRef, scrollContainerRef, selection]);
 
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
@@ -1225,6 +1289,7 @@ function App() {
                 onSetRating={handleSetRating}
                 onClearRating={handleClearRating}
                 focusToken={metadataFocusToken}
+                onFocusSelection={focusSelection}
               />
             </div>
           )}
