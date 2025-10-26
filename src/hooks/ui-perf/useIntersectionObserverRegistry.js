@@ -31,6 +31,9 @@ export default function useIntersectionObserverRegistry(
   const visibleIdsRef = useRef(new Set()); // Set<id>
   const nearIdsRef = useRef(new Set());    // Set<id>
   const observerRef = useRef(null);
+  const pendingEntriesRef = useRef(new Map()); // Map<Element, IntersectionObserverEntry>
+  const pendingFrameRef = useRef(null);
+  const pendingFrameIsTimeoutRef = useRef(false);
 
   const currentRootMarginRef = useRef(rootMargin);
   const nearPxRef = useRef(nearPx);
@@ -69,20 +72,70 @@ export default function useIntersectionObserverRegistry(
   }, []);
 
   // Observer callback: compute visible/near, then notify per-element handler
-  const handleEntries = useCallback((entries) => {
+  const flushPending = useCallback(() => {
+    const pending = pendingEntriesRef.current;
+    if (!pending.size) {
+      pendingFrameRef.current = null;
+      return;
+    }
+
+    pendingEntriesRef.current = new Map();
+    pendingFrameRef.current = null;
+
     const rootRect = getRootRect();
-    for (const entry of entries) {
-      const el = entry.target;
+    for (const [el, entry] of pending.entries()) {
       const id = idsRef.current.get(el);
       updateFlags(entry, id, rootRect);
 
       const cb = handlersRef.current.get(el);
       if (cb) {
-        // We pass "visible" (true viewport) for clarity
         cb(visibleIdsRef.current.has(id), entry);
       }
     }
   }, [getRootRect, updateFlags]);
+
+  const scheduleFlush = useCallback(() => {
+    if (pendingFrameRef.current != null) return;
+
+    const run = () => {
+      pendingFrameRef.current = null;
+      flushPending();
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      pendingFrameIsTimeoutRef.current = false;
+      pendingFrameRef.current = requestAnimationFrame(run);
+    } else {
+      pendingFrameIsTimeoutRef.current = true;
+      pendingFrameRef.current = setTimeout(run, 16);
+    }
+  }, [flushPending]);
+
+  useEffect(
+    () => () => {
+      const handle = pendingFrameRef.current;
+      if (handle == null) return;
+      if (pendingFrameIsTimeoutRef.current) {
+        clearTimeout(handle);
+      } else if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(handle);
+      }
+      pendingFrameRef.current = null;
+      pendingFrameIsTimeoutRef.current = false;
+      pendingEntriesRef.current = new Map();
+    },
+    []
+  );
+
+  const handleEntries = useCallback((entries) => {
+    if (!entries || entries.length === 0) return;
+    const pending = pendingEntriesRef.current;
+    for (const entry of entries) {
+      if (!entry || !entry.target) continue;
+      pending.set(entry.target, entry);
+    }
+    scheduleFlush();
+  }, [scheduleFlush]);
 
   // Build the single observer (or rebuild if root/opts truly change)
   useEffect(() => {
@@ -209,10 +262,11 @@ export default function useIntersectionObserverRegistry(
         ? performance.now()
         : Date.now();
 
+    flushPending();
     for (const el of handlersRef.current.keys()) {
       evaluateTarget(el, rootRect, now);
     }
-  }, [evaluateTarget, getRootRect]);
+  }, [evaluateTarget, flushPending, getRootRect]);
 
   return useMemo(() => ({
     observe,

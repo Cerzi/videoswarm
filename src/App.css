@@ -316,6 +316,7 @@ body {
 .video-item {
   content-visibility: auto;
   contain-intrinsic-size: 140px 250px;
+  contain: layout paint style;
   border: 2px solid transparent;
   border-radius: 8px;
   overflow: hidden;
