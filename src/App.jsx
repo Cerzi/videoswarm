@@ -647,6 +647,7 @@ function App() {
       font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
       animation: slideInFromRight 0.2s ease-out;
+      pointer-events: none;
     `;
     el.textContent = `${icons[type] || icons.info} ${message}`;
     document.body.appendChild(el);
