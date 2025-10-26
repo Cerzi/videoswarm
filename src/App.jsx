@@ -72,7 +72,13 @@ function computeActivationWindow(orderedIds, metrics = {}, explicitTarget) {
     const safeTarget = Number.isFinite(explicitTarget)
       ? Math.max(0, Math.floor(explicitTarget))
       : 0;
-    return { ids: [], startIndex: 0, endIndex: 0, target: safeTarget };
+    return {
+      ids: [],
+      idSet: new Set(),
+      startIndex: 0,
+      endIndex: 0,
+      target: safeTarget,
+    };
   }
 
   const fallbackTarget = columnCount * viewportRows * 2;
@@ -117,7 +123,8 @@ function computeActivationWindow(orderedIds, metrics = {}, explicitTarget) {
   }
 
   const ids = list.slice(startIndex, endIndex);
-  return { ids, startIndex, endIndex, target: safeTarget };
+  const idSet = new Set(ids);
+  return { ids, idSet, startIndex, endIndex, target: safeTarget };
 }
 
 function App() {
@@ -255,15 +262,10 @@ function App() {
     [orderedIds, viewportMetrics, activationTargetCount]
   );
 
-  const activationWindowSet = useMemo(
-    () => new Set(activationWindow.ids),
-    [activationWindow]
-  );
-
-  const activationWindowRef = useRef(activationWindowSet);
+  const activationWindowRef = useRef(activationWindow.idSet);
   useEffect(() => {
-    activationWindowRef.current = activationWindowSet;
-  }, [activationWindowSet]);
+    activationWindowRef.current = activationWindow.idSet;
+  }, [activationWindow.idSet]);
 
   const isWithinActivation = useCallback(
     (id) => activationWindowRef.current.has(id),
