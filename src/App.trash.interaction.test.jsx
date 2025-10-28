@@ -72,10 +72,12 @@ vi.mock("./hooks/useFullScreenModal", () => ({
   }),
 }));
 
+let memoryStatusMock = null;
+
 vi.mock("./hooks/video-collection", () => ({
   __esModule: true,
   useVideoCollection: ({ videos = [] }) => ({
-    memoryStatus: null,
+    memoryStatus: memoryStatusMock,
     playingVideos: [],
     limits: { maxLoaded: videos.length },
     performCleanup: vi.fn(() => []),
@@ -266,6 +268,7 @@ describe("App trash regression", () => {
   beforeEach(() => {
     selectionRef.current = null;
     runActionRef.current = null;
+    memoryStatusMock = null;
     window.electronAPI = {
       bulkMoveToTrash: vi.fn(async (paths) => {
         const result = { moved: paths.filter((p) => p !== "keep"), failed: [] };
@@ -347,5 +350,21 @@ describe("App trash regression", () => {
 
     const toast = await screen.findByText(/Moved 2 item\(s\) to Recycle Bin/);
     expect(toast).toHaveStyle({ pointerEvents: "none" });
+  });
+
+  it("renders memory alert without blocking interactions", async () => {
+    memoryStatusMock = {
+      currentMemoryMB: 5120,
+      totalMemoryMB: 8192,
+      memoryPressure: 90,
+      isNearLimit: true,
+      source: "test",
+    };
+
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const warningLabel = await screen.findByText(/Memory Warning/);
+    expect(warningLabel.parentElement).toHaveStyle({ pointerEvents: "none" });
   });
 });

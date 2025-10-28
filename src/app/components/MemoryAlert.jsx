@@ -1,3 +1,5 @@
+import React from "react";
+
 function MemoryAlert({ memStatus }) {
   if (!memStatus || !memStatus.isNearLimit) return null;
   return (
@@ -13,6 +15,7 @@ function MemoryAlert({ memStatus }) {
         zIndex: 1000,
         maxWidth: "300px",
         boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        pointerEvents: "none",
       }}
     >
       <div style={{ fontWeight: "bold", marginBottom: "0.5rem" }}>
