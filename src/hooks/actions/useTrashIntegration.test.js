@@ -26,6 +26,7 @@ describe("useTrashIntegration", () => {
     const playing = createStateHarness(new Set(["keep"]));
     const visible = createStateHarness(new Set(["keep", "trash"]));
     const loading = createStateHarness(new Set(["trash"]));
+    const refresh = vi.fn();
 
     const { result } = renderHook(() =>
       useTrashIntegration({
@@ -39,6 +40,7 @@ describe("useTrashIntegration", () => {
         setPlayingIds: playing.set,
         setVisibleIds: visible.set,
         setLoadingIds: loading.set,
+        refreshTagList: refresh,
       })
     );
 
@@ -52,6 +54,8 @@ describe("useTrashIntegration", () => {
     expect(Array.from(playing.get())).toEqual(["keep"]);
     expect(Array.from(visible.get())).toEqual(["keep"]);
     expect(Array.from(loading.get())).toEqual([]);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh.mock.calls[0][0]).toEqual(new Set(["trash"]));
   });
 
   it("syncs with useSelectionState selections", () => {
@@ -60,6 +64,7 @@ describe("useTrashIntegration", () => {
       { id: "keep" },
       { id: "trash" },
     ]);
+    const refresh = vi.fn();
 
     act(() => {
       selection.current.setSelected(() => new Set(["keep", "trash"]));
@@ -77,6 +82,7 @@ describe("useTrashIntegration", () => {
         setPlayingIds: () => {},
         setVisibleIds: () => {},
         setLoadingIds: () => {},
+        refreshTagList: refresh,
       })
     );
 
@@ -87,5 +93,7 @@ describe("useTrashIntegration", () => {
     expect(Array.from(selection.current.selected)).toEqual(["keep"]);
     expect(selection.current.size).toBe(1);
     expect(videos.get()).toEqual([{ id: "keep" }]);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh.mock.calls[0][0]).toEqual(new Set(["trash"]));
   });
 });

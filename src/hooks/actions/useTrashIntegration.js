@@ -13,6 +13,7 @@ export default function useTrashIntegration({
   setPlayingIds,        // Set updater (ids)
   setVisibleIds,        // optional
   setLoadingIds,        // optional
+  refreshTagList,       // optional: refresh available tags after removals
 }) {
   // movedSet contains *paths/ids* (your app uses id === path)
   const onItemsRemoved = useMemo(() => (movedSet) => {
@@ -41,7 +42,23 @@ export default function useTrashIntegration({
     prune(setPlayingIds);
     prune(setVisibleIds);
     prune(setLoadingIds);
-  }, [setVideos, setSelected, setLoadedIds, setPlayingIds, setVisibleIds, setLoadingIds]);
+
+    if (typeof refreshTagList === 'function') {
+      try {
+        refreshTagList(movedSet);
+      } catch (error) {
+        console.warn('[trash] refreshTagList failed:', error);
+      }
+    }
+  }, [
+    refreshTagList,
+    setLoadedIds,
+    setLoadingIds,
+    setPlayingIds,
+    setSelected,
+    setVideos,
+    setVisibleIds,
+  ]);
 
   // Optional: listen for main-process broadcast
   useEffect(() => {

@@ -717,6 +717,7 @@ function App() {
     setPlayingIds: setActualPlaying,
     setVisibleIds: setVisibleVideos,
     setLoadingIds: setLoadingVideos,
+    refreshTagList: invokeRefreshTagList,
   });
 
   const { runAction } = useActionDispatch(deps, getById);

@@ -30,6 +30,7 @@ function Harness() {
     setPlayingIds: () => {},
     setVisibleIds: () => {},
     setLoadingIds: () => {},
+    refreshTagList: () => {},
   });
 
   useEffect(() => {
