@@ -725,6 +725,7 @@ function App() {
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
+      hideContextMenu();
       if (actionId === "metadata:open") {
         openMetadataPanel();
         return;
@@ -751,6 +752,7 @@ function App() {
       runAction(actionId, selection.selected, contextMenu.contextId);
     },
     [
+      hideContextMenu,
       openMetadataPanel,
       selectedFingerprints,
       handleSetRating,

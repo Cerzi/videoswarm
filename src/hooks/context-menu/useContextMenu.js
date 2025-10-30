@@ -6,12 +6,14 @@ import { useState, useCallback } from 'react';
  * - Right-click on empty space: clear selection
  * - Stores position + contextId for the menu renderer
  */
+const createInitialState = () => ({
+  visible: false,
+  position: { x: 0, y: 0 },
+  contextId: undefined, // id of the item right-clicked, undefined if background
+});
+
 export function useContextMenu() {
-  const [state, setState] = useState({
-    visible: false,
-    position: { x: 0, y: 0 },
-    contextId: undefined, // id of the item right-clicked, undefined if background
-  });
+  const [state, setState] = useState(() => createInitialState());
 
   const showOnItem = useCallback((event, videoId, isSelected, selectOnly) => {
     event.preventDefault();
@@ -36,7 +38,7 @@ export function useContextMenu() {
   }, []);
 
   const hide = useCallback(() => {
-    setState(s => ({ ...s, visible: false }));
+    setState((prev) => (prev.visible ? createInitialState() : prev));
   }, []);
 
   return { contextMenu: state, showOnItem, showOnEmpty, hide };

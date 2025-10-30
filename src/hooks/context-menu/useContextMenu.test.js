@@ -23,11 +23,13 @@ describe('useContextMenu', () => {
     expect(result.current.contextMenu.contextId).toBeUndefined();
   });
 
-  test('hide sets visible=false', () => {
+  test('hide resets menu state when closing', () => {
     const { result } = renderHook(() => useContextMenu());
     const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 1, clientY: 1 };
     act(() => result.current.showOnEmpty(event, () => {}));
     act(() => result.current.hide());
     expect(result.current.contextMenu.visible).toBe(false);
+    expect(result.current.contextMenu.contextId).toBeUndefined();
+    expect(result.current.contextMenu.position).toEqual({ x: 0, y: 0 });
   });
 });
