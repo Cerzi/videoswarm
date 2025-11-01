@@ -5,6 +5,8 @@
 
 I got tired of manually opening tens or hundreds of ComfyUI video outputs to try and find an old workflow or get a quick overview of the quality of a large batch run. **Video Swarm** was born because I couldn't find any existing software that does this: tile a large number of videos, all playing at once, with seamless scrolling through subdirectories and quick file operations. I figured I'm not the only one who would find this useful, so I've open-sourced it.
 
+If VideoSwarm has been helpful and you'd like to chip in, you can support development at [ko-fi.com/videoswarm](https://ko-fi.com/videoswarm). ❤️
+
 ![Video Swarm Demo](docs/images/demo.gif)
 
 https://github.com/user-attachments/assets/9fed71dd-fe4e-4bdf-8326-ab775979e2d5
