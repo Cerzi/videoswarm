@@ -139,6 +139,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: var(--color-accent);
 }
 
 .donate-button__label {

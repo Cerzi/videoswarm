@@ -1,9 +1,9 @@
 {
   "donationUrl": "https://ko-fi.com/videoswarm",
-  "donationTooltip": "Support VideoSwarm’s development",
+  "donationTooltip": "Opens our Ko-fi page in your browser",
   "donationButtonLabel": "Donate",
   "donationLinkLabel": "Support VideoSwarm on Ko-fi",
-  "donationBlurb": "VideoSwarm is maintained by a small team and a buzzing open-source community. Your support helps us keep shipping smoother browsing for massive video folders.",
+  "donationBlurb": "If you enjoy using VideoSwarm, you can support its development ❤️",
   "credits": [
     "Concept & development: VideoSwarm core maintainers",
     "Design, QA & inspiration: The VideoSwarm community",

@@ -1,5 +1,6 @@
 import React from "react";
 import { supportContent } from "../config/supportContent";
+import { openDonationPage } from "../utils/support";
 
 export default function HelpMenu({ onOpenAbout }) {
   return (
@@ -12,13 +13,9 @@ export default function HelpMenu({ onOpenAbout }) {
           onOpenAbout?.();
         }
         if (value === "donate") {
-          if (typeof window !== "undefined") {
-            window.open(
-              supportContent.donationUrl,
-              "_blank",
-              "noopener,noreferrer"
-            );
-          }
+          openDonationPage().catch((error) => {
+            console.warn("Failed to open donation page", error);
+          });
         }
         event.target.value = "placeholder";
       }}

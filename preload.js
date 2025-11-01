@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  openDonationPage: () => ipcRenderer.invoke("support:open-donation"),
+
   // File manager integration
   showItemInFolder: async (filePath) => {
     return await ipcRenderer.invoke("show-item-in-folder", filePath);
