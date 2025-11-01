@@ -69,7 +69,6 @@ export default function useVideoResourceManager({
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
-  playingCap,
   suspendEvictions = false,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
@@ -217,13 +216,6 @@ export default function useVideoResourceManager({
       maxLoaded = activationGoal;
     }
 
-    // ---- NEW: ensure loaded cap can satisfy the user's playing cap (+ buffer) ----
-    if (typeof playingCap === "number" && playingCap > 0) {
-      const floor = playingCap + CONFIG.PLAY_PRELOAD_BUFFER;
-      const safeFloor = Math.min(floor, totalCeiling, CONFIG.MAX_LOADED_SOFT_CAP);
-      if (maxLoaded < safeFloor) maxLoaded = safeFloor;
-    }
-
     maxLoaded = Math.max(1, Math.floor(maxLoaded * limitMultiplier));
     maxLoaded = Math.min(maxLoaded, CONFIG.MAX_LOADED_SOFT_CAP);
     maxLoaded = Math.min(maxLoaded, totalCeiling);
@@ -278,7 +270,6 @@ export default function useVideoResourceManager({
     mem.currentMemoryMB,
     mem.totalMemoryMB,
     hadLongTaskRecently,
-    playingCap, // re-evaluate if user cap changes
     limitMultiplier,
   ]);
 

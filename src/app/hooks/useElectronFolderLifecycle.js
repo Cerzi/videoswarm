@@ -1,5 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { normalizeVideoFromMain } from "../videoNormalization";
+import {
+  clampRenderLimitStep,
+  inferRenderLimitStepFromLegacy,
+} from "../../utils/renderLimit";
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
@@ -12,8 +16,8 @@ export function useElectronFolderLifecycle({
   recursiveMode,
   setRecursiveMode,
   setShowFilenames,
-  maxConcurrentPlaying,
-  setMaxConcurrentPlaying,
+  renderLimitStep,
+  setRenderLimitStep,
   setSortKey,
   setSortDir,
   groupByFolders,
@@ -37,7 +41,7 @@ export function useElectronFolderLifecycle({
   const setterRefs = useRef({
     setRecursiveMode,
     setShowFilenames,
-    setMaxConcurrentPlaying,
+    setRenderLimitStep,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -49,7 +53,7 @@ export function useElectronFolderLifecycle({
     setterRefs.current = {
       setRecursiveMode,
       setShowFilenames,
-      setMaxConcurrentPlaying,
+      setRenderLimitStep,
       setSortKey,
       setSortDir,
       setGroupByFolders,
@@ -59,7 +63,7 @@ export function useElectronFolderLifecycle({
   }, [
     setRecursiveMode,
     setShowFilenames,
-    setMaxConcurrentPlaying,
+    setRenderLimitStep,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -190,7 +194,7 @@ export function useElectronFolderLifecycle({
         const {
           setRecursiveMode: applyRecursiveMode,
           setShowFilenames: applyShowFilenames,
-          setMaxConcurrentPlaying: applyMaxConcurrentPlaying,
+          setRenderLimitStep: applyRenderLimitStep,
           setSortKey: applySortKey,
           setSortDir: applySortDir,
           setGroupByFolders: applyGroupByFolders,
@@ -202,8 +206,15 @@ export function useElectronFolderLifecycle({
           applyRecursiveMode(settings.recursiveMode);
         if (settings.showFilenames !== undefined)
           applyShowFilenames(settings.showFilenames);
-        if (settings.maxConcurrentPlaying !== undefined)
-          applyMaxConcurrentPlaying(settings.maxConcurrentPlaying);
+        if (settings.renderLimitStep !== undefined) {
+          applyRenderLimitStep(clampRenderLimitStep(settings.renderLimitStep));
+        } else if (settings.maxConcurrentPlaying !== undefined) {
+          applyRenderLimitStep(
+            clampRenderLimitStep(
+              inferRenderLimitStepFromLegacy(settings.maxConcurrentPlaying)
+            )
+          );
+        }
         if (settings.zoomLevel !== undefined)
           applyZoomLevelFromSettings(settings.zoomLevel);
         if (settings.sortKey) applySortKey(settings.sortKey);

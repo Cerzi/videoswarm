@@ -99,8 +99,10 @@ export default function HeaderBar({
   toggleRecursive,
   showFilenames,
   toggleFilenames,
-  maxConcurrentPlaying,
-  handleVideoLimitChange,
+  renderLimitStep,
+  renderLimitLabel = "Max",
+  renderLimitMaxStep = 10,
+  handleRenderLimitChange,
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
@@ -190,19 +192,23 @@ export default function HeaderBar({
         </button>
 
         <div style={dividerStyle}>
-          <div className="video-limit-control" title="Max playing limit">
+          <div className="video-limit-control" title="Limit rendered VideoCards">
             <FilmIcon />
             <input
               type="range"
-              min="10"
-              max="500"
-              value={maxConcurrentPlaying}
-              step="10"
+              min="0"
+              max={renderLimitMaxStep}
+              value={renderLimitStep}
+              step="1"
               style={{ width: 100 }}
-              onChange={(e) => handleVideoLimitChange(parseInt(e.target.value, 10))}
+              onChange={(e) =>
+                handleRenderLimitChange(parseInt(e.target.value, 10))
+              }
               disabled={isLoadingFolder}
+              aria-label="Rendered VideoCards limit"
+              aria-valuetext={renderLimitLabel}
             />
-            <span style={{ fontSize: "0.8rem" }}>{maxConcurrentPlaying}</span>
+            <span style={{ fontSize: "0.8rem" }}>{renderLimitLabel}</span>
           </div>
 
           <div className="zoom-control" title="Zoom">

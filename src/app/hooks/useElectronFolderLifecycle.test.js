@@ -1,5 +1,6 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useElectronFolderLifecycle } from "./useElectronFolderLifecycle";
+import { inferRenderLimitStepFromLegacy } from "../../utils/renderLimit";
 
 function createSetStateMock() {
   let current = new Set();
@@ -52,7 +53,7 @@ describe("useElectronFolderLifecycle", () => {
       getSettings: vi.fn().mockResolvedValue({
         recursiveMode: true,
         showFilenames: false,
-        maxConcurrentPlaying: 10,
+        renderLimitStep: 7,
         zoomLevel: 3,
         sortKey: "name",
         sortDir: "desc",
@@ -97,8 +98,8 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode: false,
           setRecursiveMode,
           setShowFilenames: vi.fn(),
-          maxConcurrentPlaying: 5,
-          setMaxConcurrentPlaying: vi.fn(),
+          renderLimitStep: 5,
+          setRenderLimitStep: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,
@@ -138,7 +139,7 @@ describe("useElectronFolderLifecycle", () => {
   it("loads persisted settings on mount", async () => {
     const setRecursiveMode = vi.fn();
     const setShowFilenames = vi.fn();
-    const setMaxConcurrentPlaying = vi.fn();
+    const setRenderLimitStep = vi.fn();
     const setSortKey = vi.fn();
     const setSortDir = vi.fn();
     const setGroupByFolders = vi.fn();
@@ -151,8 +152,8 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode,
         setShowFilenames,
-        maxConcurrentPlaying: 5,
-        setMaxConcurrentPlaying,
+        renderLimitStep: 5,
+        setRenderLimitStep,
         setSortKey,
         setSortDir,
         groupByFolders: true,
@@ -172,12 +173,52 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setRecursiveMode).toHaveBeenCalledWith(true);
     expect(setShowFilenames).toHaveBeenCalledWith(false);
-    expect(setMaxConcurrentPlaying).toHaveBeenCalledWith(10);
+    expect(setRenderLimitStep).toHaveBeenCalledWith(7);
     expect(setSortKey).toHaveBeenCalledWith("name");
     expect(setSortDir).toHaveBeenCalledWith("desc");
     expect(setGroupByFolders).toHaveBeenCalledWith(false);
     expect(setRandomSeed).toHaveBeenCalledWith(42);
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
+  });
+
+  it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {
+    const legacyValue = 250;
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      recursiveMode: false,
+      showFilenames: true,
+      maxConcurrentPlaying: legacyValue,
+    });
+
+    const setRenderLimitStep = vi.fn();
+
+    const { result } = renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep,
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+        delayFn: () => Promise.resolve(),
+      })
+    );
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setRenderLimitStep).toHaveBeenCalledWith(
+      inferRenderLimitStepFromLegacy(legacyValue)
+    );
   });
 
   it("handles folder selection lifecycle", async () => {
@@ -187,8 +228,8 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        maxConcurrentPlaying: 5,
-        setMaxConcurrentPlaying: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -231,8 +272,8 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        maxConcurrentPlaying: 5,
-        setMaxConcurrentPlaying: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -316,8 +357,8 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode: false,
           setRecursiveMode: vi.fn(),
           setShowFilenames: vi.fn(),
-          maxConcurrentPlaying: 5,
-          setMaxConcurrentPlaying: vi.fn(),
+          renderLimitStep: 5,
+          setRenderLimitStep: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,
@@ -362,8 +403,8 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        maxConcurrentPlaying: 5,
-        setMaxConcurrentPlaying: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -411,8 +452,8 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode,
           setRecursiveMode,
           setShowFilenames: vi.fn(),
-          maxConcurrentPlaying: 5,
-          setMaxConcurrentPlaying: vi.fn(),
+          renderLimitStep: 5,
+          setRenderLimitStep: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,

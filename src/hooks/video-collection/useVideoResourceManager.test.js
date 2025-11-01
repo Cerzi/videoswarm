@@ -45,7 +45,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: playing,
         isNear,
-        playingCap: 32, // ensures a sensible maxLoaded floor for determinism
       })
     );
 
@@ -98,7 +97,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: new Set(),
         isNear: () => false,
-        playingCap: 24,
       })
     );
 
@@ -128,7 +126,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: playing,
         isNear: () => false,
-        playingCap: 32,
       })
     );
 
@@ -175,7 +172,6 @@ describe('useVideoResourceManager (current behavior)', () => {
           loadingVideos: loading,
           playingVideos: new Set(),
           isNear,
-          playingCap: 32,
           suspendEvictions: true,
         },
       }
@@ -200,7 +196,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: new Set(),
         isNear,
-        playingCap: 32,
         suspendEvictions: false,
       });
     });
@@ -227,7 +222,6 @@ describe('reportPlayerCreationFailure', () => {
         loadingVideos: loading,
         playingVideos: new Set(),
         isNear: () => false,
-        playingCap: 32,
       })
     );
 
