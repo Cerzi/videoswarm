@@ -38,7 +38,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 ## Features
 
 ### Playback and Layout
-- Configurable concurrent playback (default 50; adjustable up to 500 depending on system resources)
+- Adjustable rendered card cap (minimum 100, scales up to the filtered dataset size)
 - Lazy loading: videos only play when visible in the viewport
 - Automatic cleanup of off-screen elements to reduce memory usage
 - Vertical masonry layout: fixed width, variable height; handles portrait, square, and landscape videos without wasted space

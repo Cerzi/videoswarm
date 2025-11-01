@@ -1,7 +1,7 @@
 // hooks/video-collection/useVideoCollection.js
+import { useCallback } from "react";
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
-import usePlayOrchestrator from "./usePlayOrchestrator";
 
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,
@@ -21,7 +21,6 @@ export default function useVideoCollection({
   loadedVideos = new Set(),
   loadingVideos = new Set(),
   actualPlaying = new Set(),
-  maxConcurrentPlaying = 250,
   scrollRef = null,
   progressive = {},
   hadLongTaskRecently = false,
@@ -116,17 +115,12 @@ export default function useVideoCollection({
     playingVideos: actualPlaying,
     hadLongTaskRecently,
     isNear,
-    playingCap: maxConcurrentPlaying,
     suspendEvictions,
   });
 
-  // Layer 3: Play orchestration (Business logic)
-  const { playingSet, markHover, reportPlayError, reportStarted } =
-    usePlayOrchestrator({
-      visibleIds: visibleVideos,
-      loadedIds: loadedVideos,
-      maxPlaying: maxConcurrentPlaying,
-    });
+  const markHover = useCallback(() => {}, []);
+  const reportPlayError = useCallback(() => {}, []);
+  const reportStarted = useCallback(() => {}, []);
 
   return {
     // What to render
@@ -134,7 +128,7 @@ export default function useVideoCollection({
 
     // Functions for VideoCard
     canLoadVideo,
-    isVideoPlaying: (videoId) => playingSet.has(videoId),
+    isVideoPlaying: (videoId) => actualPlaying.has(videoId),
     markHover,
     reportPlayError,
     reportStarted,
@@ -144,11 +138,11 @@ export default function useVideoCollection({
     performCleanup,
 
     // Derived state for UI
-    playingVideos: playingSet,
+    playingVideos: actualPlaying,
     stats: {
       total: videos.length,
       rendered: progressiveVideos.length,
-      playing: playingSet.size,
+      playing: actualPlaying.size,
       loaded: loadedVideos.size,
       progressiveVisible: progressiveVisibleCount,
       activationTarget: desiredActiveCount,

@@ -101,7 +101,7 @@ function getDefaultZoomForScreen() {
 // Note: zoomLevel will be set dynamically after app is ready
 const defaultSettings = {
   recursiveMode: false,
-  maxConcurrentPlaying: 50,
+  renderCap: 100,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -378,7 +378,12 @@ async function loadSettings() {
     const settings = JSON.parse(data);
     console.log("Settings loaded:", settings);
 
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
+    const {
+      layoutMode,
+      autoplayEnabled,
+      maxConcurrentPlaying: _legacyMaxConcurrentPlaying,
+      ...cleanSettings
+    } = settings;
 
     if (cleanSettings.zoomLevel === undefined) {
       const defaultZoom = getDefaultZoomForScreen();
@@ -408,7 +413,12 @@ async function loadSettings() {
 
 async function saveSettings(settings) {
   try {
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
+    const {
+      layoutMode,
+      autoplayEnabled,
+      maxConcurrentPlaying: _legacyMaxConcurrentPlaying,
+      ...cleanSettings
+    } = settings;
     await fs.writeFile(settingsPath, JSON.stringify(cleanSettings, null, 2));
     currentSettings = cleanSettings;
     console.log("Settings saved:", cleanSettings);

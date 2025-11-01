@@ -21,7 +21,6 @@ export function useZoomControls({
   setZoomLevel,
   orderedVideoCount = 0,
   recursiveMode,
-  maxConcurrentPlaying,
   showFilenames,
   setZoomClass,
   scheduleLayout,
@@ -40,11 +39,10 @@ export function useZoomControls({
       window.electronAPI?.saveSettingsPartial?.({
         zoomLevel: level,
         recursiveMode,
-        maxConcurrentPlaying,
         showFilenames,
       });
     },
-    [recursiveMode, maxConcurrentPlaying, showFilenames]
+    [recursiveMode, showFilenames]
   );
 
   const applyZoom = useCallback(

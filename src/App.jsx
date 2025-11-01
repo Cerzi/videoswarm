@@ -40,6 +40,7 @@ import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
 import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
+import { useRenderCap } from "./hooks/useRenderCap";
 
 import feature from "./config/featureFlags";
 import "./App.css";
@@ -134,7 +135,6 @@ function App() {
   const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
   const [sortDir, setSortDir] = useState("asc");
@@ -192,8 +192,6 @@ function App() {
     recursiveMode,
     setRecursiveMode,
     setShowFilenames,
-    maxConcurrentPlaying,
-    setMaxConcurrentPlaying,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -254,14 +252,37 @@ function App() {
     gridRef,
   });
 
+  const renderCap = useRenderCap({ datasetCount: orderedVideos.length });
+
+  const limitedOrderedVideos = useMemo(
+    () => orderedVideos.slice(0, renderCap.clampedCap || 0),
+    [orderedVideos, renderCap.clampedCap]
+  );
+
+  const limitedOrderedIds = useMemo(
+    () => limitedOrderedVideos.map((video) => video.id),
+    [limitedOrderedVideos]
+  );
+
+  const limitedOrderForRange = useMemo(() => {
+    if (!Array.isArray(orderForRange)) return [];
+    if (!limitedOrderedIds.length) return [];
+    return orderForRange.slice(0, limitedOrderedIds.length);
+  }, [orderForRange, limitedOrderedIds.length, limitedOrderedIds]);
+
+  const limitedIdSet = useMemo(
+    () => new Set(limitedOrderedIds),
+    [limitedOrderedIds]
+  );
+
   const activationWindow = useMemo(
     () =>
       computeActivationWindow(
-        orderedIds,
+        limitedOrderedIds,
         viewportMetrics,
         activationTargetCount
       ),
-    [orderedIds, viewportMetrics, activationTargetCount]
+    [limitedOrderedIds, viewportMetrics, activationTargetCount]
   );
 
   const activationWindowRef = useRef(activationWindow.idSet);
@@ -282,7 +303,7 @@ function App() {
       let changed = false;
       const next = new Set();
       prev.forEach((id) => {
-        if (filteredVideoIds.has(id)) {
+        if (filteredVideoIds.has(id) && limitedIdSet.has(id)) {
           next.add(id);
         } else {
           changed = true;
@@ -290,7 +311,12 @@ function App() {
       });
       return changed ? next : prev;
     });
-  }, [filteredVideoIds, selection.size, selectionSetSelected]);
+  }, [
+    filteredVideoIds,
+    limitedIdSet,
+    selection.size,
+    selectionSetSelected,
+  ]);
 
 
   const anchorDefaults = useMemo(
@@ -329,7 +355,7 @@ function App() {
     gridRef,
     observeRef: contentRegionRef,
     selection,
-    orderedIds: orderForRange,
+    orderedIds: limitedOrderForRange,
     anchorMode: "last",
     settleFrames: anchorDefaults.settleFrames,
     stabilizeFrames: anchorDefaults.stabilizeFrames,
@@ -343,9 +369,8 @@ function App() {
   } = useZoomControls({
     zoomLevel,
     setZoomLevel,
-    orderedVideoCount: orderedVideos.length,
+    orderedVideoCount: limitedOrderedVideos.length,
     recursiveMode,
-    maxConcurrentPlaying,
     showFilenames,
     setZoomClass,
     scheduleLayout,
@@ -544,8 +569,8 @@ function App() {
   }, [focusCurrentAnchor, gridRef, scrollContainerRef, selection]);
 
   const getById = useCallback(
-    (id) => orderedVideos.find((v) => v.id === id),
-    [orderedVideos]
+    (id) => limitedOrderedVideos.find((v) => v.id === id),
+    [limitedOrderedVideos]
   );
 
   const selectedVideos = useMemo(() => {
@@ -631,6 +656,15 @@ function App() {
     const base = `Sorted by ${keyLabels[sortKey]}${arrow ? ` ${arrow}` : ""}`;
     return groupByFolders ? `${base} • Grouped by folders` : base;
   }, [sortKey, sortDir, groupByFolders]);
+
+  const renderCapSliderValue = Math.min(renderCap.cap, renderCap.max);
+  const renderCapLabel =
+    renderCap.clampedCap < orderedVideos.length
+      ? `Rendered: ${renderCap.clampedCap}`
+      : `Rendered: Max (${orderedVideos.length})`;
+  const renderCapDisabled = orderedVideos.length === 0;
+  const renderCapTooltip =
+    "Limits how many video cards are created in the grid after filters and sorting. Use this to reduce memory and CPU/GPU load on very large folders.";
 
   // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {
@@ -874,12 +908,11 @@ function App() {
 
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
-    videos: orderedVideos,
+    videos: limitedOrderedVideos,
     visibleVideos,
     loadedVideos,
     loadingVideos,
     actualPlaying,
-    maxConcurrentPlaying,
     scrollRef: scrollContainerRef,
     progressive: {
       initial: 120,
@@ -902,7 +935,7 @@ function App() {
     openFullScreen,
     closeFullScreen,
     navigateFullScreen,
-  } = useFullScreenModal(orderedVideos, "masonry-vertical", gridRef);
+  } = useFullScreenModal(limitedOrderedVideos, "masonry-vertical", gridRef);
 
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
@@ -987,8 +1020,8 @@ function App() {
   // === DYNAMIC ZOOM RESIZE / COUNT ===
   // relayout when list changes
   useEffect(() => {
-    if (orderedVideos.length) onItemsChanged();
-  }, [orderedVideos.length, onItemsChanged]);
+    if (limitedOrderedVideos.length) onItemsChanged();
+  }, [limitedOrderedVideos.length, onItemsChanged]);
 
   // aspect ratio updates from cards
     const handleVideoLoaded = useCallback(
@@ -1016,11 +1049,10 @@ function App() {
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
       recursiveMode: next,
-      maxConcurrentPlaying,
       zoomLevel,
       showFilenames,
     });
-  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [recursiveMode, zoomLevel, showFilenames]);
 
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
@@ -1028,23 +1060,9 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({
       showFilenames: next,
       recursiveMode,
-      maxConcurrentPlaying,
       zoomLevel,
     });
-  }, [showFilenames, recursiveMode, maxConcurrentPlaying, zoomLevel]);
-
-  const handleVideoLimitChange = useCallback(
-    (n) => {
-      setMaxConcurrentPlaying(n);
-      window.electronAPI?.saveSettingsPartial?.({
-        maxConcurrentPlaying: n,
-        recursiveMode,
-        zoomLevel,
-        showFilenames,
-      });
-    },
-    [recursiveMode, zoomLevel, showFilenames]
-  );
+  }, [showFilenames, recursiveMode, zoomLevel]);
 
   const handleSortChange = useCallback(
     (value) => {
@@ -1099,7 +1117,7 @@ function App() {
       if (isShiftClick) {
         // Shift: range selection (additive if Ctrl also held)
         selection.selectRange(
-          orderForRange,
+          limitedOrderForRange,
           videoId,
           /* additive */ isCtrlClick
         );
@@ -1118,7 +1136,7 @@ function App() {
       openFullScreen,
       videoCollection.playingVideos,
       selection,
-      orderForRange,
+      limitedOrderForRange,
     ]
   );
 
@@ -1210,8 +1228,13 @@ function App() {
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
-            maxConcurrentPlaying={maxConcurrentPlaying}
-            handleVideoLimitChange={handleVideoLimitChange}
+            renderCapValue={renderCapSliderValue}
+            renderCapMin={renderCap.min}
+            renderCapMax={renderCap.max}
+            renderCapLabel={renderCapLabel}
+            onRenderCapChange={renderCap.setCap}
+            renderCapDisabled={renderCapDisabled}
+            renderCapTooltip={renderCapTooltip}
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
@@ -1353,7 +1376,7 @@ function App() {
                     !showFilenames ? "hide-filenames" : ""
                   } ${zoomClassForLevel(zoomLevel)}`}
               >
-                {orderedVideos.length === 0 &&
+                {limitedOrderedVideos.length === 0 &&
                   videos.length > 0 &&
                   !isLoadingFolder && (
                     <div className="filters-empty-state">

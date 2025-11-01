@@ -99,8 +99,13 @@ export default function HeaderBar({
   toggleRecursive,
   showFilenames,
   toggleFilenames,
-  maxConcurrentPlaying,
-  handleVideoLimitChange,
+  renderCapValue,
+  renderCapMin,
+  renderCapMax,
+  renderCapLabel,
+  onRenderCapChange,
+  renderCapDisabled,
+  renderCapTooltip,
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
@@ -190,19 +195,46 @@ export default function HeaderBar({
         </button>
 
         <div style={dividerStyle}>
-          <div className="video-limit-control" title="Max playing limit">
+          <div
+            className="video-limit-control"
+            title={renderCapTooltip}
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+          >
             <FilmIcon />
-            <input
-              type="range"
-              min="10"
-              max="500"
-              value={maxConcurrentPlaying}
-              step="10"
-              style={{ width: 100 }}
-              onChange={(e) => handleVideoLimitChange(parseInt(e.target.value, 10))}
-              disabled={isLoadingFolder}
-            />
-            <span style={{ fontSize: "0.8rem" }}>{maxConcurrentPlaying}</span>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.25rem",
+                minWidth: 160,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  color: "#555",
+                }}
+              >
+                Max rendered
+              </span>
+              <input
+                type="range"
+                min={renderCapMin}
+                max={renderCapMax}
+                value={renderCapValue}
+                step={1}
+                style={{ width: 160 }}
+                onChange={(e) => onRenderCapChange(parseInt(e.target.value, 10))}
+                disabled={isLoadingFolder || renderCapDisabled}
+                aria-label="Maximum rendered cards"
+                aria-valuetext={renderCapLabel}
+              />
+            </div>
+            <span style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
+              {renderCapLabel}
+            </span>
           </div>
 
           <div className="zoom-control" title="Zoom">
