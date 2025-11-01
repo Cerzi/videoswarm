@@ -112,6 +112,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("move-to-trash", filePath);
   },
 
+  confirmMoveToTrash: async (payload) => {
+    const result = await ipcRenderer.invoke("confirm-move-to-trash", payload);
+    if (typeof result === "boolean") return result;
+    if (result && typeof result.confirmed === "boolean") {
+      return result.confirmed;
+    }
+    return !!result;
+  },
+
   copyFile: async (sourcePath, destPath) => {
     return await ipcRenderer.invoke("copy-file", sourcePath, destPath);
   },
