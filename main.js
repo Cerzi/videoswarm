@@ -566,6 +566,29 @@ function createMenu() {
         { role: "togglefullscreen" },
       ],
     },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About VideoSwarm",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-about");
+            }
+          },
+        },
+        {
+          label: "Support VideoSwarm on Ko-fi",
+          click: () => {
+            const supportContent = require("./src/config/supportContent.json");
+            const url = supportContent?.donationUrl || "https://ko-fi.com/videoswarm";
+            shell.openExternal(url).catch((error) => {
+              console.warn("Failed to open support link", error);
+            });
+          },
+        },
+      ],
+    },
   ];
 
   if (process.platform === "darwin") {

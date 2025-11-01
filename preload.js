@@ -76,6 +76,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("folder-selected", handler);
   },
 
+  onOpenAbout: (callback) => {
+    const handler = () => {
+      callback();
+    };
+    ipcRenderer.on("ui:open-about", handler);
+    return () => ipcRenderer.removeListener("ui:open-about", handler);
+  },
+
   // Settings management - existing methods
   saveSettings: async (settings) => {
     return await ipcRenderer.invoke("save-settings", settings);
