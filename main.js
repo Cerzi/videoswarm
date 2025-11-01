@@ -27,6 +27,13 @@ function openDonationPage() {
   return shell.openExternal(url);
 }
 
+// --- Icon resolver: works in dev and when packaged (asar/resources) ---
+function assetPath(...p) {
+  // When packaged, electron-builder copies buildResources into process.resourcesPath
+  const base = app.isPackaged ? process.resourcesPath : __dirname;
+  return path.join(base, ...p);
+}
+
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
 console.log("Electron version:", process.versions.electron);
@@ -215,19 +222,19 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       rating,
       dimensions: dimensions
         ? {
-            width: Math.round(dimensions.width),
-            height: Math.round(dimensions.height),
-            aspectRatio:
-              Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
-                ? dimensions.aspectRatio
-                : dimensions.width / dimensions.height,
-          }
+          width: Math.round(dimensions.width),
+          height: Math.round(dimensions.height),
+          aspectRatio:
+            Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
+              ? dimensions.aspectRatio
+              : dimensions.width / dimensions.height,
+        }
         : null,
       aspectRatio:
         dimensions && isValidDimensions(dimensions)
           ? (Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
-              ? dimensions.aspectRatio
-              : dimensions.width / dimensions.height)
+            ? dimensions.aspectRatio
+            : dimensions.width / dimensions.height)
           : null,
       metadata: {
         folder: path.dirname(filePath),
@@ -435,6 +442,13 @@ async function createWindow() {
   const settings = await loadSettings();
   const appVersion = app.getVersion();
 
+  // Choose the right icon per platform
+  const iconPath =
+    process.platform === "win32"
+      ? assetPath("assets", "icons", "videoswarm.ico")
+      : assetPath("assets", "icons", "videoswarm.png");
+
+
   mainWindow = new BrowserWindow({
     width: settings.windowBounds.width,
     height: settings.windowBounds.height,
@@ -455,10 +469,19 @@ async function createWindow() {
       spellcheck: false,
       v8CacheOptions: "bypassHeatCheck",
     },
-    icon: path.join(__dirname, "icon.png"),
+    icon: iconPath,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     title: `Video Swarm v${appVersion}`,
   });
+
+  // set the dock icon explicitly on macOS
+  if (process.platform === "darwin") {
+    try {
+      app.dock.setIcon(nativeImage.createFromPath(
+        assetPath("assets", "icons", "videoswarm.png")
+      ));
+    } catch { }
+  }
 
   const isDev =
     process.argv.includes("--dev") || !!process.env.VITE_DEV_SERVER_URL;
@@ -928,10 +951,10 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
       if (!win || win.isDestroyed()) return;
       try {
         win.focus();
-      } catch {}
+      } catch { }
       try {
         win.webContents.focus();
-      } catch {}
+      } catch { }
     };
 
     refocus();
@@ -944,7 +967,7 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
       try {
         win.focus();
         win.webContents.focus();
-      } catch {}
+      } catch { }
     }
     return false;
   }
@@ -1050,8 +1073,8 @@ ipcMain.handle(
         : [];
       const cleanNames = Array.isArray(tagNames)
         ? tagNames
-            .map((name) => (name ?? "").toString().trim())
-            .filter(Boolean)
+          .map((name) => (name ?? "").toString().trim())
+          .filter(Boolean)
         : [];
       if (!cleanFingerprints.length || !cleanNames.length) {
         return { updates: {}, tags: store.listTags() };
