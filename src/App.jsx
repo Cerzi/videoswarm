@@ -25,6 +25,7 @@ import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
+import { ActionIds } from "./hooks/actions/actions";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
@@ -50,6 +51,7 @@ import { useMasonryLayout } from "./app/hooks/useMasonryLayout";
 import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
+import { resetInteractionState } from "./utils/resetInteractionState";
 
 const clampNumber = (value, min, max) =>
   Math.max(min, Math.min(max, value));
@@ -705,6 +707,11 @@ function App() {
     hide: hideContextMenu,
   } = useContextMenu();
 
+  const resetTrashInteractionState = useCallback(() => {
+    hideContextMenu();
+    resetInteractionState();
+  }, [hideContextMenu]);
+
   const deps = useTrashIntegration({
     electronAPI: window.electronAPI,
     notify,
@@ -719,6 +726,16 @@ function App() {
   });
 
   const { runAction } = useActionDispatch(deps, getById);
+
+  const runActionSafe = useCallback(
+    (actionId, selectedIds, contextId) => {
+      if (actionId === ActionIds.MOVE_TO_TRASH) {
+        resetTrashInteractionState();
+      }
+      return runAction(actionId, selectedIds, contextId);
+    },
+    [runAction, resetTrashInteractionState]
+  );
 
   const handleContextAction = useCallback(
     (actionId) => {
@@ -746,14 +763,14 @@ function App() {
         }
         return;
       }
-      runAction(actionId, selection.selected, contextMenu.contextId);
+      runActionSafe(actionId, selection.selected, contextMenu.contextId);
     },
     [
       openMetadataPanel,
       selectedFingerprints,
       handleSetRating,
       handleApplyExistingTag,
-      runAction,
+      runActionSafe,
       selection.selected,
       contextMenu.contextId,
     ]
@@ -794,8 +811,8 @@ function App() {
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
     (actionId, currentSelection) =>
-      runAction(actionId, currentSelection, contextMenu.contextId),
-    [runAction, contextMenu.contextId]
+      runActionSafe(actionId, currentSelection, contextMenu.contextId),
+    [runActionSafe, contextMenu.contextId]
   );
   // Global hotkeys (Enter / Ctrl+C / Delete) + Zoom (+ / - and Ctrl/⌘ + Wheel)
   useHotkeys(runForHotkeys, () => selection.selected, {
