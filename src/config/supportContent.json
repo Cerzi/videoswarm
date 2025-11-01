@@ -1,12 +1,11 @@
 {
-  "donationUrl": "https://ko-fi.com/videoswarm",
-  "donationTooltip": "Opens our Ko-fi page in your browser",
+  "donationUrl": "https://ko-fi.com/benpateman",
+  "donationTooltip": "Support VideoSwarm’s development",
   "donationButtonLabel": "Donate",
   "donationLinkLabel": "Support VideoSwarm on Ko-fi",
-  "donationBlurb": "If you enjoy using VideoSwarm, you can support its development ❤️",
+  "donationBlurb": "VideoSwarm is maintained by a solo developer. If it saves you time or makes your workflow nicer, you can chip in to help keep updates coming.",
   "credits": [
-    "Concept & development: VideoSwarm core maintainers",
-    "Design, QA & inspiration: The VideoSwarm community",
-    "Open-source libraries & tooling: Countless upstream contributors"
+    "Concept & development: Ben Pateman",
+    "Open-source libraries & tooling: countless upstream contributors"
   ]
 }
