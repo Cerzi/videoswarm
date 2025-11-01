@@ -705,10 +705,126 @@ function App() {
     hide: hideContextMenu,
   } = useContextMenu();
 
+  const captureLastFocusSelector = useCallback(() => {
+    if (typeof document === "undefined") return null;
+    const active = document.activeElement;
+    if (!active || active === document.body) return null;
+
+    const cssEscape = (value) => {
+      if (typeof value !== "string" || !value) return "";
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/([\0-\x1F\x7F-\x9F!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~ ])/g, "\\$1");
+    };
+
+    const attrSelector = (attr, value) => {
+      if (!value) return null;
+      const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `${active.tagName?.toLowerCase?.() || "*"}[${attr}="${escaped}"]`;
+    };
+
+    if (active.id) {
+      return `#${cssEscape(active.id)}`;
+    }
+
+    const datasetKey = active.getAttribute?.("data-focus-target");
+    if (datasetKey) {
+      const escaped = datasetKey.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `[data-focus-target="${escaped}"]`;
+    }
+
+    if (active.name) {
+      return attrSelector("name", active.name);
+    }
+
+    const placeholder = active.getAttribute?.("placeholder");
+    if (placeholder) {
+      return attrSelector("placeholder", placeholder);
+    }
+
+    return null;
+  }, []);
+
+  const scheduleAnimationFrame = useCallback((cb) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(cb);
+    }
+    return setTimeout(cb, 16);
+  }, []);
+
+  const preTrashCleanup = useCallback(() => {
+    hideContextMenu();
+  }, [hideContextMenu]);
+
+  const postConfirmRecovery = useCallback(
+    ({ cancelled: _cancelled, lastFocusedSelector } = {}) => {
+      if (typeof document === "undefined") return;
+
+      const query = (selector) => {
+        if (!selector) return null;
+        try {
+          return document.querySelector(selector);
+        } catch (error) {
+          console.warn("[trash] failed to query focus selector", selector, error);
+          return null;
+        }
+      };
+
+      const visible = (el) => {
+        if (!el) return false;
+        if (typeof el.offsetParent !== "undefined") return !!el.offsetParent;
+        const rect = el.getBoundingClientRect?.();
+        return !!rect && rect.width > 0 && rect.height > 0;
+      };
+
+      const pickCandidate = () => {
+        const last = query(lastFocusedSelector);
+        if (visible(last)) return last;
+        const tagInput = query('input[placeholder="Add tag and press Enter"]');
+        if (visible(tagInput)) return tagInput;
+        const searchInput = query('input[placeholder="Search available tags"]');
+        if (visible(searchInput)) return searchInput;
+        return null;
+      };
+
+      const attemptFocus = () => {
+        const el = pickCandidate();
+        if (!el) return false;
+        if (typeof el.focus === "function") {
+          el.focus({ preventScroll: true });
+        }
+        return document.activeElement === el;
+      };
+
+      if (attemptFocus()) return;
+
+      const enqueue = typeof queueMicrotask === "function"
+        ? queueMicrotask
+        : (fn) => Promise.resolve().then(fn);
+
+      enqueue(() => {
+        if (attemptFocus()) return;
+        scheduleAnimationFrame(() => {
+          if (attemptFocus()) return;
+          if (typeof window !== "undefined") {
+            window.blur?.();
+            window.focus?.();
+          }
+          attemptFocus();
+        });
+      });
+    },
+    [scheduleAnimationFrame]
+  );
+
   const deps = useTrashIntegration({
     electronAPI: window.electronAPI,
     notify,
     confirm: window.confirm,
+    preTrashCleanup,
+    postConfirmRecovery,
+    captureLastFocusSelector,
     releaseVideoHandlesForAsync,
     setVideos,
     setSelected: selection.setSelected,

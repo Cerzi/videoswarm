@@ -1,9 +1,12 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 export default function useTrashIntegration({
   electronAPI,
   notify,
   confirm,
+  preTrashCleanup,
+  postConfirmRecovery,
+  captureLastFocusSelector,
   releaseVideoHandlesForAsync,
 
   // your real setters
@@ -56,10 +59,55 @@ export default function useTrashIntegration({
     return () => api.offFilesTrashed?.(handler);
   }, [electronAPI, onItemsRemoved, releaseVideoHandlesForAsync]);
 
+  const confirmMoveToTrash = useCallback(async ({ count, sampleName }) => {
+    preTrashCleanup?.();
+
+    const lastFocusedSelector = captureLastFocusSelector?.() ?? null;
+
+    const buildMessage = () => {
+      if (count === 1) {
+        if (sampleName) return `Move "${sampleName}" to Recycle Bin?`;
+        return "Move this item to Recycle Bin?";
+      }
+      return `Move ${count} item(s) to Recycle Bin?`;
+    };
+
+    const fallbackConfirm = () => {
+      const fn = typeof confirm === 'function' ? confirm : window?.confirm;
+      if (typeof fn !== 'function') return true;
+      try {
+        return fn(buildMessage());
+      } catch (error) {
+        console.warn('[trash] confirm fallback failed', error);
+        return false;
+      }
+    };
+
+    let confirmed = false;
+    try {
+      if (electronAPI?.confirmMoveToTrash) {
+        confirmed = await electronAPI.confirmMoveToTrash({ count, sampleName });
+      } else {
+        confirmed = fallbackConfirm();
+      }
+    } catch (error) {
+      console.warn('[trash] confirmMoveToTrash failed', error);
+      confirmed = false;
+    }
+
+    postConfirmRecovery?.({
+      cancelled: !confirmed,
+      lastFocusedSelector,
+    });
+
+    return { confirmed: !!confirmed, lastFocusedSelector };
+  }, [captureLastFocusSelector, confirm, electronAPI, postConfirmRecovery, preTrashCleanup]);
+
   return {
     electronAPI,
     notify,
-    confirm,
+    confirmMoveToTrash,
+    postConfirmRecovery,
     releaseVideoHandlesForAsync,
     onItemsRemoved,
   };

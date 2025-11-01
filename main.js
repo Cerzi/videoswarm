@@ -861,6 +861,56 @@ ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   }
 });
 
+ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
+  const requester = event?.sender;
+  const win = requester ? BrowserWindow.fromWebContents(requester) : mainWindow;
+  const count = Number(payload?.count) || 0;
+  const sampleName = payload?.sampleName || "";
+
+  const message = count === 1 && sampleName
+    ? `Move "${sampleName}" to Recycle Bin?`
+    : count === 1
+      ? "Move this item to Recycle Bin?"
+      : `Move ${count} item${count === 1 ? "" : "s"} to Recycle Bin?`;
+
+  try {
+    const { response } = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: ["Move to Bin", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      message,
+    });
+
+    const confirmed = response === 0;
+
+    const refocus = () => {
+      if (!win || win.isDestroyed()) return;
+      try {
+        win.focus();
+      } catch {}
+      try {
+        win.webContents.focus();
+      } catch {}
+    };
+
+    refocus();
+    setTimeout(refocus, 0);
+
+    return confirmed;
+  } catch (error) {
+    console.error("Failed to show confirm dialog:", error);
+    if (win && !win.isDestroyed()) {
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {}
+    }
+    return false;
+  }
+});
+
 // Read directory and return video files with metadata
 ipcMain.handle(
   "read-directory",

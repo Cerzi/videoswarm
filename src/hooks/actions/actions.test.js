@@ -12,13 +12,15 @@ const makeVideo = (p) => ({
 describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
   let electronAPI;
   let notify;
-  let confirm;
+  let confirmMoveToTrash;
+  let postConfirmRecovery;
   let releaseVideoHandlesForAsync;
   let onItemsRemoved;
 
   beforeEach(() => {
     notify = vi.fn();
-    confirm = vi.fn(() => true);
+    confirmMoveToTrash = vi.fn(async () => ({ confirmed: true, lastFocusedSelector: '.tag-input' }));
+    postConfirmRecovery = vi.fn();
     releaseVideoHandlesForAsync = vi.fn(async () => {});
     onItemsRemoved = vi.fn();
 
@@ -42,13 +44,14 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
       electronAPI,
       notify,
-      confirm,
+      confirmMoveToTrash,
+      postConfirmRecovery,
       releaseVideoHandlesForAsync,
       onItemsRemoved,
     });
 
     // confirmation
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirmMoveToTrash).toHaveBeenCalledTimes(1);
 
     // bulk called once with all paths
     expect(electronAPI.bulkMoveToTrash).toHaveBeenCalledTimes(1);
@@ -91,7 +94,8 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
       electronAPI,
       notify,
-      confirm,
+      confirmMoveToTrash,
+      postConfirmRecovery,
       releaseVideoHandlesForAsync,
       onItemsRemoved,
     });
@@ -134,7 +138,8 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
       electronAPI,
       notify,
-      confirm,
+      confirmMoveToTrash,
+      postConfirmRecovery,
       releaseVideoHandlesForAsync,
       onItemsRemoved,
     });
@@ -158,22 +163,24 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
   });
 
   it("aborts when user cancels confirmation", async () => {
-    confirm.mockReturnValue(false);
+    confirmMoveToTrash.mockResolvedValue({ confirmed: false, lastFocusedSelector: '.tag-input' });
     const videos = [makeVideo("/x")];
 
     await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
       electronAPI,
       notify,
-      confirm,
+      confirmMoveToTrash,
+      postConfirmRecovery,
       releaseVideoHandlesForAsync,
       onItemsRemoved,
     });
 
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirmMoveToTrash).toHaveBeenCalledTimes(1);
     expect(electronAPI.bulkMoveToTrash).not.toHaveBeenCalled();
     expect(onItemsRemoved).not.toHaveBeenCalled();
     expect(releaseVideoHandlesForAsync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    expect(postConfirmRecovery).not.toHaveBeenCalled();
   });
 
   it('handles "nothing to trash" and shows info toast', async () => {
@@ -185,7 +192,8 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
       electronAPI,
       notify,
-      confirm,
+      confirmMoveToTrash,
+      postConfirmRecovery,
       releaseVideoHandlesForAsync,
       onItemsRemoved,
     });
@@ -196,5 +204,22 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     expect(
       notify.mock.calls.some((c) => typeof c?.[0] === "string" && /nothing to trash/i.test(c[0]))
     ).toBe(true);
+  });
+
+  it("calls postConfirmRecovery after successful run", async () => {
+    const videos = [makeVideo("/x")];
+
+    await actionRegistry[ActionIds.MOVE_TO_TRASH](videos, {
+      electronAPI,
+      notify,
+      confirmMoveToTrash,
+      postConfirmRecovery,
+      releaseVideoHandlesForAsync,
+      onItemsRemoved,
+    });
+
+    expect(postConfirmRecovery).toHaveBeenCalled();
+    const lastCall = postConfirmRecovery.mock.calls.pop();
+    expect(lastCall?.[0]?.cancelled).toBe(false);
   });
 });
