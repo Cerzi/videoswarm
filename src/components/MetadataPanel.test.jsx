@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import MetadataPanel from './MetadataPanel';
 
 const renderPanel = (props = {}) =>
@@ -82,5 +82,44 @@ describe('MetadataPanel single-selection info', () => {
     expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+  });
+});
+
+describe('MetadataPanel tag input', () => {
+  it('autocompletes to the closest existing tag on Tab', async () => {
+    const handleAddTag = vi.fn();
+
+    renderPanel({
+      selectedVideos: [{ name: 'clip-one.mp4', metadata: {}, dimensions: null }],
+      availableTags: [
+        { name: 'dog', usageCount: 5 },
+        { name: 'doughnut', usageCount: 2 },
+      ],
+      onAddTag: handleAddTag,
+    });
+
+    const input = screen.getByPlaceholderText('Add tag and press Enter');
+    fireEvent.change(input, { target: { value: 'do' } });
+    fireEvent.keyDown(input, { key: 'Tab', code: 'Tab' });
+
+    expect(handleAddTag).toHaveBeenCalledWith(['dog']);
+    expect(input).toHaveValue('');
+  });
+
+  it('does not create a new tag when Tab has no match', async () => {
+    const handleAddTag = vi.fn();
+
+    renderPanel({
+      selectedVideos: [{ name: 'clip-one.mp4', metadata: {}, dimensions: null }],
+      availableTags: [{ name: 'cat', usageCount: 1 }],
+      onAddTag: handleAddTag,
+    });
+
+    const input = screen.getByPlaceholderText('Add tag and press Enter');
+    fireEvent.change(input, { target: { value: 'do' } });
+    fireEvent.keyDown(input, { key: 'Tab', code: 'Tab' });
+
+    expect(handleAddTag).not.toHaveBeenCalled();
+    expect(input).toHaveValue('do');
   });
 });
