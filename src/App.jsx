@@ -25,6 +25,7 @@ import useSelectionState from "./hooks/selection/useSelectionState";
 import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
+import { ActionIds } from "./hooks/actions/actions";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
@@ -155,12 +156,53 @@ function App() {
   const gridRef = useRef(null);
   const contentRegionRef = useRef(null);
   const metadataPanelRef = useRef(null);
+  const lastTextInputRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
   const refreshTagListRef = useRef(() => {});
   const applyZoomFromSettingsRef = useRef((value) => {
     setZoomLevel(clampZoomIndex(value));
   });
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+
+    const handleFocusIn = (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      const tagName = typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
+      const isTextualInput =
+        target.isContentEditable ||
+        tagName === "input" ||
+        tagName === "textarea";
+
+      if (!isTextualInput) return;
+
+      if (target instanceof HTMLInputElement) {
+        const type = (target.type || "").toLowerCase();
+        if (
+          type === "button" ||
+          type === "checkbox" ||
+          type === "color" ||
+          type === "file" ||
+          type === "hidden" ||
+          type === "image" ||
+          type === "radio" ||
+          type === "range" ||
+          type === "reset" ||
+          type === "submit"
+        ) {
+          return;
+        }
+      }
+
+      lastTextInputRef.current = target;
+    };
+
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, []);
   const invokeRefreshTagList = useCallback(() => {
     const fn = refreshTagListRef.current;
     if (typeof fn === "function") {
@@ -705,6 +747,119 @@ function App() {
     hide: hideContextMenu,
   } = useContextMenu();
 
+  const releasePointerInteractions = useCallback(() => {
+    if (typeof document === "undefined") return;
+
+    try {
+      const pointerCancel = new PointerEvent("pointercancel", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+      });
+      document.dispatchEvent(pointerCancel);
+    } catch {}
+
+    try {
+      const pointerUp = new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+      });
+      document.dispatchEvent(pointerUp);
+    } catch {}
+
+    try {
+      const mouseUp = new MouseEvent("mouseup", { bubbles: true, cancelable: true });
+      document.dispatchEvent(mouseUp);
+    } catch {}
+
+    try {
+      const selection = window.getSelection?.();
+      selection?.removeAllRanges?.();
+    } catch {}
+  }, []);
+
+  const prepareForAction = useCallback(
+    (actionId) => {
+      if (actionId !== ActionIds.MOVE_TO_TRASH) return;
+
+      hideContextMenu();
+      releasePointerInteractions();
+
+      if (typeof document !== "undefined") {
+        const active = document.activeElement;
+        if (active && typeof active.blur === "function") {
+          try {
+            active.blur();
+          } catch {}
+        }
+      }
+    },
+    [hideContextMenu, releasePointerInteractions]
+  );
+
+  const cleanupAfterAction = useCallback(
+    (actionId) => {
+      if (actionId !== ActionIds.MOVE_TO_TRASH) return;
+      if (typeof window === "undefined") return;
+
+      window.requestAnimationFrame(() => {
+        if (typeof document === "undefined") return;
+
+        const candidates = [];
+
+        const lastInput = lastTextInputRef.current;
+        if (lastInput instanceof HTMLElement && lastInput.isConnected) {
+          candidates.push(lastInput);
+        }
+
+        if (isMetadataPanelOpen && metadataPanelRef.current) {
+          const panelInput = metadataPanelRef.current.querySelector(
+            'input[type="text"], input:not([type]), textarea, [contenteditable="true"]'
+          );
+          if (panelInput instanceof HTMLElement) {
+            candidates.push(panelInput);
+          }
+        }
+
+        const filterInput = document.querySelector('.filters-tag-search input');
+        if (filterInput instanceof HTMLElement) {
+          candidates.push(filterInput);
+        }
+
+        let focused = false;
+        for (const candidate of candidates) {
+          if (!(candidate instanceof HTMLElement)) continue;
+          if (!candidate.isConnected) continue;
+          if ('disabled' in candidate && candidate.disabled) continue;
+          if (candidate.getAttribute?.('aria-disabled') === 'true') continue;
+          if (typeof candidate.focus !== 'function') continue;
+
+          try {
+            candidate.focus({ preventScroll: true });
+          } catch {
+            try {
+              candidate.focus();
+            } catch {
+              continue;
+            }
+          }
+
+          focused = document.activeElement === candidate;
+          if (focused) {
+            lastTextInputRef.current = candidate;
+            break;
+          }
+        }
+
+        if (!focused && typeof window.focus === 'function') {
+          window.focus();
+        }
+      });
+    },
+    [isMetadataPanelOpen, metadataPanelRef]
+  );
+
   const deps = useTrashIntegration({
     electronAPI: window.electronAPI,
     notify,
@@ -718,7 +873,16 @@ function App() {
     setLoadingIds: setLoadingVideos,
   });
 
-  const { runAction } = useActionDispatch(deps, getById);
+  const actionDeps = useMemo(
+    () => ({
+      ...deps,
+      onBeforeAction: prepareForAction,
+      onAfterAction: cleanupAfterAction,
+    }),
+    [deps, prepareForAction, cleanupAfterAction]
+  );
+
+  const { runAction } = useActionDispatch(actionDeps, getById);
 
   const handleContextAction = useCallback(
     (actionId) => {

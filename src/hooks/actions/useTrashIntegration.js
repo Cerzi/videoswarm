@@ -56,11 +56,11 @@ export default function useTrashIntegration({
     return () => api.offFilesTrashed?.(handler);
   }, [electronAPI, onItemsRemoved, releaseVideoHandlesForAsync]);
 
-  return {
+  return useMemo(() => ({
     electronAPI,
     notify,
     confirm,
     releaseVideoHandlesForAsync,
     onItemsRemoved,
-  };
+  }), [electronAPI, notify, confirm, releaseVideoHandlesForAsync, onItemsRemoved]);
 }

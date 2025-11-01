@@ -49,7 +49,21 @@ export default function useActionDispatch(deps, getById) {
         .filter(Boolean);
 
       if (targets.length === 0) return;
-      await exec(targets, deps);
+
+      const before = deps?.onBeforeAction;
+      const after = deps?.onAfterAction;
+
+      if (typeof before === 'function') {
+        try { before(actionId, targets); } catch (err) { console.error(err); }
+      }
+
+      try {
+        await exec(targets, deps);
+      } finally {
+        if (typeof after === 'function') {
+          try { after(actionId, targets); } catch (err) { console.error(err); }
+        }
+      }
     },
     [deps, getById, resolveTargetIds]
   );
