@@ -1,11 +1,4 @@
-import React, {
-  useMemo,
-  useState,
-  useEffect,
-  useRef,
-  forwardRef,
-  useCallback,
-} from "react";
+import React, { useMemo, useState, useEffect, useRef, forwardRef } from "react";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -205,31 +198,24 @@ const MetadataPanel = forwardRef((
     const deriveFilename = () => {
       const fromMetadata = video?.metadata?.filename || video?.metadata?.fileName;
       const primary =
-        video?.name ||
-        video?.filename ||
-        video?.fileName ||
-        fromMetadata;
-
+        typeof fromMetadata === "string" && fromMetadata.trim()
+          ? fromMetadata
+          : typeof video?.name === "string"
+          ? video.name
+          : null;
       if (primary) return primary;
-
-      const path = video?.fullPath || video?.path || video?.sourcePath;
-      if (typeof path === "string" && path.trim()) {
-        const segments = path.split(/[\\/]/).filter(Boolean);
-        if (segments.length) {
-          return segments[segments.length - 1];
-        }
+      const fallback = video?.path || video?.metadata?.path;
+      if (typeof fallback === "string" && fallback.trim()) {
+        return fallback.split(/[\/\\]/).filter(Boolean).pop();
       }
-
       return null;
     };
 
     const filename = deriveFilename();
-
-    const width = Number(video?.dimensions?.width);
-    const height = Number(video?.dimensions?.height);
-    const hasResolution =
-      Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
-    const resolution = hasResolution ? `${width}×${height}` : null;
+    const resolution =
+      video?.dimensions?.width && video?.dimensions?.height
+        ? `${video.dimensions.width}×${video.dimensions.height}`
+        : null;
 
     if (!filename && !createdDisplay && !resolution) {
       return null;
@@ -237,294 +223,190 @@ const MetadataPanel = forwardRef((
 
     return {
       filename,
-      created: createdDisplay,
+      createdDisplay,
       resolution,
     };
   }, [derivedSelectionCount, selectedVideos]);
 
-  const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
-
   const suggestionTags = useMemo(() => {
-    if (!isOpen || !Array.isArray(availableTags)) return [];
-
-    const query = inputValue.trim().toLowerCase();
-    const deduped = new Map();
-
-    availableTags.forEach((entry) => {
-      const name = entry?.name?.trim();
-      if (!name || sharedTagSet.has(name)) return;
-
-      const usageCount =
-        typeof entry.usageCount === "number" && Number.isFinite(entry.usageCount)
-          ? entry.usageCount
-          : 0;
-
-      const existing = deduped.get(name);
-      if (!existing || (existing.usageCount || 0) < usageCount) {
-        deduped.set(name, { name, usageCount });
+    const seen = new Set();
+    const suggestions = [];
+    for (const video of selectedVideos) {
+      const tags = Array.isArray(video?.tags) ? video.tags : [];
+      for (const tag of tags) {
+        const normalized = typeof tag === "string" ? tag.trim() : "";
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        suggestions.push(normalized);
+        if (suggestions.length >= MAX_SUGGESTION_TAGS) {
+          return suggestions;
+        }
       }
-    });
-
-    let list = Array.from(deduped.values());
-
-    if (query) {
-      list = list.filter((item) => item.name.toLowerCase().includes(query));
     }
+    return suggestions;
+  }, [selectedVideos]);
 
-    list.sort((a, b) => {
-      const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
-      if (usageDiff !== 0) return usageDiff;
-      return a.name.localeCompare(b.name);
-    });
-
-    return list.slice(0, MAX_SUGGESTION_TAGS);
-  }, [availableTags, inputValue, sharedTagSet, isOpen]);
-
-  const hasSuggestionQuery = inputValue.trim().length > 0;
-
-  const handleTagSubmit = () => {
-    const tokens = inputValue
-      .split(",")
-      .map((token) => token.trim())
-      .filter(Boolean);
-    if (!tokens.length) return;
-    onAddTag?.(tokens);
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const trimmed = inputValue.trim();
+    if (!trimmed) return;
+    onAddTag?.(trimmed);
     setInputValue("");
-  };
-
-  const handleKeyDown = (event) => {
-    if (event.key === "Enter" || event.key === "Tab" || event.key === ",") {
-      event.preventDefault();
-      handleTagSubmit();
-    }
   };
 
   const toggleDisabled = !hasSelection;
 
-  const handlePanelContextMenu = useCallback((event) => {
-    if (!event) return;
-    const target = event.target;
-    const allowDefault =
-      typeof target?.closest === "function" &&
-      target.closest("input, textarea, [contenteditable='true']");
-
-    event.stopPropagation?.();
-    if (!allowDefault) {
-      event.preventDefault?.();
-    }
-  }, []);
-
   const panelClass = [
     "metadata-panel",
     isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
-    !hasSelection ? "metadata-panel--empty" : "",
   ]
     .filter(Boolean)
     .join(" ");
-
-  const showFocusButton = hasSelection && typeof onFocusSelection === "function";
 
   return (
     <aside
       ref={ref}
       className={panelClass}
       aria-hidden={!isOpen && !hasSelection}
-      onContextMenu={handlePanelContextMenu}
     >
       <div className="metadata-panel__header">
         <button
           type="button"
-          className={`metadata-panel__toggle${
-            toggleDisabled ? " metadata-panel__toggle--disabled" : ""
-          }`}
-          onClick={() => !toggleDisabled && onToggle?.()}
+          className="metadata-panel__toggle"
+          onClick={() => onToggle?.()}
           aria-expanded={isOpen}
-          aria-label={
-            toggleDisabled
-              ? "Select a video to enable metadata panel"
-              : isOpen
-              ? "Collapse metadata panel"
-              : "Expand metadata panel"
-          }
-          disabled={toggleDisabled}
+          aria-controls="metadata-panel-body"
         >
-          {isOpen ? "❯" : "❮"}
+          Metadata
         </button>
-        <div className="metadata-panel__titles">
-          <span className="metadata-panel__title">Details</span>
-          <span className="metadata-panel__subtitle">
-            {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
-          </span>
-        </div>
-        {showFocusButton && (
-          <button
-            type="button"
-            className="metadata-panel__focus"
-            onClick={onFocusSelection}
-            aria-label="Focus selection in grid"
-            title="Scroll to selected videos"
-          >
-            Focus
-          </button>
-        )}
+        <span className="metadata-panel__selection-count">
+          {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
+        </span>
       </div>
 
-      <div className="metadata-panel__content">
-        {!hasSelection ? (
-          <div className="metadata-panel__empty-state">
-            <p>Select one or more videos to tag and rate them.</p>
+      <div id="metadata-panel-body" className="metadata-panel__body">
+        <form className="metadata-panel__form" onSubmit={handleSubmit}>
+          <label className="metadata-panel__label" htmlFor="metadata-tag-input">
+            Tags
+          </label>
+          <div className="metadata-panel__tag-input-row">
+            <input
+              ref={inputRef}
+              id="metadata-tag-input"
+              type="text"
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              placeholder="Add tag and press Enter"
+              disabled={toggleDisabled}
+            />
+            <button type="submit" disabled={toggleDisabled}>
+              Add
+            </button>
           </div>
-        ) : (
-          <>
-            {singleSelectionInfo && (
-              <section className="metadata-panel__section metadata-panel__info">
-                <div className="metadata-panel__info-grid">
-                  {singleSelectionInfo.filename && (
-                    <div className="metadata-panel__info-item metadata-panel__info-item--filename">
-                      <span className="metadata-panel__info-label">Filename</span>
-                      <span className="metadata-panel__info-value" title={singleSelectionInfo.filename}>
-                        {singleSelectionInfo.filename}
-                      </span>
-                    </div>
-                  )}
-                  {singleSelectionInfo.created && (
-                    <div className="metadata-panel__info-item">
-                      <span className="metadata-panel__info-label">Date created</span>
-                      <span className="metadata-panel__info-value">
-                        {singleSelectionInfo.created}
-                      </span>
-                    </div>
-                  )}
-                  {singleSelectionInfo.resolution && (
-                    <div className="metadata-panel__info-item">
-                      <span className="metadata-panel__info-label">Resolution</span>
-                      <span className="metadata-panel__info-value">
-                        {singleSelectionInfo.resolution}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </section>
-            )}
-            <section className="metadata-panel__section">
-              <div className="metadata-panel__section-header">
-                <span>Rating</span>
-                {ratingInfo.mixed ? (
-                  <span className="metadata-panel__badge">Mixed</span>
-                ) : ratingInfo.hasAny ? (
-                  <span className="metadata-panel__badge metadata-panel__badge--accent">
-                    {`${ratingInfo.value} / 5`}
-                  </span>
-                ) : (
-                  <span className="metadata-panel__badge">Not rated</span>
-                )}
-              </div>
-              <RatingStars
-                value={ratingInfo.value}
-                isMixed={ratingInfo.mixed}
-                onSelect={(val) => onSetRating?.(val)}
-                onClear={onClearRating}
-                disabled={!hasSelection}
-              />
-            </section>
+        </form>
 
-            <section className="metadata-panel__section">
-              <div className="metadata-panel__section-header">
-                <span>Tags</span>
-                <span className="metadata-panel__badge">
-                  {sharedTags.length ? `${sharedTags.length} applied` : "None"}
-                </span>
-              </div>
-              <div className="metadata-panel__chips">
-                {sharedTags.length === 0 ? (
-                  <span className="metadata-panel__hint">No shared tags yet.</span>
-                ) : (
-                  sharedTags.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className="metadata-panel__chip"
-                      onClick={() => onRemoveTag?.(tag)}
-                    >
-                      <span>#{tag}</span>
-                      <span aria-hidden="true">×</span>
-                    </button>
-                  ))
-                )}
-              </div>
-
-              {partialTags.length > 0 && (
-                <div className="metadata-panel__partial-group">
-                  <div className="metadata-panel__section-subtitle">
-                    Appears on some selected clips
-                  </div>
-                  <div className="metadata-panel__chips">
-                    {partialTags.map(({ tag, count }) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        className="metadata-panel__chip metadata-panel__chip--ghost"
-                        onClick={() => onApplyTagToSelection?.(tag)}
-                        title={`Apply to all (${count}/${derivedSelectionCount})`}
-                      >
-                        <span>#{tag}</span>
-                        <span className="metadata-panel__chip-count">
-                          {count}/{derivedSelectionCount}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="metadata-panel__input-row">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Add tag and press Enter"
-                  disabled={!hasSelection}
-                />
+        {suggestionTags.length > 0 && (
+          <div className="metadata-panel__suggestions">
+            <span className="metadata-panel__suggestions-label">Existing tags</span>
+            <div className="metadata-panel__suggestions-list">
+              {suggestionTags.map((tag) => (
                 <button
+                  key={tag}
                   type="button"
-                  onClick={handleTagSubmit}
-                  disabled={!hasSelection || !inputValue.trim()}
+                  className="metadata-panel__suggestion"
+                  onClick={() => onApplyTagToSelection?.(tag)}
+                  disabled={toggleDisabled}
                 >
-                  Add
+                  #{tag}
                 </button>
-              </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-              {suggestionTags.length > 0 && (
-                <div className="metadata-panel__suggestions" aria-live="polite">
-                  <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-                    {hasSuggestionQuery
-                      ? "Matching tags"
-                      : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
-                  </div>
-                  <div className="metadata-panel__suggestion-list">
-                    {suggestionTags.map((suggestion) => (
-                      <button
-                        key={suggestion.name}
-                        type="button"
-                        className="metadata-panel__suggestion"
-                        onClick={() => onApplyTagToSelection?.(suggestion.name)}
-                      >
-                        <span>#{suggestion.name}</span>
-                        {typeof suggestion.usageCount === "number" && (
-                          <span className="metadata-panel__suggestion-count">
-                            {suggestion.usageCount}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+        {sharedTags.length > 0 && (
+          <div className="metadata-panel__shared-tags">
+            <span className="metadata-panel__section-label">Shared tags</span>
+            <div className="metadata-panel__chip-list">
+              {sharedTags.map((tag) => (
+                <span key={tag} className="metadata-panel__chip">
+                  #{tag}
+                  <button
+                    type="button"
+                    className="metadata-panel__chip-remove"
+                    onClick={() => onRemoveTag?.(tag)}
+                    title={`Remove tag ${tag}`}
+                    disabled={toggleDisabled}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {partialTags.length > 0 && (
+          <div className="metadata-panel__partial-tags">
+            <span className="metadata-panel__section-label">Partial tags</span>
+            <div className="metadata-panel__chip-list">
+              {partialTags.map(({ tag, count }) => (
+                <span key={tag} className="metadata-panel__chip metadata-panel__chip--partial">
+                  #{tag}
+                  <span className="metadata-panel__chip-count">{count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="metadata-panel__actions">
+          <span className="metadata-panel__section-label">Rating</span>
+          <RatingStars
+            value={ratingInfo.value}
+            isMixed={ratingInfo.mixed}
+            onSelect={onSetRating}
+            onClear={onClearRating}
+            disabled={toggleDisabled || !ratingInfo.hasAny}
+          />
+        </div>
+
+        {singleSelectionInfo && (
+          <div className="metadata-panel__single-selection">
+            <h3 className="metadata-panel__section-title">Details</h3>
+            <dl className="metadata-panel__details">
+              {singleSelectionInfo.filename && (
+                <div className="metadata-panel__detail">
+                  <dt>Filename</dt>
+                  <dd>{singleSelectionInfo.filename}</dd>
                 </div>
               )}
-            </section>
-          </>
+              {singleSelectionInfo.createdDisplay && (
+                <div className="metadata-panel__detail">
+                  <dt>Date created</dt>
+                  <dd>{singleSelectionInfo.createdDisplay}</dd>
+                </div>
+              )}
+              {singleSelectionInfo.resolution && (
+                <div className="metadata-panel__detail">
+                  <dt>Resolution</dt>
+                  <dd>{singleSelectionInfo.resolution}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
         )}
+
+        <div className="metadata-panel__footer">
+          <button
+            type="button"
+            className="metadata-panel__focus-selection"
+            onClick={() => onFocusSelection?.()}
+            disabled={!hasSelection}
+          >
+            Focus selection
+          </button>
+        </div>
       </div>
     </aside>
   );

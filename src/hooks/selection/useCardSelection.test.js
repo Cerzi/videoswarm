@@ -84,25 +84,26 @@ describe('useCardSelection', () => {
     expect(selection.selectOnly).toHaveBeenCalledWith('x');
   });
 
-  test('card context menu selects if not selected and calls showOnItem', () => {
+  test('card context menu forwards event without mutating selection', () => {
     const { result } = render();
     const e = { preventDefault: vi.fn(), stopPropagation: vi.fn(), ctrlKey: false, metaKey: false };
 
-    // not selected → selectOnly
     act(() => result.current.handleCardContextMenu(e, { id: 'v1' }));
     expect(showOnItem).toHaveBeenCalled();
-    const [_ev, id, already, selectOnly] = showOnItem.mock.calls[0];
+    const [eventArg, id] = showOnItem.mock.calls[0];
+    expect(eventArg).toBe(e);
     expect(id).toBe('v1');
-    expect(already).toBe(false);
-    expect(typeof selectOnly).toBe('function');
+    expect(selection.selectOnly).not.toHaveBeenCalled();
+    expect(selection.toggle).not.toHaveBeenCalled();
   });
 
-  test('background context menu clears selection and calls showOnEmpty', () => {
+  test('background context menu delegates without clearing selection', () => {
     const { result } = render();
     const e = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
 
     act(() => result.current.handleBackgroundContextMenu(e));
     expect(showOnEmpty).toHaveBeenCalled();
+    expect(selection.clear).not.toHaveBeenCalled();
   });
 
   test('shift-click with anchor uses bounding box (via setSelected)', () => {
