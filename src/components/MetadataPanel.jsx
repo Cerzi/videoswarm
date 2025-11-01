@@ -237,15 +237,14 @@ const MetadataPanel = forwardRef((
 
   const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
 
-  const suggestionTags = useMemo(() => {
-    if (!isOpen || !Array.isArray(availableTags)) return [];
+  const dedupedAvailableTags = useMemo(() => {
+    if (!Array.isArray(availableTags)) return [];
 
-    const query = inputValue.trim().toLowerCase();
     const deduped = new Map();
 
     availableTags.forEach((entry) => {
       const name = entry?.name?.trim();
-      if (!name || sharedTagSet.has(name)) return;
+      if (!name) return;
 
       const usageCount =
         typeof entry.usageCount === "number" && Number.isFinite(entry.usageCount)
@@ -258,7 +257,15 @@ const MetadataPanel = forwardRef((
       }
     });
 
-    let list = Array.from(deduped.values());
+    return Array.from(deduped.values());
+  }, [availableTags]);
+
+  const suggestionTags = useMemo(() => {
+    if (!isOpen) return [];
+
+    const query = inputValue.trim().toLowerCase();
+
+    let list = dedupedAvailableTags.filter((entry) => !sharedTagSet.has(entry.name));
 
     if (query) {
       list = list.filter((item) => item.name.toLowerCase().includes(query));
@@ -271,7 +278,7 @@ const MetadataPanel = forwardRef((
     });
 
     return list.slice(0, MAX_SUGGESTION_TAGS);
-  }, [availableTags, inputValue, sharedTagSet, isOpen]);
+  }, [dedupedAvailableTags, inputValue, sharedTagSet, isOpen]);
 
   const hasSuggestionQuery = inputValue.trim().length > 0;
 
@@ -286,9 +293,36 @@ const MetadataPanel = forwardRef((
   };
 
   const handleKeyDown = (event) => {
-    if (event.key === "Enter" || event.key === "Tab" || event.key === ",") {
+    if (event.key === "Enter" || event.key === ",") {
       event.preventDefault();
       handleTagSubmit();
+      return;
+    }
+
+    if (event.key === "Tab") {
+      const rawTokens = inputValue.split(",");
+      const lastTokenRaw = rawTokens[rawTokens.length - 1] ?? "";
+      const query = lastTokenRaw.trim().toLowerCase();
+      if (!query) return;
+
+      const candidates = dedupedAvailableTags.filter((entry) =>
+        entry.name.toLowerCase().startsWith(query)
+      );
+
+      if (!candidates.length) return;
+
+      candidates.sort((a, b) => {
+        const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
+        if (usageDiff !== 0) return usageDiff;
+        return a.name.localeCompare(b.name);
+      });
+
+      const selected = candidates[0]?.name;
+      if (!selected) return;
+
+      event.preventDefault();
+      onAddTag?.([selected]);
+      setInputValue("");
     }
   };
 

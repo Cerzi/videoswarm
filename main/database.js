@@ -138,6 +138,12 @@ function createMetadataStore(db) {
     DELETE FROM file_tags WHERE fingerprint = ? AND tag_id = ?;
   `);
 
+  const countTagUsage = db.prepare(
+    "SELECT COUNT(*) AS count FROM file_tags WHERE tag_id = ?;"
+  );
+
+  const deleteTagById = db.prepare("DELETE FROM tags WHERE id = ?;");
+
   const getRating = db.prepare(`
     SELECT value FROM ratings WHERE fingerprint = ?;
   `);
@@ -301,6 +307,12 @@ function createMetadataStore(db) {
         removeTagLink.run(fingerprint, id);
         removed[fingerprint] = mapMetadataRow(fingerprint);
       });
+
+      const usageRow = countTagUsage.get(id);
+      const usageCount = Number(usageRow?.count || 0);
+      if (usageCount === 0) {
+        deleteTagById.run(id);
+      }
     });
     txn();
     return removed;
