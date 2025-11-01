@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import MetadataPanel from './MetadataPanel';
 
@@ -82,5 +82,52 @@ describe('MetadataPanel single-selection info', () => {
     expect(screen.queryByText('Filename')).not.toBeInTheDocument();
     expect(screen.queryByText('Date created')).not.toBeInTheDocument();
     expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+  });
+});
+
+describe('MetadataPanel context menu handling', () => {
+  it('suppresses the custom menu when right-clicking the panel surface', () => {
+    const { container } = renderPanel({
+      selectedVideos: [
+        {
+          name: 'clip-one.mp4',
+          metadata: { dateCreated: '2023-01-01T00:00:00Z' },
+          dimensions: { width: 1920, height: 1080 },
+        },
+      ],
+    });
+
+    const panel = container.querySelector('.metadata-panel');
+    expect(panel).toBeTruthy();
+    const event = new MouseEvent('contextmenu', { bubbles: true });
+    const stopPropagation = vi.spyOn(event, 'stopPropagation');
+    const preventDefault = vi.spyOn(event, 'preventDefault');
+
+    panel.dispatchEvent(event);
+
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it('allows native context menu inside the tag input', () => {
+    renderPanel({
+      selectedVideos: [
+        {
+          name: 'clip-one.mp4',
+          metadata: { dateCreated: '2023-01-01T00:00:00Z' },
+          dimensions: { width: 1920, height: 1080 },
+        },
+      ],
+    });
+
+    const input = screen.getByPlaceholderText('Add tag and press Enter');
+    const event = new MouseEvent('contextmenu', { bubbles: true });
+    const stopPropagation = vi.spyOn(event, 'stopPropagation');
+    const preventDefault = vi.spyOn(event, 'preventDefault');
+
+    input.dispatchEvent(event);
+
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });

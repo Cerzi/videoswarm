@@ -1,4 +1,11 @@
-import React, { useMemo, useState, useEffect, useRef, forwardRef } from "react";
+import React, {
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  forwardRef,
+  useCallback,
+} from "react";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -294,6 +301,19 @@ const MetadataPanel = forwardRef((
 
   const toggleDisabled = !hasSelection;
 
+  const handlePanelContextMenu = useCallback((event) => {
+    if (!event) return;
+    const target = event.target;
+    const allowDefault =
+      typeof target?.closest === "function" &&
+      target.closest("input, textarea, [contenteditable='true']");
+
+    event.stopPropagation?.();
+    if (!allowDefault) {
+      event.preventDefault?.();
+    }
+  }, []);
+
   const panelClass = [
     "metadata-panel",
     isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
@@ -309,6 +329,7 @@ const MetadataPanel = forwardRef((
       ref={ref}
       className={panelClass}
       aria-hidden={!isOpen && !hasSelection}
+      onContextMenu={handlePanelContextMenu}
     >
       <div className="metadata-panel__header">
         <button
