@@ -61,4 +61,45 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.stats.progressiveVisible)
       .toBe(PROGRESSIVE_DEFAULTS.initial);
   });
+
+  it("caps rendered output and stats when render limit is provided", () => {
+    const videos = makeVideos(400);
+
+    const { result, rerender } = renderHook(
+      ({ limit }) =>
+        useVideoCollection({
+          videos,
+          progressive: {
+            initial: 50,
+            batchSize: 50,
+            intervalMs: 1,
+            forceInterval: true,
+            pauseOnScroll: false,
+            longTaskAdaptation: false,
+          },
+          renderLimit: limit,
+        }),
+      { initialProps: { limit: 130 } }
+    );
+
+    expect(result.current.videosToRender.length).toBe(130);
+    expect(result.current.stats.rendered).toBe(130);
+    expect(result.current.stats.progressiveVisible).toBe(50);
+    expect(result.current.stats.activationTarget).toBe(50);
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+
+    expect(result.current.videosToRender.length).toBe(130);
+    expect(result.current.stats.rendered).toBe(130);
+    expect(result.current.stats.progressiveVisible).toBe(130);
+    expect(result.current.stats.activationTarget).toBe(130);
+
+    rerender({ limit: 80 });
+    expect(result.current.videosToRender.length).toBe(80);
+    expect(result.current.stats.rendered).toBe(80);
+    expect(result.current.stats.progressiveVisible).toBe(80);
+    expect(result.current.stats.activationTarget).toBe(80);
+  });
 });

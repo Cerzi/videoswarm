@@ -40,6 +40,11 @@ import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
 import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
+import {
+  RENDER_LIMIT_STEPS,
+  resolveRenderLimit,
+  clampRenderLimitStep,
+} from "./utils/renderLimit";
 
 import feature from "./config/featureFlags";
 import "./App.css";
@@ -134,7 +139,7 @@ function App() {
   const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
+  const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
   const [sortDir, setSortDir] = useState("asc");
@@ -192,8 +197,8 @@ function App() {
     recursiveMode,
     setRecursiveMode,
     setShowFilenames,
-    maxConcurrentPlaying,
-    setMaxConcurrentPlaying,
+    renderLimitStep,
+    setRenderLimitStep,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -253,6 +258,35 @@ function App() {
     scrollContainerRef,
     gridRef,
   });
+
+  const totalVideoCount = videos.length;
+  const renderLimitValue = useMemo(
+    () => resolveRenderLimit(renderLimitStep, totalVideoCount),
+    [renderLimitStep, totalVideoCount]
+  );
+  const renderLimitLabel = useMemo(
+    () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
+    [renderLimitValue]
+  );
+  const effectiveProgressiveCap = useMemo(() => {
+    const layoutLimit =
+      Number.isFinite(progressiveMaxVisibleNumber) &&
+      progressiveMaxVisibleNumber > 0
+        ? Math.floor(progressiveMaxVisibleNumber)
+        : null;
+    if (renderLimitValue === 0) return 0;
+    const userLimit =
+      renderLimitValue !== null &&
+      Number.isFinite(renderLimitValue) &&
+      renderLimitValue > 0
+        ? Math.floor(renderLimitValue)
+        : null;
+
+    if (layoutLimit == null && userLimit == null) return undefined;
+    if (layoutLimit == null) return userLimit ?? undefined;
+    if (userLimit == null) return layoutLimit;
+    return Math.min(layoutLimit, userLimit);
+  }, [progressiveMaxVisibleNumber, renderLimitValue]);
 
   const activationWindow = useMemo(
     () =>
@@ -345,7 +379,7 @@ function App() {
     setZoomLevel,
     orderedVideoCount: orderedVideos.length,
     recursiveMode,
-    maxConcurrentPlaying,
+    renderLimitStep,
     showFilenames,
     setZoomClass,
     scheduleLayout,
@@ -879,7 +913,6 @@ function App() {
     loadedVideos,
     loadingVideos,
     actualPlaying,
-    maxConcurrentPlaying,
     scrollRef: scrollContainerRef,
     progressive: {
       initial: 120,
@@ -887,13 +920,14 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
-      maxVisible: progressiveMaxVisibleNumber,
+      maxVisible: effectiveProgressiveCap,
     },
     hadLongTaskRecently,
     isNear: isWithinActivation,
     activationTarget: activationWindow.target,
     activationWindowIds: activationWindow.ids,
     suspendEvictions: isLayoutTransitioning,
+    renderLimit: renderLimitValue,
   });
 
   // fullscreen / context menu
@@ -1016,11 +1050,11 @@ function App() {
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
       recursiveMode: next,
-      maxConcurrentPlaying,
+      renderLimitStep,
       zoomLevel,
       showFilenames,
     });
-  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [recursiveMode, renderLimitStep, zoomLevel, showFilenames]);
 
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
@@ -1028,16 +1062,17 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({
       showFilenames: next,
       recursiveMode,
-      maxConcurrentPlaying,
+      renderLimitStep,
       zoomLevel,
     });
-  }, [showFilenames, recursiveMode, maxConcurrentPlaying, zoomLevel]);
+  }, [showFilenames, recursiveMode, renderLimitStep, zoomLevel]);
 
-  const handleVideoLimitChange = useCallback(
-    (n) => {
-      setMaxConcurrentPlaying(n);
+  const handleRenderLimitStepChange = useCallback(
+    (step) => {
+      const clamped = clampRenderLimitStep(step);
+      setRenderLimitStep(clamped);
       window.electronAPI?.saveSettingsPartial?.({
-        maxConcurrentPlaying: n,
+        renderLimitStep: clamped,
         recursiveMode,
         zoomLevel,
         showFilenames,
@@ -1061,9 +1096,10 @@ function App() {
         sortDir: dir,
         groupByFolders,
         randomSeed: seed,
+        renderLimitStep,
       });
     },
-    [groupByFolders, randomSeed]
+    [groupByFolders, randomSeed, renderLimitStep]
   );
 
   const toggleGroupByFolders = useCallback(() => {
@@ -1210,8 +1246,10 @@ function App() {
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
-            maxConcurrentPlaying={maxConcurrentPlaying}
-            handleVideoLimitChange={handleVideoLimitChange}
+            renderLimitStep={renderLimitStep}
+            renderLimitLabel={renderLimitLabel}
+            renderLimitMaxStep={RENDER_LIMIT_STEPS}
+            handleRenderLimitChange={handleRenderLimitStepChange}
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
