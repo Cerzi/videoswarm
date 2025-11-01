@@ -18,6 +18,14 @@ const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore } = require("./main/database");
 const { thumbnailCache } = require("./main/thumb-cache");
+const supportContent = require("./src/config/supportContent.json");
+
+const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
+
+function openDonationPage() {
+  const url = supportContent?.donationUrl || DEFAULT_DONATION_URL;
+  return shell.openExternal(url);
+}
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -566,6 +574,27 @@ function createMenu() {
         { role: "togglefullscreen" },
       ],
     },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About VideoSwarm",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-about");
+            }
+          },
+        },
+        {
+          label: "Support VideoSwarm on Ko-fi",
+          click: () => {
+            openDonationPage().catch((error) => {
+              console.warn("Failed to open support link", error);
+            });
+          },
+        },
+      ],
+    },
   ];
 
   if (process.platform === "darwin") {
@@ -676,6 +705,16 @@ async function clearRecentFolders() {
 
 // ===== IPC Handlers =====
 ipcMain.handle("get-app-version", () => app.getVersion());
+
+ipcMain.handle("support:open-donation", async () => {
+  try {
+    await openDonationPage();
+    return true;
+  } catch (error) {
+    console.warn("Failed to open support link", error);
+    throw error;
+  }
+});
 
 ipcMain.on("thumb:put", (event, payload) => {
   try {

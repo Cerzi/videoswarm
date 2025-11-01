@@ -14,6 +14,7 @@ import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
+import AboutDialog from "./components/AboutDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -139,6 +140,7 @@ function App() {
   const [sortDir, setSortDir] = useState("asc");
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
+  const [isAboutOpen, setAboutOpen] = useState(false);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -917,6 +919,15 @@ function App() {
     // wheelStepUnits: 100, // optional sensitivity tuning
   });
 
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenAbout?.(() => {
+      setAboutOpen(true);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   // === MEMORY MONITORING (dev helpers) ===
   useEffect(() => {
     if (performance.memory) {
@@ -1217,6 +1228,7 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
+            onOpenAbout={() => setAboutOpen(true)}
           />
 
           {isFiltersOpen && (
@@ -1229,6 +1241,8 @@ function App() {
               onClose={() => setFiltersOpen(false)}
             />
           )}
+
+          <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
 
           {filtersActiveCount > 0 && (
             <div className="filters-summary">

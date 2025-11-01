@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  openDonationPage: () => ipcRenderer.invoke("support:open-donation"),
+
   // File manager integration
   showItemInFolder: async (filePath) => {
     return await ipcRenderer.invoke("show-item-in-folder", filePath);
@@ -74,6 +76,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     };
     ipcRenderer.on("folder-selected", handler);
     return () => ipcRenderer.removeListener("folder-selected", handler);
+  },
+
+  onOpenAbout: (callback) => {
+    const handler = () => {
+      callback();
+    };
+    ipcRenderer.on("ui:open-about", handler);
+    return () => ipcRenderer.removeListener("ui:open-about", handler);
   },
 
   // Settings management - existing methods

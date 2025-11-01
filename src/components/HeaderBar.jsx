@@ -1,5 +1,8 @@
 import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
+import HelpMenu from "./HelpMenu";
+import SupportLink from "./SupportLink";
+import { supportContent } from "../config/supportContent";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
 import { clampZoomIndex } from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
@@ -114,6 +117,7 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
+  onOpenAbout,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -171,6 +175,8 @@ export default function HeaderBar({
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
+
+        <HelpMenu onOpenAbout={onOpenAbout} />
       </div>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
@@ -291,6 +297,19 @@ export default function HeaderBar({
               )}
             </button>
           </div>
+
+          <SupportLink
+            className="donate-button"
+            aria-label={`${supportContent.donationButtonLabel} – ${supportContent.donationTooltip}`}
+            title={supportContent.donationTooltip}
+          >
+            <span aria-hidden="true" className="donate-button__icon">
+              ❤️
+            </span>
+            <span className="donate-button__label">
+              {supportContent.donationButtonLabel}
+            </span>
+          </SupportLink>
         </div>
       </div>
     </div>
