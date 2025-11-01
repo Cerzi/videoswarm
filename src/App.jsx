@@ -698,12 +698,7 @@ function App() {
     });
   }, [runSidebarTransition, selection.clear, selection.size, setMetadataPanelOpen]);
 
-  const {
-    contextMenu,
-    showOnItem,
-    showOnEmpty,
-    hide: hideContextMenu,
-  } = useContextMenu();
+  const { contextMenu, showOnItem, hide: hideContextMenu } = useContextMenu();
 
   const captureLastFocusSelector = useCallback(() => {
     if (typeof document === "undefined") return null;
@@ -1116,19 +1111,25 @@ function App() {
     ]
   );
 
-  // Right-click on a card: select it (if not in selection) and open menu
+  // Right-click on a card: open the item context menu without altering selection
   const handleCardContextMenu = useCallback(
     (e, video) => {
-      const isSelected = selection.selected.has(video.id);
-      showOnItem(e, video.id, isSelected, selection.selectOnly);
+      if (!video?.id) return;
+      showOnItem(e, video.id);
     },
-    [selection.selected, selection.selectOnly, showOnItem]
+    [showOnItem]
   );
 
-  // Right-click on empty background: clear selection and open menu
+  // Right-click on empty background: allow native behavior while hiding custom menu
   const handleBackgroundContextMenu = useCallback(
-    (e) => showOnEmpty(e, selection.clear),
-    [showOnEmpty, selection.clear]
+    (e) => {
+      const target = e?.target;
+      if (typeof target?.closest === "function" && target.closest(".video-item")) {
+        return;
+      }
+      hideContextMenu();
+    },
+    [hideContextMenu]
   );
 
   useEffect(() => {
