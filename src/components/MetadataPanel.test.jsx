@@ -15,6 +15,20 @@ const renderPanel = (props = {}) =>
     />
   );
 
+describe('MetadataPanel empty state', () => {
+  it('shows guidance when nothing is selected', () => {
+    renderPanel({ selectedVideos: [], selectionCount: 0 });
+
+    expect(screen.getByText('No clips selected')).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick videos from the grid to see quick stats and tags here.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Tip: Use Shift or Ctrl/Cmd to build multi-select batches.')
+    ).toBeInTheDocument();
+  });
+});
+
 describe('MetadataPanel single-selection info', () => {
   const formatExpectedDate = (value) =>
     new Intl.DateTimeFormat(undefined, {
@@ -39,12 +53,12 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.getByText('Filename')).toBeInTheDocument();
     expect(screen.getByText('clip-one.mp4')).toBeInTheDocument();
-    expect(screen.getByText('Date created')).toBeInTheDocument();
     expect(screen.getByText(formatExpectedDate(createdDate))).toBeInTheDocument();
-    expect(screen.getByText('Resolution')).toBeInTheDocument();
     expect(screen.getByText('1920×1080')).toBeInTheDocument();
+    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
+    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
+    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
   });
 
   it('omits the info section when no identifying details are available', () => {
@@ -57,9 +71,7 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
-    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
-    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+    expect(document.querySelector('.metadata-panel__info-line')).toBeNull();
   });
 
   it('hides the info section when multiple items are selected', () => {
@@ -79,9 +91,7 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
-    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
-    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+    expect(document.querySelector('.metadata-panel__info-line')).toBeNull();
   });
 });
 
@@ -121,5 +131,64 @@ describe('MetadataPanel tag input', () => {
 
     expect(handleAddTag).not.toHaveBeenCalled();
     expect(input).toHaveValue('do');
+  });
+});
+
+describe('MetadataPanel collapsed shell', () => {
+  it('renders nothing when closed without a selection and no collapsed hint', () => {
+    const { container } = render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={() => {}}
+        selectionCount={0}
+        selectedVideos={[]}
+        availableTags={[]}
+        showCollapsedHint={false}
+      />
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('shows a collapsed toggle when dismissed without a selection', () => {
+    const handleToggle = vi.fn();
+
+    render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={handleToggle}
+        selectionCount={0}
+        selectedVideos={[]}
+        availableTags={[]}
+        showCollapsedHint
+      />
+    );
+
+    const toggle = screen.getByRole('button', { name: /show clip details/i });
+    expect(toggle).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(handleToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a compact toggle when closed with a selection', () => {
+    const handleToggle = vi.fn();
+
+    render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={handleToggle}
+        selectionCount={1}
+        selectedVideos={[{ name: 'clip-one.mp4', metadata: {}, dimensions: null }]}
+        availableTags={[]}
+        showCollapsedHint
+      />
+    );
+
+    const toggle = screen.getByRole('button', { name: /show .*details/i });
+    expect(toggle).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(handleToggle).toHaveBeenCalledTimes(1);
   });
 });
