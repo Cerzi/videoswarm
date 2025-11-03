@@ -383,7 +383,7 @@ const MetadataPanel = forwardRef((
         key: "filename",
         label: singleSelectionInfo.filename,
         title: singleSelectionInfo.filename,
-        className: "metadata-panel__info-pill--filename",
+        className: "metadata-panel__info-item--filename",
       });
     }
     if (singleSelectionInfo.resolution) {
@@ -487,16 +487,25 @@ const MetadataPanel = forwardRef((
   };
 
   const toggleDisabled = !hasSelection && !isOpen;
+  const isCollapsed = !isOpen;
+
+  if (isCollapsed && !hasSelection) {
+    return null;
+  }
+
+  const showCollapsedShell = isCollapsed && hasSelection;
 
   const panelClass = [
     "metadata-panel",
     isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
     !hasSelection ? "metadata-panel--empty" : "",
+    showCollapsedShell ? "metadata-panel--collapsed-has-selection" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  const showFocusButton = hasSelection && typeof onFocusSelection === "function";
+  const showFocusButton =
+    isOpen && hasSelection && typeof onFocusSelection === "function";
 
   const contentClass = [
     "metadata-panel__content",
@@ -504,6 +513,23 @@ const MetadataPanel = forwardRef((
   ]
     .filter(Boolean)
     .join(" ");
+
+  const handleRoleProps = isOpen
+    ? {
+        role: "slider",
+        tabIndex: 0,
+        "aria-label": "Resize metadata panel",
+        "aria-orientation": "vertical",
+        "aria-valuemin": Math.round(minHeight),
+        "aria-valuemax": Math.round(effectiveMaxHeight),
+        "aria-valuenow": Math.round(resolvedDockHeight),
+        title: "Drag or use arrow keys to resize",
+      }
+    : {
+        role: "presentation",
+        tabIndex: -1,
+        "aria-hidden": true,
+      };
 
   return (
     <aside ref={ref} className={panelClass}>
@@ -513,26 +539,29 @@ const MetadataPanel = forwardRef((
         aria-label="Selection metadata"
         style={{ "--metadata-panel-height": `${Math.round(resolvedDockHeight)}px` }}
       >
-        <div className="metadata-panel__header">
+        <div
+          className={`metadata-panel__header${
+            showCollapsedShell ? " metadata-panel__header--collapsed" : ""
+          }`}
+        >
           <div
-            className="metadata-panel__handle"
-            role="slider"
-            tabIndex={0}
-            aria-label="Resize metadata panel"
-            aria-orientation="vertical"
-            aria-valuemin={Math.round(minHeight)}
-            aria-valuemax={Math.round(effectiveMaxHeight)}
-            aria-valuenow={Math.round(resolvedDockHeight)}
-            title="Drag or use arrow keys to resize"
-            onPointerDown={handleResizePointerDown}
-            onKeyDown={handleResizeKeyDown}
+            className={`metadata-panel__handle${
+              showCollapsedShell ? " metadata-panel__handle--inactive" : ""
+            }`}
+            {...handleRoleProps}
+            onPointerDown={isOpen ? handleResizePointerDown : undefined}
+            onKeyDown={isOpen ? handleResizeKeyDown : undefined}
           />
-          <div className="metadata-panel__titles">
-            <span className="metadata-panel__title">Details</span>
-            <span className="metadata-panel__subtitle">
-              {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
-            </span>
-          </div>
+          {isOpen && (
+            <div className="metadata-panel__titles">
+              <span className="metadata-panel__title">Details</span>
+              <span className="metadata-panel__subtitle">
+                {hasSelection
+                  ? `${derivedSelectionCount} selected`
+                  : "No selection"}
+              </span>
+            </div>
+          )}
           {showFocusButton && (
             <button
               type="button"
@@ -564,162 +593,169 @@ const MetadataPanel = forwardRef((
           </button>
         </div>
 
-        <div className={contentClass}>
-          {!hasSelection ? (
-            <div className="metadata-panel__empty-state" aria-live="polite">
-              <h3>No clips selected</h3>
-              <p>Pick videos from the grid to see quick stats and tags here.</p>
-              <p>Tip: Use Shift or Ctrl/Cmd to build multi-select batches.</p>
-            </div>
-          ) : (
-            <div className="metadata-panel__stack">
-              {infoLineItems.length > 0 && (
-                <section className="metadata-panel__section metadata-panel__info">
-                  <div className="metadata-panel__info-line" role="text">
-                    {infoLineItems.map((item, index) => (
-                      <span
-                        key={item.key || index}
-                        className={`metadata-panel__info-pill${
-                          item.className ? ` ${item.className}` : ""
-                        }`}
-                        title={item.title}
-                      >
-                        {index > 0 && (
-                          <span
-                            aria-hidden="true"
-                            className="metadata-panel__info-separator"
-                          >
-                            •
-                          </span>
-                        )}
-                        <span>{item.label}</span>
-                      </span>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              <section className="metadata-panel__section metadata-panel__section--rating">
-                <div className="metadata-panel__section-header">
-                  <span>Rating</span>
-                  {ratingInfo.mixed ? (
-                    <span className="metadata-panel__badge">Mixed</span>
-                  ) : ratingInfo.hasAny ? (
-                    <span className="metadata-panel__badge metadata-panel__badge--accent">
-                      {`${ratingInfo.value} / 5`}
-                    </span>
-                  ) : (
-                    <span className="metadata-panel__badge">Not rated</span>
-                  )}
-                </div>
-                <RatingStars
-                  value={ratingInfo.value}
-                  isMixed={ratingInfo.mixed}
-                  onSelect={(val) => onSetRating?.(val)}
-                  onClear={onClearRating}
-                  disabled={!hasSelection}
-                />
-              </section>
-
-              <section className="metadata-panel__section metadata-panel__section--tags">
-                <div className="metadata-panel__section-header">
-                  <span>Tags</span>
-                  <span className="metadata-panel__badge">
-                    {sharedTags.length ? `${sharedTags.length} applied` : "None"}
-                  </span>
-                </div>
-                <div className="metadata-panel__chips">
-                  {sharedTags.length === 0 ? (
-                    <span className="metadata-panel__hint">No shared tags yet.</span>
-                  ) : (
-                    sharedTags.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        className="metadata-panel__chip"
-                        onClick={() => onRemoveTag?.(tag)}
-                      >
-                        <span>#{tag}</span>
-                        <span aria-hidden="true">×</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-
-                {partialTags.length > 0 && (
-                  <div className="metadata-panel__partial-group">
-                    <div className="metadata-panel__section-subtitle">
-                      Appears on some selected clips
-                    </div>
-                    <div className="metadata-panel__chips">
-                      {partialTags.map(({ tag, count }) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          className="metadata-panel__chip metadata-panel__chip--ghost"
-                          onClick={() => onApplyTagToSelection?.(tag)}
-                          title={`Apply to all (${count}/${derivedSelectionCount})`}
+        {isOpen && (
+          <div className={contentClass}>
+            {!hasSelection ? (
+              <div className="metadata-panel__empty-state" aria-live="polite">
+                <h3>No clips selected</h3>
+                <p>Pick videos from the grid to see quick stats and tags here.</p>
+                <p>Tip: Use Shift or Ctrl/Cmd to build multi-select batches.</p>
+              </div>
+            ) : (
+              <div className="metadata-panel__body">
+                {infoLineItems.length > 0 && (
+                  <section className="metadata-panel__section metadata-panel__info">
+                    <div className="metadata-panel__info-line" role="text">
+                      {infoLineItems.map((item, index) => (
+                        <span
+                          key={item.key || index}
+                          className={`metadata-panel__info-item${
+                            item.className ? ` ${item.className}` : ""
+                          }`}
+                          title={item.title}
                         >
-                          <span>#{tag}</span>
-                          <span className="metadata-panel__chip-count">
-                            {count}/{derivedSelectionCount}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="metadata-panel__input-row">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Add tag and press Enter"
-                    disabled={!hasSelection}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleTagSubmit}
-                    disabled={!hasSelection || !inputValue.trim()}
-                  >
-                    Add
-                  </button>
-                </div>
-
-                {suggestionTags.length > 0 && (
-                  <div className="metadata-panel__suggestions" aria-live="polite">
-                    <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-                      {hasSuggestionQuery
-                        ? "Matching tags"
-                        : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
-                    </div>
-                    <div className="metadata-panel__suggestion-list">
-                      {suggestionTags.map((suggestion) => (
-                        <button
-                          key={suggestion.name}
-                          type="button"
-                          className="metadata-panel__suggestion"
-                          onClick={() => onApplyTagToSelection?.(suggestion.name)}
-                          title={`Apply #${suggestion.name} to selection`}
-                        >
-                          <span>#{suggestion.name}</span>
-                          {typeof suggestion.usageCount === "number" && (
-                            <span className="metadata-panel__suggestion-count">
-                              {suggestion.usageCount}
+                          {index > 0 && (
+                            <span
+                              aria-hidden="true"
+                              className="metadata-panel__info-separator"
+                            >
+                              •
                             </span>
                           )}
-                        </button>
+                          <span>{item.label}</span>
+                        </span>
                       ))}
                     </div>
-                  </div>
+                  </section>
                 )}
-              </section>
-            </div>
-          )}
-        </div>
+
+                <div className="metadata-panel__grid">
+                  <section className="metadata-panel__section metadata-panel__section--rating">
+                    <div className="metadata-panel__section-header">
+                      <span>Rating</span>
+                      {ratingInfo.mixed ? (
+                        <span className="metadata-panel__badge">Mixed</span>
+                      ) : ratingInfo.hasAny ? (
+                        <span className="metadata-panel__badge metadata-panel__badge--accent">
+                          {`${ratingInfo.value} / 5`}
+                        </span>
+                      ) : (
+                        <span className="metadata-panel__badge">Not rated</span>
+                      )}
+                    </div>
+                    <RatingStars
+                      value={ratingInfo.value}
+                      isMixed={ratingInfo.mixed}
+                      onSelect={(val) => onSetRating?.(val)}
+                      onClear={onClearRating}
+                      disabled={!hasSelection}
+                    />
+                  </section>
+
+                  <section className="metadata-panel__section metadata-panel__section--tags">
+                    <div className="metadata-panel__section-header">
+                      <span>Tags</span>
+                      <span className="metadata-panel__badge">
+                        {sharedTags.length ? `${sharedTags.length} applied` : "None"}
+                      </span>
+                    </div>
+                    <div className="metadata-panel__chips">
+                      {sharedTags.length === 0 ? (
+                        <span className="metadata-panel__hint">No shared tags yet.</span>
+                      ) : (
+                        sharedTags.map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            className="metadata-panel__chip"
+                            onClick={() => onRemoveTag?.(tag)}
+                          >
+                            <span>#{tag}</span>
+                            <span aria-hidden="true">×</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+
+                    {partialTags.length > 0 && (
+                      <div className="metadata-panel__partial-group">
+                        <div className="metadata-panel__section-subtitle">
+                          Appears on some selected clips
+                        </div>
+                        <div className="metadata-panel__chips">
+                          {partialTags.map(({ tag, count }) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              className="metadata-panel__chip metadata-panel__chip--ghost"
+                              onClick={() => onApplyTagToSelection?.(tag)}
+                              title={`Apply to all (${count}/${derivedSelectionCount})`}
+                            >
+                              <span>#{tag}</span>
+                              <span className="metadata-panel__chip-count">
+                                {count}/{derivedSelectionCount}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="metadata-panel__input-row">
+                      <input
+                        ref={inputRef}
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Add tag and press Enter"
+                        disabled={!hasSelection}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleTagSubmit}
+                        disabled={!hasSelection || !inputValue.trim()}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </section>
+
+                  {suggestionTags.length > 0 && (
+                    <section
+                      className="metadata-panel__section metadata-panel__section--suggestions"
+                      aria-live="polite"
+                    >
+                      <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
+                        {hasSuggestionQuery
+                          ? "Matching tags"
+                          : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
+                      </div>
+                      <div className="metadata-panel__suggestion-list">
+                        {suggestionTags.map((suggestion) => (
+                          <button
+                            key={suggestion.name}
+                            type="button"
+                            className="metadata-panel__suggestion"
+                            onClick={() => onApplyTagToSelection?.(suggestion.name)}
+                            title={`Apply #${suggestion.name} to selection`}
+                          >
+                            <span>#{suggestion.name}</span>
+                            {typeof suggestion.usageCount === "number" && (
+                              <span className="metadata-panel__suggestion-count">
+                                {suggestion.usageCount}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );

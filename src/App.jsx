@@ -29,10 +29,7 @@ import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
-import {
-  getMetadataPanelToggleState,
-  shouldAutoOpenMetadataPanel,
-} from "./utils/metadataPanelState";
+import { shouldAutoOpenMetadataPanel } from "./utils/metadataPanelState";
 
 import { SortKey } from "./sorting/sorting.js";
 import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
@@ -161,6 +158,7 @@ function App() {
 
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
+  const [metadataPanelDismissed, setMetadataPanelDismissed] = useState(false);
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
   const [metadataDockHeight, setMetadataDockHeight] = useState(
     DEFAULT_METADATA_DOCK_HEIGHT
@@ -633,20 +631,32 @@ function App() {
   );
 
   useEffect(() => {
-    if (shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)) {
+    if (
+      !metadataPanelDismissed &&
+      shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)
+    ) {
       runSidebarTransition("sidebar:auto-open", () => {
         setMetadataPanelOpen(true);
+        setMetadataPanelDismissed(false);
         setMetadataFocusToken((token) => token + 1);
       });
     }
   }, [
     isMetadataPanelOpen,
+    metadataPanelDismissed,
     runSidebarTransition,
     selection.size,
     setMetadataFocusToken,
+    setMetadataPanelDismissed,
     setMetadataPanelOpen,
     shouldAutoOpenMetadataPanel,
   ]);
+
+  useEffect(() => {
+    if (selection.size === 0) {
+      setMetadataPanelDismissed(false);
+    }
+  }, [selection.size]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -709,24 +719,40 @@ function App() {
   const openMetadataPanel = useCallback(() => {
     runSidebarTransition("sidebar:open", () => {
       setMetadataPanelOpen(true);
+      setMetadataPanelDismissed(false);
       setMetadataFocusToken((token) => token + 1);
     });
-  }, [runSidebarTransition, setMetadataFocusToken, setMetadataPanelOpen]);
+  }, [
+    runSidebarTransition,
+    setMetadataFocusToken,
+    setMetadataPanelDismissed,
+    setMetadataPanelOpen,
+  ]);
 
   const toggleMetadataPanel = useCallback(() => {
     runSidebarTransition("sidebarToggle", () => {
       setMetadataPanelOpen((open) => {
-        const { nextOpen, shouldClear } = getMetadataPanelToggleState(
-          open,
-          selection.size
-        );
-        if (shouldClear) {
-          selection.clear();
+        if (open) {
+          setMetadataPanelDismissed(true);
+          return false;
         }
-        return nextOpen;
+
+        if (selection.size === 0) {
+          return open;
+        }
+
+        setMetadataPanelDismissed(false);
+        setMetadataFocusToken((token) => token + 1);
+        return true;
       });
     });
-  }, [runSidebarTransition, selection.clear, selection.size, setMetadataPanelOpen]);
+  }, [
+    runSidebarTransition,
+    selection.size,
+    setMetadataFocusToken,
+    setMetadataPanelDismissed,
+    setMetadataPanelOpen,
+  ]);
 
   const { contextMenu, showOnItem, hide: hideContextMenu } = useContextMenu();
 

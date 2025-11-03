@@ -133,3 +133,42 @@ describe('MetadataPanel tag input', () => {
     expect(input).toHaveValue('do');
   });
 });
+
+describe('MetadataPanel collapsed shell', () => {
+  it('renders nothing when closed without a selection', () => {
+    const { container } = render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={() => {}}
+        selectionCount={0}
+        selectedVideos={[]}
+        availableTags={[]}
+      />
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('shows a compact toggle when closed with a selection', () => {
+    const handleToggle = vi.fn();
+
+    render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={handleToggle}
+        selectionCount={1}
+        selectedVideos={[{ name: 'clip-one.mp4', metadata: {}, dimensions: null }]}
+        availableTags={[]}
+      />
+    );
+
+    const toggle = screen.getByRole('button', { name: /show metadata panel/i });
+    expect(toggle).toBeInTheDocument();
+
+    const inactiveHandle = document.querySelector('.metadata-panel__handle--inactive');
+    expect(inactiveHandle).not.toBeNull();
+
+    fireEvent.click(toggle);
+    expect(handleToggle).toHaveBeenCalledTimes(1);
+  });
+});
