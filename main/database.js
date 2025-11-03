@@ -29,7 +29,9 @@ function initDatabase(app) {
       last_known_path TEXT NOT NULL,
       size INTEGER NOT NULL,
       created_ms INTEGER,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -62,14 +64,38 @@ function initDatabase(app) {
 }
 
 function createMetadataStore(db) {
+  const columns = new Set(
+    db
+      .prepare('PRAGMA table_info(files);')
+      .all()
+      .map((row) => row.name)
+  );
+
+  if (!columns.has('width')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN width INTEGER;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
+  if (!columns.has('height')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN height INTEGER;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
+
   const fileUpsert = db.prepare(`
-    INSERT INTO files (fingerprint, last_known_path, size, created_ms, updated_at)
-    VALUES (@fingerprint, @last_known_path, @size, @created_ms, @updated_at)
+    INSERT INTO files (fingerprint, last_known_path, size, created_ms, updated_at, width, height)
+    VALUES (@fingerprint, @last_known_path, @size, @created_ms, @updated_at, @width, @height)
     ON CONFLICT(fingerprint) DO UPDATE SET
       last_known_path=excluded.last_known_path,
       size=excluded.size,
       created_ms=excluded.created_ms,
-      updated_at=excluded.updated_at;
+      updated_at=excluded.updated_at,
+      width=COALESCE(excluded.width, files.width),
+      height=COALESCE(excluded.height, files.height);
   `);
 
   const tagInsert = db.prepare(`
@@ -85,6 +111,14 @@ function createMetadataStore(db) {
     GROUP BY t.id
     ORDER BY t.name COLLATE NOCASE;
   `);
+
+  const fileSelect = db.prepare(
+    'SELECT width, height FROM files WHERE fingerprint = ?;'
+  );
+
+  const setDimensionsStmt = db.prepare(
+    'UPDATE files SET width = ?, height = ? WHERE fingerprint = ?;'
+  );
 
   const tagsForFingerprint = db.prepare(`
     SELECT t.name AS name
@@ -103,6 +137,12 @@ function createMetadataStore(db) {
   const removeTagLink = db.prepare(`
     DELETE FROM file_tags WHERE fingerprint = ? AND tag_id = ?;
   `);
+
+  const countTagUsage = db.prepare(
+    "SELECT COUNT(*) AS count FROM file_tags WHERE tag_id = ?;"
+  );
+
+  const deleteTagById = db.prepare("DELETE FROM tags WHERE id = ?;");
 
   const getRating = db.prepare(`
     SELECT value FROM ratings WHERE fingerprint = ?;
@@ -137,7 +177,19 @@ function createMetadataStore(db) {
     return result;
   }
 
-  function writeFileRecord(fingerprint, filePath, stats, createdMsOverride) {
+  function normalizeDimension(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return null;
+    return Math.round(num);
+  }
+
+  function writeFileRecord(
+    fingerprint,
+    filePath,
+    stats,
+    createdMsOverride,
+    dimensions
+  ) {
     const now = Date.now();
     const createdMs = createdMsOverride ?? Math.round(
       stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs || 0
@@ -148,6 +200,8 @@ function createMetadataStore(db) {
       size: Number(stats.size || 0),
       created_ms: createdMs,
       updated_at: now,
+      width: normalizeDimension(dimensions?.width),
+      height: normalizeDimension(dimensions?.height),
     });
   }
 
@@ -162,17 +216,27 @@ function createMetadataStore(db) {
   function mapMetadataRow(fingerprint) {
     const tags = tagsForFingerprint.all(fingerprint).map((row) => row.name);
     const ratingRow = getRating.get(fingerprint);
+    const dimRow = fileSelect.get(fingerprint);
+    let dimensions = null;
+    if (dimRow) {
+      const width = Number(dimRow.width) || 0;
+      const height = Number(dimRow.height) || 0;
+      if (width > 0 && height > 0) {
+        dimensions = { width, height, aspectRatio: width / height };
+      }
+    }
     return {
       tags,
       rating: ratingRow ? ratingRow.value : null,
+      dimensions,
     };
   }
 
-  async function indexFile({ filePath, stats }) {
+  async function indexFile({ filePath, stats, dimensions }) {
     if (!filePath) return null;
     const safeStats = stats || (await fs.promises.stat(filePath));
     const { fingerprint, createdMs } = await ensureFingerprint(filePath, safeStats);
-    writeFileRecord(fingerprint, filePath, safeStats, createdMs);
+    writeFileRecord(fingerprint, filePath, safeStats, createdMs, dimensions);
     return {
       fingerprint,
       ...mapMetadataRow(fingerprint),
@@ -186,6 +250,26 @@ function createMetadataStore(db) {
       result[fp] = mapMetadataRow(fp);
     });
     return result;
+  }
+
+  function getDimensions(fingerprint) {
+    if (!fingerprint) return null;
+    const row = fileSelect.get(fingerprint);
+    if (!row) return null;
+    const width = Number(row.width) || 0;
+    const height = Number(row.height) || 0;
+    if (width > 0 && height > 0) {
+      return { width, height, aspectRatio: width / height };
+    }
+    return null;
+  }
+
+  function setDimensions(fingerprint, dimensions) {
+    if (!fingerprint) return;
+    const width = normalizeDimension(dimensions?.width);
+    const height = normalizeDimension(dimensions?.height);
+    if (!width || !height) return;
+    setDimensionsStmt.run(width, height, fingerprint);
   }
 
   function listTags() {
@@ -223,6 +307,12 @@ function createMetadataStore(db) {
         removeTagLink.run(fingerprint, id);
         removed[fingerprint] = mapMetadataRow(fingerprint);
       });
+
+      const usageRow = countTagUsage.get(id);
+      const usageCount = Number(usageRow?.count || 0);
+      if (usageCount === 0) {
+        deleteTagById.run(id);
+      }
     });
     txn();
     return removed;
@@ -254,6 +344,8 @@ function createMetadataStore(db) {
     assignTags,
     removeTag,
     setRating,
+    getDimensions,
+    setDimensions,
   };
 }
 

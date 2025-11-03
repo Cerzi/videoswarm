@@ -21,11 +21,14 @@ export default function useVideoCollection({
   loadedVideos = new Set(),
   loadingVideos = new Set(),
   actualPlaying = new Set(),
-  maxConcurrentPlaying = 250,
   scrollRef = null,
   progressive = {},
   hadLongTaskRecently = false,
   isNear,
+  activationTarget = null,
+  activationWindowIds = [],
+  suspendEvictions = false,
+  renderLimit = null,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -34,6 +37,7 @@ export default function useVideoCollection({
     pauseOnScroll = PROGRESSIVE_DEFAULTS.pauseOnScroll,
     longTaskAdaptation = PROGRESSIVE_DEFAULTS.longTaskAdaptation,
     forceInterval,
+    maxVisible,
   } = progressive || {};
 
   // Normalize to safe numbers
@@ -51,7 +55,7 @@ export default function useVideoCollection({
   );
 
   // Layer 1: Progressive rendering (React performance)
-  const progressiveVideos = useProgressiveList(
+  const progressiveState = useProgressiveList(
     videos,
     safeInitial,
     safeBatchSize,
@@ -62,37 +66,105 @@ export default function useVideoCollection({
       longTaskAdaptation,
       hadLongTaskRecently,
       forceInterval: !!forceInterval,
+      maxVisible,
+      materializeAll: true,
     }
   );
+
+  const progressiveVideos = progressiveState.items || videos;
+  const progressiveVisibleCount =
+    typeof progressiveState.visibleCount === "number"
+      ? progressiveState.visibleCount
+      : videos.length;
+  const progressiveTargetCount =
+    typeof progressiveState.targetCount === "number"
+      ? progressiveState.targetCount
+      : videos.length;
+
+  const userLimit =
+    renderLimit != null && Number.isFinite(renderLimit)
+      ? Math.max(0, Math.floor(renderLimit))
+      : null;
+
+  const limitedVideos =
+    userLimit == null
+      ? progressiveVideos
+      : progressiveVideos.slice(0, userLimit);
+
+  const limitedVisibleCount =
+    userLimit == null
+      ? progressiveVisibleCount
+      : Math.min(progressiveVisibleCount, userLimit);
+
+  const limitedTargetCount =
+    userLimit == null
+      ? progressiveTargetCount
+      : Math.min(progressiveTargetCount, Math.max(userLimit, 0));
+
+  const desiredActiveCount = Number.isFinite(activationTarget) && activationTarget > 0
+    ? Math.max(1, Math.floor(activationTarget))
+    : progressiveVisibleCount;
+
+  const cappedDesiredActiveCount =
+    userLimit == null
+      ? desiredActiveCount
+      : Math.min(
+          Math.max(0, desiredActiveCount),
+          Math.max(userLimit, 0)
+        );
+
+  const activationWindowSize = (() => {
+    if (activationWindowIds instanceof Set) return activationWindowIds.size;
+    if (Array.isArray(activationWindowIds)) return activationWindowIds.length;
+    if (activationWindowIds && typeof activationWindowIds[Symbol.iterator] === "function") {
+      let count = 0;
+      for (const _ of activationWindowIds) {
+        count += 1;
+      }
+      return count;
+    }
+    return 0;
+  })();
 
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
     performCleanup,
     limits,
+    memoryStatus,
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
-    progressiveVideos,
+    progressiveVideos: limitedVideos,
+    progressiveVisibleCount: limitedVisibleCount,
+    progressiveTargetCount: limitedTargetCount,
+    desiredActiveCount: cappedDesiredActiveCount,
     visibleVideos,
     loadedVideos,
     loadingVideos,
     playingVideos: actualPlaying,
     hadLongTaskRecently,
     isNear,
-    playingCap: maxConcurrentPlaying,
+    suspendEvictions,
   });
 
   // Layer 3: Play orchestration (Business logic)
+  const playingCap =
+    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
+      ? Math.floor(cappedDesiredActiveCount)
+      : limitedVisibleCount;
   const { playingSet, markHover, reportPlayError, reportStarted } =
     usePlayOrchestrator({
       visibleIds: visibleVideos,
       loadedIds: loadedVideos,
-      maxPlaying: maxConcurrentPlaying,
+      maxPlaying:
+        Number.isFinite(playingCap) && playingCap > 0
+          ? playingCap
+          : limitedVisibleCount,
     });
 
   return {
     // What to render
-    videosToRender: progressiveVideos,
+    videosToRender: limitedVideos,
 
     // Functions for VideoCard
     canLoadVideo,
@@ -109,10 +181,15 @@ export default function useVideoCollection({
     playingVideos: playingSet,
     stats: {
       total: videos.length,
-      rendered: progressiveVideos.length,
+      rendered: limitedVideos.length,
       playing: playingSet.size,
       loaded: loadedVideos.size,
+      progressiveVisible: limitedVisibleCount,
+      activationTarget: cappedDesiredActiveCount,
+      activeWindow: activationWindowSize,
     },
+
+    memoryStatus,
 
     // Debug info (development only)
     debug:

@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  openDonationPage: () => ipcRenderer.invoke("support:open-donation"),
+
   // File manager integration
   showItemInFolder: async (filePath) => {
     return await ipcRenderer.invoke("show-item-in-folder", filePath);
@@ -20,8 +22,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // File system watching
-  startFolderWatch: async (folderPath) => {
-    return await ipcRenderer.invoke("start-folder-watch", folderPath);
+  startFolderWatch: async (folderPath, recursive) => {
+    return await ipcRenderer.invoke(
+      "start-folder-watch",
+      folderPath,
+      recursive
+    );
   },
 
   stopFolderWatch: async () => {
@@ -30,19 +36,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // File system events
   onFileAdded: (callback) => {
-    ipcRenderer.on("file-added", (event, videoFile) => callback(videoFile));
+    const handler = (_event, videoFile) => callback(videoFile);
+    ipcRenderer.on("file-added", handler);
+    return () => ipcRenderer.removeListener("file-added", handler);
   },
 
   onFileRemoved: (callback) => {
-    ipcRenderer.on("file-removed", (event, filePath) => callback(filePath));
+    const handler = (_event, filePath) => callback(filePath);
+    ipcRenderer.on("file-removed", handler);
+    return () => ipcRenderer.removeListener("file-removed", handler);
   },
 
   onFileChanged: (callback) => {
-    ipcRenderer.on("file-changed", (event, videoFile) => callback(videoFile));
+    const handler = (_event, videoFile) => callback(videoFile);
+    ipcRenderer.on("file-changed", handler);
+    return () => ipcRenderer.removeListener("file-changed", handler);
   },
 
   onFileWatchError: (callback) => {
-    ipcRenderer.on("file-watch-error", (event, error) => callback(error));
+    const handler = (_event, error) => callback(error);
+    ipcRenderer.on("file-watch-error", handler);
+    return () => ipcRenderer.removeListener("file-watch-error", handler);
   },
 
   // Get file info
@@ -57,9 +71,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Listen for folder selection from menu
   onFolderSelected: (callback) => {
-    ipcRenderer.on("folder-selected", (event, folderPath) => {
+    const handler = (_event, folderPath) => {
       callback(folderPath);
-    });
+    };
+    ipcRenderer.on("folder-selected", handler);
+    return () => ipcRenderer.removeListener("folder-selected", handler);
+  },
+
+  onOpenAbout: (callback) => {
+    const handler = () => {
+      callback();
+    };
+    ipcRenderer.on("ui:open-about", handler);
+    return () => ipcRenderer.removeListener("ui:open-about", handler);
   },
 
   // Settings management - existing methods
@@ -98,6 +122,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("move-to-trash", filePath);
   },
 
+  confirmMoveToTrash: async (payload) => {
+    const result = await ipcRenderer.invoke("confirm-move-to-trash", payload);
+    if (typeof result === "boolean") return result;
+    if (result && typeof result.confirmed === "boolean") {
+      return result.confirmed;
+    }
+    return !!result;
+  },
+
   copyFile: async (sourcePath, destPath) => {
     return await ipcRenderer.invoke("copy-file", sourcePath, destPath);
   },
@@ -109,6 +142,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // External player integration
   openInExternalPlayer: async (filePath) => {
     return await ipcRenderer.invoke("open-in-external-player", filePath);
+  },
+
+  startFileDragSync: (paths) => {
+    const normalize = (value) => {
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string") return [value];
+      if (value && Array.isArray(value.paths)) return value.paths;
+      return [];
+    };
+    const payloadPaths = normalize(paths).filter(
+      (entry) => typeof entry === "string" && entry.trim().length > 0
+    );
+    if (!payloadPaths.length) {
+      return { ok: false, error: "NO_FILE" };
+    }
+    return ipcRenderer.sendSync("dnd:start-file", { paths: payloadPaths });
+  },
+
+  thumbs: {
+    put: (payload) => ipcRenderer.sendSync("thumb:put", payload),
+    get: (payload) => ipcRenderer.sendSync("thumb:get", payload),
   },
 
   // Clipboard operations

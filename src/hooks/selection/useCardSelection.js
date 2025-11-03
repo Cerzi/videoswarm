@@ -4,8 +4,8 @@ import useMasonryBoxSelection from './useMasonryBoxSelection';
 /**
  * Centralizes all per-card interactions:
  * - Click: single / ctrl-toggle / shift range (bounding box) / double → fullscreen
- * - Right-click: select-if-needed + open context menu
- * - Background right-click: clear selection + open background menu
+ * - Right-click: open context menu without mutating selection
+ * - Background right-click: dismiss custom menu without altering selection
  */
 export default function useCardSelection({
   gridRef,
@@ -13,9 +13,9 @@ export default function useCardSelection({
   getById,
   openFullScreen,
   playingVideos,
-  // from useContextMenu – use the pair that matches your hook API
-  showOnItem,     // (event, id, isAlreadySelected, selectOnly)
-  showOnEmpty,    // (event, clearSelection)
+    // from useContextMenu – use the pair that matches your hook API
+    showOnItem,     // (event, id)
+    showOnEmpty,    // (event)
   // OR if you still expose a single function:
   showContextMenu // (event, video|null)
 }) {
@@ -55,32 +55,27 @@ export default function useCardSelection({
     if (!id) return;
 
     if (showOnItem) {
-      const already = selection.selected.has(id);
-      showOnItem(e, id, already, selection.selectOnly);
+      showOnItem(e, id);
       return;
     }
 
     // fallback for older useContextMenu API
     e.preventDefault();
     e.stopPropagation();
-    if (!selection.selected.has(id)) {
-      if (e.ctrlKey || e.metaKey) selection.toggle(id);
-      else selection.selectOnly(id);
-    }
     showContextMenu?.(e, video);
-  }, [selection, showOnItem, showContextMenu]);
+  }, [showOnItem, showContextMenu]);
 
   // Background context menu – clear selection then show background menu
   const handleBackgroundContextMenu = useCallback((e) => {
     if (showOnEmpty) {
-      showOnEmpty(e, selection.clear);
+      showOnEmpty(e);
       return;
     }
-    e.preventDefault();
+    // Fallback retains legacy behavior of hiding the custom menu without
+    // altering selection state.
     e.stopPropagation();
-    selection.clear();
     showContextMenu?.(e, null);
-  }, [selection, showOnEmpty, showContextMenu]);
+  }, [showOnEmpty, showContextMenu]);
 
   return {
     handleVideoSelect,

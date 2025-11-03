@@ -240,4 +240,35 @@ describe('useChunkedMasonry – core layout & order', () => {
     });
     expect(onOrderChange).toHaveBeenCalledTimes(1);
   });
+
+  test('calls onLayoutComplete after each layout pass', () => {
+    const grid = makeGrid({ width: 630 });
+    ['a', 'b', 'c', 'd'].forEach((id) => grid.appendChild(makeItem(id)));
+    const gridRef = { current: grid };
+    const onLayoutComplete = vi.fn();
+
+    const { result } = renderHook(() =>
+      useChunkedMasonry({
+        gridRef,
+        defaultAspect: 1,
+        onLayoutComplete,
+      })
+    );
+
+    act(() => flushRaf(5));
+    expect(onLayoutComplete).toHaveBeenCalledTimes(1);
+    const payload = onLayoutComplete.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      maxHeight: expect.any(Number),
+      metrics: expect.objectContaining({ columnWidth: expect.any(Number) }),
+    });
+    expect(Array.isArray(payload.columnHeights)).toBe(true);
+
+    act(() => {
+      result.current.onItemsChanged();
+      flushRaf(5);
+    });
+
+    expect(onLayoutComplete).toHaveBeenCalledTimes(2);
+  });
 });

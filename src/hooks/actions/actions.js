@@ -66,7 +66,9 @@ export const actionRegistry = {
         {
           electronAPI,
           notify,
-          confirm = window.confirm,
+          confirm,
+          confirmMoveToTrash,
+          postConfirmRecovery,
           releaseVideoHandlesForAsync,      // inject this
           onItemsRemoved,                   // inject: (movedSet: Set<string>) => void
         }
@@ -74,14 +76,27 @@ export const actionRegistry = {
         const candidates = videos
           .filter(v => v.isElectronFile && v.fullPath)
           .map(v => v.fullPath);
-      
+
         if (candidates.length === 0) {
           notify('Nothing to trash', 'info');
           return;
         }
-      
-        if (!confirm(`Move ${candidates.length} item(s) to Recycle Bin?`)) return;
-      
+
+        const sampleName = videos[0]?.name || '';
+        const confirmResult = confirmMoveToTrash
+          ? await confirmMoveToTrash({ count: candidates.length, sampleName })
+          : (() => {
+              const fn = typeof confirm === 'function' ? confirm : window?.confirm;
+              const message = candidates.length === 1
+                ? (sampleName ? `Move "${sampleName}" to Recycle Bin?` : 'Move this item to Recycle Bin?')
+                : `Move ${candidates.length} item(s) to Recycle Bin?`;
+              const confirmed = typeof fn === 'function' ? fn(message) : true;
+              postConfirmRecovery?.({ cancelled: !confirmed, lastFocusedSelector: null });
+              return { confirmed: !!confirmed, lastFocusedSelector: null };
+            })();
+
+        if (!confirmResult?.confirmed) return;
+
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const isTransient = (msg = '') =>
           /aborted|busy|access is denied|used by another process|locked|eperm|eacces|ebusy/i.test(msg);
@@ -128,7 +143,7 @@ export const actionRegistry = {
         if (moved.size) {
           try { await releaseVideoHandlesForAsync?.(Array.from(moved)); } catch {}
         }
-      
+
         // 6) Notify
         const movedCount = moved.size;
         const failedCount = finalFailed.length;
@@ -141,6 +156,11 @@ export const actionRegistry = {
           notify('Failed to move items to Recycle Bin', 'error');
           console.warn('[trash] bulk failure:', result);
         }
+
+        postConfirmRecovery?.({
+          cancelled: false,
+          lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
+        });
       },
-            
+
 };

@@ -5,6 +5,8 @@
 
 I got tired of manually opening tens or hundreds of ComfyUI video outputs to try and find an old workflow or get a quick overview of the quality of a large batch run. **Video Swarm** was born because I couldn't find any existing software that does this: tile a large number of videos, all playing at once, with seamless scrolling through subdirectories and quick file operations. I figured I'm not the only one who would find this useful, so I've open-sourced it.
 
+If VideoSwarm has been helpful and you'd like to chip in, you can support development at [ko-fi.com/videoswarm](https://ko-fi.com/videoswarm). ❤️
+
 ![Video Swarm Demo](docs/images/demo.gif)
 
 https://github.com/user-attachments/assets/9fed71dd-fe4e-4bdf-8326-ab775979e2d5
@@ -65,6 +67,13 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Rich metadata: size, modification time, creation time
 - Native file operations (show, open, delete, copy) - show in folder is particularly useful for ComfyUI users for quickly accessing the video in order to re-use workflows
 - Fingerprint-based file tracking keeps tags and ratings attached even if files move
+
+### Live Drag Thumbnails
+- Captures the current frame of any visible, playing clip and renders a 96×96 PNG with rounded corners and overlay in the renderer.
+- Scheduler respects a single concurrent capture, a global rate limit (≤10 captures/sec), and a per-card cooldown to avoid GPU churn.
+- Renderer maintains an in-memory LRU cache (500 entries) keyed by file signature and synchronously pushes thumbs to the main process via `thumb:put`.
+- Main process mirrors the thumbnails in a path→nativeImage cache and persists them under `userData/thumbs` (≤5k files, LRU eviction) for instant reuse on restart.
+- File-only drag payloads (`dnd:start-file`) automatically reuse cached thumbs; if none exist, a generic icon is used so drags never stall.
 
 ### Settings
 - Persistent settings stored in Electron’s userData directory (JSON)

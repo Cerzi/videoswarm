@@ -7,6 +7,16 @@ import { useEffect, useRef, useState } from "react";
  * Back-compat signature:
  *   useProgressiveList(items, initial=100, batchSize=50, intervalMs=100, options?)
  *
+ * Returns an object describing the current progressive budget:
+ *   {
+ *     items: Array,            // slice of `items` (or full list if materializeAll)
+ *     visibleCount: number,    // how many items the scheduler considers materialized
+ *     targetCount: number,     // clamp target (maxVisible or list length)
+ *     totalCount: number,      // total items provided
+ *     materializedCount: number, // actual length of `items`
+ *     isComplete: boolean,
+ *   }
+ *
  * Default behavior in real browsers:
  *   - Uses requestIdleCallback (fallback rAF) to grow only when the main thread is idle.
  *   - Pauses growth while the user is actively scrolling.
@@ -43,12 +53,27 @@ export function useProgressiveList(
 
     // Force interval mode (useful for tests/SSR)
     forceInterval = false,
+
+    // Optional viewport-aware clamp.
+    maxVisible: maxVisibleOption = null,
+
+    // When true, return the full list while still tracking the progressive budget.
+    // Useful for de-windowed DOM renders that still want scheduler metrics.
+    materializeAll = false,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
-  const [visible, setVisible] = useState(() => Math.min(initial, safe.length));
+  const resolvedMaxVisible =
+    Number.isFinite(maxVisibleOption) && maxVisibleOption > 0
+      ? Math.max(1, Math.floor(maxVisibleOption))
+      : null;
+
+  const [visible, setVisible] = useState(() =>
+    Math.min(initial, safe.length, resolvedMaxVisible ?? safe.length)
+  );
   const prevLenRef = useRef(safe.length);
   const didInitRef = useRef(false);
+  const maxVisibleRef = useRef(resolvedMaxVisible ?? Infinity);
 
   // ---- Clamp logic: initialize once; clamp on shrink; don't reset on growth ----
   useEffect(() => {
@@ -69,8 +94,24 @@ export function useProgressiveList(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safe.length]);
 
+  useEffect(() => {
+    maxVisibleRef.current = resolvedMaxVisible ?? Infinity;
+    if (resolvedMaxVisible != null || safe.length < prevLenRef.current) {
+      setVisible((v) => {
+        const cap = Math.min(safe.length, maxVisibleRef.current);
+        return v > cap ? cap : v;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedMaxVisible, safe.length]);
+
+  const maxCapForRender =
+    resolvedMaxVisible != null
+      ? Math.min(safe.length, resolvedMaxVisible)
+      : safe.length;
+
   // Short-circuit when fully visible
-  const allVisible = visible >= safe.length;
+  const allVisible = visible >= maxCapForRender;
 
   // ---------------------- Scheduling strategies ----------------------
 
@@ -194,7 +235,11 @@ export function useProgressiveList(
         if (cancelled) return;
         if (!allVisible) {
           const add = computeNextBatch();
-          setVisible((v) => (v < safe.length ? Math.min(v + add, safe.length) : v));
+          setVisible((v) => {
+            const cap = Math.min(safe.length, maxVisibleRef.current);
+            if (v >= cap) return v;
+            return Math.min(v + add, cap);
+          });
         }
         // Chain next idle tick
         rafId = requestAnimationFrame(schedule);
@@ -233,13 +278,26 @@ export function useProgressiveList(
     if (allVisible) return;
 
     const timer = setInterval(() => {
-      setVisible((v) =>
-        v < safe.length ? Math.min(v + batchSize, safe.length) : v
-      );
+      setVisible((v) => {
+        const cap = Math.min(safe.length, maxVisibleRef.current);
+        if (v >= cap) return v;
+        const next = v + batchSize;
+        return next >= cap ? cap : next;
+      });
     }, intervalMs);
 
     return () => clearInterval(timer);
   }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
 
-  return safe.slice(0, visible);
+  const sliceCount = Math.min(visible, maxCapForRender);
+  const materializedItems = materializeAll ? safe : safe.slice(0, sliceCount);
+
+  return {
+    items: materializedItems,
+    visibleCount: sliceCount,
+    targetCount: maxCapForRender,
+    totalCount: safe.length,
+    materializedCount: materializeAll ? safe.length : materializedItems.length,
+    isComplete: sliceCount >= maxCapForRender,
+  };
 }

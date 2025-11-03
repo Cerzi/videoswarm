@@ -14,186 +14,139 @@ import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
+import AboutDialog from "./components/AboutDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
-import useChunkedMasonry from "./hooks/useChunkedMasonry";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
-import useIntersectionObserverRegistry from "./hooks/ui-perf/useIntersectionObserverRegistry";
 import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
+import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
+import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
+import { shouldAutoOpenMetadataPanel } from "./utils/metadataPanelState";
 
-import {
-  SortKey,
-  buildComparator,
-  groupAndSort,
-  buildRandomOrderMap,
-} from "./sorting/sorting.js";
+import { SortKey } from "./sorting/sorting.js";
 import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 
-import {
-  calculateSafeZoom,
-  zoomClassForLevel,
-  clampZoomIndex,
-} from "./zoom/utils.js";
+import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
-import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX, ZOOM_TILE_WIDTHS } from "./zoom/config";
+import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
+import {
+  RENDER_LIMIT_STEPS,
+  resolveRenderLimit,
+  clampRenderLimitStep,
+} from "./utils/renderLimit";
 
-import LoadingProgress from "./components/LoadingProgress";
+import feature from "./config/featureFlags";
 import "./App.css";
 
-// Helper
-const path = {
-  dirname: (filePath) => {
-    if (!filePath) return "";
-    const lastSlash = Math.max(
-      filePath.lastIndexOf("/"),
-      filePath.lastIndexOf("\\")
-    );
-    return lastSlash === -1 ? "" : filePath.substring(0, lastSlash);
-  },
-};
+import LoadingOverlay from "./app/components/LoadingOverlay";
+import MemoryAlert from "./app/components/MemoryAlert";
+import { useFilterState } from "./app/hooks/useFilterState";
+import { useMasonryLayout } from "./app/hooks/useMasonryLayout";
+import { useMetadataActions } from "./app/hooks/useMetadataActions";
+import { useZoomControls } from "./app/hooks/useZoomControls";
+import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 
-const __DEV__ = import.meta.env.MODE !== "production";
+const clampNumber = (value, min, max) =>
+  Math.max(min, Math.min(max, value));
 
-const normalizeVideoFromMain = (video) => {
-  if (!video || typeof video !== "object") return video;
-  const fingerprint =
-    typeof video.fingerprint === "string" && video.fingerprint.length > 0
-      ? video.fingerprint
-      : null;
-  const rating =
-    typeof video.rating === "number" && Number.isFinite(video.rating)
-      ? Math.max(0, Math.min(5, Math.round(video.rating)))
-      : null;
-  const tags = Array.isArray(video.tags)
-    ? Array.from(
-        new Set(
-          video.tags
-            .map((tag) => (tag ?? "").toString().trim())
-            .filter(Boolean)
-        )
-      )
-    : [];
+const MIN_METADATA_DOCK_HEIGHT = 200;
+const MAX_METADATA_DOCK_HEIGHT = 520;
+const DEFAULT_METADATA_DOCK_HEIGHT = 280;
 
-  return {
-    ...video,
-    fingerprint,
-    rating,
-    tags,
-  };
-};
-
-const LoadingOverlay = ({ show, stage, progress }) => {
-  if (!show) return null;
-  return (
-    <LoadingProgress
-      progress={{
-        current: typeof progress === "number" ? progress : 0,
-        total: 100,
-        stage: stage || "",
-      }}
-    />
+function computeActivationWindow(orderedIds, metrics = {}, explicitTarget) {
+  const list = Array.isArray(orderedIds) ? orderedIds : [];
+  const total = list.length;
+  const columnCount = Math.max(
+    1,
+    Math.floor(Number(metrics.columnCount) || 1)
   );
-};
-
-const MemoryAlert = ({ memStatus }) => {
-  if (!memStatus || !memStatus.isNearLimit) return null;
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: "80px",
-        right: "20px",
-        background: "rgba(255, 107, 107, 0.95)",
-        color: "white",
-        padding: "1rem",
-        borderRadius: "8px",
-        zIndex: 1000,
-        maxWidth: "300px",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-      }}
-    >
-      <div style={{ fontWeight: "bold", marginBottom: "0.5rem" }}>
-        🚨 Memory Warning
-      </div>
-      <div style={{ fontSize: "0.9rem" }}>
-        Memory usage: {memStatus.currentMemoryMB}MB ({memStatus.memoryPressure}
-        %)
-        <br />
-        Reducing video quality to prevent crashes.
-      </div>
-    </div>
+  const approxHeight = Math.max(1, Number(metrics.approxTileHeight) || 1);
+  const scrollTop = Math.max(0, Number(metrics.scrollTop) || 0);
+  const viewportRows = Math.max(
+    1,
+    Math.floor(Number(metrics.viewportRows) || 1)
   );
-};
-/** --- end split-outs --- */
 
-const createDefaultFilters = () => ({
-  includeTags: [],
-  excludeTags: [],
-  minRating: null,
-  exactRating: null,
-});
+  if (total === 0) {
+    const safeTarget = Number.isFinite(explicitTarget)
+      ? Math.max(0, Math.floor(explicitTarget))
+      : 0;
+    return {
+      ids: [],
+      idSet: new Set(),
+      startIndex: 0,
+      endIndex: 0,
+      target: safeTarget,
+    };
+  }
 
-const normalizeTagList = (tags) =>
-  Array.from(
-    new Set(
-      (Array.isArray(tags) ? tags : [])
-        .map((tag) => (tag ?? "").toString().trim())
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
+  const fallbackTarget = columnCount * viewportRows * 2;
+  const desiredTarget = Number.isFinite(explicitTarget) && explicitTarget > 0
+    ? Math.floor(explicitTarget)
+    : fallbackTarget;
+  const safeTarget = clampNumber(desiredTarget, 1, Math.min(600, total));
 
-const clampRatingValue = (value, min, max) => {
-  if (value === null || value === undefined) return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return null;
-  const rounded = Math.round(num);
-  if (Number.isNaN(rounded)) return null;
-  return Math.min(max, Math.max(min, rounded));
-};
+  const topRow = Math.max(0, Math.floor(scrollTop / approxHeight));
+  const bufferRows = viewportRows;
+  let startRow = Math.max(0, topRow - bufferRows);
+  const rowsNeeded = Math.max(
+    Math.ceil(safeTarget / columnCount),
+    viewportRows * 2
+  );
+  let endRow = startRow + rowsNeeded;
 
-const sanitizeMinRating = (value) => clampRatingValue(value, 1, 5);
-const sanitizeExactRating = (value) => clampRatingValue(value, 0, 5);
+  let startIndex = Math.min(total, startRow * columnCount);
+  let endIndex = Math.min(total, endRow * columnCount);
 
-const formatStars = (value) => {
-  const safe = clampRatingValue(value, 0, 5);
-  const filled = Math.max(0, safe ?? 0);
-  const empty = Math.max(0, 5 - filled);
-  return `${"★".repeat(filled)}${"☆".repeat(empty)}`;
-};
+  if (endIndex - startIndex < safeTarget) {
+    const deficit = safeTarget - (endIndex - startIndex);
+    endIndex = Math.min(total, endIndex + deficit);
+  }
 
-const formatRatingLabel = (value, mode) => {
-  if (value === null || value === undefined) return null;
-  const stars = formatStars(value);
-  return mode === "min" ? `≥ ${stars}` : `= ${stars}`;
-};
+  if (endIndex - startIndex < safeTarget) {
+    const deficit = safeTarget - (endIndex - startIndex);
+    startIndex = Math.max(0, startIndex - deficit);
+  }
+
+  if (endIndex - startIndex > safeTarget) {
+    endIndex = Math.min(total, startIndex + safeTarget);
+  }
+
+  if (endIndex - startIndex > safeTarget) {
+    startIndex = Math.max(0, endIndex - safeTarget);
+  }
+
+  if (startIndex >= endIndex) {
+    startIndex = Math.max(0, Math.min(total, startIndex));
+    endIndex = Math.min(total, Math.max(startIndex, startIndex + safeTarget));
+  }
+
+  const ids = list.slice(startIndex, endIndex);
+  const idSet = new Set(ids);
+  return { ids, idSet, startIndex, endIndex, target: safeTarget };
+}
 
 function App() {
-  const [videos, setVideos] = useState([]);
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
   const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
-  const [maxConcurrentPlaying, setMaxConcurrentPlaying] = useState(250);
+  const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
   const [sortDir, setSortDir] = useState("asc");
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
-
-  // Loading state
-  const [isLoadingFolder, setIsLoadingFolder] = useState(false);
-  const [loadingStage, setLoadingStage] = useState("");
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [isAboutOpen, setAboutOpen] = useState(false);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -205,142 +158,162 @@ function App() {
 
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
+  const [metadataPanelDismissed, setMetadataPanelDismissed] = useState(false);
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
-  const [filters, setFilters] = useState(() => createDefaultFilters());
-  const [isFiltersOpen, setFiltersOpen] = useState(false);
-
+  const [metadataDockHeight, setMetadataDockHeight] = useState(
+    DEFAULT_METADATA_DOCK_HEIGHT
+  );
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const contentRegionRef = useRef(null);
+  const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
+  const refreshTagListRef = useRef(() => {});
+  const applyZoomFromSettingsRef = useRef((value) => {
+    setZoomLevel(clampZoomIndex(value));
+  });
+  const invokeRefreshTagList = useCallback(() => {
+    const fn = refreshTagListRef.current;
+    if (typeof fn === "function") {
+      fn();
+    }
+  }, []);
+  // ----- Recent Folders hook -----
+  const {
+    items: recentFolders,
+    add: addRecentFolder,
+    remove: removeRecentFolder,
+    clear: clearRecentFolders,
+  } = useRecentFolders();
 
-  const ioRegistry = useIntersectionObserverRegistry(scrollContainerRef, {
-    rootMargin: "1600px 0px",
-    threshold: [0, 0.15],
-    nearPx: 900,
+  const {
+    videos,
+    setVideos,
+    isLoadingFolder,
+    loadingStage,
+    loadingProgress,
+    settingsLoaded,
+    handleElectronFolderSelection,
+    handleFolderSelect,
+    handleWebFileSelection,
+  } = useElectronFolderLifecycle({
+    selection,
+    recursiveMode,
+    setRecursiveMode,
+    setShowFilenames,
+    renderLimitStep,
+    setRenderLimitStep,
+    setSortKey,
+    setSortDir,
+    groupByFolders,
+    setGroupByFolders,
+    setRandomSeed,
+    setZoomLevelFromSettings: (value) =>
+      applyZoomFromSettingsRef.current?.(value),
+    setVisibleVideos,
+    setLoadedVideos,
+    setLoadingVideos,
+    setActualPlaying,
+    refreshTagList: invokeRefreshTagList,
+    addRecentFolder,
   });
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    const update = () => {
-      const h = el?.clientHeight || window.innerHeight;
-      ioRegistry.setNearPx(Math.max(700, Math.floor(h * 1.1)));
-    };
-    update();
+  const {
+    filters,
+    setFiltersOpen,
+    isFiltersOpen,
+    updateFilters,
+    resetFilters,
+    filteredVideos,
+    filteredVideoIds,
+    filtersActiveCount,
+    ratingSummary,
+    handleRemoveIncludeFilter,
+    handleRemoveExcludeFilter,
+  } = useFilterState({
+    videos,
+    filtersButtonRef,
+    filtersPopoverRef,
+  });
 
-    const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    if (ro && el) ro.observe(el);
-    window.addEventListener("resize", update);
+  const {
+    orderedVideos,
+    orderedIds,
+    orderForRange,
+    ioRegistry,
+    layoutEpoch,
+    scheduleLayout,
+    updateAspectRatio,
+    onItemsChanged,
+    setZoomClass,
+    progressiveMaxVisibleNumber,
+    activationTarget: activationTargetCount,
+    viewportMetrics,
+    withLayoutHold,
+    isLayoutTransitioning,
+  } = useMasonryLayout({
+    videos,
+    filteredVideos,
+    sortKey,
+    sortDir,
+    groupByFolders,
+    randomSeed,
+    zoomLevel,
+    scrollContainerRef,
+    gridRef,
+  });
 
-    return () => {
-      if (ro && el) ro.unobserve(el);
-      ro?.disconnect?.();
-      window.removeEventListener("resize", update);
-    };
-  }, [scrollContainerRef, ioRegistry]);
-
-  const { hadLongTaskRecently } = useLongTaskFlag();
-
-  const filtersActiveCount = useMemo(() => {
-    const includeCount = filters.includeTags?.length ?? 0;
-    const excludeCount = filters.excludeTags?.length ?? 0;
-    const ratingCount =
-      filters.exactRating !== null && filters.exactRating !== undefined
-        ? 1
-        : filters.minRating !== null && filters.minRating !== undefined
-        ? 1
-        : 0;
-    return includeCount + excludeCount + ratingCount;
-  }, [filters]);
-
-  const updateFilters = useCallback((updater) => {
-    setFilters((prev) => {
-      const resolve = (value, fallback) =>
-        value === undefined ? fallback : value;
-      const draft =
-        typeof updater === "function"
-          ? updater(prev) ?? prev
-          : { ...prev, ...updater };
-
-      const includeTagsRaw = resolve(draft?.includeTags, prev.includeTags);
-      const excludeTagsRaw = resolve(draft?.excludeTags, prev.excludeTags);
-      const minRatingRaw = resolve(draft?.minRating, prev.minRating);
-      const exactRatingRaw = resolve(draft?.exactRating, prev.exactRating);
-
-      return {
-        includeTags: normalizeTagList(includeTagsRaw),
-        excludeTags: normalizeTagList(excludeTagsRaw),
-        minRating: sanitizeMinRating(minRatingRaw),
-        exactRating: sanitizeExactRating(exactRatingRaw),
-      };
-    });
-  }, []);
-
-  const resetFilters = useCallback(() => {
-    setFilters(createDefaultFilters());
-  }, []);
-
-  const filteredVideos = useMemo(() => {
-    const includeTags = filters.includeTags ?? [];
-    const excludeTags = filters.excludeTags ?? [];
-    const minRating = sanitizeMinRating(filters.minRating);
-    const exactRating = sanitizeExactRating(filters.exactRating);
-
-    const includeSet = includeTags.length
-      ? new Set(includeTags.map((tag) => tag.toLowerCase()))
-      : null;
-    const excludeSet = excludeTags.length
-      ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
-      : null;
-
-    if (!includeSet && !excludeSet && minRating === null && exactRating === null) {
-      return videos;
-    }
-
-    return videos.filter((video) => {
-      const tagList = Array.isArray(video.tags)
-        ? video.tags
-            .map((tag) => (tag ?? "").toString().trim().toLowerCase())
-            .filter(Boolean)
-        : [];
-
-      if (includeSet) {
-        for (const tag of includeSet) {
-          if (!tagList.includes(tag)) {
-            return false;
-          }
-        }
-      }
-
-      if (excludeSet) {
-        for (const tag of excludeSet) {
-          if (tagList.includes(tag)) {
-            return false;
-          }
-        }
-      }
-
-      const ratingValue = Number.isFinite(video.rating)
-        ? Math.round(video.rating)
+  const totalVideoCount = videos.length;
+  const renderLimitValue = useMemo(
+    () => resolveRenderLimit(renderLimitStep, totalVideoCount),
+    [renderLimitStep, totalVideoCount]
+  );
+  const renderLimitLabel = useMemo(
+    () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
+    [renderLimitValue]
+  );
+  const effectiveProgressiveCap = useMemo(() => {
+    const layoutLimit =
+      Number.isFinite(progressiveMaxVisibleNumber) &&
+      progressiveMaxVisibleNumber > 0
+        ? Math.floor(progressiveMaxVisibleNumber)
+        : null;
+    if (renderLimitValue === 0) return 0;
+    const userLimit =
+      renderLimitValue !== null &&
+      Number.isFinite(renderLimitValue) &&
+      renderLimitValue > 0
+        ? Math.floor(renderLimitValue)
         : null;
 
-      if (exactRating !== null) {
-        return (ratingValue ?? null) === exactRating;
-      }
+    if (layoutLimit == null && userLimit == null) return undefined;
+    if (layoutLimit == null) return userLimit ?? undefined;
+    if (userLimit == null) return layoutLimit;
+    return Math.min(layoutLimit, userLimit);
+  }, [progressiveMaxVisibleNumber, renderLimitValue]);
 
-      if (minRating !== null) {
-        return (ratingValue ?? 0) >= minRating;
-      }
-
-      return true;
-    });
-  }, [videos, filters]);
-
-  const filteredVideoIds = useMemo(
-    () => new Set(filteredVideos.map((video) => video.id)),
-    [filteredVideos]
+  const activationWindow = useMemo(
+    () =>
+      computeActivationWindow(
+        orderedIds,
+        viewportMetrics,
+        activationTargetCount
+      ),
+    [orderedIds, viewportMetrics, activationTargetCount]
   );
+
+  const activationWindowRef = useRef(activationWindow.idSet);
+  useEffect(() => {
+    activationWindowRef.current = activationWindow.idSet;
+  }, [activationWindow.idSet]);
+
+  const isWithinActivation = useCallback(
+    (id) => activationWindowRef.current.has(id),
+    []
+  );
+
+  const { hadLongTaskRecently } = useLongTaskFlag();
 
   useEffect(() => {
     if (!selection.size) return;
@@ -358,146 +331,256 @@ function App() {
     });
   }, [filteredVideoIds, selection.size, selectionSetSelected]);
 
-  useEffect(() => {
-    if (!isFiltersOpen) return;
 
-    const handlePointerDown = (event) => {
-      const anchor = filtersButtonRef.current;
-      const panel = filtersPopoverRef.current;
-      if (panel?.contains(event.target) || anchor?.contains(event.target)) {
+  const anchorDefaults = useMemo(
+    () =>
+      feature.stableViewFixes
+        ? { settleFrames: 2, stabilizeFrames: 2, maxWaitMs: 700 }
+        : { settleFrames: 1, stabilizeFrames: 1, maxWaitMs: 400 },
+    []
+  );
+
+  const sidebarAnchorOptions = useMemo(
+    () => ({
+      capture: "fresh",
+      settleFrames: anchorDefaults.settleFrames,
+      stabilizeFrames: anchorDefaults.stabilizeFrames,
+      maxWaitMs: anchorDefaults.maxWaitMs,
+    }),
+    [
+      anchorDefaults.maxWaitMs,
+      anchorDefaults.settleFrames,
+      anchorDefaults.stabilizeFrames,
+    ]
+  );
+
+  const zoomAnchorOptions = useMemo(
+    () =>
+      feature.stableViewFixes
+        ? { capture: "fresh", settleFrames: 1, stabilizeFrames: 2, maxWaitMs: 600 }
+        : { capture: "fresh", settleFrames: 1, stabilizeFrames: 1, maxWaitMs: 400 },
+    []
+  );
+
+  const { runWithStableAnchor, focusCurrentAnchor } = useStableViewAnchoring({
+    enabled: feature.stableViewAnchoring,
+    scrollRef: scrollContainerRef,
+    gridRef,
+    observeRef: contentRegionRef,
+    selection,
+    orderedIds: orderForRange,
+    anchorMode: "last",
+    settleFrames: anchorDefaults.settleFrames,
+    stabilizeFrames: anchorDefaults.stabilizeFrames,
+    maxWaitMs: anchorDefaults.maxWaitMs,
+  });
+
+  const {
+    handleZoomChangeSafe,
+    getMinimumZoomLevel,
+    applyZoomFromSettings,
+  } = useZoomControls({
+    zoomLevel,
+    setZoomLevel,
+    orderedVideoCount: orderedVideos.length,
+    recursiveMode,
+    renderLimitStep,
+    showFilenames,
+    setZoomClass,
+    scheduleLayout,
+    runWithStableAnchor,
+    withLayoutHold,
+    zoomAnchorOptions,
+  });
+
+  useEffect(() => {
+    applyZoomFromSettingsRef.current =
+      typeof applyZoomFromSettings === "function"
+        ? applyZoomFromSettings
+        : (value) => setZoomLevel(clampZoomIndex(value));
+  }, [applyZoomFromSettings]);
+
+  const waitForTransitionEnd = useCallback(
+    (element, properties = ["width"], timeoutMs = anchorDefaults.maxWaitMs) => {
+      if (!feature.stableViewFixes) return Promise.resolve();
+      if (!element || typeof window === "undefined") return Promise.resolve();
+
+      let computed;
+      try {
+        computed = window.getComputedStyle(element);
+      } catch (error) {
+        console.debug("[stable-anchor] Failed to read computed style", error);
+        return Promise.resolve();
+      }
+
+      const parseTime = (value) => {
+        if (!value) return 0;
+        const trimmed = String(value).trim();
+        if (!trimmed) return 0;
+        if (trimmed.endsWith("ms")) return parseFloat(trimmed);
+        if (trimmed.endsWith("s")) return parseFloat(trimmed) * 1000;
+        const parsed = parseFloat(trimmed);
+        return Number.isFinite(parsed) ? parsed * 1000 : 0;
+      };
+
+      const durations = (computed?.transitionDuration || "")
+        .split(",")
+        .map(parseTime);
+      const delays = (computed?.transitionDelay || "")
+        .split(",")
+        .map(parseTime);
+      const hasDuration = durations.some((duration, index) => {
+        const delay = delays[index] ?? delays[delays.length - 1] ?? 0;
+        return duration + delay > 0;
+      });
+      if (!hasDuration) {
+        return Promise.resolve();
+      }
+
+      const propertySet = Array.isArray(properties) && properties.length > 0
+        ? new Set(properties.filter(Boolean))
+        : null;
+
+      return new Promise((resolve) => {
+        if (!element) {
+          resolve();
+          return;
+        }
+
+        let resolved = false;
+        let timer = null;
+
+        function cleanup() {
+          if (!element) return;
+          element.removeEventListener("transitionend", onTransitionDone);
+          element.removeEventListener("transitioncancel", onTransitionDone);
+          if (timer != null) {
+            window.clearTimeout(timer);
+          }
+        }
+
+        function finalize() {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          resolve();
+        }
+
+        function onTransitionDone(event) {
+          if (propertySet && propertySet.size && !propertySet.has(event.propertyName)) {
+            return;
+          }
+          if (propertySet && propertySet.size) {
+            propertySet.delete(event.propertyName);
+            if (propertySet.size > 0) {
+              return;
+            }
+          }
+          finalize();
+        }
+
+        element.addEventListener("transitionend", onTransitionDone);
+        element.addEventListener("transitioncancel", onTransitionDone);
+        timer = window.setTimeout(finalize, timeoutMs ?? anchorDefaults.maxWaitMs);
+      });
+    },
+    [anchorDefaults.maxWaitMs]
+  );
+
+  const runSidebarTransition = useCallback(
+    (triggerType, applyState) =>
+      withLayoutHold(() =>
+        runWithStableAnchor(
+          triggerType,
+          () => {
+            const promise = waitForTransitionEnd(
+              metadataPanelRef.current,
+              ["transform"],
+              anchorDefaults.maxWaitMs
+            );
+            if (typeof applyState === "function") {
+              applyState();
+            }
+            scheduleLayout?.();
+            return promise;
+          },
+          sidebarAnchorOptions
+        )
+      ),
+    [
+      anchorDefaults.maxWaitMs,
+      metadataPanelRef,
+      runWithStableAnchor,
+      scheduleLayout,
+      sidebarAnchorOptions,
+      waitForTransitionEnd,
+      withLayoutHold,
+    ]
+  );
+
+  const focusSelection = useCallback(() => {
+    const selectedSet = selection?.selected;
+    if (!(selectedSet instanceof Set) || selectedSet.size === 0) {
+      return;
+    }
+
+    if (typeof focusCurrentAnchor === "function") {
+      const handled = focusCurrentAnchor({ align: "center" });
+      if (handled) {
         return;
       }
-      setFiltersOpen(false);
-    };
+    }
 
-    const handleKeydown = (event) => {
-      if (event.key === "Escape") {
-        setFiltersOpen(false);
+    const scrollEl = scrollContainerRef?.current;
+    const gridEl = gridRef?.current;
+    if (!scrollEl || !gridEl) return;
+
+    let fallbackId = null;
+    if (selection?.anchorId && selectedSet.has(selection.anchorId)) {
+      fallbackId = selection.anchorId;
+    } else {
+      const iterator = selectedSet.values();
+      const next = iterator.next();
+      fallbackId = next?.value ?? null;
+    }
+
+    if (!fallbackId) return;
+
+    const nodes = gridEl.querySelectorAll("[data-video-id]");
+    let target = null;
+    for (const node of nodes) {
+      if (node?.dataset?.videoId === String(fallbackId)) {
+        target = node;
+        break;
       }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("touchstart", handlePointerDown);
-    window.addEventListener("keydown", handleKeydown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("touchstart", handlePointerDown);
-      window.removeEventListener("keydown", handleKeydown);
-    };
-  }, [isFiltersOpen]);
-
-  const handleRemoveIncludeFilter = useCallback(
-    (tag) => {
-      if (!tag) return;
-      updateFilters((prev) => ({
-        ...prev,
-        includeTags: (prev.includeTags ?? []).filter((entry) => entry !== tag),
-      }));
-    },
-    [updateFilters]
-  );
-
-  const handleRemoveExcludeFilter = useCallback(
-    (tag) => {
-      if (!tag) return;
-      updateFilters((prev) => ({
-        ...prev,
-        excludeTags: (prev.excludeTags ?? []).filter((entry) => entry !== tag),
-      }));
-    },
-    [updateFilters]
-  );
-
-  const clearMinRatingFilter = useCallback(() => {
-    updateFilters((prev) => ({ ...prev, minRating: null }));
-  }, [updateFilters]);
-
-  const clearExactRatingFilter = useCallback(() => {
-    updateFilters((prev) => ({ ...prev, exactRating: null }));
-  }, [updateFilters]);
-
-  const ratingSummary = useMemo(() => {
-    if (filters.exactRating !== null && filters.exactRating !== undefined) {
-      const label = formatRatingLabel(filters.exactRating, "exact");
-      return label
-        ? {
-            key: "exact",
-            label,
-            onClear: clearExactRatingFilter,
-          }
-        : null;
     }
 
-    if (filters.minRating !== null && filters.minRating !== undefined) {
-      const label = formatRatingLabel(filters.minRating, "min");
-      return label
-        ? {
-            key: "min",
-            label,
-            onClear: clearMinRatingFilter,
-          }
+    if (!target) return;
+
+    const viewportRect =
+      typeof scrollEl.getBoundingClientRect === "function"
+        ? scrollEl.getBoundingClientRect()
         : null;
+
+    if (viewportRect) {
+      const rect =
+        typeof target.getBoundingClientRect === "function"
+          ? target.getBoundingClientRect()
+          : null;
+      if (rect) {
+        const delta =
+          rect.top - viewportRect.top - viewportRect.height / 2 + rect.height / 2;
+        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+          scrollEl.scrollTop += delta;
+        }
+        return;
+      }
     }
 
-    return null;
-  }, [filters.exactRating, filters.minRating, clearExactRatingFilter, clearMinRatingFilter]);
-
-
-  // ----- Recent Folders hook -----
-  const {
-    items: recentFolders,
-    add: addRecentFolder,
-    remove: removeRecentFolder,
-    clear: clearRecentFolders,
-  } = useRecentFolders();
-
-  // Track visual (masonry) order for Shift-range selection
-  const [visualOrderedIds, setVisualOrderedIds] = useState([]);
-
-  // ----- Masonry hook -----
-  const { updateAspectRatio, onItemsChanged, setZoomClass, scheduleLayout } =
-    useChunkedMasonry({
-      gridRef,
-      zoomClassForLevel, // use shared mapping
-      getTileWidthForLevel: (level) =>
-        ZOOM_TILE_WIDTHS[
-          Math.max(0, Math.min(level, ZOOM_TILE_WIDTHS.length - 1))
-        ],
-
-      onOrderChange: setVisualOrderedIds,
-    });
-
-  // MEMOIZED sorting & grouping
-  const randomOrderMap = useMemo(
-    () =>
-      sortKey === SortKey.RANDOM
-        ? buildRandomOrderMap(
-            videos.map((v) => v.id),
-            randomSeed ?? Date.now()
-          )
-        : null,
-    [sortKey, randomSeed, videos]
-  );
-
-  const comparator = useMemo(
-    () => buildComparator({ sortKey, sortDir, randomOrderMap }),
-    [sortKey, sortDir, randomOrderMap]
-  );
-
-  const orderedVideos = useMemo(
-    () => groupAndSort(filteredVideos, { groupByFolders, comparator }),
-    [filteredVideos, groupByFolders, comparator]
-  );
-
-  // data order ids (fallback)
-  const orderedIds = useMemo(
-    () => orderedVideos.map((v) => v.id),
-    [orderedVideos]
-  );
-
-  // Prefer visual order if we have it
-  const orderForRange = visualOrderedIds.length ? visualOrderedIds : orderedIds;
+    if (typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+    }
+  }, [focusCurrentAnchor, gridRef, scrollContainerRef, selection]);
 
   const getById = useCallback(
     (id) => orderedVideos.find((v) => v.id === id),
@@ -520,11 +603,54 @@ function App() {
     return Array.from(set);
   }, [selectedVideos]);
 
+  const handleNativeDragStart = useCallback(
+    (nativeEvent, video) => {
+      if (!video?.isElectronFile || !video?.fullPath) return;
+      const electronAPI = window?.electronAPI;
+      if (!electronAPI?.startFileDragSync) return;
+
+      const selectedIds = selection?.selected;
+      const isInSelection = selectedIds instanceof Set && selectedIds.has(video.id);
+      const pool = isInSelection ? selectedVideos : [video];
+      const localFiles = pool
+        .filter((entry) => entry?.isElectronFile && entry?.fullPath)
+        .map((entry) => entry.fullPath);
+
+      if (!localFiles.length) return;
+
+      if (nativeEvent?.dataTransfer) {
+        try {
+          nativeEvent.dataTransfer.effectAllowed = "copy";
+          nativeEvent.dataTransfer.dropEffect = "copy";
+        } catch (err) {}
+      }
+
+      electronAPI.startFileDragSync(localFiles);
+    },
+    [selection?.selected, selectedVideos]
+  );
+
   useEffect(() => {
-    if (selection.size > 0) {
-      setMetadataPanelOpen(true);
+    if (
+      !metadataPanelDismissed &&
+      shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)
+    ) {
+      runSidebarTransition("sidebar:auto-open", () => {
+        setMetadataPanelOpen(true);
+        setMetadataPanelDismissed(false);
+        setMetadataFocusToken((token) => token + 1);
+      });
     }
-  }, [selection.size]);
+  }, [
+    isMetadataPanelOpen,
+    metadataPanelDismissed,
+    runSidebarTransition,
+    selection.size,
+    setMetadataFocusToken,
+    setMetadataPanelDismissed,
+    setMetadataPanelOpen,
+    shouldAutoOpenMetadataPanel,
+  ]);
 
   const sortStatus = useMemo(() => {
     const keyLabels = {
@@ -563,140 +689,182 @@ function App() {
     }, 3000);
   }, []);
 
-  const refreshTagList = useCallback(async () => {
-    const api = window.electronAPI?.metadata;
-    if (!api?.listTags) return;
-    try {
-      const res = await api.listTags();
-      if (Array.isArray(res?.tags)) {
-        setAvailableTags(res.tags);
-      }
-    } catch (error) {
-      console.warn("Failed to refresh tags:", error);
-    }
-  }, []);
+  const {
+    applyMetadataPatch,
+    handleAddTags,
+    handleRemoveTag,
+    handleSetRating,
+    handleClearRating,
+    handleApplyExistingTag,
+    refreshTagList,
+  } = useMetadataActions({
+    selectedFingerprints,
+    setVideos,
+    setAvailableTags,
+    notify,
+  });
+
+  refreshTagListRef.current = refreshTagList;
 
   useEffect(() => {
     refreshTagList();
   }, [refreshTagList]);
 
-  const applyMetadataPatch = useCallback((updates) => {
-    if (!updates || typeof updates !== "object") return;
-    setVideos((prev) =>
-      prev.map((video) => {
-        const fingerprint = video?.fingerprint;
-        if (!fingerprint || !updates[fingerprint]) return video;
-        return normalizeVideoFromMain({
-          ...video,
-          ...updates[fingerprint],
-          fingerprint,
-        });
-      })
-    );
-  }, []);
-
-  const handleAddTags = useCallback(
-    async (tagNames) => {
-      const api = window.electronAPI?.metadata;
-      if (!api?.addTags) return;
-      const fingerprints = selectedFingerprints;
-      if (!fingerprints.length) return;
-      const cleanNames = Array.isArray(tagNames)
-        ? tagNames.map((name) => name.trim()).filter(Boolean)
-        : [];
-      if (!cleanNames.length) return;
-      try {
-        const result = await api.addTags(fingerprints, cleanNames);
-        if (result?.updates) applyMetadataPatch(result.updates);
-        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
-        notify(
-          `Added ${cleanNames.join(", ")} to ${fingerprints.length} item(s)`,
-          "success"
-        );
-      } catch (error) {
-        console.error("Failed to add tags:", error);
-        notify("Failed to add tags", "error");
-      }
-    },
-    [selectedFingerprints, applyMetadataPatch, notify]
-  );
-
-  const handleRemoveTag = useCallback(
-    async (tagName) => {
-      const api = window.electronAPI?.metadata;
-      if (!api?.removeTag) return;
-      const fingerprints = selectedFingerprints;
-      const cleanName = (tagName ?? "").trim();
-      if (!fingerprints.length || !cleanName) return;
-      try {
-        const result = await api.removeTag(fingerprints, cleanName);
-        if (result?.updates) applyMetadataPatch(result.updates);
-        if (Array.isArray(result?.tags)) setAvailableTags(result.tags);
-        notify(
-          `Removed "${cleanName}" from ${fingerprints.length} item(s)`,
-          "success"
-        );
-      } catch (error) {
-        console.error("Failed to remove tag:", error);
-        notify("Failed to remove tag", "error");
-      }
-    },
-    [selectedFingerprints, applyMetadataPatch, notify]
-  );
-
-  const handleSetRating = useCallback(
-    async (value, targetFingerprints = selectedFingerprints) => {
-      const api = window.electronAPI?.metadata;
-      if (!api?.setRating) return;
-      const fingerprints = (targetFingerprints || []).filter(Boolean);
-      if (!fingerprints.length) return;
-      try {
-        const result = await api.setRating(fingerprints, value);
-        if (result?.updates) applyMetadataPatch(result.updates);
-        if (value === null || value === undefined) {
-          notify(`Cleared rating for ${fingerprints.length} item(s)`, "success");
-        } else {
-          const safeRating = Math.max(0, Math.min(5, Math.round(Number(value))));
-          notify(
-            `Rated ${fingerprints.length} item(s) ${safeRating} star${
-              safeRating === 1 ? "" : "s"
-            }`,
-            "success"
-          );
-        }
-      } catch (error) {
-        console.error("Failed to update rating:", error);
-        notify("Failed to update rating", "error");
-      }
-    },
-    [selectedFingerprints, applyMetadataPatch, notify]
-  );
-
-  const handleClearRating = useCallback(() => {
-    handleSetRating(null, selectedFingerprints);
-  }, [handleSetRating, selectedFingerprints]);
-
-  const handleApplyExistingTag = useCallback(
-    (tagName) => handleAddTags([tagName]),
-    [handleAddTags]
-  );
-
   const openMetadataPanel = useCallback(() => {
-    setMetadataPanelOpen(true);
-    setMetadataFocusToken((token) => token + 1);
+    runSidebarTransition("sidebar:open", () => {
+      setMetadataPanelOpen(true);
+      setMetadataPanelDismissed(false);
+      setMetadataFocusToken((token) => token + 1);
+    });
+  }, [
+    runSidebarTransition,
+    setMetadataFocusToken,
+    setMetadataPanelDismissed,
+    setMetadataPanelOpen,
+  ]);
+
+  const toggleMetadataPanel = useCallback(() => {
+    runSidebarTransition("sidebarToggle", () => {
+      setMetadataPanelOpen((open) => {
+        if (open) {
+          setMetadataPanelDismissed(true);
+          return false;
+        }
+
+        setMetadataPanelDismissed(false);
+        setMetadataFocusToken((token) => token + 1);
+        return true;
+      });
+    });
+  }, [
+    runSidebarTransition,
+    setMetadataFocusToken,
+    setMetadataPanelDismissed,
+    setMetadataPanelOpen,
+  ]);
+
+  const { contextMenu, showOnItem, hide: hideContextMenu } = useContextMenu();
+
+  const captureLastFocusSelector = useCallback(() => {
+    if (typeof document === "undefined") return null;
+    const active = document.activeElement;
+    if (!active || active === document.body) return null;
+
+    const cssEscape = (value) => {
+      if (typeof value !== "string" || !value) return "";
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/([\0-\x1F\x7F-\x9F!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~ ])/g, "\\$1");
+    };
+
+    const attrSelector = (attr, value) => {
+      if (!value) return null;
+      const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `${active.tagName?.toLowerCase?.() || "*"}[${attr}="${escaped}"]`;
+    };
+
+    if (active.id) {
+      return `#${cssEscape(active.id)}`;
+    }
+
+    const datasetKey = active.getAttribute?.("data-focus-target");
+    if (datasetKey) {
+      const escaped = datasetKey.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `[data-focus-target="${escaped}"]`;
+    }
+
+    if (active.name) {
+      return attrSelector("name", active.name);
+    }
+
+    const placeholder = active.getAttribute?.("placeholder");
+    if (placeholder) {
+      return attrSelector("placeholder", placeholder);
+    }
+
+    return null;
   }, []);
 
-  const {
-    contextMenu,
-    showOnItem,
-    showOnEmpty,
-    hide: hideContextMenu,
-  } = useContextMenu();
+  const scheduleAnimationFrame = useCallback((cb) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(cb);
+    }
+    return setTimeout(cb, 16);
+  }, []);
+
+  const preTrashCleanup = useCallback(() => {
+    hideContextMenu();
+  }, [hideContextMenu]);
+
+  const postConfirmRecovery = useCallback(
+    ({ cancelled: _cancelled, lastFocusedSelector } = {}) => {
+      if (typeof document === "undefined") return;
+
+      const query = (selector) => {
+        if (!selector) return null;
+        try {
+          return document.querySelector(selector);
+        } catch (error) {
+          console.warn("[trash] failed to query focus selector", selector, error);
+          return null;
+        }
+      };
+
+      const visible = (el) => {
+        if (!el) return false;
+        if (typeof el.offsetParent !== "undefined") return !!el.offsetParent;
+        const rect = el.getBoundingClientRect?.();
+        return !!rect && rect.width > 0 && rect.height > 0;
+      };
+
+      const pickCandidate = () => {
+        const last = query(lastFocusedSelector);
+        if (visible(last)) return last;
+        const tagInput = query('input[placeholder="Add tag and press Enter"]');
+        if (visible(tagInput)) return tagInput;
+        const searchInput = query('input[placeholder="Search available tags"]');
+        if (visible(searchInput)) return searchInput;
+        return null;
+      };
+
+      const attemptFocus = () => {
+        const el = pickCandidate();
+        if (!el) return false;
+        if (typeof el.focus === "function") {
+          el.focus({ preventScroll: true });
+        }
+        return document.activeElement === el;
+      };
+
+      if (attemptFocus()) return;
+
+      const enqueue = typeof queueMicrotask === "function"
+        ? queueMicrotask
+        : (fn) => Promise.resolve().then(fn);
+
+      enqueue(() => {
+        if (attemptFocus()) return;
+        scheduleAnimationFrame(() => {
+          if (attemptFocus()) return;
+          if (typeof window !== "undefined") {
+            window.blur?.();
+            window.focus?.();
+          }
+          attemptFocus();
+        });
+      });
+    },
+    [scheduleAnimationFrame]
+  );
 
   const deps = useTrashIntegration({
     electronAPI: window.electronAPI,
     notify,
     confirm: window.confirm,
+    preTrashCleanup,
+    postConfirmRecovery,
+    captureLastFocusSelector,
     releaseVideoHandlesForAsync,
     setVideos,
     setSelected: selection.setSelected,
@@ -754,7 +922,6 @@ function App() {
     loadedVideos,
     loadingVideos,
     actualPlaying,
-    maxConcurrentPlaying,
     scrollRef: scrollContainerRef,
     progressive: {
       initial: 120,
@@ -762,9 +929,14 @@ function App() {
       intervalMs: 100,
       pauseOnScroll: true,
       longTaskAdaptation: true,
+      maxVisible: effectiveProgressiveCap,
     },
     hadLongTaskRecently,
-    isNear: ioRegistry.isNear,
+    isNear: isWithinActivation,
+    activationTarget: activationWindow.target,
+    activationWindowIds: activationWindow.ids,
+    suspendEvictions: isLayoutTransitioning,
+    renderLimit: renderLimitValue,
   });
 
   // fullscreen / context menu
@@ -790,57 +962,14 @@ function App() {
     // wheelStepUnits: 100, // optional sensitivity tuning
   });
 
-  // ====== Zoom logic (refactored) ======
-
-  const handleZoomChange = useCallback(
-    (z) => {
-      const clamped = clampZoomIndex(z);
-      if (clamped === zoomLevel) return; // no-op if unchanged
-      setZoomLevel(clamped);
-      setZoomClass(clamped);
-      window.electronAPI?.saveSettingsPartial?.({
-        zoomLevel: clamped,
-        recursiveMode,
-        maxConcurrentPlaying,
-        showFilenames,
-      });
-      // Nudge masonry after zoom change
-      scheduleLayout?.();
-    },
-    [
-      zoomLevel,
-      setZoomClass,
-      recursiveMode,
-      maxConcurrentPlaying,
-      showFilenames,
-      scheduleLayout,
-    ]
-  );
-
-  const getMinimumZoomLevel = useCallback(() => {
-    const videoCount = orderedVideos.length;
-    const windowWidth = window.innerWidth;
-    if (videoCount > 200 && windowWidth > 2560) return 2;
-    if (videoCount > 150 && windowWidth > 1920) return 1;
-    return 0;
-  }, [orderedVideos.length]);
-
-  const handleZoomChangeSafe = useCallback(
-    (newZoom) => {
-      const minZoom = getMinimumZoomLevel();
-      const safeZoom = Math.max(newZoom, minZoom);
-      if (safeZoom === zoomLevel) return; // nothing to do
-      if (safeZoom !== newZoom) {
-        console.warn(
-          `🛡️ Zoom limited to ${getZoomLabelByIndex(
-            safeZoom
-          )} for memory safety (requested ${getZoomLabelByIndex(newZoom)})`
-        );
-      }
-      handleZoomChange(safeZoom);
-    },
-    [getMinimumZoomLevel, handleZoomChange, zoomLevel]
-  );
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenAbout?.(() => {
+      setAboutOpen(true);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   // === MEMORY MONITORING (dev helpers) ===
   useEffect(() => {
@@ -899,318 +1028,42 @@ function App() {
   ]);
 
   // === DYNAMIC ZOOM RESIZE / COUNT ===
-  useEffect(() => {
-    if (!window.electronAPI?.isElectron) return;
-    const handleResize = () => {
-      const windowWidth = window.innerWidth;
-      const windowHeight = window.innerHeight;
-      const videoCount = orderedVideos.length;
-      if (videoCount > 50) {
-        const safeZoom = calculateSafeZoom(
-          windowWidth,
-          windowHeight,
-          videoCount
-        );
-        if (safeZoom > zoomLevel) {
-          console.log(
-            `📐 Window resized: ${windowWidth}x${windowHeight} with ${videoCount} videos - adjusting zoom to ${getZoomLabelByIndex(
-              safeZoom
-            )} for safety`
-          );
-          handleZoomChange(safeZoom);
-        }
-      }
-    };
-    let resizeTimeout;
-    const debouncedResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(handleResize, 500);
-    };
-    window.addEventListener("resize", debouncedResize);
-    return () => {
-      window.removeEventListener("resize", debouncedResize);
-      clearTimeout(resizeTimeout);
-    };
-  }, [orderedVideos.length, zoomLevel, handleZoomChange]);
-
-  useEffect(() => {
-    if (orderedVideos.length > 100) {
-      const windowWidth = window.innerWidth;
-      const windowHeight = window.innerHeight;
-      const safeZoom = calculateSafeZoom(
-        windowWidth,
-        windowHeight,
-        orderedVideos.length
-      );
-      if (safeZoom > zoomLevel) {
-        console.log(
-          `📹 Large collection detected (${orderedVideos.length} videos) - adjusting zoom for memory safety`
-        );
-        handleZoomChange(safeZoom);
-      }
-    }
-  }, [orderedVideos.length, zoomLevel, handleZoomChange]);
-
-  // settings load + folder selection event
-  useEffect(() => {
-    const load = async () => {
-      const api = window.electronAPI;
-      if (!api?.getSettings) {
-        setSettingsLoaded(true);
-        return;
-      }
-      try {
-        const s = await api.getSettings();
-        if (s.recursiveMode !== undefined) setRecursiveMode(s.recursiveMode);
-        if (s.showFilenames !== undefined) setShowFilenames(s.showFilenames);
-        if (s.maxConcurrentPlaying !== undefined)
-          setMaxConcurrentPlaying(s.maxConcurrentPlaying);
-        if (s.zoomLevel !== undefined)
-          setZoomLevel(clampZoomIndex(s.zoomLevel));
-        if (s.sortKey) setSortKey(s.sortKey);
-        if (s.sortDir) setSortDir(s.sortDir);
-        if (s.groupByFolders !== undefined) setGroupByFolders(s.groupByFolders);
-        if (s.randomSeed !== undefined) setRandomSeed(s.randomSeed);
-      } catch {}
-      setSettingsLoaded(true);
-    };
-    load();
-
-    window.electronAPI?.onFolderSelected?.(
-      (folderPath) => {
-        handleElectronFolderSelection(folderPath);
-      },
-      [handleElectronFolderSelection]
-    );
-  }, []); // eslint-disable-line
-
-  // FS listeners
-  useEffect(() => {
-    const api = window.electronAPI;
-    if (!api) return;
-
-    const handleFileAdded = (videoFile) => {
-      const normalized = normalizeVideoFromMain(videoFile);
-      setVideos((prev) => {
-        const existingIndex = prev.findIndex((v) => v.id === normalized.id);
-        if (existingIndex !== -1) {
-          const next = prev.slice();
-          next[existingIndex] = normalized;
-          return next;
-        }
-        return [...prev, normalized].sort((a, b) =>
-          a.basename.localeCompare(b.basename, undefined, {
-            numeric: true,
-            sensitivity: "base",
-          })
-        );
-      });
-      if (normalized.tags.length) {
-        refreshTagList();
-      }
-    };
-    const handleFileRemoved = (filePath) => {
-      setVideos((prev) => prev.filter((v) => v.id !== filePath));
-      selection.setSelected((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setActualPlaying((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadedVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setLoadingVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      setVisibleVideos((prev) => {
-        const ns = new Set(prev);
-        ns.delete(filePath);
-        return ns;
-      });
-      refreshTagList();
-    };
-    const handleFileChanged = (videoFile) => {
-      const normalized = normalizeVideoFromMain(videoFile);
-      setVideos((prev) =>
-        prev.map((v) => (v.id === normalized.id ? normalized : v))
-      );
-      if (normalized.tags.length) {
-        refreshTagList();
-      }
-    };
-
-    api.onFileAdded?.(handleFileAdded);
-    api.onFileRemoved?.(handleFileRemoved);
-    api.onFileChanged?.(handleFileChanged);
-
-    return () => {
-      api?.stopFolderWatch?.().catch(() => {});
-    };
-  }, [selection.setSelected, refreshTagList]);
-
   // relayout when list changes
   useEffect(() => {
     if (orderedVideos.length) onItemsChanged();
   }, [orderedVideos.length, onItemsChanged]);
 
-  // zoom handling via hook
-  useEffect(() => {
-    setZoomClass(zoomLevel);
-  }, [zoomLevel, setZoomClass]);
-
   // aspect ratio updates from cards
-  const handleVideoLoaded = useCallback(
-    (videoId, aspectRatio) => {
-      setLoadedVideos((prev) => new Set([...prev, videoId]));
-      updateAspectRatio(videoId, aspectRatio);
-    },
-    [updateAspectRatio]
-  );
+    const handleVideoLoaded = useCallback(
+      (videoId, aspectRatio) => {
+        setLoadedVideos((prev) => updateSetMembership(prev, videoId, true));
+        updateAspectRatio(videoId, aspectRatio);
+      },
+      [updateAspectRatio]
+    );
 
-  const handleVideoStartLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => new Set([...prev, videoId]));
-  }, []);
+    const handleVideoStartLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, true));
+    }, []);
 
-  const handleVideoStopLoading = useCallback((videoId) => {
-    setLoadingVideos((prev) => {
-      const ns = new Set(prev);
-      ns.delete(videoId);
-      return ns;
-    });
-  }, []);
+    const handleVideoStopLoading = useCallback((videoId) => {
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+    }, []);
 
-  const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
-    setVisibleVideos((prev) => {
-      const ns = new Set(prev);
-      if (isVisible) ns.add(videoId);
-      else ns.delete(videoId);
-      return ns;
-    });
-  }, []);
-
-  const handleElectronFolderSelection = useCallback(
-    async (folderPath) => {
-      const api = window.electronAPI;
-      if (!api?.readDirectory) return;
-
-      try {
-        console.log(
-          "🔍 Starting folder selection with recursive =",
-          recursiveMode
-        );
-        setIsLoadingFolder(true);
-        setLoadingStage("Reading directory...");
-        setLoadingProgress(10);
-        await new Promise((r) => setTimeout(r, 100));
-
-        await api.stopFolderWatch?.();
-
-        setVideos([]);
-        selection.clear();
-        setVisibleVideos(new Set());
-        setLoadedVideos(new Set());
-        setLoadingVideos(new Set());
-        setActualPlaying(new Set());
-
-        setLoadingStage("Scanning for video files...");
-        setLoadingProgress(30);
-        await new Promise((r) => setTimeout(r, 200));
-
-        console.log("📁 Calling readDirectory with:", {
-          folderPath,
-          recursiveMode,
-        });
-        const files = await api.readDirectory(folderPath, recursiveMode);
-        console.log("📁 readDirectory returned:", files.length, "files");
-        const normalizedFiles = files.map((file) =>
-          normalizeVideoFromMain(file)
-        );
-
-        setLoadingStage(
-          `Found ${files.length} videos — initializing masonry...`
-        );
-        setLoadingProgress(70);
-        await new Promise((r) => setTimeout(r, 200));
-
-        setVideos(normalizedFiles);
-        await new Promise((r) => setTimeout(r, 300));
-
-        setLoadingStage("Complete!");
-        setLoadingProgress(100);
-        await new Promise((r) => setTimeout(r, 250));
-        setIsLoadingFolder(false);
-
-        refreshTagList();
-
-        const watchResult = await api.startFolderWatch?.(folderPath);
-        if (watchResult?.success && __DEV__) console.log("👁️ watching folder");
-
-        // record in recent folders AFTER successful open
-        addRecentFolder(folderPath);
-      } catch (e) {
-        console.error("Error reading directory:", e);
-        setIsLoadingFolder(false);
-      }
-    },
-    [recursiveMode, addRecentFolder, selection, refreshTagList]
-  );
-
-  const handleFolderSelect = useCallback(async () => {
-    const res = await window.electronAPI?.selectFolder?.();
-    if (res?.folderPath) await handleElectronFolderSelection(res.folderPath);
-  }, [handleElectronFolderSelection]);
-
-  const handleWebFileSelection = useCallback(
-    (event) => {
-      const files = Array.from(event.target.files || []).filter((f) => {
-        const isVideoType = f.type.startsWith("video/");
-        const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
-          f.name
-        );
-        return isVideoType || hasExt;
-      });
-      const list = files.map((f) => ({
-        id: f.name + f.size,
-        name: f.name,
-        file: f,
-        loaded: false,
-        isElectronFile: false,
-        basename: f.name,
-        dirname: "",
-        createdMs: f.lastModified || 0,
-        fingerprint: null,
-        tags: [],
-        rating: null,
-      }));
-      setVideos(list);
-      selection.clear();
-      setVisibleVideos(new Set());
-      setLoadedVideos(new Set());
-      setLoadingVideos(new Set());
-      setActualPlaying(new Set());
-    },
-    [selection]
-  );
+    const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
+      setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
+    }, []);
 
   const toggleRecursive = useCallback(() => {
     const next = !recursiveMode;
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
       recursiveMode: next,
-      maxConcurrentPlaying,
+      renderLimitStep,
       zoomLevel,
       showFilenames,
     });
-  }, [recursiveMode, maxConcurrentPlaying, zoomLevel, showFilenames]);
+  }, [recursiveMode, renderLimitStep, zoomLevel, showFilenames]);
 
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
@@ -1218,16 +1071,17 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({
       showFilenames: next,
       recursiveMode,
-      maxConcurrentPlaying,
+      renderLimitStep,
       zoomLevel,
     });
-  }, [showFilenames, recursiveMode, maxConcurrentPlaying, zoomLevel]);
+  }, [showFilenames, recursiveMode, renderLimitStep, zoomLevel]);
 
-  const handleVideoLimitChange = useCallback(
-    (n) => {
-      setMaxConcurrentPlaying(n);
+  const handleRenderLimitStepChange = useCallback(
+    (step) => {
+      const clamped = clampRenderLimitStep(step);
+      setRenderLimitStep(clamped);
       window.electronAPI?.saveSettingsPartial?.({
-        maxConcurrentPlaying: n,
+        renderLimitStep: clamped,
         recursiveMode,
         zoomLevel,
         showFilenames,
@@ -1251,9 +1105,10 @@ function App() {
         sortDir: dir,
         groupByFolders,
         randomSeed: seed,
+        renderLimitStep,
       });
     },
-    [groupByFolders, randomSeed]
+    [groupByFolders, randomSeed, renderLimitStep]
   );
 
   const toggleGroupByFolders = useCallback(() => {
@@ -1312,19 +1167,25 @@ function App() {
     ]
   );
 
-  // Right-click on a card: select it (if not in selection) and open menu
+  // Right-click on a card: open the item context menu without altering selection
   const handleCardContextMenu = useCallback(
     (e, video) => {
-      const isSelected = selection.selected.has(video.id);
-      showOnItem(e, video.id, isSelected, selection.selectOnly);
+      if (!video?.id) return;
+      showOnItem(e, video.id);
     },
-    [selection.selected, selection.selectOnly, showOnItem]
+    [showOnItem]
   );
 
-  // Right-click on empty background: clear selection and open menu
+  // Right-click on empty background: allow native behavior while hiding custom menu
   const handleBackgroundContextMenu = useCallback(
-    (e) => showOnEmpty(e, selection.clear),
-    [showOnEmpty, selection.clear]
+    (e) => {
+      const target = e?.target;
+      if (typeof target?.closest === "function" && target.closest(".video-item")) {
+        return;
+      }
+      hideContextMenu();
+    },
+    [hideContextMenu]
   );
 
   useEffect(() => {
@@ -1342,19 +1203,61 @@ function App() {
   const playingSize = actualPlaying.size;                                  
   const loadingSize = loadingVideos.size;                                   
 
-  useEffect(() => {                                                          
-    const id = setTimeout(() => {                                            // run after paint to avoid chaining renders
+  useEffect(() => {
+    if (isLayoutTransitioning) return undefined;
+    const id = setTimeout(() => {
       const victims = videoCollection.performCleanup?.();
-      if (Array.isArray(victims) && victims.length) {
-        setLoadedVideos((prev) => {
-          const ns = new Set(prev);
-          for (const vid of victims) ns.delete(vid);
-          return ns;
-        });
-      }
+        if (Array.isArray(victims) && victims.length) {
+          setLoadedVideos((prev) => removeManyFromSet(prev, victims));
+        }
     }, 0);
     return () => clearTimeout(id);
-  }, [maxLoaded, loadedSize, playingSize, loadingSize, videoCollection.performCleanup]); 
+  }, [
+    isLayoutTransitioning,
+    maxLoaded,
+    loadedSize,
+    playingSize,
+    loadingSize,
+    videoCollection.performCleanup,
+  ]);
+
+  const shouldRenderCollapsedHint = metadataPanelDismissed || selection.size > 0;
+
+  const contentRegionClassName = [
+    "content-region",
+    shouldRenderCollapsedHint ? "content-region--dock-hint" : "",
+    isMetadataPanelOpen ? "content-region--dock-open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const contentRegionStyle = useMemo(
+    () => ({ "--metadata-dock-height": `${Math.round(metadataDockHeight)}px` }),
+    [metadataDockHeight]
+  );
+
+  const handleMetadataDockHeightChange = useCallback((nextHeight) => {
+    if (!Number.isFinite(nextHeight)) return;
+    const viewportHeight =
+      typeof window !== "undefined" && Number.isFinite(window.innerHeight)
+        ? window.innerHeight
+        : null;
+    const dynamicMax = viewportHeight
+      ? Math.max(
+          MIN_METADATA_DOCK_HEIGHT,
+          Math.min(MAX_METADATA_DOCK_HEIGHT, viewportHeight - 96)
+        )
+      : MAX_METADATA_DOCK_HEIGHT;
+
+    setMetadataDockHeight((prev) => {
+      const clamped = clampNumber(
+        nextHeight,
+        MIN_METADATA_DOCK_HEIGHT,
+        dynamicMax
+      );
+      return prev === clamped ? prev : clamped;
+    });
+  }, []);
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
@@ -1390,8 +1293,10 @@ function App() {
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
-            maxConcurrentPlaying={maxConcurrentPlaying}
-            handleVideoLimitChange={handleVideoLimitChange}
+            renderLimitStep={renderLimitStep}
+            renderLimitLabel={renderLimitLabel}
+            renderLimitMaxStep={RENDER_LIMIT_STEPS}
+            handleRenderLimitChange={handleRenderLimitStepChange}
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
@@ -1408,6 +1313,7 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
+            onOpenAbout={() => setAboutOpen(true)}
           />
 
           {isFiltersOpen && (
@@ -1420,6 +1326,8 @@ function App() {
               onClose={() => setFiltersOpen(false)}
             />
           )}
+
+          <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
 
           {filtersActiveCount > 0 && (
             <div className="filters-summary">
@@ -1487,6 +1395,9 @@ function App() {
             rendered={videoCollection.stats.rendered}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
+            activeWindow={activationWindow.ids.length}
+            activationTarget={activationWindow.target}
+            progressiveVisible={videoCollection.stats.progressiveVisible}
             memoryStatus={videoCollection.memoryStatus}
             zoomLevel={zoomLevel}
             getMinimumZoomLevel={getMinimumZoomLevel}
@@ -1516,17 +1427,21 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="content-region">
+            <div
+              className={contentRegionClassName}
+              ref={contentRegionRef}
+              style={contentRegionStyle}
+            >
               <div
                 className="content-region__viewport"
                 ref={scrollContainerRef}
               >
                 <div
                   ref={gridRef}
-                className={`video-grid masonry-vertical ${
+                  className={`video-grid masonry-vertical ${
                     !showFilenames ? "hide-filenames" : ""
                   } ${zoomClassForLevel(zoomLevel)}`}
-              >
+                >
                 {orderedVideos.length === 0 &&
                   videos.length > 0 &&
                   !isLoadingFolder && (
@@ -1539,21 +1454,24 @@ function App() {
                   <VideoCard
                     key={video.id}
                     video={video}
-                    ioRoot={gridRef}
                     observeIntersection={ioRegistry.observe}
                     unobserveIntersection={ioRegistry.unobserve}
+                    scrollRootRef={scrollContainerRef}
                     selected={selection.selected.has(video.id)}
                     onSelect={(...args) => handleVideoSelect(...args)}
                     onContextMenu={handleCardContextMenu}
+                    onNativeDragStart={handleNativeDragStart}
                     showFilenames={showFilenames}
                     // Video Collection Management
-                    canLoadMoreVideos={() =>
-                      videoCollection.canLoadVideo(video.id)
+                    canLoadMoreVideos={(opts) =>
+                      videoCollection.canLoadVideo(video.id, opts)
                     }
                     isLoading={loadingVideos.has(video.id)}
                     isLoaded={loadedVideos.has(video.id)}
                     isVisible={visibleVideos.has(video.id)}
                     isPlaying={videoCollection.isVideoPlaying(video.id)}
+                    isNear={ioRegistry.isNear}
+                    layoutEpoch={layoutEpoch}
                     // Lifecycle callbacks
                     onStartLoading={handleVideoStartLoading}
                     onStopLoading={handleVideoStopLoading}
@@ -1562,26 +1480,14 @@ function App() {
                     // Media events → update orchestrator + actual playing count
                     onVideoPlay={(id) => {
                       videoCollection.reportStarted(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.add(id);
-                        return next;
-                      });
+                      setActualPlaying((prev) => updateSetMembership(prev, id, true));
                     }}
                     onVideoPause={(id) => {
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
+                      setActualPlaying((prev) => updateSetMembership(prev, id, false));
                     }}
                     onPlayError={(id) => {
                       videoCollection.reportPlayError(id);
-                      setActualPlaying((prev) => {
-                        const next = new Set(prev);
-                        next.delete(id);
-                        return next;
-                      });
+                      setActualPlaying((prev) => updateSetMembership(prev, id, false));
                     }}
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
@@ -1591,8 +1497,10 @@ function App() {
                 </div>
               </div>
               <MetadataPanel
-                isOpen={isMetadataPanelOpen && selection.size > 0}
-                onToggle={() => setMetadataPanelOpen((open) => !open)}
+                ref={metadataPanelRef}
+                isOpen={isMetadataPanelOpen}
+                onToggle={toggleMetadataPanel}
+                showCollapsedHint={shouldRenderCollapsedHint}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}
@@ -1602,6 +1510,11 @@ function App() {
                 onSetRating={handleSetRating}
                 onClearRating={handleClearRating}
                 focusToken={metadataFocusToken}
+                onFocusSelection={focusSelection}
+                dockHeight={metadataDockHeight}
+                minDockHeight={MIN_METADATA_DOCK_HEIGHT}
+                maxDockHeight={MAX_METADATA_DOCK_HEIGHT}
+                onDockHeightChange={handleMetadataDockHeightChange}
               />
             </div>
           )}

@@ -23,14 +23,6 @@ export default function usePlayOrchestrator({
     startOrderRef.current.push(id);
   }, []);
 
-  // FIXED: More conservative hover handling to prevent video disruption
-  const markHover = useCallback((id) => {
-    // Only update if hover actually changed
-    if (hoveredRef.current === id) return;
-
-    hoveredRef.current = id;
-  }, []);
-
   // Media actually started - FIXED to prevent infinite loops
   const reportStarted = useCallback(
     (id) => {
@@ -109,11 +101,18 @@ export default function usePlayOrchestrator({
       let next = new Set(prev);
       let hasChanges = false;
 
-      // Only remove videos that are no longer visible
+      // Only remove videos that are no longer visible **or** no longer loaded.
+      // A relayout can temporarily tear down media elements which clears the
+      // loaded set even though the tile remains visible. Keeping those ids in
+      // the playing set makes the debug summary report them as active and
+      // prevents other tiles from being admitted. Drop them until they reload.
       for (const id of next) {
-        if (!visibleIds.has(id)) {
+        if (!visibleIds.has(id) || !loadedIds.has(id)) {
           next.delete(id);
           hasChanges = true;
+          if (startOrderRef.current.length) {
+            startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
+          }
         }
       }
 
@@ -150,10 +149,19 @@ export default function usePlayOrchestrator({
     });
   }, [visibleIds, loadedIds, maxPlaying, evictIfNeeded, pushStartOrder]);
 
+  const markHover = useCallback(
+    (id) => {
+      if (hoveredRef.current === id) return;
+      hoveredRef.current = id;
+      reconcile();
+    },
+    [reconcile]
+  );
+
   // FIXED: Add proper dependency management for reconcile
   useEffect(() => {
     reconcile();
-  }, [visibleIds.size, loadedIds.size, maxPlaying]); // Only depend on sizes, not the sets themselves
+  }, [reconcile, visibleIds, loadedIds, maxPlaying]);
 
   // Expire "recently errored" entries so they can retry later
   useEffect(() => {

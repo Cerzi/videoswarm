@@ -10,6 +10,29 @@ describe('useSelectionState', () => {
     expect(result.current.selected.size).toBe(1);
   });
 
+  test('selectOnly on the same id clears selection', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('a'));
+    expect(result.current.selected.size).toBe(1);
+    act(() => result.current.selectOnly('a'));
+    expect(result.current.selected.size).toBe(0);
+  });
+
+  test('selectOnly isolates a member of a multi-selection before clearing', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('a'));
+    act(() => result.current.toggle('b'));
+    expect(result.current.selected).toEqual(new Set(['a', 'b']));
+
+    act(() => result.current.selectOnly('a'));
+    expect(result.current.selected).toEqual(new Set(['a']));
+    expect(result.current.anchorId).toBe('a');
+
+    act(() => result.current.selectOnly('a'));
+    expect(result.current.selected.size).toBe(0);
+    expect(result.current.anchorId).toBe(null);
+  });
+
   test('toggle adds/removes', () => {
     const { result } = renderHook(() => useSelectionState());
     act(() => result.current.toggle('a'));
@@ -35,6 +58,15 @@ describe('useSelectionState (range + anchor)', () => {
     expect(result.current.selected.size).toBe(1);
     expect(result.current.selected.has('c')).toBe(true);
     expect(result.current.anchorId).toBe('c');
+  });
+
+  test('selectOnly toggled clears anchor', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('c'));
+    expect(result.current.anchorId).toBe('c');
+    act(() => result.current.selectOnly('c'));
+    expect(result.current.selected.size).toBe(0);
+    expect(result.current.anchorId).toBe(null);
   });
 
   test('toggle adds/removes and updates anchor', () => {

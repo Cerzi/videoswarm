@@ -42,24 +42,34 @@ const CONFIG = {
   BASE_MAX_LOADED_BY_DM: {              // coarse base cap by deviceMemory (GB)
     4: 160, 6: 210, 8: 260, 12: 320, 16: 380,
   },
-  BASE_MAX_LOADING: 24,                 // upper bound on concurrent loads
   MIN_MAX_LOADED: 24,                   // never drop below this when list is big
   LONG_TASK_DERATE: 0.6,                // when hadLongTaskRecently
+  ACTIVE_MIN_CLAMP: 100,
+  ACTIVE_MAX_CLAMP: 600,
+  ACTIVE_BUFFER_RATIO: 0.5,
+  ACTIVE_MAX_LOADED: 900,
+  MIN_CONCURRENT_LOADERS: 2,
+  MAX_CONCURRENT_LOADERS: 16,
 
   // Make the user cap meaningful:
   PLAY_PRELOAD_BUFFER: 16,              // keep this many extra loaded beyond play cap
   MAX_LOADED_SOFT_CAP: 9999,            // global ceiling (leave high)
 };
 
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
 export default function useVideoResourceManager({
   progressiveVideos,
+  progressiveVisibleCount = progressiveVideos?.length || 0,
+  progressiveTargetCount = progressiveVideos?.length || 0,
+  desiredActiveCount = progressiveVisibleCount,
   visibleVideos,
   loadedVideos,
   loadingVideos,
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
-  playingCap, 
+  suspendEvictions = false,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -157,10 +167,42 @@ export default function useVideoResourceManager({
       Math.min(baseByDM, maxByMem) * pressureScale * longTaskScale
     );
 
-    // Bound by collection size (plus small buffer)
-    const listBound = Math.max(
+    const totalCount = progressiveVideos?.length || 0;
+    const schedulerVisible = Number.isFinite(progressiveVisibleCount)
+      ? Math.max(0, Math.floor(progressiveVisibleCount))
+      : totalCount;
+    const schedulerTarget = Number.isFinite(progressiveTargetCount)
+      ? Math.max(0, Math.floor(progressiveTargetCount))
+      : schedulerVisible;
+    const requestedActive = Number.isFinite(desiredActiveCount)
+      ? Math.max(0, Math.floor(desiredActiveCount))
+      : schedulerTarget;
+
+    const activationGoal = totalCount >= CONFIG.ACTIVE_MIN_CLAMP
+      ? clamp(requestedActive, CONFIG.ACTIVE_MIN_CLAMP, CONFIG.ACTIVE_MAX_CLAMP)
+      : Math.max(1, Math.min(requestedActive || totalCount, totalCount));
+
+    const activationBuffer = Math.max(
+      10,
+      Math.round(activationGoal * CONFIG.ACTIVE_BUFFER_RATIO)
+    );
+    const activationSoftCap = clamp(
+      activationGoal + activationBuffer,
+      activationGoal,
+      CONFIG.ACTIVE_MAX_LOADED
+    );
+
+    const totalCeiling = totalCount
+      ? Math.min(activationSoftCap, Math.max(activationGoal, totalCount))
+      : activationGoal;
+
+    let listBound = Math.max(
       CONFIG.MIN_MAX_LOADED,
-      Math.min(want, (progressiveVideos?.length || 0) + 20)
+      Math.min(want, totalCeiling)
+    );
+    listBound = Math.min(
+      totalCeiling,
+      Math.max(listBound, activationGoal)
     );
 
     // Smooth step from previous to avoid oscillation
@@ -169,25 +211,37 @@ export default function useVideoResourceManager({
       -CONFIG.SMOOTH_MAX_STEP,
       Math.min(CONFIG.SMOOTH_MAX_STEP, listBound - prev)
     );
-    let maxLoaded = Math.max(CONFIG.MIN_MAX_LOADED, prev + delta);
-
-    // ---- NEW: ensure loaded cap can satisfy the user's playing cap (+ buffer) ----
-    if (typeof playingCap === "number" && playingCap > 0) {
-      const floor = playingCap + CONFIG.PLAY_PRELOAD_BUFFER;
-      const safeFloor = Math.min(floor, listBound, CONFIG.MAX_LOADED_SOFT_CAP);
-      if (maxLoaded < safeFloor) maxLoaded = safeFloor;
+    let maxLoaded = clamp(prev + delta, CONFIG.MIN_MAX_LOADED, totalCeiling);
+    if (maxLoaded < activationGoal) {
+      maxLoaded = activationGoal;
     }
 
-    // Concurrent loaders: small fraction of maxLoaded, clamped
-    const baseLoaders = Math.max(4, Math.floor(maxLoaded / 8));
-    let maxConcurrentLoading = Math.min(
-      CONFIG.BASE_MAX_LOADING,
-      hadLongTaskRecently ? Math.max(4, Math.floor(baseLoaders * 0.6)) : baseLoaders
-    );
-
     maxLoaded = Math.max(1, Math.floor(maxLoaded * limitMultiplier));
+    maxLoaded = Math.min(maxLoaded, CONFIG.MAX_LOADED_SOFT_CAP);
+    maxLoaded = Math.min(maxLoaded, totalCeiling);
+
+    // Concurrent loaders: derived from activation window
+    const baseLoaders = Math.max(
+      CONFIG.MIN_CONCURRENT_LOADERS,
+      Math.ceil(activationGoal / 8)
+    );
+    let maxConcurrentLoading = Math.min(
+      CONFIG.MAX_CONCURRENT_LOADERS,
+      baseLoaders
+    );
+    if (hadLongTaskRecently) {
+      maxConcurrentLoading = Math.max(
+        CONFIG.MIN_CONCURRENT_LOADERS,
+        Math.floor(maxConcurrentLoading * 0.75)
+      );
+    }
+    const loaderCeiling = Math.max(
+      CONFIG.MIN_CONCURRENT_LOADERS,
+      Math.floor(maxLoaded / 6)
+    );
+    maxConcurrentLoading = Math.min(maxConcurrentLoading, loaderCeiling);
     maxConcurrentLoading = Math.max(
-      1,
+      CONFIG.MIN_CONCURRENT_LOADERS,
       Math.floor(maxConcurrentLoading * limitMultiplier)
     );
 
@@ -201,33 +255,40 @@ export default function useVideoResourceManager({
         headroomMB: headroom,
         pressure: Number(pressure.toFixed(3)),
         memSource: mem.source,
+        activationGoal,
+        activationSoftCap,
       },
     };
     prevLimitsRef.current = computed;
     return computed;
   }, [
     progressiveVideos?.length,
+    progressiveVisibleCount,
+    progressiveTargetCount,
+    desiredActiveCount,
     mem.source,
     mem.currentMemoryMB,
     mem.totalMemoryMB,
     hadLongTaskRecently,
-    playingCap, // re-evaluate if user cap changes
     limitMultiplier,
   ]);
 
   // --- admission control (relaxed + visible priority) ---
   const canLoadVideo = useCallback(
-    (id) => {
+    (id, options = {}) => {
       if (!id) return false;
+
+      const assumeVisible = Boolean(options?.assumeVisible);
+      const assumeNear = assumeVisible || Boolean(options?.assumeNear);
 
       // Hard cap on *loaded* to avoid runaway memory; let visible bypass to reload if needed
       if (_loadedVideos.size >= limits.maxLoaded) {
-        const isVisCapBypass = _visibleVideos.has(id);
+        const isVisCapBypass = assumeVisible || _visibleVideos.has(id);
         if (!isVisCapBypass) return false;
       }
 
-      const isVis = _visibleVideos.has(id);
-      const near = isNear ? !!isNear(id) : false;
+      const isVis = assumeVisible || _visibleVideos.has(id);
+      const near = assumeNear || (isNear ? !!isNear(id) : false);
 
       // Always allow visible; permit small overflow over loader cap
       if (isVis) {
@@ -260,6 +321,7 @@ export default function useVideoResourceManager({
   // Evict to meet limits (prefer to free non-visible, non-playing first; never evict visible/playing)
   const lastCleanupAtRef = useRef(0);
   const performCleanup = useCallback(() => {
+    if (suspendEvictions) return;
     // basic throttle (avoid floods from callers/effects)
     const now = Date.now();
     if (now - lastCleanupAtRef.current < 500) return;
@@ -295,7 +357,14 @@ export default function useVideoResourceManager({
       console.warn(`♻️ Evicting ${victims.length} tiles to meet limits (${limits.maxLoaded}).`);
     }
     return victims.length > 0 ? victims : undefined;
-  }, [_loadedVideos, limits.maxLoaded, _visibleVideos, _playingVideos, isNear]);
+  }, [
+    _loadedVideos,
+    limits.maxLoaded,
+    _visibleVideos,
+    _playingVideos,
+    isNear,
+    suspendEvictions,
+  ]);
 
   // Reduce limits after catastrophic player creation failures
   const reportPlayerCreationFailure = useCallback(() => {

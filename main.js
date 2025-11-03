@@ -9,11 +9,30 @@ const {
   ipcMain,
   dialog,
   Menu,
+  nativeImage,
 } = require("electron");
 const path = require("path");
 const fs = require("fs").promises;
-require('./main/ipc-trash')(ipcMain);
+const { getEmbeddedDragIcon } = require("./main/drag-icon");
+const { getVideoDimensions } = require("./main/videoDimensions");
+require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore } = require("./main/database");
+const { thumbnailCache } = require("./main/thumb-cache");
+const supportContent = require("./src/config/supportContent.json");
+
+const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
+
+function openDonationPage() {
+  const url = supportContent?.donationUrl || DEFAULT_DONATION_URL;
+  return shell.openExternal(url);
+}
+
+// --- Icon resolver: works in dev and when packaged (asar/resources) ---
+function assetPath(...p) {
+  // When packaged, electron-builder copies buildResources into process.resourcesPath
+  const base = app.isPackaged ? process.resourcesPath : __dirname;
+  return path.join(base, ...p);
+}
 
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
@@ -82,7 +101,7 @@ function getDefaultZoomForScreen() {
 // Note: zoomLevel will be set dynamically after app is ready
 const defaultSettings = {
   recursiveMode: false,
-  maxConcurrentPlaying: 50,
+  renderLimitStep: 10,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -145,6 +164,11 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     let fingerprint = null;
     let tags = [];
     let rating = null;
+    let dimensions = null;
+
+    const isValidDimensions = (dims) =>
+      dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0;
+
     try {
       const metadataStore = getMetadataStore();
       const info = await metadataStore.indexFile({ filePath, stats });
@@ -154,6 +178,25 @@ async function createVideoFileObject(filePath, baseFolderPath) {
         typeof info?.rating === "number" && Number.isFinite(info.rating)
           ? info.rating
           : null;
+
+      if (isValidDimensions(info?.dimensions)) {
+        dimensions = info.dimensions;
+      } else if (fingerprint) {
+        const storedDims = metadataStore.getDimensions(fingerprint);
+        if (isValidDimensions(storedDims)) {
+          dimensions = storedDims;
+        }
+      }
+
+      if (!isValidDimensions(dimensions)) {
+        const computed = await getVideoDimensions(filePath, stats);
+        if (isValidDimensions(computed)) {
+          dimensions = computed;
+          if (fingerprint) {
+            metadataStore.setDimensions(fingerprint, computed);
+          }
+        }
+      }
     } catch (metaError) {
       console.warn(
         `[metadata] Failed to index ${filePath}:`,
@@ -177,6 +220,22 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       fingerprint,
       tags,
       rating,
+      dimensions: dimensions
+        ? {
+          width: Math.round(dimensions.width),
+          height: Math.round(dimensions.height),
+          aspectRatio:
+            Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
+              ? dimensions.aspectRatio
+              : dimensions.width / dimensions.height,
+        }
+        : null,
+      aspectRatio:
+        dimensions && isValidDimensions(dimensions)
+          ? (Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
+            ? dimensions.aspectRatio
+            : dimensions.width / dimensions.height)
+          : null,
       metadata: {
         folder: path.dirname(filePath),
         baseName: path.basename(fileName, ext),
@@ -192,7 +251,8 @@ async function createVideoFileObject(filePath, baseFolderPath) {
 }
 
 // Scan folder and detect changes (used by watcher in polling mode)
-async function scanFolderForChanges(folderPath) {
+async function scanFolderForChanges(folderPath, options = {}) {
+  const { recursive = true } = options;
   try {
     const videoExtensions = [
       ".mp4",
@@ -209,7 +269,8 @@ async function scanFolderForChanges(folderPath) {
     const currentFiles = new Map();
 
     async function scanDirectory(dirPath, depth = 0) {
-      if (depth > 10) return; // Limit depth
+      if (!recursive && depth > 0) return;
+      if (recursive && depth > 10) return; // Limit depth when recursing
       const files = await fs.readdir(dirPath, { withFileTypes: true });
 
       for (const file of files) {
@@ -228,7 +289,12 @@ async function scanFolderForChanges(folderPath) {
               // File might have been deleted while scanning
             }
           }
-        } else if (file.isDirectory() && !file.name.startsWith(".")) {
+        } else if (
+          recursive &&
+          file.isDirectory() &&
+          depth < 10 &&
+          !file.name.startsWith(".")
+        ) {
           await scanDirectory(fullPath, depth + 1);
         }
       }
@@ -376,6 +442,13 @@ async function createWindow() {
   const settings = await loadSettings();
   const appVersion = app.getVersion();
 
+  // Choose the right icon per platform
+  const iconPath =
+    process.platform === "win32"
+      ? assetPath("assets", "icons", "videoswarm.ico")
+      : assetPath("assets", "icons", "videoswarm.png");
+
+
   mainWindow = new BrowserWindow({
     width: settings.windowBounds.width,
     height: settings.windowBounds.height,
@@ -396,10 +469,19 @@ async function createWindow() {
       spellcheck: false,
       v8CacheOptions: "bypassHeatCheck",
     },
-    icon: path.join(__dirname, "icon.png"),
+    icon: iconPath,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     title: `Video Swarm v${appVersion}`,
   });
+
+  // set the dock icon explicitly on macOS
+  if (process.platform === "darwin") {
+    try {
+      app.dock.setIcon(nativeImage.createFromPath(
+        assetPath("assets", "icons", "videoswarm.png")
+      ));
+    } catch { }
+  }
 
   const isDev =
     process.argv.includes("--dev") || !!process.env.VITE_DEV_SERVER_URL;
@@ -515,6 +597,27 @@ function createMenu() {
         { role: "togglefullscreen" },
       ],
     },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About VideoSwarm",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-about");
+            }
+          },
+        },
+        {
+          label: "Support VideoSwarm on Ko-fi",
+          click: () => {
+            openDonationPage().catch((error) => {
+              console.warn("Failed to open support link", error);
+            });
+          },
+        },
+      ],
+    },
   ];
 
   if (process.platform === "darwin") {
@@ -626,6 +729,112 @@ async function clearRecentFolders() {
 // ===== IPC Handlers =====
 ipcMain.handle("get-app-version", () => app.getVersion());
 
+ipcMain.handle("support:open-donation", async () => {
+  try {
+    await openDonationPage();
+    return true;
+  } catch (error) {
+    console.warn("Failed to open support link", error);
+    throw error;
+  }
+});
+
+ipcMain.on("thumb:put", (event, payload) => {
+  try {
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+    const result = thumbnailCache.put(nativeImage, payload);
+    event.returnValue = result;
+  } catch (error) {
+    console.error("[thumb-cache] put failed", error);
+    event.returnValue = {
+      ok: false,
+      error: error?.message || "UNKNOWN_ERROR",
+    };
+  }
+});
+
+ipcMain.on("thumb:get", (event, payload) => {
+  try {
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+    const pathKey = payload?.path;
+    const signature = payload?.signature;
+    const result = thumbnailCache.has(pathKey, signature);
+    event.returnValue = result;
+  } catch (error) {
+    console.error("[thumb-cache] get failed", error);
+    event.returnValue = {
+      ok: false,
+      error: error?.message || "UNKNOWN_ERROR",
+    };
+  }
+});
+
+ipcMain.on("dnd:start-file", (event, payload) => {
+  const normalize = (value) => {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object" && Array.isArray(value.paths)) {
+      return value.paths;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      return [value];
+    }
+    return [];
+  };
+
+  try {
+    if (!thumbnailCache.initialized) {
+      try {
+        thumbnailCache.init(app);
+      } catch (initError) {
+        console.warn("[thumb-cache] late init failed", initError);
+      }
+    }
+
+    const candidates = normalize(payload).filter(
+      (entry) => typeof entry === "string" && entry.trim().length > 0
+    );
+    const filePath = candidates[0];
+    if (!filePath) {
+      event.returnValue = { ok: false, error: "NO_FILE" };
+      return;
+    }
+
+    let icon = thumbnailCache.getForDrag(nativeImage, filePath);
+    if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
+      icon = getEmbeddedDragIcon(nativeImage);
+    }
+
+    if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
+      event.returnValue = { ok: false, error: "NO_ICON" };
+      return;
+    }
+
+    event.sender.startDrag({
+      file: filePath,
+      icon,
+    });
+    event.returnValue = { ok: true };
+  } catch (error) {
+    console.error("Failed to start native drag:", error);
+    event.returnValue = {
+      ok: false,
+      error: error?.message || "UNKNOWN_ERROR",
+    };
+  }
+});
+
 ipcMain.handle("save-settings", async (_event, settings) => {
   await saveSettings(settings);
   return { success: true };
@@ -711,6 +920,56 @@ ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   } catch (error) {
     console.error("Failed to copy to clipboard:", error);
     return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
+  const requester = event?.sender;
+  const win = requester ? BrowserWindow.fromWebContents(requester) : mainWindow;
+  const count = Number(payload?.count) || 0;
+  const sampleName = payload?.sampleName || "";
+
+  const message = count === 1 && sampleName
+    ? `Move "${sampleName}" to Recycle Bin?`
+    : count === 1
+      ? "Move this item to Recycle Bin?"
+      : `Move ${count} item${count === 1 ? "" : "s"} to Recycle Bin?`;
+
+  try {
+    const { response } = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: ["Move to Bin", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      message,
+    });
+
+    const confirmed = response === 0;
+
+    const refocus = () => {
+      if (!win || win.isDestroyed()) return;
+      try {
+        win.focus();
+      } catch { }
+      try {
+        win.webContents.focus();
+      } catch { }
+    };
+
+    refocus();
+    setTimeout(refocus, 0);
+
+    return confirmed;
+  } catch (error) {
+    console.error("Failed to show confirm dialog:", error);
+    if (win && !win.isDestroyed()) {
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch { }
+    }
+    return false;
   }
 });
 
@@ -814,8 +1073,8 @@ ipcMain.handle(
         : [];
       const cleanNames = Array.isArray(tagNames)
         ? tagNames
-            .map((name) => (name ?? "").toString().trim())
-            .filter(Boolean)
+          .map((name) => (name ?? "").toString().trim())
+          .filter(Boolean)
         : [];
       if (!cleanFingerprints.length || !cleanNames.length) {
         return { updates: {}, tags: store.listTags() };
@@ -945,10 +1204,16 @@ ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFold
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 // Watcher IPC (delegated to file watcher module)
-ipcMain.handle("start-folder-watch", async (_event, folderPath) => {
+ipcMain.handle("start-folder-watch", async (_event, folderPath, recursive) => {
   try {
-    const result = await folderWatcher.start(folderPath);
-    return { success: true, mode: result.mode };
+    const result = await folderWatcher.start(folderPath, {
+      recursive: recursive ?? true,
+    });
+    return {
+      success: true,
+      mode: result.mode,
+      recursive: result.recursive,
+    };
   } catch (e) {
     console.error("Error starting folder watch:", e);
     return { success: false, error: e.message || String(e) };
@@ -1009,6 +1274,11 @@ app.on("window-all-closed", () => {
 app.whenReady().then(async () => {
   try {
     console.log("GPU status:", app.getGPUFeatureStatus());
+    try {
+      thumbnailCache.init(app);
+    } catch (thumbErr) {
+      console.warn("[thumb-cache] init failed", thumbErr);
+    }
     await initRecentStore(); // safe no-op if it fails
     await initMetadataStore(app);
     await createWindow();
@@ -1026,4 +1296,11 @@ app.on("activate", () => {
 
 // Ensure watcher cleanup on quit
 app.on("before-quit", async () => { await folderWatcher.stop(); });
-app.on("will-quit", async () => { await folderWatcher.stop(); });
+app.on("will-quit", async () => {
+  await folderWatcher.stop();
+  try {
+    thumbnailCache.shutdown();
+  } catch (error) {
+    console.warn("[thumb-cache] shutdown failed", error);
+  }
+});

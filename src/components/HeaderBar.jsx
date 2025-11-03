@@ -1,5 +1,8 @@
 import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
+import HelpMenu from "./HelpMenu";
+import SupportLink from "./SupportLink";
+import { supportContent } from "../config/supportContent";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
 import { clampZoomIndex } from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
@@ -96,8 +99,10 @@ export default function HeaderBar({
   toggleRecursive,
   showFilenames,
   toggleFilenames,
-  maxConcurrentPlaying,
-  handleVideoLimitChange,
+  renderLimitStep,
+  renderLimitLabel = "Max",
+  renderLimitMaxStep = 10,
+  handleRenderLimitChange,
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
@@ -114,6 +119,7 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
+  onOpenAbout,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -171,6 +177,8 @@ export default function HeaderBar({
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
+
+        <HelpMenu onOpenAbout={onOpenAbout} />
       </div>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
@@ -184,19 +192,23 @@ export default function HeaderBar({
         </button>
 
         <div style={dividerStyle}>
-          <div className="video-limit-control" title="Max playing limit">
+          <div className="video-limit-control" title="Limit rendered VideoCards">
             <FilmIcon />
             <input
               type="range"
-              min="10"
-              max="500"
-              value={maxConcurrentPlaying}
-              step="10"
+              min="0"
+              max={renderLimitMaxStep}
+              value={renderLimitStep}
+              step="1"
               style={{ width: 100 }}
-              onChange={(e) => handleVideoLimitChange(parseInt(e.target.value, 10))}
+              onChange={(e) =>
+                handleRenderLimitChange(parseInt(e.target.value, 10))
+              }
               disabled={isLoadingFolder}
+              aria-label="Rendered VideoCards limit"
+              aria-valuetext={renderLimitLabel}
             />
-            <span style={{ fontSize: "0.8rem" }}>{maxConcurrentPlaying}</span>
+            <span style={{ fontSize: "0.8rem" }}>{renderLimitLabel}</span>
           </div>
 
           <div className="zoom-control" title="Zoom">
@@ -291,6 +303,19 @@ export default function HeaderBar({
               )}
             </button>
           </div>
+
+          <SupportLink
+            className="donate-button"
+            aria-label={`${supportContent.donationButtonLabel} – ${supportContent.donationTooltip}`}
+            title={supportContent.donationTooltip}
+          >
+            <span aria-hidden="true" className="donate-button__icon">
+              ❤️
+            </span>
+            <span className="donate-button__label">
+              {supportContent.donationButtonLabel}
+            </span>
+          </SupportLink>
         </div>
       </div>
     </div>

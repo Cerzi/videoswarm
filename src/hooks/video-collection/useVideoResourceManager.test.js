@@ -45,7 +45,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: playing,
         isNear,
-        playingCap: 32, // ensures a sensible maxLoaded floor for determinism
       })
     );
 
@@ -84,6 +83,34 @@ describe('useVideoResourceManager (current behavior)', () => {
     expect(result.current.canLoadVideo('2')).toBe(false);
   });
 
+  test('canLoadVideo treats assumeVisible option as a visibility override', async () => {
+    const progressiveVideos = makeVideos(40);
+    const visible = new Set();
+    const loaded = new Set();
+    const loading = new Set();
+
+    const { result } = renderHook(() =>
+      useVideoResourceManager({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear: () => false,
+      })
+    );
+
+    await flushAsync();
+
+    // Without override the id is considered far and blocked once loaders are saturated
+    const { maxConcurrentLoading } = result.current.limits;
+    for (let i = 0; i < maxConcurrentLoading; i++) loading.add(`L${i}`);
+    expect(result.current.canLoadVideo('v-stuck')).toBe(false);
+
+    // With assumeVisible it is treated like a visible tile and allowed despite loader usage
+    expect(result.current.canLoadVideo('v-stuck', { assumeVisible: true })).toBe(true);
+  });
+
   test('performCleanup returns victim ids when over the limit; never evicts playing or visible', async () => {
     const progressiveVideos = makeVideos(200);
     const visible = new Set(['1', '2', '3']);
@@ -99,7 +126,6 @@ describe('useVideoResourceManager (current behavior)', () => {
         loadingVideos: loading,
         playingVideos: playing,
         isNear: () => false,
-        playingCap: 32,
       })
     );
 
@@ -128,6 +154,57 @@ describe('useVideoResourceManager (current behavior)', () => {
       expect(victimsInLoaded.length).toBeLessThanOrEqual(overBy);
     }
   });
+
+  test('performCleanup is suppressed while evictions are suspended', async () => {
+    const progressiveVideos = makeVideos(120);
+    const visible = new Set(['1']);
+    const loaded = new Set();
+    const loading = new Set();
+    const isNear = () => false;
+
+    const { result, rerender } = renderHook(
+      (props) => useVideoResourceManager(props),
+      {
+        initialProps: {
+          progressiveVideos,
+          visibleVideos: visible,
+          loadedVideos: loaded,
+          loadingVideos: loading,
+          playingVideos: new Set(),
+          isNear,
+          suspendEvictions: true,
+        },
+      }
+    );
+
+    await flushAsync();
+
+    const { maxLoaded } = result.current.limits;
+    for (let i = 0; i < maxLoaded + 10; i++) {
+      loaded.add(String(i + 1));
+    }
+
+    expect(result.current.performCleanup()).toBeUndefined();
+
+    await flushAsync();
+
+    act(() => {
+      rerender({
+        progressiveVideos,
+        visibleVideos: visible,
+        loadedVideos: loaded,
+        loadingVideos: loading,
+        playingVideos: new Set(),
+        isNear,
+        suspendEvictions: false,
+      });
+    });
+
+    await flushAsync();
+
+    const victims = result.current.performCleanup();
+    expect(Array.isArray(victims) && victims.length > 0).toBe(true);
+  });
 });
 
 describe('reportPlayerCreationFailure', () => {
@@ -145,7 +222,6 @@ describe('reportPlayerCreationFailure', () => {
         loadingVideos: loading,
         playingVideos: new Set(),
         isNear: () => false,
-        playingCap: 32,
       })
     );
 
@@ -165,10 +241,8 @@ describe('reportPlayerCreationFailure', () => {
     const { maxLoaded: afterLoaded, maxConcurrentLoading: afterLoading } =
       result.current.limits;
 
-    const SMOOTH_STEP = 12; // mirror internal tuning
-    const expectedLoaded = Math.floor((beforeLoaded + SMOOTH_STEP) / 2);
-    const baseLoaders = Math.max(4, Math.floor((beforeLoaded + SMOOTH_STEP) / 8));
-    const expectedLoading = Math.floor(baseLoaders / 2);
+    const expectedLoaded = Math.floor(beforeLoaded * 0.5);
+    const expectedLoading = Math.max(2, Math.floor(beforeLoading * 0.5));
 
     expect(afterLoaded).toBe(expectedLoaded);
     expect(afterLoading).toBe(expectedLoading);
