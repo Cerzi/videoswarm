@@ -8,6 +8,7 @@
   --color-text: #f5f5f5;
   --color-accent: #51cf66;
   --metadata-dock-height: clamp(220px, 30vh, 360px);
+  --metadata-dock-collapsed-inset: 2.75rem;
 }
 
 html,
@@ -428,10 +429,17 @@ body {
   scrollbar-gutter: stable both-edges;
   overflow-anchor: auto;
   transition: padding-bottom 0.3s ease;
+  padding-bottom: 0;
+}
+
+.content-region--dock-hint .content-region__viewport {
+  padding-bottom: var(--metadata-dock-collapsed-inset);
 }
 
 .content-region--dock-open .content-region__viewport {
-  padding-bottom: calc(var(--metadata-dock-height) + 1.25rem);
+  padding-bottom: calc(
+    var(--metadata-dock-height) + var(--metadata-dock-collapsed-inset)
+  );
 }
 
 /* Ensure React doesn't interfere with existing styles */

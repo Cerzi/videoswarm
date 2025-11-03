@@ -495,7 +495,7 @@ function App() {
           () => {
             const promise = waitForTransitionEnd(
               metadataPanelRef.current,
-              ["width"],
+              ["transform"],
               anchorDefaults.maxWaitMs
             );
             if (typeof applyState === "function") {
@@ -652,12 +652,6 @@ function App() {
     shouldAutoOpenMetadataPanel,
   ]);
 
-  useEffect(() => {
-    if (selection.size === 0) {
-      setMetadataPanelDismissed(false);
-    }
-  }, [selection.size]);
-
   const sortStatus = useMemo(() => {
     const keyLabels = {
       [SortKey.NAME]: "Name",
@@ -737,10 +731,6 @@ function App() {
           return false;
         }
 
-        if (selection.size === 0) {
-          return open;
-        }
-
         setMetadataPanelDismissed(false);
         setMetadataFocusToken((token) => token + 1);
         return true;
@@ -748,7 +738,6 @@ function App() {
     });
   }, [
     runSidebarTransition,
-    selection.size,
     setMetadataFocusToken,
     setMetadataPanelDismissed,
     setMetadataPanelOpen,
@@ -1232,8 +1221,11 @@ function App() {
     videoCollection.performCleanup,
   ]);
 
+  const shouldRenderCollapsedHint = metadataPanelDismissed || selection.size > 0;
+
   const contentRegionClassName = [
     "content-region",
+    shouldRenderCollapsedHint ? "content-region--dock-hint" : "",
     isMetadataPanelOpen ? "content-region--dock-open" : "",
   ]
     .filter(Boolean)
@@ -1508,6 +1500,7 @@ function App() {
                 ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen}
                 onToggle={toggleMetadataPanel}
+                showCollapsedHint={shouldRenderCollapsedHint}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}

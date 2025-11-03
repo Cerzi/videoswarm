@@ -52,6 +52,7 @@ const MetadataPanel = forwardRef((
   {
     isOpen,
     onToggle,
+    showCollapsedHint = false,
     selectionCount,
     selectedVideos = [],
     availableTags = [],
@@ -487,14 +488,21 @@ const MetadataPanel = forwardRef((
   };
 
   if (!isOpen) {
-    if (!hasSelection) {
+    if (!showCollapsedHint) {
       return null;
     }
 
-    const collapsedLabel =
-      derivedSelectionCount === 1
+    const collapsedLabel = hasSelection
+      ? derivedSelectionCount === 1
         ? "Show clip details"
-        : `Show details (${derivedSelectionCount})`;
+        : `Show details (${derivedSelectionCount})`
+      : "Show clip details";
+
+    const collapsedCountLabel = hasSelection
+      ? derivedSelectionCount === 1
+        ? "1 clip"
+        : `${derivedSelectionCount} clips`
+      : "No selection";
 
     return (
       <aside ref={ref} className="metadata-panel metadata-panel--collapsed">
@@ -507,9 +515,7 @@ const MetadataPanel = forwardRef((
           <span className="metadata-panel__collapsed-handle" aria-hidden="true" />
           <span className="metadata-panel__collapsed-label">Details</span>
           <span className="metadata-panel__collapsed-count">
-            {derivedSelectionCount === 1
-              ? "1 clip"
-              : `${derivedSelectionCount} clips`}
+            {collapsedCountLabel}
           </span>
         </button>
       </aside>

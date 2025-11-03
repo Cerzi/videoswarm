@@ -135,7 +135,7 @@ describe('MetadataPanel tag input', () => {
 });
 
 describe('MetadataPanel collapsed shell', () => {
-  it('renders nothing when closed without a selection', () => {
+  it('renders nothing when closed without a selection and no collapsed hint', () => {
     const { container } = render(
       <MetadataPanel
         isOpen={false}
@@ -143,10 +143,32 @@ describe('MetadataPanel collapsed shell', () => {
         selectionCount={0}
         selectedVideos={[]}
         availableTags={[]}
+        showCollapsedHint={false}
       />
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it('shows a collapsed toggle when dismissed without a selection', () => {
+    const handleToggle = vi.fn();
+
+    render(
+      <MetadataPanel
+        isOpen={false}
+        onToggle={handleToggle}
+        selectionCount={0}
+        selectedVideos={[]}
+        availableTags={[]}
+        showCollapsedHint
+      />
+    );
+
+    const toggle = screen.getByRole('button', { name: /show clip details/i });
+    expect(toggle).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(handleToggle).toHaveBeenCalledTimes(1);
   });
 
   it('shows a compact toggle when closed with a selection', () => {
@@ -159,6 +181,7 @@ describe('MetadataPanel collapsed shell', () => {
         selectionCount={1}
         selectedVideos={[{ name: 'clip-one.mp4', metadata: {}, dimensions: null }]}
         availableTags={[]}
+        showCollapsedHint
       />
     );
 
