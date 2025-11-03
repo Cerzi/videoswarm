@@ -1,8 +1,5 @@
 export function getMetadataPanelToggleState(isOpen, selectionSize) {
   if (isOpen) {
-    if (selectionSize > 0) {
-      return { nextOpen: false, shouldClear: true };
-    }
     return { nextOpen: false, shouldClear: false };
   }
 

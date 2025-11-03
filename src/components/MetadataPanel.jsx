@@ -1,8 +1,18 @@
-import React, { useMemo, useState, useEffect, useRef, forwardRef } from "react";
+import React, {
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  forwardRef,
+} from "react";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
 const MAX_SUGGESTION_TAGS = 15;
+const DEFAULT_LOCAL_DOCK_HEIGHT = 260;
+
+const clampValue = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const RatingStars = ({ value, isMixed, onSelect, onClear, disabled }) => {
   return (
@@ -52,11 +62,141 @@ const MetadataPanel = forwardRef((
     onClearRating,
     focusToken,
     onFocusSelection,
+    dockHeight,
+    minDockHeight,
+    maxDockHeight,
+    onDockHeightChange,
   },
   ref
 ) => {
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef(null);
+  const resizeSessionCleanupRef = useRef(null);
+
+  const minHeight = Number.isFinite(minDockHeight) ? Math.max(160, minDockHeight) : 200;
+  const maxHeight = Number.isFinite(maxDockHeight) ? maxDockHeight : 520;
+
+  const [internalDockHeight, setInternalDockHeight] = useState(() =>
+    clampValue(DEFAULT_LOCAL_DOCK_HEIGHT, minHeight, maxHeight)
+  );
+
+  const computeMaxHeight = useCallback(() => {
+    if (typeof window !== "undefined" && Number.isFinite(window.innerHeight)) {
+      const limit = window.innerHeight - 96;
+      if (Number.isFinite(limit)) {
+        return clampValue(limit, minHeight, maxHeight);
+      }
+    }
+    return maxHeight;
+  }, [minHeight, maxHeight]);
+
+  const effectiveMaxHeight = computeMaxHeight();
+
+  const providedHeight = Number.isFinite(dockHeight)
+    ? dockHeight
+    : internalDockHeight;
+  const resolvedDockHeight = clampValue(
+    providedHeight,
+    minHeight,
+    effectiveMaxHeight
+  );
+
+  useEffect(() => {
+    if (!Number.isFinite(dockHeight)) return;
+    const clamped = clampValue(dockHeight, minHeight, maxHeight);
+    setInternalDockHeight((prev) => (prev === clamped ? prev : clamped));
+  }, [dockHeight, minHeight, maxHeight]);
+
+  const updateDockHeight = useCallback(
+    (nextHeight) => {
+      const dynamicMax = computeMaxHeight();
+      const clamped = clampValue(nextHeight, minHeight, dynamicMax);
+      if (typeof onDockHeightChange === "function") {
+        onDockHeightChange(clamped);
+      } else {
+        setInternalDockHeight((prev) => (prev === clamped ? prev : clamped));
+      }
+    },
+    [computeMaxHeight, minHeight, onDockHeightChange]
+  );
+
+  const endActiveResize = useCallback(() => {
+    if (typeof resizeSessionCleanupRef.current === "function") {
+      resizeSessionCleanupRef.current();
+      resizeSessionCleanupRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => endActiveResize(), [endActiveResize]);
+
+  const handleResizePointerDown = useCallback(
+    (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      endActiveResize();
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startY = event.clientY;
+      const startHeight = resolvedDockHeight;
+      const pointerId = event.pointerId;
+
+      const handlePointerMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        const delta = startY - moveEvent.clientY;
+        updateDockHeight(startHeight + delta);
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
+        try {
+          event.currentTarget?.releasePointerCapture(pointerId);
+        } catch (err) {}
+      };
+
+      const handlePointerUp = (upEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
+        cleanup();
+        resizeSessionCleanupRef.current = null;
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
+      resizeSessionCleanupRef.current = cleanup;
+
+      try {
+        event.currentTarget?.setPointerCapture(pointerId);
+      } catch (err) {}
+    },
+    [endActiveResize, resolvedDockHeight, updateDockHeight]
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (event) => {
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        const delta = event.key === "ArrowUp" ? 24 : -24;
+        updateDockHeight(resolvedDockHeight + delta);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        updateDockHeight(computeMaxHeight());
+      } else if (event.key === "End") {
+        event.preventDefault();
+        updateDockHeight(minHeight);
+      }
+    },
+    [computeMaxHeight, minHeight, resolvedDockHeight, updateDockHeight]
+  );
 
   const derivedSelectionCount = useMemo(() => {
     const numeric = Number(selectionCount);
@@ -235,6 +375,26 @@ const MetadataPanel = forwardRef((
     };
   }, [derivedSelectionCount, selectedVideos]);
 
+  const infoLineItems = useMemo(() => {
+    if (!singleSelectionInfo) return [];
+    const items = [];
+    if (singleSelectionInfo.filename) {
+      items.push({
+        key: "filename",
+        label: singleSelectionInfo.filename,
+        title: singleSelectionInfo.filename,
+        className: "metadata-panel__info-pill--filename",
+      });
+    }
+    if (singleSelectionInfo.resolution) {
+      items.push({ key: "resolution", label: singleSelectionInfo.resolution });
+    }
+    if (singleSelectionInfo.created) {
+      items.push({ key: "created", label: singleSelectionInfo.created });
+    }
+    return items;
+  }, [singleSelectionInfo]);
+
   const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
 
   const dedupedAvailableTags = useMemo(() => {
@@ -351,9 +511,22 @@ const MetadataPanel = forwardRef((
         className="metadata-panel__container"
         role="complementary"
         aria-label="Selection metadata"
+        style={{ "--metadata-panel-height": `${Math.round(resolvedDockHeight)}px` }}
       >
         <div className="metadata-panel__header">
-          <span className="metadata-panel__handle" aria-hidden="true" />
+          <div
+            className="metadata-panel__handle"
+            role="slider"
+            tabIndex={0}
+            aria-label="Resize metadata panel"
+            aria-orientation="vertical"
+            aria-valuemin={Math.round(minHeight)}
+            aria-valuemax={Math.round(effectiveMaxHeight)}
+            aria-valuenow={Math.round(resolvedDockHeight)}
+            title="Drag or use arrow keys to resize"
+            onPointerDown={handleResizePointerDown}
+            onKeyDown={handleResizeKeyDown}
+          />
           <div className="metadata-panel__titles">
             <span className="metadata-panel__title">Details</span>
             <span className="metadata-panel__subtitle">
@@ -399,162 +572,152 @@ const MetadataPanel = forwardRef((
               <p>Tip: Use Shift or Ctrl/Cmd to build multi-select batches.</p>
             </div>
           ) : (
-            <>
-              <div className="metadata-panel__column">
-                {singleSelectionInfo && (
-                  <section className="metadata-panel__section metadata-panel__info">
-                    {singleSelectionInfo.filename && (
-                      <div className="metadata-panel__info-item metadata-panel__info-item--filename">
-                        <span className="metadata-panel__info-label">Filename</span>
-                        <span
-                          className="metadata-panel__info-value"
-                          title={singleSelectionInfo.filename}
-                        >
-                          {singleSelectionInfo.filename}
-                        </span>
-                      </div>
-                    )}
-                    {singleSelectionInfo.created && (
-                      <div className="metadata-panel__info-item">
-                        <span className="metadata-panel__info-label">Date created</span>
-                        <span className="metadata-panel__info-value">
-                          {singleSelectionInfo.created}
-                        </span>
-                      </div>
-                    )}
-                    {singleSelectionInfo.resolution && (
-                      <div className="metadata-panel__info-item">
-                        <span className="metadata-panel__info-label">Resolution</span>
-                        <span className="metadata-panel__info-value">
-                          {singleSelectionInfo.resolution}
-                        </span>
-                      </div>
-                    )}
-                  </section>
-                )}
-
-                <section className="metadata-panel__section">
-                  <div className="metadata-panel__section-header">
-                    <span>Rating</span>
-                    {ratingInfo.mixed ? (
-                      <span className="metadata-panel__badge">Mixed</span>
-                    ) : ratingInfo.hasAny ? (
-                      <span className="metadata-panel__badge metadata-panel__badge--accent">
-                        {`${ratingInfo.value} / 5`}
+            <div className="metadata-panel__stack">
+              {infoLineItems.length > 0 && (
+                <section className="metadata-panel__section metadata-panel__info">
+                  <div className="metadata-panel__info-line" role="text">
+                    {infoLineItems.map((item, index) => (
+                      <span
+                        key={item.key || index}
+                        className={`metadata-panel__info-pill${
+                          item.className ? ` ${item.className}` : ""
+                        }`}
+                        title={item.title}
+                      >
+                        {index > 0 && (
+                          <span
+                            aria-hidden="true"
+                            className="metadata-panel__info-separator"
+                          >
+                            •
+                          </span>
+                        )}
+                        <span>{item.label}</span>
                       </span>
-                    ) : (
-                      <span className="metadata-panel__badge">Not rated</span>
-                    )}
+                    ))}
                   </div>
-                  <RatingStars
-                    value={ratingInfo.value}
-                    isMixed={ratingInfo.mixed}
-                    onSelect={(val) => onSetRating?.(val)}
-                    onClear={onClearRating}
-                    disabled={!hasSelection}
-                  />
                 </section>
-              </div>
+              )}
 
-              <div className="metadata-panel__column">
-                <section className="metadata-panel__section">
-                  <div className="metadata-panel__section-header">
-                    <span>Tags</span>
-                    <span className="metadata-panel__badge">
-                      {sharedTags.length ? `${sharedTags.length} applied` : "None"}
+              <section className="metadata-panel__section metadata-panel__section--rating">
+                <div className="metadata-panel__section-header">
+                  <span>Rating</span>
+                  {ratingInfo.mixed ? (
+                    <span className="metadata-panel__badge">Mixed</span>
+                  ) : ratingInfo.hasAny ? (
+                    <span className="metadata-panel__badge metadata-panel__badge--accent">
+                      {`${ratingInfo.value} / 5`}
                     </span>
-                  </div>
-                  <div className="metadata-panel__chips">
-                    {sharedTags.length === 0 ? (
-                      <span className="metadata-panel__hint">No shared tags yet.</span>
-                    ) : (
-                      sharedTags.map((tag) => (
+                  ) : (
+                    <span className="metadata-panel__badge">Not rated</span>
+                  )}
+                </div>
+                <RatingStars
+                  value={ratingInfo.value}
+                  isMixed={ratingInfo.mixed}
+                  onSelect={(val) => onSetRating?.(val)}
+                  onClear={onClearRating}
+                  disabled={!hasSelection}
+                />
+              </section>
+
+              <section className="metadata-panel__section metadata-panel__section--tags">
+                <div className="metadata-panel__section-header">
+                  <span>Tags</span>
+                  <span className="metadata-panel__badge">
+                    {sharedTags.length ? `${sharedTags.length} applied` : "None"}
+                  </span>
+                </div>
+                <div className="metadata-panel__chips">
+                  {sharedTags.length === 0 ? (
+                    <span className="metadata-panel__hint">No shared tags yet.</span>
+                  ) : (
+                    sharedTags.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="metadata-panel__chip"
+                        onClick={() => onRemoveTag?.(tag)}
+                      >
+                        <span>#{tag}</span>
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                {partialTags.length > 0 && (
+                  <div className="metadata-panel__partial-group">
+                    <div className="metadata-panel__section-subtitle">
+                      Appears on some selected clips
+                    </div>
+                    <div className="metadata-panel__chips">
+                      {partialTags.map(({ tag, count }) => (
                         <button
                           key={tag}
                           type="button"
-                          className="metadata-panel__chip"
-                          onClick={() => onRemoveTag?.(tag)}
+                          className="metadata-panel__chip metadata-panel__chip--ghost"
+                          onClick={() => onApplyTagToSelection?.(tag)}
+                          title={`Apply to all (${count}/${derivedSelectionCount})`}
                         >
                           <span>#{tag}</span>
-                          <span aria-hidden="true">×</span>
+                          <span className="metadata-panel__chip-count">
+                            {count}/{derivedSelectionCount}
+                          </span>
                         </button>
-                      ))
-                    )}
+                      ))}
+                    </div>
                   </div>
+                )}
 
-                  {partialTags.length > 0 && (
-                    <div className="metadata-panel__partial-group">
-                      <div className="metadata-panel__section-subtitle">
-                        Appears on some selected clips
-                      </div>
-                      <div className="metadata-panel__chips">
-                        {partialTags.map(({ tag, count }) => (
-                          <button
-                            key={tag}
-                            type="button"
-                            className="metadata-panel__chip metadata-panel__chip--ghost"
-                            onClick={() => onApplyTagToSelection?.(tag)}
-                            title={`Apply to all (${count}/${derivedSelectionCount})`}
-                          >
-                            <span>#{tag}</span>
-                            <span className="metadata-panel__chip-count">
-                              {count}/{derivedSelectionCount}
+                <div className="metadata-panel__input-row">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Add tag and press Enter"
+                    disabled={!hasSelection}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTagSubmit}
+                    disabled={!hasSelection || !inputValue.trim()}
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {suggestionTags.length > 0 && (
+                  <div className="metadata-panel__suggestions" aria-live="polite">
+                    <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
+                      {hasSuggestionQuery
+                        ? "Matching tags"
+                        : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
+                    </div>
+                    <div className="metadata-panel__suggestion-list">
+                      {suggestionTags.map((suggestion) => (
+                        <button
+                          key={suggestion.name}
+                          type="button"
+                          className="metadata-panel__suggestion"
+                          onClick={() => onApplyTagToSelection?.(suggestion.name)}
+                          title={`Apply #${suggestion.name} to selection`}
+                        >
+                          <span>#{suggestion.name}</span>
+                          {typeof suggestion.usageCount === "number" && (
+                            <span className="metadata-panel__suggestion-count">
+                              {suggestion.usageCount}
                             </span>
-                          </button>
-                        ))}
-                      </div>
+                          )}
+                        </button>
+                      ))}
                     </div>
-                  )}
-
-                  <div className="metadata-panel__input-row">
-                    <input
-                      ref={inputRef}
-                      type="text"
-                      value={inputValue}
-                      onChange={(e) => setInputValue(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="Add tag and press Enter"
-                      disabled={!hasSelection}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleTagSubmit}
-                      disabled={!hasSelection || !inputValue.trim()}
-                    >
-                      Add
-                    </button>
                   </div>
-
-                  {suggestionTags.length > 0 && (
-                    <div className="metadata-panel__suggestions" aria-live="polite">
-                      <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-                        {hasSuggestionQuery
-                          ? "Matching tags"
-                          : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
-                      </div>
-                      <div className="metadata-panel__suggestion-list">
-                        {suggestionTags.map((suggestion) => (
-                          <button
-                            key={suggestion.name}
-                            type="button"
-                            className="metadata-panel__suggestion"
-                            onClick={() => onApplyTagToSelection?.(suggestion.name)}
-                            title={`Apply #${suggestion.name} to selection`}
-                          >
-                            <span>#{suggestion.name}</span>
-                            {typeof suggestion.usageCount === "number" && (
-                              <span className="metadata-panel__suggestion-count">
-                                {suggestion.usageCount}
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </section>
-              </div>
-            </>
+                )}
+              </section>
+            </div>
           )}
         </div>
       </div>

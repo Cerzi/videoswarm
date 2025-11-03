@@ -53,12 +53,12 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.getByText('Filename')).toBeInTheDocument();
     expect(screen.getByText('clip-one.mp4')).toBeInTheDocument();
-    expect(screen.getByText('Date created')).toBeInTheDocument();
     expect(screen.getByText(formatExpectedDate(createdDate))).toBeInTheDocument();
-    expect(screen.getByText('Resolution')).toBeInTheDocument();
     expect(screen.getByText('1920×1080')).toBeInTheDocument();
+    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
+    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
+    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
   });
 
   it('omits the info section when no identifying details are available', () => {
@@ -71,9 +71,7 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
-    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
-    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+    expect(document.querySelector('.metadata-panel__info-line')).toBeNull();
   });
 
   it('hides the info section when multiple items are selected', () => {
@@ -93,9 +91,7 @@ describe('MetadataPanel single-selection info', () => {
       ],
     });
 
-    expect(screen.queryByText('Filename')).not.toBeInTheDocument();
-    expect(screen.queryByText('Date created')).not.toBeInTheDocument();
-    expect(screen.queryByText('Resolution')).not.toBeInTheDocument();
+    expect(document.querySelector('.metadata-panel__info-line')).toBeNull();
   });
 });
 

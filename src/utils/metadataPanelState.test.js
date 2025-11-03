@@ -3,9 +3,9 @@ import { getMetadataPanelToggleState, shouldAutoOpenMetadataPanel } from './meta
 
 describe('metadataPanelState', () => {
   describe('getMetadataPanelToggleState', () => {
-    it('requests clearing selection when collapsing with active selection', () => {
+    it('does not request clearing selection when collapsing with active selection', () => {
       const result = getMetadataPanelToggleState(true, 3);
-      expect(result).toEqual({ nextOpen: false, shouldClear: true });
+      expect(result).toEqual({ nextOpen: false, shouldClear: false });
     });
 
     it('keeps panel closed when toggled closed without selection', () => {
