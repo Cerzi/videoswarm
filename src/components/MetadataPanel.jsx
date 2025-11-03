@@ -755,7 +755,6 @@ const MetadataPanel = forwardRef((
               </div>
             )}
           </div>
-        )}
       </div>
     </aside>
   );
