@@ -19,6 +19,7 @@ require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
+const { migrateLegacyProfileData } = require("./main/profile-migration");
 const supportContent = require("./src/config/supportContent.json");
 
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
@@ -547,6 +548,20 @@ async function reconfigureForProfile(profileId, { broadcast = true } = {}) {
   const targetId = profileManager.setActiveProfile(profileId);
   activeProfileId = targetId;
   const profilePath = getProfilePath(targetId);
+
+  if (typeof profileManager.getUserDataPath === "function") {
+    try {
+      const userDataPath = profileManager.getUserDataPath();
+      await migrateLegacyProfileData({
+        profileId: targetId,
+        profilePath,
+        userDataPath,
+        defaultProfileId: profileManager.DEFAULT_PROFILE_ID,
+      });
+    } catch (error) {
+      console.warn("[profile] Legacy data migration failed", error);
+    }
+  }
 
   try {
     await folderWatcher.stop();
