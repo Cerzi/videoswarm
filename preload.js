@@ -118,6 +118,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("profile-changed", handler);
       return () => ipcRenderer.removeListener("profile-changed", handler);
     },
+    onPromptInput: (callback) => {
+      if (typeof callback !== "function") {
+        return () => {};
+      }
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("profiles:prompt-input", handler);
+      return () => ipcRenderer.removeListener("profiles:prompt-input", handler);
+    },
+    respondToPrompt: (requestId, value) => {
+      ipcRenderer.send("profiles:prompt-response", { requestId, value });
+    },
   },
 
   // Settings management - NEW methods for faster loading

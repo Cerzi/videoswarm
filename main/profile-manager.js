@@ -137,6 +137,10 @@ function initializeProfileManager(customBasePath = null) {
   return ensureInitialised();
 }
 
+function getUserDataPath() {
+  return resolveAppUserDataPath();
+}
+
 function getActiveProfile() {
   const currentState = ensureInitialised();
   return currentState.activeProfileId;
@@ -270,6 +274,7 @@ module.exports = {
   renameProfile,
   deleteProfile,
   resetForTests,
+  getUserDataPath,
   DEFAULT_PROFILE_ID,
   DEFAULT_PROFILE_NAME,
 };

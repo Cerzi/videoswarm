@@ -1,6 +1,5 @@
 import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
-import HelpMenu from "./HelpMenu";
 import SupportLink from "./SupportLink";
 import { supportContent } from "../config/supportContent";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
@@ -95,7 +94,6 @@ export default function HeaderBar({
   isLoadingFolder,
   handleFolderSelect,
   handleWebFileSelection,
-  activeProfileName,
   recursiveMode,
   toggleRecursive,
   showFilenames,
@@ -179,11 +177,16 @@ export default function HeaderBar({
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
 
-        <HelpMenu onOpenAbout={onOpenAbout} />
-        {isElectron && activeProfileName && (
-          <div className="profile-indicator" title={`Active profile: ${activeProfileName}`}>
-            <span>{activeProfileName}</span>
-          </div>
+        {isElectron && (
+          <button
+            type="button"
+            className="toggle-button"
+            onClick={onOpenAbout}
+            title="About VideoSwarm"
+            disabled={!onOpenAbout}
+          >
+            <span>About</span>
+          </button>
         )}
       </div>
 

@@ -398,51 +398,109 @@ function wireWatcherEvents(win) {
 }
 
 // ===== Settings load/save =====
+function computeDefaultZoomLevel() {
+  try {
+    return getDefaultZoomForScreen();
+  } catch {
+    return defaultSettings.zoomLevel;
+  }
+}
+
+function normaliseLoadedSettings(rawSettings) {
+  const { layoutMode, autoplayEnabled, ...cleanSettings } = rawSettings || {};
+  const merged = { ...defaultSettings, ...cleanSettings };
+  const hasZoom = Object.prototype.hasOwnProperty.call(cleanSettings, "zoomLevel")
+    && cleanSettings.zoomLevel !== null
+    && cleanSettings.zoomLevel !== undefined;
+  if (!hasZoom) {
+    merged.zoomLevel = computeDefaultZoomLevel();
+  }
+  return merged;
+}
+
+async function tryMigrateLegacySettings(profileId, targetPath) {
+  if (profileId !== profileManager.DEFAULT_PROFILE_ID) {
+    return null;
+  }
+  if (typeof profileManager.getUserDataPath !== "function") {
+    return null;
+  }
+
+  let userDataPath;
+  try {
+    userDataPath = profileManager.getUserDataPath();
+  } catch (error) {
+    console.warn("[settings] Unable to resolve userData path for migration", error);
+    return null;
+  }
+
+  const legacyPath = path.join(userDataPath, "settings.json");
+  if (legacyPath === targetPath) {
+    return null;
+  }
+
+  try {
+    const legacyRaw = await fs.readFile(legacyPath, "utf8");
+    const legacySettings = JSON.parse(legacyRaw);
+    const migrated = normaliseLoadedSettings(legacySettings);
+    const { layoutMode, autoplayEnabled, ...toPersist } = migrated;
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, JSON.stringify(toPersist, null, 2));
+    console.log("[settings] Migrated legacy settings.json into profile scope");
+    return migrated;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[settings] Failed to migrate legacy settings", error);
+    }
+    return null;
+  }
+}
+
 async function loadSettings(profileId = getActiveProfileId()) {
   const settingsFile = getSettingsPath(profileId);
   try {
     const data = await fs.readFile(settingsFile, "utf8");
-    const settings = JSON.parse(data);
-    console.log("Settings loaded:", settings);
+    const parsed = JSON.parse(data);
+    const settings = normaliseLoadedSettings(parsed);
+    currentSettingsProfileId = profileId;
+    currentSettings = settings;
+    return currentSettings;
+  } catch (error) {
+    const migrated = await tryMigrateLegacySettings(profileId, settingsFile);
+    if (migrated) {
+      currentSettingsProfileId = profileId;
+      currentSettings = migrated;
+      return currentSettings;
+    }
 
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
-
-    if (cleanSettings.zoomLevel === undefined) {
-      const defaultZoom = getDefaultZoomForScreen();
-      cleanSettings.zoomLevel = defaultZoom;
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        "[settings] Failed to read settings for profile, using defaults",
+        error
+      );
+    } else {
       console.log(
-        "🔍 No saved zoom level, using screen-based default:",
-        cleanSettings.zoomLevel
+        "No settings file found for profile",
+        profileId,
+        "— using defaults"
       );
     }
 
+    const defaults = normaliseLoadedSettings(null);
     currentSettingsProfileId = profileId;
-    currentSettings = { ...defaultSettings, ...cleanSettings };
-    return currentSettings;
-  } catch {
-    console.log("No settings file found for profile", profileId, "— using defaults");
-
-    const settingsWithScreenZoom = { ...defaultSettings };
-    try {
-      settingsWithScreenZoom.zoomLevel = getDefaultZoomForScreen();
-    } catch {
-      settingsWithScreenZoom.zoomLevel = 1;
-    }
-
-    currentSettingsProfileId = profileId;
-    currentSettings = settingsWithScreenZoom;
+    currentSettings = defaults;
     return currentSettings;
   }
 }
 
 async function saveSettings(settings, profileId = getActiveProfileId()) {
   try {
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
+    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings || {};
     const settingsFile = getSettingsPath(profileId);
     await fs.mkdir(path.dirname(settingsFile), { recursive: true });
     await fs.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
     currentSettingsProfileId = profileId;
-    currentSettings = { ...defaultSettings, ...cleanSettings };
+    currentSettings = normaliseLoadedSettings(cleanSettings);
     console.log("Settings saved for profile", profileId);
   } catch (error) {
     console.error("Failed to save settings:", error);
@@ -670,6 +728,49 @@ async function promptForProfileName(defaultValue, { title, message }) {
     const value = result?.value ?? result?.textValue ?? result?.inputValue ?? "";
     const trimmed = typeof value === "string" ? value.trim() : "";
     return trimmed.length ? trimmed : null;
+  }
+
+  if (mainWindow?.webContents) {
+    const requestId = `profile-prompt-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`;
+    return await new Promise((resolve) => {
+      let settled = false;
+      const channel = "profiles:prompt-response";
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        ipcMain.removeListener(channel, handler);
+        clearTimeout(timeoutId);
+      };
+      const handler = (_event, payload) => {
+        if (!payload || payload.requestId !== requestId) {
+          return;
+        }
+        cleanup();
+        const value =
+          typeof payload.value === "string" ? payload.value.trim() : "";
+        resolve(value.length ? value : null);
+      };
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 45000);
+
+      ipcMain.on(channel, handler);
+      try {
+        mainWindow.webContents.send("profiles:prompt-input", {
+          requestId,
+          defaultValue,
+          title,
+          message,
+        });
+      } catch (error) {
+        cleanup();
+        console.warn("[profiles] Failed to request renderer prompt", error);
+        resolve(null);
+      }
+    });
   }
 
   const { response } = await dialog.showMessageBox(mainWindow || null, {

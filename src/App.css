@@ -45,18 +45,6 @@ body {
   gap: 0.5rem;
 }
 
-.profile-indicator {
-  margin-left: 0.75rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--color-text);
-  font-size: 0.85rem;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-
 .controls {
   display: flex;
   align-items: center;

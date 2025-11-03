@@ -37,6 +37,10 @@ describe("profile manager", () => {
     expect(fs.existsSync(profileManager.resolveProfilePath(active))).toBe(true);
   });
 
+  it("exposes the userData path after initialization", () => {
+    expect(profileManager.getUserDataPath()).toBe(tempDir);
+  });
+
   it("creates, activates, and resolves new profiles", () => {
     const created = profileManager.createProfile("Artist Cuts");
     expect(created.name).toBe("Artist Cuts");

@@ -147,7 +147,6 @@ function App() {
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
-  const [activeProfileInfo, setActiveProfileInfo] = useState(null);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -183,23 +182,39 @@ function App() {
 
   useEffect(() => {
     const profilesApi = window.electronAPI?.profiles;
-    if (!profilesApi) return undefined;
-    let disposed = false;
+    if (!profilesApi?.onPromptInput || !profilesApi?.respondToPrompt) {
+      return undefined;
+    }
 
-    profilesApi.getActive?.().then((info) => {
-      if (!disposed && info) {
-        setActiveProfileInfo(info);
+    const dispose = profilesApi.onPromptInput?.((payload) => {
+      if (!payload || !payload.requestId) {
+        return;
       }
+      const { requestId, defaultValue, title, message } = payload;
+      const promptMessage = [title, message]
+        .filter((part) => typeof part === "string" && part.trim().length)
+        .join("\n\n");
+
+      let responseValue = null;
+      if (typeof window.prompt === "function") {
+        try {
+          responseValue = window.prompt(
+            promptMessage || "Enter a profile name",
+            defaultValue ?? ""
+          );
+        } catch (error) {
+          console.warn("Profile rename prompt failed", error);
+          responseValue = null;
+        }
+      }
+
+      profilesApi.respondToPrompt(
+        requestId,
+        typeof responseValue === "string" ? responseValue : null
+      );
     });
 
-    const unsubscribe = profilesApi.onChanged?.((payload) => {
-      setActiveProfileInfo(payload);
-    });
-
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
+    return () => dispose?.();
   }, []);
   // ----- Recent Folders hook -----
   const {
@@ -1311,7 +1326,6 @@ function App() {
             isLoadingFolder={isLoadingFolder}
             handleFolderSelect={handleFolderSelect}
             handleWebFileSelection={handleWebFileSelection}
-            activeProfileName={activeProfileInfo?.profileName ?? ""}
             recursiveMode={recursiveMode}
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
