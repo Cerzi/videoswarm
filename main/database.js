@@ -5,6 +5,7 @@ const { computeFingerprint } = require('./fingerprint');
 
 let dbInstance = null;
 let metadataStoreInstance = null;
+let currentProfilePath = null;
 
 function ensureDirectory(dirPath) {
   try {
@@ -14,11 +15,36 @@ function ensureDirectory(dirPath) {
   }
 }
 
-function initDatabase(app) {
-  if (dbInstance) return dbInstance;
-  const userData = app.getPath('userData');
-  ensureDirectory(userData);
-  const dbPath = path.join(userData, 'videoswarm-meta.db');
+function normalizeProfilePath(profilePath) {
+  if (typeof profilePath === 'string') {
+    const trimmed = profilePath.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+function initDatabase(app, profilePath) {
+  const normalized = normalizeProfilePath(profilePath);
+  const resolvedProfilePath = normalized || app.getPath('userData');
+
+  if (dbInstance && currentProfilePath === resolvedProfilePath) {
+    return dbInstance;
+  }
+
+  if (dbInstance) {
+    try {
+      dbInstance.close();
+    } catch (error) {
+      console.warn('[database] Failed to close existing instance', error);
+    }
+    dbInstance = null;
+    currentProfilePath = null;
+  }
+
+  ensureDirectory(resolvedProfilePath);
+  const dbPath = path.join(resolvedProfilePath, 'videoswarm-meta.db');
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -60,6 +86,7 @@ function initDatabase(app) {
   `);
 
   dbInstance = db;
+  currentProfilePath = resolvedProfilePath;
   return db;
 }
 
@@ -349,9 +376,12 @@ function createMetadataStore(db) {
   };
 }
 
-function initMetadataStore(app) {
-  if (metadataStoreInstance) return metadataStoreInstance;
-  const db = initDatabase(app);
+function initMetadataStore(app, profilePath) {
+  const normalized = normalizeProfilePath(profilePath) || currentProfilePath;
+  if (metadataStoreInstance && currentProfilePath && normalized === currentProfilePath) {
+    return metadataStoreInstance;
+  }
+  const db = initDatabase(app, profilePath);
   metadataStoreInstance = createMetadataStore(db);
   return metadataStoreInstance;
 }
@@ -363,7 +393,23 @@ function getMetadataStore() {
   return metadataStoreInstance;
 }
 
+function resetDatabase() {
+  if (metadataStoreInstance) {
+    metadataStoreInstance = null;
+  }
+  if (dbInstance) {
+    try {
+      dbInstance.close();
+    } catch (error) {
+      console.warn('[database] Failed to close database during reset', error);
+    }
+    dbInstance = null;
+  }
+  currentProfilePath = null;
+}
+
 module.exports = {
   initMetadataStore,
   getMetadataStore,
+  resetDatabase,
 };

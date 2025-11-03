@@ -105,6 +105,32 @@ contextBridge.exposeInMainWorld("electronAPI", {
     });
   },
 
+  profiles: {
+    list: () => ipcRenderer.invoke("profiles:list"),
+    getActive: () => ipcRenderer.invoke("profiles:get-active"),
+    setActive: (profileId) => ipcRenderer.invoke("profiles:set-active", profileId),
+    create: (name) => ipcRenderer.invoke("profiles:create", name),
+    rename: (profileId, name) =>
+      ipcRenderer.invoke("profiles:rename", profileId, name),
+    delete: (profileId) => ipcRenderer.invoke("profiles:delete", profileId),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("profile-changed", handler);
+      return () => ipcRenderer.removeListener("profile-changed", handler);
+    },
+    onPromptInput: (callback) => {
+      if (typeof callback !== "function") {
+        return () => {};
+      }
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("profiles:prompt-input", handler);
+      return () => ipcRenderer.removeListener("profiles:prompt-input", handler);
+    },
+    respondToPrompt: (requestId, value) => {
+      ipcRenderer.send("profiles:prompt-response", { requestId, value });
+    },
+  },
+
   // Settings management - NEW methods for faster loading
   getSettings: async () => {
     return await ipcRenderer.invoke("get-settings");
