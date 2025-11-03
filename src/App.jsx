@@ -1199,6 +1199,13 @@ function App() {
     videoCollection.performCleanup,
   ]);
 
+  const contentRegionClassName = [
+    "content-region",
+    isMetadataPanelOpen ? "content-region--dock-open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
       {!settingsLoaded ? (
@@ -1367,7 +1374,7 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="content-region" ref={contentRegionRef}>
+            <div className={contentRegionClassName} ref={contentRegionRef}>
               <div
                 className="content-region__viewport"
                 ref={scrollContainerRef}

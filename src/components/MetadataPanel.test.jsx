@@ -21,10 +21,10 @@ describe('MetadataPanel empty state', () => {
 
     expect(screen.getByText('No clips selected')).toBeInTheDocument();
     expect(
-      screen.getByText('Choose videos from the grid to see their details here.')
+      screen.getByText('Pick videos from the grid to see quick stats and tags here.')
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Tip: Use Shift or Ctrl/Cmd to edit multiple clips together.')
+      screen.getByText('Tip: Use Shift or Ctrl/Cmd to build multi-select batches.')
     ).toBeInTheDocument();
   });
 });
