@@ -78,7 +78,7 @@
     "afterPack": "./scripts/linux-fix.js",
     "directories": {
       "output": "dist",
-      "buildResources": "build"
+      "buildResources": "assets"
     },
     "files": [
       "index.html",
@@ -112,7 +112,7 @@
         }
       ],
       "artifactName": "VideoSwarm-${version}-win-${arch}.${ext}",
-      "icon": "build/icon.ico",
+      "icon": "icons/videoswarm.ico",
       "publisherName": "AI Tools",
       "verifyUpdateCodeSignature": false
     },
@@ -128,7 +128,7 @@
         "deb"
       ],
       "artifactName": "VideoSwarm-${version}-linux.${ext}",
-      "icon": "build/icon.png",
+      "icon": "icons/videoswarm.png",
       "category": "Utility",
       "executableName": "video-swarm",
       "desktop": {
