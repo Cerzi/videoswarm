@@ -15,6 +15,7 @@ import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
+import ProfilePromptDialog from "./components/ProfilePromptDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -147,6 +148,8 @@ function App() {
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
+  const [profilePromptRequest, setProfilePromptRequest] = useState(null);
+  const [profilePromptValue, setProfilePromptValue] = useState("");
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -179,6 +182,70 @@ function App() {
       fn();
     }
   }, []);
+
+  const respondToProfilePrompt = useCallback((requestId, value) => {
+    const profilesApi = window.electronAPI?.profiles;
+    profilesApi?.respondToPrompt?.(requestId, value);
+  }, []);
+
+  useEffect(() => {
+    const profilesApi = window.electronAPI?.profiles;
+    if (!profilesApi?.onPromptInput) {
+      return undefined;
+    }
+
+    return profilesApi.onPromptInput((payload) => {
+      if (!payload?.requestId) {
+        return;
+      }
+
+      setProfilePromptRequest((current) => {
+        if (current?.requestId && current.requestId !== payload.requestId) {
+          respondToProfilePrompt(current.requestId, null);
+        }
+        return {
+          requestId: payload.requestId,
+          title: payload.title,
+          message: payload.message,
+        };
+      });
+      setProfilePromptValue(payload.defaultValue ?? "");
+    });
+  }, [respondToProfilePrompt]);
+
+  const handleProfilePromptDismiss = useCallback(() => {
+    setProfilePromptRequest(null);
+    setProfilePromptValue("");
+  }, []);
+
+  const handleProfilePromptConfirm = useCallback(
+    (nextValue) => {
+      if (!profilePromptRequest) {
+        return;
+      }
+      const resolvedValue =
+        typeof nextValue === "string" ? nextValue : profilePromptValue;
+      const trimmed = resolvedValue.trim();
+      respondToProfilePrompt(
+        profilePromptRequest.requestId,
+        trimmed.length ? trimmed : null
+      );
+      handleProfilePromptDismiss();
+    },
+    [
+      profilePromptRequest,
+      profilePromptValue,
+      respondToProfilePrompt,
+      handleProfilePromptDismiss,
+    ]
+  );
+
+  const handleProfilePromptCancel = useCallback(() => {
+    if (profilePromptRequest) {
+      respondToProfilePrompt(profilePromptRequest.requestId, null);
+    }
+    handleProfilePromptDismiss();
+  }, [profilePromptRequest, respondToProfilePrompt, handleProfilePromptDismiss]);
   // ----- Recent Folders hook -----
   const {
     items: recentFolders,
@@ -1313,7 +1380,6 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
-            onOpenAbout={() => setAboutOpen(true)}
           />
 
           {isFiltersOpen && (
@@ -1328,6 +1394,16 @@ function App() {
           )}
 
           <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
+
+          {profilePromptRequest ? (
+            <ProfilePromptDialog
+              request={profilePromptRequest}
+              value={profilePromptValue}
+              onChange={setProfilePromptValue}
+              onSubmit={handleProfilePromptConfirm}
+              onCancel={handleProfilePromptCancel}
+            />
+          ) : null}
 
           {filtersActiveCount > 0 && (
             <div className="filters-summary">

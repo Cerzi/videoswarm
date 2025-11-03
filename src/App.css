@@ -342,6 +342,119 @@ body {
   outline: none;
 }
 
+.profile-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2200;
+  padding: 1.5rem;
+}
+
+.profile-prompt-dialog {
+  width: min(420px, 100%);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: 14px;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.profile-prompt-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-prompt-header {
+  padding: 1.25rem 1.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.profile-prompt-header h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.profile-prompt-message {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.72));
+}
+
+.profile-prompt-body {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.profile-prompt-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.72));
+}
+
+.profile-prompt-input {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  padding: 0.6rem 0.75rem;
+  font-size: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.profile-prompt-input:focus {
+  outline: none;
+  border-color: rgba(143, 199, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.profile-prompt-footer {
+  padding: 1rem 1.5rem 1.4rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.profile-prompt-button {
+  border-radius: 8px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.profile-prompt-button--secondary {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.profile-prompt-button--secondary:hover,
+.profile-prompt-button--secondary:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.profile-prompt-button--primary {
+  background: linear-gradient(135deg, #5f8cff, #7c5dff);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.profile-prompt-button--primary:hover,
+.profile-prompt-button--primary:focus-visible {
+  background: linear-gradient(135deg, #759cff, #9371ff);
+  outline: none;
+}
+
 .filters-empty-state {
   padding: 3rem 1rem;
   text-align: center;

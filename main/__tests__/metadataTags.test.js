@@ -28,7 +28,7 @@ try {
 if (!hasNativeDriver || databaseLoadError) {
   describe.skip("metadata tag cleanup", () => {});
 } else {
-  const { initMetadataStore, getMetadataStore } = database;
+  const { initMetadataStore, getMetadataStore, resetDatabase } = database;
 
   describe("metadata tag cleanup", () => {
     let tempDir;
@@ -39,11 +39,12 @@ if (!hasNativeDriver || databaseLoadError) {
       const mockApp = {
         getPath: () => tempDir,
       };
-      initMetadataStore(mockApp);
+      initMetadataStore(mockApp, tempDir);
       store = getMetadataStore();
     });
 
     afterAll(() => {
+      resetDatabase();
       if (tempDir && fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

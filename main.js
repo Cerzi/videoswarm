@@ -17,8 +17,11 @@ const fsPromises = fs.promises;
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
-const { initMetadataStore, getMetadataStore } = require("./main/database");
+const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
+const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
+const { migrateLegacyProfileData } = require("./main/profile-migration");
+
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
 
 function loadSupportContent() {
@@ -98,7 +101,8 @@ if (process.platform === "linux") {
 app.commandLine.appendSwitch("js-flags", "--expose-gc");
 console.log("🧠 Enabled garbage collection access");
 
-const settingsPath = path.join(app.getPath("userData"), "settings.json");
+let activeProfileId = null;
+let currentSettingsProfileId = null;
 
 // Enhanced default zoom detection based on screen size
 function getDefaultZoomForScreen() {
@@ -164,6 +168,30 @@ let currentSettings = null;
 
 // ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
+
+function getActiveProfileId() {
+  try {
+    return activeProfileId || profileManager.getActiveProfile();
+  } catch (error) {
+    console.warn("[profile] Unable to resolve active profile", error);
+    return activeProfileId;
+  }
+}
+
+function getProfilePath(profileId = getActiveProfileId()) {
+  return profileManager.resolveProfilePath(profileId);
+}
+
+function getSettingsPath(profileId = getActiveProfileId()) {
+  const profilePath = getProfilePath(profileId);
+  return path.join(profilePath, "settings.json");
+}
+
+function getProfileDisplayName(profileId = getActiveProfileId()) {
+  const profiles = profileManager.listProfiles();
+  const match = profiles.find((profile) => profile.id === profileId);
+  return match?.name || profileId;
+}
 
 // We keep scanFolderForChanges so the watcher module can call it in polling mode.
 let lastFolderScan = new Map();
@@ -415,49 +443,110 @@ function wireWatcherEvents(win) {
 }
 
 // ===== Settings load/save =====
-async function loadSettings() {
+function computeDefaultZoomLevel() {
   try {
-    const data = await fsPromises.readFile(settingsPath, "utf8");
-    const settings = JSON.parse(data);
-    console.log("Settings loaded:", settings);
+    return getDefaultZoomForScreen();
+  } catch {
+    return defaultSettings.zoomLevel;
+  }
+}
 
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
+function normaliseLoadedSettings(rawSettings) {
+  const { layoutMode, autoplayEnabled, ...cleanSettings } = rawSettings || {};
+  const merged = { ...defaultSettings, ...cleanSettings };
+  const hasZoom = Object.prototype.hasOwnProperty.call(cleanSettings, "zoomLevel")
+    && cleanSettings.zoomLevel !== null
+    && cleanSettings.zoomLevel !== undefined;
+  if (!hasZoom) {
+    merged.zoomLevel = computeDefaultZoomLevel();
+  }
+  return merged;
+}
 
-    if (cleanSettings.zoomLevel === undefined) {
-      const defaultZoom = getDefaultZoomForScreen();
-      cleanSettings.zoomLevel = defaultZoom;
+async function tryMigrateLegacySettings(profileId, targetPath) {
+  if (profileId !== profileManager.DEFAULT_PROFILE_ID) {
+    return null;
+  }
+  if (typeof profileManager.getUserDataPath !== "function") {
+    return null;
+  }
+
+  let userDataPath;
+  try {
+    userDataPath = profileManager.getUserDataPath();
+  } catch (error) {
+    console.warn("[settings] Unable to resolve userData path for migration", error);
+    return null;
+  }
+
+  const legacyPath = path.join(userDataPath, "settings.json");
+  if (legacyPath === targetPath) {
+    return null;
+  }
+
+  try {
+    const legacyRaw = await fsPromises.readFile(legacyPath, "utf8");
+    const legacySettings = JSON.parse(legacyRaw);
+    const migrated = normaliseLoadedSettings(legacySettings);
+    const { layoutMode, autoplayEnabled, ...toPersist } = migrated;
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, JSON.stringify(toPersist, null, 2));
+    console.log("[settings] Migrated legacy settings.json into profile scope");
+    return migrated;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[settings] Failed to migrate legacy settings", error);
+    }
+    return null;
+  }
+}
+
+async function loadSettings(profileId = getActiveProfileId()) {
+  const settingsFile = getSettingsPath(profileId);
+  try {
+    const data = await fsPromises.readFile(settingsFile, "utf8");
+    const parsed = JSON.parse(data);
+    const settings = normaliseLoadedSettings(parsed);
+    currentSettingsProfileId = profileId;
+    currentSettings = settings;
+    return currentSettings;
+  } catch (error) {
+    const migrated = await tryMigrateLegacySettings(profileId, settingsFile);
+    if (migrated) {
+      currentSettingsProfileId = profileId;
+      currentSettings = migrated;
+      return currentSettings;
+    }
+
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        "[settings] Failed to read settings for profile, using defaults",
+        error
+      );
+    } else {
       console.log(
-        "🔍 No saved zoom level, using screen-based default:",
-        cleanSettings.zoomLevel
+        "No settings file found for profile",
+        profileId,
+        "— using defaults"
       );
     }
 
-    currentSettings = { ...defaultSettings, ...cleanSettings };
-    return currentSettings;
-  } catch {
-    console.log("No settings file found, using defaults");
-
-    const settingsWithScreenZoom = { ...defaultSettings };
-    try {
-      settingsWithScreenZoom.zoomLevel = getDefaultZoomForScreen();
-    } catch {
-      settingsWithScreenZoom.zoomLevel = 1;
-    }
-
-    currentSettings = settingsWithScreenZoom;
+    const defaults = normaliseLoadedSettings(null);
+    currentSettingsProfileId = profileId;
+    currentSettings = defaults;
     return currentSettings;
   }
 }
 
-async function saveSettings(settings) {
+async function saveSettings(settings, profileId = getActiveProfileId()) {
   try {
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings;
-    await fsPromises.writeFile(
-      settingsPath,
-      JSON.stringify(cleanSettings, null, 2)
-    );
-    currentSettings = cleanSettings;
-    console.log("Settings saved:", cleanSettings);
+    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings || {};
+    const settingsFile = getSettingsPath(profileId);
+    await fsPromises.mkdir(path.dirname(settingsFile), { recursive: true });
+    await fsPromises.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
+    currentSettingsProfileId = profileId;
+    currentSettings = normaliseLoadedSettings(cleanSettings);
+    console.log("Settings saved for profile", profileId);
   } catch (error) {
     console.error("Failed to save settings:", error);
   }
@@ -473,14 +562,85 @@ function saveWindowBounds() {
   }
 }
 
-async function saveSettingsPartial(partialSettings) {
+async function saveSettingsPartial(partialSettings, profileId = getActiveProfileId()) {
   try {
-    const current = await loadSettings();
+    const current =
+      currentSettings && currentSettingsProfileId === profileId
+        ? currentSettings
+        : await loadSettings(profileId);
     const newSettings = { ...current, ...partialSettings };
-    await saveSettings(newSettings);
+    await saveSettings(newSettings, profileId);
   } catch (error) {
     console.error("Failed to save partial settings:", error);
   }
+}
+
+function broadcastProfileChange(settings = currentSettings) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const payload = {
+      profileId: getActiveProfileId(),
+      profileName: getProfileDisplayName(),
+      profiles: profileManager.listProfiles(),
+      settings: settings || currentSettings || defaultSettings,
+    };
+    mainWindow.webContents.send("settings-loaded", payload.settings);
+    mainWindow.webContents.send("profile-changed", payload);
+  }
+}
+
+async function reconfigureForProfile(profileId, { broadcast = true } = {}) {
+  const targetId = profileManager.setActiveProfile(profileId);
+  activeProfileId = targetId;
+  const profilePath = getProfilePath(targetId);
+
+  if (typeof profileManager.getUserDataPath === "function") {
+    try {
+      const userDataPath = profileManager.getUserDataPath();
+      await migrateLegacyProfileData({
+        profileId: targetId,
+        profilePath,
+        userDataPath,
+        defaultProfileId: profileManager.DEFAULT_PROFILE_ID,
+      });
+    } catch (error) {
+      console.warn("[profile] Legacy data migration failed", error);
+    }
+  }
+
+  try {
+    await folderWatcher.stop();
+  } catch (error) {
+    console.warn("[profile] Failed to stop watcher during profile switch", error);
+  }
+  lastFolderScan = new Map();
+
+  if (typeof thumbnailCache.reset === "function") {
+    try {
+      thumbnailCache.reset();
+    } catch (error) {
+      console.warn("[profile] Failed to reset thumbnail cache", error);
+    }
+  }
+  try {
+    thumbnailCache.init(app, profilePath);
+  } catch (error) {
+    console.warn("[profile] Failed to init thumbnail cache for new profile", error);
+  }
+
+  resetDatabase();
+  await initMetadataStore(app, profilePath);
+  await ensureRecentStore(targetId);
+
+  currentSettings = null;
+  currentSettingsProfileId = null;
+  const settings = await loadSettings(targetId);
+
+  if (broadcast) {
+    broadcastProfileChange(settings);
+  }
+
+  createMenu();
+  return settings;
 }
 
 // ===== Window/Menu =====
@@ -546,12 +706,24 @@ async function createWindow() {
     console.log("Page loaded, sending settings immediately");
     mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
+    mainWindow.webContents.send("profile-changed", {
+      profileId: getActiveProfileId(),
+      profileName: getProfileDisplayName(),
+      profiles: profileManager.listProfiles(),
+      settings: currentSettings,
+    });
   });
 
   mainWindow.webContents.on("dom-ready", () => {
     console.log("DOM ready, sending settings");
     mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
+    mainWindow.webContents.send("profile-changed", {
+      profileId: getActiveProfileId(),
+      profileName: getProfileDisplayName(),
+      profiles: profileManager.listProfiles(),
+      settings: currentSettings,
+    });
   });
 
   // Enhanced crash detection
@@ -599,6 +771,227 @@ async function createWindow() {
   wireWatcherEvents(mainWindow);
 }
 
+async function promptForProfileName(defaultValue, { title, message }) {
+  if (typeof dialog.showInputBox === "function") {
+    const result = await dialog.showInputBox({
+      title,
+      message,
+      buttonLabel: "Save",
+      value: defaultValue ?? "",
+      inputLabel: message,
+      cancelId: 1,
+    });
+    if (result?.canceled || result?.response === 1) {
+      return null;
+    }
+    const value = result?.value ?? result?.textValue ?? result?.inputValue ?? "";
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    return trimmed.length ? trimmed : null;
+  }
+
+  if (mainWindow?.webContents) {
+    const requestId = `profile-prompt-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`;
+    return await new Promise((resolve) => {
+      let settled = false;
+      const channel = "profiles:prompt-response";
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        ipcMain.removeListener(channel, handler);
+        clearTimeout(timeoutId);
+      };
+      const handler = (_event, payload) => {
+        if (!payload || payload.requestId !== requestId) {
+          return;
+        }
+        cleanup();
+        const value =
+          typeof payload.value === "string" ? payload.value.trim() : "";
+        resolve(value.length ? value : null);
+      };
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 45000);
+
+      ipcMain.on(channel, handler);
+      try {
+        mainWindow.webContents.send("profiles:prompt-input", {
+          requestId,
+          defaultValue,
+          title,
+          message,
+        });
+      } catch (error) {
+        cleanup();
+        console.warn("[profiles] Failed to request renderer prompt", error);
+        resolve(null);
+      }
+    });
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow || null, {
+    type: "question",
+    buttons: ["Use Suggested", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    title,
+    message,
+    detail:
+      "Your Electron version does not provide text input dialogs. Choose 'Use Suggested' to accept the suggested name.",
+  });
+  if (response === 0) {
+    const trimmed = typeof defaultValue === "string" ? defaultValue.trim() : "";
+    return trimmed.length ? trimmed : null;
+  }
+  return null;
+}
+
+async function handleCreateProfileFromMenu() {
+  const profiles = profileManager.listProfiles();
+  const suggested = `Profile ${profiles.length + 1}`;
+  const name = await promptForProfileName(suggested, {
+    title: "Create Profile",
+    message: "Enter a name for the new profile:",
+  });
+  if (!name) return;
+  try {
+    const profile = profileManager.createProfile(name);
+    await reconfigureForProfile(profile.id);
+  } catch (error) {
+    console.error("Failed to create profile", error);
+    await dialog.showMessageBox(mainWindow || null, {
+      type: "error",
+      title: "Create Profile Failed",
+      message: "Could not create the profile.",
+      detail: error?.message || String(error),
+    });
+  }
+}
+
+async function handleRenameActiveProfileFromMenu() {
+  const activeId = getActiveProfileId();
+  const currentName = getProfileDisplayName(activeId);
+  const name = await promptForProfileName(currentName, {
+    title: "Rename Profile",
+    message: "Enter a new name for the active profile:",
+  });
+  if (!name || name === currentName) {
+    return;
+  }
+  try {
+    profileManager.renameProfile(activeId, name);
+    createMenu();
+    broadcastProfileChange(currentSettings);
+  } catch (error) {
+    console.error("Failed to rename profile", error);
+    await dialog.showMessageBox(mainWindow || null, {
+      type: "error",
+      title: "Rename Profile Failed",
+      message: "Could not rename the profile.",
+      detail: error?.message || String(error),
+    });
+  }
+}
+
+async function handleDeleteActiveProfileFromMenu() {
+  const activeId = getActiveProfileId();
+  const profiles = profileManager.listProfiles();
+  if (profiles.length <= 1) {
+    await dialog.showMessageBox(mainWindow || null, {
+      type: "warning",
+      title: "Delete Profile",
+      message: "At least one profile must remain.",
+    });
+    return;
+  }
+
+  const activeName = getProfileDisplayName(activeId);
+  const { response } = await dialog.showMessageBox(mainWindow || null, {
+    type: "warning",
+    buttons: ["Delete", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    title: "Delete Profile",
+    message: `Delete the profile "${activeName}"?`,
+    detail:
+      "All settings and cached data for this profile will be removed. This cannot be undone.",
+  });
+  if (response !== 0) {
+    return;
+  }
+
+  try {
+    profileManager.deleteProfile(activeId);
+    await reconfigureForProfile(profileManager.getActiveProfile());
+  } catch (error) {
+    console.error("Failed to delete profile", error);
+    await dialog.showMessageBox(mainWindow || null, {
+      type: "error",
+      title: "Delete Profile Failed",
+      message: "Could not delete the profile.",
+      detail: error?.message || String(error),
+    });
+  }
+}
+
+function buildProfilesMenuTemplate() {
+  const profiles = profileManager.listProfiles();
+  if (!profiles.length) {
+    return [];
+  }
+  const activeId = getActiveProfileId();
+  const activeName = getProfileDisplayName(activeId);
+
+  const submenu = [
+    { label: `Active: ${activeName}`, enabled: false },
+    { type: "separator" },
+    ...profiles.map((profile) => ({
+      label: profile.name,
+      type: "radio",
+      checked: profile.id === activeId,
+      click: () => {
+        if (profile.id !== getActiveProfileId()) {
+          reconfigureForProfile(profile.id).catch((error) => {
+            console.error("Failed to switch profile", error);
+          });
+        }
+      },
+    })),
+    { type: "separator" },
+    {
+      label: "Create Profile…",
+      click: () => {
+        handleCreateProfileFromMenu().catch((error) => {
+          console.error("Create profile handler failed", error);
+        });
+      },
+    },
+    {
+      label: "Rename Profile…",
+      enabled: profiles.length > 0,
+      click: () => {
+        handleRenameActiveProfileFromMenu().catch((error) => {
+          console.error("Rename profile handler failed", error);
+        });
+      },
+    },
+    {
+      label: "Delete Profile…",
+      enabled: profiles.length > 1,
+      click: () => {
+        handleDeleteActiveProfileFromMenu().catch((error) => {
+          console.error("Delete profile handler failed", error);
+        });
+      },
+    },
+  ];
+
+  return submenu;
+}
+
 // Create application menu with folder selection
 function createMenu() {
   const template = [
@@ -628,6 +1021,10 @@ function createMenu() {
           click: () => app.quit(),
         },
       ],
+    },
+    {
+      label: "Profiles",
+      submenu: buildProfilesMenuTemplate(),
     },
     {
       label: "View",
@@ -689,25 +1086,50 @@ function createMenu() {
 
 // ===== Recent Folders Store (ESM import) =====
 let recentStore = null;
+let RecentStoreClass = null;
+let recentStoreProfilePath = null;
 
-async function initRecentStore() {
+async function loadRecentStoreClass() {
+  if (RecentStoreClass) {
+    return RecentStoreClass;
+  }
+  const mod = await import("electron-store");
+  RecentStoreClass = mod.default || mod.Store || mod;
+  return RecentStoreClass;
+}
+
+async function initRecentStore(profilePath) {
   try {
-    const mod = await import("electron-store"); // ESM-only in v9+
-    const StoreClass = mod.default || mod.Store || mod;
+    const normalized = typeof profilePath === "string" ? profilePath.trim() : "";
+    if (!normalized) {
+      throw new Error("Profile path is required for recent store initialization");
+    }
+    const StoreClass = await loadRecentStoreClass();
     recentStore = new StoreClass({
       name: "recent-folders",
+      cwd: normalized,
       fileExtension: "json",
       clearInvalidConfig: true,
       accessPropertiesByDotNotation: false,
     });
-    console.log("📁 recentStore initialized");
+    recentStoreProfilePath = normalized;
+    console.log("📁 recentStore initialized for", normalized);
   } catch (e) {
     console.warn("📁 electron-store unavailable:", e?.message);
     recentStore = null; // feature gracefully disabled
+    recentStoreProfilePath = null;
+  }
+}
+
+async function ensureRecentStore(profileId = getActiveProfileId()) {
+  const profilePath = getProfilePath(profileId);
+  if (!recentStore || recentStoreProfilePath !== profilePath) {
+    await initRecentStore(profilePath);
   }
 }
 
 async function getRecentFolders() {
+  await ensureRecentStore();
   if (!recentStore) {
     console.log("📁 Recent store not available, returning empty array");
     return [];
@@ -721,6 +1143,7 @@ async function getRecentFolders() {
 }
 
 async function saveRecentFolders(items) {
+  await ensureRecentStore();
   if (!recentStore) {
     console.log("📁 Recent store not available, cannot save");
     return;
@@ -734,6 +1157,7 @@ async function saveRecentFolders(items) {
 }
 
 async function addRecentFolder(folderPath) {
+  await ensureRecentStore();
   try {
     const name = path.basename(folderPath);
     const now = Date.now();
@@ -750,6 +1174,7 @@ async function addRecentFolder(folderPath) {
 }
 
 async function removeRecentFolder(folderPath) {
+  await ensureRecentStore();
   try {
     const items = (await getRecentFolders()).filter(
       (x) => x.path !== folderPath
@@ -763,6 +1188,7 @@ async function removeRecentFolder(folderPath) {
 }
 
 async function clearRecentFolders() {
+  await ensureRecentStore();
   try {
     await saveRecentFolders([]);
     return await getRecentFolders();
@@ -785,11 +1211,89 @@ ipcMain.handle("support:open-donation", async () => {
   }
 });
 
+ipcMain.handle("profiles:list", async () => ({
+  success: true,
+  profiles: profileManager.listProfiles(),
+  activeProfileId: getActiveProfileId(),
+  profileName: getProfileDisplayName(),
+}));
+
+ipcMain.handle("profiles:get-active", async () => ({
+  profileId: getActiveProfileId(),
+  profileName: getProfileDisplayName(),
+  profiles: profileManager.listProfiles(),
+}));
+
+ipcMain.handle("profiles:set-active", async (_event, profileId) => {
+  try {
+    await reconfigureForProfile(profileId);
+    return {
+      success: true,
+      profileId: getActiveProfileId(),
+      profileName: getProfileDisplayName(),
+      profiles: profileManager.listProfiles(),
+    };
+  } catch (error) {
+    console.error("Failed to switch profile", error);
+    return { success: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("profiles:create", async (_event, name) => {
+  try {
+    const profile = profileManager.createProfile(name);
+    await reconfigureForProfile(profile.id);
+    return {
+      success: true,
+      profile,
+      activeProfileId: getActiveProfileId(),
+      profiles: profileManager.listProfiles(),
+    };
+  } catch (error) {
+    console.error("Failed to create profile via IPC", error);
+    return { success: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("profiles:rename", async (_event, profileId, newName) => {
+  try {
+    const renamed = profileManager.renameProfile(profileId, newName);
+    createMenu();
+    if (profileId === getActiveProfileId()) {
+      broadcastProfileChange(currentSettings);
+    }
+    return {
+      success: true,
+      profile: renamed,
+      profiles: profileManager.listProfiles(),
+    };
+  } catch (error) {
+    console.error("Failed to rename profile via IPC", error);
+    return { success: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("profiles:delete", async (_event, profileId) => {
+  try {
+    const removed = profileManager.deleteProfile(profileId);
+    await reconfigureForProfile(profileManager.getActiveProfile());
+    return {
+      success: true,
+      removed,
+      activeProfileId: getActiveProfileId(),
+      profiles: profileManager.listProfiles(),
+    };
+  } catch (error) {
+    console.error("Failed to delete profile via IPC", error);
+    return { success: false, error: error?.message || String(error) };
+  }
+});
+
 ipcMain.on("thumb:put", (event, payload) => {
   try {
     if (!thumbnailCache.initialized) {
       try {
-        thumbnailCache.init(app);
+        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
       } catch (initError) {
         console.warn("[thumb-cache] late init failed", initError);
       }
@@ -809,7 +1313,7 @@ ipcMain.on("thumb:get", (event, payload) => {
   try {
     if (!thumbnailCache.initialized) {
       try {
-        thumbnailCache.init(app);
+        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
       } catch (initError) {
         console.warn("[thumb-cache] late init failed", initError);
       }
@@ -842,7 +1346,7 @@ ipcMain.on("dnd:start-file", (event, payload) => {
   try {
     if (!thumbnailCache.initialized) {
       try {
-        thumbnailCache.init(app);
+        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
       } catch (initError) {
         console.warn("[thumb-cache] late init failed", initError);
       }
@@ -1319,16 +1823,12 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   try {
+    profileManager.initializeProfileManager(app.getPath("userData"));
+    activeProfileId = profileManager.getActiveProfile();
     console.log("GPU status:", app.getGPUFeatureStatus());
-    try {
-      thumbnailCache.init(app);
-    } catch (thumbErr) {
-      console.warn("[thumb-cache] init failed", thumbErr);
-    }
-    await initRecentStore(); // safe no-op if it fails
-    await initMetadataStore(app);
+    await reconfigureForProfile(activeProfileId, { broadcast: false });
     await createWindow();
-    createMenu();
+    broadcastProfileChange(currentSettings || defaultSettings);
   } catch (err) {
     console.error("❌ Startup failure:", err);
   }

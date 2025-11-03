@@ -1,6 +1,5 @@
 import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
-import HelpMenu from "./HelpMenu";
 import SupportLink from "./SupportLink";
 import { supportContent } from "../config/supportContent";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
@@ -119,7 +118,6 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
-  onOpenAbout,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -177,8 +175,6 @@ export default function HeaderBar({
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
-
-        <HelpMenu onOpenAbout={onOpenAbout} />
       </div>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
