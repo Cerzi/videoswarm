@@ -118,7 +118,6 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
-  onOpenAbout,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -175,18 +174,6 @@ export default function HeaderBar({
 
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
-        )}
-
-        {isElectron && (
-          <button
-            type="button"
-            className="toggle-button"
-            onClick={onOpenAbout}
-            title="About VideoSwarm"
-            disabled={!onOpenAbout}
-          >
-            <span>About</span>
-          </button>
         )}
       </div>
 

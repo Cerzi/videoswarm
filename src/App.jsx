@@ -1380,7 +1380,6 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
-            onOpenAbout={() => setAboutOpen(true)}
           />
 
           {isFiltersOpen && (
