@@ -1,6 +1,6 @@
 {
   "name": "video-swarm",
-  "version": "0.4.0",
+  "version": "0.5.1",
   "description": "Desktop application for viewing hundreds of videos simultaneously with advanced masonry layouts and real-time file system monitoring",
   "main": "main.js",
   "homepage": "https://github.com/Cerzi/videoswarm",
@@ -78,7 +78,7 @@
     "afterPack": "./scripts/linux-fix.js",
     "directories": {
       "output": "dist",
-      "buildResources": "build"
+      "buildResources": "assets"
     },
     "files": [
       "index.html",
@@ -87,6 +87,7 @@
       "main/**",
       "dist-react/**/*",
       "assets/**/*",
+      "src/config/supportContent.json",
       "package.json"
     ],
     "extraResources": [
@@ -111,7 +112,7 @@
         }
       ],
       "artifactName": "VideoSwarm-${version}-win-${arch}.${ext}",
-      "icon": "build/icon.ico",
+      "icon": "icons/videoswarm.ico",
       "publisherName": "AI Tools",
       "verifyUpdateCodeSignature": false
     },
@@ -127,7 +128,7 @@
         "deb"
       ],
       "artifactName": "VideoSwarm-${version}-linux.${ext}",
-      "icon": "build/icon.png",
+      "icon": "icons/videoswarm.png",
       "category": "Utility",
       "executableName": "video-swarm",
       "desktop": {

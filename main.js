@@ -12,7 +12,8 @@ const {
   nativeImage,
 } = require("electron");
 const path = require("path");
-const fs = require("fs").promises;
+const fs = require("fs");
+const fsPromises = fs.promises;
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
@@ -20,9 +21,52 @@ const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/d
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
 const { migrateLegacyProfileData } = require("./main/profile-migration");
-const supportContent = require("./src/config/supportContent.json");
 
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
+
+function loadSupportContent() {
+  try {
+    return require("./src/config/supportContent.json");
+  } catch (error) {
+    console.warn("⚠️ Unable to load supportContent.json via require", error);
+
+    const basePaths = [
+      path.join(__dirname, "src", "config", "supportContent.json"),
+    ];
+
+    if (app?.isPackaged) {
+      basePaths.push(
+        path.join(process.resourcesPath, "src", "config", "supportContent.json")
+      );
+      basePaths.push(
+        path.join(process.resourcesPath, "config", "supportContent.json")
+      );
+      basePaths.push(path.join(process.resourcesPath, "supportContent.json"));
+    }
+
+    for (const candidatePath of basePaths) {
+      try {
+        if (fs.existsSync(candidatePath)) {
+          const raw = fs.readFileSync(candidatePath, "utf8");
+          return JSON.parse(raw);
+        }
+      } catch (fsError) {
+        console.warn(
+          `⚠️ Failed to read support content from ${candidatePath}:`,
+          fsError
+        );
+      }
+    }
+
+    console.error(
+      "❌ Falling back to default donation URL because support content could not be loaded"
+    );
+
+    return { donationUrl: DEFAULT_DONATION_URL };
+  }
+}
+
+const supportContent = loadSupportContent();
 
 function openDonationPage() {
   const url = supportContent?.donationUrl || DEFAULT_DONATION_URL;
@@ -182,7 +226,7 @@ function formatFileSize(bytes) {
 // Helper function to create rich file object
 async function createVideoFileObject(filePath, baseFolderPath) {
   try {
-    const stats = await fs.stat(filePath);
+    const stats = await fsPromises.stat(filePath);
     const fileName = path.basename(filePath);
     const ext = path.extname(fileName).toLowerCase();
     let dirname = path.relative(baseFolderPath, path.dirname(filePath));
@@ -298,7 +342,7 @@ async function scanFolderForChanges(folderPath, options = {}) {
     async function scanDirectory(dirPath, depth = 0) {
       if (!recursive && depth > 0) return;
       if (recursive && depth > 10) return; // Limit depth when recursing
-      const files = await fs.readdir(dirPath, { withFileTypes: true });
+      const files = await fsPromises.readdir(dirPath, { withFileTypes: true });
 
       for (const file of files) {
         const fullPath = path.join(dirPath, file.name);
@@ -307,7 +351,7 @@ async function scanFolderForChanges(folderPath, options = {}) {
           const ext = path.extname(file.name).toLowerCase();
           if (videoExtensions.includes(ext)) {
             try {
-              const stats = await fs.stat(fullPath);
+              const stats = await fsPromises.stat(fullPath);
               currentFiles.set(fullPath, {
                 size: stats.size,
                 mtime: stats.mtime.getTime(),
@@ -441,7 +485,7 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
   }
 
   try {
-    const legacyRaw = await fs.readFile(legacyPath, "utf8");
+    const legacyRaw = await fsPromises.readFile(legacyPath, "utf8");
     const legacySettings = JSON.parse(legacyRaw);
     const migrated = normaliseLoadedSettings(legacySettings);
     const { layoutMode, autoplayEnabled, ...toPersist } = migrated;
@@ -460,7 +504,7 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
 async function loadSettings(profileId = getActiveProfileId()) {
   const settingsFile = getSettingsPath(profileId);
   try {
-    const data = await fs.readFile(settingsFile, "utf8");
+    const data = await fsPromises.readFile(settingsFile, "utf8");
     const parsed = JSON.parse(data);
     const settings = normaliseLoadedSettings(parsed);
     currentSettingsProfileId = profileId;
@@ -498,8 +542,8 @@ async function saveSettings(settings, profileId = getActiveProfileId()) {
   try {
     const { layoutMode, autoplayEnabled, ...cleanSettings } = settings || {};
     const settingsFile = getSettingsPath(profileId);
-    await fs.mkdir(path.dirname(settingsFile), { recursive: true });
-    await fs.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
+    await fsPromises.mkdir(path.dirname(settingsFile), { recursive: true });
+    await fsPromises.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
     currentSettingsProfileId = profileId;
     currentSettings = normaliseLoadedSettings(cleanSettings);
     console.log("Settings saved for profile", profileId);
@@ -1500,7 +1544,7 @@ ipcMain.handle(
       const videoFiles = [];
 
       async function scanDirectory(dirPath, depth = 0) {
-        const files = await fs.readdir(dirPath, { withFileTypes: true });
+        const files = await fsPromises.readdir(dirPath, { withFileTypes: true });
 
         for (const file of files) {
           const fullPath = path.join(dirPath, file.name);
@@ -1655,7 +1699,7 @@ ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
 // File info helpers
 ipcMain.handle("get-file-info", async (_event, filePath) => {
   try {
-    const stats = await fs.stat(filePath);
+    const stats = await fsPromises.stat(filePath);
     return {
       name: path.basename(filePath),
       size: stats.size,
@@ -1681,7 +1725,7 @@ ipcMain.handle("move-to-trash", async (_event, filePath) => {
 
 ipcMain.handle("copy-file", async (_event, sourcePath, destPath) => {
   try {
-    await fs.copyFile(sourcePath, destPath);
+    await fsPromises.copyFile(sourcePath, destPath);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1690,7 +1734,7 @@ ipcMain.handle("copy-file", async (_event, sourcePath, destPath) => {
 
 ipcMain.handle("get-file-properties", async (_event, filePath) => {
   try {
-    const stats = await fs.stat(filePath);
+    const stats = await fsPromises.stat(filePath);
     return {
       size: stats.size,
       created: stats.birthtime,
