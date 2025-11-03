@@ -24,6 +24,13 @@ export default function useRecentFolders() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  useEffect(() => {
+    const dispose = window.electronAPI?.profiles?.onChanged?.(() => {
+      refresh();
+    });
+    return () => dispose?.();
+  }, [refresh]);
+
   const add = useCallback(async (folderPath) => {
     if (!folderPath) return;
     if (isElectron) {

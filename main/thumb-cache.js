@@ -24,18 +24,28 @@ class ThumbnailCache {
     this.persistTimer = null;
     this.baseDir = null;
     this.indexPath = null;
+    this.profileRoot = null;
   }
 
-  init(app) {
-    if (this.initialized) {
-      return;
-    }
+  init(app, profilePath = null) {
     if (!app || typeof app.getPath !== "function") {
       throw new Error("ThumbnailCache.init requires electron app instance");
     }
 
-    const userData = app.getPath("userData");
-    this.baseDir = path.join(userData, this.diskFolderName);
+    const root =
+      (typeof profilePath === "string" && profilePath.trim().length > 0
+        ? profilePath.trim()
+        : null) || app.getPath("userData");
+
+    if (this.initialized) {
+      if (this.profileRoot === root) {
+        return;
+      }
+      this.reset();
+    }
+
+    this.profileRoot = root;
+    this.baseDir = path.join(root, this.diskFolderName);
     this.indexPath = path.join(this.baseDir, this.indexFileName);
 
     fs.mkdirSync(this.baseDir, { recursive: true });
@@ -55,6 +65,17 @@ class ThumbnailCache {
         console.warn("[thumb-cache] Failed to persist index during shutdown", error);
       }
     }
+  }
+
+  reset() {
+    this.shutdown();
+    this.memoryStore.clear();
+    this.signatureToEntry.clear();
+    this.pathToSignature.clear();
+    this.initialized = false;
+    this.baseDir = null;
+    this.indexPath = null;
+    this.profileRoot = null;
   }
 
   has(pathKey, signatureHint = null) {

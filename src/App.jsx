@@ -147,6 +147,7 @@ function App() {
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
+  const [activeProfileInfo, setActiveProfileInfo] = useState(null);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -178,6 +179,27 @@ function App() {
     if (typeof fn === "function") {
       fn();
     }
+  }, []);
+
+  useEffect(() => {
+    const profilesApi = window.electronAPI?.profiles;
+    if (!profilesApi) return undefined;
+    let disposed = false;
+
+    profilesApi.getActive?.().then((info) => {
+      if (!disposed && info) {
+        setActiveProfileInfo(info);
+      }
+    });
+
+    const unsubscribe = profilesApi.onChanged?.((payload) => {
+      setActiveProfileInfo(payload);
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
   }, []);
   // ----- Recent Folders hook -----
   const {
@@ -1289,6 +1311,7 @@ function App() {
             isLoadingFolder={isLoadingFolder}
             handleFolderSelect={handleFolderSelect}
             handleWebFileSelection={handleWebFileSelection}
+            activeProfileName={activeProfileInfo?.profileName ?? ""}
             recursiveMode={recursiveMode}
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}

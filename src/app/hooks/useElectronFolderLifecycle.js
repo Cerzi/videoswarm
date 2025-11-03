@@ -181,8 +181,44 @@ export function useElectronFolderLifecycle({
     [resetDerivedVideoState]
   );
 
-  useEffect(() => {
-    const loadSettings = async () => {
+  const applySettingsFromMain = useCallback((settings) => {
+    if (!settings) return;
+    const {
+      setRecursiveMode: applyRecursiveMode,
+      setShowFilenames: applyShowFilenames,
+      setRenderLimitStep: applyRenderLimitStep,
+      setSortKey: applySortKey,
+      setSortDir: applySortDir,
+      setGroupByFolders: applyGroupByFolders,
+      setRandomSeed: applyRandomSeed,
+      setZoomLevelFromSettings: applyZoomLevelFromSettings,
+    } = setterRefs.current;
+
+    if (settings.recursiveMode !== undefined)
+      applyRecursiveMode(settings.recursiveMode);
+    if (settings.showFilenames !== undefined)
+      applyShowFilenames(settings.showFilenames);
+    if (settings.renderLimitStep !== undefined) {
+      applyRenderLimitStep(clampRenderLimitStep(settings.renderLimitStep));
+    } else if (settings.maxConcurrentPlaying !== undefined) {
+      applyRenderLimitStep(
+        clampRenderLimitStep(
+          inferRenderLimitStepFromLegacy(settings.maxConcurrentPlaying)
+        )
+      );
+    }
+    if (settings.zoomLevel !== undefined)
+      applyZoomLevelFromSettings(settings.zoomLevel);
+    if (settings.sortKey) applySortKey(settings.sortKey);
+    if (settings.sortDir) applySortDir(settings.sortDir);
+    if (settings.groupByFolders !== undefined)
+      applyGroupByFolders(settings.groupByFolders);
+    if (settings.randomSeed !== undefined)
+      applyRandomSeed(settings.randomSeed);
+  }, []);
+
+  const loadSettingsFromMain = useCallback(
+    async (settingsOverride = null) => {
       const api = window.electronAPI;
       if (!api?.getSettings) {
         setSettingsLoaded(true);
@@ -190,48 +226,23 @@ export function useElectronFolderLifecycle({
       }
 
       try {
-        const settings = await api.getSettings();
-        const {
-          setRecursiveMode: applyRecursiveMode,
-          setShowFilenames: applyShowFilenames,
-          setRenderLimitStep: applyRenderLimitStep,
-          setSortKey: applySortKey,
-          setSortDir: applySortDir,
-          setGroupByFolders: applyGroupByFolders,
-          setRandomSeed: applyRandomSeed,
-          setZoomLevelFromSettings: applyZoomLevelFromSettings,
-        } = setterRefs.current;
-
-        if (settings.recursiveMode !== undefined)
-          applyRecursiveMode(settings.recursiveMode);
-        if (settings.showFilenames !== undefined)
-          applyShowFilenames(settings.showFilenames);
-        if (settings.renderLimitStep !== undefined) {
-          applyRenderLimitStep(clampRenderLimitStep(settings.renderLimitStep));
-        } else if (settings.maxConcurrentPlaying !== undefined) {
-          applyRenderLimitStep(
-            clampRenderLimitStep(
-              inferRenderLimitStepFromLegacy(settings.maxConcurrentPlaying)
-            )
-          );
-        }
-        if (settings.zoomLevel !== undefined)
-          applyZoomLevelFromSettings(settings.zoomLevel);
-        if (settings.sortKey) applySortKey(settings.sortKey);
-        if (settings.sortDir) applySortDir(settings.sortDir);
-        if (settings.groupByFolders !== undefined)
-          applyGroupByFolders(settings.groupByFolders);
-        if (settings.randomSeed !== undefined)
-          applyRandomSeed(settings.randomSeed);
+        const settings =
+          settingsOverride !== null && settingsOverride !== undefined
+            ? settingsOverride
+            : await api.getSettings();
+        applySettingsFromMain(settings);
       } catch (error) {
         console.error("Failed to load settings", error);
       }
 
       setSettingsLoaded(true);
-    };
+    },
+    [applySettingsFromMain]
+  );
 
-    loadSettings();
-  }, []);
+  useEffect(() => {
+    loadSettingsFromMain();
+  }, [loadSettingsFromMain]);
 
   useEffect(() => {
     const cleanup = window.electronAPI?.onFolderSelected?.((folderPath) => {
@@ -244,6 +255,27 @@ export function useElectronFolderLifecycle({
       }
     };
   }, [handleElectronFolderSelection]);
+
+  useEffect(() => {
+    const profilesApi = window.electronAPI?.profiles;
+    if (!profilesApi?.onChanged) return undefined;
+
+    const unsubscribe = profilesApi.onChanged?.((payload) => {
+      try {
+        const stopPromise = window.electronAPI?.stopFolderWatch?.();
+        if (stopPromise?.catch) {
+          stopPromise.catch(() => {});
+        }
+      } catch {}
+      setVideos([]);
+      resetDerivedVideoState();
+      setSettingsLoaded(false);
+      loadSettingsFromMain(payload?.settings);
+      refreshTagList();
+    });
+
+    return () => unsubscribe?.();
+  }, [loadSettingsFromMain, refreshTagList, resetDerivedVideoState, setVideos]);
 
   useEffect(() => {
     const api = window.electronAPI;

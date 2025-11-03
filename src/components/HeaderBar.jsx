@@ -95,6 +95,7 @@ export default function HeaderBar({
   isLoadingFolder,
   handleFolderSelect,
   handleWebFileSelection,
+  activeProfileName,
   recursiveMode,
   toggleRecursive,
   showFilenames,
@@ -179,6 +180,11 @@ export default function HeaderBar({
         )}
 
         <HelpMenu onOpenAbout={onOpenAbout} />
+        {isElectron && activeProfileName && (
+          <div className="profile-indicator" title={`Active profile: ${activeProfileName}`}>
+            <span>{activeProfileName}</span>
+          </div>
+        )}
       </div>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
