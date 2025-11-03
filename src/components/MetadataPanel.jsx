@@ -486,26 +486,46 @@ const MetadataPanel = forwardRef((
     }
   };
 
-  const toggleDisabled = !hasSelection && !isOpen;
-  const isCollapsed = !isOpen;
+  if (!isOpen) {
+    if (!hasSelection) {
+      return null;
+    }
 
-  if (isCollapsed && !hasSelection) {
-    return null;
+    const collapsedLabel =
+      derivedSelectionCount === 1
+        ? "Show clip details"
+        : `Show details (${derivedSelectionCount})`;
+
+    return (
+      <aside ref={ref} className="metadata-panel metadata-panel--collapsed">
+        <button
+          type="button"
+          className="metadata-panel__collapsed-shell"
+          onClick={() => onToggle?.()}
+          aria-label={`${collapsedLabel}`}
+        >
+          <span className="metadata-panel__collapsed-handle" aria-hidden="true" />
+          <span className="metadata-panel__collapsed-label">Details</span>
+          <span className="metadata-panel__collapsed-count">
+            {derivedSelectionCount === 1
+              ? "1 clip"
+              : `${derivedSelectionCount} clips`}
+          </span>
+        </button>
+      </aside>
+    );
   }
-
-  const showCollapsedShell = isCollapsed && hasSelection;
 
   const panelClass = [
     "metadata-panel",
-    isOpen ? "metadata-panel--open" : "metadata-panel--collapsed",
+    "metadata-panel--open",
     !hasSelection ? "metadata-panel--empty" : "",
-    showCollapsedShell ? "metadata-panel--collapsed-has-selection" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   const showFocusButton =
-    isOpen && hasSelection && typeof onFocusSelection === "function";
+    hasSelection && typeof onFocusSelection === "function";
 
   const contentClass = [
     "metadata-panel__content",
@@ -514,22 +534,16 @@ const MetadataPanel = forwardRef((
     .filter(Boolean)
     .join(" ");
 
-  const handleRoleProps = isOpen
-    ? {
-        role: "slider",
-        tabIndex: 0,
-        "aria-label": "Resize metadata panel",
-        "aria-orientation": "vertical",
-        "aria-valuemin": Math.round(minHeight),
-        "aria-valuemax": Math.round(effectiveMaxHeight),
-        "aria-valuenow": Math.round(resolvedDockHeight),
-        title: "Drag or use arrow keys to resize",
-      }
-    : {
-        role: "presentation",
-        tabIndex: -1,
-        "aria-hidden": true,
-      };
+  const handleRoleProps = {
+    role: "slider",
+    tabIndex: 0,
+    "aria-label": "Resize metadata panel",
+    "aria-orientation": "vertical",
+    "aria-valuemin": Math.round(minHeight),
+    "aria-valuemax": Math.round(effectiveMaxHeight),
+    "aria-valuenow": Math.round(resolvedDockHeight),
+    title: "Drag or use arrow keys to resize",
+  };
 
   return (
     <aside ref={ref} className={panelClass}>
@@ -539,29 +553,19 @@ const MetadataPanel = forwardRef((
         aria-label="Selection metadata"
         style={{ "--metadata-panel-height": `${Math.round(resolvedDockHeight)}px` }}
       >
-        <div
-          className={`metadata-panel__header${
-            showCollapsedShell ? " metadata-panel__header--collapsed" : ""
-          }`}
-        >
+        <div className="metadata-panel__header">
           <div
-            className={`metadata-panel__handle${
-              showCollapsedShell ? " metadata-panel__handle--inactive" : ""
-            }`}
+            className="metadata-panel__handle"
             {...handleRoleProps}
-            onPointerDown={isOpen ? handleResizePointerDown : undefined}
-            onKeyDown={isOpen ? handleResizeKeyDown : undefined}
+            onPointerDown={handleResizePointerDown}
+            onKeyDown={handleResizeKeyDown}
           />
-          {isOpen && (
-            <div className="metadata-panel__titles">
-              <span className="metadata-panel__title">Details</span>
-              <span className="metadata-panel__subtitle">
-                {hasSelection
-                  ? `${derivedSelectionCount} selected`
-                  : "No selection"}
-              </span>
-            </div>
-          )}
+          <div className="metadata-panel__titles">
+            <span className="metadata-panel__title">Details</span>
+            <span className="metadata-panel__subtitle">
+              {hasSelection ? `${derivedSelectionCount} selected` : "No selection"}
+            </span>
+          </div>
           {showFocusButton && (
             <button
               type="button"
@@ -575,34 +579,24 @@ const MetadataPanel = forwardRef((
           )}
           <button
             type="button"
-            className={`metadata-panel__toggle${
-              toggleDisabled ? " metadata-panel__toggle--disabled" : ""
-            }`}
-            onClick={() => !toggleDisabled && onToggle?.()}
+            className="metadata-panel__toggle"
+            onClick={() => onToggle?.()}
             aria-expanded={isOpen}
-            aria-label={
-              toggleDisabled
-                ? "Select a video to enable metadata panel"
-                : isOpen
-                ? "Hide metadata panel"
-                : "Show metadata panel"
-            }
-            disabled={toggleDisabled}
+            aria-label={isOpen ? "Hide metadata panel" : "Show metadata panel"}
           >
             {isOpen ? "Hide" : "Show"}
           </button>
         </div>
 
-        {isOpen && (
-          <div className={contentClass}>
-            {!hasSelection ? (
-              <div className="metadata-panel__empty-state" aria-live="polite">
-                <h3>No clips selected</h3>
-                <p>Pick videos from the grid to see quick stats and tags here.</p>
-                <p>Tip: Use Shift or Ctrl/Cmd to build multi-select batches.</p>
-              </div>
-            ) : (
-              <div className="metadata-panel__body">
+        <div className={contentClass}>
+          {!hasSelection ? (
+            <div className="metadata-panel__empty-state" aria-live="polite">
+              <h3>No clips selected</h3>
+              <p>Pick videos from the grid to see quick stats and tags here.</p>
+              <p>Tip: Use Shift or Ctrl/Cmd to build multi-select batches.</p>
+            </div>
+          ) : (
+            <div className="metadata-panel__body">
                 {infoLineItems.length > 0 && (
                   <section className="metadata-panel__section metadata-panel__info">
                     <div className="metadata-panel__info-line" role="text">

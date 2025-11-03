@@ -162,11 +162,8 @@ describe('MetadataPanel collapsed shell', () => {
       />
     );
 
-    const toggle = screen.getByRole('button', { name: /show metadata panel/i });
+    const toggle = screen.getByRole('button', { name: /show .*details/i });
     expect(toggle).toBeInTheDocument();
-
-    const inactiveHandle = document.querySelector('.metadata-panel__handle--inactive');
-    expect(inactiveHandle).not.toBeNull();
 
     fireEvent.click(toggle);
     expect(handleToggle).toHaveBeenCalledTimes(1);
