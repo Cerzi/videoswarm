@@ -15,6 +15,20 @@ const renderPanel = (props = {}) =>
     />
   );
 
+describe('MetadataPanel empty state', () => {
+  it('shows guidance when nothing is selected', () => {
+    renderPanel({ selectedVideos: [], selectionCount: 0 });
+
+    expect(screen.getByText('No clips selected')).toBeInTheDocument();
+    expect(
+      screen.getByText('Choose videos from the grid to see their details here.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Tip: Use Shift or Ctrl/Cmd to edit multiple clips together.')
+    ).toBeInTheDocument();
+  });
+});
+
 describe('MetadataPanel single-selection info', () => {
   const formatExpectedDate = (value) =>
     new Intl.DateTimeFormat(undefined, {

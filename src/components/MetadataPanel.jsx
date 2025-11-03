@@ -326,7 +326,7 @@ const MetadataPanel = forwardRef((
     }
   };
 
-  const toggleDisabled = !hasSelection;
+  const toggleDisabled = !hasSelection && !isOpen;
 
   const panelClass = [
     "metadata-panel",
@@ -339,11 +339,7 @@ const MetadataPanel = forwardRef((
   const showFocusButton = hasSelection && typeof onFocusSelection === "function";
 
   return (
-    <aside
-      ref={ref}
-      className={panelClass}
-      aria-hidden={!isOpen && !hasSelection}
-    >
+    <aside ref={ref} className={panelClass} aria-hidden={!isOpen}>
       <div className="metadata-panel__header">
         <button
           type="button"
@@ -384,8 +380,10 @@ const MetadataPanel = forwardRef((
 
       <div className="metadata-panel__content">
         {!hasSelection ? (
-          <div className="metadata-panel__empty-state">
-            <p>Select one or more videos to tag and rate them.</p>
+          <div className="metadata-panel__empty-state" aria-live="polite">
+            <h3>No clips selected</h3>
+            <p>Choose videos from the grid to see their details here.</p>
+            <p>Tip: Use Shift or Ctrl/Cmd to edit multiple clips together.</p>
           </div>
         ) : (
           <>

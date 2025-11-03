@@ -641,19 +641,6 @@ function App() {
     shouldAutoOpenMetadataPanel,
   ]);
 
-  useEffect(() => {
-    if (selection.size === 0 && isMetadataPanelOpen) {
-      runSidebarTransition("sidebar:auto-close", () => {
-        setMetadataPanelOpen(false);
-      });
-    }
-  }, [
-    isMetadataPanelOpen,
-    runSidebarTransition,
-    selection.size,
-    setMetadataPanelOpen,
-  ]);
-
   const sortStatus = useMemo(() => {
     const keyLabels = {
       [SortKey.NAME]: "Name",
@@ -1447,7 +1434,7 @@ function App() {
               </div>
               <MetadataPanel
                 ref={metadataPanelRef}
-                isOpen={isMetadataPanelOpen && selection.size > 0}
+                isOpen={isMetadataPanelOpen}
                 onToggle={toggleMetadataPanel}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
