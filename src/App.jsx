@@ -1492,7 +1492,10 @@ function App() {
               <div className="drop-zone">
                 <h2>🐝 Welcome to Video Swarm 🐝</h2>
                 <p>
-                  Click "Select Folder" above to browse your video collection
+                  Click the green folder icon in the top left to open a directory of videos.
+                </p>
+                <p>
+                  Use the Subfolders toggle to enable recursive loading, which will recursively load all videos in all subfolders as well.
                 </p>
                 {window.innerWidth > 2560 && (
                   <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
