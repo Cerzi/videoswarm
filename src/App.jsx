@@ -1095,10 +1095,11 @@ function App() {
   ]);
 
   // === DYNAMIC ZOOM RESIZE / COUNT ===
-  // relayout when list changes
+  // relayout when ordering changes (length or sort)
   useEffect(() => {
-    if (orderedVideos.length) onItemsChanged();
-  }, [orderedVideos.length, onItemsChanged]);
+    if (!orderedIds.length) return;
+    onItemsChanged();
+  }, [orderedIds, onItemsChanged]);
 
   // aspect ratio updates from cards
     const handleVideoLoaded = useCallback(
