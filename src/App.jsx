@@ -1096,9 +1096,24 @@ function App() {
 
   // === DYNAMIC ZOOM RESIZE / COUNT ===
   // relayout when list changes
+  const previousOrderedIdsRef = useRef([]);
   useEffect(() => {
-    if (orderedVideos.length) onItemsChanged();
-  }, [orderedVideos.length, onItemsChanged]);
+    const prev = previousOrderedIdsRef.current;
+    let hasChanged = prev.length !== orderedIds.length;
+    if (!hasChanged) {
+      for (let i = 0; i < orderedIds.length; i += 1) {
+        if (prev[i] !== orderedIds[i]) {
+          hasChanged = true;
+          break;
+        }
+      }
+    }
+
+    if (hasChanged) {
+      previousOrderedIdsRef.current = orderedIds.slice();
+      onItemsChanged();
+    }
+  }, [orderedIds, onItemsChanged]);
 
   // aspect ratio updates from cards
     const handleVideoLoaded = useCallback(
