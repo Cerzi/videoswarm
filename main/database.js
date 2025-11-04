@@ -2,10 +2,128 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { computeFingerprint } = require('./fingerprint');
+const profileManager = require('./profile-manager');
 
 let dbInstance = null;
 let metadataStoreInstance = null;
 let currentProfilePath = null;
+
+const DB_FILE_NAME = 'videoswarm-meta.db';
+const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
+
+function isSqliteCorruptionError(error) {
+  if (!error) return false;
+  if (error.code === 'SQLITE_CORRUPT') {
+    return true;
+  }
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('malformed') ||
+    message.includes('database disk image is malformed') ||
+    message.includes('file is encrypted or is not a database')
+  );
+}
+
+function resolveBaseUserDataPath(app) {
+  try {
+    if (app && typeof app.getPath === 'function') {
+      return app.getPath('userData');
+    }
+  } catch (error) {
+    console.warn('[database] Failed to resolve userData from app', error);
+  }
+
+  try {
+    if (profileManager && typeof profileManager.getUserDataPath === 'function') {
+      return profileManager.getUserDataPath();
+    }
+  } catch (error) {
+    console.warn('[database] Failed to resolve userData from profile manager', error);
+  }
+
+  return null;
+}
+
+function archiveIfExists(filePath, suffix) {
+  if (!filePath) {
+    return false;
+  }
+  try {
+    if (fs.existsSync(filePath)) {
+      const target = `${filePath}${suffix}`;
+      fs.renameSync(filePath, target);
+      return true;
+    }
+  } catch (error) {
+    console.warn(`[database] Failed to archive corrupt file ${filePath}`, error);
+  }
+  return false;
+}
+
+function copyIfExists(sourcePath, destinationPath) {
+  if (!sourcePath || !destinationPath) {
+    return false;
+  }
+  try {
+    if (fs.existsSync(sourcePath)) {
+      ensureDirectory(path.dirname(destinationPath));
+      fs.copyFileSync(sourcePath, destinationPath);
+      return true;
+    }
+  } catch (error) {
+    console.warn(
+      `[database] Failed to copy ${sourcePath} to ${destinationPath}`,
+      error
+    );
+  }
+  return false;
+}
+
+function tryRestoreFromBaseDatabase(app, profilePath) {
+  const baseUserDataPath = resolveBaseUserDataPath(app);
+  if (!baseUserDataPath) {
+    return false;
+  }
+
+  const resolvedProfilePath = path.resolve(profilePath);
+  const resolvedBasePath = path.resolve(baseUserDataPath);
+  if (resolvedProfilePath === resolvedBasePath) {
+    return false;
+  }
+
+  const baseDbPath = path.join(resolvedBasePath, DB_FILE_NAME);
+  if (!fs.existsSync(baseDbPath)) {
+    return false;
+  }
+
+  const targetDbPath = path.join(resolvedProfilePath, DB_FILE_NAME);
+  const suffix = `.corrupt-${Date.now()}`;
+  let restored = false;
+
+  archiveIfExists(targetDbPath, suffix);
+  DB_SIDE_FILES.forEach((sidecar) => {
+    archiveIfExists(`${targetDbPath}${sidecar}`, suffix);
+  });
+
+  const copiedMain = copyIfExists(baseDbPath, targetDbPath);
+  restored = restored || copiedMain;
+
+  DB_SIDE_FILES.forEach((sidecar) => {
+    const copied = copyIfExists(
+      `${baseDbPath}${sidecar}`,
+      `${targetDbPath}${sidecar}`
+    );
+    restored = restored || copied;
+  });
+
+  if (restored) {
+    console.warn(
+      '[database] Detected corrupt profile database – restored from base userData copy'
+    );
+  }
+
+  return restored;
+}
 
 function ensureDirectory(dirPath) {
   try {
@@ -44,10 +162,39 @@ function initDatabase(app, profilePath) {
   }
 
   ensureDirectory(resolvedProfilePath);
-  const dbPath = path.join(resolvedProfilePath, 'videoswarm-meta.db');
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  const dbPath = path.join(resolvedProfilePath, DB_FILE_NAME);
+
+  function openDatabase() {
+    const db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    return db;
+  }
+
+  let db;
+  try {
+    db = openDatabase();
+  } catch (error) {
+    if (db) {
+      try {
+        db.close();
+      } catch (_) {
+        // Ignore secondary errors when closing a corrupt handle
+      }
+      db = null;
+    }
+
+    if (isSqliteCorruptionError(error)) {
+      const restored = tryRestoreFromBaseDatabase(app, resolvedProfilePath);
+      if (restored) {
+        db = openDatabase();
+      } else {
+        throw error;
+      }
+    } else {
+      throw error;
+    }
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS files (

@@ -9,10 +9,11 @@ const require = createRequire(import.meta.url);
 let database;
 let databaseLoadError;
 let hasNativeDriver = false;
+let BetterSqlite;
 
 try {
   const testRequire = createRequire(import.meta.url);
-  const BetterSqlite = testRequire("better-sqlite3");
+  BetterSqlite = testRequire("better-sqlite3");
   try {
     const testDb = new BetterSqlite(":memory:");
     testDb.close();
@@ -74,6 +75,32 @@ if (!hasNativeDriver || databaseLoadError) {
       expect(fs.existsSync(dbAPath)).toBe(true);
       expect(fs.existsSync(dbBPath)).toBe(true);
       expect(dbAPath).not.toBe(dbBPath);
+    });
+
+    it("restores legacy database when corruption is detected", async () => {
+      // Create legacy/base database with data
+      resetDatabase();
+      initMetadataStore(mockApp);
+      const legacyDbPath = path.join(baseDir, "videoswarm-meta.db");
+      const legacyDb = new BetterSqlite(legacyDbPath);
+      legacyDb.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run("legacy");
+      legacyDb.close();
+      resetDatabase();
+
+      const defaultProfilePath = path.join(baseDir, "profiles", "default");
+      fs.mkdirSync(defaultProfilePath, { recursive: true });
+      const corruptDbPath = path.join(defaultProfilePath, "videoswarm-meta.db");
+      fs.writeFileSync(corruptDbPath, "not a sqlite database");
+
+      initMetadataStore(mockApp, defaultProfilePath);
+      const store = getMetadataStore();
+      const tags = store.listTags().map((tag) => tag.name);
+      expect(tags).toContain("legacy");
+
+      const archivedFiles = fs
+        .readdirSync(defaultProfilePath)
+        .filter((file) => file.startsWith("videoswarm-meta.db.corrupt-"));
+      expect(archivedFiles.length).toBeGreaterThan(0);
     });
   });
 }
