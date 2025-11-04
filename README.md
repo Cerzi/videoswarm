@@ -16,10 +16,12 @@ https://github.com/user-attachments/assets/9fed71dd-fe4e-4bdf-8326-ab775979e2d5
 
 ## TL;DR
 - Download [latest release](https://github.com/Cerzi/videoswarm/releases)  
-- Open a folder with clips (optionally enable recursive scan)  
-- Browse videos in a live-playing masonry grid  
+- Open a folder with clips (optionally enable recursive scan by ticking Subdirectories)  
+- Browse videos in a live-playing masonry grid
+- Tag and rate videos to organize your dataset
+- Drag and drop videos directly into other apps (eg ComfyUI to re-use a video's workflow, or DaVinci Resolve to add the video to the timeline)
 - Double-click → fullscreen, ←/→ to navigate, Space to pause/play  
-- Right click for context menu. Opening in file explorer will highlight the video file for easy drag and drop into ComfyUI to find old workflows
+- Right click for context menu: move to trash, open containing folder, etc
 
 ---
 
@@ -59,6 +61,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - Five-star rating system with overlays on video cards
 - Popular tag shortcuts and searchable tag catalog for quick tagging
 - Persistent metadata storage backed by SQLite, shared across sessions
+- Multiple user profiles can be created with independent tag/review collections
 
 ### File System Integration
 - Recursive directory scanning (configurable)
@@ -70,10 +73,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 ### Live Drag Thumbnails
 - Captures the current frame of any visible, playing clip and renders a 96×96 PNG with rounded corners and overlay in the renderer.
-- Scheduler respects a single concurrent capture, a global rate limit (≤10 captures/sec), and a per-card cooldown to avoid GPU churn.
-- Renderer maintains an in-memory LRU cache (500 entries) keyed by file signature and synchronously pushes thumbs to the main process via `thumb:put`.
-- Main process mirrors the thumbnails in a path→nativeImage cache and persists them under `userData/thumbs` (≤5k files, LRU eviction) for instant reuse on restart.
-- File-only drag payloads (`dnd:start-file`) automatically reuse cached thumbs; if none exist, a generic icon is used so drags never stall.
+- Drag and drop clips with full payload data, for dragging into other services (eg ComfyUI workflows, video editor timeline drop-in, copying to filesystem location)
 
 ### Settings
 - Persistent settings stored in Electron’s userData directory (JSON)
@@ -97,6 +97,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 ## Known Limitations
 
 - Designed primarily for folders of short videoclips (~5 seconds) - loading large directories of long videos may have issues
+- Linux: No native support for Nvidia video decoding - app runs generally more sluggish than on Windows due to being CPU bound. Planning a custom render pipeline to resolve this but it's a long way off.
 - Desktop-only: no web version (requires unrestricted filesystem access)
 - HEVC/H.265: limited browser support; may not decode on all systems
 - Very large directories (3000+ files): performance may degrade despite lazy loading, can be some glitchiness during load
@@ -108,6 +109,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 Planned for upcoming versions:
 
+- Better dynamic rendering to improve performance with very large datasets
 - Smart collections and saved filter presets
 - Enhanced search (text + metadata)
 - Further performance improvements
