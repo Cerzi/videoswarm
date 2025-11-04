@@ -30,6 +30,7 @@ export function useMasonryLayout({
   });
   const [scrollTop, setScrollTop] = useState(0);
   const [visualOrderedIds, setVisualOrderedIds] = useState([]);
+  const orderSignatureRef = useRef("");
   const metadataAspectCacheRef = useRef(new Map());
   const masonryRefreshRafRef = useRef(0);
   const [ioConfig, setIoConfig] = useState({
@@ -204,6 +205,23 @@ export function useMasonryLayout({
   );
 
   const orderedIds = useMemo(() => orderedVideos.map((v) => v.id), [orderedVideos]);
+
+  useEffect(() => {
+    if (!orderedIds.length) {
+      orderSignatureRef.current = "";
+      setVisualOrderedIds([]);
+      return;
+    }
+
+    const signature = orderedIds.join("\u0001");
+    if (orderSignatureRef.current === signature) {
+      return;
+    }
+
+    orderSignatureRef.current = signature;
+    setVisualOrderedIds([]);
+    onItemsChanged();
+  }, [orderedIds, onItemsChanged, setVisualOrderedIds]);
 
   const averageAspectRatio = useMemo(() => {
     const sampleLimit = 80;
