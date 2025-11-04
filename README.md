@@ -7,10 +7,10 @@ I got tired of manually opening tens or hundreds of ComfyUI video outputs to try
 
 If VideoSwarm has been helpful and you'd like to chip in, you can support development [here](https://ko-fi.com/videoswarm).
 
-![Video Swarm Demo](docs/images/demo.gif)
+<img width="2226" height="1378" alt="image" src="https://github.com/user-attachments/assets/dfa870c7-5007-465e-9c01-457d4f049acb" />
 
-https://github.com/user-attachments/assets/9fed71dd-fe4e-4bdf-8326-ab775979e2d5
-<p><em>demo video</em></p>
+https://github.com/user-attachments/assets/85845a4e-488d-4817-806c-a39bc290aabc
+<p><em>new features overview</em></p>
 
 ---
 
