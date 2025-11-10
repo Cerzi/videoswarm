@@ -14,6 +14,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const fsPromises = fs.promises;
+const { fileURLToPath } = require("url");
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
@@ -1443,7 +1444,24 @@ ipcMain.handle("folder-drop:open", async (event, candidatePaths = []) => {
     ? candidatePaths
     : [];
   const sanitizedPaths = normalizeArray
-    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .map((entry) => {
+      if (typeof entry !== "string") {
+        return "";
+      }
+      const trimmed = entry.trim();
+      if (!trimmed) {
+        return "";
+      }
+      if (/^file:\/\//i.test(trimmed)) {
+        try {
+          return fileURLToPath(trimmed);
+        } catch (error) {
+          console.warn(`Skipping malformed file URI ${trimmed}:`, error);
+          return "";
+        }
+      }
+      return trimmed;
+    })
     .filter((entry) => entry.length > 0);
 
   if (!sanitizedPaths.length) {
