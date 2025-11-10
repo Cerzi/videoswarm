@@ -506,6 +506,41 @@ body {
   background: rgba(81, 207, 102, 0.1);
 }
 
+.app-drop-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(81, 207, 102, 0.12);
+  border: 2px dashed rgba(81, 207, 102, 0.65);
+  color: var(--color-text);
+  z-index: 2000;
+  transition: opacity 0.2s ease;
+  animation: fadeInOverlay 0.15s ease-out;
+}
+
+.app-drop-overlay__content {
+  backdrop-filter: blur(6px);
+  background: rgba(33, 33, 33, 0.8);
+  border-radius: 14px;
+  padding: 1.5rem 2.25rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(81, 207, 102, 0.45);
+}
+
+@keyframes fadeInOverlay {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .selection-info {
   background: var(--color-accent);
   color: #000;

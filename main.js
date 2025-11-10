@@ -1436,6 +1436,56 @@ ipcMain.handle("select-folder", async () => {
   }
 });
 
+ipcMain.handle("folder-drop:open", async (event, candidatePaths = []) => {
+  const sender = event?.sender;
+  const targetWindow = sender ? BrowserWindow.fromWebContents(sender) : mainWindow;
+  const normalizeArray = Array.isArray(candidatePaths)
+    ? candidatePaths
+    : [];
+  const sanitizedPaths = normalizeArray
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+
+  if (!sanitizedPaths.length) {
+    return { success: false, reason: "NO_PATHS" };
+  }
+
+  let openedPath = null;
+  let extraDirectoryCount = 0;
+
+  for (const candidate of sanitizedPaths) {
+    try {
+      const stats = await fsPromises.stat(candidate);
+      if (stats.isDirectory()) {
+        if (!openedPath) {
+          openedPath = candidate;
+        } else {
+          extraDirectoryCount += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(`Skipping dropped path ${candidate}:`, error?.message || error);
+    }
+  }
+
+  if (!openedPath) {
+    return { success: false, reason: "NO_DIRECTORY" };
+  }
+
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    targetWindow.webContents.send("folder-selected", openedPath);
+  }
+
+  const response = { success: true, openedPath };
+  if (extraDirectoryCount > 0) {
+    response.extraDirectoryCount = extraDirectoryCount;
+    response.infoMessage = "Only the first folder was opened. Additional folders were ignored.";
+    response.infoType = "info";
+  }
+
+  return response;
+});
+
 // Handle file manager opening
 ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
   try {

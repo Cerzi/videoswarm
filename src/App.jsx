@@ -150,6 +150,7 @@ function App() {
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
+  const [isDragActive, setIsDragActive] = useState(false);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -172,6 +173,7 @@ function App() {
   const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
+  const dragCounterRef = useRef(0);
   const refreshTagListRef = useRef(() => {});
   const applyZoomFromSettingsRef = useRef((value) => {
     setZoomLevel(clampZoomIndex(value));
@@ -756,6 +758,105 @@ function App() {
     }, 3000);
   }, []);
 
+  useEffect(() => {
+    const electronAPI = window?.electronAPI;
+    if (!electronAPI?.openDroppedFolder) {
+      return undefined;
+    }
+
+    const hasFilePayload = (event) => {
+      const types = event?.dataTransfer?.types;
+      if (!types) return false;
+      if (typeof types.includes === "function") {
+        return types.includes("Files");
+      }
+      try {
+        return Array.from(types).includes("Files");
+      } catch {
+        return false;
+      }
+    };
+
+    const resetDragState = () => {
+      dragCounterRef.current = 0;
+      setIsDragActive(false);
+    };
+
+    const handleDragEnter = (event) => {
+      if (!hasFilePayload(event)) return;
+      dragCounterRef.current += 1;
+      event.preventDefault();
+      setIsDragActive(true);
+    };
+
+    const handleDragOver = (event) => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      try {
+        event.dataTransfer.dropEffect = "copy";
+      } catch {}
+    };
+
+    const handleDragLeave = (event) => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+      if (dragCounterRef.current <= 0 || !event.relatedTarget) {
+        resetDragState();
+      }
+    };
+
+    const handleDrop = async (event) => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      const files = Array.from(event?.dataTransfer?.files || []);
+      const candidatePaths = files
+        .map((file) => (typeof file?.path === "string" ? file.path : ""))
+        .filter((value) => value.length > 0);
+
+      resetDragState();
+
+      if (!candidatePaths.length) {
+        notify("Drop a folder to open it", "info");
+        return;
+      }
+
+      try {
+        const result = await electronAPI.openDroppedFolder(candidatePaths);
+        if (result?.success) {
+          if (typeof result?.infoMessage === "string" && result.infoMessage) {
+            notify(result.infoMessage, result.infoType || "info");
+          }
+        } else if (result?.reason === "NO_DIRECTORY") {
+          notify("Drop a folder to open it", "info");
+        } else if (result?.error) {
+          notify(result.error, "error");
+        }
+      } catch (error) {
+        console.error("Failed to open dropped folder", error);
+        notify("Failed to open folder", "error");
+      }
+    };
+
+    const handleDragEnd = () => {
+      resetDragState();
+    };
+
+    window.addEventListener("dragenter", handleDragEnter);
+    window.addEventListener("dragover", handleDragOver);
+    window.addEventListener("dragleave", handleDragLeave);
+    window.addEventListener("drop", handleDrop);
+    window.addEventListener("dragend", handleDragEnd);
+
+    return () => {
+      window.removeEventListener("dragenter", handleDragEnter);
+      window.removeEventListener("dragover", handleDragOver);
+      window.removeEventListener("dragleave", handleDragLeave);
+      window.removeEventListener("drop", handleDrop);
+      window.removeEventListener("dragend", handleDragEnd);
+    };
+  }, [dragCounterRef, notify]);
+
   const {
     applyMetadataPatch,
     handleAddTags,
@@ -1328,6 +1429,13 @@ function App() {
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
+      {isDragActive && (
+        <div className="app-drop-overlay" aria-hidden="true">
+          <div className="app-drop-overlay__content">
+            <span>Drop a folder to open it</span>
+          </div>
+        </div>
+      )}
       {!settingsLoaded ? (
         <div
           style={{

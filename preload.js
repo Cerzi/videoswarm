@@ -69,6 +69,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("select-folder");
   },
 
+  // Folder drop integration
+  openDroppedFolder: async (paths) => {
+    return await ipcRenderer.invoke("folder-drop:open", paths);
+  },
+
   // Listen for folder selection from menu
   onFolderSelected: (callback) => {
     const handler = (_event, folderPath) => {

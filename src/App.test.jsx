@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, waitFor } from "@testing-library/react";
 
 const selectionMock = {
   selected: new Set(),
@@ -258,6 +258,7 @@ vi.mock("./App.css", () => ({}), { virtual: true });
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  delete window.electronAPI;
 });
 
 describe("App hook composition", () => {
@@ -284,6 +285,41 @@ describe("App hook composition", () => {
 
     const zoomArgs = useZoomControlsMock.mock.calls[0][0];
     expect(zoomArgs.runWithStableAnchor).toBe(runWithStableAnchorMock);
+
+    result.unmount();
+  });
+
+  test("routes dropped folder paths through the electron bridge", async () => {
+    const openDroppedFolder = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI = { isElectron: true, openDroppedFolder };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+
+    const result = render(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const dropEvent = new Event("drop");
+    Object.defineProperty(dropEvent, "dataTransfer", {
+      value: {
+        files: [
+          { path: "/videos/project" },
+          { path: "/videos/clip.mp4" },
+        ],
+        types: ["Files"],
+      },
+    });
+    dropEvent.preventDefault = vi.fn();
+
+    window.dispatchEvent(dropEvent);
+
+    await waitFor(() => {
+      expect(openDroppedFolder).toHaveBeenCalledWith([
+        "/videos/project",
+        "/videos/clip.mp4",
+      ]);
+    });
+    expect(dropEvent.preventDefault).toHaveBeenCalled();
 
     result.unmount();
   });
