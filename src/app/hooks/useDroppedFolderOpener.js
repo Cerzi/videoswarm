@@ -1,10 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { extractDroppedPaths } from "../drag-drop/extractDroppedPaths";
+import {
+  dropContainsDirectory,
+  extractDroppedPaths,
+} from "../drag-drop/extractDroppedPaths";
 
 const NO_DIRECTORY_MESSAGE =
   "Dropped items didn't contain a folder. Drop a folder to open it.";
 const NO_PATHS_MESSAGE =
   "We couldn't read that drop. Drop a folder to open it.";
+const PLATFORM_PATH_WARNING = {
+  win32:
+    "Windows didn't share the folder's location with VideoSwarm, so we couldn't open it automatically. Please use Open Folder and pick it manually.",
+  linux:
+    "Your file manager didn't share the folder's location with VideoSwarm, so we couldn't open it automatically. Please use Open Folder and pick it manually.",
+};
+
+function missingPathMessage(platform = "unknown") {
+  if (platform && PLATFORM_PATH_WARNING[platform]) {
+    return PLATFORM_PATH_WARNING[platform];
+  }
+  return "Your system didn't share the folder's location with VideoSwarm, so we couldn't open it automatically. Please use Open Folder and pick it manually.";
+}
 
 function hasFilePayload(event) {
   const types = event?.dataTransfer?.types;
@@ -79,16 +95,53 @@ export function useDroppedFolderOpener({ notify }) {
       }
 
       event.preventDefault();
+      const containsDirectory = dropContainsDirectory(event);
       const droppedPaths = extractDroppedPaths(event, platform);
       resetDragState();
 
       if (!droppedPaths.length) {
-        notify?.(NO_PATHS_MESSAGE, "info");
+        if (containsDirectory) {
+          notify?.(missingPathMessage(platform), "warning");
+          const selectFolder = electronAPI.selectFolder;
+          if (typeof selectFolder === "function") {
+            try {
+              const selection = await selectFolder();
+              if (selection?.success && selection.folderPath) {
+                const fallbackResult = await electronAPI.openDroppedFolder({
+                  paths: [selection.folderPath],
+                  source: "drop-fallback",
+                });
+                if (!fallbackResult?.success) {
+                  if (fallbackResult?.reason === "NO_DIRECTORY") {
+                    notify?.(NO_DIRECTORY_MESSAGE, "info");
+                  } else if (fallbackResult?.reason === "NO_PATHS") {
+                    notify?.(missingPathMessage(platform), "warning");
+                  } else if (fallbackResult?.error) {
+                    notify?.(fallbackResult.error, "error");
+                  } else {
+                    notify?.("Failed to open folder", "error");
+                  }
+                }
+              }
+            } catch (fallbackError) {
+              console.error(
+                "Failed to open folder through fallback picker",
+                fallbackError
+              );
+              notify?.("Failed to open folder", "error");
+            }
+          }
+        } else {
+          notify?.(NO_PATHS_MESSAGE, "info");
+        }
         return;
       }
 
       try {
-        const result = await electronAPI.openDroppedFolder(droppedPaths);
+        const result = await electronAPI.openDroppedFolder({
+          paths: droppedPaths,
+          source: "drop",
+        });
         if (result?.success) {
           if (typeof result?.infoMessage === "string" && result.infoMessage) {
             notify?.(result.infoMessage, result.infoType || "info");
@@ -99,7 +152,7 @@ export function useDroppedFolderOpener({ notify }) {
         if (result?.reason === "NO_DIRECTORY") {
           notify?.(NO_DIRECTORY_MESSAGE, "info");
         } else if (result?.reason === "NO_PATHS") {
-          notify?.(NO_PATHS_MESSAGE, "info");
+          notify?.(missingPathMessage(platform), "warning");
         } else if (result?.error) {
           notify?.(result.error, "error");
         } else {

@@ -1437,9 +1437,23 @@ ipcMain.handle("select-folder", async () => {
   }
 });
 
-ipcMain.handle("folder-drop:open", async (event, candidatePaths = []) => {
+ipcMain.handle("folder-drop:open", async (event, payload = []) => {
   const sender = event?.sender;
   const targetWindow = sender ? BrowserWindow.fromWebContents(sender) : mainWindow;
+  let candidatePaths = [];
+  let source = "drop";
+
+  if (Array.isArray(payload)) {
+    candidatePaths = payload;
+  } else if (payload && typeof payload === "object") {
+    if (Array.isArray(payload.paths)) {
+      candidatePaths = payload.paths;
+    }
+    if (typeof payload.source === "string" && payload.source) {
+      source = payload.source;
+    }
+  }
+
   const normalizeArray = Array.isArray(candidatePaths)
     ? candidatePaths
     : [];
@@ -1494,7 +1508,7 @@ ipcMain.handle("folder-drop:open", async (event, candidatePaths = []) => {
     targetWindow.webContents.send("folder-selected", openedPath);
   }
 
-  const response = { success: true, openedPath };
+  const response = { success: true, openedPath, source };
   if (extraDirectoryCount > 0) {
     response.extraDirectoryCount = extraDirectoryCount;
     response.infoMessage = "Only the first folder was opened. Additional folders were ignored.";

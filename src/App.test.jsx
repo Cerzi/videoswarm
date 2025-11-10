@@ -314,10 +314,10 @@ describe("App hook composition", () => {
     window.dispatchEvent(dropEvent);
 
     await waitFor(() => {
-      expect(openDroppedFolder).toHaveBeenCalledWith([
-        "/videos/project",
-        "/videos/clip.mp4",
-      ]);
+      expect(openDroppedFolder).toHaveBeenCalledWith({
+        paths: ["/videos/project", "/videos/clip.mp4"],
+        source: "drop",
+      });
     });
     expect(dropEvent.preventDefault).toHaveBeenCalled();
 

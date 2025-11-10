@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { extractDroppedPaths, normalizeDroppedPath } from "./extractDroppedPaths";
+import {
+  dropContainsDirectory,
+  extractDroppedPaths,
+  normalizeDroppedPath,
+} from "./extractDroppedPaths";
 
 describe("normalizeDroppedPath", () => {
   it("returns empty string for non-string", () => {
@@ -92,5 +96,68 @@ describe("extractDroppedPaths", () => {
     };
 
     expect(extractDroppedPaths({ dataTransfer }, "darwin")).toEqual([]);
+  });
+
+  it("consumes additional uri-like payloads", () => {
+    const dataTransfer = {
+      files: [],
+      items: [],
+      getData: vi.fn((type) =>
+        type === "text/x-moz-url" ? "file:///videos/alt\nVideos" : ""
+      ),
+    };
+
+    expect(extractDroppedPaths({ dataTransfer }, "darwin")).toEqual([
+      "/videos/alt",
+    ]);
+  });
+
+  it("parses plain-text windows paths", () => {
+    const dataTransfer = {
+      files: [],
+      items: [],
+      getData: vi.fn((type) =>
+        type === "text/plain" ? "C:\\Users\\demo\\Videos" : ""
+      ),
+    };
+
+    expect(extractDroppedPaths({ dataTransfer }, "win32")).toEqual([
+      "C:\\Users\\demo\\Videos",
+    ]);
+  });
+});
+
+describe("dropContainsDirectory", () => {
+  it("returns false without items", () => {
+    expect(dropContainsDirectory({})).toBe(false);
+  });
+
+  it("detects directory entries", () => {
+    const dataTransfer = {
+      items: [
+        {
+          webkitGetAsEntry: () => ({ isDirectory: false }),
+        },
+        {
+          webkitGetAsEntry: () => ({ isDirectory: true }),
+        },
+      ],
+    };
+
+    expect(dropContainsDirectory({ dataTransfer })).toBe(true);
+  });
+
+  it("handles inspection errors gracefully", () => {
+    const dataTransfer = {
+      items: [
+        {
+          webkitGetAsEntry: () => {
+            throw new Error("boom");
+          },
+        },
+      ],
+    };
+
+    expect(dropContainsDirectory({ dataTransfer })).toBe(false);
   });
 });
