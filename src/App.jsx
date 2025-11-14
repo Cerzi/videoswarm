@@ -15,6 +15,7 @@ import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
+import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
@@ -148,6 +149,7 @@ function App() {
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
+  const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
 
@@ -186,6 +188,17 @@ function App() {
   const respondToProfilePrompt = useCallback((requestId, value) => {
     const profilesApi = window.electronAPI?.profiles;
     profilesApi?.respondToPrompt?.(requestId, value);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenDataLocation?.(() => {
+      setDataLocationOpen(true);
+    });
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -1394,6 +1407,10 @@ function App() {
           )}
 
           <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
+          <DataLocationDialog
+            open={isDataLocationOpen}
+            onClose={() => setDataLocationOpen(false)}
+          />
 
           {profilePromptRequest ? (
             <ProfilePromptDialog
