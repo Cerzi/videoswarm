@@ -22,7 +22,7 @@ export default function useCardSelection({
   const { selectRangeByBox } = useMasonryBoxSelection(gridRef);
 
   const handleVideoSelect = useCallback(
-    (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
+    (videoId, isCtrlClick, isShiftClick, isDoubleClick, pointer) => {
       const video = getById?.(videoId);
 
       if (isDoubleClick && video) {
@@ -36,7 +36,7 @@ export default function useCardSelection({
           return;
         }
         // bounding-box range; additive when ctrl/meta held
-        selectRangeByBox(selection, selection.anchorId, videoId, isCtrlClick);
+        selectRangeByBox(selection, selection.anchorId, videoId, isCtrlClick, pointer);
         return;
       }
 

@@ -61,7 +61,7 @@ describe('useCardSelection', () => {
   test('double-click triggers fullscreen when video exists', () => {
     const { result } = render();
     act(() => {
-      result.current.handleVideoSelect('vid1', false, false, true);
+      result.current.handleVideoSelect('vid1', false, false, true, { clientX: 10, clientY: 10 });
     });
     expect(openFullScreen).toHaveBeenCalledWith({ id: 'vid1' }, new Set());
   });
@@ -69,10 +69,10 @@ describe('useCardSelection', () => {
   test('ctrl-click toggles selection; plain click selects only', () => {
     const { result } = render();
 
-    act(() => result.current.handleVideoSelect('a', true, false, false));
+    act(() => result.current.handleVideoSelect('a', true, false, false, { clientX: 0, clientY: 0 }));
     expect(selection.toggle).toHaveBeenCalledWith('a');
 
-    act(() => result.current.handleVideoSelect('b', false, false, false));
+    act(() => result.current.handleVideoSelect('b', false, false, false, { clientX: 0, clientY: 0 }));
     expect(selection.selectOnly).toHaveBeenCalledWith('b');
   });
 
@@ -80,7 +80,7 @@ describe('useCardSelection', () => {
     const { result } = render();
     selection.anchorId = null;
 
-    act(() => result.current.handleVideoSelect('x', false, true, false));
+    act(() => result.current.handleVideoSelect('x', false, true, false, { clientX: 0, clientY: 0 }));
     expect(selection.selectOnly).toHaveBeenCalledWith('x');
   });
 
@@ -126,7 +126,7 @@ describe('useCardSelection', () => {
     selection.anchorId = 'a';
 
     act(() => {
-      result.current.handleVideoSelect('b', /*ctrl*/ false, /*shift*/ true, /*dbl*/ false);
+      result.current.handleVideoSelect('b', /*ctrl*/ false, /*shift*/ true, /*dbl*/ false, { clientX: 150, clientY: 30 });
     });
 
     // setSelected was called with a Set containing a & b (order not guaranteed)

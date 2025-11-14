@@ -53,6 +53,26 @@ describe('useMasonryBoxSelection', () => {
     expect(arr).toEqual(['a', 'b', 'd', 'e']);
   });
 
+  test('getBoxSelectionIds narrows selection using pointer location', () => {
+    const { result } = renderHook(() => useMasonryBoxSelection(gridRef));
+    const { getBoxSelectionIds } = result.current;
+
+    // Pointer is inside the top-left corner of card "e" – expect to keep anchor and end only
+    const ids = getBoxSelectionIds('a', 'e', { clientX: 120, clientY: 75 });
+    const arr = Array.from(ids).sort();
+    expect(arr).toEqual(['a', 'e']);
+  });
+
+  test('getBoxSelectionIds keeps clicked card even if overlap is tiny', () => {
+    const { result } = renderHook(() => useMasonryBoxSelection(gridRef));
+    const { getBoxSelectionIds } = result.current;
+
+    // Simulate clicking the extreme top-left of card "e" – overlap with the box is minimal
+    const ids = getBoxSelectionIds('a', 'e', { clientX: 112, clientY: 72 });
+    expect(ids.has('e')).toBe(true);
+    expect(ids.has('a')).toBe(true);
+  });
+
   test('getBoxSelectionIds returns empty Set if anchor or end not found', () => {
     const { result } = renderHook(() => useMasonryBoxSelection(gridRef));
     const { getBoxSelectionIds } = result.current;
@@ -74,12 +94,12 @@ describe('useMasonryBoxSelection', () => {
     };
 
     // replace
-    selectRangeByBox(selection, 'a', 'e', /*additive*/ false);
+    selectRangeByBox(selection, 'a', 'e', /*additive*/ false, { clientX: 180, clientY: 120 });
     expect(current instanceof Set).toBe(true);
     expect(Array.from(current).sort()).toEqual(['a', 'b', 'd', 'e']);
 
     // additive (merge in anchor=end of a smaller box)
-    selectRangeByBox(selection, 'b', 'b', /*additive*/ true);
+    selectRangeByBox(selection, 'b', 'b', /*additive*/ true, { clientX: 150, clientY: 40 });
     expect(Array.from(current).sort()).toEqual(['a', 'b', 'd', 'e']); // unchanged; 'b' already present
   });
 });

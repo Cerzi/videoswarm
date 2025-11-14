@@ -689,14 +689,15 @@ const VideoCard = memo(function VideoCard({
   // UI handlers (unchanged)
   const handleClick = useCallback((e) => {
     e.stopPropagation();
+    const pointer = { clientX: e.clientX, clientY: e.clientY };
     if (clickTimeoutRef.current) {
       clearTimeout(clickTimeoutRef.current);
       clickTimeoutRef.current = null;
-      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true, pointer);
       return;
     }
     clickTimeoutRef.current = setTimeout(() => {
-      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
+      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false, pointer);
       clickTimeoutRef.current = null;
     }, 300);
   }, [onSelect, videoId]);
