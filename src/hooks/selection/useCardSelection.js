@@ -1,9 +1,8 @@
 import { useCallback } from 'react';
-import useMasonryBoxSelection from './useMasonryBoxSelection';
 
 /**
  * Centralizes all per-card interactions:
- * - Click: single / ctrl-toggle / shift range (bounding box) / double → fullscreen
+ * - Click: single / ctrl-toggle / shift range (linear order) / double → fullscreen
  * - Right-click: open context menu without mutating selection
  * - Background right-click: dismiss custom menu without altering selection
  */
@@ -13,14 +12,13 @@ export default function useCardSelection({
   getById,
   openFullScreen,
   playingVideos,
+  getLinearOrder,
     // from useContextMenu – use the pair that matches your hook API
     showOnItem,     // (event, id)
     showOnEmpty,    // (event)
   // OR if you still expose a single function:
   showContextMenu // (event, video|null)
 }) {
-  const { selectRangeByBox } = useMasonryBoxSelection(gridRef);
-
   const handleVideoSelect = useCallback(
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
       const video = getById?.(videoId);
@@ -31,12 +29,17 @@ export default function useCardSelection({
       }
 
       if (isShiftClick) {
-        if (!selection.anchorId) {
+        const orderedIds =
+          typeof selection?.selectRange === 'function' &&
+          typeof getLinearOrder === 'function'
+            ? getLinearOrder() ?? []
+            : [];
+
+        if (orderedIds.length) {
+          selection.selectRange(orderedIds, videoId, isCtrlClick);
+        } else {
           selection.selectOnly(videoId);
-          return;
         }
-        // bounding-box range; additive when ctrl/meta held
-        selectRangeByBox(selection, selection.anchorId, videoId, isCtrlClick);
         return;
       }
 
@@ -46,7 +49,7 @@ export default function useCardSelection({
         selection.selectOnly(videoId);
       }
     },
-    [getById, openFullScreen, playingVideos, selection, selectRangeByBox]
+    [getById, openFullScreen, playingVideos, selection, getLinearOrder]
   );
 
   // Card context menu – select if needed then show the menu

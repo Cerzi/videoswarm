@@ -1178,6 +1178,10 @@ function App() {
     [groupByFolders, randomSeed, renderLimitStep]
   );
 
+  useEffect(() => {
+    selection.resetAnchor?.();
+  }, [selection.resetAnchor, sortKey, sortDir]);
+
   const toggleGroupByFolders = useCallback(() => {
     const next = !groupByFolders;
     setGroupByFolders(next);

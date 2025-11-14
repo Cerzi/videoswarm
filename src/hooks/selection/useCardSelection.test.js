@@ -11,6 +11,7 @@ describe('useCardSelection', () => {
   let openFullScreen;
   let showOnItem;
   let showOnEmpty;
+  let getLinearOrder;
 
   beforeEach(() => {
     // Selection stub
@@ -24,8 +25,8 @@ describe('useCardSelection', () => {
       toggle: vi.fn((id) => {
         if (selection.selected.has(id)) selection.selected.delete(id);
         else selection.selected.add(id);
-        selection.anchorId = id;
       }),
+      selectRange: vi.fn(),
       clear: vi.fn(() => {
         selection.selected = new Set();
         selection.anchorId = null;
@@ -40,6 +41,7 @@ describe('useCardSelection', () => {
     openFullScreen = vi.fn();
     showOnItem = vi.fn();
     showOnEmpty = vi.fn();
+    getLinearOrder = vi.fn(() => ['a', 'b', 'c', 'd']);
 
     // jsdom root for querySelectorAll in inner hook (no actual items needed here for most tests)
     gridRef.current.innerHTML = '';
@@ -53,6 +55,7 @@ describe('useCardSelection', () => {
         getById,
         openFullScreen,
         playingVideos: new Set(),
+        getLinearOrder,
         showOnItem,
         showOnEmpty,
       })
@@ -81,6 +84,30 @@ describe('useCardSelection', () => {
     selection.anchorId = null;
 
     act(() => result.current.handleVideoSelect('x', false, true, false));
+    expect(selection.selectRange).toHaveBeenCalledWith(
+      ['a', 'b', 'c', 'd'],
+      'x',
+      false
+    );
+    expect(selection.selectOnly).not.toHaveBeenCalledWith('x');
+  });
+
+  test('shift-click falls back to single select when no linear order is provided', () => {
+    getLinearOrder = vi.fn(() => []);
+    const { result } = renderHook(() =>
+      useCardSelection({
+        gridRef,
+        selection,
+        getById,
+        openFullScreen,
+        playingVideos: new Set(),
+        getLinearOrder,
+        showOnItem,
+        showOnEmpty,
+      })
+    );
+
+    act(() => result.current.handleVideoSelect('x', false, true, false));
     expect(selection.selectOnly).toHaveBeenCalledWith('x');
   });
 
@@ -106,34 +133,18 @@ describe('useCardSelection', () => {
     expect(selection.clear).not.toHaveBeenCalled();
   });
 
-  test('shift-click with anchor uses bounding box (via setSelected)', () => {
-    // Build a tiny DOM so inner box-selection can work
-    const makeRect = (l, t, r, b) => ({ left: l, top: t, right: r, bottom: b, width: r-l, height: b-t });
-    gridRef.current.innerHTML = '';
-    const addItem = (id, rect) => {
-      const el = document.createElement('div');
-      el.className = 'video-item';
-      el.dataset.videoId = id;
-      el.getBoundingClientRect = vi.fn(() => rect);
-      gridRef.current.appendChild(el);
-    };
-    // anchor=a (0,0)-(100,80), end=b (110,0)-(210,60) → expect [a,b]
-    addItem('a', makeRect(0, 0, 100, 80));
-    addItem('b', makeRect(110, 0, 210, 60));
-    addItem('c', makeRect(220, 0, 320, 120)); // outside the box for this test
-
+  test('shift-click forwards linear order to selectRange', () => {
     const { result } = render();
     selection.anchorId = 'a';
 
     act(() => {
-      result.current.handleVideoSelect('b', /*ctrl*/ false, /*shift*/ true, /*dbl*/ false);
+      result.current.handleVideoSelect('c', false, true, false);
     });
 
-    // setSelected was called with a Set containing a & b (order not guaranteed)
-    expect(selection.setSelected).toHaveBeenCalled();
-    const arg = selection.setSelected.mock.calls.at(-1)[0];
-    const nextSet = typeof arg === 'function' ? arg(new Set()) : arg;
-    expect(nextSet instanceof Set).toBe(true);
-    expect(Array.from(nextSet).sort()).toEqual(['a', 'b']);
+    expect(selection.selectRange).toHaveBeenCalledWith(
+      ['a', 'b', 'c', 'd'],
+      'c',
+      false
+    );
   });
 });
