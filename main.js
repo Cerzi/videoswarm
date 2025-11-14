@@ -14,6 +14,10 @@ const {
 const path = require("path");
 const fs = require("fs");
 const fsPromises = fs.promises;
+const { DataLocationManager } = require("./main/data-location-manager");
+const dataLocationManager = new DataLocationManager({ app, dialog });
+const { source: dataLocationSource } = dataLocationManager.bootstrap(process.argv);
+
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const { getVideoDimensions } = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
@@ -83,6 +87,10 @@ function assetPath(...p) {
 console.log("=== MAIN.JS LOADING ===");
 console.log("Node version:", process.version);
 console.log("Electron version:", process.versions.electron);
+console.log(
+  `📁 Using user data path: ${app.getPath("userData")}` +
+    (dataLocationSource ? ` [source: ${dataLocationSource}]` : "")
+);
 
 if (process.platform === "linux") {
   console.log("=== USING NEW CHROMIUM GL FLAGS ===");
@@ -1027,6 +1035,19 @@ function createMenu() {
       submenu: buildProfilesMenuTemplate(),
     },
     {
+      label: "Options",
+      submenu: [
+        {
+          label: "Data Location",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-data-location");
+            }
+          },
+        },
+      ],
+    },
+    {
       label: "View",
       submenu: [
         { role: "reload" },
@@ -1209,6 +1230,25 @@ ipcMain.handle("support:open-donation", async () => {
     console.warn("Failed to open support link", error);
     throw error;
   }
+});
+
+ipcMain.handle("data-location:get-state", async () => {
+  try {
+    return dataLocationManager.getRendererState();
+  } catch (error) {
+    console.warn("[data-location] Failed to get state", error);
+    return dataLocationManager.getRendererState();
+  }
+});
+
+ipcMain.handle("data-location:browse", async () => {
+  const browser = BrowserWindow.getFocusedWindow() || mainWindow || null;
+  return dataLocationManager.browseForDirectory(browser);
+});
+
+ipcMain.handle("data-location:apply", async (_event, payload) => {
+  const browser = BrowserWindow.getFocusedWindow() || mainWindow || null;
+  return dataLocationManager.applySelection(payload, browser);
 });
 
 ipcMain.handle("profiles:list", async () => ({
@@ -1823,6 +1863,7 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   try {
+    await dataLocationManager.ensureReady();
     profileManager.initializeProfileManager(app.getPath("userData"));
     activeProfileId = profileManager.getActiveProfile();
     console.log("GPU status:", app.getGPUFeatureStatus());

@@ -11,6 +11,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   openDonationPage: () => ipcRenderer.invoke("support:open-donation"),
 
+  onOpenDataLocation: (callback) => {
+    if (typeof callback !== "function") {
+      return () => {};
+    }
+    const handler = () => callback();
+    ipcRenderer.on("ui:open-data-location", handler);
+    return () => ipcRenderer.removeListener("ui:open-data-location", handler);
+  },
+
+  dataLocation: {
+    getState: () => ipcRenderer.invoke("data-location:get-state"),
+    browse: () => ipcRenderer.invoke("data-location:browse"),
+    applySelection: (payload) => ipcRenderer.invoke("data-location:apply", payload),
+  },
+
   // File manager integration
   showItemInFolder: async (filePath) => {
     return await ipcRenderer.invoke("show-item-in-folder", filePath);

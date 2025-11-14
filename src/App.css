@@ -342,6 +342,222 @@ body {
   outline: none;
 }
 
+.data-location-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2050;
+  padding: 1.5rem;
+}
+
+.data-location-dialog {
+  width: min(640px, 100%);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: 18px;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 3rem);
+}
+
+.data-location-dialog__header {
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-location-dialog__header h2 {
+  margin: 0;
+  font-size: 1.45rem;
+}
+
+.data-location-dialog__body {
+  padding: 1.25rem 1.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+}
+
+.data-location-banner {
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.data-location-banner--warning {
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  color: #ffd86b;
+}
+
+.data-location-current {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+}
+
+.data-location-current__label {
+  opacity: 0.8;
+}
+
+.data-location-current__value {
+  font-family: var(--font-mono, "Fira Code", "SFMono-Regular", Menlo, monospace);
+  word-break: break-all;
+  font-size: 0.9rem;
+}
+
+.data-location-options {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-inline-size: 0;
+}
+
+.data-location-option {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.data-location-option input[type="radio"] {
+  margin-top: 0.35rem;
+}
+
+.data-location-option__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.data-location-option__title {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.data-location-option__description {
+  font-size: 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.data-location-option--custom {
+  background: rgba(132, 94, 247, 0.08);
+  border-color: rgba(132, 94, 247, 0.32);
+}
+
+.data-location-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text);
+  font-family: var(--font-mono, "Fira Code", "SFMono-Regular", Menlo, monospace);
+  font-size: 0.9rem;
+}
+
+.data-location-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.data-location-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.data-location-button {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text);
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  font-size: 0.9rem;
+}
+
+.data-location-button:hover:not(:disabled),
+.data-location-button:focus-visible:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+  outline: none;
+}
+
+.data-location-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.data-location-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.data-location-status {
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font-size: 0.93rem;
+  line-height: 1.45;
+}
+
+.data-location-status--error {
+  background: rgba(239, 83, 80, 0.15);
+  border: 1px solid rgba(239, 83, 80, 0.4);
+  color: #ff8a80;
+}
+
+.data-location-status--warning {
+  background: rgba(255, 193, 7, 0.15);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  color: #ffd86b;
+}
+
+.data-location-status--info {
+  background: rgba(41, 182, 246, 0.16);
+  border: 1px solid rgba(41, 182, 246, 0.35);
+  color: #82cfff;
+}
+
+.data-location-dialog__footer {
+  padding: 1rem 1.5rem 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.data-location-button--primary {
+  background: rgba(132, 94, 247, 0.8);
+  border-color: rgba(132, 94, 247, 0.9);
+}
+
+.data-location-button--primary:hover:not(:disabled),
+.data-location-button--primary:focus-visible:not(:disabled) {
+  background: rgba(132, 94, 247, 1);
+  border-color: rgba(132, 94, 247, 1);
+}
+
+.data-location-button--secondary {
+  background: transparent;
+}
+
 .profile-prompt-backdrop {
   position: fixed;
   inset: 0;
