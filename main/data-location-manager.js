@@ -459,8 +459,8 @@ class DataLocationManager {
     const { response } = await this.dialog.showMessageBox(browserWindow || null, {
       type: "question",
       buttons: [
-        "Move & Restart",
-        "Use New Folder (Fresh Data) & Restart",
+        "Move && Restart",
+        "Use New Folder (Fresh Data) && Restart",
         "Cancel",
       ],
       defaultId: 0,

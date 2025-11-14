@@ -23,6 +23,8 @@ export default function DataLocationDialog({ open, onClose }) {
   const overrideActive = !!state?.isCommandLineOverride;
   const portablePreset = state?.portablePresetPath || "";
   const effectivePath = state?.effectivePath || "";
+  const defaultPath = state?.defaultPath || "";
+  const effectivePathUnavailable = !!state?.effectivePathUnavailable;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -190,6 +192,9 @@ export default function DataLocationDialog({ open, onClose }) {
 
   if (!open) return null;
 
+  const shouldShowDefaultPathHint =
+    !!defaultPath && state && !state.isUsingDefault;
+
   return (
     <div
       className="data-location-backdrop"
@@ -216,10 +221,27 @@ export default function DataLocationDialog({ open, onClose }) {
               Data location is controlled by the '--user-data-dir' command-line option.
             </div>
           ) : null}
+
           <div className="data-location-current">
             <span className="data-location-current__label">Current data folder:</span>
             <code className="data-location-current__value">{effectivePath}</code>
+            <p className="data-location-current__hint">
+              Includes profiles, thumbnails, metadata database, cache, and logs.
+            </p>
+            {effectivePathUnavailable ? (
+              <div className="data-location-current__warning">
+                <span
+                  className="data-location-current__warning-icon"
+                  aria-hidden="true"
+                />
+                <span className="data-location-current__warning-text">
+                  VideoSwarm cannot currently access this folder. Check that the drive
+                  or network location is available.
+                </span>
+              </div>
+            ) : null}
           </div>
+
           <fieldset
             className="data-location-options"
             disabled={overrideActive || busy || !state}
@@ -240,11 +262,23 @@ export default function DataLocationDialog({ open, onClose }) {
                   Use default system location
                 </div>
                 <div className="data-location-option__description">
-                  Stores data in your OS user profile (AppData/Roaming on Windows,
-                  ~/.config on Linux).
+                  {shouldShowDefaultPathHint ? (
+                    <>
+                      Stores data in:
+                      <code className="data-location-option__path">{defaultPath}</code>
+                    </>
+                  ) : (
+                    "Stores data in your OS user profile."
+                  )}
                 </div>
               </div>
             </label>
+
+            <div
+              className="data-location-options__divider"
+              role="separator"
+              aria-hidden="true"
+            />
 
             <label className="data-location-option data-location-option--custom">
               <input
@@ -280,18 +314,20 @@ export default function DataLocationDialog({ open, onClose }) {
                       type="button"
                       className="data-location-button"
                       onClick={handlePortable}
-                      disabled={
-                        overrideActive || busy || !portablePreset
-                      }
+                      disabled={overrideActive || busy || !portablePreset}
                     >
                       Set to app folder (portable mode)
                     </button>
                   </div>
-                  <p className="data-location-hint">Takes effect after restart.</p>
                 </div>
               </div>
             </label>
           </fieldset>
+
+          <p className="data-location-hint-global">
+            Changes to the data location take effect after restart.
+          </p>
+
           {statusMessage ? (
             <div
               className={`data-location-status data-location-status--${statusMessage.type}`}
