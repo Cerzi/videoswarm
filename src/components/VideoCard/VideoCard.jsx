@@ -63,6 +63,7 @@ const VideoCard = memo(function VideoCard({
   const retryAttemptsRef   = useRef(0);
   const suppressErrorsRef  = useRef(false); // ignore unload-induced errors
   const lastFailureAtRef   = useRef(0);
+  const [lastErrorReason, setLastErrorReason] = useState(null);
 
   const [errorText, setErrorText] = useState(null);
   const initialNear = (isNear?.(videoId) ?? true) === true;
@@ -218,6 +219,7 @@ const VideoCard = memo(function VideoCard({
       permanentErrorRef.current = false;
       retryAttemptsRef.current  = 0;
       setErrorText(null);
+      setLastErrorReason(null);
       loadRequestedRef.current = false;
       setLoaded(false);
       setLoading(false);
@@ -398,6 +400,17 @@ const VideoCard = memo(function VideoCard({
         const isLocal = Boolean(video.isElectronFile && video.fullPath);
         const looksTransientLocal = isLocal && code === 4 && retryAttemptsRef.current < 2;
 
+        const markPermanentFailure = () => {
+          permanentErrorRef.current = true;
+          reportPlayerCreationFailure?.();
+          try {
+            suppressErrorsRef.current = true;
+            hardDetach(el);
+          } finally {
+            setTimeout(() => { suppressErrorsRef.current = false; }, 0);
+          }
+        };
+
         if (!looksTransientLocal) {
           lastFailureAtRef.current = Date.now();
         }
@@ -416,12 +429,12 @@ const VideoCard = memo(function VideoCard({
         const decodeWhileActive =
           code === 3 && el.currentSrc && !suppressErrorsRef.current;
 
-        if (terminal && decodeWhileActive && !looksTransientLocal) {
-          permanentErrorRef.current = true;
-          reportPlayerCreationFailure?.();
+        if (terminal && !looksTransientLocal) {
+          markPermanentFailure();
         }
 
         setErrorText(`⚠️ ${looksTransientLocal ? "Temporary read error" : label}`);
+        setLastErrorReason(label);
         onPlayError?.(videoId, err);
 
         // Only detach permanently if confirmed decode error
@@ -504,6 +517,31 @@ const VideoCard = memo(function VideoCard({
     scheduleInit,
     syncVideoIntoContainer,
   ]);
+
+  const handleRetryLoad = useCallback(() => {
+    permanentErrorRef.current = false;
+    retryAttemptsRef.current = 0;
+    lastFailureAtRef.current = 0;
+    setErrorText(null);
+    setLastErrorReason(null);
+    loadRequestedRef.current = false;
+    metaNotifiedRef.current = false;
+
+    const el = videoRef.current;
+    if (el && !isAdoptedByModal()) {
+      try {
+        suppressErrorsRef.current = true;
+        hardDetach(el);
+        el.remove();
+      } catch {}
+      finally {
+        setTimeout(() => { suppressErrorsRef.current = false; }, 0);
+      }
+      videoRef.current = null;
+    }
+
+    loadVideo({ assumeVisible: true });
+  }, [isAdoptedByModal, loadVideo]);
 
   const ensureVisibleAndLoad = useCallback(() => {
     if (!isVisible && !nearStateRef.current) {
@@ -733,10 +771,24 @@ const VideoCard = memo(function VideoCard({
         const stripped = errorText.replace(/^\s*⚠️\s*/u, "").trim();
         return stripped.length > 0 ? stripped : errorText;
       })();
+      const showErrorHint =
+        lastErrorReason && lastErrorReason !== sanitizedErrorText;
       return (
         <div className="error-indicator" role="alert">
           <div className="error-indicator__icon" aria-hidden="true" />
           <div className="error-indicator__message">{sanitizedErrorText}</div>
+          {showErrorHint && (
+            <div className="error-indicator__hint">
+              Last attempt: {lastErrorReason}
+            </div>
+          )}
+          <button
+            type="button"
+            className="error-indicator__retry"
+            onClick={handleRetryLoad}
+          >
+            Retry load
+          </button>
         </div>
       );
     }
