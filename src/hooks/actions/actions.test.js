@@ -319,6 +319,23 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
     ).toBe(true);
   });
 
+  it("prefers ffmpeg IPC when available for electron files", async () => {
+    const notify = vi.fn();
+    const electronAPI = {
+      copyLastFrameFromFile: vi.fn(async () => ({ success: true })),
+    };
+
+    await actionRegistry[ActionIds.COPY_LAST_FRAME](
+      [{ fullPath: "/tmp/video.mp4", isElectronFile: true, name: "test" }],
+      { electronAPI, notify }
+    );
+
+    expect(electronAPI.copyLastFrameFromFile).toHaveBeenCalledWith("/tmp/video.mp4");
+    expect(
+      notify.mock.calls.some((call) => /last frame copied/i.test(call[0]))
+    ).toBe(true);
+  });
+
   it("seeks to the last frame when reusing an existing video element", async () => {
     const assignedTimes = [];
     const loopAssignments = [];

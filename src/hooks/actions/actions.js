@@ -254,6 +254,15 @@ export const actionRegistry = {
         if (!video) return;
 
         try {
+          if (video.isElectronFile && video.fullPath && electronAPI?.copyLastFrameFromFile) {
+            const result = await electronAPI.copyLastFrameFromFile(video.fullPath);
+            if (result?.success === false) {
+              throw new Error(result?.error || "Clipboard copy failed");
+            }
+            notify('Last frame copied to clipboard', 'success');
+            return;
+          }
+
           const { blob, dataUrl } = await captureLastFrame(video);
           if (electronAPI?.copyImageToClipboard) {
             const result = await electronAPI.copyImageToClipboard(dataUrl);

@@ -215,6 +215,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("copy-image-to-clipboard", dataUrl);
   },
 
+  copyLastFrameFromFile: async (filePath) => {
+    return await ipcRenderer.invoke("copy-last-frame-from-file", filePath);
+  },
+
 
 
   metadata: {
