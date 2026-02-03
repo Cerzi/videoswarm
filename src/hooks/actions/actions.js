@@ -124,6 +124,11 @@ const captureLastFrame = async (video) => {
   try {
     const startingTime = videoEl.currentTime || 0;
     const wasPaused = videoEl.paused;
+    if (!wasPaused && typeof videoEl.pause === "function") {
+      try {
+        videoEl.pause();
+      } catch {}
+    }
 
     if (ownsElement) {
       videoEl.src = src;
@@ -178,11 +183,13 @@ const captureLastFrame = async (video) => {
 
     if (!ownsElement) {
       try {
-        if (!wasPaused) {
-          videoEl.play().catch(() => {});
-        }
         videoEl.currentTime = startingTime;
       } catch {}
+      if (!wasPaused && typeof videoEl.play === "function") {
+        try {
+          videoEl.play().catch(() => {});
+        } catch {}
+      }
     }
 
     return { blob, dataUrl };

@@ -236,10 +236,15 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
   afterEach(() => {
     document.createElement.mockRestore();
     createElementMock.mockReset();
+    if (document.querySelector?.mockRestore) {
+      document.querySelector.mockRestore();
+    }
   });
 
-  const setupVideoCaptureMocks = () => {
+  const setupVideoCaptureMocks = ({ existingVideo = null } = {}) => {
     const videoListeners = new Map();
+    const pauseMock = vi.fn();
+    const playMock = vi.fn(() => Promise.resolve());
     const videoEl = {
       preload: "",
       muted: false,
@@ -250,6 +255,8 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
       videoWidth: 320,
       videoHeight: 180,
       currentTime: 0,
+      paused: true,
+      readyState: 2,
       addEventListener: vi.fn((event, handler) => {
         if (!videoListeners.has(event)) {
           videoListeners.set(event, new Set());
@@ -262,9 +269,10 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
       removeEventListener: vi.fn((event, handler) => {
         videoListeners.get(event)?.delete(handler);
       }),
-      pause: vi.fn(),
+      pause: pauseMock,
       removeAttribute: vi.fn(),
       load: vi.fn(),
+      play: playMock,
     };
 
     const ctx = {
@@ -284,7 +292,11 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
       return originalCreateElement.call(document, tag);
     });
 
-    return { videoEl, canvasEl };
+    if (existingVideo) {
+      vi.spyOn(document, "querySelector").mockReturnValue(existingVideo);
+    }
+
+    return { videoEl, canvasEl, pauseMock, playMock };
   };
 
   it("copies the last frame to clipboard via electron API and notifies", async () => {
@@ -305,6 +317,47 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
     expect(
       notify.mock.calls.some((call) => /last frame copied/i.test(call[0]))
     ).toBe(true);
+  });
+
+  it("seeks to the last frame when reusing an existing video element", async () => {
+    const assignedTimes = [];
+    const existingVideo = {
+      _time: 2,
+      get currentTime() {
+        return this._time;
+      },
+      set currentTime(value) {
+        this._time = value;
+        assignedTimes.push(value);
+      },
+      duration: 8,
+      videoWidth: 320,
+      videoHeight: 180,
+      paused: false,
+      readyState: 4,
+      addEventListener: vi.fn((event, handler) => {
+        if (event === "seeked") handler();
+      }),
+      removeEventListener: vi.fn(),
+      pause: vi.fn(),
+      play: vi.fn(() => Promise.resolve()),
+    };
+
+    setupVideoCaptureMocks({ existingVideo });
+    const notify = vi.fn();
+    const electronAPI = {
+      copyImageToClipboard: vi.fn(async () => ({ success: true })),
+    };
+
+    await actionRegistry[ActionIds.COPY_LAST_FRAME](
+      [{ id: "video-1", name: "test" }],
+      { electronAPI, notify }
+    );
+
+    expect(assignedTimes.some((value) => Math.abs(value - 7.95) < 0.02)).toBe(true);
+    expect(existingVideo.currentTime).toBe(2);
+    expect(existingVideo.pause).toHaveBeenCalled();
+    expect(existingVideo.play).toHaveBeenCalled();
   });
 
   it("notifies failure when clipboard copy fails", async () => {
