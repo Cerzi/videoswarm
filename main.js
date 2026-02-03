@@ -1513,6 +1513,23 @@ ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   }
 });
 
+// Copy image to clipboard
+ipcMain.handle("copy-image-to-clipboard", async (_event, dataUrl) => {
+  try {
+    const { clipboard, nativeImage } = require("electron");
+    const image = nativeImage.createFromDataURL(String(dataUrl || ""));
+    if (!image || image.isEmpty()) {
+      return { success: false, error: "EMPTY_IMAGE" };
+    }
+    clipboard.writeImage(image);
+    console.log("Copied image to clipboard");
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to copy image to clipboard:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   const requester = event?.sender;
   const win = requester ? BrowserWindow.fromWebContents(requester) : mainWindow;

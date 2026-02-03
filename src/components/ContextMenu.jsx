@@ -105,6 +105,7 @@ const ContextMenu = ({
         { id: 'copy-path', label: `📋 ${menuLabel('copy-path')}`, action: 'copy-path' },
         { id: 'copy-relative-path', label: `📋 ${menuLabel('copy-relative-path')}`, action: 'copy-relative-path' },
         { id: 'copy-filename', label: `📄 ${menuLabel('copy-filename')}`, action: 'copy-filename' },
+        { id: 'copy-last-frame', label: `🖼️ ${menuLabel('copy-last-frame')}`, action: 'copy-last-frame' },
       ]);
 
       const metadataActions = [

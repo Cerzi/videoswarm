@@ -64,6 +64,13 @@ export const actionPolicies = {
     whenContextWithMulti: TargetPolicy.ALL_SELECTED,
     enabledForToolbar: (count) => count >= 1,
   },
+
+  'copy-last-frame': {
+    id: 'copy-last-frame',
+    label: 'Copy Last Frame',
+    whenContextWithMulti: TargetPolicy.CONTEXT_ONLY,
+    enabledForToolbar: (count) => count === 1,
+  },
 };
 
 // Simple helpers you can import in UI
