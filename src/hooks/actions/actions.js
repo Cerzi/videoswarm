@@ -124,10 +124,14 @@ const captureLastFrame = async (video) => {
   try {
     const startingTime = videoEl.currentTime || 0;
     const wasPaused = videoEl.paused;
+    const startingLoop = typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
     if (!wasPaused && typeof videoEl.pause === "function") {
       try {
         videoEl.pause();
       } catch {}
+    }
+    if (!ownsElement && typeof videoEl.loop === "boolean") {
+      videoEl.loop = false;
     }
 
     if (ownsElement) {
@@ -142,7 +146,20 @@ const captureLastFrame = async (video) => {
     }
 
     const duration = Number(videoEl.duration);
-    const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    const seekableEnd = (() => {
+      try {
+        if (videoEl.seekable && videoEl.seekable.length > 0) {
+          return Number(videoEl.seekable.end(videoEl.seekable.length - 1));
+        }
+      } catch {}
+      return NaN;
+    })();
+    const safeDuration =
+      Number.isFinite(seekableEnd) && seekableEnd > 0
+        ? seekableEnd
+        : Number.isFinite(duration) && duration > 0
+          ? duration
+          : 0;
     const targetTime = Math.max(0, safeDuration - 0.05);
 
     if (Number.isFinite(targetTime) && targetTime > 0) {
@@ -185,6 +202,9 @@ const captureLastFrame = async (video) => {
       try {
         videoEl.currentTime = startingTime;
       } catch {}
+      if (typeof startingLoop === "boolean") {
+        videoEl.loop = startingLoop;
+      }
       if (!wasPaused && typeof videoEl.play === "function") {
         try {
           videoEl.play().catch(() => {});

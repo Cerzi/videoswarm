@@ -321,6 +321,7 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
 
   it("seeks to the last frame when reusing an existing video element", async () => {
     const assignedTimes = [];
+    const loopAssignments = [];
     const existingVideo = {
       _time: 2,
       get currentTime() {
@@ -330,7 +331,12 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
         this._time = value;
         assignedTimes.push(value);
       },
+      loop: true,
       duration: 8,
+      seekable: {
+        length: 1,
+        end: () => 8,
+      },
       videoWidth: 320,
       videoHeight: 180,
       paused: false,
@@ -342,6 +348,17 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
       pause: vi.fn(),
       play: vi.fn(() => Promise.resolve()),
     };
+
+    Object.defineProperty(existingVideo, "loop", {
+      get() {
+        return this._loop;
+      },
+      set(value) {
+        this._loop = value;
+        loopAssignments.push(value);
+      },
+    });
+    existingVideo._loop = true;
 
     setupVideoCaptureMocks({ existingVideo });
     const notify = vi.fn();
@@ -358,6 +375,8 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
     expect(existingVideo.currentTime).toBe(2);
     expect(existingVideo.pause).toHaveBeenCalled();
     expect(existingVideo.play).toHaveBeenCalled();
+    expect(loopAssignments).toContain(false);
+    expect(loopAssignments[loopAssignments.length - 1]).toBe(true);
   });
 
   it("notifies failure when clipboard copy fails", async () => {
