@@ -56,6 +56,25 @@ const waitForFrame = (videoEl) =>
     setTimeout(resolve, 120);
   });
 
+const safeEscapeSelector = (value) => {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(String(value));
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+};
+
+const findExistingVideoElement = (video) => {
+  const id = video?.id ?? video?.fullPath ?? video?.name;
+  if (!id || typeof document === "undefined") return null;
+  try {
+    return document.querySelector(
+      `video.video-element[data-video-id="${safeEscapeSelector(id)}"]`
+    );
+  } catch {
+    return null;
+  }
+};
+
 const resolveVideoSource = (video) => {
   if (!video) return {};
   if (video.isElectronFile && video.fullPath) {
@@ -75,18 +94,23 @@ const resolveVideoSource = (video) => {
 };
 
 const captureLastFrame = async (video) => {
+  const existingVideo = findExistingVideoElement(video);
   const { src, revoke } = resolveVideoSource(video);
-  if (!src) {
+  if (!existingVideo && !src) {
     throw new Error("No video source available");
   }
 
-  const videoEl = document.createElement("video");
-  videoEl.preload = "auto";
-  videoEl.muted = true;
-  videoEl.playsInline = true;
-  videoEl.crossOrigin = "anonymous";
+  const ownsElement = !existingVideo;
+  const videoEl = existingVideo || document.createElement("video");
+  if (ownsElement) {
+    videoEl.preload = "auto";
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.crossOrigin = "anonymous";
+  }
 
   const cleanup = () => {
+    if (!ownsElement) return;
     try {
       videoEl.pause();
     } catch {}
@@ -98,10 +122,19 @@ const captureLastFrame = async (video) => {
   };
 
   try {
-    videoEl.src = src;
-    await waitForEvent(videoEl, "loadedmetadata", {
-      errorMessage: "Failed to load video metadata",
-    });
+    const startingTime = videoEl.currentTime || 0;
+    const wasPaused = videoEl.paused;
+
+    if (ownsElement) {
+      videoEl.src = src;
+      await waitForEvent(videoEl, "loadedmetadata", {
+        errorMessage: "Failed to load video metadata",
+      });
+    } else if (videoEl.readyState < 1) {
+      await waitForEvent(videoEl, "loadedmetadata", {
+        errorMessage: "Failed to load video metadata",
+      });
+    }
 
     const duration = Number(videoEl.duration);
     const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
@@ -141,6 +174,15 @@ const captureLastFrame = async (video) => {
     });
     if (!blob) {
       throw new Error("Failed to create image blob");
+    }
+
+    if (!ownsElement) {
+      try {
+        if (!wasPaused) {
+          videoEl.play().catch(() => {});
+        }
+        videoEl.currentTime = startingTime;
+      } catch {}
     }
 
     return { blob, dataUrl };
