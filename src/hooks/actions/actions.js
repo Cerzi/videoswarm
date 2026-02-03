@@ -4,14 +4,218 @@
  * No React here. Easy to unit test.
  */
 
+import { toFileURL } from "../../components/VideoCard/videoDom";
+
 export const ActionIds = {
     OPEN_EXTERNAL: 'open-external',
     COPY_PATH: 'copy-path',
     COPY_FILENAME: 'copy-filename',
     COPY_RELATIVE_PATH: 'copy-relative-path',
+    COPY_LAST_FRAME: 'copy-last-frame',
     SHOW_IN_FOLDER: 'show-in-folder',
     FILE_PROPERTIES: 'file-properties',
     MOVE_TO_TRASH: 'move-to-trash',
+};
+
+const waitForEvent = (el, eventName, { timeoutMs = 6000, errorMessage } = {}) =>
+  new Promise((resolve, reject) => {
+    if (!el) {
+      reject(new Error(errorMessage || "Missing media element"));
+      return;
+    }
+    let timeoutId;
+    const handleEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error(errorMessage || "Failed to load media"));
+    };
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      el.removeEventListener(eventName, handleEvent);
+      el.removeEventListener("error", handleError);
+    };
+    el.addEventListener(eventName, handleEvent);
+    el.addEventListener("error", handleError);
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error(errorMessage || "Timed out waiting for media"));
+    }, timeoutMs);
+  });
+
+const waitForFrame = (videoEl) =>
+  new Promise((resolve) => {
+    if (typeof videoEl?.requestVideoFrameCallback === "function") {
+      try {
+        videoEl.requestVideoFrameCallback(() => resolve());
+        return;
+      } catch {}
+    }
+    setTimeout(resolve, 120);
+  });
+
+const safeEscapeSelector = (value) => {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(String(value));
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+};
+
+const findExistingVideoElement = (video) => {
+  const id = video?.id ?? video?.fullPath ?? video?.name;
+  if (!id || typeof document === "undefined") return null;
+  try {
+    return document.querySelector(
+      `video.video-element[data-video-id="${safeEscapeSelector(id)}"]`
+    );
+  } catch {
+    return null;
+  }
+};
+
+const resolveVideoSource = (video) => {
+  if (!video) return {};
+  if (video.isElectronFile && video.fullPath) {
+    return { src: toFileURL(video.fullPath) };
+  }
+  if (video.fullPath) {
+    return { src: toFileURL(video.fullPath) };
+  }
+  if (video.blobUrl) {
+    return { src: video.blobUrl };
+  }
+  if (video.file) {
+    const objectUrl = URL.createObjectURL(video.file);
+    return { src: objectUrl, revoke: () => URL.revokeObjectURL(objectUrl) };
+  }
+  return {};
+};
+
+const captureLastFrame = async (video) => {
+  const existingVideo = findExistingVideoElement(video);
+  const { src, revoke } = resolveVideoSource(video);
+  if (!existingVideo && !src) {
+    throw new Error("No video source available");
+  }
+
+  const ownsElement = !existingVideo;
+  const videoEl = existingVideo || document.createElement("video");
+  if (ownsElement) {
+    videoEl.preload = "auto";
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.crossOrigin = "anonymous";
+  }
+
+  const cleanup = () => {
+    if (!ownsElement) return;
+    try {
+      videoEl.pause();
+    } catch {}
+    try {
+      videoEl.removeAttribute("src");
+      videoEl.load();
+    } catch {}
+    revoke?.();
+  };
+
+  try {
+    const startingTime = videoEl.currentTime || 0;
+    const wasPaused = videoEl.paused;
+    const startingLoop = typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
+    if (!wasPaused && typeof videoEl.pause === "function") {
+      try {
+        videoEl.pause();
+      } catch {}
+    }
+    if (!ownsElement && typeof videoEl.loop === "boolean") {
+      videoEl.loop = false;
+    }
+
+    if (ownsElement) {
+      videoEl.src = src;
+      await waitForEvent(videoEl, "loadedmetadata", {
+        errorMessage: "Failed to load video metadata",
+      });
+    } else if (videoEl.readyState < 1) {
+      await waitForEvent(videoEl, "loadedmetadata", {
+        errorMessage: "Failed to load video metadata",
+      });
+    }
+
+    const duration = Number(videoEl.duration);
+    const seekableEnd = (() => {
+      try {
+        if (videoEl.seekable && videoEl.seekable.length > 0) {
+          return Number(videoEl.seekable.end(videoEl.seekable.length - 1));
+        }
+      } catch {}
+      return NaN;
+    })();
+    const safeDuration =
+      Number.isFinite(seekableEnd) && seekableEnd > 0
+        ? seekableEnd
+        : Number.isFinite(duration) && duration > 0
+          ? duration
+          : 0;
+    const targetTime = Math.max(0, safeDuration - 0.05);
+
+    if (Number.isFinite(targetTime) && targetTime > 0) {
+      videoEl.currentTime = targetTime;
+      await waitForEvent(videoEl, "seeked", {
+        errorMessage: "Failed to seek to last frame",
+      });
+    } else {
+      await waitForEvent(videoEl, "loadeddata", {
+        errorMessage: "Failed to load video frame",
+      });
+    }
+
+    await waitForFrame(videoEl);
+
+    const width = Number(videoEl.videoWidth) || 0;
+    const height = Number(videoEl.videoHeight) || 0;
+    if (!width || !height) {
+      throw new Error("Invalid video dimensions");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Failed to acquire canvas context");
+    }
+    ctx.drawImage(videoEl, 0, 0, width, height);
+
+    const dataUrl = canvas.toDataURL("image/png");
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((result) => resolve(result), "image/png");
+    });
+    if (!blob) {
+      throw new Error("Failed to create image blob");
+    }
+
+    if (!ownsElement) {
+      try {
+        videoEl.currentTime = startingTime;
+      } catch {}
+      if (typeof startingLoop === "boolean") {
+        videoEl.loop = startingLoop;
+      }
+      if (!wasPaused && typeof videoEl.play === "function") {
+        try {
+          videoEl.play().catch(() => {});
+        } catch {}
+      }
+    }
+
+    return { blob, dataUrl };
+  } finally {
+    cleanup();
+  }
 };
 
 export const actionRegistry = {
@@ -43,6 +247,38 @@ export const actionRegistry = {
         if (electronAPI?.copyToClipboard) await electronAPI.copyToClipboard(text);
         else if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(text);
         notify('Relative path(s) copied', 'success');
+    },
+
+    [ActionIds.COPY_LAST_FRAME]: async (videos, { electronAPI, notify }) => {
+        const video = videos[0];
+        if (!video) return;
+
+        try {
+          if (video.isElectronFile && video.fullPath && electronAPI?.copyLastFrameFromFile) {
+            const result = await electronAPI.copyLastFrameFromFile(video.fullPath);
+            if (result?.success === false) {
+              throw new Error(result?.error || "Clipboard copy failed");
+            }
+            notify('Last frame copied to clipboard', 'success');
+            return;
+          }
+
+          const { blob, dataUrl } = await captureLastFrame(video);
+          if (electronAPI?.copyImageToClipboard) {
+            const result = await electronAPI.copyImageToClipboard(dataUrl);
+            if (result?.success === false) {
+              throw new Error(result?.error || "Clipboard copy failed");
+            }
+          } else if (navigator?.clipboard?.write && window?.ClipboardItem) {
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          } else {
+            throw new Error("Clipboard image copy not supported");
+          }
+          notify('Last frame copied to clipboard', 'success');
+        } catch (error) {
+          console.error("Failed to copy last frame:", error);
+          notify('Failed to copy last frame', 'error');
+        }
     },
 
     [ActionIds.SHOW_IN_FOLDER]: async (videos, { electronAPI, notify }) => {

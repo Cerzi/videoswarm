@@ -1513,6 +1513,87 @@ ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   }
 });
 
+// Copy image to clipboard
+ipcMain.handle("copy-image-to-clipboard", async (_event, dataUrl) => {
+  try {
+    const { clipboard, nativeImage } = require("electron");
+    const image = nativeImage.createFromDataURL(String(dataUrl || ""));
+    if (!image || image.isEmpty()) {
+      return { success: false, error: "EMPTY_IMAGE" };
+    }
+    clipboard.writeImage(image);
+    console.log("Copied image to clipboard");
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to copy image to clipboard:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Copy last frame via ffmpeg
+ipcMain.handle("copy-last-frame-from-file", async (_event, filePath) => {
+  if (!filePath || typeof filePath !== "string") {
+    return { success: false, error: "INVALID_PATH" };
+  }
+  try {
+    const { spawn } = require("child_process");
+    const { clipboard, nativeImage } = require("electron");
+
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-sseof",
+      "-0.1",
+      "-i",
+      filePath,
+      "-frames:v",
+      "1",
+      "-f",
+      "image2pipe",
+      "-vcodec",
+      "png",
+      "pipe:1",
+    ];
+
+    const buffer = await new Promise((resolve, reject) => {
+      let stdout = Buffer.alloc(0);
+      let stderr = "";
+      const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+      proc.stdout.on("data", (chunk) => {
+        stdout = Buffer.concat([stdout, chunk]);
+      });
+      proc.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      proc.on("error", (error) => {
+        reject(error);
+      });
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr || `ffmpeg exited with ${code}`));
+          return;
+        }
+        resolve(stdout);
+      });
+    });
+
+    if (!buffer || !buffer.length) {
+      return { success: false, error: "EMPTY_IMAGE" };
+    }
+
+    const image = nativeImage.createFromBuffer(buffer);
+    if (!image || image.isEmpty()) {
+      return { success: false, error: "EMPTY_IMAGE" };
+    }
+    clipboard.writeImage(image);
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to copy last frame with ffmpeg:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   const requester = event?.sender;
   const win = requester ? BrowserWindow.fromWebContents(requester) : mainWindow;

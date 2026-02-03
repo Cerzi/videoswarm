@@ -47,6 +47,7 @@ describe('ContextMenu', () => {
     // Single-item verbs are annotated as "(this item)"
     expect(screen.getByText(/Open.*this item/i)).toBeInTheDocument();
     expect(screen.getByText(/Show.*this item/i)).toBeInTheDocument();
+    expect(screen.getByText(/Copy Last Frame.*this item/i)).toBeInTheDocument();
 
     // Multi-item verbs annotated as "(3 selected)"
     expect(screen.getByText(/Copy Path.*3 selected/i)).toBeInTheDocument();
