@@ -223,3 +223,104 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
     expect(lastCall?.[0]?.cancelled).toBe(false);
   });
 });
+
+describe("actionRegistry → COPY_LAST_FRAME", () => {
+  const originalCreateElement = document.createElement;
+  const createElementMock = vi.fn();
+
+  beforeEach(() => {
+    createElementMock.mockReset();
+    vi.spyOn(document, "createElement").mockImplementation(createElementMock);
+  });
+
+  afterEach(() => {
+    document.createElement.mockRestore();
+    createElementMock.mockReset();
+  });
+
+  const setupVideoCaptureMocks = () => {
+    const videoListeners = new Map();
+    const videoEl = {
+      preload: "",
+      muted: false,
+      playsInline: false,
+      crossOrigin: "",
+      src: "",
+      duration: 10,
+      videoWidth: 320,
+      videoHeight: 180,
+      currentTime: 0,
+      addEventListener: vi.fn((event, handler) => {
+        if (!videoListeners.has(event)) {
+          videoListeners.set(event, new Set());
+        }
+        videoListeners.get(event).add(handler);
+        if (event === "loadedmetadata" || event === "seeked") {
+          handler();
+        }
+      }),
+      removeEventListener: vi.fn((event, handler) => {
+        videoListeners.get(event)?.delete(handler);
+      }),
+      pause: vi.fn(),
+      removeAttribute: vi.fn(),
+      load: vi.fn(),
+    };
+
+    const ctx = {
+      drawImage: vi.fn(),
+    };
+    const canvasEl = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ctx),
+      toDataURL: vi.fn(() => "data:image/png;base64,abc"),
+      toBlob: vi.fn((cb) => cb(new Blob(["x"], { type: "image/png" }))),
+    };
+
+    createElementMock.mockImplementation((tag) => {
+      if (tag === "video") return videoEl;
+      if (tag === "canvas") return canvasEl;
+      return originalCreateElement.call(document, tag);
+    });
+
+    return { videoEl, canvasEl };
+  };
+
+  it("copies the last frame to clipboard via electron API and notifies", async () => {
+    setupVideoCaptureMocks();
+    const notify = vi.fn();
+    const electronAPI = {
+      copyImageToClipboard: vi.fn(async () => ({ success: true })),
+    };
+
+    await actionRegistry[ActionIds.COPY_LAST_FRAME](
+      [{ blobUrl: "blob:test", name: "test" }],
+      { electronAPI, notify }
+    );
+
+    expect(electronAPI.copyImageToClipboard).toHaveBeenCalledWith(
+      "data:image/png;base64,abc"
+    );
+    expect(
+      notify.mock.calls.some((call) => /last frame copied/i.test(call[0]))
+    ).toBe(true);
+  });
+
+  it("notifies failure when clipboard copy fails", async () => {
+    setupVideoCaptureMocks();
+    const notify = vi.fn();
+    const electronAPI = {
+      copyImageToClipboard: vi.fn(async () => ({ success: false, error: "NO" })),
+    };
+
+    await actionRegistry[ActionIds.COPY_LAST_FRAME](
+      [{ blobUrl: "blob:test", name: "test" }],
+      { electronAPI, notify }
+    );
+
+    expect(
+      notify.mock.calls.some((call) => /failed to copy last frame/i.test(call[0]))
+    ).toBe(true);
+  });
+});
