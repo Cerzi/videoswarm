@@ -288,3 +288,36 @@ describe("App hook composition", () => {
     result.unmount();
   });
 });
+
+
+describe("App masonry relayout behavior", () => {
+  test("re-layouts only when ordered ids meaningfully change", async () => {
+    const onItemsChanged = vi.fn();
+    let ids = ["a", "b", "c"];
+
+    useMasonryLayoutMock.mockImplementation(() => ({
+      ...masonryReturn,
+      orderedIds: [...ids],
+      orderedVideos: ids.map((id) => ({ id, basename: id, dirname: "" })),
+      onItemsChanged,
+    }));
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+
+    const result = render(<App />);
+    expect(onItemsChanged).toHaveBeenCalledTimes(1);
+
+    // Same semantic order (new array identity) should not force another relayout.
+    ids = ["a", "b", "c"];
+    result.rerender(<App />);
+    expect(onItemsChanged).toHaveBeenCalledTimes(1);
+
+    // Order change should trigger relayout.
+    ids = ["c", "b", "a"];
+    result.rerender(<App />);
+    expect(onItemsChanged).toHaveBeenCalledTimes(2);
+
+    result.unmount();
+  });
+});

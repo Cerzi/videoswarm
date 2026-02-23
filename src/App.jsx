@@ -1108,10 +1108,24 @@ function App() {
   ]);
 
   // === DYNAMIC ZOOM RESIZE / COUNT ===
-  // relayout when list changes
+  // relayout when list order or membership changes
+  const previousOrderedIdsRef = useRef(null);
   useEffect(() => {
-    if (orderedVideos.length) onItemsChanged();
-  }, [orderedVideos.length, onItemsChanged]);
+    const nextOrderedIds = Array.isArray(orderedIds) ? orderedIds : [];
+    const previousOrderedIds = previousOrderedIdsRef.current;
+
+    const orderChanged =
+      !Array.isArray(previousOrderedIds) ||
+      previousOrderedIds.length !== nextOrderedIds.length ||
+      nextOrderedIds.some((id, index) => id !== previousOrderedIds[index]);
+
+    if (!orderChanged) {
+      return;
+    }
+
+    previousOrderedIdsRef.current = nextOrderedIds.slice();
+    onItemsChanged();
+  }, [orderedIds, onItemsChanged]);
 
   // aspect ratio updates from cards
     const handleVideoLoaded = useCallback(
