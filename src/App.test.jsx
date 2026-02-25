@@ -58,6 +58,11 @@ const useElectronLifecycleMock = vi.fn(() => ({
   handleElectronFolderSelection: vi.fn(),
   handleFolderSelect: vi.fn(),
   handleWebFileSelection: vi.fn(),
+  librarySources: [],
+  activeSourceId: null,
+  removeLibrarySource: vi.fn(),
+  reindexLibrarySource: vi.fn(),
+  setSourceIncluded: vi.fn(),
 }));
 
 const filterStateReturn = {

@@ -14,6 +14,8 @@ describe("filtersUtils", () => {
     expect(createDefaultFilters()).toEqual({
       includeTags: [],
       excludeTags: [],
+      sourceIds: [],
+      searchQuery: "",
       minRating: null,
       exactRating: null,
     });
@@ -47,6 +49,8 @@ describe("filtersUtils", () => {
     const filters = {
       includeTags: ["a"],
       excludeTags: [],
+      sourceIds: ["source-1"],
+      searchQuery: "bird",
       minRating: 4,
       exactRating: null,
     };
@@ -55,9 +59,9 @@ describe("filtersUtils", () => {
     , {
       initialProps: { value: filters },
     });
-    expect(result.current).toBe(2);
+    expect(result.current).toBe(4);
 
     rerender({ value: { ...filters, minRating: null, exactRating: 5 } });
-    expect(result.current).toBe(2);
+    expect(result.current).toBe(4);
   });
 });
