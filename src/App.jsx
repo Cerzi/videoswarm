@@ -17,6 +17,7 @@ import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
+import LibraryOverlayDrawer from "./components/LibraryOverlayDrawer";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -277,6 +278,11 @@ function App() {
     handleElectronFolderSelection,
     handleFolderSelect,
     handleWebFileSelection,
+    librarySources,
+    activeSourceId,
+    removeLibrarySource,
+    reindexLibrarySource,
+    setSourceIncluded,
   } = useElectronFolderLifecycle({
     selection,
     recursiveMode,
@@ -299,6 +305,8 @@ function App() {
     addRecentFolder,
   });
 
+  const [isLibraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
+
   const {
     filters,
     setFiltersOpen,
@@ -315,7 +323,14 @@ function App() {
     videos,
     filtersButtonRef,
     filtersPopoverRef,
+    availableSourceIds: librarySources.filter((source) => source.isIncluded !== false).map((source) => source.id),
   });
+
+
+  useEffect(() => {
+    if (!activeSourceId) return;
+    updateFilters((prev) => ({ ...prev, sourceIds: [activeSourceId] }));
+  }, [activeSourceId, updateFilters]);
 
   const {
     orderedVideos,
@@ -1592,6 +1607,18 @@ function App() {
                 ))}
                 </div>
               </div>
+              <LibraryOverlayDrawer
+                isOpen={isLibraryDrawerOpen}
+                onToggle={setLibraryDrawerOpen}
+                videos={videos}
+                librarySources={librarySources}
+                filters={filters}
+                onFiltersChange={updateFilters}
+                onRemoveSource={removeLibrarySource}
+                onReindexSource={reindexLibrarySource}
+                onSetSourceIncluded={setSourceIncluded}
+              />
+
               <MetadataPanel
                 ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen}

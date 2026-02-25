@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   createDefaultFilters,
   normalizeTagList,
+  normalizeSourceIds,
   sanitizeMinRating,
   sanitizeExactRating,
   formatRatingLabel,
@@ -14,18 +15,27 @@ const resolveValue = (value, fallback) =>
 const normalizeFiltersDraft = (draft, prev) => {
   const includeTagsRaw = resolveValue(draft?.includeTags, prev.includeTags);
   const excludeTagsRaw = resolveValue(draft?.excludeTags, prev.excludeTags);
+  const sourceIdsRaw = resolveValue(draft?.sourceIds, prev.sourceIds);
+  const searchQueryRaw = resolveValue(draft?.searchQuery, prev.searchQuery);
   const minRatingRaw = resolveValue(draft?.minRating, prev.minRating);
   const exactRatingRaw = resolveValue(draft?.exactRating, prev.exactRating);
 
   return {
     includeTags: normalizeTagList(includeTagsRaw),
     excludeTags: normalizeTagList(excludeTagsRaw),
+    sourceIds: normalizeSourceIds(sourceIdsRaw),
+    searchQuery: (searchQueryRaw ?? "").toString(),
     minRating: sanitizeMinRating(minRatingRaw),
     exactRating: sanitizeExactRating(exactRatingRaw),
   };
 };
 
-export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) {
+export function useFilterState({
+  videos,
+  filtersButtonRef,
+  filtersPopoverRef,
+  availableSourceIds = [],
+}) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
@@ -41,9 +51,21 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     setFilters(createDefaultFilters());
   }, []);
 
+  useEffect(() => {
+    if (!filters.sourceIds?.length) return;
+    const sourceSet = new Set(availableSourceIds);
+    setFilters((prev) => {
+      const nextSourceIds = (prev.sourceIds ?? []).filter((sourceId) => sourceSet.has(sourceId));
+      if (nextSourceIds.length === (prev.sourceIds ?? []).length) return prev;
+      return { ...prev, sourceIds: nextSourceIds };
+    });
+  }, [availableSourceIds, filters.sourceIds]);
+
   const filteredVideos = useMemo(() => {
     const includeTags = filters.includeTags ?? [];
     const excludeTags = filters.excludeTags ?? [];
+    const sourceIds = filters.sourceIds ?? [];
+    const searchQuery = filters.searchQuery?.trim().toLowerCase() ?? "";
     const minRating = sanitizeMinRating(filters.minRating);
     const exactRating = sanitizeExactRating(filters.exactRating);
 
@@ -53,12 +75,17 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     const excludeSet = excludeTags.length
       ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
       : null;
+    const sourceSet = sourceIds.length ? new Set(sourceIds) : null;
 
-    if (!includeSet && !excludeSet && minRating === null && exactRating === null) {
+    if (!includeSet && !excludeSet && !sourceSet && !searchQuery && minRating === null && exactRating === null) {
       return videos;
     }
 
     return videos.filter((video) => {
+      if (sourceSet && !sourceSet.has(video.sourceId)) {
+        return false;
+      }
+
       const tagList = Array.isArray(video.tags)
         ? video.tags.map((tag) => (tag ?? "").toString().trim().toLowerCase()).filter(Boolean)
         : [];
@@ -76,6 +103,15 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
           if (tagList.includes(tag)) {
             return false;
           }
+        }
+      }
+
+      if (searchQuery) {
+        const haystack = [video.basename, video.name, video.dirname, video.path]
+          .map((entry) => (entry ?? "").toString().toLowerCase())
+          .join(" ");
+        if (!haystack.includes(searchQuery)) {
+          return false;
         }
       }
 

@@ -33,6 +33,8 @@ export function useElectronFolderLifecycle({
   delayFn = delay,
 }) {
   const [videos, setVideos] = useState([]);
+  const [librarySources, setLibrarySources] = useState([]);
+  const [activeSourceId, setActiveSourceId] = useState(null);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -85,10 +87,61 @@ export function useElectronFolderLifecycle({
     setVisibleVideos,
   ]);
 
+  const mergeSourceVideos = useCallback((sourceId, sourcePath, files) => {
+    const normalizedFiles = files.map((file) => ({
+      ...normalizeVideoFromMain(file),
+      sourceId,
+      sourcePath,
+    }));
+
+    setVideos((prev) => {
+      const retained = prev.filter((video) => video.sourceId !== sourceId);
+      return [...retained, ...normalizedFiles].sort((a, b) =>
+        (a.basename ?? "").localeCompare(b.basename ?? "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        })
+      );
+    });
+  }, []);
+
+  const registerSource = useCallback((sourceId, folderPath) => {
+    const now = new Date();
+    setLibrarySources((prev) => {
+      const existing = prev.find((entry) => entry.id === sourceId);
+      if (existing) {
+        return prev.map((entry) =>
+          entry.id === sourceId
+            ? {
+                ...entry,
+                path: folderPath,
+                isIndexed: true,
+                isIncluded: true,
+                lastOpenedAt: now,
+              }
+            : entry
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          id: sourceId,
+          path: folderPath,
+          isIndexed: true,
+          isIncluded: true,
+          addedAt: now,
+          lastOpenedAt: now,
+        },
+      ];
+    });
+  }, []);
+
   const handleElectronFolderSelection = useCallback(
     async (folderPath) => {
       const api = window.electronAPI;
       if (!api?.readDirectory) return;
+      const sourceId = folderPath;
 
       try {
         setIsLoadingFolder(true);
@@ -98,7 +151,6 @@ export function useElectronFolderLifecycle({
 
         await api.stopFolderWatch?.();
 
-        setVideos([]);
         resetDerivedVideoState();
 
         setLoadingStage("Scanning for video files...");
@@ -106,13 +158,14 @@ export function useElectronFolderLifecycle({
         await delayFn(200);
 
         const files = await api.readDirectory(folderPath, recursiveMode);
-        const normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
 
         setLoadingStage(`Found ${files.length} videos — initializing masonry...`);
         setLoadingProgress(70);
         await delayFn(200);
 
-        setVideos(normalizedFiles);
+        mergeSourceVideos(sourceId, folderPath, files);
+        registerSource(sourceId, folderPath);
+        setActiveSourceId(sourceId);
         await delayFn(300);
 
         setLoadingStage("Complete!");
@@ -138,10 +191,66 @@ export function useElectronFolderLifecycle({
     },
     [
       addRecentFolder,
+      mergeSourceVideos,
       recursiveMode,
+      registerSource,
       refreshTagList,
       resetDerivedVideoState,
     ]
+  );
+
+  const removeLibrarySource = useCallback(
+    (sourceId) => {
+      if (!sourceId) return;
+      setLibrarySources((prev) => prev.filter((source) => source.id !== sourceId));
+      setVideos((prev) => prev.filter((video) => video.sourceId !== sourceId));
+      setSelection((prev) => {
+        const next = new Set(prev);
+        for (const video of videos) {
+          if (video.sourceId === sourceId) {
+            next.delete(video.id);
+          }
+        }
+        return next;
+      });
+      setActiveSourceId((current) => (current === sourceId ? null : current));
+      refreshTagList();
+    },
+    [refreshTagList, setSelection, videos]
+  );
+
+  const reindexLibrarySource = useCallback(
+    async (sourceId) => {
+      const source = librarySources.find((entry) => entry.id === sourceId);
+      if (!source?.path || !window.electronAPI?.readDirectory) return;
+      const files = await window.electronAPI.readDirectory(source.path, recursiveMode);
+      mergeSourceVideos(sourceId, source.path, files);
+      registerSource(sourceId, source.path);
+      refreshTagList();
+    },
+    [librarySources, mergeSourceVideos, recursiveMode, refreshTagList, registerSource]
+  );
+
+  const setSourceIncluded = useCallback(
+    async (sourceId, included) => {
+      setLibrarySources((prev) =>
+        prev.map((source) =>
+          source.id === sourceId ? { ...source, isIncluded: Boolean(included) } : source
+        )
+      );
+
+      if (included) {
+        await reindexLibrarySource(sourceId);
+        return;
+      }
+
+      setVideos((prev) => prev.filter((video) => video.sourceId !== sourceId));
+      if (activeSourceId === sourceId) {
+        setActiveSourceId(null);
+      }
+      refreshTagList();
+    },
+    [activeSourceId, refreshTagList, reindexLibrarySource]
   );
 
   const handleFolderSelect = useCallback(async () => {
@@ -282,7 +391,10 @@ export function useElectronFolderLifecycle({
     if (!api) return undefined;
 
     const handleFileAdded = (videoFile) => {
-      const normalized = normalizeVideoFromMain(videoFile);
+      const normalized = {
+        ...normalizeVideoFromMain(videoFile),
+        sourceId: activeSourceId,
+      };
       setVideos((prev) => {
         const existingIndex = prev.findIndex((v) => v.id === normalized.id);
         if (existingIndex !== -1) {
@@ -333,7 +445,10 @@ export function useElectronFolderLifecycle({
     };
 
     const handleFileChanged = (videoFile) => {
-      const normalized = normalizeVideoFromMain(videoFile);
+      const normalized = {
+        ...normalizeVideoFromMain(videoFile),
+        sourceId: activeSourceId,
+      };
       setVideos((prev) =>
         prev.map((v) => (v.id === normalized.id ? normalized : v))
       );
@@ -357,6 +472,7 @@ export function useElectronFolderLifecycle({
       api?.stopFolderWatch?.().catch(() => {});
     };
   }, [
+    activeSourceId,
     refreshTagList,
     setActualPlaying,
     setLoadedVideos,
@@ -368,6 +484,12 @@ export function useElectronFolderLifecycle({
   return {
     videos,
     setVideos,
+    librarySources,
+    activeSourceId,
+    setActiveSourceId,
+    removeLibrarySource,
+    reindexLibrarySource,
+    setSourceIncluded,
     isLoadingFolder,
     loadingStage,
     loadingProgress,
