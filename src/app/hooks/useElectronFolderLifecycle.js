@@ -11,6 +11,25 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const splitPath = (value) => (value ?? "").toString().split(/[\\/]/).filter(Boolean);
+const dirnameOf = (value) => {
+  const raw = (value ?? "").toString();
+  const normalized = raw.replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx > 0 ? normalized.slice(0, idx) : "";
+};
+const basenameOf = (value) => {
+  const raw = (value ?? "").toString();
+  const normalized = raw.replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+};
+const extnameOf = (value) => {
+  const base = basenameOf(value);
+  const idx = base.lastIndexOf(".");
+  return idx >= 0 ? base.slice(idx).toLowerCase() : "";
+};
+
 export function useElectronFolderLifecycle({
   selection,
   setShowFilenames,
@@ -28,6 +47,7 @@ export function useElectronFolderLifecycle({
   setActualPlaying,
   refreshTagList,
   addRecentFolder,
+  recentFolders = [],
   delayFn = delay,
 }) {
   const [videos, setVideos] = useState([]);
@@ -37,6 +57,7 @@ export function useElectronFolderLifecycle({
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const bootstrappedKnownRef = useRef(false);
   const { clear: clearSelection, setSelected: setSelection } = selection;
   const setterRefs = useRef({
     setShowFilenames,
@@ -130,6 +151,24 @@ export function useElectronFolderLifecycle({
         },
       ];
     });
+  }, []);
+
+  const inferSourcePath = useCallback((fullPath, recentCandidates) => {
+    const normalizedFullPath = (fullPath ?? "").toString();
+    if (!normalizedFullPath) return "";
+
+    const candidates = (Array.isArray(recentCandidates) ? recentCandidates : [])
+      .map((entry) => (entry?.path ?? "").toString())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+
+    const matched = candidates.find((candidate) =>
+      normalizedFullPath === candidate ||
+      normalizedFullPath.startsWith(`${candidate}/`) || normalizedFullPath.startsWith(`${candidate}\\`)
+    );
+
+    if (matched) return matched;
+    return dirnameOf(normalizedFullPath);
   }, []);
 
   const handleElectronFolderSelection = useCallback(
@@ -476,6 +515,105 @@ export function useElectronFolderLifecycle({
     setSelection,
     setVisibleVideos,
   ]);
+
+  useEffect(() => {
+    if (!settingsLoaded || bootstrappedKnownRef.current) return;
+    const metadataApi = window.electronAPI?.metadata;
+    if (!metadataApi?.listIndexedFiles) {
+      bootstrappedKnownRef.current = true;
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const response = await metadataApi.listIndexedFiles();
+        const indexed = Array.isArray(response?.files) ? response.files : [];
+        if (cancelled || indexed.length === 0) {
+          bootstrappedKnownRef.current = true;
+          return;
+        }
+
+        const nextVideos = [];
+        const sourceMap = new Map();
+        const now = new Date();
+
+        indexed.forEach((entry) => {
+          const fullPath = (entry?.fullPath ?? "").toString();
+          if (!fullPath) return;
+
+          const basename = basenameOf(fullPath);
+          const sourcePath = inferSourcePath(fullPath, recentFolders);
+          const sourceId = sourcePath || dirnameOf(fullPath);
+          const dirname = dirnameOf(fullPath);
+
+          const existingSource = sourceMap.get(sourceId);
+          sourceMap.set(sourceId, {
+            id: sourceId,
+            path: sourceId,
+            isIndexed: true,
+            isIncluded: true,
+            addedAt: existingSource?.addedAt ?? now,
+            lastOpenedAt: now,
+            clipCount: (existingSource?.clipCount ?? 0) + 1,
+          });
+
+          nextVideos.push({
+            id: fullPath,
+            name: basename,
+            fullPath,
+            relativePath: basename,
+            extension: extnameOf(basename),
+            size: 0,
+            isElectronFile: true,
+            basename,
+            dirname,
+            createdMs: Number(entry?.createdMs) || 0,
+            fingerprint:
+              typeof entry?.fingerprint === "string" && entry.fingerprint.length
+                ? entry.fingerprint
+                : null,
+            tags: Array.isArray(entry?.tags) ? entry.tags : [],
+            rating:
+              typeof entry?.rating === "number" && Number.isFinite(entry.rating)
+                ? entry.rating
+                : null,
+            dimensions: entry?.dimensions ?? null,
+            aspectRatio:
+              Number.isFinite(entry?.dimensions?.aspectRatio) &&
+              entry.dimensions.aspectRatio > 0
+                ? entry.dimensions.aspectRatio
+                : null,
+            sourceId,
+            sourcePath: sourceId,
+            metadata: {
+              folder: dirname,
+              baseName: basename.replace(/\.[^\.]+$/, ""),
+              sizeFormatted: "Unknown",
+            },
+          });
+        });
+
+        if (!cancelled) {
+          setVideos((prev) => (prev.length > 0 ? prev : nextVideos));
+          setLibrarySources((prev) =>
+            prev.length > 0 ? prev : Array.from(sourceMap.values())
+          );
+          bootstrappedKnownRef.current = true;
+          refreshTagList();
+        }
+      } catch (error) {
+        console.warn("Failed to bootstrap indexed files", error);
+        bootstrappedKnownRef.current = true;
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [inferSourcePath, recentFolders, refreshTagList, settingsLoaded]);
 
   return {
     videos,

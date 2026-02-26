@@ -1734,6 +1734,16 @@ ipcMain.handle("metadata:list-tags", async () => {
   }
 });
 
+ipcMain.handle("metadata:list-indexed-files", async () => {
+  try {
+    const store = getMetadataStore();
+    return { files: store.listIndexedFiles() };
+  } catch (error) {
+    console.error("Failed to list indexed files:", error);
+    return { files: [], error: error?.message || String(error) };
+  }
+});
+
 ipcMain.handle(
   "metadata:add-tags",
   async (_event, fingerprints = [], tagNames = []) => {

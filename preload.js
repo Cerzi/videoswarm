@@ -223,6 +223,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   metadata: {
     listTags: async () => ipcRenderer.invoke("metadata:list-tags"),
+    listIndexedFiles: async () =>
+      ipcRenderer.invoke("metadata:list-indexed-files"),
     addTags: async (fingerprints, tagNames) =>
       ipcRenderer.invoke("metadata:add-tags", fingerprints, tagNames),
     removeTag: async (fingerprints, tagName) =>
