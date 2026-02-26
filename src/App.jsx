@@ -1427,7 +1427,6 @@ function App() {
               return `${name} · ${mode}`;
             })()}
             searchInTooltip={filters.activePathPrefix || "All known clips"}
-            onSearchInIndicatorClick={() => setFiltersOpen(true)}
             onSourcesToggle={() => setSourcesOpen((open) => !open)}
             sourcesButtonRef={sourcesButtonRef}
           />

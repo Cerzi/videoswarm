@@ -43,7 +43,6 @@ export default function HeaderBar({
   onSourcesToggle,
   sourcesButtonRef,
   searchInLabel = "All Known",
-  onSearchInIndicatorClick,
   searchInTooltip,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
@@ -85,13 +84,14 @@ export default function HeaderBar({
           <button onClick={onGroupByFoldersToggle} disabled={isLoadingFolder} className={`toggle-button ${groupByFolders ? "active" : ""}`} title="Group by folders"><GridIcon /></button>
           {sortKey === SortKey.RANDOM && <button onClick={onReshuffle} disabled={isLoadingFolder} className="toggle-button" title="Reshuffle"><ShuffleIcon /></button>}
 
-          <button type="button" className="scope-indicator-chip" onClick={onSearchInIndicatorClick} disabled={isLoadingFolder} title={searchInTooltip || "Open filters"}>{searchInLabel}</button>
-
           <button ref={sourcesButtonRef} type="button" onClick={onSourcesToggle} disabled={isLoadingFolder} className="toggle-button" title="Open sources">Sources</button>
 
           <div style={{ position: "relative" }}>
-            <button ref={filtersButtonRef} onClick={onFiltersToggle} disabled={isLoadingFolder} className={`toggle-button ${filtersActiveCount > 0 || filtersAreOpen ? "active" : ""}`} title={filtersActiveCount > 0 ? `Filters active (${filtersActiveCount})` : "Open filters"} type="button">
-              <FilterIcon /><span className="filters-button-label">Filters</span>{filtersActiveCount > 0 && <span className="filters-button-badge">{filtersActiveCount}</span>}
+            <button ref={filtersButtonRef} onClick={onFiltersToggle} disabled={isLoadingFolder} className={`toggle-button ${filtersActiveCount > 0 || filtersAreOpen ? "active" : ""}`} title={searchInTooltip || (filtersActiveCount > 0 ? `Filters active (${filtersActiveCount})` : "Open filters")} type="button">
+              <FilterIcon />
+              <span className="filters-button-label">Filters</span>
+              <span className="filters-button-state">{searchInLabel}</span>
+              {filtersActiveCount > 0 && <span className="filters-button-badge">{filtersActiveCount}</span>}
             </button>
           </div>
 

@@ -188,20 +188,15 @@ body {
   line-height: 1.4;
 }
 
-.scope-indicator-chip {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 0.75rem;
-  padding: 0.3rem 0.55rem;
-  cursor: pointer;
+.filters-button-state {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.72);
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.scope-indicator-chip:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text);
-}
 
 .filters-summary {
   display: flex;
