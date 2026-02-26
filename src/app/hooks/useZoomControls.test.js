@@ -36,7 +36,6 @@ describe("useZoomControls", () => {
         zoomLevel,
         setZoomLevel,
         orderedVideoCount: 220,
-        recursiveMode: false,
         renderLimitStep: 8,
         showFilenames: true,
         setZoomClass,
@@ -55,7 +54,6 @@ describe("useZoomControls", () => {
     expect(result.current.zoomLevel).toBe(2);
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
       zoomLevel: 2,
-      recursiveMode: false,
       renderLimitStep: 8,
       showFilenames: true,
     });
@@ -74,7 +72,6 @@ describe("useZoomControls", () => {
         zoomLevel,
         setZoomLevel,
         orderedVideoCount: 10,
-        recursiveMode: false,
         renderLimitStep: 4,
         showFilenames: true,
         setZoomClass,

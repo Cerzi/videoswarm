@@ -14,6 +14,7 @@ export default function ManageLibrarySourcesModal({
   onSetSourceIncluded,
   onReindexSource,
   onRemoveSource,
+  onRevealSource,
 }) {
   if (!open) return null;
 
@@ -43,6 +44,9 @@ export default function ManageLibrarySourcesModal({
                 </label>
                 <button type="button" onClick={() => onReindexSource(source.id)}>
                   Reindex
+                </button>
+                <button type="button" onClick={() => onRevealSource?.(source.path)}>
+                  Reveal
                 </button>
                 <button type="button" onClick={() => onRemoveSource(source.id)}>
                   Remove

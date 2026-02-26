@@ -13,8 +13,6 @@ function delay(ms) {
 
 export function useElectronFolderLifecycle({
   selection,
-  recursiveMode,
-  setRecursiveMode,
   setShowFilenames,
   renderLimitStep,
   setRenderLimitStep,
@@ -41,7 +39,6 @@ export function useElectronFolderLifecycle({
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const { clear: clearSelection, setSelected: setSelection } = selection;
   const setterRefs = useRef({
-    setRecursiveMode,
     setShowFilenames,
     setRenderLimitStep,
     setSortKey,
@@ -53,8 +50,7 @@ export function useElectronFolderLifecycle({
 
   useEffect(() => {
     setterRefs.current = {
-      setRecursiveMode,
-      setShowFilenames,
+        setShowFilenames,
       setRenderLimitStep,
       setSortKey,
       setSortDir,
@@ -63,7 +59,6 @@ export function useElectronFolderLifecycle({
       setZoomLevelFromSettings,
     };
   }, [
-    setRecursiveMode,
     setShowFilenames,
     setRenderLimitStep,
     setSortKey,
@@ -157,7 +152,7 @@ export function useElectronFolderLifecycle({
         setLoadingProgress(30);
         await delayFn(200);
 
-        const files = await api.readDirectory(folderPath, recursiveMode);
+        const files = await api.readDirectory(folderPath, true);
 
         setLoadingStage(`Found ${files.length} videos — initializing masonry...`);
         setLoadingProgress(70);
@@ -177,7 +172,7 @@ export function useElectronFolderLifecycle({
 
         const watchResult = await api.startFolderWatch?.(
           folderPath,
-          recursiveMode
+          true
         );
         if (watchResult?.success && __DEV__) {
           console.log("👁️ watching folder");
@@ -192,7 +187,6 @@ export function useElectronFolderLifecycle({
     [
       addRecentFolder,
       mergeSourceVideos,
-      recursiveMode,
       registerSource,
       refreshTagList,
       resetDerivedVideoState,
@@ -228,12 +222,12 @@ export function useElectronFolderLifecycle({
     async (sourceId) => {
       const source = librarySources.find((entry) => entry.id === sourceId);
       if (!source?.path || !window.electronAPI?.readDirectory) return;
-      const files = await window.electronAPI.readDirectory(source.path, recursiveMode);
+      const files = await window.electronAPI.readDirectory(source.path, true);
       mergeSourceVideos(sourceId, source.path, files);
       registerSource(sourceId, source.path);
       refreshTagList();
     },
-    [librarySources, mergeSourceVideos, recursiveMode, refreshTagList, registerSource]
+    [librarySources, mergeSourceVideos, refreshTagList, registerSource]
   );
 
   const setSourceIncluded = useCallback(
@@ -298,7 +292,6 @@ export function useElectronFolderLifecycle({
   const applySettingsFromMain = useCallback((settings) => {
     if (!settings) return;
     const {
-      setRecursiveMode: applyRecursiveMode,
       setShowFilenames: applyShowFilenames,
       setRenderLimitStep: applyRenderLimitStep,
       setSortKey: applySortKey,
@@ -308,8 +301,6 @@ export function useElectronFolderLifecycle({
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
 
-    if (settings.recursiveMode !== undefined)
-      applyRecursiveMode(settings.recursiveMode);
     if (settings.showFilenames !== undefined)
       applyShowFilenames(settings.showFilenames);
     if (settings.renderLimitStep !== undefined) {

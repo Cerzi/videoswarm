@@ -171,7 +171,6 @@ describe("useElectronFolderLifecycle", () => {
     );
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(setRecursiveMode).toHaveBeenCalledWith(true);
     expect(setShowFilenames).toHaveBeenCalledWith(false);
     expect(setRenderLimitStep).toHaveBeenCalledWith(7);
     expect(setSortKey).toHaveBeenCalledWith("name");
@@ -255,10 +254,10 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.videos).toHaveLength(1));
 
     expect(selection.clear).toHaveBeenCalled();
-    expect(window.electronAPI.readDirectory).toHaveBeenCalledWith("/videos", false);
+    expect(window.electronAPI.readDirectory).toHaveBeenCalledWith("/videos", true);
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/videos",
-      false
+      true
     );
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
@@ -479,7 +478,7 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(window.electronAPI.startFolderWatch).toHaveBeenLastCalledWith(
       "/videos",
-      false
+      true
     );
 
     window.electronAPI.startFolderWatch.mockClear();

@@ -254,3 +254,22 @@
   align-self: flex-start;
   font-size: 0.82rem;
 }
+
+.sources-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text);
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+}
+
+.sources-row--active {
+  border-color: var(--color-accent);
+  background: rgba(81, 207, 102, 0.12);
+}

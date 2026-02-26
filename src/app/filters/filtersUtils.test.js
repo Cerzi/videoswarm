@@ -14,8 +14,9 @@ describe("filtersUtils", () => {
     expect(createDefaultFilters()).toEqual({
       includeTags: [],
       excludeTags: [],
-      scope: "ALL",
-      sourceIds: [],
+      searchIn: "ALL",
+      activePathPrefix: "",
+      includeSubfolders: true,
       searchQuery: "",
       minRating: null,
       exactRating: null,
@@ -23,9 +24,8 @@ describe("filtersUtils", () => {
   });
 
   it("normalizes tags", () => {
-    expect(
-      normalizeTagList(["  a  ", "B", "a", null, undefined, "b", ""]) // duplicates/spacing
-    ).toEqual(["B", "a", "b"].sort((a, b) => a.localeCompare(b)));
+    expect(normalizeTagList(["  a  ", "B", "a", null, undefined, "b", ""]))
+      .toEqual(["B", "a", "b"].sort((a, b) => a.localeCompare(b)));
   });
 
   it("sanitizes rating bounds", () => {
@@ -50,20 +50,19 @@ describe("filtersUtils", () => {
     const filters = {
       includeTags: ["a"],
       excludeTags: [],
-      scope: "CURRENT_FOLDER",
-      sourceIds: ["source-1"],
+      searchIn: "FOLDER",
+      activePathPrefix: "/tmp/a",
+      includeSubfolders: false,
       searchQuery: "bird",
       minRating: 4,
       exactRating: null,
     };
-    const { result, rerender } = renderHook(({ value }) =>
-      useFiltersActiveCount(value)
-    , {
+    const { result, rerender } = renderHook(({ value }) => useFiltersActiveCount(value), {
       initialProps: { value: filters },
     });
-    expect(result.current).toBe(5);
+    expect(result.current).toBe(4);
 
     rerender({ value: { ...filters, minRating: null, exactRating: 5 } });
-    expect(result.current).toBe(5);
+    expect(result.current).toBe(4);
   });
 });
