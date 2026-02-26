@@ -55,7 +55,9 @@ const FiltersPopover = forwardRef(
     const minRating = filters?.minRating ?? null;
     const exactRating =
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
-    const scope = filters?.scope ?? "ALL";
+    const searchIn = filters?.searchIn ?? "ALL";
+    const activePathPrefix = filters?.activePathPrefix ?? "";
+    const activeFolderName = activePathPrefix.split(/[/\\]/).filter(Boolean).pop() || "Folder";
 
     const [tagQuery, setTagQuery] = useState("");
 
@@ -152,10 +154,10 @@ const FiltersPopover = forwardRef(
       });
     };
 
-    const handleScopeChange = (nextScope) => {
+    const handleSearchInChange = (nextValue) => {
       onChange((prev) => ({
         ...prev,
-        scope: nextScope,
+        searchIn: nextValue,
       }));
     };
 
@@ -207,25 +209,25 @@ const FiltersPopover = forwardRef(
         </div>
 
         <section className="filters-section">
-          <header className="filters-section__title">Scope</header>
+          <header className="filters-section__title">Search In</header>
           <label className="filters-scope-option">
             <input
               type="radio"
-              name="scope"
-              checked={scope === "ALL"}
-              onChange={() => handleScopeChange("ALL")}
+              name="searchIn"
+              checked={searchIn === "ALL"}
+              onChange={() => handleSearchInChange("ALL")}
             />
             <span>All known clips</span>
           </label>
           <label className={`filters-scope-option ${!hasActiveFolder ? "is-disabled" : ""}`}>
             <input
               type="radio"
-              name="scope"
-              checked={scope === "CURRENT_FOLDER"}
-              onChange={() => handleScopeChange("CURRENT_FOLDER")}
+              name="searchIn"
+              checked={searchIn === "FOLDER"}
+              onChange={() => handleSearchInChange("FOLDER")}
               disabled={!hasActiveFolder}
             />
-            <span>This folder</span>
+            <span title={activePathPrefix}>{activeFolderName}</span>
           </label>
           <button type="button" className="filters-link filters-link--secondary" onClick={onOpenManageSources}>
             Manage library sources…

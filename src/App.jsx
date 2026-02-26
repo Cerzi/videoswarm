@@ -9,7 +9,6 @@ import React, {
 import VideoCard from "./components/VideoCard/VideoCard";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
-import RecentFolders from "./components/RecentFolders";
 import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
@@ -18,6 +17,7 @@ import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import ManageLibrarySourcesModal from "./components/ManageLibrarySourcesModal";
+import SourcesPopover from "./components/SourcesPopover";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -141,7 +141,6 @@ function App() {
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
   const selectionSetSelected = selection.setSelected;
-  const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -175,6 +174,8 @@ function App() {
   const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
+  const sourcesPopoverRef = useRef(null);
+  const sourcesButtonRef = useRef(null);
   const refreshTagListRef = useRef(() => {});
   const applyZoomFromSettingsRef = useRef((value) => {
     setZoomLevel(clampZoomIndex(value));
@@ -261,12 +262,7 @@ function App() {
     handleProfilePromptDismiss();
   }, [profilePromptRequest, respondToProfilePrompt, handleProfilePromptDismiss]);
   // ----- Recent Folders hook -----
-  const {
-    items: recentFolders,
-    add: addRecentFolder,
-    remove: removeRecentFolder,
-    clear: clearRecentFolders,
-  } = useRecentFolders();
+  const { add: addRecentFolder } = useRecentFolders();
 
   const {
     videos,
@@ -285,8 +281,6 @@ function App() {
     setSourceIncluded,
   } = useElectronFolderLifecycle({
     selection,
-    recursiveMode,
-    setRecursiveMode,
     setShowFilenames,
     renderLimitStep,
     setRenderLimitStep,
@@ -306,6 +300,8 @@ function App() {
   });
 
   const [isManageSourcesOpen, setManageSourcesOpen] = useState(false);
+  const [isSourcesOpen, setSourcesOpen] = useState(false);
+  const [folderViewSettings, setFolderViewSettings] = useState(() => new Map());
 
   const {
     filters,
@@ -323,15 +319,36 @@ function App() {
     videos,
     filtersButtonRef,
     filtersPopoverRef,
-    availableSourceIds: librarySources.filter((source) => source.isIncluded !== false).map((source) => source.id),
-    activeSourceId,
+    activeSourcePath: activeSourceId,
   });
 
 
   useEffect(() => {
     if (!activeSourceId) return;
-    updateFilters((prev) => ({ ...prev, scope: "CURRENT_FOLDER" }));
+    updateFilters((prev) => ({ ...prev, searchIn: "FOLDER", activePathPrefix: activeSourceId, includeSubfolders: true }));
   }, [activeSourceId, updateFilters]);
+
+  useEffect(() => {
+    if (!isSourcesOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      const btn = sourcesButtonRef.current;
+      const panel = sourcesPopoverRef.current;
+      if (panel?.contains(event.target) || btn?.contains(event.target)) return;
+      setSourcesOpen(false);
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") setSourcesOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [isSourcesOpen]);
 
   const {
     orderedVideos,
@@ -479,7 +496,6 @@ function App() {
     zoomLevel,
     setZoomLevel,
     orderedVideoCount: orderedVideos.length,
-    recursiveMode,
     renderLimitStep,
     showFilenames,
     setZoomClass,
@@ -1150,27 +1166,15 @@ function App() {
       setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
     }, []);
 
-  const toggleRecursive = useCallback(() => {
-    const next = !recursiveMode;
-    setRecursiveMode(next);
-    window.electronAPI?.saveSettingsPartial?.({
-      recursiveMode: next,
-      renderLimitStep,
-      zoomLevel,
-      showFilenames,
-    });
-  }, [recursiveMode, renderLimitStep, zoomLevel, showFilenames]);
-
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
     setShowFilenames(next);
     window.electronAPI?.saveSettingsPartial?.({
       showFilenames: next,
-      recursiveMode,
       renderLimitStep,
       zoomLevel,
     });
-  }, [showFilenames, recursiveMode, renderLimitStep, zoomLevel]);
+  }, [showFilenames, renderLimitStep, zoomLevel]);
 
   const handleRenderLimitStepChange = useCallback(
     (step) => {
@@ -1178,12 +1182,11 @@ function App() {
       setRenderLimitStep(clamped);
       window.electronAPI?.saveSettingsPartial?.({
         renderLimitStep: clamped,
-        recursiveMode,
         zoomLevel,
         showFilenames,
       });
     },
-    [recursiveMode, zoomLevel, showFilenames]
+    [zoomLevel, showFilenames]
   );
 
   const handleSortChange = useCallback(
@@ -1317,6 +1320,19 @@ function App() {
     videoCollection.performCleanup,
   ]);
 
+
+  const sourcesWithCounts = useMemo(() => {
+    const counts = new Map();
+    videos.forEach((video) => {
+      if (!video.sourceId) return;
+      counts.set(video.sourceId, (counts.get(video.sourceId) ?? 0) + 1);
+    });
+    return librarySources.map((source) => ({
+      ...source,
+      clipCount: counts.get(source.id) ?? 0,
+    }));
+  }, [librarySources, videos]);
+
   const shouldRenderCollapsedHint = metadataPanelDismissed || selection.size > 0;
 
   const contentRegionClassName = [
@@ -1385,8 +1401,6 @@ function App() {
             isLoadingFolder={isLoadingFolder}
             handleFolderSelect={handleFolderSelect}
             handleWebFileSelection={handleWebFileSelection}
-            recursiveMode={recursiveMode}
-            toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
             renderLimitStep={renderLimitStep}
@@ -1402,15 +1416,20 @@ function App() {
             onSortChange={handleSortChange}
             onGroupByFoldersToggle={toggleGroupByFolders}
             onReshuffle={reshuffleRandom}
-            recentFolders={recentFolders}
-            onRecentOpen={(path) => handleElectronFolderSelection(path)}
-            hasOpenFolder={videos.length > 0}
             onFiltersToggle={() => setFiltersOpen((open) => !open)}
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
-            scopeLabel={filters.scope === "CURRENT_FOLDER" ? "This folder" : "All known"}
-            onScopeIndicatorClick={() => setFiltersOpen(true)}
+            searchInLabel={(() => {
+              if (filters.searchIn !== "FOLDER") return "All Known";
+              const name = (filters.activePathPrefix || "").split(/[\\/]/).filter(Boolean).pop() || "Folder";
+              const mode = filters.includeSubfolders ? "Subfolders On" : "Direct Only";
+              return `${name} · ${mode}`;
+            })()}
+            searchInTooltip={filters.activePathPrefix || "All known clips"}
+            onSearchInIndicatorClick={() => setFiltersOpen(true)}
+            onSourcesToggle={() => setSourcesOpen((open) => !open)}
+            sourcesButtonRef={sourcesButtonRef}
           />
 
           {isFiltersOpen && (
@@ -1426,6 +1445,32 @@ function App() {
             />
           )}
 
+
+          {isSourcesOpen && (
+            <div ref={sourcesPopoverRef} style={{ position: "absolute", top: "4.75rem", right: "24rem", zIndex: 121 }}>
+              <SourcesPopover
+                sources={sourcesWithCounts}
+                filters={filters}
+                onSelectSource={(path) => {
+                  const nextInclude = folderViewSettings.get(path)?.includeSubfolders ?? true;
+                  updateFilters((prev) => ({ ...prev, searchIn: "FOLDER", activePathPrefix: path, includeSubfolders: nextInclude }));
+                  setSourcesOpen(false);
+                }}
+                onToggleIncludeSubfolders={(enabled) => {
+                  const path = filters.activePathPrefix;
+                  if (!path) return;
+                  setFolderViewSettings((prev) => {
+                    const next = new Map(prev);
+                    next.set(path, { includeSubfolders: Boolean(enabled) });
+                    return next;
+                  });
+                  updateFilters((prev) => ({ ...prev, includeSubfolders: Boolean(enabled) }));
+                }}
+                onAddFolder={handleFolderSelect}
+                onOpenManageSources={() => setManageSourcesOpen(true)}
+              />
+            </div>
+          )}
           <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
           <DataLocationDialog
             open={isDataLocationOpen}
@@ -1434,11 +1479,12 @@ function App() {
 
           <ManageLibrarySourcesModal
             open={isManageSourcesOpen}
-            sources={librarySources}
+            sources={sourcesWithCounts}
             onClose={() => setManageSourcesOpen(false)}
             onSetSourceIncluded={setSourceIncluded}
             onReindexSource={reindexLibrarySource}
             onRemoveSource={removeLibrarySource}
+            onRevealSource={(path) => window.electronAPI?.showItemInFolder?.(path)}
           />
 
           {profilePromptRequest ? (
@@ -1527,30 +1573,11 @@ function App() {
           />
 
           {/* Home state: Recent Locations when nothing is loaded */}
-          {videos.length === 0 && !isLoadingFolder ? (
-            <>
-              <RecentFolders
-                items={recentFolders}
-                onOpen={(path) => handleElectronFolderSelection(path)}
-                onRemove={removeRecentFolder}
-                onClear={clearRecentFolders}
-              />
-              <div className="drop-zone">
+          {librarySources.length === 0 && !isLoadingFolder ? (
+            <div className="drop-zone">
                 <h2>🐝 Welcome to Video Swarm 🐝</h2>
-                <p>
-                  Click the green folder icon in the top left to open a directory of videos.
-                </p>
-                <p>
-                  Use the Subfolders toggle to enable recursive loading, which will recursively load all videos in all subfolders as well.
-                </p>
-                {window.innerWidth > 2560 && (
-                  <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
-                    🖥️ Large display detected - zoom will auto-adjust for memory
-                    safety
-                  </p>
-                )}
+                <p>Add a folder to start building your library.</p>
               </div>
-            </>
           ) : (
             <div
               className={contentRegionClassName}
