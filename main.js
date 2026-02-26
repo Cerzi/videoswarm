@@ -241,6 +241,7 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     if (dirname === ".") dirname = "";
 
     let fingerprint = null;
+    let canonicalPath = null;
     let tags = [];
     let rating = null;
     let dimensions = null;
@@ -252,6 +253,7 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       const metadataStore = getMetadataStore();
       const info = await metadataStore.indexFile({ filePath, stats });
       fingerprint = info?.fingerprint ?? null;
+      canonicalPath = info?.canonicalPath ?? null;
       tags = Array.isArray(info?.tags) ? info.tags : [];
       rating =
         typeof info?.rating === "number" && Number.isFinite(info.rating)
@@ -284,9 +286,10 @@ async function createVideoFileObject(filePath, baseFolderPath) {
     }
 
     return {
-      id: filePath,
+      id: canonicalPath || filePath,
       name: fileName,
       fullPath: filePath,
+      canonicalPath: canonicalPath || filePath,
       relativePath: path.relative(baseFolderPath, filePath),
       extension: ext,
       size: stats.size,

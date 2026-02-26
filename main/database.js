@@ -133,6 +133,18 @@ function ensureDirectory(dirPath) {
   }
 }
 
+function canonicalizePath(filePath) {
+  if (!filePath) return '';
+  const raw = path.resolve(String(filePath));
+  try {
+    const real = fs.realpathSync.native ? fs.realpathSync.native(raw) : fs.realpathSync(raw);
+    return process.platform === 'win32' ? real.toLowerCase() : real;
+  } catch {
+    const normalized = path.normalize(raw);
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  }
+}
+
 function normalizeProfilePath(profilePath) {
   if (typeof profilePath === 'string') {
     const trimmed = profilePath.trim();
@@ -199,6 +211,7 @@ function initDatabase(app, profilePath) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS files (
       fingerprint TEXT PRIMARY KEY,
+      canonical_path TEXT,
       last_known_path TEXT NOT NULL,
       size INTEGER NOT NULL,
       created_ms INTEGER,
@@ -259,11 +272,78 @@ function createMetadataStore(db) {
       if (!/duplicate column/i.test(error?.message || '')) throw error;
     }
   }
+  if (!columns.has('canonical_path')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN canonical_path TEXT;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
+
+  const rowsToCanonicalize = db
+    .prepare('SELECT fingerprint, last_known_path FROM files WHERE canonical_path IS NULL OR canonical_path = "";')
+    .all();
+  const updateCanonicalStmt = db.prepare('UPDATE files SET canonical_path = ? WHERE fingerprint = ?;');
+  const canonicalTxn = db.transaction((rows) => {
+    rows.forEach((row) => {
+      const canonical = canonicalizePath(row.last_known_path);
+      if (!canonical) return;
+      updateCanonicalStmt.run(canonical, row.fingerprint);
+    });
+  });
+  canonicalTxn(rowsToCanonicalize);
+
+  const duplicateCanonicalRows = db
+    .prepare(`
+      SELECT canonical_path
+      FROM files
+      WHERE canonical_path IS NOT NULL AND canonical_path != ''
+      GROUP BY canonical_path
+      HAVING COUNT(*) > 1;
+    `)
+    .all();
+
+  if (duplicateCanonicalRows.length > 0) {
+    const pickStmt = db.prepare(`
+      SELECT fingerprint
+      FROM files
+      WHERE canonical_path = ?
+      ORDER BY updated_at DESC
+      LIMIT 1;
+    `);
+    const listStmt = db.prepare('SELECT fingerprint FROM files WHERE canonical_path = ?;');
+    const moveTagsStmt = db.prepare(`
+      INSERT OR IGNORE INTO file_tags (fingerprint, tag_id, added_at)
+      SELECT ?, tag_id, added_at FROM file_tags WHERE fingerprint = ?;
+    `);
+    const moveRatingStmt = db.prepare(`
+      INSERT OR REPLACE INTO ratings (fingerprint, value, updated_at)
+      SELECT ?, value, updated_at FROM ratings WHERE fingerprint = ?;
+    `);
+    const deleteFileStmt = db.prepare('DELETE FROM files WHERE fingerprint = ?;');
+
+    const dedupeTxn = db.transaction((rows) => {
+      rows.forEach((row) => {
+        const keep = pickStmt.get(row.canonical_path)?.fingerprint;
+        if (!keep) return;
+        const all = listStmt.all(row.canonical_path).map((entry) => entry.fingerprint);
+        all.forEach((fp) => {
+          if (fp === keep) return;
+          moveTagsStmt.run(keep, fp);
+          moveRatingStmt.run(keep, fp);
+          deleteFileStmt.run(fp);
+        });
+      });
+    });
+    dedupeTxn(duplicateCanonicalRows);
+  }
+
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_files_canonical_path ON files(canonical_path);');
 
   const fileUpsert = db.prepare(`
-    INSERT INTO files (fingerprint, last_known_path, size, created_ms, updated_at, width, height)
-    VALUES (@fingerprint, @last_known_path, @size, @created_ms, @updated_at, @width, @height)
-    ON CONFLICT(fingerprint) DO UPDATE SET
+    INSERT INTO files (fingerprint, canonical_path, last_known_path, size, created_ms, updated_at, width, height)
+    VALUES (@fingerprint, @canonical_path, @last_known_path, @size, @created_ms, @updated_at, @width, @height)
+    ON CONFLICT(canonical_path) DO UPDATE SET
       last_known_path=excluded.last_known_path,
       size=excluded.size,
       created_ms=excluded.created_ms,
@@ -288,6 +368,9 @@ function createMetadataStore(db) {
 
   const fileSelect = db.prepare(
     'SELECT width, height FROM files WHERE fingerprint = ?;'
+  );
+  const fingerprintByCanonicalStmt = db.prepare(
+    'SELECT fingerprint FROM files WHERE canonical_path = ? LIMIT 1;'
   );
 
   const setDimensionsStmt = db.prepare(
@@ -332,6 +415,7 @@ function createMetadataStore(db) {
   const indexedFilesStmt = db.prepare(`
     SELECT
       f.fingerprint AS fingerprint,
+      f.canonical_path AS canonicalPath,
       f.last_known_path AS fullPath,
       f.created_ms AS createdMs,
       f.width AS width,
@@ -384,8 +468,10 @@ function createMetadataStore(db) {
     const createdMs = createdMsOverride ?? Math.round(
       stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs || 0
     );
+    const canonicalPath = canonicalizePath(filePath);
     fileUpsert.run({
       fingerprint,
+      canonical_path: canonicalPath,
       last_known_path: filePath,
       size: Number(stats.size || 0),
       created_ms: createdMs,
@@ -427,9 +513,13 @@ function createMetadataStore(db) {
     const safeStats = stats || (await fs.promises.stat(filePath));
     const { fingerprint, createdMs } = await ensureFingerprint(filePath, safeStats);
     writeFileRecord(fingerprint, filePath, safeStats, createdMs, dimensions);
+    const canonicalPath = canonicalizePath(filePath);
+    const persistedFingerprint =
+      fingerprintByCanonicalStmt.get(canonicalPath)?.fingerprint || fingerprint;
     return {
-      fingerprint,
-      ...mapMetadataRow(fingerprint),
+      fingerprint: persistedFingerprint,
+      canonicalPath,
+      ...mapMetadataRow(persistedFingerprint),
     };
   }
 
@@ -533,6 +623,7 @@ function createMetadataStore(db) {
       const height = Number(row.height) || 0;
       return {
         fingerprint: row.fingerprint,
+        canonicalPath: row.canonicalPath,
         fullPath: row.fullPath,
         createdMs: Number(row.createdMs) || 0,
         rating:

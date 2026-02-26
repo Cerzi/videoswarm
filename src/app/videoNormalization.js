@@ -1,5 +1,15 @@
 export const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
+  const canonicalPath =
+    typeof video.canonicalPath === "string" && video.canonicalPath.length > 0
+      ? video.canonicalPath
+      : typeof video.fullPath === "string" && video.fullPath.length > 0
+      ? video.fullPath
+      : typeof video.path === "string" && video.path.length > 0
+      ? video.path
+      : typeof video.id === "string"
+      ? video.id
+      : null;
   const fingerprint =
     typeof video.fingerprint === "string" && video.fingerprint.length > 0
       ? video.fingerprint
@@ -41,6 +51,8 @@ export const normalizeVideoFromMain = (video) => {
 
   return {
     ...video,
+    id: canonicalPath || video.id,
+    canonicalPath,
     fingerprint,
     rating,
     tags,

@@ -30,6 +30,22 @@ const extnameOf = (value) => {
   return idx >= 0 ? base.slice(idx).toLowerCase() : "";
 };
 
+const canonicalizeIdentity = (video) => {
+  const candidate = video?.canonicalPath || video?.fullPath || video?.path || video?.id || "";
+  return candidate.toString().replace(/\\/g, "/");
+};
+
+const dedupeVideos = (videos) => {
+  const map = new Map();
+  (Array.isArray(videos) ? videos : []).forEach((video) => {
+    const key = canonicalizeIdentity(video);
+    if (!key) return;
+    const prev = map.get(key);
+    map.set(key, prev ? { ...prev, ...video, id: key, canonicalPath: key } : { ...video, id: key, canonicalPath: key });
+  });
+  return Array.from(map.values());
+};
+
 export function useElectronFolderLifecycle({
   selection,
   setShowFilenames,
@@ -112,7 +128,7 @@ export function useElectronFolderLifecycle({
 
     setVideos((prev) => {
       const retained = prev.filter((video) => video.sourceId !== sourceId);
-      return [...retained, ...normalizedFiles].sort((a, b) =>
+      return dedupeVideos([...retained, ...normalizedFiles]).sort((a, b) =>
         (a.basename ?? "").localeCompare(b.basename ?? "", undefined, {
           numeric: true,
           sensitivity: "base",
@@ -437,7 +453,7 @@ export function useElectronFolderLifecycle({
           next[existingIndex] = normalized;
           return next;
         }
-        return [...prev, normalized].sort((a, b) =>
+        return dedupeVideos([...prev, normalized]).sort((a, b) =>
           a.basename.localeCompare(b.basename, undefined, {
             numeric: true,
             sensitivity: "base",
@@ -450,29 +466,35 @@ export function useElectronFolderLifecycle({
     };
 
     const handleFileRemoved = (filePath) => {
-      setVideos((prev) => prev.filter((v) => v.id !== filePath));
+      const canonicalRemoved = filePath?.toString?.().replace(/\\/g, "/");
+      setVideos((prev) => prev.filter((v) => v.id !== canonicalRemoved && v.fullPath !== filePath));
       setSelection((prev) => {
         const next = new Set(prev);
+        next.delete(canonicalRemoved);
         next.delete(filePath);
         return next;
       });
       setActualPlaying((prev) => {
         const next = new Set(prev);
+        next.delete(canonicalRemoved);
         next.delete(filePath);
         return next;
       });
       setLoadedVideos((prev) => {
         const next = new Set(prev);
+        next.delete(canonicalRemoved);
         next.delete(filePath);
         return next;
       });
       setLoadingVideos((prev) => {
         const next = new Set(prev);
+        next.delete(canonicalRemoved);
         next.delete(filePath);
         return next;
       });
       setVisibleVideos((prev) => {
         const next = new Set(prev);
+        next.delete(canonicalRemoved);
         next.delete(filePath);
         return next;
       });
@@ -485,7 +507,7 @@ export function useElectronFolderLifecycle({
         sourceId: activeSourceId,
       };
       setVideos((prev) =>
-        prev.map((v) => (v.id === normalized.id ? normalized : v))
+        dedupeVideos(prev.map((v) => (v.id === normalized.id ? normalized : v)))
       );
       if (normalized.tags.length) {
         refreshTagList();
@@ -540,7 +562,7 @@ export function useElectronFolderLifecycle({
         const now = new Date();
 
         indexed.forEach((entry) => {
-          const fullPath = (entry?.fullPath ?? "").toString();
+          const fullPath = ((entry?.canonicalPath ?? entry?.fullPath) ?? "").toString();
           if (!fullPath) return;
 
           const basename = basenameOf(fullPath);
@@ -596,7 +618,7 @@ export function useElectronFolderLifecycle({
         });
 
         if (!cancelled) {
-          setVideos((prev) => (prev.length > 0 ? prev : nextVideos));
+          setVideos((prev) => (prev.length > 0 ? prev : dedupeVideos(nextVideos)));
           setLibrarySources((prev) =>
             prev.length > 0 ? prev : Array.from(sourceMap.values())
           );
