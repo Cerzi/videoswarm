@@ -329,6 +329,22 @@ function createMetadataStore(db) {
   `);
 
   const deleteRatingStmt = db.prepare(`DELETE FROM ratings WHERE fingerprint = ?;`);
+  const indexedFilesStmt = db.prepare(`
+    SELECT
+      f.fingerprint AS fingerprint,
+      f.last_known_path AS fullPath,
+      f.created_ms AS createdMs,
+      f.width AS width,
+      f.height AS height,
+      r.value AS rating,
+      GROUP_CONCAT(t.name, '\u0001') AS tags
+    FROM files f
+    LEFT JOIN ratings r ON r.fingerprint = f.fingerprint
+    LEFT JOIN file_tags ft ON ft.fingerprint = f.fingerprint
+    LEFT JOIN tags t ON t.id = ft.tag_id
+    GROUP BY f.fingerprint
+    ORDER BY f.updated_at DESC;
+  `);
 
   const metadataCache = new Map();
 
@@ -511,6 +527,34 @@ function createMetadataStore(db) {
     return updates;
   }
 
+  function listIndexedFiles() {
+    return indexedFilesStmt.all().map((row) => {
+      const width = Number(row.width) || 0;
+      const height = Number(row.height) || 0;
+      return {
+        fingerprint: row.fingerprint,
+        fullPath: row.fullPath,
+        createdMs: Number(row.createdMs) || 0,
+        rating:
+          typeof row.rating === 'number' && Number.isFinite(row.rating)
+            ? row.rating
+            : null,
+        tags:
+          typeof row.tags === 'string' && row.tags.length > 0
+            ? row.tags.split('\u0001').filter(Boolean)
+            : [],
+        dimensions:
+          width > 0 && height > 0
+            ? {
+                width,
+                height,
+                aspectRatio: width / height,
+              }
+            : null,
+      };
+    });
+  }
+
   return {
     indexFile,
     getMetadataForFingerprints,
@@ -518,6 +562,7 @@ function createMetadataStore(db) {
     assignTags,
     removeTag,
     setRating,
+    listIndexedFiles,
     getDimensions,
     setDimensions,
   };

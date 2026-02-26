@@ -262,7 +262,7 @@ function App() {
     handleProfilePromptDismiss();
   }, [profilePromptRequest, respondToProfilePrompt, handleProfilePromptDismiss]);
   // ----- Recent Folders hook -----
-  const { add: addRecentFolder } = useRecentFolders();
+  const { items: recentFolders, add: addRecentFolder } = useRecentFolders();
 
   const {
     videos,
@@ -297,6 +297,7 @@ function App() {
     setActualPlaying,
     refreshTagList: invokeRefreshTagList,
     addRecentFolder,
+    recentFolders,
   });
 
   const [isManageSourcesOpen, setManageSourcesOpen] = useState(false);
