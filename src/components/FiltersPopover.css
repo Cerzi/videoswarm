@@ -233,3 +233,24 @@
     top: 4.5rem;
   }
 }
+
+.filters-scope-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.filters-scope-option input {
+  accent-color: var(--color-accent);
+}
+
+.filters-scope-option.is-disabled {
+  opacity: 0.55;
+}
+
+.filters-link--secondary {
+  align-self: flex-start;
+  font-size: 0.82rem;
+}

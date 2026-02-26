@@ -41,6 +41,8 @@ const FiltersPopover = forwardRef(
     {
       filters,
       availableTags = [],
+      hasActiveFolder = false,
+      onOpenManageSources,
       onChange,
       onReset,
       onClose,
@@ -53,6 +55,7 @@ const FiltersPopover = forwardRef(
     const minRating = filters?.minRating ?? null;
     const exactRating =
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
+    const scope = filters?.scope ?? "ALL";
 
     const [tagQuery, setTagQuery] = useState("");
 
@@ -149,12 +152,11 @@ const FiltersPopover = forwardRef(
       });
     };
 
-    const handleRemoveInclude = (tag) => {
-      cycleInclude(tag);
-    };
-
-    const handleRemoveExclude = (tag) => {
-      cycleExclude(tag);
+    const handleScopeChange = (nextScope) => {
+      onChange((prev) => ({
+        ...prev,
+        scope: nextScope,
+      }));
     };
 
     const handleMinRatingChange = (value) => {
@@ -205,6 +207,32 @@ const FiltersPopover = forwardRef(
         </div>
 
         <section className="filters-section">
+          <header className="filters-section__title">Scope</header>
+          <label className="filters-scope-option">
+            <input
+              type="radio"
+              name="scope"
+              checked={scope === "ALL"}
+              onChange={() => handleScopeChange("ALL")}
+            />
+            <span>All known clips</span>
+          </label>
+          <label className={`filters-scope-option ${!hasActiveFolder ? "is-disabled" : ""}`}>
+            <input
+              type="radio"
+              name="scope"
+              checked={scope === "CURRENT_FOLDER"}
+              onChange={() => handleScopeChange("CURRENT_FOLDER")}
+              disabled={!hasActiveFolder}
+            />
+            <span>This folder</span>
+          </label>
+          <button type="button" className="filters-link filters-link--secondary" onClick={onOpenManageSources}>
+            Manage library sources…
+          </button>
+        </section>
+
+        <section className="filters-section">
           <header className="filters-section__title">Tags</header>
           <div className="filters-chip-group">
             <span className="filters-chip-group__label">Include</span>
@@ -213,7 +241,7 @@ const FiltersPopover = forwardRef(
                 <span className="filters-chip--empty">None</span>
               ) : (
                 includeTags.map((tag) =>
-                  renderTagChip(tag, handleRemoveInclude, "include")
+                  renderTagChip(tag, cycleInclude, "include")
                 )
               )}
             </div>
@@ -226,7 +254,7 @@ const FiltersPopover = forwardRef(
                 <span className="filters-chip--empty">None</span>
               ) : (
                 excludeTags.map((tag) =>
-                  renderTagChip(tag, handleRemoveExclude, "exclude")
+                  renderTagChip(tag, cycleExclude, "exclude")
                 )
               )}
             </div>

@@ -203,20 +203,25 @@ export function useElectronFolderLifecycle({
     (sourceId) => {
       if (!sourceId) return;
       setLibrarySources((prev) => prev.filter((source) => source.id !== sourceId));
-      setVideos((prev) => prev.filter((video) => video.sourceId !== sourceId));
-      setSelection((prev) => {
-        const next = new Set(prev);
-        for (const video of videos) {
-          if (video.sourceId === sourceId) {
-            next.delete(video.id);
-          }
+      setVideos((prev) => {
+        const removedIds = new Set(
+          prev
+            .filter((video) => video.sourceId === sourceId)
+            .map((video) => video.id)
+        );
+        if (removedIds.size) {
+          setSelection((selectedPrev) => {
+            const next = new Set(selectedPrev);
+            removedIds.forEach((id) => next.delete(id));
+            return next;
+          });
         }
-        return next;
+        return prev.filter((video) => video.sourceId !== sourceId);
       });
       setActiveSourceId((current) => (current === sourceId ? null : current));
       refreshTagList();
     },
-    [refreshTagList, setSelection, videos]
+    [refreshTagList, setSelection]
   );
 
   const reindexLibrarySource = useCallback(

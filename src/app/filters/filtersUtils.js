@@ -3,6 +3,7 @@ import { useMemo } from "react";
 export const createDefaultFilters = () => ({
   includeTags: [],
   excludeTags: [],
+  scope: "ALL",
   sourceIds: [],
   searchQuery: "",
   minRating: null,
@@ -56,6 +57,7 @@ export const useFiltersActiveCount = (filters) =>
   useMemo(() => {
     const includeCount = filters.includeTags?.length ?? 0;
     const excludeCount = filters.excludeTags?.length ?? 0;
+    const scopeCount = filters.scope && filters.scope !== "ALL" ? 1 : 0;
     const sourceCount = filters.sourceIds?.length ?? 0;
     const searchCount = filters.searchQuery?.trim() ? 1 : 0;
     const ratingCount =
@@ -64,5 +66,5 @@ export const useFiltersActiveCount = (filters) =>
         : filters.minRating !== null && filters.minRating !== undefined
         ? 1
         : 0;
-    return includeCount + excludeCount + sourceCount + searchCount + ratingCount;
+    return includeCount + excludeCount + scopeCount + sourceCount + searchCount + ratingCount;
   }, [filters]);
