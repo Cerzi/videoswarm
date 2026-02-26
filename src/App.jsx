@@ -17,7 +17,7 @@ import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
-import LibraryOverlayDrawer from "./components/LibraryOverlayDrawer";
+import ManageLibrarySourcesModal from "./components/ManageLibrarySourcesModal";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -305,7 +305,7 @@ function App() {
     addRecentFolder,
   });
 
-  const [isLibraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
+  const [isManageSourcesOpen, setManageSourcesOpen] = useState(false);
 
   const {
     filters,
@@ -324,12 +324,13 @@ function App() {
     filtersButtonRef,
     filtersPopoverRef,
     availableSourceIds: librarySources.filter((source) => source.isIncluded !== false).map((source) => source.id),
+    activeSourceId,
   });
 
 
   useEffect(() => {
     if (!activeSourceId) return;
-    updateFilters((prev) => ({ ...prev, sourceIds: [activeSourceId] }));
+    updateFilters((prev) => ({ ...prev, scope: "CURRENT_FOLDER" }));
   }, [activeSourceId, updateFilters]);
 
   const {
@@ -1408,6 +1409,8 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
+            scopeLabel={filters.scope === "CURRENT_FOLDER" ? "This folder" : "All known"}
+            onScopeIndicatorClick={() => setFiltersOpen(true)}
           />
 
           {isFiltersOpen && (
@@ -1417,6 +1420,8 @@ function App() {
               availableTags={availableTags}
               onChange={updateFilters}
               onReset={resetFilters}
+              hasActiveFolder={Boolean(activeSourceId)}
+              onOpenManageSources={() => setManageSourcesOpen(true)}
               onClose={() => setFiltersOpen(false)}
             />
           )}
@@ -1425,6 +1430,15 @@ function App() {
           <DataLocationDialog
             open={isDataLocationOpen}
             onClose={() => setDataLocationOpen(false)}
+          />
+
+          <ManageLibrarySourcesModal
+            open={isManageSourcesOpen}
+            sources={librarySources}
+            onClose={() => setManageSourcesOpen(false)}
+            onSetSourceIncluded={setSourceIncluded}
+            onReindexSource={reindexLibrarySource}
+            onRemoveSource={removeLibrarySource}
           />
 
           {profilePromptRequest ? (
@@ -1607,18 +1621,6 @@ function App() {
                 ))}
                 </div>
               </div>
-              <LibraryOverlayDrawer
-                isOpen={isLibraryDrawerOpen}
-                onToggle={setLibraryDrawerOpen}
-                videos={videos}
-                librarySources={librarySources}
-                filters={filters}
-                onFiltersChange={updateFilters}
-                onRemoveSource={removeLibrarySource}
-                onReindexSource={reindexLibrarySource}
-                onSetSourceIncluded={setSourceIncluded}
-              />
-
               <MetadataPanel
                 ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen}

@@ -12,18 +12,25 @@ import {
 const resolveValue = (value, fallback) =>
   value === undefined ? fallback : value;
 
+const normalizeScope = (scope) => (scope === "CURRENT_FOLDER" ? "CURRENT_FOLDER" : "ALL");
+
 const normalizeFiltersDraft = (draft, prev) => {
   const includeTagsRaw = resolveValue(draft?.includeTags, prev.includeTags);
   const excludeTagsRaw = resolveValue(draft?.excludeTags, prev.excludeTags);
+  const scopeRaw = resolveValue(draft?.scope, prev.scope);
   const sourceIdsRaw = resolveValue(draft?.sourceIds, prev.sourceIds);
   const searchQueryRaw = resolveValue(draft?.searchQuery, prev.searchQuery);
   const minRatingRaw = resolveValue(draft?.minRating, prev.minRating);
   const exactRatingRaw = resolveValue(draft?.exactRating, prev.exactRating);
 
+  const scope = normalizeScope(scopeRaw);
+  const sourceIds = normalizeSourceIds(sourceIdsRaw);
+
   return {
     includeTags: normalizeTagList(includeTagsRaw),
     excludeTags: normalizeTagList(excludeTagsRaw),
-    sourceIds: normalizeSourceIds(sourceIdsRaw),
+    scope,
+    sourceIds,
     searchQuery: (searchQueryRaw ?? "").toString(),
     minRating: sanitizeMinRating(minRatingRaw),
     exactRating: sanitizeExactRating(exactRatingRaw),
@@ -35,6 +42,7 @@ export function useFilterState({
   filtersButtonRef,
   filtersPopoverRef,
   availableSourceIds = [],
+  activeSourceId = null,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
@@ -52,19 +60,27 @@ export function useFilterState({
   }, []);
 
   useEffect(() => {
-    if (!filters.sourceIds?.length) return;
     const sourceSet = new Set(availableSourceIds);
     setFilters((prev) => {
       const nextSourceIds = (prev.sourceIds ?? []).filter((sourceId) => sourceSet.has(sourceId));
-      if (nextSourceIds.length === (prev.sourceIds ?? []).length) return prev;
-      return { ...prev, sourceIds: nextSourceIds };
+      const nextScope = prev.scope === "CURRENT_FOLDER" && !activeSourceId ? "ALL" : prev.scope;
+      if (nextSourceIds.length === (prev.sourceIds ?? []).length && nextScope === prev.scope) {
+        return prev;
+      }
+      return { ...prev, sourceIds: nextSourceIds, scope: nextScope };
     });
-  }, [availableSourceIds, filters.sourceIds]);
+  }, [availableSourceIds, activeSourceId]);
+
+  const scopedSourceIds = useMemo(() => {
+    if (filters.scope === "CURRENT_FOLDER") {
+      return activeSourceId ? [activeSourceId] : [];
+    }
+    return filters.sourceIds ?? [];
+  }, [filters.scope, filters.sourceIds, activeSourceId]);
 
   const filteredVideos = useMemo(() => {
     const includeTags = filters.includeTags ?? [];
     const excludeTags = filters.excludeTags ?? [];
-    const sourceIds = filters.sourceIds ?? [];
     const searchQuery = filters.searchQuery?.trim().toLowerCase() ?? "";
     const minRating = sanitizeMinRating(filters.minRating);
     const exactRating = sanitizeExactRating(filters.exactRating);
@@ -75,9 +91,16 @@ export function useFilterState({
     const excludeSet = excludeTags.length
       ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
       : null;
-    const sourceSet = sourceIds.length ? new Set(sourceIds) : null;
+    const sourceSet = scopedSourceIds.length ? new Set(scopedSourceIds) : null;
 
-    if (!includeSet && !excludeSet && !sourceSet && !searchQuery && minRating === null && exactRating === null) {
+    if (
+      !includeSet &&
+      !excludeSet &&
+      !sourceSet &&
+      !searchQuery &&
+      minRating === null &&
+      exactRating === null
+    ) {
       return videos;
     }
 
@@ -127,7 +150,7 @@ export function useFilterState({
 
       return true;
     });
-  }, [videos, filters]);
+  }, [videos, filters, scopedSourceIds]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),

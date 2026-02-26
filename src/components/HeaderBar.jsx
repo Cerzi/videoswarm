@@ -118,6 +118,8 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
+  scopeLabel = "All known",
+  onScopeIndicatorClick,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -276,6 +278,16 @@ export default function HeaderBar({
               <ShuffleIcon />
             </button>
           )}
+
+          <button
+            type="button"
+            className="scope-indicator-chip"
+            onClick={onScopeIndicatorClick}
+            disabled={isLoadingFolder}
+            title="Open filters"
+          >
+            Scope: {scopeLabel}
+          </button>
 
           <div style={{ position: "relative" }}>
             <button
