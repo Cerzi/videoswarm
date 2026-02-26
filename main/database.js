@@ -281,7 +281,7 @@ function createMetadataStore(db) {
   }
 
   const rowsToCanonicalize = db
-    .prepare('SELECT fingerprint, last_known_path FROM files WHERE canonical_path IS NULL OR canonical_path = "";')
+    .prepare("SELECT fingerprint, last_known_path FROM files WHERE canonical_path IS NULL OR canonical_path = '';")
     .all();
   const updateCanonicalStmt = db.prepare('UPDATE files SET canonical_path = ? WHERE fingerprint = ?;');
   const canonicalTxn = db.transaction((rows) => {
