@@ -281,14 +281,52 @@ function createMetadataStore(db) {
   }
 
   const rowsToCanonicalize = db
-    .prepare("SELECT fingerprint, last_known_path FROM files WHERE canonical_path IS NULL OR canonical_path = '';")
+    .prepare("SELECT fingerprint, last_known_path, updated_at FROM files WHERE canonical_path IS NULL OR canonical_path = '';")
     .all();
   const updateCanonicalStmt = db.prepare('UPDATE files SET canonical_path = ? WHERE fingerprint = ?;');
+  const lookupCanonicalOwnerStmt = db.prepare(`
+    SELECT fingerprint, updated_at
+    FROM files
+    WHERE canonical_path = ?
+    LIMIT 1;
+  `);
+  const moveTagsStmt = db.prepare(`
+    INSERT OR IGNORE INTO file_tags (fingerprint, tag_id, added_at)
+    SELECT ?, tag_id, added_at FROM file_tags WHERE fingerprint = ?;
+  `);
+  const moveRatingStmt = db.prepare(`
+    INSERT OR REPLACE INTO ratings (fingerprint, value, updated_at)
+    SELECT ?, value, updated_at FROM ratings WHERE fingerprint = ?;
+  `);
+  const deleteFileStmt = db.prepare('DELETE FROM files WHERE fingerprint = ?;');
+
   const canonicalTxn = db.transaction((rows) => {
     rows.forEach((row) => {
       const canonical = canonicalizePath(row.last_known_path);
       if (!canonical) return;
-      updateCanonicalStmt.run(canonical, row.fingerprint);
+
+      const existingOwner = lookupCanonicalOwnerStmt.get(canonical);
+      if (!existingOwner || existingOwner.fingerprint === row.fingerprint) {
+        updateCanonicalStmt.run(canonical, row.fingerprint);
+        return;
+      }
+
+      const keepFingerprint =
+        Number(existingOwner.updated_at || 0) >= Number(row.updated_at || 0)
+          ? existingOwner.fingerprint
+          : row.fingerprint;
+      const dropFingerprint =
+        keepFingerprint === row.fingerprint
+          ? existingOwner.fingerprint
+          : row.fingerprint;
+
+      if (keepFingerprint === row.fingerprint) {
+        updateCanonicalStmt.run(canonical, row.fingerprint);
+      }
+
+      moveTagsStmt.run(keepFingerprint, dropFingerprint);
+      moveRatingStmt.run(keepFingerprint, dropFingerprint);
+      deleteFileStmt.run(dropFingerprint);
     });
   });
   canonicalTxn(rowsToCanonicalize);
@@ -312,16 +350,6 @@ function createMetadataStore(db) {
       LIMIT 1;
     `);
     const listStmt = db.prepare('SELECT fingerprint FROM files WHERE canonical_path = ?;');
-    const moveTagsStmt = db.prepare(`
-      INSERT OR IGNORE INTO file_tags (fingerprint, tag_id, added_at)
-      SELECT ?, tag_id, added_at FROM file_tags WHERE fingerprint = ?;
-    `);
-    const moveRatingStmt = db.prepare(`
-      INSERT OR REPLACE INTO ratings (fingerprint, value, updated_at)
-      SELECT ?, value, updated_at FROM ratings WHERE fingerprint = ?;
-    `);
-    const deleteFileStmt = db.prepare('DELETE FROM files WHERE fingerprint = ?;');
-
     const dedupeTxn = db.transaction((rows) => {
       rows.forEach((row) => {
         const keep = pickStmt.get(row.canonical_path)?.fingerprint;
