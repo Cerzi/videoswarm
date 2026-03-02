@@ -41,9 +41,6 @@ const FiltersPopover = forwardRef(
     {
       filters,
       availableTags = [],
-      hasActiveFolder = false,
-      folderOptionLabel = "Select a folder in SOURCES",
-      onOpenManageSources,
       onChange,
       onReset,
       onClose,
@@ -155,13 +152,6 @@ const FiltersPopover = forwardRef(
       });
     };
 
-    const handleSearchInChange = (nextValue) => {
-      onChange((prev) => ({
-        ...prev,
-        searchIn: nextValue,
-      }));
-    };
-
     const handleMinRatingChange = (value) => {
       onChange((prev) => {
         const nextValue =
@@ -208,34 +198,6 @@ const FiltersPopover = forwardRef(
             </button>
           </div>
         </div>
-
-        <section className="filters-section">
-          <header className="filters-section__title">Search In</header>
-          <label className="filters-scope-option">
-            <input
-              type="radio"
-              name="searchIn"
-              checked={searchIn === "ALL"}
-              onChange={() => handleSearchInChange("ALL")}
-            />
-            <span>All known clips</span>
-          </label>
-          <label className={`filters-scope-option ${!hasActiveFolder ? "is-disabled" : ""}`}>
-            <input
-              type="radio"
-              name="searchIn"
-              checked={searchIn === "FOLDER"}
-              onChange={() => handleSearchInChange("FOLDER")}
-              disabled={!hasActiveFolder}
-            />
-            <span title={activePathPrefix || folderOptionLabel}>
-              {hasActiveFolder ? activeFolderName : folderOptionLabel}
-            </span>
-          </label>
-          <button type="button" className="filters-link filters-link--secondary" onClick={onOpenManageSources}>
-            Manage library sources…
-          </button>
-        </section>
 
         <section className="filters-section">
           <header className="filters-section__title">Tags</header>

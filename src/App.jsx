@@ -1421,13 +1421,13 @@ function App() {
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
-            searchInLabel={(() => {
-              if (filters.searchIn !== "FOLDER") return "All Known";
+            datasetContextLabel={(() => {
+              if (filters.searchIn !== "FOLDER") return "All Known Clips";
               const name = (filters.activePathPrefix || "").split(/[\\/]/).filter(Boolean).pop() || "Folder";
               const mode = filters.includeSubfolders ? "Subfolders On" : "Direct Only";
               return `${name} · ${mode}`;
             })()}
-            searchInTooltip={filters.activePathPrefix || "All known clips"}
+            datasetContextTooltip={filters.activePathPrefix || "All known clips"}
             onSourcesToggle={() => setSourcesOpen((open) => !open)}
             sourcesButtonRef={sourcesButtonRef}
           />
@@ -1439,13 +1439,6 @@ function App() {
               availableTags={availableTags}
               onChange={updateFilters}
               onReset={resetFilters}
-              hasActiveFolder={Boolean(filters.activePathPrefix) || librarySources.length > 0}
-              folderOptionLabel={
-                filters.activePathPrefix
-                  ? (filters.activePathPrefix.split(/[\\/]/).filter(Boolean).pop() || "Folder")
-                  : "Select a folder in SOURCES"
-              }
-              onOpenManageSources={() => setManageSourcesOpen(true)}
               onClose={() => setFiltersOpen(false)}
             />
           )}
@@ -1456,6 +1449,13 @@ function App() {
               <SourcesPopover
                 sources={sourcesWithCounts}
                 filters={filters}
+                onSelectAllKnown={() => {
+                  updateFilters(
+                    (prev) => ({ ...prev, searchIn: "ALL", activePathPrefix: "" }),
+                    "sources:selectAllKnown"
+                  );
+                  setSourcesOpen(false);
+                }}
                 onSelectSource={(path) => {
                   const nextInclude = folderViewSettings.get(path)?.includeSubfolders ?? true;
                   updateFilters(
@@ -1478,8 +1478,7 @@ function App() {
                   );
                 }}
                 onAddFolder={handleFolderSelect}
-                onOpenManageSources={() => setManageSourcesOpen(true)}
-              />
+                />
             </div>
           )}
           <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
