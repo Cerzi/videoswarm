@@ -42,6 +42,7 @@ const FiltersPopover = forwardRef(
       filters,
       availableTags = [],
       hasActiveFolder = false,
+      folderOptionLabel = "Select a folder in SOURCES",
       onOpenManageSources,
       onChange,
       onReset,
@@ -227,7 +228,9 @@ const FiltersPopover = forwardRef(
               onChange={() => handleSearchInChange("FOLDER")}
               disabled={!hasActiveFolder}
             />
-            <span title={activePathPrefix}>{activeFolderName}</span>
+            <span title={activePathPrefix || folderOptionLabel}>
+              {hasActiveFolder ? activeFolderName : folderOptionLabel}
+            </span>
           </label>
           <button type="button" className="filters-link filters-link--secondary" onClick={onOpenManageSources}>
             Manage library sources…

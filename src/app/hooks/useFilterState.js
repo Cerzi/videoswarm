@@ -44,24 +44,67 @@ const normalizeFiltersDraft = (draft, prev) => {
   };
 };
 
-export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef, activeSourcePath = null }) {
+const __DEV__ = import.meta.env.MODE !== "production";
+
+function logFilterTransition(action, prev, next) {
+  if (!__DEV__) return;
+  console.debug("[filters]", {
+    ts: new Date().toISOString(),
+    action,
+    prev: {
+      searchIn: prev?.searchIn,
+      activePathPrefix: prev?.activePathPrefix,
+    },
+    next: {
+      searchIn: next?.searchIn,
+      activePathPrefix: next?.activePathPrefix,
+    },
+  });
+}
+
+export function useFilterState({
+  videos,
+  filtersButtonRef,
+  filtersPopoverRef,
+  knownSourcePaths = [],
+}) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
-  const updateFilters = useCallback((updater) => {
+  const updateFilters = useCallback((updater, action = "update") => {
     setFilters((prev) => {
       const nextDraft = typeof updater === "function" ? updater(prev) ?? prev : { ...prev, ...updater };
-      return normalizeFiltersDraft(nextDraft, prev);
+      const normalized = normalizeFiltersDraft(nextDraft, prev);
+      const next =
+        normalized.searchIn === "FOLDER" && !normalized.activePathPrefix
+          ? { ...normalized, searchIn: "ALL" }
+          : normalized;
+      logFilterTransition(action, prev, next);
+      return next;
     });
   }, []);
 
-  const resetFilters = useCallback(() => setFilters(createDefaultFilters()), []);
+  const resetFilters = useCallback(
+    () =>
+      setFilters((prev) => {
+        const next = createDefaultFilters();
+        logFilterTransition("reset", prev, next);
+        return next;
+      }),
+    []
+  );
 
   useEffect(() => {
-    if (!activeSourcePath && filters.searchIn === "FOLDER") {
-      setFilters((prev) => ({ ...prev, searchIn: "ALL", activePathPrefix: "" }));
-    }
-  }, [activeSourcePath, filters.searchIn]);
+    const knownSet = new Set((knownSourcePaths ?? []).map((entry) => normalizePath(entry)));
+    setFilters((prev) => {
+      if (prev.searchIn !== "FOLDER") return prev;
+      const activePath = normalizePath(prev.activePathPrefix);
+      if (activePath && knownSet.has(activePath)) return prev;
+      const next = { ...prev, searchIn: "ALL", activePathPrefix: "" };
+      logFilterTransition("sourceRemovedFallback", prev, next);
+      return next;
+    });
+  }, [knownSourcePaths]);
 
   const filteredVideos = useMemo(() => {
     const includeTags = filters.includeTags ?? [];
@@ -73,7 +116,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef, ac
     const includeSet = includeTags.length ? new Set(includeTags.map((tag) => tag.toLowerCase())) : null;
     const excludeSet = excludeTags.length ? new Set(excludeTags.map((tag) => tag.toLowerCase())) : null;
 
-    const pathPrefix = filters.searchIn === "FOLDER" ? normalizePath(filters.activePathPrefix || activeSourcePath) : "";
+    const pathPrefix = filters.searchIn === "FOLDER" ? normalizePath(filters.activePathPrefix) : "";
     const includeSubfolders = Boolean(filters.includeSubfolders);
 
     return videos.filter((video) => {
@@ -109,7 +152,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef, ac
       if (minRating !== null) return (ratingValue ?? 0) >= minRating;
       return true;
     });
-  }, [videos, filters, activeSourcePath]);
+  }, [videos, filters]);
 
   const filteredVideoIds = useMemo(() => new Set(filteredVideos.map((video) => video.id)), [filteredVideos]);
 
