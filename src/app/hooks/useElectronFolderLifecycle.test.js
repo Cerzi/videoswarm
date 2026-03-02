@@ -330,7 +330,7 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(result.current.videos.map((v) => v.id)).toEqual(["file2"]);
     expect(selection.setSelected).toHaveBeenCalled();
-    expect(refreshTagList).toHaveBeenCalledTimes(3);
+    expect(refreshTagList.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     unmount();
     expect(disposeAdded).toHaveBeenCalled();

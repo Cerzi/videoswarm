@@ -7,6 +7,10 @@ import {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 
+const SOURCE_MONITOR_INTERVAL_MS = 15000;
+
+const normalizePathValue = (value) => (value ?? "").toString().replace(/\\/g, "/").replace(/\/+$/, "");
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -168,6 +172,27 @@ export function useElectronFolderLifecycle({
       ];
     });
   }, []);
+
+  const resolveSourceForPath = useCallback(
+    (filePath) => {
+      const normalizedFilePath = normalizePathValue(filePath);
+      if (!normalizedFilePath) return null;
+      const orderedSources = [...librarySources]
+        .filter((source) => Boolean(source?.path))
+        .sort((a, b) => normalizePathValue(b.path).length - normalizePathValue(a.path).length);
+
+      const matched = orderedSources.find((source) => {
+        const sourcePath = normalizePathValue(source.path);
+        return (
+          normalizedFilePath === sourcePath ||
+          normalizedFilePath.startsWith(`${sourcePath}/`)
+        );
+      });
+
+      return matched ?? null;
+    },
+    [librarySources]
+  );
 
   const inferSourcePath = useCallback((fullPath, recentCandidates) => {
     const normalizedFullPath = (fullPath ?? "").toString();
@@ -444,7 +469,8 @@ export function useElectronFolderLifecycle({
     const handleFileAdded = (videoFile) => {
       const normalized = {
         ...normalizeVideoFromMain(videoFile),
-        sourceId: activeSourceId,
+        sourceId: resolveSourceForPath(videoFile?.canonicalPath ?? videoFile?.fullPath ?? videoFile?.path)?.id ?? activeSourceId,
+        sourcePath: resolveSourceForPath(videoFile?.canonicalPath ?? videoFile?.fullPath ?? videoFile?.path)?.path ?? null,
       };
       setVideos((prev) => {
         const existingIndex = prev.findIndex((v) => v.id === normalized.id);
@@ -504,7 +530,8 @@ export function useElectronFolderLifecycle({
     const handleFileChanged = (videoFile) => {
       const normalized = {
         ...normalizeVideoFromMain(videoFile),
-        sourceId: activeSourceId,
+        sourceId: resolveSourceForPath(videoFile?.canonicalPath ?? videoFile?.fullPath ?? videoFile?.path)?.id ?? activeSourceId,
+        sourcePath: resolveSourceForPath(videoFile?.canonicalPath ?? videoFile?.fullPath ?? videoFile?.path)?.path ?? null,
       };
       setVideos((prev) =>
         dedupeVideos(prev.map((v) => (v.id === normalized.id ? normalized : v)))
@@ -531,12 +558,51 @@ export function useElectronFolderLifecycle({
   }, [
     activeSourceId,
     refreshTagList,
+    resolveSourceForPath,
     setActualPlaying,
     setLoadedVideos,
     setLoadingVideos,
     setSelection,
     setVisibleVideos,
   ]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return undefined;
+    const api = window.electronAPI;
+    const sourcesToMonitor = librarySources.filter((source) => source?.path && source?.isIncluded !== false);
+    if (!api?.readDirectory || sourcesToMonitor.length === 0) return undefined;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const runMonitorPass = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        for (const source of sourcesToMonitor) {
+          if (cancelled) return;
+          const files = await api.readDirectory(source.path, true);
+          if (cancelled) return;
+          mergeSourceVideos(source.id, source.path, Array.isArray(files) ? files : []);
+        }
+        refreshTagList();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("[sources-monitor] monitor pass failed", error);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    runMonitorPass();
+    const intervalId = setInterval(runMonitorPass, SOURCE_MONITOR_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [librarySources, mergeSourceVideos, refreshTagList, settingsLoaded]);
 
   useEffect(() => {
     if (!settingsLoaded || bootstrappedKnownRef.current) return;
