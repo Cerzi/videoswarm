@@ -320,13 +320,13 @@ function createMetadataStore(db) {
           ? existingOwner.fingerprint
           : row.fingerprint;
 
-      if (keepFingerprint === row.fingerprint) {
-        updateCanonicalStmt.run(canonical, row.fingerprint);
-      }
-
       moveTagsStmt.run(keepFingerprint, dropFingerprint);
       moveRatingStmt.run(keepFingerprint, dropFingerprint);
       deleteFileStmt.run(dropFingerprint);
+
+      if (keepFingerprint === row.fingerprint) {
+        updateCanonicalStmt.run(canonical, row.fingerprint);
+      }
     });
   });
   canonicalTxn(rowsToCanonicalize);
