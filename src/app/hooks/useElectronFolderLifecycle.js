@@ -581,6 +581,8 @@ export function useElectronFolderLifecycle({
       try {
         for (const source of sourcesToMonitor) {
           if (cancelled) return;
+          // Monitoring/indexing is always recursive for known locations;
+          // includeSubfolders is a view-level filter only.
           const files = await api.readDirectory(source.path, true);
           if (cancelled) return;
           mergeSourceVideos(source.id, source.path, Array.isArray(files) ? files : []);
