@@ -320,7 +320,7 @@ function App() {
     videos,
     filtersButtonRef,
     filtersPopoverRef,
-    activeSourcePath: activeSourceId,
+    knownSourcePaths: librarySources.map((source) => source.path),
   });
 
 
@@ -1439,7 +1439,12 @@ function App() {
               availableTags={availableTags}
               onChange={updateFilters}
               onReset={resetFilters}
-              hasActiveFolder={Boolean(activeSourceId)}
+              hasActiveFolder={Boolean(filters.activePathPrefix) || librarySources.length > 0}
+              folderOptionLabel={
+                filters.activePathPrefix
+                  ? (filters.activePathPrefix.split(/[\\/]/).filter(Boolean).pop() || "Folder")
+                  : "Select a folder in SOURCES"
+              }
               onOpenManageSources={() => setManageSourcesOpen(true)}
               onClose={() => setFiltersOpen(false)}
             />
@@ -1453,7 +1458,10 @@ function App() {
                 filters={filters}
                 onSelectSource={(path) => {
                   const nextInclude = folderViewSettings.get(path)?.includeSubfolders ?? true;
-                  updateFilters((prev) => ({ ...prev, searchIn: "FOLDER", activePathPrefix: path, includeSubfolders: nextInclude }));
+                  updateFilters(
+                    (prev) => ({ ...prev, searchIn: "FOLDER", activePathPrefix: path, includeSubfolders: nextInclude }),
+                    "sources:select"
+                  );
                   setSourcesOpen(false);
                 }}
                 onToggleIncludeSubfolders={(enabled) => {
@@ -1464,7 +1472,10 @@ function App() {
                     next.set(path, { includeSubfolders: Boolean(enabled) });
                     return next;
                   });
-                  updateFilters((prev) => ({ ...prev, includeSubfolders: Boolean(enabled) }));
+                  updateFilters(
+                    (prev) => ({ ...prev, includeSubfolders: Boolean(enabled) }),
+                    "sources:toggleSubfolders"
+                  );
                 }}
                 onAddFolder={handleFolderSelect}
                 onOpenManageSources={() => setManageSourcesOpen(true)}
