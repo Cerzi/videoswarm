@@ -42,8 +42,8 @@ export default function HeaderBar({
   filtersButtonRef,
   onSourcesToggle,
   sourcesButtonRef,
-  searchInLabel = "All Known",
-  searchInTooltip,
+  datasetContextLabel = "All Known Clips",
+  datasetContextTooltip = "All known clips",
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
   const minZoomIndex = getMinimumZoomLevel();
@@ -87,13 +87,28 @@ export default function HeaderBar({
           <button ref={sourcesButtonRef} type="button" onClick={onSourcesToggle} disabled={isLoadingFolder} className="toggle-button" title="Open sources">Sources</button>
 
           <div style={{ position: "relative" }}>
-            <button ref={filtersButtonRef} onClick={onFiltersToggle} disabled={isLoadingFolder} className={`toggle-button ${filtersActiveCount > 0 || filtersAreOpen ? "active" : ""}`} title={searchInTooltip || (filtersActiveCount > 0 ? `Filters active (${filtersActiveCount})` : "Open filters")} type="button">
+            <button ref={filtersButtonRef} onClick={onFiltersToggle} disabled={isLoadingFolder} className={`toggle-button ${filtersActiveCount > 0 || filtersAreOpen ? "active" : ""}`} title={filtersActiveCount > 0 ? `Filters active (${filtersActiveCount})` : "Open filters"} type="button">
               <FilterIcon />
               <span className="filters-button-label">Filters</span>
-              <span className="filters-button-state">{searchInLabel}</span>
               {filtersActiveCount > 0 && <span className="filters-button-badge">{filtersActiveCount}</span>}
             </button>
           </div>
+
+          <span
+            className="dataset-context-display"
+            title={datasetContextTooltip}
+            role="button"
+            tabIndex={0}
+            onClick={onSourcesToggle}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSourcesToggle();
+              }
+            }}
+          >
+            {datasetContextLabel}
+          </span>
 
           <SupportLink className="donate-button" aria-label={`${supportContent.donationButtonLabel} – ${supportContent.donationTooltip}`} title={supportContent.donationTooltip}><span aria-hidden="true" className="donate-button__icon">❤️</span><span className="donate-button__label">{supportContent.donationButtonLabel}</span></SupportLink>
         </div>

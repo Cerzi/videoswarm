@@ -10,6 +10,7 @@ const basename = (value) => {
 export default function SourcesPopover({
   sources = [],
   filters,
+  onSelectAllKnown,
   onSelectSource,
   onToggleIncludeSubfolders,
   onAddFolder,
@@ -17,6 +18,7 @@ export default function SourcesPopover({
 }) {
   const activePath = filters?.activePathPrefix ?? null;
   const isFolderMode = filters?.searchIn === "FOLDER" && !!activePath;
+  const isAllKnownMode = filters?.searchIn !== "FOLDER";
 
   return (
     <div className="filters-popover" role="dialog" aria-label="Known sources">
@@ -29,6 +31,15 @@ export default function SourcesPopover({
 
       <section className="filters-section">
         <div className="filters-tag-list" role="list">
+          <button
+            type="button"
+            className={`sources-row ${isAllKnownMode ? "sources-row--active" : ""}`}
+            onClick={onSelectAllKnown}
+            title="Show clips from all known sources"
+          >
+            <span>All Known Clips</span>
+            <span>All sources</span>
+          </button>
           {sources.map((source) => {
             const selected = activePath === source.path && isFolderMode;
             return (
