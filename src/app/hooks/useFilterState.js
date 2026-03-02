@@ -99,7 +99,13 @@ export function useFilterState({
     setFilters((prev) => {
       if (prev.searchIn !== "FOLDER") return prev;
       const activePath = normalizePath(prev.activePathPrefix);
-      if (activePath && knownSet.has(activePath)) return prev;
+      if (!activePath) {
+        const next = { ...prev, searchIn: "ALL", activePathPrefix: "" };
+        logFilterTransition("missingActivePathFallback", prev, next);
+        return next;
+      }
+      if (knownSet.size === 0) return prev;
+      if (knownSet.has(activePath)) return prev;
       const next = { ...prev, searchIn: "ALL", activePathPrefix: "" };
       logFilterTransition("sourceRemovedFallback", prev, next);
       return next;
