@@ -30,6 +30,10 @@ const VideoCard = memo(function VideoCard({
   reportPlayerCreationFailure,
   onVisibilityChange,     // (id, visible)
   onHover,                // (id)
+  hoverAudioEnabled = false,
+  isHoverAudioActive = false,
+  onHoverAudioStart,      // (id)
+  onHoverAudioEnd,        // (id)
 
   // IO registry
   observeIntersection,    // (el, id, cb)
@@ -292,10 +296,27 @@ const VideoCard = memo(function VideoCard({
     el.addEventListener("pause",   handlePause);
     el.addEventListener("error",   handleError);
 
-    if (isPlaying && isVisible && loaded && !permanentErrorRef.current) {
+    const shouldPlay = isPlaying && isVisible && loaded && !permanentErrorRef.current;
+    if (shouldPlay) {
+      el.muted = !isHoverAudioActive;
+      if (isHoverAudioActive) {
+        el.volume = 1;
+      }
       const p = el.play();
-      if (p?.catch) p.catch((err) => handleError({ target: { error: err } }));
+      if (p?.catch) {
+        p.catch((err) => {
+          if (isHoverAudioActive && err?.name === "NotAllowedError") {
+            try {
+              el.muted = true;
+              el.play()?.catch?.(() => {});
+            } catch {}
+            return;
+          }
+          handleError({ target: { error: err } });
+        });
+      }
     } else {
+      el.muted = true;
       try { el.pause(); } catch {}
     }
 
@@ -304,7 +325,16 @@ const VideoCard = memo(function VideoCard({
       el.removeEventListener("pause",   handlePause);
       el.removeEventListener("error",   handleError);
     };
-  }, [isPlaying, isVisible, loaded, videoId, onVideoPlay, onVideoPause, onPlayError]);
+  }, [
+    isPlaying,
+    isVisible,
+    loaded,
+    isHoverAudioActive,
+    videoId,
+    onVideoPlay,
+    onVideoPause,
+    onPlayError,
+  ]);
 
   // Quiet stall watchdog (no visual changes)
   useEffect(() => {
@@ -683,8 +713,9 @@ const VideoCard = memo(function VideoCard({
       videoRef.current = null;
       loadRequestedRef.current = false;
       metaNotifiedRef.current = false;
+      onHoverAudioEnd?.(videoId);
     };
-  }, []);
+  }, [onHoverAudioEnd, videoId]);
 
   // UI handlers (unchanged)
   const handleClick = useCallback((e) => {
@@ -707,7 +738,18 @@ const VideoCard = memo(function VideoCard({
     onContextMenu?.(e, video);
   }, [onContextMenu, video]);
 
-  const handleMouseEnter = useCallback(() => onHover?.(videoId), [onHover, videoId]);
+  const handleMouseEnter = useCallback(() => {
+    onHover?.(videoId);
+    if (hoverAudioEnabled) {
+      onHoverAudioStart?.(videoId);
+    }
+  }, [onHover, videoId, hoverAudioEnabled, onHoverAudioStart]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (hoverAudioEnabled) {
+      onHoverAudioEnd?.(videoId);
+    }
+  }, [hoverAudioEnabled, onHoverAudioEnd, videoId]);
 
   const handleDragStart = useCallback(
     (reactEvent) => {
@@ -801,6 +843,7 @@ const VideoCard = memo(function VideoCard({
       className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
       draggable={canStartNativeDrag}

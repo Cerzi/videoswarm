@@ -109,4 +109,63 @@ describe('usePlayOrchestrator', () => {
     expect(result.current.playingSet.has('keep')).toBe(true);
     expect(result.current.playingSet.has('reload')).toBe(false);
   });
+
+  test('hover audio start/end tracks active card and switches cleanly', () => {
+    const visible = setOf(['a', 'b']);
+    const loaded = setOf(['a', 'b']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 2,
+        hoverAudioEnabled: true,
+      })
+    );
+
+    act(() => {
+      result.current.onCardHoverAudioStart('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('a');
+
+    act(() => {
+      result.current.onCardHoverAudioStart('b');
+    });
+    expect(result.current.activeHoverAudioId).toBe('b');
+
+    act(() => {
+      result.current.onCardHoverAudioEnd('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('b');
+
+    act(() => {
+      result.current.onCardHoverAudioEnd('b');
+    });
+    expect(result.current.activeHoverAudioId).toBe(null);
+  });
+
+  test('disabling hover audio clears active hover-audio state', () => {
+    const visible = setOf(['a']);
+    const loaded = setOf(['a']);
+    const { result, rerender } = renderHook((props) => usePlayOrchestrator(props), {
+      initialProps: {
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 2,
+        hoverAudioEnabled: true,
+      },
+    });
+
+    act(() => {
+      result.current.onCardHoverAudioStart('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('a');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      hoverAudioEnabled: false,
+    });
+    expect(result.current.activeHoverAudioId).toBe(null);
+  });
 });

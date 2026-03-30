@@ -142,6 +142,7 @@ function App() {
   const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
+  const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
@@ -1017,6 +1018,7 @@ function App() {
     activationWindowIds: activationWindow.ids,
     suspendEvictions: isLayoutTransitioning,
     renderLimit: renderLimitValue,
+    hoverAudioEnabled,
   });
 
   // fullscreen / context menu
@@ -1373,6 +1375,8 @@ function App() {
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
+            hoverAudioEnabled={hoverAudioEnabled}
+            onHoverAudioToggle={setHoverAudioEnabled}
             renderLimitStep={renderLimitStep}
             renderLimitLabel={renderLimitLabel}
             renderLimitMaxStep={RENDER_LIMIT_STEPS}
@@ -1587,6 +1591,12 @@ function App() {
                     }}
                     // Hover for priority
                     onHover={(id) => videoCollection.markHover(id)}
+                    hoverAudioEnabled={hoverAudioEnabled}
+                    isHoverAudioActive={
+                      hoverAudioEnabled && videoCollection.activeHoverAudioId === video.id
+                    }
+                    onHoverAudioStart={videoCollection.onCardHoverAudioStart}
+                    onHoverAudioEnd={videoCollection.onCardHoverAudioEnd}
                     scheduleInit={scheduleInit}
                   />
                 ))}

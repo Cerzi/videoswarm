@@ -118,6 +118,8 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
+  hoverAudioEnabled = false,
+  onHoverAudioToggle,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -170,6 +172,16 @@ export default function HeaderBar({
             disabled={isLoadingFolder}
           />
           <span>Subfolders</span>
+        </label>
+
+        <label className="subfolders-option" title="Enable audio while hovering cards">
+          <input
+            type="checkbox"
+            checked={hoverAudioEnabled}
+            onChange={(e) => onHoverAudioToggle?.(e.target.checked)}
+            disabled={isLoadingFolder}
+          />
+          <span>Hover audio</span>
         </label>
 
         {hasOpenFolder && recentFolders.length > 0 && (
