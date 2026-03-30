@@ -11,8 +11,10 @@ export default function usePlayOrchestrator({
   visibleIds, // Set<string>
   loadedIds, // Set<string>
   maxPlaying, // number
+  hoverAudioEnabled = false,
 }) {
   const [playingSet, setPlayingSet] = useState(new Set()); // allowed/desired
+  const [activeHoverAudioId, setActiveHoverAudioId] = useState(null);
   const hoveredRef = useRef(null);
   const startOrderRef = useRef([]); // newer at the end
   const recentlyErroredRef = useRef(new Map()); // id -> ts
@@ -158,10 +160,38 @@ export default function usePlayOrchestrator({
     [reconcile]
   );
 
+  const onCardHoverAudioStart = useCallback(
+    (id) => {
+      if (!hoverAudioEnabled) return;
+      setActiveHoverAudioId((prev) => (prev === id ? prev : id));
+    },
+    [hoverAudioEnabled]
+  );
+
+  const onCardHoverAudioEnd = useCallback(
+    (id) => {
+      setActiveHoverAudioId((prev) => (prev === id ? null : prev));
+    },
+    []
+  );
+
   // FIXED: Add proper dependency management for reconcile
   useEffect(() => {
     reconcile();
   }, [reconcile, visibleIds, loadedIds, maxPlaying]);
+
+  useEffect(() => {
+    if (hoverAudioEnabled) return;
+    setActiveHoverAudioId(null);
+  }, [hoverAudioEnabled]);
+
+  useEffect(() => {
+    setActiveHoverAudioId((prev) => {
+      if (!prev) return prev;
+      if (!visibleIds.has(prev)) return null;
+      return prev;
+    });
+  }, [visibleIds]);
 
   // Expire "recently errored" entries so they can retry later
   useEffect(() => {
@@ -181,9 +211,20 @@ export default function usePlayOrchestrator({
     () => ({
       playingSet, // desired/allowed
       markHover, // force-priority on hover
+      activeHoverAudioId,
+      onCardHoverAudioStart,
+      onCardHoverAudioEnd,
       reportStarted, // call when <video> fires "playing"
       reportPlayError, // call on error (load/play)
     }),
-    [playingSet, markHover, reportStarted, reportPlayError]
+    [
+      playingSet,
+      markHover,
+      activeHoverAudioId,
+      onCardHoverAudioStart,
+      onCardHoverAudioEnd,
+      reportStarted,
+      reportPlayError,
+    ]
   );
 }

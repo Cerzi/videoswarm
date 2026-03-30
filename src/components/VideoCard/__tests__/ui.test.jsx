@@ -1,7 +1,7 @@
 // src/components/VideoCard/VideoCard.test.jsx
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import VideoCard from "../VideoCard";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
@@ -540,5 +540,102 @@ describe("VideoCard", () => {
 
     containerEl = document.querySelector(".video-container");
     expect(containerEl?.contains(created)).toBe(true);
+  });
+
+  it("does not emit hover-audio callbacks when hover audio is disabled", () => {
+    const onHoverAudioStart = vi.fn();
+    const onHoverAudioEnd = vi.fn();
+
+    const { container } = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "hover-1", name: "hover-1" }}
+        hoverAudioEnabled={false}
+        onHoverAudioStart={onHoverAudioStart}
+        onHoverAudioEnd={onHoverAudioEnd}
+      />
+    );
+
+    const card = container.querySelector(".video-item");
+    expect(card).toBeTruthy();
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+
+    expect(onHoverAudioStart).not.toHaveBeenCalled();
+    expect(onHoverAudioEnd).not.toHaveBeenCalled();
+  });
+
+  it("emits hover-audio callbacks when hover audio is enabled", () => {
+    const onHoverAudioStart = vi.fn();
+    const onHoverAudioEnd = vi.fn();
+
+    const { container } = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "hover-2", name: "hover-2" }}
+        hoverAudioEnabled={true}
+        onHoverAudioStart={onHoverAudioStart}
+        onHoverAudioEnd={onHoverAudioEnd}
+      />
+    );
+
+    const card = container.querySelector(".video-item");
+    expect(card).toBeTruthy();
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+
+    expect(onHoverAudioStart).toHaveBeenCalledWith("hover-2");
+    expect(onHoverAudioEnd).toHaveBeenCalledWith("hover-2");
+  });
+
+  it("unmutes active hover-audio card and mutes inactive cards", async () => {
+    const video = {
+      id: "hover-audio-media",
+      name: "hover-audio-media",
+      isElectronFile: false,
+      fullPath: "/remote/hover-audio-media.mp4",
+    };
+    const { rerender } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={false}
+      />
+    );
+
+    await act(async () => {});
+    const created = lastVideoEl;
+    expect(created).toBeTruthy();
+
+    await act(async () => {
+      created.dispatchEvent?.(new Event("loadedmetadata"));
+      created.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={true}
+        isHoverAudioActive={false}
+      />
+    );
+    expect(created.muted).toBe(true);
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={true}
+        isHoverAudioActive={true}
+      />
+    );
+    expect(created.muted).toBe(false);
   });
 });

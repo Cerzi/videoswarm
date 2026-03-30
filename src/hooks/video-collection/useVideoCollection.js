@@ -29,6 +29,7 @@ export default function useVideoCollection({
   activationWindowIds = [],
   suspendEvictions = false,
   renderLimit = null,
+  hoverAudioEnabled = false,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -152,7 +153,15 @@ export default function useVideoCollection({
     cappedDesiredActiveCount && cappedDesiredActiveCount > 0
       ? Math.floor(cappedDesiredActiveCount)
       : limitedVisibleCount;
-  const { playingSet, markHover, reportPlayError, reportStarted } =
+  const {
+    playingSet,
+    markHover,
+    reportPlayError,
+    reportStarted,
+    activeHoverAudioId,
+    onCardHoverAudioStart,
+    onCardHoverAudioEnd,
+  } =
     usePlayOrchestrator({
       visibleIds: visibleVideos,
       loadedIds: loadedVideos,
@@ -160,6 +169,7 @@ export default function useVideoCollection({
         Number.isFinite(playingCap) && playingCap > 0
           ? playingCap
           : limitedVisibleCount,
+      hoverAudioEnabled,
     });
 
   return {
@@ -170,6 +180,9 @@ export default function useVideoCollection({
     canLoadVideo,
     isVideoPlaying: (videoId) => playingSet.has(videoId),
     markHover,
+    activeHoverAudioId,
+    onCardHoverAudioStart,
+    onCardHoverAudioEnd,
     reportPlayError,
     reportStarted,
     reportPlayerCreationFailure,

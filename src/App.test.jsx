@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 
 const selectionMock = {
   selected: new Set(),
@@ -139,7 +139,11 @@ const useVideoCollectionMock = vi.fn(() => ({
   reportStarted: vi.fn(),
   reportPlayError: vi.fn(),
   markHover: vi.fn(),
+  activeHoverAudioId: null,
+  onCardHoverAudioStart: vi.fn(),
+  onCardHoverAudioEnd: vi.fn(),
 }));
+const headerBarSpy = vi.fn();
 
 vi.mock("./components/VideoCard/VideoCard", () => ({
   __esModule: true,
@@ -163,7 +167,20 @@ vi.mock("./components/MetadataPanel", () => ({
 }));
 vi.mock("./components/HeaderBar", () => ({
   __esModule: true,
-  default: () => null,
+  default: (props) => {
+    headerBarSpy(props);
+    return (
+      <label>
+        Hover audio
+        <input
+          aria-label="Hover audio"
+          type="checkbox"
+          checked={Boolean(props.hoverAudioEnabled)}
+          onChange={(e) => props.onHoverAudioToggle?.(e.target.checked)}
+        />
+      </label>
+    );
+  },
 }));
 vi.mock("./components/FiltersPopover", async () => {
   const ReactModule = await vi.importActual("react");
@@ -286,5 +303,25 @@ describe("App hook composition", () => {
     expect(zoomArgs.runWithStableAnchor).toBe(runWithStableAnchorMock);
 
     result.unmount();
+  });
+
+  test("wires Hover audio header toggle into useVideoCollection state", async () => {
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+
+    render(<App />);
+
+    const hoverAudioToggle = screen.getByRole("checkbox", { name: "Hover audio" });
+    expect(hoverAudioToggle).toBeInTheDocument();
+    expect(useVideoCollectionMock).toHaveBeenCalled();
+
+    const initialArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(initialArgs.hoverAudioEnabled).toBe(false);
+
+    fireEvent.click(hoverAudioToggle);
+
+    const updatedArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(updatedArgs.hoverAudioEnabled).toBe(true);
+    expect(headerBarSpy).toHaveBeenCalled();
   });
 });
