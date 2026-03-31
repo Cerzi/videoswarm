@@ -170,15 +170,14 @@ vi.mock("./components/HeaderBar", () => ({
   default: (props) => {
     headerBarSpy(props);
     return (
-      <label>
+      <button
+        type="button"
+        aria-label="Play audio on hover"
+        aria-pressed={Boolean(props.hoverAudioEnabled)}
+        onClick={() => props.onHoverAudioToggle?.()}
+      >
         Hover audio
-        <input
-          aria-label="Hover audio"
-          type="checkbox"
-          checked={Boolean(props.hoverAudioEnabled)}
-          onChange={(e) => props.onHoverAudioToggle?.(e.target.checked)}
-        />
-      </label>
+      </button>
     );
   },
 }));
@@ -311,7 +310,7 @@ describe("App hook composition", () => {
 
     render(<App />);
 
-    const hoverAudioToggle = screen.getByRole("checkbox", { name: "Hover audio" });
+    const hoverAudioToggle = screen.getByRole("button", { name: "Play audio on hover" });
     expect(hoverAudioToggle).toBeInTheDocument();
     expect(useVideoCollectionMock).toHaveBeenCalled();
 

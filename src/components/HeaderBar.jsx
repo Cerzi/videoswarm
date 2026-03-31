@@ -90,6 +90,22 @@ const FilterIcon = (props) => (
   </Icon>
 );
 
+const SpeakerOnIcon = (props) => (
+  <Icon {...props}>
+    <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M18.5 6a8.5 8.5 0 0 1 0 12" />
+  </Icon>
+);
+
+const SpeakerOffIcon = (props) => (
+  <Icon {...props}>
+    <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+    <line x1="23" y1="9" x2="17" y2="15" />
+    <line x1="17" y1="9" x2="23" y2="15" />
+  </Icon>
+);
+
 export default function HeaderBar({
   isLoadingFolder,
   handleFolderSelect,
@@ -174,16 +190,6 @@ export default function HeaderBar({
           <span>Subfolders</span>
         </label>
 
-        <label className="subfolders-option" title="Enable audio while hovering cards">
-          <input
-            type="checkbox"
-            checked={hoverAudioEnabled}
-            onChange={(e) => onHoverAudioToggle?.(e.target.checked)}
-            disabled={isLoadingFolder}
-          />
-          <span>Hover audio</span>
-        </label>
-
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
@@ -220,6 +226,19 @@ export default function HeaderBar({
           </div>
 
           <div className="zoom-control" title="Zoom">
+            <button
+              onClick={() => onHoverAudioToggle?.()}
+              className={`toggle-button ${hoverAudioEnabled ? "active" : ""}`}
+              disabled={isLoadingFolder}
+              title="Play audio on hover"
+              aria-label="Play audio on hover"
+              aria-pressed={hoverAudioEnabled}
+              type="button"
+              style={{ opacity: hoverAudioEnabled ? 1 : 0.75 }}
+            >
+              {hoverAudioEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+            </button>
+
             <ZoomInIcon />
             <input
               type="range"

@@ -1158,6 +1158,10 @@ function App() {
     });
   }, [showFilenames, recursiveMode, renderLimitStep, zoomLevel]);
 
+  const toggleHoverAudio = useCallback(() => {
+    setHoverAudioEnabled((prev) => !prev);
+  }, []);
+
   const handleRenderLimitStepChange = useCallback(
     (step) => {
       const clamped = clampRenderLimitStep(step);
@@ -1376,7 +1380,7 @@ function App() {
             showFilenames={showFilenames}
             toggleFilenames={toggleFilenames}
             hoverAudioEnabled={hoverAudioEnabled}
-            onHoverAudioToggle={setHoverAudioEnabled}
+            onHoverAudioToggle={toggleHoverAudio}
             renderLimitStep={renderLimitStep}
             renderLimitLabel={renderLimitLabel}
             renderLimitMaxStep={RENDER_LIMIT_STEPS}
