@@ -5,7 +5,12 @@ const DETECTED_VIDEO_DECODE_STATES = new Set([
   "enabled_on",
   "hardware_accelerated",
 ]);
-const PLAYBACK_MODES = new Set(["balanced", "all-motion", "static-hover"]);
+const PLAYBACK_MODES = new Set([
+  "balanced",
+  "adaptive-motion",
+  "all-motion",
+  "static-hover",
+]);
 
 function normalizePlaybackMode(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -26,6 +31,25 @@ function isHardwareDecodeDetected(status) {
     DETECTED_VIDEO_DECODE_STATES.has(normalized) ||
     normalized.startsWith("enabled_")
   );
+}
+
+function applyPlaybackModeScheduling(webContents, value) {
+  const mode = normalizePlaybackMode(value);
+  const backgroundThrottling = mode !== "all-motion";
+  if (
+    !webContents ||
+    webContents.isDestroyed?.() ||
+    typeof webContents.setBackgroundThrottling !== "function"
+  ) {
+    return {
+      success: false,
+      mode,
+      backgroundThrottling,
+      error: "WEB_CONTENTS_UNAVAILABLE",
+    };
+  }
+  webContents.setBackgroundThrottling(backgroundThrottling);
+  return { success: true, mode, backgroundThrottling };
 }
 
 function createPlaybackCapabilities({
@@ -51,6 +75,7 @@ function createPlaybackCapabilities({
 }
 
 module.exports = {
+  applyPlaybackModeScheduling,
   createPlaybackCapabilities,
   isHardwareDecodeDetected,
   normalizePlaybackMode,

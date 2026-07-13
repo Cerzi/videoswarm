@@ -67,6 +67,7 @@ import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
 import {
   DEFAULT_PLAYBACK_MODE,
+  PLAYBACK_MODES,
   normalizePlaybackMode,
 } from "./playback/playbackPolicy";
 import {
@@ -155,11 +156,15 @@ function App() {
     useWindowWorkSuspension();
   const { capabilities: playbackCapabilities, statusText: playbackCapabilityStatus } =
     usePlaybackCapabilities();
+  const uncappedAllMotion = playbackMode === PLAYBACK_MODES.ALL_MOTION;
   const {
     telemetry: playbackTelemetry,
     hadLongTaskRecently,
     registerMediaElement,
-  } = usePlaybackTelemetry({ suspended: workSuspended });
+  } = usePlaybackTelemetry({
+    suspended: workSuspended,
+    detailed: !uncappedAllMotion,
+  });
   const { scheduleInit } = useInitGate({
     perFrame: 6,
     suspended: workSuspended,
@@ -169,6 +174,15 @@ function App() {
     thumbService.setSuspended(workSuspended);
     return () => thumbService.setSuspended(true);
   }, [workSuspended]);
+
+  useEffect(() => {
+    try {
+      const update = window.electronAPI?.playback?.setModeScheduling?.(
+        playbackMode
+      );
+      update?.catch?.(() => {});
+    } catch {}
+  }, [playbackMode]);
 
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
