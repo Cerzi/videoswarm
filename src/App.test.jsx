@@ -32,7 +32,50 @@ const useStableViewAnchoringMock = vi.fn(() => ({
 
 const scheduleInitMock = vi.fn();
 const useInitGateMock = vi.fn(() => ({ scheduleInit: scheduleInitMock }));
-const useLongTaskFlagMock = vi.fn(() => ({ hadLongTaskRecently: false }));
+const registerMediaElementMock = vi.fn();
+const playbackTelemetry = {
+  sampleCount: 7,
+  droppedFrameRatio: 0.02,
+  frameDelayMs: 8,
+  longTaskRate: 0,
+  averagePixelArea: 921600,
+};
+const usePlaybackTelemetryMock = vi.fn(() => ({
+  telemetry: playbackTelemetry,
+  hadLongTaskRecently: false,
+  registerMediaElement: registerMediaElementMock,
+}));
+const playbackCapabilities = {
+  platform: "linux",
+  logicalCores: 8,
+  totalMemoryMB: 32768,
+  hardwareDecodeDetected: false,
+  hardwareDecodeGuaranteed: false,
+  proxyAvailable: true,
+};
+const playbackCapabilityStatus =
+  "Linux: hardware video decode was not detected; software decoding is likely.";
+const usePlaybackCapabilitiesMock = vi.fn(() => ({
+  capabilities: playbackCapabilities,
+  statusText: playbackCapabilityStatus,
+}));
+const activeWindowWork = {
+  isSuspended: false,
+  reason: null,
+  activity: { active: true },
+};
+const useWindowWorkSuspensionMock = vi.fn(() => activeWindowWork);
+const playbackDecision = {
+  mode: "balanced",
+  target: 3,
+  safetyCap: 6,
+  cleanWindows: 2,
+  health: "healthy",
+  reasons: [],
+};
+const useAdaptivePlaybackPolicyMock = vi.fn(() => playbackDecision);
+const setThumbSuspendedMock = vi.fn();
+const resetThumbnailGenerationMock = vi.fn();
 const contextMenuReturn = {
   contextMenu: { visible: false, position: { x: 0, y: 0 }, contextId: null },
   showOnItem: vi.fn(),
@@ -98,6 +141,7 @@ const masonryReturn = {
   progressiveMaxVisibleNumber: 0,
   activationTarget: 0,
   activationIds: [],
+  centerPriorityIds: [],
   activationIdSet: new Set(),
   virtualItems: [],
   totalHeight: 0,
@@ -189,23 +233,43 @@ vi.mock("./components/RecentFolders", () => ({
   __esModule: true,
   default: () => null,
 }));
-vi.mock("./components/MetadataPanel", () => ({
-  __esModule: true,
-  default: () => null,
-}));
+vi.mock("./components/MetadataPanel", async () => {
+  const ReactModule = await vi.importActual("react");
+  return {
+    __esModule: true,
+    default: ReactModule.default.forwardRef(() => null),
+  };
+});
 vi.mock("./components/HeaderBar", () => ({
   __esModule: true,
   default: (props) => {
     headerBarSpy(props);
     return (
-      <button
-        type="button"
-        aria-label="Play audio on hover"
-        aria-pressed={Boolean(props.hoverAudioEnabled)}
-        onClick={() => props.onHoverAudioToggle?.()}
-      >
-        Hover audio
-      </button>
+      <>
+        <button
+          type="button"
+          aria-label="Play audio on hover"
+          aria-pressed={Boolean(props.hoverAudioEnabled)}
+          onClick={() => props.onHoverAudioToggle?.()}
+        >
+          Hover audio
+        </button>
+        <button
+          type="button"
+          aria-label="Use Static + Hover playback"
+          onClick={() => props.onPlaybackModeChange?.("static-hover")}
+        >
+          Static + Hover
+        </button>
+        <button
+          type="button"
+          aria-label="Toggle proxy playback"
+          aria-pressed={Boolean(props.proxyPlaybackEnabled)}
+          onClick={() => props.onProxyPlaybackToggle?.()}
+        >
+          Proxy playback
+        </button>
+      </>
     );
   },
 }));
@@ -233,9 +297,13 @@ vi.mock("./hooks/useRecentFolders", () => ({
   __esModule: true,
   default: (...args) => useRecentFoldersMock(...args),
 }));
-vi.mock("./hooks/ui-perf/useLongTaskFlag", () => ({
+vi.mock("./hooks/video-collection/usePlaybackTelemetry", () => ({
   __esModule: true,
-  default: (...args) => useLongTaskFlagMock(...args),
+  default: (...args) => usePlaybackTelemetryMock(...args),
+}));
+vi.mock("./hooks/video-collection/useAdaptivePlaybackPolicy", () => ({
+  __esModule: true,
+  default: (...args) => useAdaptivePlaybackPolicyMock(...args),
 }));
 vi.mock("./hooks/ui-perf/useInitGate", () => ({
   __esModule: true,
@@ -296,6 +364,20 @@ vi.mock("./app/hooks/useElectronFolderLifecycle", () => ({
   __esModule: true,
   useElectronFolderLifecycle: (...args) => useElectronLifecycleMock(...args),
 }));
+vi.mock("./app/hooks/useWindowWorkSuspension", () => ({
+  __esModule: true,
+  default: (...args) => useWindowWorkSuspensionMock(...args),
+}));
+vi.mock("./app/hooks/usePlaybackCapabilities", () => ({
+  __esModule: true,
+  default: (...args) => usePlaybackCapabilitiesMock(...args),
+}));
+vi.mock("./services/thumbService", () => ({
+  thumbService: {
+    setSuspended: (...args) => setThumbSuspendedMock(...args),
+    resetGeneration: (...args) => resetThumbnailGenerationMock(...args),
+  },
+}));
 vi.mock("./config/featureFlags", () => ({
   __esModule: true,
   default: { stableViewFixes: false, stableViewAnchoring: false },
@@ -311,10 +393,23 @@ afterEach(() => {
     orderedIds: [],
     orderForRange: [],
     activationIds: [],
+    centerPriorityIds: [],
     activationIdSet: new Set(),
     virtualItems: [],
     totalHeight: 0,
   });
+  useWindowWorkSuspensionMock.mockReturnValue(activeWindowWork);
+  usePlaybackCapabilitiesMock.mockReturnValue({
+    capabilities: playbackCapabilities,
+    statusText: playbackCapabilityStatus,
+  });
+  usePlaybackTelemetryMock.mockReturnValue({
+    telemetry: playbackTelemetry,
+    hadLongTaskRecently: false,
+    registerMediaElement: registerMediaElementMock,
+  });
+  useAdaptivePlaybackPolicyMock.mockReturnValue(playbackDecision);
+  delete window.electronAPI;
 });
 
 describe("App hook composition", () => {
@@ -328,9 +423,21 @@ describe("App hook composition", () => {
     expect(useFilterStateMock).toHaveBeenCalled();
     expect(useMasonryLayoutMock).toHaveBeenCalled();
     expect(useZoomControlsMock).toHaveBeenCalled();
+    expect(useWindowWorkSuspensionMock).toHaveBeenCalledWith();
+    expect(usePlaybackCapabilitiesMock).toHaveBeenCalledWith();
+    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({ suspended: false });
+    expect(useInitGateMock).toHaveBeenCalledWith({
+      perFrame: 6,
+      suspended: false,
+    });
 
     const electronArgs = useElectronLifecycleMock.mock.calls[0][0];
     expect(typeof electronArgs.setZoomLevelFromSettings).toBe("function");
+    expect(typeof electronArgs.setPlaybackMode).toBe("function");
+    expect(typeof electronArgs.setProxyPlaybackEnabled).toBe("function");
+    expect(typeof electronArgs.resetThumbnailGeneration).toBe("function");
+    electronArgs.resetThumbnailGeneration("folder-change");
+    expect(resetThumbnailGenerationMock).toHaveBeenCalledWith("folder-change");
 
     const filterArgs = useFilterStateMock.mock.calls[0][0];
     expect(filterArgs.videos).toBe(electronVideos);
@@ -342,7 +449,112 @@ describe("App hook composition", () => {
     const zoomArgs = useZoomControlsMock.mock.calls[0][0];
     expect(typeof zoomArgs.runWithStableAnchor).toBe("function");
 
+    expect(useAdaptivePlaybackPolicyMock).toHaveBeenCalledWith({
+      mode: "balanced",
+      visibleCount: 0,
+      telemetry: playbackTelemetry,
+      capabilities: playbackCapabilities,
+      averagePixelArea: 1280 * 720,
+      suspended: false,
+    });
+
+    const collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(collectionArgs).toMatchObject({
+      workSuspended: false,
+      playbackMode: "balanced",
+      decoderTarget: playbackDecision.target,
+      selectedIds: selectionMock.selected,
+      centerPriorityIds: masonryReturn.centerPriorityIds,
+      hoveredId: null,
+    });
+    expect(electronArgs.resetMediaScheduler).toBe(
+      collectionArgs.mediaScheduler.reset
+    );
+
+    const trashArgs = useTrashIntegrationMock.mock.calls.at(-1)?.[0];
+    expect(trashArgs).toMatchObject({
+      workSuspended: false,
+      mediaScheduler: collectionArgs.mediaScheduler,
+    });
+
+    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    expect(headerProps).toMatchObject({
+      playbackMode: "balanced",
+      playbackDecision,
+      playbackCapabilityStatus,
+      proxyPlaybackEnabled: false,
+      proxyPlaybackAvailable: true,
+      workSuspended: false,
+    });
+    expect(setThumbSuspendedMock).toHaveBeenCalledWith(false);
+
     result.unmount();
+    expect(setThumbSuspendedMock).toHaveBeenCalledWith(true);
+  });
+
+  test("propagates minimized-window suspension through all expensive work", async () => {
+    useWindowWorkSuspensionMock.mockReturnValue({
+      isSuspended: true,
+      reason: "window-minimized",
+      activity: { active: false, minimized: true },
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({ suspended: true });
+    expect(useInitGateMock).toHaveBeenCalledWith({
+      perFrame: 6,
+      suspended: true,
+    });
+    expect(useAdaptivePlaybackPolicyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ suspended: true })
+    );
+
+    const collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(collectionArgs.workSuspended).toBe(true);
+
+    const trashArgs = useTrashIntegrationMock.mock.calls.at(-1)?.[0];
+    expect(trashArgs.workSuspended).toBe(true);
+
+    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    expect(headerProps.workSuspended).toBe(true);
+
+    const overlayProps = loadingOverlaySpy.mock.calls.at(-1)?.[0];
+    expect(overlayProps.workSuspensionReason).toBe("window-minimized");
+    expect(setThumbSuspendedMock).toHaveBeenCalledWith(true);
+  });
+
+  test("persists explicit playback and proxy controls", async () => {
+    const saveSettingsPartial = vi.fn();
+    window.electronAPI = { saveSettingsPartial };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use Static + Hover playback" })
+    );
+
+    let headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    let collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(headerProps.playbackMode).toBe("static-hover");
+    expect(collectionArgs.playbackMode).toBe("static-hover");
+    expect(saveSettingsPartial).toHaveBeenCalledWith({
+      playbackMode: "static-hover",
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle proxy playback" })
+    );
+
+    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    expect(headerProps.proxyPlaybackEnabled).toBe(true);
+    expect(saveSettingsPartial).toHaveBeenCalledWith({
+      proxyPlaybackEnabled: true,
+    });
   });
 
   test("wires Hover audio header toggle into useVideoCollection state", async () => {
@@ -387,6 +599,7 @@ describe("App hook composition", () => {
       orderedIds: videos.map((video) => video.id),
       orderForRange: videos.map((video) => video.id),
       activationIds: positions.map((position) => position.id),
+      centerPriorityIds: ["video-2", "video-1"],
       activationIdSet: new Set(positions.map((position) => position.id)),
       virtualItems: positions,
       totalHeight: 1600,
@@ -405,6 +618,15 @@ describe("App hook composition", () => {
       ([props]) => props.video.id === "video-1"
     )?.[0];
     expect(firstProps).toBeTruthy();
+    expect(firstProps).toMatchObject({
+      workSuspended: false,
+      proxyPlaybackEnabled: false,
+      registerMediaElement: registerMediaElementMock,
+    });
+
+    const collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(collectionArgs.centerPriorityIds).toBe(masonryReturn.centerPriorityIds);
+    expect(collectionArgs.decoderTarget).toBe(playbackDecision.target);
 
     const renderCountBeforeUnrelatedParentRender = videoCardSpy.mock.calls.length;
     rendered.rerender(<App />);
@@ -423,6 +645,19 @@ describe("App hook composition", () => {
     expect(lastProps.onVideoPause).toBe(firstProps.onVideoPause);
     expect(lastProps.onPlayError).toBe(firstProps.onPlayError);
     expect(lastProps.onHover).toBe(firstProps.onHover);
+
+    const markHover = useVideoCollectionMock.mock.results.at(-1)?.value.markHover;
+    act(() => firstProps.onHover("video-1"));
+    expect(useVideoCollectionMock.mock.calls.at(-1)?.[0].hoveredId).toBe(
+      "video-1"
+    );
+    expect(markHover).toHaveBeenCalledWith("video-1");
+
+    const hoverRenderMarkHover =
+      useVideoCollectionMock.mock.results.at(-1)?.value.markHover;
+    act(() => firstProps.onUnmount("video-1"));
+    expect(useVideoCollectionMock.mock.calls.at(-1)?.[0].hoveredId).toBeNull();
+    expect(hoverRenderMarkHover).toHaveBeenCalledWith(null);
 
     act(() => firstProps.onVideoLoad("video-1", 16 / 9));
     const loadedProps = videoCardSpy.mock.calls

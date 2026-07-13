@@ -3,6 +3,9 @@ import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
 
+const EMPTY_SET = new Set();
+const EMPTY_IDS = Object.freeze([]);
+
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,
   batchSize: 50,
@@ -32,6 +35,12 @@ export default function useVideoCollection({
   hoverAudioEnabled = false,
   mediaScheduler = null,
   playbackSuspended = false,
+  workSuspended = false,
+  playbackMode = "balanced",
+  decoderTarget = null,
+  selectedIds = EMPTY_SET,
+  centerPriorityIds = EMPTY_IDS,
+  hoveredId,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -71,6 +80,7 @@ export default function useVideoCollection({
       forceInterval: !!forceInterval,
       maxVisible,
       materializeAll: true,
+      suspended: workSuspended,
     }
   );
 
@@ -133,8 +143,13 @@ export default function useVideoCollection({
     cappedDesiredActiveCount && cappedDesiredActiveCount > 0
       ? Math.floor(cappedDesiredActiveCount)
       : limitedVisibleCount;
-  const maxDecoders = playbackSuspended
+  const policyDecoderTarget = Number.isFinite(decoderTarget)
+    ? Math.max(0, Math.floor(decoderTarget))
+    : null;
+  const maxDecoders = playbackSuspended || workSuspended
     ? 0
+    : policyDecoderTarget !== null
+      ? policyDecoderTarget
     : Number.isFinite(playingCap) && playingCap > 0
       ? playingCap
       : limitedVisibleCount;
@@ -167,6 +182,7 @@ export default function useVideoCollection({
     suspendEvictions,
     mediaScheduler,
     maxDecoders,
+    workSuspended,
   });
 
   // Layer 3: Play orchestration (Business logic)
@@ -187,7 +203,11 @@ export default function useVideoCollection({
       maxPlaying: maxDecoders,
       hoverAudioEnabled,
       mediaScheduler: slotScheduler,
-      playbackSuspended,
+      playbackSuspended: playbackSuspended || workSuspended,
+      playbackMode,
+      selectedIds,
+      centerPriorityIds,
+      hoveredId,
     });
 
   return {

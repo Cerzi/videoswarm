@@ -21,8 +21,9 @@ import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
 import useRecentFolders from "./hooks/useRecentFolders";
-import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
+import usePlaybackTelemetry from "./hooks/video-collection/usePlaybackTelemetry";
+import useAdaptivePlaybackPolicy from "./hooks/video-collection/useAdaptivePlaybackPolicy";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
@@ -54,7 +55,14 @@ import { useMasonryLayout } from "./app/hooks/useMasonryLayout";
 import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
+import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
+import usePlaybackCapabilities from "./app/hooks/usePlaybackCapabilities";
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
+import { thumbService } from "./services/thumbService";
+import {
+  DEFAULT_PLAYBACK_MODE,
+  normalizePlaybackMode,
+} from "./playback/playbackPolicy";
 
 const clampNumber = (value, min, max) =>
   Math.max(min, Math.min(max, value));
@@ -69,6 +77,10 @@ function App() {
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
+  const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
+  const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
+  const [hoveredVideoId, setHoveredVideoId] = useState(null);
+  const hoveredVideoIdRef = useRef(null);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
@@ -93,7 +105,24 @@ function App() {
   const mediaScheduler = mediaSchedulerRef.current;
   const closeFullScreenRef = useRef(() => {});
 
-  const { scheduleInit } = useInitGate({ perFrame: 6 });
+  const { isSuspended: workSuspended, reason: workSuspensionReason } =
+    useWindowWorkSuspension();
+  const { capabilities: playbackCapabilities, statusText: playbackCapabilityStatus } =
+    usePlaybackCapabilities();
+  const {
+    telemetry: playbackTelemetry,
+    hadLongTaskRecently,
+    registerMediaElement,
+  } = usePlaybackTelemetry({ suspended: workSuspended });
+  const { scheduleInit } = useInitGate({
+    perFrame: 6,
+    suspended: workSuspended,
+  });
+
+  useEffect(() => {
+    thumbService.setSuspended(workSuspended);
+    return () => thumbService.setSuspended(true);
+  }, [workSuspended]);
 
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
@@ -237,6 +266,8 @@ function App() {
     groupByFolders,
     setGroupByFolders,
     setRandomSeed,
+    setPlaybackMode,
+    setProxyPlaybackEnabled,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
     setVisibleVideos,
@@ -244,6 +275,7 @@ function App() {
     setLoadingVideos,
     setActualPlaying,
     resetMediaScheduler: mediaScheduler.reset,
+    resetThumbnailGeneration: thumbService.resetGeneration,
     refreshTagList: invokeRefreshTagList,
     addRecentFolder,
   });
@@ -290,6 +322,7 @@ function App() {
     progressiveMaxVisibleNumber,
     activationTarget: activationTargetCount,
     activationIds,
+    centerPriorityIds,
     activationIdSet,
     virtualItems,
     totalHeight: masonryTotalHeight,
@@ -350,8 +383,6 @@ function App() {
     (id) => activationWindowRef.current.has(id),
     []
   );
-
-  const { hadLongTaskRecently } = useLongTaskFlag();
 
   const displayedVideoIds = useMemo(
     () => new Set(orderForRange),
@@ -889,6 +920,7 @@ function App() {
     beginMediaMutation,
     endMediaMutation,
     mediaScheduler,
+    workSuspended,
     setVideos,
     setSelected: selection.setSelected,
     setLoadedIds: setLoadedVideos,
@@ -947,6 +979,33 @@ function App() {
   } = useFullScreenModal(displayVideos);
   closeFullScreenRef.current = closeFullScreen;
 
+  const visibleAveragePixelArea = useMemo(() => {
+    let total = 0;
+    let count = 0;
+    const candidateIds = visibleVideos.size
+      ? visibleVideos
+      : activationWindow.ids;
+    for (const id of candidateIds) {
+      const dimensions = videosById.get(id)?.dimensions;
+      const width = Number(dimensions?.width);
+      const height = Number(dimensions?.height);
+      if (width > 0 && height > 0) {
+        total += width * height;
+        count += 1;
+      }
+    }
+    return count ? total / count : 1280 * 720;
+  }, [activationWindow.ids, videosById, visibleVideos]);
+
+  const playbackDecision = useAdaptivePlaybackPolicy({
+    mode: playbackMode,
+    visibleCount: visibleVideos.size,
+    telemetry: playbackTelemetry,
+    capabilities: playbackCapabilities,
+    averagePixelArea: visibleAveragePixelArea,
+    suspended: workSuspended || Boolean(fullScreenVideo),
+  });
+
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
     videos: orderedVideos,
@@ -972,6 +1031,12 @@ function App() {
     hoverAudioEnabled,
     mediaScheduler,
     playbackSuspended: Boolean(fullScreenVideo),
+    workSuspended,
+    playbackMode,
+    decoderTarget: playbackDecision.target,
+    selectedIds: selection.selected,
+    centerPriorityIds,
+    hoveredId: hoveredVideoId,
   });
 
   useEffect(() => {
@@ -1062,7 +1127,10 @@ function App() {
     collectionCallbacksRef.current?.reportPlayerCreationFailure?.();
   }, []);
   const handleVideoHover = useCallback((videoId) => {
-    collectionCallbacksRef.current?.markHover?.(videoId);
+    const nextId = videoId || null;
+    hoveredVideoIdRef.current = nextId;
+    setHoveredVideoId(nextId);
+    collectionCallbacksRef.current?.markHover?.(nextId);
   }, []);
   const handleHoverAudioStart = useCallback((videoId) => {
     collectionCallbacksRef.current?.onCardHoverAudioStart?.(videoId);
@@ -1180,6 +1248,11 @@ function App() {
       setLoadedVideos((prev) => updateSetMembership(prev, videoId, false));
       setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
       setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+      if (hoveredVideoIdRef.current === videoId) {
+        hoveredVideoIdRef.current = null;
+        setHoveredVideoId(null);
+        collectionCallbacksRef.current?.markHover?.(null);
+      }
     }, []);
 
     const handleMediaInvalidated = useCallback((videoId) => {
@@ -1212,6 +1285,22 @@ function App() {
 
   const toggleHoverAudio = useCallback(() => {
     setHoverAudioEnabled((prev) => !prev);
+  }, []);
+
+  const handlePlaybackModeChange = useCallback((value) => {
+    const next = normalizePlaybackMode(value);
+    setPlaybackMode(next);
+    window.electronAPI?.saveSettingsPartial?.({ playbackMode: next });
+  }, []);
+
+  const toggleProxyPlayback = useCallback(() => {
+    setProxyPlaybackEnabled((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({
+        proxyPlaybackEnabled: next,
+      });
+      return next;
+    });
   }, []);
 
   const handleRenderLimitStepChange = useCallback(
@@ -1429,6 +1518,10 @@ function App() {
             stage={loadingStage}
             progress={loadingProgress}
             memoryStatus={videoCollection.memoryStatus}
+            playbackDecision={playbackDecision}
+            playbackMode={playbackMode}
+            playbackTelemetry={playbackTelemetry}
+            workSuspensionReason={workSuspensionReason}
             onCancel={cancelFolderLoad}
           />
 
@@ -1442,6 +1535,14 @@ function App() {
             toggleFilenames={toggleFilenames}
             hoverAudioEnabled={hoverAudioEnabled}
             onHoverAudioToggle={toggleHoverAudio}
+            playbackMode={playbackMode}
+            onPlaybackModeChange={handlePlaybackModeChange}
+            playbackDecision={playbackDecision}
+            playbackCapabilityStatus={playbackCapabilityStatus}
+            proxyPlaybackEnabled={proxyPlaybackEnabled}
+            onProxyPlaybackToggle={toggleProxyPlayback}
+            proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
+            workSuspended={workSuspended}
             renderLimitStep={renderLimitStep}
             renderLimitLabel={renderLimitLabel}
             renderLimitMaxStep={RENDER_LIMIT_STEPS}
@@ -1647,6 +1748,8 @@ function App() {
                         isVisible={visibleVideos.has(video.id)}
                         isPlaying={videoCollection.isVideoPlaying(video.id)}
                         playbackSuspended={Boolean(fullScreenVideo)}
+                        workSuspended={workSuspended}
+                        proxyPlaybackEnabled={proxyPlaybackEnabled}
                         isNear={ioRegistry.isNear}
                         onStartLoading={handleVideoStartLoading}
                         onStopLoading={handleVideoStopLoading}
@@ -1667,6 +1770,7 @@ function App() {
                         onHoverAudioStart={handleHoverAudioStart}
                         onHoverAudioEnd={handleHoverAudioEnd}
                         scheduleInit={scheduleInit}
+                        registerMediaElement={registerMediaElement}
                       />
                     </div>
                   );
@@ -1703,6 +1807,7 @@ function App() {
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
               mediaScheduler={mediaScheduler}
+              workSuspended={workSuspended}
             />
           )}
 

@@ -398,6 +398,22 @@ export function useMasonryLayout({
     () => activationPositions.map((position) => position.id),
     [activationPositions]
   );
+  const centerPriorityIds = useMemo(() => {
+    const viewportCenter = scrollTop + viewportHeight / 2;
+    return activationPositions
+      .map((position, index) => ({
+        id: position.id,
+        index,
+        distance: Math.abs(
+          position.y + position.height / 2 - viewportCenter
+        ),
+      }))
+      .sort(
+        (left, right) =>
+          left.distance - right.distance || left.index - right.index
+      )
+      .map((entry) => entry.id);
+  }, [activationPositions, scrollTop, viewportHeight]);
   const activationIdSet = useMemo(() => new Set(activationIds), [activationIds]);
 
   const virtualItems = useMemo(
@@ -589,6 +605,7 @@ export function useMasonryLayout({
     progressiveMaxVisibleNumber,
     activationTarget,
     activationIds,
+    centerPriorityIds,
     activationIdSet,
     virtualItems,
     totalHeight: layout.totalHeight,

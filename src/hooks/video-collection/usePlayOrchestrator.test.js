@@ -219,4 +219,60 @@ describe('usePlayOrchestrator', () => {
     });
     expect(result.current.getDecoderLease(nextId)).toBe(nextLease);
   });
+
+  test('prioritizes hover, selection, then viewport center', () => {
+    const visible = setOf(['edge', 'selected', 'center', 'hover']);
+    const loaded = setOf(['edge', 'selected', 'center', 'hover']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 3,
+        centerPriorityIds: ['center', 'selected', 'edge', 'hover'],
+        selectedIds: setOf(['selected']),
+        hoveredId: 'hover',
+      })
+    );
+
+    expect(result.current.playingSet).toEqual(
+      new Set(['hover', 'selected', 'center'])
+    );
+  });
+
+  test('Static + Hover admits only hovered and selected visible cards', () => {
+    const visible = setOf(['still', 'selected', 'hover']);
+    const loaded = setOf(['still', 'selected', 'hover']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 3,
+          playbackMode: 'static-hover',
+          selectedIds: setOf(['selected']),
+          hoveredId: 'hover',
+          centerPriorityIds: ['still', 'selected', 'hover'],
+        },
+      }
+    );
+
+    expect(result.current.playingSet).toEqual(new Set(['hover', 'selected']));
+    const hoverLease = result.current.getDecoderLease('hover');
+    act(() => {
+      rerender({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 3,
+        playbackMode: 'static-hover',
+        selectedIds: setOf(['selected']),
+        hoveredId: null,
+        centerPriorityIds: ['still', 'selected', 'hover'],
+      });
+    });
+    expect(result.current.playingSet).toEqual(new Set(['selected']));
+    act(() => {
+      expect(result.current.reportPaused('hover', hoverLease)).toBe(true);
+    });
+  });
 });

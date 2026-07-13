@@ -60,6 +60,11 @@ export function useProgressiveList(
     // When true, return the full list while still tracking the progressive budget.
     // Useful for de-windowed DOM renders that still want scheduler metrics.
     materializeAll = false,
+
+    // Stop all progressive scheduling and observers while the renderer is hidden
+    // or its BrowserWindow is minimized. The current budget is retained so work
+    // can resume without rebuilding the collection from the beginning.
+    suspended = false,
   } = options;
 
   const safe = Array.isArray(items) ? items : [];
@@ -134,7 +139,7 @@ export function useProgressiveList(
 
   // Attach scroll listener (pause while user is scrolling)
   useEffect(() => {
-    if (!pauseOnScroll) return;
+    if (!pauseOnScroll || suspended) return;
     const target =
       scrollRef?.current ??
       (typeof window !== "undefined" ? window : null);
@@ -152,12 +157,14 @@ export function useProgressiveList(
     return () => {
       target.removeEventListener("scroll", onScroll);
       if (scrollingTimeoutRef.current) clearTimeout(scrollingTimeoutRef.current);
+      scrollingTimeoutRef.current = null;
+      isScrollingRef.current = false;
     };
-  }, [scrollRef, pauseOnScroll, scrollIdleMs, shouldUseInterval]);
+  }, [scrollRef, pauseOnScroll, scrollIdleMs, shouldUseInterval, suspended]);
 
   // EXTERNAL recent-long-task signal → coalesce into the same ref with a short decay
   useEffect(() => {
-    if (!longTaskAdaptation) return;
+    if (!longTaskAdaptation || suspended) return;
     if (!hadLongTaskRecently) return;
 
     hadLongTaskRecentlyRef.current = true;
@@ -165,11 +172,16 @@ export function useProgressiveList(
     longTaskTimeoutRef.current = setTimeout(() => {
       hadLongTaskRecentlyRef.current = false;
     }, 800); // same decay window as the internal observer
-  }, [hadLongTaskRecently, longTaskAdaptation]);
+    return () => {
+      if (longTaskTimeoutRef.current) clearTimeout(longTaskTimeoutRef.current);
+      longTaskTimeoutRef.current = null;
+      hadLongTaskRecentlyRef.current = false;
+    };
+  }, [hadLongTaskRecently, longTaskAdaptation, suspended]);
 
   // INTERNAL Long Tasks API observer (where available)
   useEffect(() => {
-    if (!longTaskAdaptation || shouldUseInterval) return;
+    if (!longTaskAdaptation || shouldUseInterval || suspended) return;
     if (typeof window === "undefined" || typeof PerformanceObserver !== "function") return;
 
     let observer;
@@ -195,8 +207,10 @@ export function useProgressiveList(
         try { observer.disconnect(); } catch {}
       }
       if (longTaskTimeoutRef.current) clearTimeout(longTaskTimeoutRef.current);
+      longTaskTimeoutRef.current = null;
+      hadLongTaskRecentlyRef.current = false;
     };
-  }, [longTaskAdaptation, shouldUseInterval]);
+  }, [longTaskAdaptation, shouldUseInterval, suspended]);
 
   // Choose next batch size based on conditions (idle path only)
   const computeNextBatch = () => {
@@ -218,7 +232,7 @@ export function useProgressiveList(
 
   // Idle growth scheduler (preferred in real browsers)
   useEffect(() => {
-    if (allVisible || shouldUseInterval) return;
+    if (allVisible || shouldUseInterval || suspended) return;
 
     let cancelled = false;
 
@@ -268,6 +282,7 @@ export function useProgressiveList(
     allVisible,
     pauseOnScroll,
     shouldUseInterval,
+    suspended,
     // note: do not depend on visible/safe.length here; the setVisible closure handles it
   ]);
 
@@ -275,7 +290,7 @@ export function useProgressiveList(
   // (kept fixed for backward-compat with existing tests)
   useEffect(() => {
     if (!shouldUseInterval) return;
-    if (allVisible) return;
+    if (allVisible || suspended) return;
 
     const timer = setInterval(() => {
       setVisible((v) => {
@@ -287,7 +302,7 @@ export function useProgressiveList(
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs]);
+  }, [shouldUseInterval, allVisible, safe.length, batchSize, intervalMs, suspended]);
 
   const sliceCount = Math.min(visible, maxCapForRender);
   const materializedItems = materializeAll ? safe : safe.slice(0, sliceCount);

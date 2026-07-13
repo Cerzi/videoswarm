@@ -248,14 +248,16 @@ Acceptance criteria:
 
 ### 5. Linux-aware playback modes
 
+Status: **Implemented** (2026-07-13)
+
 Playback policy has three user-facing modes:
 
 - **Balanced:** adaptive decoder cap with viewport-center, hover, selection,
   and fullscreen priority.
 - **All Motion:** attempts to animate all visible cards within explicit safety
   limits.
-- **Static + Hover:** uses cached still or motion previews and activates the
-  original only on hover, selection, or fullscreen.
+- **Static + Hover:** retains a paused first-frame preview and activates motion
+  only on hover, selection, or fullscreen.
 
 The adaptive budget incorporates hardware concurrency, event-loop/frame delay,
 video pixel area, dropped-frame rate, measured working-set changes, and
@@ -264,6 +266,31 @@ thumbnail capture, and high-frequency polling.
 
 Optional generated proxies are stored under a bounded disk quota and never
 replace originals.
+
+One collection-wide sampler measures p95 animation-frame delay, long-task
+occupancy, decoded/dropped frame deltas from the exact registered media
+elements, source pixel area, whole-application working-set growth, and
+available system memory. Balanced policy reductions are immediate; recovery
+adds at most one decoder after three consecutive clean samples. All Motion is
+still bounded by platform, core, memory, source-pixel, and absolute safety
+ceilings. Static + Hover retains paused first-frame media for nearby cards and
+admits decoders only for hovered or selected cards; fullscreen uses its
+separate scheduler lane.
+
+Page Visibility and main-process BrowserWindow activity jointly suspend work.
+Suspension physically detaches grid/fullscreen sources, drives every scheduler
+lane to zero, cancels queued initialization and thumbnail work, pauses
+progressive growth, telemetry, and memory polling, and cancels renderer-owned
+proxy jobs. Electron background throttling is enabled. Restoring the window
+resumes from current collection state rather than rebuilding the folder.
+
+The optional profile-local proxy cache returns the original immediately while
+one background ffmpeg worker runs. It permits four additional pending jobs,
+uses a 120-second timeout, caps stdout/stderr at 1 MiB/256 KiB, cancels work on
+owner, profile, window, or app teardown, and uses atomic publication. Completed
+proxies are capped at 512 entries and 1 GiB with disk-byte LRU eviction. A
+proxy is selected only on a subsequent media load after it is cached; originals
+remain untouched and are always the fallback.
 
 Acceptance criteria:
 
@@ -382,8 +409,8 @@ Acceptance criteria:
 | Atomic media loader/decoder scheduler | **Implemented** | Opaque scoped leases, exact loader/resident caps, priority wake-up, acknowledged decoder handoff, bounded auxiliary lanes, and React-mirror integration landed in `e804b97` and `17ced36`. |
 | Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen owns its element, source, blob URL, timeout, and dedicated decoder lease; navigation, close, and failure release every owned resource. Grid suspension remains declarative; landed in `331a360` and `17ced36`. |
 | Destructive and one-shot media lifecycle | **Implemented** | Trash blocks affected scheduler IDs while physical handles are released, and serialized frame capture uses a bounded auxiliary lease with deterministic cleanup; landed in `17ced36`. |
-| Linux playback modes and adaptive decoder budget | **Unimplemented** | Requires telemetry and UX controls. |
-| Hidden/minimized work suspension | **Unimplemented** | Background throttling is currently disabled. |
+| Linux playback modes and adaptive decoder budget | **Implemented** | Balanced, All Motion, and Static + Hover modes use source-pixel, frame-delay, long-task, dropped-frame, working-set, memory, and hardware inputs. Explicit UI controls, conservative Linux capability wording, and bounded proxy fallback are covered by focused policy, telemetry, IPC, card, and app tests. |
+| Hidden/minimized work suspension | **Implemented** | Page Visibility plus BrowserWindow activity drive scheduler limits to zero, physically release media, cancel thumbnail/proxy work, and stop progressive/high-frequency polling. Electron background throttling is enabled. |
 | Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
 | Asynchronous thumbnail IPC and persistence | **Unimplemented** | Current bridge uses synchronous IPC. |
 | Folder tree, scope control, and sibling cycling | **Unimplemented** | Requires root/directory state. |
@@ -408,10 +435,11 @@ streaming or virtualization:
    elements immediately, and stop the scheduler's animation frame while idle.
 6. **Implemented** — Add focused regression tests for these guarantees.
 
-The scan still returns one final array after this slice. Incremental batches,
-bounded enrichment workers, and adaptive Linux playback remain explicitly
-**Unimplemented** until their acceptance criteria land. Live phase telemetry is
-implemented in the following slice without claiming incremental delivery.
+The scan still returns one final array after this slice. Incremental batches
+and bounded enrichment workers remain **Unimplemented**. Adaptive Linux
+playback was outside this initial slice and is now implemented in its dedicated
+slice below. Live phase telemetry is implemented in the following slice without
+claiming incremental delivery.
 
 ## Live scan feedback implementation slice
 
@@ -569,15 +597,45 @@ The following adjacent work remains **Unimplemented**:
 
 The following adjacent work remains **Unimplemented**:
 
-- Adaptive decoder budgets, Linux playback modes, dropped-frame/event-loop
-  telemetry, and user-facing policy controls remain part of Section 5.
-- Hidden/minimized suspension remains part of Section 5; background throttling
-  is still disabled by the current Electron configuration.
 - Process-lifetime cache limits, asynchronous thumbnail IPC, and bounded
   external child-process work remain part of Section 6.
 - Electron smoke coverage and Linux CPU/RSS/file-handle/playback soak budgets
-  remain part of Section 8. The current scheduler coverage is deterministic
-  Vitest/jsdom coverage rather than a hardware benchmark.
+  remain part of Section 8. Capability reporting is deliberately observational
+  and does not promise Linux/NVIDIA hardware video decoding; current scheduler
+  coverage is deterministic Vitest/jsdom coverage rather than a hardware
+  benchmark.
+
+## Linux-aware playback implementation slice
+
+1. **Implemented** — Add persisted Balanced, All Motion, and Static + Hover
+   controls with live decoder target/safety-cap feedback and explicit Linux
+   wording that acceleration is detected, not guaranteed.
+2. **Implemented** — Derive conservative decoder ceilings from platform, cores,
+   system/available memory, and average source pixel area. Derate immediately
+   on dropped frames, p95 frame delay, long-task occupancy, working-set growth,
+   or low memory and recover one slot only after three clean windows.
+3. **Implemented** — Prioritize hover, selected cards, then viewport-center
+   order while preserving the scheduler's exact pause acknowledgement. Keep
+   Static + Hover decoder eligibility limited to hover/selection and retain
+   fullscreen's dedicated lane.
+4. **Implemented** — Register exact media elements with one bounded telemetry
+   sampler and dispose registrations on every media ownership transition.
+5. **Implemented** — Combine renderer visibility and BrowserWindow activity to
+   suspend media, scheduler lanes, initialization, progressive rendering,
+   thumbnails, telemetry, memory polling, frame capture, and proxy generation;
+   enable Chromium background throttling.
+6. **Implemented** — Generate optional profile-local 720p proxies through one
+   bounded child-process runner with concurrency, pending-work, timeout,
+   output-buffer, owner-cancellation, atomic-publish, entry, and disk-byte
+   limits. Missing ffmpeg and failed generation fall back to originals.
+7. **Implemented** — Add policy, telemetry, capability, window-activity,
+   suspension, proxy/child-runner, settings, card-lifecycle, scheduler,
+   fullscreen, thumbnail, and application regressions; verify the full
+   renderer suite, production build, and unpacked Electron package.
+
+Hardware-specific Linux decode verification and performance soak thresholds
+remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
+video decoding.
 
 ## Migration and compatibility
 

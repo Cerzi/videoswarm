@@ -134,4 +134,33 @@ describe("useProgressiveList", () => {
 
     vi.useRealTimers();
   });
+
+  test("retains its budget without scheduling growth while suspended", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 200 }, (_, i) => i);
+
+    const { result, rerender } = renderHook(
+      ({ suspended }) =>
+        useProgressiveList(items, 40, 20, 5, {
+          forceInterval: true,
+          pauseOnScroll: false,
+          longTaskAdaptation: false,
+          suspended,
+        }),
+      { initialProps: { suspended: false } }
+    );
+
+    act(() => vi.advanceTimersByTime(5));
+    expect(result.current.visibleCount).toBe(60);
+
+    rerender({ suspended: true });
+    act(() => vi.advanceTimersByTime(100));
+    expect(result.current.visibleCount).toBe(60);
+
+    rerender({ suspended: false });
+    act(() => vi.advanceTimersByTime(5));
+    expect(result.current.visibleCount).toBe(80);
+
+    vi.useRealTimers();
+  });
 });

@@ -72,4 +72,38 @@ describe("useInitGate", () => {
     flushFrame();
     expect(task).not.toHaveBeenCalled();
   });
+
+  it("clears work while suspended and resumes without stale callbacks", () => {
+    const rendered = renderHook(
+      ({ suspended }) => useInitGate({ perFrame: 1, suspended }),
+      { initialProps: { suspended: false } }
+    );
+    const stale = vi.fn();
+    const current = vi.fn();
+
+    act(() => rendered.result.current.scheduleInit(stale));
+    rendered.rerender({ suspended: true });
+    flushFrame();
+    expect(stale).not.toHaveBeenCalled();
+
+    expect(rendered.result.current.scheduleInit(current)).toBeTypeOf("function");
+    expect(callbacks.size).toBe(0);
+    rendered.rerender({ suspended: false });
+    act(() => rendered.result.current.scheduleInit(current));
+    flushFrame();
+    expect(current).toHaveBeenCalledOnce();
+  });
+
+  it("bounds pending initialization work", () => {
+    const { result } = renderHook(() =>
+      useInitGate({ perFrame: 1, maxPending: 2 })
+    );
+    const calls = [vi.fn(), vi.fn(), vi.fn()];
+    act(() => calls.forEach((call) => result.current.scheduleInit(call)));
+    flushFrame();
+    flushFrame();
+    expect(calls[0]).toHaveBeenCalledOnce();
+    expect(calls[1]).toHaveBeenCalledOnce();
+    expect(calls[2]).not.toHaveBeenCalled();
+  });
 });

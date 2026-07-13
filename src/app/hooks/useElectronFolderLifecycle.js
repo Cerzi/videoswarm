@@ -10,6 +10,7 @@ import {
   getLoadingProgressPercent,
   mergeScanLoadingProgress,
 } from "../loading/scanLoadingStatus";
+import { normalizePlaybackMode } from "../../playback/playbackPolicy";
 
 const __DEV__ = import.meta.env.MODE !== "production";
 let directoryScanSequence = 0;
@@ -26,12 +27,15 @@ export function useElectronFolderLifecycle({
   groupByFolders,
   setGroupByFolders,
   setRandomSeed,
+  setPlaybackMode,
+  setProxyPlaybackEnabled,
   setZoomLevelFromSettings,
   setVisibleVideos,
   setLoadedVideos,
   setLoadingVideos,
   setActualPlaying,
   resetMediaScheduler,
+  resetThumbnailGeneration,
   refreshTagList,
   addRecentFolder,
 }) {
@@ -56,6 +60,8 @@ export function useElectronFolderLifecycle({
     setSortDir,
     setGroupByFolders,
     setRandomSeed,
+    setPlaybackMode,
+    setProxyPlaybackEnabled,
     setZoomLevelFromSettings,
   });
 
@@ -68,6 +74,8 @@ export function useElectronFolderLifecycle({
       setSortDir,
       setGroupByFolders,
       setRandomSeed,
+      setPlaybackMode,
+      setProxyPlaybackEnabled,
       setZoomLevelFromSettings,
     };
   }, [
@@ -78,11 +86,14 @@ export function useElectronFolderLifecycle({
     setSortDir,
     setGroupByFolders,
     setRandomSeed,
+    setPlaybackMode,
+    setProxyPlaybackEnabled,
     setZoomLevelFromSettings,
   ]);
 
   const resetDerivedVideoState = useCallback(() => {
     resetMediaScheduler?.();
+    resetThumbnailGeneration?.();
     clearSelection();
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
@@ -91,6 +102,7 @@ export function useElectronFolderLifecycle({
   }, [
     clearSelection,
     resetMediaScheduler,
+    resetThumbnailGeneration,
     setActualPlaying,
     setLoadedVideos,
     setLoadingVideos,
@@ -353,6 +365,8 @@ export function useElectronFolderLifecycle({
       setSortDir: applySortDir,
       setGroupByFolders: applyGroupByFolders,
       setRandomSeed: applyRandomSeed,
+      setPlaybackMode: applyPlaybackMode,
+      setProxyPlaybackEnabled: applyProxyPlaybackEnabled,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
 
@@ -377,6 +391,12 @@ export function useElectronFolderLifecycle({
       applyGroupByFolders(settings.groupByFolders);
     if (settings.randomSeed !== undefined)
       applyRandomSeed(settings.randomSeed);
+    if (settings.playbackMode !== undefined) {
+      applyPlaybackMode?.(normalizePlaybackMode(settings.playbackMode));
+    }
+    if (settings.proxyPlaybackEnabled !== undefined) {
+      applyProxyPlaybackEnabled?.(Boolean(settings.proxyPlaybackEnabled));
+    }
   }, []);
 
   const loadSettingsFromMain = useCallback(

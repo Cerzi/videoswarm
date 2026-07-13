@@ -167,10 +167,25 @@ describe("useMasonryLayout virtual layout", () => {
     expect(result.current.activationIds).toEqual(
       result.current.activationIds.filter((id, index, ids) => ids.indexOf(id) === index)
     );
+    expect(new Set(result.current.centerPriorityIds)).toEqual(
+      new Set(result.current.activationIds)
+    );
     expect(result.current.activationTarget).toBeLessThanOrEqual(600);
     expect(result.current.mountedVideoCount).toBe(result.current.virtualItems.length);
     expect(result.current.totalHeight).toBeGreaterThan(600);
     expect(result.current.getPositionById("clip-999")).toBeNull();
+  });
+
+  it("orders decoder priority by logical distance from the viewport center", () => {
+    const rendered = renderLayout({ videos: makeVideos(200) });
+    const viewportCenter =
+      rendered.scrollElement.scrollTop + rendered.scrollElement.clientHeight / 2;
+    const distances = rendered.result.current.centerPriorityIds.map((id) => {
+      const position = rendered.result.current.getPositionById(id);
+      return Math.abs(position.y + position.height / 2 - viewportCenter);
+    });
+
+    expect(distances).toEqual([...distances].sort((a, b) => a - b));
   });
 
   it("batches aspect corrections and discards an override after the file changes", () => {

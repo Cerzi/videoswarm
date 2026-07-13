@@ -1,16 +1,24 @@
 import { useRef, useEffect, useCallback } from "react";
 
-export default function useInitGate({ perFrame = 6 } = {}) {
+export default function useInitGate({
+  perFrame = 6,
+  suspended = false,
+  maxPending = 256,
+} = {}) {
   const queueRef = useRef([]);
   const rafRef = useRef(0);
   const mountedRef = useRef(true);
   const perFrameRef = useRef(perFrame);
+  const suspendedRef = useRef(Boolean(suspended));
+  const maxPendingRef = useRef(maxPending);
 
   perFrameRef.current = Math.max(1, Number(perFrame) || 1);
+  suspendedRef.current = Boolean(suspended);
+  maxPendingRef.current = Math.max(1, Math.floor(Number(maxPending) || 1));
 
   const pump = useCallback(() => {
     rafRef.current = 0;
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || suspendedRef.current) return;
 
     let remaining = perFrameRef.current;
     while (remaining > 0 && queueRef.current.length) {
@@ -36,8 +44,20 @@ export default function useInitGate({ perFrame = 6 } = {}) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!suspended) return;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    queueRef.current.length = 0;
+  }, [suspended]);
+
   const scheduleInit = useCallback((fn) => {
-    if (!mountedRef.current || typeof fn !== "function") {
+    if (
+      !mountedRef.current ||
+      suspendedRef.current ||
+      typeof fn !== "function" ||
+      queueRef.current.length >= maxPendingRef.current
+    ) {
       return () => {};
     }
 

@@ -401,6 +401,30 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
     ).toBe(true);
   });
 
+  it("does not start native or renderer frame capture while work is suspended", async () => {
+    const notify = vi.fn();
+    const electronAPI = {
+      copyLastFrameFromFile: vi.fn(async () => ({ success: true })),
+      copyImageToClipboard: vi.fn(async () => ({ success: true })),
+    };
+    const mediaScheduler = {
+      reserveAuxiliaryDecoder: vi.fn(),
+    };
+
+    await actionRegistry[ActionIds.COPY_LAST_FRAME](
+      [{ fullPath: "/tmp/video.mp4", isElectronFile: true, name: "test" }],
+      { electronAPI, notify, mediaScheduler, workSuspended: true }
+    );
+
+    expect(electronAPI.copyLastFrameFromFile).not.toHaveBeenCalled();
+    expect(electronAPI.copyImageToClipboard).not.toHaveBeenCalled();
+    expect(mediaScheduler.reserveAuxiliaryDecoder).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(
+      "Restore the app before capturing a frame",
+      "error"
+    );
+  });
+
   it("seeks to the last frame when reusing an existing video element", async () => {
     const assignedTimes = [];
     const loopAssignments = [];

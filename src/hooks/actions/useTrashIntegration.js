@@ -11,6 +11,7 @@ export default function useTrashIntegration({
   beginMediaMutation,
   endMediaMutation,
   mediaScheduler,
+  workSuspended = false,
 
   // your real setters
   setVideos,            // (prev) => next array
@@ -115,6 +116,7 @@ export default function useTrashIntegration({
     beginMediaMutation,
     endMediaMutation,
     mediaScheduler,
+    workSuspended,
     onItemsRemoved,
   };
 }

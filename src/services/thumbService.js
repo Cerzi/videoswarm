@@ -6,6 +6,11 @@ const MAX_MEMORY_ENTRIES = 500;
 const queue = [];
 let activeCapture = false;
 let lastCaptureTimestamp = 0;
+let delayedTaskTimer = null;
+let activeTask = null;
+let suspended = false;
+let generation = 1;
+let taskSequence = 0;
 
 const memoryCache = new Map(); // signature -> { base64, capturedAt }
 const stateBySignature = new Map();
@@ -19,6 +24,7 @@ const metrics = {
   failures: 0,
   nativeHits: 0,
   skippedInvisible: 0,
+  cancelled: 0,
 };
 
 function now() {
@@ -45,6 +51,7 @@ function ensureState(path, signature) {
     state = {
       path,
       pending: false,
+      pendingTaskToken: null,
       lastSuccess: 0,
       cooldownUntil: 0,
       lastFailureLogged: 0,
@@ -60,7 +67,7 @@ function ensureState(path, signature) {
 }
 
 function checkNativeAvailability(state, path, signature) {
-  const api = window?.electronAPI;
+  const api = typeof window !== "undefined" ? window.electronAPI : null;
   if (!api?.thumbs?.get) {
     return false;
   }
@@ -88,28 +95,48 @@ function checkNativeAvailability(state, path, signature) {
   return state.nativeAvailable;
 }
 
-async function waitForStableFrame(video) {
+async function waitForStableFrame(task) {
+  let video = task?.videoElement;
   if (!video) return;
-  if (typeof video.requestVideoFrameCallback === "function") {
-    await new Promise((resolve) => {
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      try {
-        video.requestVideoFrameCallback(() => {
-          done();
-        });
-      } catch (error) {
-        done();
+
+  await new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = null;
+    let frameId = null;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      task.cancelWait = null;
+      video = null;
+      resolve();
+    };
+
+    task.cancelWait = () => {
+      if (
+        frameId !== null &&
+        typeof video?.cancelVideoFrameCallback === "function"
+      ) {
+        try {
+          video.cancelVideoFrameCallback(frameId);
+        } catch {}
       }
-      setTimeout(done, 180);
-    });
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, 160));
-  }
+      done();
+    };
+
+    if (typeof video.requestVideoFrameCallback === "function") {
+      try {
+        frameId = video.requestVideoFrameCallback(done);
+      } catch {
+        done();
+        return;
+      }
+      timeoutId = setTimeout(done, 180);
+      return;
+    }
+
+    timeoutId = setTimeout(done, 160);
+  });
 }
 
 function drawRoundedThumbnail(video, size = 96) {
@@ -186,108 +213,149 @@ function drawRoundedThumbnail(video, size = 96) {
   return canvas.toDataURL("image/png");
 }
 
-function cleanupState(signature) {
+function cleanupState(signature, taskToken = null) {
   const state = stateBySignature.get(signature);
-  if (state) {
+  if (state && (taskToken === null || state.pendingTaskToken === taskToken)) {
     state.pending = false;
+    state.pendingTaskToken = null;
   }
 }
 
+function isTaskCurrent(task) {
+  if (
+    !task ||
+    task.cancelled ||
+    suspended ||
+    task.generation !== generation
+  ) {
+    return false;
+  }
+
+  const state = stateBySignature.get(task.signature);
+  if (!state || state.pendingTaskToken !== task.token) return false;
+  const currentSignature = pathToSignature.get(task.path);
+  return !currentSignature || currentSignature === task.signature;
+}
+
+function cancelTask(task) {
+  if (!task || task.cancelled) return false;
+  task.cancelled = true;
+  metrics.cancelled += 1;
+  try {
+    task.cancelWait?.();
+  } catch {}
+  task.cancelWait = null;
+  cleanupState(task.signature, task.token);
+  task.videoElement = null;
+  task.isVisible = null;
+  return true;
+}
+
+function finalizeTask(task) {
+  if (!task) return;
+  cleanupState(task.signature, task.token);
+  task.videoElement = null;
+  task.isVisible = null;
+  task.cancelWait = null;
+}
+
 async function executeCapture(task) {
-  const { path, signature, videoElement, isVisible } = task;
-  const state = stateBySignature.get(signature);
-  if (!state) {
-    return;
-  }
+  if (!isTaskCurrent(task)) return;
+  if (!task.videoElement || typeof task.videoElement !== "object") return;
 
-  const currentSignature = pathToSignature.get(path);
-  if (currentSignature && currentSignature !== signature) {
-    cleanupState(signature);
-    return;
-  }
-
-  if (!videoElement || typeof videoElement !== "object") {
-    cleanupState(signature);
-    return;
-  }
-
-  const stillVisible = typeof isVisible === "function" ? isVisible() : true;
+  const stillVisible =
+    typeof task.isVisible === "function" ? task.isVisible() : true;
   if (!stillVisible) {
     metrics.skippedInvisible += 1;
-    cleanupState(signature);
     return;
   }
 
-  if (videoElement.readyState < 2) {
-    cleanupState(signature);
-    return;
-  }
-
-  if (videoElement.paused) {
-    cleanupState(signature);
-    return;
-  }
-
-  if (!videoElement.isConnected) {
-    cleanupState(signature);
-    return;
-  }
+  if (task.videoElement.readyState < 2) return;
+  if (task.videoElement.paused) return;
+  if (!task.videoElement.isConnected) return;
 
   metrics.attempted += 1;
   try {
-    await waitForStableFrame(videoElement);
-    if (typeof isVisible === "function" && !isVisible()) {
+    await waitForStableFrame(task);
+    if (!isTaskCurrent(task)) return;
+    if (typeof task.isVisible === "function" && !task.isVisible()) {
       metrics.skippedInvisible += 1;
-      cleanupState(signature);
       return;
     }
 
+    let videoElement = task.videoElement;
+    if (!videoElement?.isConnected) return;
     const dataUrl = drawRoundedThumbnail(videoElement);
-    remember(signature, dataUrl);
+    videoElement = null;
+    if (!isTaskCurrent(task)) return;
 
-    const api = window?.electronAPI;
+    const api = typeof window !== "undefined" ? window.electronAPI : null;
     if (!api?.thumbs?.put) {
       throw new Error("thumb:put unavailable");
     }
 
-    const response = api.thumbs.put({
-      path,
-      signature,
+    // Drop live renderer references before an asynchronous native write. The
+    // generation check immediately above guarantees suspended/stale work never
+    // starts a write after its frame wait completes.
+    task.videoElement = null;
+    task.isVisible = null;
+    const response = await Promise.resolve(api.thumbs.put({
+      path: task.path,
+      signature: task.signature,
       base64: dataUrl,
-    });
+    }));
+
+    if (!isTaskCurrent(task)) return;
 
     if (!response || response.ok !== true) {
       throw new Error(response?.error || "thumb:put failed");
     }
 
+    const state = stateBySignature.get(task.signature);
+    if (!state || state.pendingTaskToken !== task.token) return;
     const ts = now();
+    remember(task.signature, dataUrl);
     state.nativeAvailable = true;
     state.lastSuccess = ts;
     state.cooldownUntil = ts + PER_CARD_COOLDOWN_MS;
     metrics.succeeded += 1;
   } catch (error) {
+    if (!isTaskCurrent(task)) return;
+    const state = stateBySignature.get(task.signature);
+    if (!state || state.pendingTaskToken !== task.token) return;
     const ts = now();
     state.cooldownUntil = ts + FAILURE_COOLDOWN_MS;
     if (!state.lastFailureLogged || ts - state.lastFailureLogged > FAILURE_COOLDOWN_MS) {
-      console.warn(`[thumbs] Capture failed for ${path}:`, error);
+      console.warn(`[thumbs] Capture failed for ${task.path}:`, error);
       state.lastFailureLogged = ts;
     }
     metrics.failures += 1;
   } finally {
-    cleanupState(signature);
+    finalizeTask(task);
   }
 }
 
 function runNextTask() {
-  const task = queue.shift();
+  delayedTaskTimer = null;
+  if (suspended) {
+    activeCapture = false;
+    return;
+  }
+
+  let task = queue.shift();
+  while (task?.cancelled) task = queue.shift();
   if (!task) {
     activeCapture = false;
     return;
   }
 
+  activeTask = task;
   executeCapture(task)
     .catch(() => {})
     .finally(() => {
+      finalizeTask(task);
+      if (activeTask !== task) return;
+      activeTask = null;
       lastCaptureTimestamp = now();
       activeCapture = false;
       processQueue();
@@ -295,6 +363,7 @@ function runNextTask() {
 }
 
 function processQueue() {
+  if (suspended) return;
   if (activeCapture) return;
   if (!queue.length) return;
 
@@ -302,16 +371,41 @@ function processQueue() {
   const delay = Math.max(0, RATE_LIMIT_MS - sinceLast);
   activeCapture = true;
   if (delay > 0) {
-    setTimeout(runNextTask, delay);
+    delayedTaskTimer = setTimeout(runNextTask, delay);
   } else {
     runNextTask();
   }
 }
 
 function enqueue(task) {
+  if (suspended || task.generation !== generation) {
+    cancelTask(task);
+    return false;
+  }
   queue.push(task);
   metrics.scheduled += 1;
   processQueue();
+  return true;
+}
+
+function cancelPendingWork({ advanceGeneration = true } = {}) {
+  if (advanceGeneration) generation += 1;
+
+  if (delayedTaskTimer) {
+    clearTimeout(delayedTaskTimer);
+    delayedTaskTimer = null;
+  }
+
+  const queuedTasks = queue.splice(0, queue.length);
+  queuedTasks.forEach(cancelTask);
+  if (activeTask) cancelTask(activeTask);
+  activeTask = null;
+  activeCapture = false;
+
+  stateBySignature.forEach((state) => {
+    state.pending = false;
+    state.pendingTaskToken = null;
+  });
 }
 
 function shouldSkip(state) {
@@ -353,33 +447,52 @@ export function noteVideoMetadata(path, signature) {
 export const thumbService = {
   metrics,
   noteVideoMetadata,
+  setSuspended(nextSuspended) {
+    const next = Boolean(nextSuspended);
+    if (next === suspended) return suspended;
+    suspended = next;
+    if (suspended) {
+      cancelPendingWork({ advanceGeneration: true });
+    } else {
+      processQueue();
+    }
+    return suspended;
+  },
+  resetGeneration() {
+    cancelPendingWork({ advanceGeneration: true });
+    memoryCache.clear();
+    stateBySignature.clear();
+    pathToSignature.clear();
+    lastCaptureTimestamp = 0;
+    return generation;
+  },
   requestCapture(options) {
     const { path, signature, videoElement, isVisible, reason = "unknown" } =
       options || {};
 
-    if (!path || !signature || !videoElement) return;
-    if (!videoElement.isConnected) return;
+    if (suspended || !path || !signature || !videoElement) return false;
+    if (!videoElement.isConnected) return false;
 
     const state = ensureState(path, signature);
     metrics.requested += 1;
     state.lastRequested = now();
 
     if (shouldSkip(state)) {
-      return;
+      return false;
     }
 
     if (checkNativeAvailability(state, path, signature)) {
-      return;
+      return false;
     }
 
     const visibilityOk = typeof isVisible === "function" ? isVisible() : true;
     if (!visibilityOk) {
-      return;
+      return false;
     }
 
     const cacheEntry = memoryCache.get(signature);
     if (cacheEntry && cacheEntry.base64) {
-      const api = window?.electronAPI;
+      const api = typeof window !== "undefined" ? window.electronAPI : null;
       try {
         if (api?.thumbs?.put) {
           const response = api.thumbs.put({
@@ -391,7 +504,7 @@ export const thumbService = {
             state.nativeAvailable = true;
             state.cooldownUntil = now() + PER_CARD_COOLDOWN_MS;
             state.lastSuccess = now();
-            return;
+            return false;
           }
         }
       } catch (error) {
@@ -399,13 +512,33 @@ export const thumbService = {
       }
     }
 
-    state.pending = true;
-    enqueue({
+    const task = {
+      token: ++taskSequence,
+      generation,
       path,
       signature,
       videoElement,
       isVisible,
       reason,
-    });
+      cancelled: false,
+      cancelWait: null,
+    };
+    state.pending = true;
+    state.pendingTaskToken = task.token;
+    return enqueue(task);
+  },
+  getDebugSnapshot() {
+    return {
+      suspended,
+      generation,
+      queued: queue.length,
+      active: Boolean(activeTask),
+      delayed: Boolean(delayedTaskTimer),
+      pendingStates: Array.from(stateBySignature.values()).filter(
+        (state) => state.pending
+      ).length,
+      memoryEntries: memoryCache.size,
+      metadataEntries: pathToSignature.size,
+    };
   },
 };

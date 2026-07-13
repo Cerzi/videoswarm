@@ -196,4 +196,30 @@ describe("FullScreenModal media ownership", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:second-fullscreen");
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
   });
+
+  it("releases fullscreen media while work is suspended and will not restart by keyboard", () => {
+    const scheduler = createMediaSlotScheduler({ maxExternalDecoders: 1 });
+    const common = {
+      video: {
+        id: "suspend",
+        name: "suspend.mp4",
+        fullPath: "/suspend.mp4",
+        isElectronFile: true,
+      },
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      showFilenames: false,
+      mediaScheduler: scheduler,
+    };
+    const rendered = render(<FullScreenModal {...common} />);
+    expect(scheduler.getSnapshot().externalDecoders).toBe(1);
+
+    rendered.rerender(<FullScreenModal {...common} workSuspended />);
+    expect(scheduler.getSnapshot().externalDecoders).toBe(0);
+    fireEvent.keyDown(document, { key: " " });
+    expect(playSpy).not.toHaveBeenCalled();
+
+    rendered.rerender(<FullScreenModal {...common} workSuspended={false} />);
+    expect(scheduler.getSnapshot().externalDecoders).toBe(1);
+  });
 });

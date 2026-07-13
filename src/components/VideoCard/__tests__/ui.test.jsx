@@ -6,6 +6,18 @@ import VideoCard from "../VideoCard";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
 const NATIVE_CREATE_ELEMENT = document.createElement.bind(document);
+const ORIGINAL_ELECTRON_API = Object.getOwnPropertyDescriptor(
+  window,
+  "electronAPI"
+);
+const ORIGINAL_CREATE_OBJECT_URL = Object.getOwnPropertyDescriptor(
+  URL,
+  "createObjectURL"
+);
+const ORIGINAL_REVOKE_OBJECT_URL = Object.getOwnPropertyDescriptor(
+  URL,
+  "revokeObjectURL"
+);
 
 // --- IntersectionObserver mock: immediately marks the card visible ---
 class IO {
@@ -70,6 +82,21 @@ afterEach(() => {
   global.requestAnimationFrame = prevRAF;
   global.cancelAnimationFrame = prevCAF;
   vi.restoreAllMocks();
+  if (ORIGINAL_ELECTRON_API) {
+    Object.defineProperty(window, "electronAPI", ORIGINAL_ELECTRON_API);
+  } else {
+    delete window.electronAPI;
+  }
+  if (ORIGINAL_CREATE_OBJECT_URL) {
+    Object.defineProperty(URL, "createObjectURL", ORIGINAL_CREATE_OBJECT_URL);
+  } else {
+    delete URL.createObjectURL;
+  }
+  if (ORIGINAL_REVOKE_OBJECT_URL) {
+    Object.defineProperty(URL, "revokeObjectURL", ORIGINAL_REVOKE_OBJECT_URL);
+  } else {
+    delete URL.revokeObjectURL;
+  }
 });
 
 // --- Common props scaffold ---
@@ -235,6 +262,151 @@ describe("VideoCard", () => {
       created.dispatchEvent?.(new Event("loadedmetadata"));
       created.dispatchEvent?.(new Event("canplay"));
     });
+  });
+
+  it("uses a cached proxy source returned by the Electron playback bridge", async () => {
+    const resolveSource = vi.fn().mockResolvedValue({
+      status: "cached",
+      path: "/profile/proxies/proxy clip.mp4",
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { playback: { resolveSource } },
+    });
+
+    render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "proxy-source",
+          name: "source.mp4",
+          fullPath: "/source/source.mp4",
+          isElectronFile: true,
+        }}
+        proxyPlaybackEnabled
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(resolveSource).toHaveBeenCalledOnce();
+    expect(resolveSource).toHaveBeenCalledWith({
+      filePath: "/source/source.mp4",
+      enabled: true,
+    });
+    expect(lastVideoEl.src).toContain(
+      "/profile/proxies/proxy%20clip.mp4"
+    );
+    expect(lastVideoEl.dataset.proxyStatus).toBe("cached");
+    expect(lastVideoEl.load).toHaveBeenCalledOnce();
+  });
+
+  it("does not apply a proxy resolution that settles after unmount", async () => {
+    let resolveProxy;
+    const resolveSource = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveProxy = resolve;
+        })
+    );
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { playback: { resolveSource } },
+    });
+
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "stale-proxy",
+          name: "stale.mp4",
+          fullPath: "/source/stale.mp4",
+          isElectronFile: true,
+        }}
+        proxyPlaybackEnabled
+      />
+    );
+    await act(async () => {});
+    const element = lastVideoEl;
+    expect(resolveSource).toHaveBeenCalledOnce();
+
+    rendered.unmount();
+    const detachLoadCount = element.load.mock.calls.length;
+
+    await act(async () => {
+      resolveProxy({
+        status: "cached",
+        path: "/profile/proxies/stale-proxy.mp4",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(element.src).toBe("");
+    expect(element.dataset.proxyStatus).toBeUndefined();
+    expect(element.load).toHaveBeenCalledTimes(detachLoadCount);
+  });
+
+  it("revokes its owned object URL exactly once on unmount", async () => {
+    const createObjectURL = vi.fn(() => "blob:owned-card-source");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "owned-blob",
+          name: "owned-blob.mp4",
+          file: new Blob(["video"]),
+        }}
+      />
+    );
+    await act(async () => {});
+
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(lastVideoEl.src).toBe("blob:owned-card-source");
+
+    rendered.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:owned-card-source");
+  });
+
+  it("registers the exact media element and disposes telemetry on unmount", async () => {
+    const disposeTelemetry = vi.fn();
+    const registerMediaElement = vi.fn(() => disposeTelemetry);
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "telemetry-card",
+          name: "telemetry-card.mp4",
+          fullPath: "/telemetry-card.mp4",
+          isElectronFile: true,
+        }}
+        registerMediaElement={registerMediaElement}
+      />
+    );
+    await act(async () => {});
+
+    expect(registerMediaElement).toHaveBeenCalledOnce();
+    expect(registerMediaElement).toHaveBeenCalledWith(
+      "telemetry-card",
+      lastVideoEl
+    );
+
+    rendered.unmount();
+    expect(disposeTelemetry).toHaveBeenCalledOnce();
   });
 
   it("loads when parent marks visible even if IntersectionObserver never fires", async () => {
@@ -696,6 +868,24 @@ describe("VideoCard", () => {
 
     expect(onHoverAudioStart).not.toHaveBeenCalled();
     expect(onHoverAudioEnd).not.toHaveBeenCalled();
+  });
+
+  it("clears collection hover priority on mouse leave", () => {
+    const onHover = vi.fn();
+    const { container } = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "hover-priority", name: "hover-priority" }}
+        canLoadMoreVideos={() => false}
+        onHover={onHover}
+      />
+    );
+
+    const card = container.querySelector(".video-item");
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+
+    expect(onHover.mock.calls).toEqual([["hover-priority"], [null]]);
   });
 
   it("emits hover-audio callbacks when hover audio is enabled", () => {
