@@ -72,6 +72,9 @@ but unfinished parent deliverables remain Unimplemented.
 
 ### 1. Scan coordinator and incremental folder opening
 
+Status: **Unimplemented** (live scan feedback is implemented; incremental
+delivery and watcher reconciliation remain outstanding)
+
 Folder opening becomes a job coordinated by the Electron main process.
 
 Each job owns:
@@ -114,6 +117,12 @@ Acceptance criteria:
 - Enumeration records are emitted in bounded batches.
 - Progress reports real discovered, enumerated, and enriched counts.
 - Watcher events created during initialization are reconciled without loss.
+
+The live-progress portion of this section is **Implemented**: scan-owned phase
+events now report real discovery, indexing, reconciliation, and enrichment
+activity. The parent deliverable remains **Unimplemented** because enumeration
+still returns one final array and the watcher does not yet buffer events before
+the initial scan.
 
 ### 2. Persistent content and file-instance index
 
@@ -309,8 +318,9 @@ Acceptance criteria:
 | Deliverable | Status | Notes |
 | --- | --- | --- |
 | Scan cancellation and latest-request-wins safety | **Implemented** | Request IDs, cooperative cancellation, stale-result rejection, profile/window/app teardown, and focused renderer tests landed in `062e23a`. The scan still returns one final array. |
-| Loading overlay and Escape cancellation | **Implemented** | The overlay forwards one cancellation action and Escape uses the same path; landed in `062e23a`. |
-| Incremental enumeration batches and real progress | **Unimplemented** | Requires scan protocol expansion. |
+| Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
+| Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
+| Incremental enumeration batches | **Unimplemented** | The scan protocol still returns one final array after enumeration and enrichment. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
@@ -345,8 +355,54 @@ streaming or virtualization:
 6. **Implemented** — Add focused regression tests for these guarantees.
 
 The scan still returns one final array after this slice. Incremental batches,
-enrichment workers, and adaptive Linux playback remain explicitly
-Unimplemented until their acceptance criteria land.
+bounded enrichment workers, and adaptive Linux playback remain explicitly
+**Unimplemented** until their acceptance criteria land. Live phase telemetry is
+implemented in the following slice without claiming incremental delivery.
+
+## Live scan feedback implementation slice
+
+1. **Implemented** — Add a scan-owned, throttled progress reporter with
+   sequence numbers, elapsed time, timestamps, scan/root identity, and forced
+   phase transitions for enumeration, indexing, reconciliation, enrichment,
+   finalization, cancellation, and errors.
+2. **Implemented** — Report monotonic lifetime counters plus phase-local
+   current/total values for visited directories, checked entries, discovered
+   videos, indexed/enriched files, reused fingerprints, warnings, and the
+   current location.
+3. **Implemented** — Yield from main-process enumeration, indexing, and
+   enrichment loops at bounded intervals so the loading dialog, heartbeat, and
+   cancellation IPC remain responsive during large recursive scans.
+4. **Implemented** — Extend batch database indexing with safe progress
+   callbacks and fingerprint-reuse counts without allowing a telemetry
+   observer failure to abort indexing.
+5. **Implemented** — Expose a disposable preload progress listener and accept
+   events in the renderer only when both scan ID and monotonic sequence match
+   the active request. Late events after cancellation cannot revive the
+   dialog or replace active state.
+6. **Implemented** — Replace artificial percentages with an honest phase rail:
+   discovery is indeterminate when its total is unknowable, while indexing and
+   enrichment display real current/total progress and percentages.
+7. **Implemented** — Redesign the loading dialog as a compact, responsive,
+   accessible status surface with live counts, root/current locations,
+   elapsed time, last-update heartbeat, warning feedback, focus management,
+   persistent error state, and a shared Cancel/Escape action.
+8. **Implemented** — Display the existing whole-application working set in MB
+   and label unavailable data as “Measuring…” rather than presenting an
+   unsupported renderer heap reading as `0%`.
+9. **Implemented** — Add native reporter/database regressions, lifecycle tests
+   for stale events and cancellation, and component/application tests for
+   progress semantics, memory labels, focus, errors, and status wiring.
+
+The following adjacent work remains **Unimplemented**:
+
+- Enumeration batches and record patches are not streamed to the renderer;
+  the first grid still waits for the final scan result.
+- The watcher does not start before enumeration or reconcile a buffered event
+  generation with the initial result.
+- Enrichment does not yet use a bounded worker pool that prioritizes the first
+  visible viewport.
+- Folder-open performance marks, Electron-runtime smoke coverage, and Linux
+  CPU/RSS/event-loop soak budgets remain part of Section 8.
 
 ## Persistent index implementation slice
 
