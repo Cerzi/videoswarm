@@ -30,6 +30,8 @@ export default function useVideoCollection({
   suspendEvictions = false,
   renderLimit = null,
   hoverAudioEnabled = false,
+  mediaScheduler = null,
+  playbackSuspended = false,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -127,9 +129,26 @@ export default function useVideoCollection({
     return 0;
   })();
 
+  const playingCap =
+    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
+      ? Math.floor(cappedDesiredActiveCount)
+      : limitedVisibleCount;
+  const maxDecoders = playbackSuspended
+    ? 0
+    : Number.isFinite(playingCap) && playingCap > 0
+      ? playingCap
+      : limitedVisibleCount;
+
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
+    reserveLoadSlot,
+    queueLoadSlot,
+    cancelQueuedLoadSlot,
+    finishLoadSlot,
+    releaseMediaSlot,
+    isCurrentMediaLease,
+    mediaScheduler: slotScheduler,
     performCleanup,
     limits,
     memoryStatus,
@@ -146,30 +165,29 @@ export default function useVideoCollection({
     hadLongTaskRecently,
     isNear,
     suspendEvictions,
+    mediaScheduler,
+    maxDecoders,
   });
 
   // Layer 3: Play orchestration (Business logic)
-  const playingCap =
-    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
-      ? Math.floor(cappedDesiredActiveCount)
-      : limitedVisibleCount;
   const {
     playingSet,
     markHover,
     reportPlayError,
     reportStarted,
+    reportPaused,
     activeHoverAudioId,
     onCardHoverAudioStart,
     onCardHoverAudioEnd,
+    getDecoderLease,
   } =
     usePlayOrchestrator({
       visibleIds: visibleVideos,
       loadedIds: loadedVideos,
-      maxPlaying:
-        Number.isFinite(playingCap) && playingCap > 0
-          ? playingCap
-          : limitedVisibleCount,
+      maxPlaying: maxDecoders,
       hoverAudioEnabled,
+      mediaScheduler: slotScheduler,
+      playbackSuspended,
     });
 
   return {
@@ -178,6 +196,13 @@ export default function useVideoCollection({
 
     // Functions for VideoCard
     canLoadVideo,
+    reserveLoadSlot,
+    queueLoadSlot,
+    cancelQueuedLoadSlot,
+    finishLoadSlot,
+    releaseMediaSlot,
+    isCurrentMediaLease,
+    getDecoderLease,
     isVideoPlaying: (videoId) => playingSet.has(videoId),
     markHover,
     activeHoverAudioId,
@@ -185,6 +210,7 @@ export default function useVideoCollection({
     onCardHoverAudioEnd,
     reportPlayError,
     reportStarted,
+    reportPaused,
     reportPlayerCreationFailure,
 
     // Functions for parent
@@ -203,6 +229,7 @@ export default function useVideoCollection({
     },
 
     memoryStatus,
+    limits,
 
     // Debug info (development only)
     debug:

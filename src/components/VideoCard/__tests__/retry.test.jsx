@@ -25,8 +25,9 @@ function makeVideoStub(realCreate) {
     origAdd(t, fn);
   };
   el.removeEventListener = (t) => {
+    const handler = listeners[t];
     delete listeners[t];
-    origRemove(t, listeners[t]);
+    origRemove(t, handler);
   };
 
   // Patch media methods
@@ -178,16 +179,17 @@ describe("VideoCard local transient errors", () => {
       return realCreate(tag, opts);
     });
 
-    render(
+    const badVideo = {
+      id: "/tmp/bad.mkv",
+      name: "bad.mkv",
+      fullPath: "/tmp/bad.mkv",
+      isElectronFile: true,
+      size: 2048,
+      dateModified: new Date().toISOString(),
+    };
+    const { rerender } = render(
       <VideoCard
-        video={{
-          id: "/tmp/bad.mkv",
-          name: "bad.mkv",
-          fullPath: "/tmp/bad.mkv",
-          isElectronFile: true,
-          size: 2048,
-          dateModified: new Date().toISOString(),
-        }}
+        video={badVideo}
         isVisible
         isLoaded={false}
         isLoading={false}
@@ -212,6 +214,17 @@ describe("VideoCard local transient errors", () => {
     });
 
     const createdAfterSecond = creates;
+    rerender(
+      <VideoCard
+        video={badVideo}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        showFilenames={false}
+        canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
+      />
+    );
     await tick(3000);
     // No third creation (permanent)
     expect(creates).toBe(createdAfterSecond);
@@ -278,7 +291,6 @@ describe("VideoCard local transient errors", () => {
 
     // Retry after change
     await tick(1600);
-    second.el.dataset.adopted = "modal";
     await act(async () => {
       second.listeners.loadeddata?.();
     });

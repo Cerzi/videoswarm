@@ -14,6 +14,14 @@ describe("classifyMediaError", () => {
     expect(classifyMediaError({ code: 3, message: "Demuxer: failed to parse" }).terminal).toBe(true);
   });
 
+  test("missing source and NotSupportedError → terminal", () => {
+    expect(classifyMediaError(new Error("No valid video source")).terminal).toBe(true);
+    expect(
+      classifyMediaError({ name: "NotSupportedError", message: "load failed" })
+        .terminal
+    ).toBe(true);
+  });
+
   test("aborted → transient", () => {
     expect(classifyMediaError({ code: 1, message: "aborted" }).terminal).toBe(false);
   });

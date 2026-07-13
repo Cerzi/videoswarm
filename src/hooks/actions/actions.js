@@ -17,6 +17,15 @@ export const ActionIds = {
     MOVE_TO_TRASH: 'move-to-trash',
 };
 
+let frameCaptureSequence = 0;
+let frameCaptureTail = Promise.resolve();
+
+const scheduleFrameCapture = (task) => {
+  const result = frameCaptureTail.catch(() => {}).then(task);
+  frameCaptureTail = result.catch(() => {});
+  return result;
+};
+
 const waitForEvent = (el, eventName, { timeoutMs = 6000, errorMessage } = {}) =>
   new Promise((resolve, reject) => {
     if (!el) {
@@ -45,13 +54,36 @@ const waitForEvent = (el, eventName, { timeoutMs = 6000, errorMessage } = {}) =>
     }, timeoutMs);
   });
 
-const waitForFrame = (videoEl) =>
-  new Promise((resolve) => {
+const waitForFrame = (videoEl, { timeoutMs = 2000 } = {}) =>
+  new Promise((resolve, reject) => {
     if (typeof videoEl?.requestVideoFrameCallback === "function") {
+      let settled = false;
+      let frameId = null;
+      const finish = (error = null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeoutId = setTimeout(() => {
+        try {
+          if (
+            frameId !== null &&
+            typeof videoEl.cancelVideoFrameCallback === "function"
+          ) {
+            videoEl.cancelVideoFrameCallback(frameId);
+          }
+        } catch {}
+        finish(new Error("Timed out waiting for video frame"));
+      }, timeoutMs);
       try {
-        videoEl.requestVideoFrameCallback(() => resolve());
+        frameId = videoEl.requestVideoFrameCallback(() => finish());
         return;
-      } catch {}
+      } catch (error) {
+        finish(error);
+        return;
+      }
     }
     setTimeout(resolve, 120);
   });
@@ -93,15 +125,31 @@ const resolveVideoSource = (video) => {
   return {};
 };
 
-const captureLastFrame = async (video) => {
+const captureLastFrame = async (video, mediaScheduler = null) => {
   const existingVideo = findExistingVideoElement(video);
-  const { src, revoke } = resolveVideoSource(video);
+  const ownsElement = !existingVideo;
+  const { src, revoke } = ownsElement ? resolveVideoSource(video) : {};
   if (!existingVideo && !src) {
     throw new Error("No video source available");
   }
 
-  const ownsElement = !existingVideo;
   const videoEl = existingVideo || document.createElement("video");
+  let auxiliaryLease = null;
+  const needsAuxiliaryLease =
+    ownsElement || existingVideo?.dataset?.playbackDesired !== "true";
+  const reserveAuxiliary =
+    mediaScheduler?.reserveAuxiliaryDecoder ||
+    mediaScheduler?.reserveExternalDecoder;
+  if (needsAuxiliaryLease && reserveAuxiliary) {
+    auxiliaryLease = reserveAuxiliary.call(
+      mediaScheduler,
+      `frame-capture:${++frameCaptureSequence}`
+    );
+    if (!auxiliaryLease) {
+      revoke?.();
+      throw new Error("Media capture capacity is busy");
+    }
+  }
   if (ownsElement) {
     videoEl.preload = "auto";
     videoEl.muted = true;
@@ -114,17 +162,33 @@ const captureLastFrame = async (video) => {
     try {
       videoEl.pause();
     } catch {}
-    try {
-      videoEl.removeAttribute("src");
-      videoEl.load();
-    } catch {}
-    revoke?.();
+    try { videoEl.removeAttribute("src"); } catch {}
+    try { videoEl.srcObject = null; } catch {}
+    try { videoEl.load(); } catch {}
+    try { videoEl.remove?.(); } catch {}
+    try { revoke?.(); } catch {}
+  };
+
+  const startingTime = videoEl.currentTime || 0;
+  const wasPaused = videoEl.paused;
+  const startingLoop =
+    typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
+
+  const restoreExistingElement = () => {
+    if (ownsElement) return;
+    const shouldResume = videoEl.dataset?.playbackDesired !== "false";
+    try { videoEl.currentTime = startingTime; } catch {}
+    if (typeof startingLoop === "boolean") videoEl.loop = startingLoop;
+    if (videoEl.dataset) delete videoEl.dataset.mediaOperation;
+    if (!wasPaused && shouldResume && typeof videoEl.play === "function") {
+      try { videoEl.play()?.catch?.(() => {}); } catch {}
+    }
   };
 
   try {
-    const startingTime = videoEl.currentTime || 0;
-    const wasPaused = videoEl.paused;
-    const startingLoop = typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
+    if (!ownsElement && videoEl.dataset) {
+      videoEl.dataset.mediaOperation = "frame-capture";
+    }
     if (!wasPaused && typeof videoEl.pause === "function") {
       try {
         videoEl.pause();
@@ -198,23 +262,11 @@ const captureLastFrame = async (video) => {
       throw new Error("Failed to create image blob");
     }
 
-    if (!ownsElement) {
-      try {
-        videoEl.currentTime = startingTime;
-      } catch {}
-      if (typeof startingLoop === "boolean") {
-        videoEl.loop = startingLoop;
-      }
-      if (!wasPaused && typeof videoEl.play === "function") {
-        try {
-          videoEl.play().catch(() => {});
-        } catch {}
-      }
-    }
-
     return { blob, dataUrl };
   } finally {
+    restoreExistingElement();
     cleanup();
+    if (auxiliaryLease) mediaScheduler?.releaseDecoder?.(auxiliaryLease);
   }
 };
 
@@ -249,7 +301,10 @@ export const actionRegistry = {
         notify('Relative path(s) copied', 'success');
     },
 
-    [ActionIds.COPY_LAST_FRAME]: async (videos, { electronAPI, notify }) => {
+    [ActionIds.COPY_LAST_FRAME]: async (
+      videos,
+      { electronAPI, notify, mediaScheduler }
+    ) => {
         const video = videos[0];
         if (!video) return;
 
@@ -263,7 +318,9 @@ export const actionRegistry = {
             return;
           }
 
-          const { blob, dataUrl } = await captureLastFrame(video);
+          const { blob, dataUrl } = await scheduleFrameCapture(() =>
+            captureLastFrame(video, mediaScheduler)
+          );
           if (electronAPI?.copyImageToClipboard) {
             const result = await electronAPI.copyImageToClipboard(dataUrl);
             if (result?.success === false) {
@@ -306,6 +363,8 @@ export const actionRegistry = {
           confirmMoveToTrash,
           postConfirmRecovery,
           releaseVideoHandlesForAsync,      // inject this
+          beginMediaMutation,
+          endMediaMutation,
           onItemsRemoved,                   // inject: (movedSet: Set<string>) => void
         }
       ) => {
@@ -336,7 +395,10 @@ export const actionRegistry = {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const isTransient = (msg = '') =>
           /aborted|busy|access is denied|used by another process|locked|eperm|eacces|ebusy/i.test(msg);
-      
+
+        beginMediaMutation?.(candidates);
+        let moved = new Set();
+        try {
         // 1) Pre-release (awaited)
         try { await releaseVideoHandlesForAsync?.(candidates); } catch {}
       
@@ -370,7 +432,7 @@ export const actionRegistry = {
           }
         }
       
-        const moved = new Set(result?.moved || []);
+        moved = new Set(result?.moved || []);
       
         // 4) Optimistically update the model NOW (so cards unmount immediately)
         if (moved.size) onItemsRemoved?.(moved);
@@ -397,6 +459,9 @@ export const actionRegistry = {
           cancelled: false,
           lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
         });
+        } finally {
+          endMediaMutation?.(candidates, moved);
+        }
       },
 
 };

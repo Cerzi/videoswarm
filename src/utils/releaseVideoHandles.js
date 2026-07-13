@@ -1,22 +1,28 @@
 // src/utils/releaseVideoHandles.js
 // Backward compatible: keep releaseVideoHandlesFor(...)
-// Add a thorough async variant and fix edge cases (blob: URLs, #t=... fragments)
-
-function stripQueryAndHash(s = "") {
-  return s.replace(/[?#].*$/, "");
-}
+// Add a thorough async variant and preserve valid POSIX `?`/`#` filenames.
 
 function normalizeFsPath(p = "") {
-  return stripQueryAndHash(p).trim().replace(/\\/g, "/").toLowerCase();
+  let normalized = String(p || "").trim().replace(/\\/g, "/");
+  const isDrivePath = /^\/?[A-Za-z]:\//.test(normalized);
+  if (isDrivePath && normalized.startsWith("/")) normalized = normalized.slice(1);
+  const isUncPath = normalized.startsWith("//");
+  return isDrivePath || isUncPath ? normalized.toLowerCase() : normalized;
 }
 
-function normalizeSrc(u = "") {
+function normalizeSrc(value = "") {
+  const source = String(value || "").trim();
+  if (!/^file:/i.test(source)) return normalizeFsPath(source);
+
   try {
-    // file:///C:/path/file.mp4#t=0.1 -> c:/path/file.mp4
-    const withoutScheme = String(u).replace(/^file:\/\//i, "");
-    return normalizeFsPath(decodeURI(withoutScheme));
+    const parsed = new URL(source);
+    const pathname = decodeURIComponent(parsed.pathname || "");
+    const rawPath = parsed.host
+      ? `//${decodeURIComponent(parsed.host)}${pathname}`
+      : pathname;
+    return normalizeFsPath(rawPath);
   } catch {
-    return normalizeFsPath(String(u || ""));
+    return normalizeFsPath(source.replace(/^file:\/\//i, ""));
   }
 }
 
@@ -29,37 +35,38 @@ function revokeIfBlob(url) {
 }
 
 function hardReleaseVideoElement(v) {
-  try {
-    v.pause();
+  try { v.pause(); } catch {}
 
-    // Revoke object URLs on the element and <source> children
-    revokeIfBlob(v.src);
-    Array.from(v.querySelectorAll("source")).forEach((s) => revokeIfBlob(s.src));
+  // Revoke object URLs on the element and <source> children.
+  try { revokeIfBlob(v.src); } catch {}
+  let sourceElements = [];
+  try { sourceElements = Array.from(v.querySelectorAll("source")); } catch {}
+  for (const source of sourceElements) {
+    try { revokeIfBlob(source.src); } catch {}
+  }
 
-    // Fully detach sources & pipelines
-    v.removeAttribute("src");
-    v.src = "";
-    v.srcObject = null;
-
-    // Remove all <source> children (each can hold its own handle)
-    Array.from(v.querySelectorAll("source")).forEach((s) => s.remove());
-
-    // Be defensive
-    v.removeAttribute("poster");
-    v.preload = "none";
-
-    // Force UA to drop decoders/handles
-    v.load();
-  } catch {}
+  try { v.removeAttribute("src"); } catch {}
+  try { v.srcObject = null; } catch {}
+  for (const source of sourceElements) {
+    try { source.remove(); } catch {}
+  }
+  try { v.removeAttribute("poster"); } catch {}
+  try { v.preload = "none"; } catch {}
+  try { v.load(); } catch {}
 }
 
 /** Original sync API (kept) */
 export function releaseVideoHandlesFor(paths) {
-  if (!Array.isArray(paths) || !paths.length) return;
+  if (
+    !Array.isArray(paths) ||
+    !paths.length ||
+    typeof document === "undefined"
+  ) {
+    return;
+  }
   const targets = new Set(paths.map(normalizeFsPath));
 
-  const matchesTarget = (norm) =>
-    targets.has(norm) || Array.from(targets).some((t) => norm.endsWith(t));
+  const matchesTarget = (norm) => targets.has(norm);
 
   document.querySelectorAll("video").forEach((v) => {
     try {
@@ -78,11 +85,40 @@ export function releaseVideoHandlesFor(paths) {
   });
 }
 
+const waitForNextFrame = ({ timeoutMs = 50 } = {}) =>
+  new Promise((resolve) => {
+    let settled = false;
+    let frameId = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve();
+    };
+    const timeoutId = setTimeout(() => {
+      if (
+        frameId !== null &&
+        typeof cancelAnimationFrame === "function"
+      ) {
+        try { cancelAnimationFrame(frameId); } catch {}
+      }
+      finish();
+    }, timeoutMs);
+
+    if (typeof requestAnimationFrame === "function") {
+      try {
+        frameId = requestAnimationFrame(finish);
+        return;
+      } catch {}
+    }
+    setTimeout(finish, 0);
+  });
+
 /** New async helper: two passes + RAFs so Chromium actually drops OS handles */
 export async function releaseVideoHandlesForAsync(paths, { extraPassDelayMs = 80 } = {}) {
   releaseVideoHandlesFor(paths);
   await new Promise((r) => setTimeout(r, extraPassDelayMs));
-  await new Promise((r) => requestAnimationFrame(() => r()));
+  await waitForNextFrame();
   releaseVideoHandlesFor(paths);
-  await new Promise((r) => requestAnimationFrame(() => r()));
+  await waitForNextFrame();
 }

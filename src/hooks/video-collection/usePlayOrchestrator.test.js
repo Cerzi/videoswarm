@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import usePlayOrchestrator from './usePlayOrchestrator';
+import { createMediaSlotScheduler } from '../../services/mediaSlotScheduler';
 
 const setOf = (arr) => new Set(arr);
 
@@ -31,10 +32,15 @@ describe('usePlayOrchestrator', () => {
       result.current.reportStarted('x');
     });
     expect(result.current.playingSet.has('x')).toBe(true);
+    const xLease = result.current.getDecoderLease('x');
 
     act(() => {
-      result.current.markHover('y'); // prioritizes y
-      result.current.reportStarted('y');
+      result.current.markHover('y'); // requests x -> y handoff
+    });
+    expect(result.current.playingSet.size).toBe(0);
+
+    act(() => {
+      result.current.reportPaused('x', xLease);
     });
     expect(result.current.playingSet.has('y')).toBe(true);
   });
@@ -167,5 +173,50 @@ describe('usePlayOrchestrator', () => {
       hoverAudioEnabled: false,
     });
     expect(result.current.activeHoverAudioId).toBe(null);
+  });
+
+  test('uses exact injected leases and ignores stale pause acknowledgements', () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 2,
+      maxLoaders: 2,
+      maxDecoders: 1,
+    });
+    for (const id of ['a', 'b']) {
+      const loader = scheduler.reserveLoader(id);
+      scheduler.markLoaderReady(loader);
+    }
+    const visible = setOf(['a', 'b']);
+    const loaded = setOf(['a', 'b']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 1,
+        mediaScheduler: scheduler,
+      })
+    );
+    const firstId = Array.from(result.current.playingSet)[0];
+    const nextId = firstId === 'a' ? 'b' : 'a';
+    const firstLease = result.current.getDecoderLease(firstId);
+
+    act(() => result.current.markHover(nextId));
+    expect(result.current.playingSet.size).toBe(0);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      decoders: 1,
+      stoppingDecoders: 1,
+    });
+
+    act(() => {
+      expect(result.current.reportPaused(firstId, firstLease)).toBe(true);
+    });
+    const nextLease = result.current.getDecoderLease(nextId);
+    expect(nextLease).toBeTruthy();
+    expect(nextLease).not.toBe(firstLease);
+    expect(result.current.playingSet).toEqual(new Set([nextId]));
+
+    act(() => {
+      expect(result.current.reportPaused(firstId, firstLease)).toBe(false);
+    });
+    expect(result.current.getDecoderLease(nextId)).toBe(nextLease);
   });
 });
