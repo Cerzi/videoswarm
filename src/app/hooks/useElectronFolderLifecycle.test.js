@@ -116,7 +116,6 @@ describe("useElectronFolderLifecycle", () => {
           setActualPlaying: setActualPlayingMock.setter,
           refreshTagList,
           addRecentFolder,
-          delayFn: () => Promise.resolve(),
         }),
       { initialProps: { setZoomLevelFromSettings: vi.fn() } }
     );
@@ -170,7 +169,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -215,7 +213,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -246,7 +243,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -302,7 +298,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -364,7 +359,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -425,7 +419,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -510,7 +503,6 @@ describe("useElectronFolderLifecycle", () => {
           setActualPlaying: setActualPlayingMock.setter,
           refreshTagList,
           addRecentFolder,
-          delayFn: () => Promise.resolve(),
         }),
       { initialProps: { selectionProp: baseSelection } }
     );
@@ -556,7 +548,6 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
-        delayFn: () => Promise.resolve(),
       })
     );
 
@@ -605,7 +596,6 @@ describe("useElectronFolderLifecycle", () => {
           setActualPlaying: setActualPlayingMock.setter,
           refreshTagList,
           addRecentFolder,
-          delayFn: () => Promise.resolve(),
         }),
       { initialProps: { recursiveMode: false } }
     );
