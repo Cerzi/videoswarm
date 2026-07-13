@@ -25,6 +25,33 @@ describe("useElectronFolderLifecycle", () => {
   let disposeRemoved;
   let disposeChanged;
   let disposeError;
+  let directoryScanProgressHandler;
+  let disposeDirectoryScanProgress;
+
+  const renderDefaultLifecycle = (overrides = {}) =>
+    renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+        ...overrides,
+      })
+    );
 
   beforeEach(() => {
     selection = {
@@ -48,6 +75,8 @@ describe("useElectronFolderLifecycle", () => {
     disposeRemoved = vi.fn();
     disposeChanged = vi.fn();
     disposeError = vi.fn();
+    directoryScanProgressHandler = undefined;
+    disposeDirectoryScanProgress = vi.fn();
 
     window.electronAPI = {
       getSettings: vi.fn().mockResolvedValue({
@@ -75,6 +104,10 @@ describe("useElectronFolderLifecycle", () => {
       cancelDirectoryScan: vi.fn().mockResolvedValue({
         success: true,
         cancelled: true,
+      }),
+      onDirectoryScanProgress: vi.fn((callback) => {
+        directoryScanProgressHandler = callback;
+        return disposeDirectoryScanProgress;
       }),
       onFileAdded: vi.fn((cb) => {
         onFileAddedHandler = cb;
@@ -137,6 +170,7 @@ describe("useElectronFolderLifecycle", () => {
     onFileAddedHandler = undefined;
     onFileRemovedHandler = undefined;
     onFileChangedHandler = undefined;
+    directoryScanProgressHandler = undefined;
   });
 
   it("loads persisted settings on mount", async () => {
@@ -328,6 +362,151 @@ describe("useElectronFolderLifecycle", () => {
     expect(result.current.videos).toEqual([]);
     expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
     expect(addRecentFolder).not.toHaveBeenCalled();
+  });
+
+  it("accepts only monotonic progress for the active directory scan", async () => {
+    let resolveRead;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle();
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/large");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledTimes(1)
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    act(() => {
+      directoryScanProgressHandler?.({
+        scanId: "stale-scan",
+        sequence: 9,
+        phase: "indexing",
+        phaseCurrent: 90,
+        phaseTotal: 100,
+      });
+    });
+    expect(result.current.loadingStatus.phase).toBe("enumerating");
+
+    act(() => {
+      directoryScanProgressHandler?.({
+        scanId,
+        sequence: 2,
+        phase: "indexing",
+        phaseCurrent: 40,
+        phaseTotal: 200,
+        directoriesScanned: 18,
+        entriesChecked: 900,
+        videosFound: 200,
+        indexedFiles: 40,
+        currentPath: "run-18",
+        updatedAt: 500,
+      });
+    });
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "indexing",
+      completed: 40,
+      total: 200,
+      directoriesScanned: 18,
+      entriesInspected: 900,
+      videosDiscovered: 200,
+      indexed: 40,
+      currentPath: "run-18",
+    });
+    expect(result.current.loadingProgress).toBe(20);
+
+    act(() => {
+      directoryScanProgressHandler?.({
+        scanId,
+        sequence: 1,
+        phase: "indexing",
+        phaseCurrent: 5,
+        phaseTotal: 200,
+      });
+    });
+    expect(result.current.loadingStatus.completed).toBe(40);
+
+    act(() => result.current.cancelFolderLoad());
+    act(() => {
+      directoryScanProgressHandler?.({
+        scanId,
+        sequence: 3,
+        phase: "enriching",
+        phaseCurrent: 100,
+        phaseTotal: 200,
+      });
+    });
+    expect(result.current.loadingStatus.phase).toBe("cancelled");
+
+    await act(async () => {
+      resolveRead({ cancelled: true, files: [] });
+      await loadPromise;
+    });
+  });
+
+  it("keeps scan failures visible until the user closes the dialog", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    window.electronAPI.readDirectory.mockRejectedValueOnce(
+      new Error("Permission denied")
+    );
+    const { result } = renderDefaultLifecycle();
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/unreadable");
+    });
+
+    expect(result.current.isLoadingFolder).toBe(true);
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "error",
+      message: "Couldn’t open this collection",
+      error: "Permission denied",
+    });
+
+    act(() => result.current.cancelFolderLoad());
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(errorLog).toHaveBeenCalledWith(
+      "Error reading directory:",
+      expect.any(Error)
+    );
+    errorLog.mockRestore();
+  });
+
+  it("keeps a loaded collection open when watcher startup fails", async () => {
+    const warningLog = vi.spyOn(console, "warn").mockImplementation(() => {});
+    window.electronAPI.startFolderWatch.mockRejectedValueOnce(
+      new Error("watch limit reached")
+    );
+    const { result } = renderDefaultLifecycle();
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+
+    expect(result.current.videos).toHaveLength(1);
+    expect(result.current.loadingStatus.phase).toBe("complete");
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(addRecentFolder).toHaveBeenCalledWith("/videos");
+    expect(warningLog).toHaveBeenCalledWith(
+      "Failed to start folder watcher:",
+      expect.any(Error)
+    );
+    warningLog.mockRestore();
+  });
+
+  it("disposes the directory progress subscription on unmount", async () => {
+    const { unmount } = renderDefaultLifecycle();
+    await waitFor(() =>
+      expect(window.electronAPI.onDirectoryScanProgress).toHaveBeenCalledOnce()
+    );
+
+    unmount();
+    expect(disposeDirectoryScanProgress).toHaveBeenCalledOnce();
   });
 
   it("keeps the newest folder when scans resolve out of order", async () => {

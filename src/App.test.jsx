@@ -55,6 +55,7 @@ const useElectronLifecycleMock = vi.fn(() => ({
   videos: electronVideos,
   setVideos: vi.fn(),
   isLoadingFolder: false,
+  loadingStatus: null,
   loadingStage: "",
   loadingProgress: 0,
   settingsLoaded: true,
@@ -155,6 +156,7 @@ const useVideoCollectionMock = vi.fn(() => ({
 }));
 const headerBarSpy = vi.fn();
 const videoCardSpy = vi.fn();
+const loadingOverlaySpy = vi.fn();
 
 vi.mock("./components/VideoCard/VideoCard", async () => {
   const ReactModule = await vi.importActual("react");
@@ -256,7 +258,10 @@ vi.mock("./hooks/selection/useHotkeys", () => ({
 }));
 vi.mock("./app/components/LoadingOverlay", () => ({
   __esModule: true,
-  default: () => null,
+  default: (props) => {
+    loadingOverlaySpy(props);
+    return null;
+  },
 }));
 vi.mock("./app/components/MemoryAlert", () => ({
   __esModule: true,
@@ -423,5 +428,44 @@ describe("App hook composition", () => {
     expect(unmountedProps.isLoaded).toBe(false);
     expect(unmountedProps.isVisible).toBe(false);
     expect(unmountedProps.isLoading).toBe(false);
+  });
+
+  test("forwards live scan status and whole-app memory to the loading dialog", async () => {
+    const loadingStatus = {
+      scanId: "scan-large",
+      phase: "indexing",
+      completed: 250,
+      total: 1000,
+    };
+    const memoryStatus = {
+      source: "app",
+      currentMemoryMB: 640,
+      totalMemoryMB: 32768,
+      memoryPressure: 2,
+    };
+    const lifecycleDefaults = useElectronLifecycleMock.getMockImplementation()();
+    const collectionDefaults = useVideoCollectionMock.getMockImplementation()();
+    useElectronLifecycleMock.mockReturnValueOnce({
+      ...lifecycleDefaults,
+      isLoadingFolder: true,
+      loadingStatus,
+    });
+    useVideoCollectionMock.mockReturnValueOnce({
+      ...collectionDefaults,
+      memoryStatus,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const overlayProps = loadingOverlaySpy.mock.calls
+      .map(([props]) => props)
+      .find((props) => props.status === loadingStatus);
+    expect(overlayProps).toMatchObject({
+      show: true,
+      status: loadingStatus,
+      memoryStatus,
+    });
   });
 });

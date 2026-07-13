@@ -26,6 +26,10 @@ const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
+const {
+  createDirectoryScanProgressReporter,
+  createPeriodicEventLoopYielder,
+} = require("./main/directory-scan-progress");
 
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
 
@@ -1907,6 +1911,16 @@ ipcMain.handle(
   async (event, folderPath, recursive = false, requestedScanId = null) => {
     const scan = beginDirectoryScan(event.sender.id, requestedScanId);
     let metadataContext = null;
+    let progressReporter = null;
+    const progressCounters = {
+      directoriesScanned: 0,
+      entriesChecked: 0,
+      videosFound: 0,
+      indexedFiles: 0,
+      enrichedFiles: 0,
+      fingerprintsReused: 0,
+      warnings: 0,
+    };
     const assertActive = () => {
       assertDirectoryScanActive(scan);
       if (metadataContext) {
@@ -1925,6 +1939,16 @@ ipcMain.handle(
       scan.metadataContext = metadataContext;
       scan.rootPath = normalizedRoot;
       scan.recursive = Boolean(recursive);
+      progressReporter = createDirectoryScanProgressReporter({
+        scanId: scan.scanId,
+        sender: event.sender,
+        rootPath: normalizedRoot,
+        recursive,
+      });
+      progressReporter.setPhase("enumerating", {
+        currentPath: ".",
+        ...progressCounters,
+      });
       assertActive();
 
       const metadataStore = metadataContext.metadataStore;
@@ -1940,22 +1964,41 @@ ipcMain.handle(
       const scannedDirectories = new Set();
       const videoFiles = [];
       let partialCoverage = false;
+      const maybeYieldEnumeration = createPeriodicEventLoopYielder();
+      const maybeYieldEnrichment = createPeriodicEventLoopYielder();
+
+      const relativeProgressPath = (candidatePath) => {
+        if (!candidatePath) return "";
+        const relativePath = path.relative(normalizedRoot, candidatePath);
+        return relativePath && relativePath !== "." ? relativePath : ".";
+      };
+
+      const reportEnumeration = (currentPath) => {
+        progressReporter.report({
+          ...progressCounters,
+          currentPath: relativeProgressPath(currentPath),
+        });
+      };
 
       async function scanDirectory(dirPath, depth = 0) {
         assertActive();
         const files = await fsPromises.readdir(dirPath, { withFileTypes: true });
         assertActive();
         scannedDirectories.add(dirPath);
+        progressCounters.directoriesScanned += 1;
+        reportEnumeration(dirPath);
 
         for (const file of files) {
           assertActive();
           const fullPath = path.join(dirPath, file.name);
+          progressCounters.entriesChecked += 1;
 
           if (file.isFile() && isVideoFile(file.name)) {
             try {
               const stats = await fsPromises.stat(fullPath);
               assertActive();
               entries.push({ filePath: fullPath, stats });
+              progressCounters.videosFound = entries.length;
             } catch (error) {
               if (isDirectoryScanCancelled(error)) {
                 throw error;
@@ -1965,6 +2008,7 @@ ipcMain.handle(
               // still-present instance missing.
               scannedDirectories.delete(dirPath);
               partialCoverage = true;
+              progressCounters.warnings += 1;
               console.warn(
                 `Error reading file stats for ${fullPath}:`,
                 error.message
@@ -1972,30 +2016,50 @@ ipcMain.handle(
             }
           } else if (file.isDirectory() && recursive) {
             if (isIgnoredScanDirectory(file.name)) {
-              continue;
-            }
-            if (depth >= 10) {
+              // Ignored application/cache directories are expected and do not
+              // count as scan warnings.
+            } else if (depth >= 10) {
               partialCoverage = true;
-              continue;
-            }
-            try {
-              await scanDirectory(fullPath, depth + 1);
-              assertActive();
-            } catch (error) {
-              if (isDirectoryScanCancelled(error)) {
-                throw error;
+              progressCounters.warnings += 1;
+            } else {
+              try {
+                await scanDirectory(fullPath, depth + 1);
+                assertActive();
+              } catch (error) {
+                if (isDirectoryScanCancelled(error)) {
+                  throw error;
+                }
+                partialCoverage = true;
+                progressCounters.warnings += 1;
+                console.warn(
+                  `Skipping directory ${fullPath}: ${error.message}`
+                );
               }
-              partialCoverage = true;
-              console.warn(
-                `Skipping directory ${fullPath}: ${error.message}`
-              );
             }
+          }
+
+          reportEnumeration(dirPath);
+          const pendingYield = maybeYieldEnumeration();
+          if (pendingYield) {
+            await pendingYield;
+            assertActive();
           }
         }
       }
 
       await scanDirectory(normalizedRoot);
       assertActive();
+      progressReporter.report(
+        { ...progressCounters, currentPath: "." },
+        { force: true }
+      );
+
+      progressReporter.setPhase("indexing", {
+        ...progressCounters,
+        phaseCurrent: 0,
+        phaseTotal: entries.length,
+        currentPath: "",
+      });
 
       metadataStore.registerDirectories(
         normalizedRoot,
@@ -2009,12 +2073,42 @@ ipcMain.handle(
         entries,
         recursive,
         assertActive,
+        onProgress: ({
+          indexedFiles,
+          totalFiles,
+          fingerprintsReused,
+          filePath,
+        }) => {
+          progressCounters.indexedFiles = indexedFiles;
+          progressCounters.fingerprintsReused = fingerprintsReused;
+          progressReporter.report({
+            ...progressCounters,
+            phaseCurrent: indexedFiles,
+            phaseTotal: totalFiles,
+            currentPath: filePath || "",
+          });
+        },
       });
       assertActive();
+      progressCounters.indexedFiles = entries.length;
+      progressReporter.report(
+        {
+          ...progressCounters,
+          phaseCurrent: entries.length,
+          phaseTotal: entries.length,
+          currentPath: "",
+        },
+        { force: true }
+      );
       const indexedByPath = new Map(
         indexedResults.map((result) => [result.filePath, result])
       );
 
+      progressReporter.setPhase("reconciling", {
+        ...progressCounters,
+        phaseTotal: null,
+        currentPath: "",
+      });
       metadataStore.reconcileLibraryRoot(
         normalizedRoot,
         entries.map((entry) => entry.filePath),
@@ -2039,6 +2133,12 @@ ipcMain.handle(
         });
       }
 
+      progressReporter.setPhase("enriching", {
+        ...progressCounters,
+        phaseCurrent: 0,
+        phaseTotal: entries.length,
+        currentPath: "",
+      });
       for (const entry of entries) {
         assertActive();
         const videoFile = await createVideoFileObject(
@@ -2056,8 +2156,30 @@ ipcMain.handle(
         assertActive();
         if (videoFile) {
           videoFiles.push(videoFile);
+        } else {
+          progressCounters.warnings += 1;
+        }
+        progressCounters.enrichedFiles += 1;
+        progressReporter.report({
+          ...progressCounters,
+          phaseCurrent: progressCounters.enrichedFiles,
+          phaseTotal: entries.length,
+          currentPath: relativeProgressPath(entry.filePath),
+        });
+
+        const pendingYield = maybeYieldEnrichment();
+        if (pendingYield) {
+          await pendingYield;
+          assertActive();
         }
       }
+
+      progressReporter.setPhase("finalizing", {
+        ...progressCounters,
+        phaseCurrent: videoFiles.length,
+        phaseTotal: videoFiles.length,
+        currentPath: "",
+      });
 
       console.log(
         `Found ${videoFiles.length} video files in ${normalizedRoot} (recursive: ${recursive})`
@@ -2066,8 +2188,20 @@ ipcMain.handle(
       return videoFiles.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
       if (isDirectoryScanCancelled(error)) {
+        progressReporter?.setPhase("cancelled", {
+          ...progressCounters,
+          phaseTotal: null,
+          currentPath: "",
+        });
         return { cancelled: true, scanId: scan.scanId, files: [] };
       }
+      progressCounters.warnings += 1;
+      progressReporter?.setPhase("error", {
+        ...progressCounters,
+        phaseTotal: null,
+        currentPath: "",
+        message: error?.message || String(error),
+      });
       if (metadataContext?.metadataStore && scan.rootPath) {
         try {
           assertMetadataContextActive(metadataContext);
