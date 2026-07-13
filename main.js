@@ -24,8 +24,18 @@ require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
+const { createProxyManager } = require("./main/proxy-manager");
+const proxyManager = createProxyManager();
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
+const {
+  createPlaybackCapabilities,
+  normalizePlaybackMode,
+} = require("./main/playback-capabilities");
+const {
+  attachWindowActivity,
+  readWindowActivity,
+} = require("./main/window-activity");
 const {
   createDirectoryScanProgressReporter,
   createPeriodicEventLoopYielder,
@@ -162,6 +172,8 @@ function getDefaultZoomForScreen() {
 const defaultSettings = {
   recursiveMode: false,
   renderLimitStep: 10,
+  playbackMode: "balanced",
+  proxyPlaybackEnabled: false,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -178,6 +190,7 @@ const defaultSettings = {
 
 let mainWindow;
 let currentSettings = null;
+let disposeMainWindowActivity = null;
 
 // ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
@@ -703,6 +716,8 @@ function normaliseLoadedSettings(rawSettings) {
   if (!hasZoom) {
     merged.zoomLevel = computeDefaultZoomLevel();
   }
+  merged.playbackMode = normalizePlaybackMode(merged.playbackMode);
+  merged.proxyPlaybackEnabled = Boolean(merged.proxyPlaybackEnabled);
   return merged;
 }
 
@@ -886,6 +901,11 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
     } catch (error) {
       console.warn("[profile] Failed to init thumbnail cache for new profile", error);
     }
+    try {
+      await proxyManager.init(profilePath);
+    } catch (error) {
+      console.warn("[profile] Failed to initialize playback proxy cache", error);
+    }
 
     assertProfileReconfigurationActive(reconfigureGeneration);
     resetDatabase();
@@ -939,7 +959,7 @@ async function createWindow() {
 
       // Enhanced memory management
       experimentalFeatures: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       offscreen: false,
       spellcheck: false,
       v8CacheOptions: "bypassHeatCheck",
@@ -947,6 +967,16 @@ async function createWindow() {
     icon: iconPath,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     title: `Video Swarm v${appVersion}`,
+  });
+  const createdWindow = mainWindow;
+  const playbackOwnerId = createdWindow.webContents.id;
+
+  disposeMainWindowActivity?.();
+  disposeMainWindowActivity = attachWindowActivity(createdWindow, (activity) => {
+    proxyManager.setOwnerActive(playbackOwnerId, activity.active);
+    if (!createdWindow.isDestroyed()) {
+      createdWindow.webContents.send("playback:window-activity", activity);
+    }
   });
 
   // set the dock icon explicitly on macOS
@@ -1031,6 +1061,15 @@ async function createWindow() {
 
   mainWindow.on("moved", saveWindowBounds);
   mainWindow.on("resized", saveWindowBounds);
+  createdWindow.once("closed", () => {
+    proxyManager.cancelOwner(playbackOwnerId);
+    disposeMainWindowActivity?.();
+    disposeMainWindowActivity = null;
+    if (mainWindow === createdWindow) mainWindow = null;
+  });
+  createdWindow.webContents.once("destroyed", () => {
+    proxyManager.cancelOwner(playbackOwnerId);
+  });
 
   if (isDev) {
     mainWindow.webContents.openDevTools();
@@ -1717,6 +1756,35 @@ ipcMain.handle("request-settings", async () => {
 ipcMain.handle("save-settings-partial", async (_event, partialSettings) => {
   await saveSettingsPartial(partialSettings);
   return { success: true };
+});
+
+ipcMain.handle("playback:get-capabilities", async () =>
+  createPlaybackCapabilities({
+    platform: process.platform,
+    gpuFeatureStatus: app.getGPUFeatureStatus(),
+    proxyAvailable: proxyManager.getSnapshot().ffmpegAvailable !== false,
+  })
+);
+
+ipcMain.handle("playback:get-window-activity", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  return readWindowActivity(window);
+});
+
+ipcMain.handle("playback:set-renderer-active", (event, active) => {
+  const normalizedActive = Boolean(active);
+  proxyManager.setOwnerActive(event.sender.id, normalizedActive);
+  return { success: true, active: normalizedActive };
+});
+
+ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
+  const filePath =
+    typeof payload?.filePath === "string" ? payload.filePath : "";
+  return proxyManager.resolveSource({
+    filePath,
+    enabled: Boolean(payload?.enabled),
+    ownerId: event.sender.id,
+  });
 });
 
 ipcMain.handle("select-folder", async () => {
@@ -2441,6 +2509,10 @@ ipcMain.handle('mem:get', () => {
   // System memory (also in KB)
   const sys = process.getSystemMemoryInfo(); // { total, free, ... } in KB
   const totalMB = Math.round((sys.total || 0) / 1024);             // KB -> MB
+  const freeMB = Math.round((sys.free || 0) / 1024);
+  const availableMB = Math.round(
+    ((sys.available ?? sys.free) || 0) / 1024
+  );
   const wsMB = Math.round((totals.workingSetKB || 0) / 1024);   // KB -> MB
 
   return {
@@ -2453,6 +2525,8 @@ ipcMain.handle('mem:get', () => {
       ...totals,  // workingSetKB/privateKB/sharedKB (KB)
       wsMB,       // working set across all Electron processes (MB)
       totalMB,    // system total RAM (MB)
+      freeMB,
+      availableMB,
     },
   };
 });
@@ -2487,9 +2561,12 @@ app.on("activate", () => {
 
 // Ensure scan/watcher cleanup on quit
 app.on("before-quit", async () => {
+  disposeMainWindowActivity?.();
+  disposeMainWindowActivity = null;
   invalidateWatcherContext();
   cancelAllDirectoryScans();
   await folderWatcher.stop();
+  await proxyManager.shutdown();
 });
 app.on("will-quit", async () => {
   invalidateWatcherContext();

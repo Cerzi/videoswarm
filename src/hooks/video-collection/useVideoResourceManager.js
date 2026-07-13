@@ -80,6 +80,7 @@ export default function useVideoResourceManager({
   suspendEvictions = false,
   mediaScheduler = null,
   maxDecoders = 1,
+  workSuspended = false,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -103,6 +104,7 @@ export default function useVideoResourceManager({
   }));
 
   useEffect(() => {
+    if (workSuspended) return undefined;
     let alive = true;
     const tick = async () => {
       const res = await readAppMemorySafe();
@@ -123,7 +125,7 @@ export default function useVideoResourceManager({
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [workSuspended]);
 
   // EWMA smoothing for memoryPressure (avoid twitchy decisions)
   const smoothPressureRef = useRef(0);
@@ -290,22 +292,23 @@ export default function useVideoResourceManager({
   // remain useful mirrors for UI/scoring, but they never authorize a slot.
   useLayoutEffect(() => {
     slotScheduler.configure({
-      maxResident: limits.maxLoaded,
-      maxLoaders: limits.maxConcurrentLoading,
-      maxDecoders,
-      maxExternalDecoders: 1,
-      maxAuxiliaryDecoders: 1,
+      maxResident: workSuspended ? 0 : limits.maxLoaded,
+      maxLoaders: workSuspended ? 0 : limits.maxConcurrentLoading,
+      maxDecoders: workSuspended ? 0 : maxDecoders,
+      maxExternalDecoders: workSuspended ? 0 : 1,
+      maxAuxiliaryDecoders: workSuspended ? 0 : 1,
     });
   }, [
     limits.maxConcurrentLoading,
     limits.maxLoaded,
     maxDecoders,
     slotScheduler,
+    workSuspended,
   ]);
 
   const getAdmissionOptions = useCallback(
     (id, options = {}) => {
-      if (!id) return null;
+      if (!id || workSuspended) return null;
       const assumeVisible = Boolean(options?.assumeVisible);
       const assumeNear = assumeVisible || Boolean(options?.assumeNear);
       const visible = assumeVisible || _visibleVideos.has(id);
@@ -327,6 +330,7 @@ export default function useVideoResourceManager({
       isNear,
       limits.maxConcurrentLoading,
       slotScheduler,
+      workSuspended,
     ]
   );
 
@@ -470,8 +474,17 @@ export default function useVideoResourceManager({
       memoryPressure: Math.round(mem.memoryPressure * 100),
       isNearLimit: mem.memoryPressure > 0.85,
       source: mem.source,
+      pollingSuspended: workSuspended,
     }),
-    [mem]
+    [mem, workSuspended]
+  );
+
+  const effectiveLimits = useMemo(
+    () =>
+      workSuspended
+        ? { ...limits, maxLoaded: 0, maxConcurrentLoading: 0 }
+        : limits,
+    [limits, workSuspended]
   );
 
   return {
@@ -484,7 +497,7 @@ export default function useVideoResourceManager({
     isCurrentMediaLease: slotScheduler.isCurrentMediaLease,
     mediaScheduler: slotScheduler,
     performCleanup,
-    limits,
+    limits: effectiveLimits,
     memoryStatus,
     reportPlayerCreationFailure,
   };

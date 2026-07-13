@@ -170,6 +170,49 @@ describe("VideoCard scheduler integration", () => {
     expect(element.pause).toHaveBeenCalled();
   });
 
+  it("physically detaches resident media and releases its slot while work is suspended", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const onMediaInvalidated = vi.fn();
+    const props = cardProps(scheduler, {
+      video: {
+        id: "suspended-card",
+        name: "suspended-card.mp4",
+        fullPath: "/suspended-card.mp4",
+        isElectronFile: true,
+      },
+      onMediaInvalidated,
+    });
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+    const element = mediaElements[0];
+
+    await act(async () => element.dispatchEvent(new Event("loadeddata")));
+    expect(scheduler.getSnapshot()).toMatchObject({
+      loading: 0,
+      resident: 1,
+    });
+    expect(element.getAttribute("src")).not.toBeNull();
+
+    rendered.rerender(<VideoCard {...props} workSuspended />);
+    await act(async () => {});
+
+    expect(element.pause).toHaveBeenCalled();
+    expect(element.getAttribute("src")).toBeNull();
+    expect(element.isConnected).toBe(false);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      loading: 0,
+      queuedLoading: 0,
+      resident: 0,
+      decoders: 0,
+    });
+    expect(onMediaInvalidated).toHaveBeenCalledWith("suspended-card");
+    expect(mediaElements).toHaveLength(1);
+  });
+
   it("rejects low-readiness runtime recovery before releasing its exact leases", async () => {
     const scheduler = createMediaSlotScheduler({
       maxResident: 1,

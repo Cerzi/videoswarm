@@ -42,6 +42,8 @@ describe("useElectronFolderLifecycle", () => {
         groupByFolders: true,
         setGroupByFolders: vi.fn(),
         setRandomSeed: vi.fn(),
+        setPlaybackMode: vi.fn(),
+        setProxyPlaybackEnabled: vi.fn(),
         setZoomLevelFromSettings: vi.fn(),
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -88,6 +90,8 @@ describe("useElectronFolderLifecycle", () => {
         sortDir: "desc",
         groupByFolders: false,
         randomSeed: 42,
+        playbackMode: "static-hover",
+        proxyPlaybackEnabled: true,
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
       readDirectory: vi.fn().mockResolvedValue([
@@ -181,6 +185,8 @@ describe("useElectronFolderLifecycle", () => {
     const setSortDir = vi.fn();
     const setGroupByFolders = vi.fn();
     const setRandomSeed = vi.fn();
+    const setPlaybackMode = vi.fn();
+    const setProxyPlaybackEnabled = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
     const { result } = renderHook(() =>
@@ -196,6 +202,8 @@ describe("useElectronFolderLifecycle", () => {
         groupByFolders: true,
         setGroupByFolders,
         setRandomSeed,
+        setPlaybackMode,
+        setProxyPlaybackEnabled,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -214,7 +222,27 @@ describe("useElectronFolderLifecycle", () => {
     expect(setSortDir).toHaveBeenCalledWith("desc");
     expect(setGroupByFolders).toHaveBeenCalledWith(false);
     expect(setRandomSeed).toHaveBeenCalledWith(42);
+    expect(setPlaybackMode).toHaveBeenCalledWith("static-hover");
+    expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
+  });
+
+  it("normalizes invalid playback settings and coerces the proxy toggle", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      playbackMode: "turbo-everything",
+      proxyPlaybackEnabled: 1,
+    });
+    const setPlaybackMode = vi.fn();
+    const setProxyPlaybackEnabled = vi.fn();
+
+    const { result } = renderDefaultLifecycle({
+      setPlaybackMode,
+      setProxyPlaybackEnabled,
+    });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setPlaybackMode).toHaveBeenCalledWith("balanced");
+    expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
   });
 
   it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {
@@ -258,6 +286,7 @@ describe("useElectronFolderLifecycle", () => {
 
   it("handles folder selection lifecycle", async () => {
     const resetMediaScheduler = vi.fn();
+    const resetThumbnailGeneration = vi.fn();
     const { result } = renderHook(() =>
       useElectronFolderLifecycle({
         selection,
@@ -277,6 +306,7 @@ describe("useElectronFolderLifecycle", () => {
         setLoadingVideos: setLoadingVideosMock.setter,
         setActualPlaying: setActualPlayingMock.setter,
         resetMediaScheduler,
+        resetThumbnailGeneration,
         refreshTagList,
         addRecentFolder,
       })
@@ -292,7 +322,11 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(selection.clear).toHaveBeenCalled();
     expect(resetMediaScheduler).toHaveBeenCalledOnce();
+    expect(resetThumbnailGeneration).toHaveBeenCalledOnce();
     expect(resetMediaScheduler.mock.invocationCallOrder[0]).toBeLessThan(
+      selection.clear.mock.invocationCallOrder[0]
+    );
+    expect(resetThumbnailGeneration.mock.invocationCallOrder[0]).toBeLessThan(
       selection.clear.mock.invocationCallOrder[0]
     );
     expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(

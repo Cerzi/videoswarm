@@ -210,3 +210,40 @@ describe("reportPlayerCreationFailure", () => {
     ).toBeNull();
   });
 });
+
+describe("work suspension", () => {
+  test("stops memory polling and drives loader, resident, and decoder caps to zero", async () => {
+    const progressiveVideos = makeVideos(20);
+    const props = {
+      progressiveVideos,
+      visibleVideos: new Set(["1"]),
+      loadedVideos: new Set(),
+      loadingVideos: new Set(),
+      playingVideos: new Set(),
+      isNear: () => true,
+      workSuspended: false,
+      maxDecoders: 4,
+    };
+    const { result, rerender } = renderHook(
+      (current) => useVideoResourceManager(current),
+      { initialProps: props }
+    );
+    await flushAsync();
+    expect(result.current.reserveLoadSlot("1", { assumeVisible: true })).toBeTruthy();
+
+    rerender({ ...props, workSuspended: true });
+    expect(result.current.limits).toMatchObject({
+      maxLoaded: 0,
+      maxConcurrentLoading: 0,
+    });
+    expect(result.current.reserveLoadSlot("2", { assumeVisible: true })).toBeNull();
+    expect(result.current.mediaScheduler.getSnapshot().limits).toMatchObject({
+      maxResident: 0,
+      maxLoaders: 0,
+      maxDecoders: 0,
+      maxExternalDecoders: 0,
+      maxAuxiliaryDecoders: 0,
+    });
+    expect(result.current.memoryStatus.pollingSuspended).toBe(true);
+  });
+});

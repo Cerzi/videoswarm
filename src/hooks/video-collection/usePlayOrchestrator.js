@@ -7,13 +7,22 @@ import {
   useState,
 } from "react";
 import { createMediaSlotScheduler } from "../../services/mediaSlotScheduler";
+import {
+  buildPlaybackPriority,
+  DEFAULT_PLAYBACK_MODE,
+  normalizePlaybackMode,
+} from "../../playback/playbackPolicy";
 
 const ERROR_COOLDOWN_MS = 8000;
+const EMPTY_IDS = Object.freeze([]);
+const EMPTY_SET = new Set();
 
 const asSet = (value) =>
   value && typeof value.has === "function"
     ? value
-    : new Set(Array.isArray(value) ? value : value ? Array.from(value) : []);
+    : value
+      ? new Set(Array.isArray(value) ? value : Array.from(value))
+      : EMPTY_SET;
 
 const sameSet = (left, right) => {
   if (left === right) return true;
@@ -36,6 +45,10 @@ export default function usePlayOrchestrator({
   hoverAudioEnabled = false,
   mediaScheduler = null,
   playbackSuspended = false,
+  playbackMode = DEFAULT_PLAYBACK_MODE,
+  selectedIds = EMPTY_SET,
+  centerPriorityIds = EMPTY_IDS,
+  hoveredId,
 }) {
   const fallbackSchedulerRef = useRef(null);
   if (!fallbackSchedulerRef.current) {
@@ -45,6 +58,11 @@ export default function usePlayOrchestrator({
   const ownsScheduler = !mediaScheduler;
   const visible = asSet(visibleIds);
   const loaded = asSet(loadedIds);
+  const selected = asSet(selectedIds);
+  const normalizedMode = normalizePlaybackMode(playbackMode);
+  const centerOrder = Array.isArray(centerPriorityIds)
+    ? centerPriorityIds
+    : EMPTY_IDS;
   const decoderCap = playbackSuspended
     ? 0
     : Math.max(0, Math.floor(Number(maxPlaying) || 0));
@@ -78,38 +96,20 @@ export default function usePlayOrchestrator({
     }
 
     const now = performance.now();
-    const candidates = [];
-    const candidateSet = new Set();
-    const addCandidate = (id) => {
-      if (
-        !id ||
-        candidateSet.has(id) ||
-        !visible.has(id) ||
-        !loaded.has(id) ||
-        !scheduler.getResidentLease(id)
-      ) {
-        return;
-      }
+    const recentOrder = [...startOrderRef.current].reverse();
+    const priority = buildPlaybackPriority({
+      mode: normalizedMode,
+      visibleIds: visible,
+      loadedIds: loaded,
+      centerOrderedIds: centerOrder.length ? centerOrder : recentOrder,
+      hoveredId: hoveredId !== undefined ? hoveredId : hoveredRef.current,
+      selectedIds: selected,
+    });
+    const candidates = priority.filter((id) => {
+      if (!scheduler.getResidentLease(id)) return false;
       const failedAt = recentlyErroredRef.current.get(id);
-      if (failedAt && now - failedAt < ERROR_COOLDOWN_MS) return;
-      candidateSet.add(id);
-      candidates.push(id);
-    };
-
-    addCandidate(hoveredRef.current);
-
-    // Retain admitted decoders where possible to avoid churn during small
-    // visibility/layout changes.
-    for (const id of scheduler.getSnapshot().decoderIds) addCandidate(id);
-
-    const orderIndex = new Map();
-    startOrderRef.current.forEach((id, index) => orderIndex.set(id, index));
-    const remaining = Array.from(visible).filter((id) => loaded.has(id));
-    remaining.sort(
-      (left, right) =>
-        (orderIndex.get(right) ?? -1) - (orderIndex.get(left) ?? -1)
-    );
-    remaining.forEach(addCandidate);
+      return !(failedAt && now - failedAt < ERROR_COOLDOWN_MS);
+    });
 
     scheduler.reconcileDecoders(candidates);
     mirrorScheduler();
@@ -117,9 +117,13 @@ export default function usePlayOrchestrator({
     decoderCap,
     loaded,
     mirrorScheduler,
+    normalizedMode,
     playbackSuspended,
     reconcileRevision,
     scheduler,
+    selected,
+    centerOrder,
+    hoveredId,
     visible,
   ]);
 
@@ -226,6 +230,10 @@ export default function usePlayOrchestrator({
     setActiveHoverAudioId((previous) =>
       previous && !visible.has(previous) ? null : previous
     );
+    if (hoveredRef.current && !visible.has(hoveredRef.current)) {
+      hoveredRef.current = null;
+      setReconcileRevision((value) => value + 1);
+    }
   }, [visible]);
 
   useEffect(

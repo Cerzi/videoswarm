@@ -86,6 +86,8 @@ const VideoCard = memo(function VideoCard({
   isLoading,
   isVisible,
   playbackSuspended = false,
+  workSuspended = false,
+  proxyPlaybackEnabled = false,
   showFilenames = true,
 
   // limits & callbacks (owned by parent/orchestrator)
@@ -112,6 +114,7 @@ const VideoCard = memo(function VideoCard({
   onHoverAudioEnd,        // (id)
   onUnmount,              // (id)
   onMediaInvalidated,     // (id) file identity changed in-place
+  registerMediaElement,   // (id, exact element) => optional disposer
 
   // IO registry
   observeIntersection,    // (el, id, cb)
@@ -142,6 +145,9 @@ const VideoCard = memo(function VideoCard({
   const pendingAspectRatioRef = useRef(null);
   const watchdogRecoveryRef = useRef(false);
   const loadVideoRef = useRef(null);
+  const telemetryElementRef = useRef(null);
+  const telemetryDisposeRef = useRef(null);
+  const ownedSourceUrlRef = useRef(null);
 
   // local mirrors (parent is source of truth)
   const videoId = video.id || video.fullPath || video.name;
@@ -264,9 +270,25 @@ const VideoCard = memo(function VideoCard({
   const disposeVideoElement = useCallback((el) => {
     if (!el) return false;
 
+    if (telemetryElementRef.current === el) {
+      telemetryDisposeRef.current?.();
+      telemetryDisposeRef.current = null;
+      telemetryElementRef.current = null;
+    }
+    const ownedSource =
+      ownedSourceUrlRef.current?.element === el
+        ? ownedSourceUrlRef.current
+        : null;
+    if (ownedSource) {
+      try {
+        URL.revokeObjectURL(ownedSource.url);
+      } catch {}
+      ownedSourceUrlRef.current = null;
+    }
+
     try {
       suppressErrorsRef.current = true;
-      hardDetach(el);
+      hardDetach(el, { revokeBlobUrl: !ownedSource });
       el.remove();
     } catch {}
     finally {
@@ -412,6 +434,21 @@ const VideoCard = memo(function VideoCard({
     lastFailureAtRef.current = 0;
   }, [cancelLoadAttempt, mediaIdentity, onMediaInvalidated, videoId]);
 
+  useEffect(() => {
+    if (!workSuspended) return;
+    const ownedWork = Boolean(
+      videoRef.current ||
+        loadingReservationRef.current ||
+        mediaReservationRef.current ||
+        queuedLoadWaiterRef.current ||
+        loadRequestedRef.current
+    );
+    cancelLoadAttempt();
+    setLoaded(false);
+    setLoading(false);
+    if (ownedWork) onMediaInvalidated?.(videoId);
+  }, [cancelLoadAttempt, onMediaInvalidated, videoId, workSuspended]);
+
   // Teardown when parent says this card no longer owns media resources.
   useEffect(() => {
     if (!isLoaded && !isLoading && videoRef.current) {
@@ -537,6 +574,7 @@ const VideoCard = memo(function VideoCard({
 
     const shouldPlay =
       !playbackSuspended &&
+      !workSuspended &&
       isPlaying &&
       isVisible &&
       loaded &&
@@ -584,6 +622,7 @@ const VideoCard = memo(function VideoCard({
     isVisible,
     loaded,
     playbackSuspended,
+    workSuspended,
     isHoverAudioActive,
     videoId,
     onVideoPlay,
@@ -600,6 +639,7 @@ const VideoCard = memo(function VideoCard({
     if (!watchedElement) return;
     const enable =
       !playbackSuspended &&
+      !workSuspended &&
       loaded &&
       isPlaying &&
       isVisible &&
@@ -654,6 +694,7 @@ const VideoCard = memo(function VideoCard({
     isVisible,
     loaded,
     playbackSuspended,
+    workSuspended,
     videoId,
     decoderLease,
     disposeVideoElement,
@@ -662,7 +703,7 @@ const VideoCard = memo(function VideoCard({
 
   // create & load <video>
   const loadVideo = useCallback((options = {}) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || workSuspended) return;
     if (
       loading ||
       loadRequestedRef.current ||
@@ -724,6 +765,10 @@ const VideoCard = memo(function VideoCard({
         // Track the node before starting any asynchronous media work. An unmount
         // that happens before loadeddata must still be able to release its source.
         videoRef.current = el;
+        telemetryDisposeRef.current?.();
+        telemetryElementRef.current = el;
+        telemetryDisposeRef.current =
+          registerMediaElement?.(videoId, el) || null;
 
         el.muted = true;
         el.loop = true;
@@ -924,22 +969,43 @@ const VideoCard = memo(function VideoCard({
         el.addEventListener("error",         onErr);
         attemptCleanupRef.current = cleanupAttempt;
 
-        try {
-          if (video.isElectronFile && video.fullPath) {
-            el.src = toFileURL(video.fullPath);
-          } else if (video.file) {
-            el.src = URL.createObjectURL(video.file);
-          } else if (video.fullPath || video.relativePath) {
-            el.src = video.fullPath || video.relativePath;
-          } else {
-            throw new Error("No valid video source");
-          }
+        const assignSource = async () => {
+          try {
+            if (video.isElectronFile && video.fullPath) {
+              let selectedPath = video.fullPath;
+              let proxyStatus = "disabled";
+              if (
+                proxyPlaybackEnabled &&
+                window.electronAPI?.playback?.resolveSource
+              ) {
+                const resolved = await window.electronAPI.playback.resolveSource({
+                  filePath: video.fullPath,
+                  enabled: true,
+                });
+                if (!isCurrentAttempt()) return;
+                selectedPath = resolved?.path || resolved?.sourcePath || selectedPath;
+                proxyStatus = resolved?.status || "unavailable";
+              }
+              el.dataset.proxyStatus = proxyStatus;
+              el.src = toFileURL(selectedPath);
+            } else if (video.file) {
+              const ownedUrl = URL.createObjectURL(video.file);
+              ownedSourceUrlRef.current = { element: el, url: ownedUrl };
+              el.src = ownedUrl;
+            } else if (video.fullPath || video.relativePath) {
+              el.src = video.fullPath || video.relativePath;
+            } else {
+              throw new Error("No valid video source");
+            }
 
-          el.load();
-          // No warm-start play/pause (keeps CPU/GPU quieter)
-        } catch (err) {
-          onErr({ target: { error: err } });
-        }
+            if (!isCurrentAttempt()) return;
+            el.load();
+            // No warm-start play/pause (keeps CPU/GPU quieter)
+          } catch (err) {
+            if (isCurrentAttempt()) onErr({ target: { error: err } });
+          }
+        };
+        void assignSource();
       };
 
       const startInit = () => {
@@ -1029,10 +1095,14 @@ const VideoCard = memo(function VideoCard({
     stopLoadingReservation,
     reportPlayerCreationFailure,
     onMediaInvalidated,
+    registerMediaElement,
+    proxyPlaybackEnabled,
+    workSuspended,
   ]);
   loadVideoRef.current = loadVideo;
 
   const ensureVisibleAndLoad = useCallback(() => {
+    if (workSuspended) return false;
     if (!isVisible && !nearStateRef.current) {
       return false;
     }
@@ -1084,6 +1154,7 @@ const VideoCard = memo(function VideoCard({
     hasRenderableVideo,
     isVisible,
     queueLoadSlot,
+    workSuspended,
   ]);
 
   useEffect(() => {
@@ -1093,7 +1164,7 @@ const VideoCard = memo(function VideoCard({
   }, [loaded, showFilenames, syncVideoIntoContainer]);
 
   useEffect(() => {
-    if (!shouldEnsureLoad) return undefined;
+    if (!shouldEnsureLoad || workSuspended) return undefined;
 
     let raf = 0;
     const run = () => {
@@ -1112,7 +1183,7 @@ const VideoCard = memo(function VideoCard({
 
     run();
     return undefined;
-  }, [ensureVisibleAndLoad, shouldEnsureLoad]);
+  }, [ensureVisibleAndLoad, shouldEnsureLoad, workSuspended]);
 
   useEffect(() => {
     if (!isVisible) cancelQueuedLoad();
@@ -1138,7 +1209,7 @@ const VideoCard = memo(function VideoCard({
         onVisibilityChange?.(videoId, nowVisible);
       }
 
-      if (nowVisible) {
+      if (nowVisible && !workSuspended) {
         ensureVisibleAndLoad();
       }
     };
@@ -1153,12 +1224,14 @@ const VideoCard = memo(function VideoCard({
     videoId,
     onVisibilityChange,
     ensureVisibleAndLoad,
+    workSuspended,
   ]);
 
   // Backup trigger if parent already flags visible
   useEffect(() => {
     if (
       isVisible &&
+      !workSuspended &&
       !loaded &&
       !loading &&
       !loadRequestedRef.current &&
@@ -1171,6 +1244,7 @@ const VideoCard = memo(function VideoCard({
         if (
           mountedRef.current &&
           isVisible &&
+          !workSuspended &&
           !loaded &&
           !loading &&
           !loadRequestedRef.current &&
@@ -1190,6 +1264,7 @@ const VideoCard = memo(function VideoCard({
     checkCanLoad,
     ensureVisibleAndLoad,
     queueLoadSlot,
+    workSuspended,
   ]);
 
   // Cleanup on unmount
@@ -1200,6 +1275,9 @@ const VideoCard = memo(function VideoCard({
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
       cancelLoadAttempt();
+      telemetryDisposeRef.current?.();
+      telemetryDisposeRef.current = null;
+      telemetryElementRef.current = null;
       videoRef.current = null;
       onHoverAudioEndRef.current?.(videoIdRef.current);
       onUnmountRef.current?.(videoIdRef.current);
@@ -1235,10 +1313,11 @@ const VideoCard = memo(function VideoCard({
   }, [onHover, videoId, hoverAudioEnabled, onHoverAudioStart]);
 
   const handleMouseLeave = useCallback(() => {
+    onHover?.(null);
     if (hoverAudioEnabled) {
       onHoverAudioEnd?.(videoId);
     }
-  }, [hoverAudioEnabled, onHoverAudioEnd, videoId]);
+  }, [hoverAudioEnabled, onHover, onHoverAudioEnd, videoId]);
 
   const handleDragStart = useCallback(
     (reactEvent) => {

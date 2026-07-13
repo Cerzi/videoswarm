@@ -17,6 +17,7 @@ const FullScreenModal = ({
   onNavigate, 
   showFilenames,
   mediaScheduler = null,
+  workSuspended = false,
 }) => {
   const modalRef = useRef(null);
   const fallbackRef = useRef(null);
@@ -30,7 +31,13 @@ const FullScreenModal = ({
 
   // Fullscreen owns its media element. Grid cards can virtualize independently.
   useEffect(() => {
-    if (!video) return;
+    if (!video || workSuspended) {
+      if (workSuspended) {
+        setIsLoading(false);
+        setVideoLoaded(false);
+      }
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
@@ -115,7 +122,7 @@ const FullScreenModal = ({
       el.removeEventListener('error', onError);
       releaseResources();
     };
-  }, [mediaScheduler, video]);
+  }, [mediaScheduler, video, workSuspended]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -134,6 +141,7 @@ const FullScreenModal = ({
           break;
         case ' ':
           e.preventDefault();
+          if (workSuspended) break;
           {
             const el = fallbackRef.current;
             if (el) el.paused ? el.play() : el.pause();
@@ -146,7 +154,7 @@ const FullScreenModal = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigate]);
+  }, [onClose, onNavigate, workSuspended]);
 
   // Handle click outside to close
   const handleBackdropClick = useCallback((e) => {

@@ -174,6 +174,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("request-settings");
   },
 
+  playback: {
+    getCapabilities: () => ipcRenderer.invoke("playback:get-capabilities"),
+    getWindowActivity: () =>
+      ipcRenderer.invoke("playback:get-window-activity"),
+    setRendererActive: (active) =>
+      ipcRenderer.invoke("playback:set-renderer-active", Boolean(active)),
+    resolveSource: (payload) =>
+      ipcRenderer.invoke("playback:resolve-source", payload),
+    onWindowActivity: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, activity) => callback(activity);
+      ipcRenderer.on("playback:window-activity", handler);
+      return () =>
+        ipcRenderer.removeListener("playback:window-activity", handler);
+    },
+  },
+
   // Additional file operations (from your main.js)
   bulkMoveToTrash: async (paths) => {
     return await ipcRenderer.invoke('bulk-move-to-trash', paths);

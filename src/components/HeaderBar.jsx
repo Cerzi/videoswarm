@@ -5,6 +5,7 @@ import { supportContent } from "../config/supportContent";
 import { ZOOM_MAX_INDEX } from "../zoom/config.js";
 import { clampZoomIndex } from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
+import PlaybackModeControl from "./PlaybackModeControl";
 
 // --- Minimal inline SVG icons (fallback for environments without icon libs)
 const Icon = (props) => (
@@ -136,6 +137,14 @@ export default function HeaderBar({
   filtersButtonRef,
   hoverAudioEnabled = false,
   onHoverAudioToggle,
+  playbackMode = "balanced",
+  onPlaybackModeChange,
+  playbackDecision,
+  playbackCapabilityStatus = "",
+  proxyPlaybackEnabled = false,
+  onProxyPlaybackToggle,
+  proxyPlaybackAvailable = true,
+  workSuspended = false,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -204,6 +213,20 @@ export default function HeaderBar({
         >
           <TextIcon />
         </button>
+
+        <div style={dividerStyle}>
+          <PlaybackModeControl
+            mode={playbackMode}
+            onModeChange={onPlaybackModeChange}
+            decision={playbackDecision}
+            capabilityStatus={playbackCapabilityStatus}
+            proxyEnabled={proxyPlaybackEnabled}
+            onProxyToggle={onProxyPlaybackToggle}
+            proxyAvailable={proxyPlaybackAvailable}
+            disabled={isLoadingFolder}
+            workSuspended={workSuspended}
+          />
+        </div>
 
         <div style={dividerStyle}>
           <div className="video-limit-control" title="Limit rendered VideoCards">

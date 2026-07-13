@@ -303,10 +303,14 @@ export const actionRegistry = {
 
     [ActionIds.COPY_LAST_FRAME]: async (
       videos,
-      { electronAPI, notify, mediaScheduler }
+      { electronAPI, notify, mediaScheduler, workSuspended }
     ) => {
         const video = videos[0];
         if (!video) return;
+        if (workSuspended) {
+          notify('Restore the app before capturing a frame', 'error');
+          return;
+        }
 
         try {
           if (video.isElectronFile && video.fullPath && electronAPI?.copyLastFrameFromFile) {

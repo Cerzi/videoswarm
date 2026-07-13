@@ -33,6 +33,14 @@ const baseProps = {
   filtersButtonRef: { current: null },
   hoverAudioEnabled: false,
   onHoverAudioToggle: vi.fn(),
+  playbackMode: "balanced",
+  onPlaybackModeChange: vi.fn(),
+  playbackDecision: { target: 2, safetyCap: 4, health: "healthy" },
+  playbackCapabilityStatus:
+    "Linux: acceleration detected, not guaranteed.",
+  proxyPlaybackEnabled: false,
+  onProxyPlaybackToggle: vi.fn(),
+  proxyPlaybackAvailable: true,
 };
 
 describe("HeaderBar hover audio control", () => {
@@ -78,5 +86,22 @@ describe("HeaderBar hover audio control", () => {
     const activeButton = screen.getByRole("button", { name: "Play audio on hover" });
     expect(activeButton).toHaveAttribute("aria-pressed", "true");
     expect(activeButton.className).toContain("active");
+  });
+});
+
+describe("HeaderBar playback policy control", () => {
+  it("renders adaptive mode, target, Linux caveat, and proxy opt-in", () => {
+    render(<HeaderBar {...baseProps} />);
+    expect(screen.getByRole("combobox", { name: "Playback mode" })).toHaveValue(
+      "balanced"
+    );
+    expect(screen.getByLabelText(/Playback target/)).toHaveTextContent(
+      "2/4 decoders"
+    );
+    expect(screen.getByText(/detected, not guaranteed/i)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use generated playback proxies" })
+    );
+    expect(baseProps.onProxyPlaybackToggle).toHaveBeenCalledOnce();
   });
 });

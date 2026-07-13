@@ -23,10 +23,14 @@ export function toFileURL(absPath) {
   return `file://${encoded}`;
 }
 
-export function hardDetach(el) {
+export function hardDetach(el, { revokeBlobUrl = true } = {}) {
   if (!el) return;
   try { el.pause(); } catch {}
-  if (typeof el.src === "string" && el.src.startsWith("blob:")) {
+  if (
+    revokeBlobUrl &&
+    typeof el.src === "string" &&
+    el.src.startsWith("blob:")
+  ) {
     try { URL.revokeObjectURL(el.src); } catch {}
   }
   try { el.removeAttribute("src"); } catch {}
