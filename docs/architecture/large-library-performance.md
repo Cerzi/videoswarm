@@ -303,14 +303,14 @@ Acceptance criteria:
 
 | Deliverable | Status | Notes |
 | --- | --- | --- |
-| Scan cancellation and latest-request-wins safety | **Unimplemented** | Initial implementation target. |
-| Loading overlay and Escape cancellation | **Unimplemented** | Initial implementation target. |
+| Scan cancellation and latest-request-wins safety | **Implemented** | Request IDs, cooperative cancellation, stale-result rejection, profile/window/app teardown, and focused renderer tests landed in `062e23a`. The scan still returns one final array. |
+| Loading overlay and Escape cancellation | **Implemented** | The overlay forwards one cancellation action and Escape uses the same path; landed in `062e23a`. |
 | Incremental enumeration batches and real progress | **Unimplemented** | Requires scan protocol expansion. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
 | Persistent content/file-instance schema | **Unimplemented** | Existing schema stores one last-known path. |
 | Virtualized masonry | **Unimplemented** | Current renderer materializes all cards. |
 | Stable masonry/observer/card callback identities | **Unimplemented** | Independent optimization after safety work. |
-| Cancel-safe media initialization | **Unimplemented** | Initial implementation target. |
+| Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; failed recovery and the idle frame pump were fixed with regressions in `e85030a`. |
 | Atomic media loader/decoder scheduler | **Unimplemented** | Current admission mirrors React Sets. |
 | Fullscreen URL and keyboard lifecycle hardening | **Unimplemented** | Separate correctness slice. |
 | Linux playback modes and adaptive decoder budget | **Unimplemented** | Requires telemetry and UX controls. |
@@ -328,15 +328,16 @@ Acceptance criteria:
 The first implementation establishes ownership and cancellation before adding
 streaming or virtualization:
 
-1. Assign a unique request ID to each renderer folder scan.
-2. Add explicit main/preload cancellation and main-loop cancellation checks.
-3. Make renderer folder selection latest-request-wins and expose one cancel
-   action to the overlay and Escape key.
-4. Remove artificial folder-loading delays where they interfere with
-   cancellation semantics.
-5. Make queued video initialization cancelable, track elements immediately,
-   and stop the scheduler's animation frame while idle.
-6. Add focused regression tests for these guarantees.
+1. **Implemented** — Assign a unique request ID to each renderer folder scan.
+2. **Implemented** — Add explicit main/preload cancellation and main-loop
+   cancellation checks.
+3. **Implemented** — Make renderer folder selection latest-request-wins and
+   expose one cancel action to the overlay and Escape key.
+4. **Implemented** — Remove artificial folder-loading delays; landed in
+   `bd793f8`.
+5. **Implemented** — Make queued video initialization cancelable, track
+   elements immediately, and stop the scheduler's animation frame while idle.
+6. **Implemented** — Add focused regression tests for these guarantees.
 
 The scan still returns one final array after this slice. Incremental batches,
 enrichment workers, virtualization, library schema changes, and adaptive Linux
@@ -353,4 +354,3 @@ playback remain explicitly Unimplemented until their acceptance criteria land.
 - Windows path encoding must continue to use the shared file URL helper.
 - Generated caches, proxy files, and indexes remain rebuildable and must not be
   committed to the repository.
-
