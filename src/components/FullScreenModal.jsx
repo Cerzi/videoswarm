@@ -1,125 +1,44 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { toFileURL } from './VideoCard/videoDom';
+
+const detachFullscreenMedia = (element) => {
+  if (!element) return;
+  try { element.pause(); } catch {}
+  try {
+    element.removeAttribute('src');
+    element.srcObject = null;
+    element.load();
+  } catch {}
+};
 
 const FullScreenModal = ({ 
   video, 
   onClose, 
   onNavigate, 
-  showFilenames,
-  gridRef 
+  showFilenames
 }) => {
   const modalRef = useRef(null);
-  const adoptHostRef = useRef(null);     // host where we move the existing grid <video>
-  const fallbackRef = useRef(null);      // fallback <video> if adoption fails
+  const fallbackRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const [usingAdopted, setUsingAdopted] = useState(false);
 
-  // Keep track for restoration
-  const adoptedElRef = useRef(null);
-  const originalParentRef = useRef(null);
-  const originalNextSiblingRef = useRef(null);
-
-  // Try to adopt (move) the existing grid video element for instant loading
-  const tryAdoptExistingVideo = useCallback(() => {
-    if (!video) return false;
-
-    // Find existing video element in the grid
-    const existingVideo = document.querySelector(
-      `[data-video-id="${video.id}"] video`
-    );
-    if (existingVideo && existingVideo.readyState >= 2 && adoptHostRef.current) {
-      try {
-        originalParentRef.current = existingVideo.parentElement;
-        originalNextSiblingRef.current = existingVideo.nextSibling;
-
-        // mark adopted so the card won't re-attach or tear down
-        existingVideo.dataset.adopted = 'modal';
-
-        // move node into modal host
-        adoptHostRef.current.appendChild(existingVideo);
-
-        // style + controls for modal
-        existingVideo.controls = true;
-        existingVideo.style.display = 'block';
-        existingVideo.style.width = 'auto';
-        existingVideo.style.height = '90vh';
-        existingVideo.style.maxWidth = '90vw';
-        existingVideo.style.maxHeight = '90vh';
-        existingVideo.style.objectFit = 'contain';
-        existingVideo.style.borderRadius = '8px';
-        existingVideo.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.8)';
-        existingVideo.style.margin = '0 auto';
-
-        // play (muted already from tile)
-        existingVideo.play?.().catch(() => {});
-
-        adoptedElRef.current = existingVideo;
-        setIsLoading(false);
-        setVideoLoaded(true);
-        setUsingAdopted(true);
-        return true;
-      } catch (e) {
-        console.warn('Adopt failed, will fall back:', e);
-      }
-    }
-    return false;
-  }, [video]);
-
-  // Restore adopted node to its original parent/position
-  const restoreAdopted = useCallback(() => {
-    const el = adoptedElRef.current;
-    if (!el) return;
-    try {
-      // revert styles/controls
-      el.controls = false;
-      el.style.display = '';
-      el.style.width = '';
-      el.style.height = '';
-      el.style.maxWidth = '';
-      el.style.maxHeight = '';
-      el.style.objectFit = '';
-      el.style.borderRadius = '';
-      el.style.boxShadow = '';
-      el.style.margin = '';
-      if (el.dataset) delete el.dataset.adopted;
-
-      const parent = originalParentRef.current;
-      const next = originalNextSiblingRef.current;
-      if (parent) {
-        if (next && next.parentNode === parent) {
-          parent.insertBefore(el, next);
-        } else {
-          parent.appendChild(el);
-        }
-      }
-    } catch {}
-    adoptedElRef.current = null;
-    originalParentRef.current = null;
-    originalNextSiblingRef.current = null;
-  }, []);
-
-  // Main effect: adopt if possible, else use fallback <video>
+  // Fullscreen owns its media element. Grid cards can virtualize independently.
   useEffect(() => {
     if (!video) return;
 
     setIsLoading(true);
     setError(null);
     setVideoLoaded(false);
-    setUsingAdopted(false);
 
-    // Fast path: adopt
-    const adopted = tryAdoptExistingVideo();
-    if (adopted) return () => restoreAdopted();
-
-    // Fallback: separate <video> element (no forced .load(), reuse src)
     const el = fallbackRef.current;
     if (!el) return;
+    let ownedBlobUrl = null;
 
     const onCanPlay = () => {
       setIsLoading(false);
       setVideoLoaded(true);
-      el.play().catch(() => {});
+      el.play?.()?.catch?.(() => {});
     };
     const onError = (e) => {
       setIsLoading(false);
@@ -129,12 +48,22 @@ const FullScreenModal = ({
     el.addEventListener('canplay', onCanPlay);
     el.addEventListener('error', onError);
 
-    // Set source once (avoid .load() resets)
-    const nextSrc = video.isElectronFile && video.fullPath
-      ? `file://${video.fullPath}`
-      : (video.blobUrl || (video.file ? URL.createObjectURL(video.file) : ''));
+    let nextSrc = '';
+    if (video.isElectronFile && video.fullPath) {
+      nextSrc = toFileURL(video.fullPath);
+    } else if (video.blobUrl) {
+      nextSrc = video.blobUrl;
+    } else if (video.file) {
+      ownedBlobUrl = URL.createObjectURL(video.file);
+      nextSrc = ownedBlobUrl;
+    } else {
+      nextSrc = video.fullPath || video.relativePath || '';
+    }
 
-    if (el.src !== nextSrc) {
+    if (!nextSrc) {
+      setIsLoading(false);
+      setError('No valid video source');
+    } else if (el.src !== nextSrc) {
       el.preload = 'auto';
       el.src = nextSrc;
     }
@@ -142,9 +71,10 @@ const FullScreenModal = ({
     return () => {
       el.removeEventListener('canplay', onCanPlay);
       el.removeEventListener('error', onError);
-      // Do not revoke blob here if shared elsewhere
+      detachFullscreenMedia(el);
+      if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
     };
-  }, [video, tryAdoptExistingVideo, restoreAdopted]);
+  }, [video]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -164,7 +94,7 @@ const FullScreenModal = ({
         case ' ':
           e.preventDefault();
           {
-            const el = usingAdopted ? adoptedElRef.current : fallbackRef.current;
+            const el = fallbackRef.current;
             if (el) el.paused ? el.play() : el.pause();
           }
           break;
@@ -175,7 +105,7 @@ const FullScreenModal = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigate, usingAdopted]);
+  }, [onClose, onNavigate]);
 
   // Handle click outside to close
   const handleBackdropClick = useCallback((e) => {
@@ -188,11 +118,9 @@ const FullScreenModal = ({
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => {
-      // restore adopted video if any
-      restoreAdopted();
       document.body.style.overflow = '';
     };
-  }, [restoreAdopted]);
+  }, []);
 
   if (!video) return null;
 
@@ -364,21 +292,7 @@ const FullScreenModal = ({
             </div>
           )}
 
-          {/* Host where we adopt the existing grid <video> */}
-          <div
-            ref={adoptHostRef}
-            style={{
-              display: usingAdopted ? 'flex' : 'none',
-              maxWidth: '90vw',
-              maxHeight: '90vh',
-              width: '100%',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-
-          {/* Fallback <video> used only if adoption fails */}
+          {/* Modal-owned media remains safe when grid cards virtualize away. */}
           <video
             ref={fallbackRef}
             muted
@@ -386,7 +300,7 @@ const FullScreenModal = ({
             controls
             playsInline
             style={{
-              display: usingAdopted ? 'none' : 'block',
+              display: 'block',
               width: 'auto',
               height: '90vh',
               maxWidth: '90vw',

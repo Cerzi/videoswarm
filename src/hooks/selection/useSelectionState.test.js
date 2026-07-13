@@ -94,6 +94,19 @@ describe('useSelectionState (range + anchor)', () => {
     expect(result.current.selected).toEqual(new Set(['b', 'c', 'd']));
   });
 
+  test('selectRange spans unmounted portions of a 5,000-id logical order', () => {
+    const largeOrder = Array.from({ length: 5000 }, (_, index) => `clip-${index}`);
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('clip-100'));
+    act(() => result.current.selectRange(largeOrder, 'clip-4100', false));
+
+    expect(result.current.selected.size).toBe(4001);
+    expect(result.current.selected.has('clip-100')).toBe(true);
+    expect(result.current.selected.has('clip-2000')).toBe(true);
+    expect(result.current.selected.has('clip-4100')).toBe(true);
+    expect(result.current.selected.has('clip-99')).toBe(false);
+  });
+
   test('selectRange additive=true merges with existing selection', () => {
     const { result } = renderHook(() => useSelectionState());
     act(() => result.current.selectOnly('a'));          // anchor = a ; selected={a}
@@ -117,6 +130,25 @@ describe('useSelectionState (range + anchor)', () => {
     const { result } = renderHook(() => useSelectionState());
     act(() => result.current.selectOnly('x'));
     act(() => result.current.clear());
+    expect(result.current.selected.size).toBe(0);
+    expect(result.current.anchorId).toBe(null);
+  });
+
+  test('pruneTo removes filtered ids and clears a stale range anchor', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('b'));
+    act(() => result.current.selectRange(ids, 'd', false));
+    expect(result.current.selected).toEqual(new Set(['b', 'c', 'd']));
+
+    act(() => result.current.pruneTo(new Set(['c', 'd', 'e'])));
+    expect(result.current.selected).toEqual(new Set(['c', 'd']));
+    expect(result.current.anchorId).toBe(null);
+  });
+
+  test('remove clears the anchor when a watched file disappears', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectOnly('c'));
+    act(() => result.current.remove('c'));
     expect(result.current.selected.size).toBe(0);
     expect(result.current.anchorId).toBe(null);
   });

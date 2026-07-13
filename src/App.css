@@ -756,7 +756,7 @@ body {
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
-  overflow-anchor: auto;
+  overflow-anchor: none;
   transition: padding-bottom 0.3s ease;
   padding-bottom: 0;
 }
@@ -782,7 +782,7 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 100%;
-  transition: height 0.3s ease; /* keep single transition */
+  transition: none;
   contain: layout paint style;
 }
 
@@ -903,28 +903,35 @@ body {
 .video-grid.masonry-vertical,
 .video-grid.masonry-horizontal { position: relative; }
 
-/* Hide unpositioned items while measuring/placing */
+/* Virtual masonry owns geometry through a lightweight absolute slot. */
 .video-grid.masonry-vertical .video-item,
 .video-grid.masonry-horizontal .video-item {
-  opacity: 0;
-  pointer-events: none;
   contain: layout paint size;
-  will-change: transform;
-  transform: translateZ(0);
-  transition: opacity 0.15s ease !important;
 }
-.video-grid.masonry-vertical .video-item[data-pos="1"],
-.video-grid.masonry-horizontal .video-item[data-pos="1"] {
+
+.video-grid.virtualized-masonry {
+  padding: 0;
+  overflow-anchor: none;
+}
+
+.video-grid.virtualized-masonry .masonry-slot {
+  contain: layout paint size;
+}
+
+.video-grid.virtualized-masonry .masonry-slot > .video-item {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
   opacity: 1;
   pointer-events: auto;
+  transform: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
-/* Prevent transform/height animations during masonry passes */
-.video-grid.masonry-vertical .video-item,
-.video-grid.masonry-horizontal .video-item { transition-property: opacity !important; }
 
-/* Default placeholder height for masonry (while probing) */
-.video-grid.masonry-vertical .video-placeholder,
-.video-grid.masonry-vertical .error-indicator { height: 140px; }
+.video-grid.virtualized-masonry .video-placeholder,
+.video-grid.virtualized-masonry .error-indicator {
+  height: 100%;
+}
 
 /* ===== States: placeholder / error (unified) ===== */
 .video-placeholder {
@@ -944,7 +951,6 @@ body {
   position: relative;
   background: rgba(14, 14, 20, 0.35);
   background: color-mix(in srgb, currentColor 6%, transparent);
-  backdrop-filter: saturate(140%) blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
 }
@@ -1200,74 +1206,6 @@ body {
 .app[data-memory-pressure="high"] .video-item:not(.visible) { opacity: 0.3; }
 .app[data-memory-pressure="critical"] .video-item:not(.visible) { display: none; }
 
-/* ===== Virtual grid (kept) ===== */
-.virtual-grid-container {
-  background: #1a1a1a;
-  width: 100%;
-  position: relative;
-  will-change: scroll-position;
-  transform: translateZ(0);
-  scroll-behavior: smooth;
-}
-.virtual-grid-container::-webkit-scrollbar { width: 12px; }
-.virtual-grid-container::-webkit-scrollbar-track { background: #2d2d2d; }
-.virtual-grid-container::-webkit-scrollbar-thumb { background: #555; border-radius: 6px; }
-.virtual-grid-container::-webkit-scrollbar-thumb:hover { background: #777; }
-
-.virtual-grid-container .video-item {
-  will-change: transform;
-  transform: translateZ(0);
-  transition: none !important;
-  contain: layout style paint size;
-}
-.virtual-grid-container.layout-grid .video-item,
-.virtual-grid-container.layout-masonry-vertical .video-item,
-.virtual-grid-container.layout-masonry-horizontal .video-item {
-  border-radius: 8px;
-  overflow: hidden;
-}
-.virtual-grid-container.hide-filenames .video-filename { display: none; }
-.virtual-grid-container .video-container { contain: layout style paint; will-change: auto; }
-.virtual-grid-container .video-element { will-change: auto; transform: translateZ(0); }
-
-/* Lightweight hover */
-.virtual-grid-container .video-item:hover {
-  transform: scale(1.02);
-  z-index: 5;
-  transition: transform 0.1s ease;
-}
-.virtual-grid-container .video-item:hover .video-filename { background: rgba(0,0,0,0.9); }
-
-/* Selection + playing badges in virtual */
-.virtual-grid-container .video-item.selected { box-shadow: 0 0 0 3px #007acc; z-index: 10; }
-.virtual-grid-container .video-item.playing::after {
-  content: "▶️";
-  position: absolute; top: 4px; right: 4px;
-  font-size: 0.7rem;
-  background: rgba(0,0,0,0.8);
-  padding: 2px 4px; border-radius: 3px; z-index: 5;
-}
-
-/* Debug overlay */
-.virtual-grid-container + .debug-overlay {
-  position: fixed;
-  bottom: 20px; right: 20px;
-  background: rgba(0,0,0,0.9);
-  color: #0f0; padding: 8px; border-radius: 4px;
-  font-family: monospace; font-size: 0.7rem;
-  z-index: 1001; pointer-events: none;
-}
-
-/* High-performance mode */
-.virtual-grid-container.performance-mode .video-item {
-  contain: strict;
-  will-change: transform;
-  transform: translateZ(0) scale(1);
-}
-.virtual-grid-container.performance-mode .video-item:hover {
-  transform: translateZ(0) scale(1) !important;
-}
-
 /* ===== Fullscreen modal (Linux click fix) ===== */
 .fullscreen-modal {
   position: fixed;
@@ -1322,9 +1260,6 @@ body {
     animation: none !important;
     transition: none !important;
   }
-  .virtual-grid-container { scroll-behavior: auto; }
-  .virtual-grid-container .video-item { transition: none !important; animation: none !important; }
-  .virtual-grid-container .video-item:hover { transform: none !important; }
 }
 
 /* ===== Responsive tweaks ===== */
@@ -1337,8 +1272,6 @@ body {
   .video-placeholder { font-size: 0.8rem; padding: 0.5rem; }
   .error-indicator { font-size: 0.7rem; padding: 0.5rem; }
 
-  .virtual-grid-container { padding-top: 60px; }
-  .virtual-grid-container .video-filename { font-size: 0.7rem; padding: 2px 4px; }
 }
 
 @media (max-width: 480px) {
@@ -1346,8 +1279,6 @@ body {
   .video-grid.masonry-vertical { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .video-grid.masonry-horizontal .video-item { height: 120px; }
 
-  .virtual-grid-container { padding-top: 50px; }
-  .virtual-grid-container .video-item { font-size: 0.75rem; }
 }
 
 @keyframes placeholder-spin {

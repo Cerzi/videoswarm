@@ -1,11 +1,12 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen, act } from "@testing-library/react";
 
 const selectionMock = {
   selected: new Set(),
   size: 0,
   setSelected: vi.fn(),
+  pruneTo: vi.fn(),
   clear: vi.fn(),
   toggle: vi.fn(),
   selectOnly: vi.fn(),
@@ -29,14 +30,16 @@ const useStableViewAnchoringMock = vi.fn(() => ({
   focusCurrentAnchor: focusCurrentAnchorMock,
 }));
 
-const useInitGateMock = vi.fn(() => ({ scheduleInit: vi.fn() }));
+const scheduleInitMock = vi.fn();
+const useInitGateMock = vi.fn(() => ({ scheduleInit: scheduleInitMock }));
 const useLongTaskFlagMock = vi.fn(() => ({ hadLongTaskRecently: false }));
-const useContextMenuMock = vi.fn(() => ({
+const contextMenuReturn = {
   contextMenu: { visible: false, position: { x: 0, y: 0 }, contextId: null },
   showOnItem: vi.fn(),
   showOnEmpty: vi.fn(),
   hide: vi.fn(),
-}));
+};
+const useContextMenuMock = vi.fn(() => contextMenuReturn);
 const useTrashIntegrationMock = vi.fn(() => ({}));
 const useActionDispatchMock = vi.fn(() => ({ runAction: vi.fn() }));
 const useFullScreenModalMock = vi.fn(() => ({
@@ -78,8 +81,9 @@ const useFilterStateMock = vi.fn(() => filterStateReturn);
 
 const masonryReturn = {
   orderedVideos: [],
+  displayVideos: [],
   orderedIds: [],
-  orderForRange: () => [],
+  orderForRange: [],
   ioRegistry: {
     isNear: () => false,
     observe: vi.fn(),
@@ -92,6 +96,11 @@ const masonryReturn = {
   setZoomClass: vi.fn(),
   progressiveMaxVisibleNumber: 0,
   activationTarget: 0,
+  activationIds: [],
+  activationIdSet: new Set(),
+  virtualItems: [],
+  totalHeight: 0,
+  scrollToId: vi.fn(() => false),
   viewportMetrics: {
     columnCount: 1,
     viewportRows: 1,
@@ -145,11 +154,18 @@ const useVideoCollectionMock = vi.fn(() => ({
   onCardHoverAudioEnd: vi.fn(),
 }));
 const headerBarSpy = vi.fn();
+const videoCardSpy = vi.fn();
 
-vi.mock("./components/VideoCard/VideoCard", () => ({
-  __esModule: true,
-  default: () => null,
-}));
+vi.mock("./components/VideoCard/VideoCard", async () => {
+  const ReactModule = await vi.importActual("react");
+  return {
+    __esModule: true,
+    default: ReactModule.default.memo((props) => {
+      videoCardSpy(props);
+      return <div data-testid="video-card" data-video-id={props.video.id} />;
+    }),
+  };
+});
 vi.mock("./components/FullScreenModal", () => ({
   __esModule: true,
   default: () => null,
@@ -275,6 +291,16 @@ vi.mock("./App.css", () => ({}), { virtual: true });
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  Object.assign(masonryReturn, {
+    orderedVideos: [],
+    displayVideos: [],
+    orderedIds: [],
+    orderForRange: [],
+    activationIds: [],
+    activationIdSet: new Set(),
+    virtualItems: [],
+    totalHeight: 0,
+  });
 });
 
 describe("App hook composition", () => {
@@ -284,10 +310,10 @@ describe("App hook composition", () => {
 
     const result = render(<App />);
 
-    expect(useElectronLifecycleMock).toHaveBeenCalledTimes(1);
-    expect(useFilterStateMock).toHaveBeenCalledTimes(1);
-    expect(useMasonryLayoutMock).toHaveBeenCalledTimes(1);
-    expect(useZoomControlsMock).toHaveBeenCalledTimes(1);
+    expect(useElectronLifecycleMock).toHaveBeenCalled();
+    expect(useFilterStateMock).toHaveBeenCalled();
+    expect(useMasonryLayoutMock).toHaveBeenCalled();
+    expect(useZoomControlsMock).toHaveBeenCalled();
 
     const electronArgs = useElectronLifecycleMock.mock.calls[0][0];
     expect(typeof electronArgs.setZoomLevelFromSettings).toBe("function");
@@ -300,7 +326,7 @@ describe("App hook composition", () => {
     );
 
     const zoomArgs = useZoomControlsMock.mock.calls[0][0];
-    expect(zoomArgs.runWithStableAnchor).toBe(runWithStableAnchorMock);
+    expect(typeof zoomArgs.runWithStableAnchor).toBe("function");
 
     result.unmount();
   });
@@ -323,5 +349,79 @@ describe("App hook composition", () => {
     const updatedArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(updatedArgs.hoverAudioEnabled).toBe(true);
     expect(headerBarSpy).toHaveBeenCalled();
+  });
+
+  test("renders only the virtual window with stable collection-level callbacks", async () => {
+    const videos = [
+      { id: "video-1", name: "one.mp4" },
+      { id: "video-2", name: "two.mp4" },
+      { id: "video-3", name: "three.mp4" },
+    ];
+    const positions = videos.slice(0, 2).map((video, index) => ({
+      id: video.id,
+      item: video,
+      style: {
+        position: "absolute",
+        width: "200px",
+        height: "112px",
+        transform: `translate3d(${index * 204}px, 16px, 0)`,
+      },
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      activationIds: positions.map((position) => position.id),
+      activationIdSet: new Set(positions.map((position) => position.id)),
+      virtualItems: positions,
+      totalHeight: 1600,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+
+    expect(screen.getAllByTestId("video-card")).toHaveLength(2);
+    expect(
+      screen.getAllByTestId("video-card").map((node) => node.dataset.videoId)
+    ).toEqual(["video-1", "video-2"]);
+
+    const firstProps = videoCardSpy.mock.calls.find(
+      ([props]) => props.video.id === "video-1"
+    )?.[0];
+    expect(firstProps).toBeTruthy();
+
+    const renderCountBeforeUnrelatedParentRender = videoCardSpy.mock.calls.length;
+    rendered.rerender(<App />);
+    expect(videoCardSpy).toHaveBeenCalledTimes(
+      renderCountBeforeUnrelatedParentRender
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Play audio on hover" }));
+
+    const lastProps = videoCardSpy.mock.calls
+      .filter(([props]) => props.video.id === "video-1")
+      .at(-1)?.[0];
+    expect(lastProps.onSelect).toBe(firstProps.onSelect);
+    expect(lastProps.canLoadVideo).toBe(firstProps.canLoadVideo);
+    expect(lastProps.onVideoPlay).toBe(firstProps.onVideoPlay);
+    expect(lastProps.onVideoPause).toBe(firstProps.onVideoPause);
+    expect(lastProps.onPlayError).toBe(firstProps.onPlayError);
+    expect(lastProps.onHover).toBe(firstProps.onHover);
+
+    act(() => firstProps.onVideoLoad("video-1", 16 / 9));
+    const loadedProps = videoCardSpy.mock.calls
+      .filter(([props]) => props.video.id === "video-1")
+      .at(-1)?.[0];
+    expect(loadedProps.isLoaded).toBe(true);
+
+    act(() => loadedProps.onUnmount("video-1"));
+    const unmountedProps = videoCardSpy.mock.calls
+      .filter(([props]) => props.video.id === "video-1")
+      .at(-1)?.[0];
+    expect(unmountedProps.isLoaded).toBe(false);
+    expect(unmountedProps.isVisible).toBe(false);
+    expect(unmountedProps.isLoading).toBe(false);
   });
 });

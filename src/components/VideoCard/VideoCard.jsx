@@ -17,10 +17,12 @@ const VideoCard = memo(function VideoCard({
   isLoaded,
   isLoading,
   isVisible,
+  playbackSuspended = false,
   showFilenames = true,
 
   // limits & callbacks (owned by parent/orchestrator)
-  canLoadMoreVideos,      // (options?) => boolean
+  canLoadVideo,           // (id, options?) => boolean
+  canLoadMoreVideos,      // legacy: (options?) => boolean
   onStartLoading,         // (id)
   onStopLoading,          // (id)
   onVideoLoad,            // (id, aspectRatio)
@@ -34,13 +36,13 @@ const VideoCard = memo(function VideoCard({
   isHoverAudioActive = false,
   onHoverAudioStart,      // (id)
   onHoverAudioEnd,        // (id)
+  onUnmount,              // (id)
 
   // IO registry
   observeIntersection,    // (el, id, cb)
   unobserveIntersection,  // (el)=>void
   isNear = () => true,
   scrollRootRef = null,
-  layoutEpoch = 0,
 
   // optional init scheduler
   scheduleInit = null,
@@ -65,8 +67,10 @@ const VideoCard = memo(function VideoCard({
   const videoId = video.id || video.fullPath || video.name;
   const videoIdRef = useRef(videoId);
   const onHoverAudioEndRef = useRef(onHoverAudioEnd);
+  const onUnmountRef = useRef(onUnmount);
   videoIdRef.current = videoId;
   onHoverAudioEndRef.current = onHoverAudioEnd;
+  onUnmountRef.current = onUnmount;
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -86,6 +90,16 @@ const VideoCard = memo(function VideoCard({
   const lastObservedVisibilityRef = useRef(Boolean(isVisible));
 
   const shouldEnsureLoad = isVisible || isNearViewport;
+
+  const checkCanLoad = useCallback(
+    (options) => {
+      if (typeof canLoadVideo === "function") {
+        return canLoadVideo(videoId, options);
+      }
+      return canLoadMoreVideos?.(options);
+    },
+    [canLoadVideo, canLoadMoreVideos, videoId]
+  );
 
   const hasRenderableVideo = useCallback(() => {
     const el = videoRef.current;
@@ -341,7 +355,12 @@ const VideoCard = memo(function VideoCard({
     el.addEventListener("pause",   handlePause);
     el.addEventListener("error",   handleError);
 
-    const shouldPlay = isPlaying && isVisible && loaded && !permanentErrorRef.current;
+    const shouldPlay =
+      !playbackSuspended &&
+      isPlaying &&
+      isVisible &&
+      loaded &&
+      !permanentErrorRef.current;
     if (shouldPlay) {
       el.muted = !isHoverAudioActive;
       if (isHoverAudioActive) {
@@ -374,6 +393,7 @@ const VideoCard = memo(function VideoCard({
     isPlaying,
     isVisible,
     loaded,
+    playbackSuspended,
     isHoverAudioActive,
     videoId,
     onVideoPlay,
@@ -385,7 +405,12 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => {
     if (!videoRef.current) return;
     const enable =
-      loaded && isPlaying && isVisible && !isAdoptedByModal() && !permanentErrorRef.current;
+      !playbackSuspended &&
+      loaded &&
+      isPlaying &&
+      isVisible &&
+      !isAdoptedByModal() &&
+      !permanentErrorRef.current;
     let teardown = null;
     if (enable) {
       teardown = useVideoStallWatchdog(videoRef, {
@@ -397,14 +422,21 @@ const VideoCard = memo(function VideoCard({
       });
     }
     return () => { if (teardown) teardown(); };
-  }, [loaded, isPlaying, isVisible, isAdoptedByModal, videoId]);
+  }, [
+    isAdoptedByModal,
+    isPlaying,
+    isVisible,
+    loaded,
+    playbackSuspended,
+    videoId,
+  ]);
 
   // create & load <video>
   const loadVideo = useCallback((options = {}) => {
     if (!mountedRef.current) return;
     if (loading || loadRequestedRef.current) return;
     if (hasRenderableVideo()) return;
-    const allowLoad = canLoadMoreVideos?.(options);
+    const allowLoad = checkCanLoad(options);
     if (allowLoad === false) return;
     if (permanentErrorRef.current) return;
     setErrorText(null);
@@ -552,7 +584,7 @@ const VideoCard = memo(function VideoCard({
               visibilityRef.current &&
               !loadRequestedRef.current &&
               !videoRef.current &&
-              (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
+              (checkCanLoad({ assumeVisible: true }) ?? true)
             ) {
               loadVideo({ assumeVisible: true });
             }
@@ -612,7 +644,7 @@ const VideoCard = memo(function VideoCard({
     video,
     videoId,
     isVisible,
-    canLoadMoreVideos,
+    checkCanLoad,
     loading,
     hasRenderableVideo,
     onStartLoading,
@@ -663,13 +695,13 @@ const VideoCard = memo(function VideoCard({
       }
     }
 
-    const allow = canLoadMoreVideos?.(assumeVisible ? { assumeVisible: true } : undefined);
+    const allow = checkCanLoad(assumeVisible ? { assumeVisible: true } : undefined);
     if (allow === false) return false;
 
     loadVideo(assumeVisible ? { assumeVisible: true } : undefined);
     return true;
   }, [
-    canLoadMoreVideos,
+    checkCanLoad,
     loadVideo,
     loading,
     scrollRootRef,
@@ -681,7 +713,7 @@ const VideoCard = memo(function VideoCard({
     const el = videoRef.current;
     const container = videoContainerRef.current;
     syncVideoIntoContainer(container, el);
-  }, [layoutEpoch, loaded, showFilenames, syncVideoIntoContainer]);
+  }, [loaded, showFilenames, syncVideoIntoContainer]);
 
   useEffect(() => {
     if (!shouldEnsureLoad) return undefined;
@@ -703,7 +735,7 @@ const VideoCard = memo(function VideoCard({
 
     run();
     return undefined;
-  }, [ensureVisibleAndLoad, layoutEpoch, shouldEnsureLoad]);
+  }, [ensureVisibleAndLoad, shouldEnsureLoad]);
 
   // IO registration for visibility
   useEffect(() => {
@@ -750,7 +782,7 @@ const VideoCard = memo(function VideoCard({
       !loadRequestedRef.current &&
       !videoRef.current &&
       !permanentErrorRef.current &&
-      (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
+      (checkCanLoad({ assumeVisible: true }) ?? true)
     ) {
       Promise.resolve().then(() => {
         if (
@@ -761,7 +793,7 @@ const VideoCard = memo(function VideoCard({
           !loadRequestedRef.current &&
           !videoRef.current &&
           !permanentErrorRef.current &&
-          (canLoadMoreVideos?.({ assumeVisible: true }) ?? true)
+          (checkCanLoad({ assumeVisible: true }) ?? true)
         ) {
           ensureVisibleAndLoad();
         }
@@ -771,7 +803,7 @@ const VideoCard = memo(function VideoCard({
     isVisible,
     loaded,
     loading,
-    canLoadMoreVideos,
+    checkCanLoad,
     ensureVisibleAndLoad,
   ]);
 
@@ -793,6 +825,7 @@ const VideoCard = memo(function VideoCard({
       cancelLoadAttempt();
       videoRef.current = null;
       onHoverAudioEndRef.current?.(videoIdRef.current);
+      onUnmountRef.current?.(videoIdRef.current);
     };
   }, [cancelLoadAttempt]);
 
@@ -862,7 +895,7 @@ const VideoCard = memo(function VideoCard({
       );
     }
 
-    const canLoad = canLoadMoreVideos?.(
+    const canLoad = checkCanLoad(
       isVisible ? { assumeVisible: true } : undefined
     ) ?? true;
     const statusText = loading
@@ -876,7 +909,7 @@ const VideoCard = memo(function VideoCard({
       ? "Keep scrolling to fetch more clips"
       : "All caught up for now";
 
-    if (!isNearViewport) {
+    if (!isNearViewport || !loading) {
       return (
         <div
           className="video-placeholder video-placeholder--static"
@@ -888,10 +921,12 @@ const VideoCard = memo(function VideoCard({
           </div>
           <div className="video-placeholder__text">
             <span className="video-placeholder__message">
-              {canLoad ? "Scroll closer to load" : statusText}
+              {!isNearViewport && canLoad ? "Scroll closer to load" : statusText}
             </span>
             <span className="video-placeholder__subtext">
-              Thumbnails idle until you're nearby
+              {!isNearViewport
+                ? "Thumbnails idle until you're nearby"
+                : subtext}
             </span>
           </div>
         </div>
