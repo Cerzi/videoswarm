@@ -8,10 +8,6 @@ import {
 const __DEV__ = import.meta.env.MODE !== "production";
 let directoryScanSequence = 0;
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export function useElectronFolderLifecycle({
   selection,
   recursiveMode,
@@ -31,7 +27,6 @@ export function useElectronFolderLifecycle({
   setActualPlaying,
   refreshTagList,
   addRecentFolder,
-  delayFn = delay,
 }) {
   const [videos, setVideos] = useState([]);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
@@ -145,8 +140,6 @@ export function useElectronFolderLifecycle({
         setIsLoadingFolder(true);
         setLoadingStage("Reading directory...");
         setLoadingProgress(10);
-        await delayFn(100);
-        if (!isCurrentScan()) return;
 
         await api.stopFolderWatch?.();
         if (!isCurrentScan()) return;
@@ -156,8 +149,6 @@ export function useElectronFolderLifecycle({
 
         setLoadingStage("Scanning for video files...");
         setLoadingProgress(30);
-        await delayFn(200);
-        if (!isCurrentScan()) return;
 
         const result = await api.readDirectory(
           folderPath,
@@ -183,17 +174,11 @@ export function useElectronFolderLifecycle({
 
         setLoadingStage(`Found ${files.length} videos — initializing masonry...`);
         setLoadingProgress(70);
-        await delayFn(200);
-        if (!isCurrentScan()) return;
 
         setVideos(normalizedFiles);
-        await delayFn(300);
-        if (!isCurrentScan()) return;
 
         setLoadingStage("Complete!");
         setLoadingProgress(100);
-        await delayFn(250);
-        if (!isCurrentScan()) return;
         setIsLoadingFolder(false);
 
         refreshTagList();
@@ -221,7 +206,6 @@ export function useElectronFolderLifecycle({
     [
       addRecentFolder,
       cancelActiveFolderScan,
-      delayFn,
       recursiveMode,
       refreshTagList,
       resetDerivedVideoState,
