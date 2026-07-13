@@ -110,6 +110,12 @@ describe('computeMasonryLayout', () => {
     });
 
     expect(layout.totalHeight).toBe(maximumBottom + layout.padding);
+    expect(layout.positions[5].height).toBe(
+      Math.round(layout.columnWidth / 0.25)
+    );
+    expect(layout.positions[6].height).toBe(
+      Math.round(layout.columnWidth / 4)
+    );
     expectVisualOrder(layout, layout.positions.slice().sort((left, right) =>
       left.y - right.y || left.x - right.x || left.index - right.index
     ));
@@ -265,4 +271,3 @@ describe('getScrollTopForItem', () => {
     expect(getScrollTopForItem(layout, 'missing', { viewportHeight })).toBeNull();
   });
 });
-

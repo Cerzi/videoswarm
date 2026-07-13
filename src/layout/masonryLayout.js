@@ -14,8 +14,10 @@ const finiteNumber = (value, fallback) => {
 const nonNegativeNumber = (value, fallback) =>
   Math.max(0, finiteNumber(value, fallback));
 
-const positiveNumber = (value, fallback) =>
-  Math.max(1, finiteNumber(value, fallback));
+const positiveNumber = (value, fallback) => {
+  const number = finiteNumber(value, fallback);
+  return number > 0 ? number : fallback;
+};
 
 const defaultGetId = (item, index) => item?.id ?? item?.fullPath ?? index;
 

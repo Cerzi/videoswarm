@@ -38,6 +38,30 @@ export default function useSelectionState() {
     setAnchorId(null);
   }, []);
 
+  const remove = useCallback((id) => {
+    setSelected((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setAnchorId((prev) => (prev === id ? null : prev));
+  }, []);
+
+  const pruneTo = useCallback((validIds) => {
+    const valid = validIds instanceof Set ? validIds : new Set(validIds || []);
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set();
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+    setAnchorId((prev) => (prev != null && !valid.has(prev) ? null : prev));
+  }, []);
+
   // Select a whole range, given the *ordered ids* array and the end id.
   const selectRange = useCallback((orderedIds, endId, additive = false) => {
     if (!orderedIds?.length) return;
@@ -65,6 +89,8 @@ export default function useSelectionState() {
     selectOnly,
     toggle,
     clear,
+    remove,
+    pruneTo,
     selectRange,
   };
 }

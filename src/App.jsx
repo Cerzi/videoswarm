@@ -25,7 +25,6 @@ import useLongTaskFlag from "./hooks/ui-perf/useLongTaskFlag";
 import useInitGate from "./hooks/ui-perf/useInitGate";
 
 import useSelectionState from "./hooks/selection/useSelectionState";
-import useStableViewAnchoring from "./hooks/selection/useStableViewAnchoring";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
@@ -63,83 +62,9 @@ const MIN_METADATA_DOCK_HEIGHT = 200;
 const MAX_METADATA_DOCK_HEIGHT = 520;
 const DEFAULT_METADATA_DOCK_HEIGHT = 280;
 
-function computeActivationWindow(orderedIds, metrics = {}, explicitTarget) {
-  const list = Array.isArray(orderedIds) ? orderedIds : [];
-  const total = list.length;
-  const columnCount = Math.max(
-    1,
-    Math.floor(Number(metrics.columnCount) || 1)
-  );
-  const approxHeight = Math.max(1, Number(metrics.approxTileHeight) || 1);
-  const scrollTop = Math.max(0, Number(metrics.scrollTop) || 0);
-  const viewportRows = Math.max(
-    1,
-    Math.floor(Number(metrics.viewportRows) || 1)
-  );
-
-  if (total === 0) {
-    const safeTarget = Number.isFinite(explicitTarget)
-      ? Math.max(0, Math.floor(explicitTarget))
-      : 0;
-    return {
-      ids: [],
-      idSet: new Set(),
-      startIndex: 0,
-      endIndex: 0,
-      target: safeTarget,
-    };
-  }
-
-  const fallbackTarget = columnCount * viewportRows * 2;
-  const desiredTarget = Number.isFinite(explicitTarget) && explicitTarget > 0
-    ? Math.floor(explicitTarget)
-    : fallbackTarget;
-  const safeTarget = clampNumber(desiredTarget, 1, Math.min(600, total));
-
-  const topRow = Math.max(0, Math.floor(scrollTop / approxHeight));
-  const bufferRows = viewportRows;
-  let startRow = Math.max(0, topRow - bufferRows);
-  const rowsNeeded = Math.max(
-    Math.ceil(safeTarget / columnCount),
-    viewportRows * 2
-  );
-  let endRow = startRow + rowsNeeded;
-
-  let startIndex = Math.min(total, startRow * columnCount);
-  let endIndex = Math.min(total, endRow * columnCount);
-
-  if (endIndex - startIndex < safeTarget) {
-    const deficit = safeTarget - (endIndex - startIndex);
-    endIndex = Math.min(total, endIndex + deficit);
-  }
-
-  if (endIndex - startIndex < safeTarget) {
-    const deficit = safeTarget - (endIndex - startIndex);
-    startIndex = Math.max(0, startIndex - deficit);
-  }
-
-  if (endIndex - startIndex > safeTarget) {
-    endIndex = Math.min(total, startIndex + safeTarget);
-  }
-
-  if (endIndex - startIndex > safeTarget) {
-    startIndex = Math.max(0, endIndex - safeTarget);
-  }
-
-  if (startIndex >= endIndex) {
-    startIndex = Math.max(0, Math.min(total, startIndex));
-    endIndex = Math.min(total, Math.max(startIndex, startIndex + safeTarget));
-  }
-
-  const ids = list.slice(startIndex, endIndex);
-  const idSet = new Set(ids);
-  return { ids, idSet, startIndex, endIndex, target: safeTarget };
-}
-
 function App() {
   // Selection state (SOLID)
   const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
-  const selectionSetSelected = selection.setSelected;
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
@@ -149,6 +74,7 @@ function App() {
   const [sortDir, setSortDir] = useState("asc");
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
+  const [fullScreenPinnedId, setFullScreenPinnedId] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
@@ -171,6 +97,18 @@ function App() {
   );
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const [scrollContainerElement, setScrollContainerElement] = useState(null);
+  const [gridElement, setGridElement] = useState(null);
+  const attachScrollContainer = useCallback((element) => {
+    scrollContainerRef.current = element;
+    setScrollContainerElement((previous) =>
+      previous === element ? previous : element
+    );
+  }, []);
+  const attachGrid = useCallback((element) => {
+    gridRef.current = element;
+    setGridElement((previous) => (previous === element ? previous : element));
+  }, []);
   const contentRegionRef = useRef(null);
   const metadataPanelRef = useRef(null);
   const filtersButtonRef = useRef(null);
@@ -308,7 +246,6 @@ function App() {
     updateFilters,
     resetFilters,
     filteredVideos,
-    filteredVideoIds,
     filtersActiveCount,
     ratingSummary,
     handleRemoveIncludeFilter,
@@ -319,19 +256,35 @@ function App() {
     filtersPopoverRef,
   });
 
+  const totalVideoCount = videos.length;
+  const renderLimitValue = useMemo(
+    () => resolveRenderLimit(renderLimitStep, totalVideoCount),
+    [renderLimitStep, totalVideoCount]
+  );
+  const renderLimitLabel = useMemo(
+    () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
+    [renderLimitValue]
+  );
+  const pinnedLayoutIds = useMemo(
+    () => (fullScreenPinnedId ? [fullScreenPinnedId] : []),
+    [fullScreenPinnedId]
+  );
+
   const {
     orderedVideos,
-    orderedIds,
+    displayVideos,
     orderForRange,
     ioRegistry,
-    layoutEpoch,
     scheduleLayout,
     updateAspectRatio,
-    onItemsChanged,
     setZoomClass,
     progressiveMaxVisibleNumber,
     activationTarget: activationTargetCount,
-    viewportMetrics,
+    activationIds,
+    activationIdSet,
+    virtualItems,
+    totalHeight: masonryTotalHeight,
+    scrollToId,
     withLayoutHold,
     isLayoutTransitioning,
   } = useMasonryLayout({
@@ -344,17 +297,12 @@ function App() {
     zoomLevel,
     scrollContainerRef,
     gridRef,
+    scrollContainerElement,
+    gridElement,
+    renderLimit: renderLimitValue,
+    pinnedIds: pinnedLayoutIds,
   });
 
-  const totalVideoCount = videos.length;
-  const renderLimitValue = useMemo(
-    () => resolveRenderLimit(renderLimitStep, totalVideoCount),
-    [renderLimitStep, totalVideoCount]
-  );
-  const renderLimitLabel = useMemo(
-    () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
-    [renderLimitValue]
-  );
   const effectiveProgressiveCap = useMemo(() => {
     const layoutLimit =
       Number.isFinite(progressiveMaxVisibleNumber) &&
@@ -376,13 +324,12 @@ function App() {
   }, [progressiveMaxVisibleNumber, renderLimitValue]);
 
   const activationWindow = useMemo(
-    () =>
-      computeActivationWindow(
-        orderedIds,
-        viewportMetrics,
-        activationTargetCount
-      ),
-    [orderedIds, viewportMetrics, activationTargetCount]
+    () => ({
+      ids: activationIds,
+      idSet: activationIdSet,
+      target: activationTargetCount,
+    }),
+    [activationIdSet, activationIds, activationTargetCount]
   );
 
   const activationWindowRef = useRef(activationWindow.idSet);
@@ -397,21 +344,14 @@ function App() {
 
   const { hadLongTaskRecently } = useLongTaskFlag();
 
+  const displayedVideoIds = useMemo(
+    () => new Set(orderForRange),
+    [orderForRange]
+  );
+  const pruneSelectionTo = selection.pruneTo;
   useEffect(() => {
-    if (!selection.size) return;
-    selectionSetSelected((prev) => {
-      let changed = false;
-      const next = new Set();
-      prev.forEach((id) => {
-        if (filteredVideoIds.has(id)) {
-          next.add(id);
-        } else {
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [filteredVideoIds, selection.size, selectionSetSelected]);
+    pruneSelectionTo(displayedVideoIds);
+  }, [displayedVideoIds, pruneSelectionTo]);
 
 
   const anchorDefaults = useMemo(
@@ -444,18 +384,11 @@ function App() {
     []
   );
 
-  const { runWithStableAnchor, focusCurrentAnchor } = useStableViewAnchoring({
-    enabled: feature.stableViewAnchoring,
-    scrollRef: scrollContainerRef,
-    gridRef,
-    observeRef: contentRegionRef,
-    selection,
-    orderedIds: orderForRange,
-    anchorMode: "last",
-    settleFrames: anchorDefaults.settleFrames,
-    stabilizeFrames: anchorDefaults.stabilizeFrames,
-    maxWaitMs: anchorDefaults.maxWaitMs,
-  });
+  const runWithStableAnchor = useCallback(
+    (_triggerType, update) =>
+      typeof update === "function" ? update() : undefined,
+    []
+  );
 
   const {
     handleZoomChangeSafe,
@@ -601,73 +534,25 @@ function App() {
   );
 
   const focusSelection = useCallback(() => {
-    const selectedSet = selection?.selected;
+    const selectedSet = selection.selected;
     if (!(selectedSet instanceof Set) || selectedSet.size === 0) {
       return;
     }
 
-    if (typeof focusCurrentAnchor === "function") {
-      const handled = focusCurrentAnchor({ align: "center" });
-      if (handled) {
-        return;
-      }
+    const fallbackId =
+      selection.anchorId && selectedSet.has(selection.anchorId)
+        ? selection.anchorId
+        : selectedSet.values().next().value;
+    if (fallbackId != null) {
+      scrollToId(fallbackId, { align: "center" });
     }
+  }, [scrollToId, selection.anchorId, selection.selected]);
 
-    const scrollEl = scrollContainerRef?.current;
-    const gridEl = gridRef?.current;
-    if (!scrollEl || !gridEl) return;
-
-    let fallbackId = null;
-    if (selection?.anchorId && selectedSet.has(selection.anchorId)) {
-      fallbackId = selection.anchorId;
-    } else {
-      const iterator = selectedSet.values();
-      const next = iterator.next();
-      fallbackId = next?.value ?? null;
-    }
-
-    if (!fallbackId) return;
-
-    const nodes = gridEl.querySelectorAll("[data-video-id]");
-    let target = null;
-    for (const node of nodes) {
-      if (node?.dataset?.videoId === String(fallbackId)) {
-        target = node;
-        break;
-      }
-    }
-
-    if (!target) return;
-
-    const viewportRect =
-      typeof scrollEl.getBoundingClientRect === "function"
-        ? scrollEl.getBoundingClientRect()
-        : null;
-
-    if (viewportRect) {
-      const rect =
-        typeof target.getBoundingClientRect === "function"
-          ? target.getBoundingClientRect()
-          : null;
-      if (rect) {
-        const delta =
-          rect.top - viewportRect.top - viewportRect.height / 2 + rect.height / 2;
-        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
-          scrollEl.scrollTop += delta;
-        }
-        return;
-      }
-    }
-
-    if (typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center", behavior: "auto" });
-    }
-  }, [focusCurrentAnchor, gridRef, scrollContainerRef, selection]);
-
-  const getById = useCallback(
-    (id) => orderedVideos.find((v) => v.id === id),
+  const videosById = useMemo(
+    () => new Map(orderedVideos.map((video) => [video.id, video])),
     [orderedVideos]
   );
+  const getById = useCallback((id) => videosById.get(id), [videosById]);
 
   const selectedVideos = useMemo(() => {
     return Array.from(selection.selected)
@@ -685,15 +570,20 @@ function App() {
     return Array.from(set);
   }, [selectedVideos]);
 
+  const selectedIdsRef = useRef(selection.selected);
+  const selectedVideosRef = useRef(selectedVideos);
+  selectedIdsRef.current = selection.selected;
+  selectedVideosRef.current = selectedVideos;
+
   const handleNativeDragStart = useCallback(
     (nativeEvent, video) => {
       if (!video?.isElectronFile || !video?.fullPath) return;
       const electronAPI = window?.electronAPI;
       if (!electronAPI?.startFileDragSync) return;
 
-      const selectedIds = selection?.selected;
+      const selectedIds = selectedIdsRef.current;
       const isInSelection = selectedIds instanceof Set && selectedIds.has(video.id);
-      const pool = isInSelection ? selectedVideos : [video];
+      const pool = isInSelection ? selectedVideosRef.current : [video];
       const localFiles = pool
         .filter((entry) => entry?.isElectronFile && entry?.fullPath)
         .map((entry) => entry.fullPath);
@@ -709,7 +599,7 @@ function App() {
 
       electronAPI.startFileDragSync(localFiles);
     },
-    [selection?.selected, selectedVideos]
+    []
   );
 
   useEffect(() => {
@@ -1028,7 +918,55 @@ function App() {
     openFullScreen,
     closeFullScreen,
     navigateFullScreen,
-  } = useFullScreenModal(orderedVideos, "masonry-vertical", gridRef);
+  } = useFullScreenModal(displayVideos);
+
+  useEffect(() => {
+    setFullScreenPinnedId(fullScreenVideo?.id ?? null);
+  }, [fullScreenVideo?.id]);
+
+  const collectionCallbacksRef = useRef(null);
+  collectionCallbacksRef.current = {
+    canLoadVideo: videoCollection.canLoadVideo,
+    reportStarted: videoCollection.reportStarted,
+    reportPlayError: videoCollection.reportPlayError,
+    reportPlayerCreationFailure: videoCollection.reportPlayerCreationFailure,
+    markHover: videoCollection.markHover,
+    onCardHoverAudioStart: videoCollection.onCardHoverAudioStart,
+    onCardHoverAudioEnd: videoCollection.onCardHoverAudioEnd,
+    openFullScreen,
+  };
+
+  const handleCanLoadVideo = useCallback(
+    (videoId, options) =>
+      collectionCallbacksRef.current?.canLoadVideo?.(videoId, options) ?? false,
+    []
+  );
+  const handleVideoPlay = useCallback((videoId) => {
+    collectionCallbacksRef.current?.reportStarted?.(videoId);
+    setActualPlaying((prev) => updateSetMembership(prev, videoId, true));
+  }, []);
+  const handleVideoPause = useCallback((videoId) => {
+    setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+  }, []);
+  const handleVideoPlayError = useCallback((videoId, error) => {
+    collectionCallbacksRef.current?.reportPlayError?.(videoId, error);
+    setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+  }, []);
+  const handlePlayerCreationFailure = useCallback(() => {
+    collectionCallbacksRef.current?.reportPlayerCreationFailure?.();
+  }, []);
+  const handleVideoHover = useCallback((videoId) => {
+    collectionCallbacksRef.current?.markHover?.(videoId);
+  }, []);
+  const handleHoverAudioStart = useCallback((videoId) => {
+    collectionCallbacksRef.current?.onCardHoverAudioStart?.(videoId);
+  }, []);
+  const handleHoverAudioEnd = useCallback((videoId) => {
+    collectionCallbacksRef.current?.onCardHoverAudioEnd?.(videoId);
+  }, []);
+  const handleCloseFullScreen = useCallback(() => {
+    closeFullScreen();
+  }, [closeFullScreen]);
 
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
@@ -1110,12 +1048,6 @@ function App() {
     videoCollection.memoryStatus?.memoryPressure,
   ]);
 
-  // === DYNAMIC ZOOM RESIZE / COUNT ===
-  // relayout when list changes
-  useEffect(() => {
-    if (orderedVideos.length) onItemsChanged();
-  }, [orderedVideos.length, onItemsChanged]);
-
   // aspect ratio updates from cards
     const handleVideoLoaded = useCallback(
       (videoId, aspectRatio) => {
@@ -1135,6 +1067,13 @@ function App() {
 
     const handleVideoVisibilityChange = useCallback((videoId, isVisible) => {
       setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
+    }, []);
+
+    const handleVideoUnmount = useCallback((videoId) => {
+      setVisibleVideos((prev) => updateSetMembership(prev, videoId, false));
+      setLoadedVideos((prev) => updateSetMembership(prev, videoId, false));
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+      setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
     }, []);
 
   const toggleRecursive = useCallback(() => {
@@ -1220,38 +1159,40 @@ function App() {
     });
   }, [sortKey, sortDir, groupByFolders]);
 
+  const videoSelectStateRef = useRef(null);
+  videoSelectStateRef.current = {
+    getById,
+    orderForRange,
+    selectRange: selection.selectRange,
+    toggle: selection.toggle,
+    selectOnly: selection.selectOnly,
+  };
+
   // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
   const handleVideoSelect = useCallback(
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
-      const video = getById(videoId);
+      const current = videoSelectStateRef.current;
+      const video = current?.getById?.(videoId);
       if (isDoubleClick && video) {
-        openFullScreen(video, videoCollection.playingVideos);
+        setFullScreenPinnedId(video.id);
+        collectionCallbacksRef.current?.openFullScreen?.(video);
         return;
       }
       if (isShiftClick) {
-        // Shift: range selection (additive if Ctrl also held)
-        selection.selectRange(
-          orderForRange,
+        current?.selectRange?.(
+          current.orderForRange,
           videoId,
           /* additive */ isCtrlClick
         );
         return;
       }
       if (isCtrlClick) {
-        // Ctrl only: toggle
-        selection.toggle(videoId);
+        current?.toggle?.(videoId);
       } else {
-        // Plain click: single select + set anchor
-        selection.selectOnly(videoId);
+        current?.selectOnly?.(videoId);
       }
     },
-    [
-      getById,
-      openFullScreen,
-      videoCollection.playingVideos,
-      selection,
-      orderForRange,
-    ]
+    []
   );
 
   // Right-click on a card: open the item context menu without altering selection
@@ -1321,6 +1262,10 @@ function App() {
   const contentRegionStyle = useMemo(
     () => ({ "--metadata-dock-height": `${Math.round(metadataDockHeight)}px` }),
     [metadataDockHeight]
+  );
+  const masonryGridStyle = useMemo(
+    () => ({ height: `${Math.max(0, masonryTotalHeight)}px` }),
+    [masonryTotalHeight]
   );
 
   const handleMetadataDockHeightChange = useCallback((nextHeight) => {
@@ -1495,7 +1440,7 @@ function App() {
 
           <DebugSummary
             total={videoCollection.stats.total}
-            rendered={videoCollection.stats.rendered}
+            rendered={virtualItems.length}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
             activeWindow={activationWindow.ids.length}
@@ -1540,13 +1485,14 @@ function App() {
             >
               <div
                 className="content-region__viewport"
-                ref={scrollContainerRef}
+                ref={attachScrollContainer}
               >
                 <div
-                  ref={gridRef}
-                  className={`video-grid masonry-vertical ${
+                  ref={attachGrid}
+                  className={`video-grid masonry-vertical virtualized-masonry ${
                     !showFilenames ? "hide-filenames" : ""
                   } ${zoomClassForLevel(zoomLevel)}`}
+                  style={masonryGridStyle}
                 >
                 {orderedVideos.length === 0 &&
                   videos.length > 0 &&
@@ -1556,56 +1502,54 @@ function App() {
                     </div>
                   )}
 
-                {videoCollection.videosToRender.map((video) => (
-                  <VideoCard
-                    key={video.id}
-                    video={video}
-                    observeIntersection={ioRegistry.observe}
-                    unobserveIntersection={ioRegistry.unobserve}
-                    scrollRootRef={scrollContainerRef}
-                    selected={selection.selected.has(video.id)}
-                    onSelect={(...args) => handleVideoSelect(...args)}
-                    onContextMenu={handleCardContextMenu}
-                    onNativeDragStart={handleNativeDragStart}
-                    showFilenames={showFilenames}
-                    // Video Collection Management
-                    canLoadMoreVideos={(opts) =>
-                      videoCollection.canLoadVideo(video.id, opts)
-                    }
-                    isLoading={loadingVideos.has(video.id)}
-                    isLoaded={loadedVideos.has(video.id)}
-                    isVisible={visibleVideos.has(video.id)}
-                    isPlaying={videoCollection.isVideoPlaying(video.id)}
-                    isNear={ioRegistry.isNear}
-                    layoutEpoch={layoutEpoch}
-                    // Lifecycle callbacks
-                    onStartLoading={handleVideoStartLoading}
-                    onStopLoading={handleVideoStopLoading}
-                    onVideoLoad={handleVideoLoaded}
-                    onVisibilityChange={handleVideoVisibilityChange}
-                    // Media events → update orchestrator + actual playing count
-                    onVideoPlay={(id) => {
-                      videoCollection.reportStarted(id);
-                      setActualPlaying((prev) => updateSetMembership(prev, id, true));
-                    }}
-                    onVideoPause={(id) => {
-                      setActualPlaying((prev) => updateSetMembership(prev, id, false));
-                    }}
-                    onPlayError={(id) => {
-                      videoCollection.reportPlayError(id);
-                      setActualPlaying((prev) => updateSetMembership(prev, id, false));
-                    }}
-                    // Hover for priority
-                    onHover={(id) => videoCollection.markHover(id)}
-                    hoverAudioEnabled={hoverAudioEnabled}
-                    isHoverAudioActive={
-                      hoverAudioEnabled && videoCollection.activeHoverAudioId === video.id
-                    }
-                    onHoverAudioStart={videoCollection.onCardHoverAudioStart}
-                    onHoverAudioEnd={videoCollection.onCardHoverAudioEnd}
-                    scheduleInit={scheduleInit}
-                  />
-                ))}
+                {virtualItems.map((position) => {
+                  const video = position.item;
+                  return (
+                    <div
+                      key={position.id}
+                      className="masonry-slot"
+                      data-masonry-id={position.id}
+                      style={position.style}
+                    >
+                      <VideoCard
+                        video={video}
+                        observeIntersection={ioRegistry.observe}
+                        unobserveIntersection={ioRegistry.unobserve}
+                        scrollRootRef={scrollContainerRef}
+                        selected={selection.selected.has(video.id)}
+                        onSelect={handleVideoSelect}
+                        onContextMenu={handleCardContextMenu}
+                        onNativeDragStart={handleNativeDragStart}
+                        showFilenames={showFilenames}
+                        canLoadVideo={handleCanLoadVideo}
+                        isLoading={loadingVideos.has(video.id)}
+                        isLoaded={loadedVideos.has(video.id)}
+                        isVisible={visibleVideos.has(video.id)}
+                        isPlaying={videoCollection.isVideoPlaying(video.id)}
+                        playbackSuspended={Boolean(fullScreenVideo)}
+                        isNear={ioRegistry.isNear}
+                        onStartLoading={handleVideoStartLoading}
+                        onStopLoading={handleVideoStopLoading}
+                        onVideoLoad={handleVideoLoaded}
+                        onVisibilityChange={handleVideoVisibilityChange}
+                        onUnmount={handleVideoUnmount}
+                        onVideoPlay={handleVideoPlay}
+                        onVideoPause={handleVideoPause}
+                        onPlayError={handleVideoPlayError}
+                        reportPlayerCreationFailure={handlePlayerCreationFailure}
+                        onHover={handleVideoHover}
+                        hoverAudioEnabled={hoverAudioEnabled}
+                        isHoverAudioActive={
+                          hoverAudioEnabled &&
+                          videoCollection.activeHoverAudioId === video.id
+                        }
+                        onHoverAudioStart={handleHoverAudioStart}
+                        onHoverAudioEnd={handleHoverAudioEnd}
+                        scheduleInit={scheduleInit}
+                      />
+                    </div>
+                  );
+                })}
                 </div>
               </div>
               <MetadataPanel
@@ -1634,10 +1578,9 @@ function App() {
           {fullScreenVideo && (
             <FullScreenModal
               video={fullScreenVideo}
-              onClose={() => closeFullScreen()}
+              onClose={handleCloseFullScreen}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
-              gridRef={gridRef}
             />
           )}
 

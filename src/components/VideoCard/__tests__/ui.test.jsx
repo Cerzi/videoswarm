@@ -279,6 +279,7 @@ describe("VideoCard", () => {
       return cancelInit;
     });
     const onStopLoading = vi.fn();
+    const onUnmount = vi.fn();
 
     const { unmount } = render(
       <VideoCard
@@ -291,6 +292,7 @@ describe("VideoCard", () => {
         }}
         scheduleInit={scheduleInit}
         onStopLoading={onStopLoading}
+        onUnmount={onUnmount}
       />
     );
 
@@ -301,6 +303,8 @@ describe("VideoCard", () => {
     unmount();
     expect(cancelInit).toHaveBeenCalledOnce();
     expect(onStopLoading).toHaveBeenCalledWith("queued-unmount");
+    expect(onUnmount).toHaveBeenCalledOnce();
+    expect(onUnmount).toHaveBeenCalledWith("queued-unmount");
 
     await act(async () => queuedInit());
     expect(lastVideoEl).toBeUndefined();
@@ -376,7 +380,7 @@ describe("VideoCard", () => {
     expect(videos[0]).toBe(cardVideo);
   });
 
-  it("cleans up stray videos on layout epoch changes", async () => {
+  it("cleans up stray videos when the card layout content changes", async () => {
     const video = {
       id: "v4",
       name: "v4",
@@ -385,7 +389,7 @@ describe("VideoCard", () => {
     };
 
     const { rerender } = render(
-      <VideoCard {...baseProps} video={video} layoutEpoch={0} />
+      <VideoCard {...baseProps} video={video} showFilenames={false} />
     );
 
     await act(async () => {
@@ -406,7 +410,7 @@ describe("VideoCard", () => {
     expect(container.querySelectorAll("video")).toHaveLength(2);
 
     await act(async () => {
-      rerender(<VideoCard {...baseProps} video={video} layoutEpoch={1} />);
+      rerender(<VideoCard {...baseProps} video={video} showFilenames />);
     });
 
     const videos = container.querySelectorAll("video");
@@ -480,8 +484,8 @@ describe("VideoCard", () => {
     expect(createdVideos).toBeGreaterThan(0);
   });
 
-  it("re-evaluates geometry when layout epoch changes", async () => {
-    const gate = vi.fn(() => true);
+  it("passes the video id to the collection-level admission callback", async () => {
+    const gate = vi.fn(() => false);
     const video = {
       id: "layout-check",
       name: "layout-check",
@@ -489,46 +493,23 @@ describe("VideoCard", () => {
       fullPath: "C:/videos/layout-check.mp4",
     };
 
-    const { container, rerender } = render(
+    render(
       <VideoCard
         {...baseProps}
         video={video}
         isVisible={false}
-        layoutEpoch={0}
-        canLoadMoreVideos={gate}
+        canLoadVideo={gate}
+        canLoadMoreVideos={() => {
+          throw new Error("legacy admission callback should not run");
+        }}
       />
     );
 
-    const card = container.querySelector(".video-item");
-    expect(card).toBeTruthy();
-    if (card) {
-      card.getBoundingClientRect = () => ({
-        top: 120,
-        bottom: 320,
-        left: 0,
-        right: 320,
-        width: 320,
-        height: 200,
-      });
-    }
-
     await act(async () => {});
+
+    expect(gate).toHaveBeenCalled();
+    expect(gate.mock.calls.every(([id]) => id === "layout-check")).toBe(true);
     expect(lastVideoEl).toBeUndefined();
-
-    rerender(
-      <VideoCard
-        {...baseProps}
-        video={video}
-        isVisible={false}
-        layoutEpoch={1}
-        canLoadMoreVideos={gate}
-      />
-    );
-
-    await act(async () => {});
-
-    expect(gate).toHaveBeenCalledWith({ assumeVisible: true });
-    expect(lastVideoEl).toBeTruthy();
   });
 
   it("rehydrates when flagged as loaded but missing a video element", async () => {
@@ -561,7 +542,7 @@ describe("VideoCard", () => {
     expect(createdVideos).toBeGreaterThan(0);
   });
 
-  it("re-parents an existing video back into the container after relayout", async () => {
+  it("re-parents an existing video after card content geometry changes", async () => {
     const canLoad = vi.fn().mockReturnValue(true);
     const onVideoLoad = vi.fn();
 
@@ -575,7 +556,7 @@ describe("VideoCard", () => {
       },
       canLoadMoreVideos: canLoad,
       onVideoLoad,
-      layoutEpoch: 0,
+      showFilenames: false,
       isLoaded: false,
       isLoading: false,
     };
@@ -605,7 +586,7 @@ describe("VideoCard", () => {
     }
     expect(containerEl?.contains(created)).toBe(false);
 
-    props = { ...props, layoutEpoch: 1 };
+    props = { ...props, showFilenames: true };
     rerender(<VideoCard {...props} />);
 
     await act(async () => {});
@@ -709,5 +690,69 @@ describe("VideoCard", () => {
       />
     );
     expect(created.muted).toBe(false);
+  });
+
+  it("pauses and resumes desired playback around fullscreen suspension", async () => {
+    const video = {
+      id: "fullscreen-suspension",
+      name: "fullscreen-suspension",
+      isElectronFile: false,
+      fullPath: "/remote/fullscreen-suspension.mp4",
+    };
+    const { rerender } = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={false}
+      />
+    );
+
+    await act(async () => {});
+    const created = lastVideoEl;
+    await act(async () => {
+      created.dispatchEvent?.(new Event("loadedmetadata"));
+      created.dispatchEvent?.(new Event("loadeddata"));
+    });
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={true}
+        playbackSuspended={false}
+      />
+    );
+    const playCountBeforeSuspension = created.play.mock.calls.length;
+    expect(playCountBeforeSuspension).toBeGreaterThan(0);
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={true}
+        playbackSuspended={true}
+      />
+    );
+    expect(created.pause).toHaveBeenCalled();
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        isPlaying={true}
+        isVisible={true}
+        isLoaded={true}
+        playbackSuspended={false}
+      />
+    );
+    expect(created.play.mock.calls.length).toBeGreaterThan(
+      playCountBeforeSuspension
+    );
   });
 });
