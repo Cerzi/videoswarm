@@ -204,6 +204,66 @@ function getProfileDisplayName(profileId = getActiveProfileId()) {
 // We keep scanFolderForChanges so the watcher module can call it in polling mode.
 let lastFolderScan = new Map();
 
+// Only one interactive directory scan may be active per renderer. Keeping the
+// generation in the main process prevents a slow, older request from continuing
+// to index files after the renderer has opened another folder or changed profile.
+const activeDirectoryScans = new Map();
+let legacyDirectoryScanSequence = 0;
+
+class DirectoryScanCancelledError extends Error {
+  constructor() {
+    super("Directory scan cancelled");
+    this.name = "DirectoryScanCancelledError";
+    this.code = "DIRECTORY_SCAN_CANCELLED";
+  }
+}
+
+function isDirectoryScanCancelled(error) {
+  return error?.code === "DIRECTORY_SCAN_CANCELLED";
+}
+
+function beginDirectoryScan(senderId, requestedScanId) {
+  const previous = activeDirectoryScans.get(senderId);
+  if (previous) {
+    previous.cancelled = true;
+  }
+
+  const scanId =
+    typeof requestedScanId === "string" && requestedScanId.length > 0
+      ? requestedScanId
+      : `legacy-${Date.now()}-${++legacyDirectoryScanSequence}`;
+  const scan = { senderId, scanId, cancelled: false };
+  activeDirectoryScans.set(senderId, scan);
+  return scan;
+}
+
+function assertDirectoryScanActive(scan) {
+  if (
+    !scan ||
+    scan.cancelled ||
+    activeDirectoryScans.get(scan.senderId) !== scan
+  ) {
+    throw new DirectoryScanCancelledError();
+  }
+}
+
+function cancelDirectoryScan(senderId, scanId = null) {
+  const scan = activeDirectoryScans.get(senderId);
+  if (!scan || (scanId && scan.scanId !== scanId)) {
+    return false;
+  }
+  scan.cancelled = true;
+  activeDirectoryScans.delete(senderId);
+  return true;
+}
+
+function cancelAllDirectoryScans() {
+  for (const scan of activeDirectoryScans.values()) {
+    scan.cancelled = true;
+  }
+  activeDirectoryScans.clear();
+}
+
 // Helper function to check if file is a video
 function isVideoFile(fileName) {
   const videoExtensions = [
@@ -232,9 +292,14 @@ function formatFileSize(bytes) {
 }
 
 // Helper function to create rich file object
-async function createVideoFileObject(filePath, baseFolderPath) {
+async function createVideoFileObject(
+  filePath,
+  baseFolderPath,
+  { assertActive } = {}
+) {
   try {
     const stats = await fsPromises.stat(filePath);
+    assertActive?.();
     const fileName = path.basename(filePath);
     const ext = path.extname(fileName).toLowerCase();
     let dirname = path.relative(baseFolderPath, path.dirname(filePath));
@@ -249,8 +314,10 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0;
 
     try {
+      assertActive?.();
       const metadataStore = getMetadataStore();
       const info = await metadataStore.indexFile({ filePath, stats });
+      assertActive?.();
       fingerprint = info?.fingerprint ?? null;
       tags = Array.isArray(info?.tags) ? info.tags : [];
       rating =
@@ -269,6 +336,7 @@ async function createVideoFileObject(filePath, baseFolderPath) {
 
       if (!isValidDimensions(dimensions)) {
         const computed = await getVideoDimensions(filePath, stats);
+        assertActive?.();
         if (isValidDimensions(computed)) {
           dimensions = computed;
           if (fingerprint) {
@@ -277,6 +345,7 @@ async function createVideoFileObject(filePath, baseFolderPath) {
         }
       }
     } catch (metaError) {
+      assertActive?.();
       console.warn(
         `[metadata] Failed to index ${filePath}:`,
         metaError?.message || metaError
@@ -324,6 +393,9 @@ async function createVideoFileObject(filePath, baseFolderPath) {
       },
     };
   } catch (error) {
+    if (isDirectoryScanCancelled(error)) {
+      throw error;
+    }
     console.warn(`Error creating file object for ${filePath}:`, error.message);
     return null;
   }
@@ -597,6 +669,7 @@ function broadcastProfileChange(settings = currentSettings) {
 }
 
 async function reconfigureForProfile(profileId, { broadcast = true } = {}) {
+  cancelAllDirectoryScans();
   const targetId = profileManager.setActiveProfile(profileId);
   activeProfileId = targetId;
   const profilePath = getProfilePath(targetId);
@@ -1647,8 +1720,16 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
 // Read directory and return video files with metadata
 ipcMain.handle(
   "read-directory",
-  async (_event, folderPath, recursive = false) => {
+  async (event, folderPath, recursive = false, requestedScanId = null) => {
+    const scan = beginDirectoryScan(event.sender.id, requestedScanId);
+    const assertActive = () => assertDirectoryScanActive(scan);
+    const handleSenderDestroyed = () => {
+      cancelDirectoryScan(scan.senderId, scan.scanId);
+    };
+    event.sender.once("destroyed", handleSenderDestroyed);
+
     try {
+      assertActive();
       console.log(`Reading directory: ${folderPath} (recursive: ${recursive})`);
       const videoExtensions = [
         ".mp4",
@@ -1665,9 +1746,12 @@ ipcMain.handle(
       const videoFiles = [];
 
       async function scanDirectory(dirPath, depth = 0) {
+        assertActive();
         const files = await fsPromises.readdir(dirPath, { withFileTypes: true });
+        assertActive();
 
         for (const file of files) {
+          assertActive();
           const fullPath = path.join(dirPath, file.name);
 
           if (file.isFile()) {
@@ -1676,12 +1760,17 @@ ipcMain.handle(
               try {
                 const videoFile = await createVideoFileObject(
                   fullPath,
-                  folderPath
+                  folderPath,
+                  { assertActive }
                 );
+                assertActive();
                 if (videoFile) {
                   videoFiles.push(videoFile);
                 }
               } catch (error) {
+                if (isDirectoryScanCancelled(error)) {
+                  throw error;
+                }
                 console.warn(
                   `Error reading file stats for ${fullPath}:`,
                   error.message
@@ -1700,7 +1789,11 @@ ipcMain.handle(
             ) {
               try {
                 await scanDirectory(fullPath, depth + 1);
+                assertActive();
               } catch (error) {
+                if (isDirectoryScanCancelled(error)) {
+                  throw error;
+                }
                 console.warn(
                   `Skipping directory ${fullPath}: ${error.message}`
                 );
@@ -1711,6 +1804,7 @@ ipcMain.handle(
       }
 
       await scanDirectory(folderPath);
+      assertActive();
 
       console.log(
         `Found ${videoFiles.length} video files in ${folderPath} (recursive: ${recursive})`
@@ -1718,11 +1812,24 @@ ipcMain.handle(
 
       return videoFiles.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
+      if (isDirectoryScanCancelled(error)) {
+        return { cancelled: true, scanId: scan.scanId, files: [] };
+      }
       console.error("Error reading directory:", error);
       throw error;
+    } finally {
+      event.sender.removeListener("destroyed", handleSenderDestroyed);
+      if (activeDirectoryScans.get(scan.senderId) === scan) {
+        activeDirectoryScans.delete(scan.senderId);
+      }
     }
   }
 );
+
+ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => ({
+  success: true,
+  cancelled: cancelDirectoryScan(event.sender.id, scanId),
+}));
 
 ipcMain.handle("metadata:list-tags", async () => {
   try {
@@ -1962,8 +2069,11 @@ app.on("activate", () => {
   }
 });
 
-// Ensure watcher cleanup on quit
-app.on("before-quit", async () => { await folderWatcher.stop(); });
+// Ensure scan/watcher cleanup on quit
+app.on("before-quit", async () => {
+  cancelAllDirectoryScans();
+  await folderWatcher.stop();
+});
 app.on("will-quit", async () => {
   await folderWatcher.stop();
   try {

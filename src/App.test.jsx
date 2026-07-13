@@ -55,6 +55,7 @@ const useElectronLifecycleMock = vi.fn(() => ({
   loadingStage: "",
   loadingProgress: 0,
   settingsLoaded: true,
+  cancelFolderLoad: vi.fn(),
   handleElectronFolderSelection: vi.fn(),
   handleFolderSelect: vi.fn(),
   handleWebFileSelection: vi.fn(),

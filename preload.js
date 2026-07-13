@@ -32,8 +32,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Directory reading with enhanced metadata
-  readDirectory: async (folderPath, recursive = false) => {
-    return await ipcRenderer.invoke("read-directory", folderPath, recursive);
+  readDirectory: async (folderPath, recursive = false, scanId = null) => {
+    return await ipcRenderer.invoke(
+      "read-directory",
+      folderPath,
+      recursive,
+      scanId
+    );
+  },
+
+  cancelDirectoryScan: async (scanId) => {
+    return await ipcRenderer.invoke("cancel-directory-scan", scanId);
   },
 
   // File system watching

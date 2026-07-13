@@ -6,6 +6,7 @@ import {
 } from "../../utils/renderLimit";
 
 const __DEV__ = import.meta.env.MODE !== "production";
+let directoryScanSequence = 0;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +38,8 @@ export function useElectronFolderLifecycle({
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const activeFolderScanRef = useRef(null);
+  const mountedRef = useRef(true);
   const { clear: clearSelection, setSelected: setSelection } = selection;
   const setterRefs = useRef({
     setRecursiveMode,
@@ -85,18 +88,68 @@ export function useElectronFolderLifecycle({
     setVisibleVideos,
   ]);
 
+  const cancelActiveFolderScan = useCallback((updateLoadingState = true) => {
+    const scan = activeFolderScanRef.current;
+    if (!scan) {
+      if (updateLoadingState && mountedRef.current) {
+        setIsLoadingFolder(false);
+      }
+      return false;
+    }
+
+    scan.cancelled = true;
+    activeFolderScanRef.current = null;
+
+    try {
+      const cancellation = window.electronAPI?.cancelDirectoryScan?.(scan.id);
+      cancellation?.catch?.(() => {});
+    } catch {}
+
+    if (updateLoadingState && mountedRef.current) {
+      setLoadingStage("Cancelled");
+      setLoadingProgress(0);
+      setIsLoadingFolder(false);
+    }
+    return true;
+  }, []);
+
+  const cancelFolderLoad = useCallback(() => {
+    cancelActiveFolderScan(true);
+  }, [cancelActiveFolderScan]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      cancelActiveFolderScan(false);
+    };
+  }, [cancelActiveFolderScan]);
+
   const handleElectronFolderSelection = useCallback(
     async (folderPath) => {
       const api = window.electronAPI;
       if (!api?.readDirectory) return;
+
+      cancelActiveFolderScan(false);
+      const scan = {
+        id: `directory-scan-${Date.now()}-${++directoryScanSequence}`,
+        cancelled: false,
+      };
+      activeFolderScanRef.current = scan;
+      const isCurrentScan = () =>
+        mountedRef.current &&
+        !scan.cancelled &&
+        activeFolderScanRef.current === scan;
 
       try {
         setIsLoadingFolder(true);
         setLoadingStage("Reading directory...");
         setLoadingProgress(10);
         await delayFn(100);
+        if (!isCurrentScan()) return;
 
         await api.stopFolderWatch?.();
+        if (!isCurrentScan()) return;
 
         setVideos([]);
         resetDerivedVideoState();
@@ -104,20 +157,43 @@ export function useElectronFolderLifecycle({
         setLoadingStage("Scanning for video files...");
         setLoadingProgress(30);
         await delayFn(200);
+        if (!isCurrentScan()) return;
 
-        const files = await api.readDirectory(folderPath, recursiveMode);
+        const result = await api.readDirectory(
+          folderPath,
+          recursiveMode,
+          scan.id
+        );
+        if (!isCurrentScan()) return;
+
+        if (result?.cancelled) {
+          activeFolderScanRef.current = null;
+          setLoadingStage("Cancelled");
+          setLoadingProgress(0);
+          setIsLoadingFolder(false);
+          return;
+        }
+
+        const files = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.files)
+            ? result.files
+            : [];
         const normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
 
         setLoadingStage(`Found ${files.length} videos — initializing masonry...`);
         setLoadingProgress(70);
         await delayFn(200);
+        if (!isCurrentScan()) return;
 
         setVideos(normalizedFiles);
         await delayFn(300);
+        if (!isCurrentScan()) return;
 
         setLoadingStage("Complete!");
         setLoadingProgress(100);
         await delayFn(250);
+        if (!isCurrentScan()) return;
         setIsLoadingFolder(false);
 
         refreshTagList();
@@ -126,18 +202,26 @@ export function useElectronFolderLifecycle({
           folderPath,
           recursiveMode
         );
+        if (!isCurrentScan()) return;
         if (watchResult?.success && __DEV__) {
           console.log("👁️ watching folder");
         }
 
         addRecentFolder(folderPath);
+        if (activeFolderScanRef.current === scan) {
+          activeFolderScanRef.current = null;
+        }
       } catch (error) {
+        if (!isCurrentScan()) return;
         console.error("Error reading directory:", error);
+        activeFolderScanRef.current = null;
         setIsLoadingFolder(false);
       }
     },
     [
       addRecentFolder,
+      cancelActiveFolderScan,
+      delayFn,
       recursiveMode,
       refreshTagList,
       resetDerivedVideoState,
@@ -153,6 +237,7 @@ export function useElectronFolderLifecycle({
 
   const handleWebFileSelection = useCallback(
     (event) => {
+      cancelActiveFolderScan(true);
       const files = Array.from(event.target.files || []).filter((f) => {
         const isVideoType = f.type.startsWith("video/");
         const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
@@ -178,7 +263,7 @@ export function useElectronFolderLifecycle({
       setVideos(list);
       resetDerivedVideoState();
     },
-    [resetDerivedVideoState]
+    [cancelActiveFolderScan, resetDerivedVideoState]
   );
 
   const applySettingsFromMain = useCallback((settings) => {
@@ -261,6 +346,7 @@ export function useElectronFolderLifecycle({
     if (!profilesApi?.onChanged) return undefined;
 
     const unsubscribe = profilesApi.onChanged?.((payload) => {
+      cancelActiveFolderScan(true);
       try {
         const stopPromise = window.electronAPI?.stopFolderWatch?.();
         if (stopPromise?.catch) {
@@ -275,7 +361,13 @@ export function useElectronFolderLifecycle({
     });
 
     return () => unsubscribe?.();
-  }, [loadSettingsFromMain, refreshTagList, resetDerivedVideoState, setVideos]);
+  }, [
+    cancelActiveFolderScan,
+    loadSettingsFromMain,
+    refreshTagList,
+    resetDerivedVideoState,
+    setVideos,
+  ]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -372,6 +464,7 @@ export function useElectronFolderLifecycle({
     loadingStage,
     loadingProgress,
     settingsLoaded,
+    cancelFolderLoad,
     handleElectronFolderSelection,
     handleFolderSelect,
     handleWebFileSelection,

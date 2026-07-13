@@ -72,6 +72,10 @@ describe("useElectronFolderLifecycle", () => {
       ]),
       stopFolderWatch: vi.fn().mockResolvedValue(),
       startFolderWatch: vi.fn().mockResolvedValue({ success: true }),
+      cancelDirectoryScan: vi.fn().mockResolvedValue({
+        success: true,
+        cancelled: true,
+      }),
       onFileAdded: vi.fn((cb) => {
         onFileAddedHandler = cb;
         return disposeAdded;
@@ -255,7 +259,11 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.videos).toHaveLength(1));
 
     expect(selection.clear).toHaveBeenCalled();
-    expect(window.electronAPI.readDirectory).toHaveBeenCalledWith("/videos", false);
+    expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(
+      "/videos",
+      false,
+      expect.stringMatching(/^directory-scan-/)
+    );
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/videos",
       false
@@ -263,6 +271,137 @@ describe("useElectronFolderLifecycle", () => {
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
     expect(result.current.isLoadingFolder).toBe(false);
+  });
+
+  it("cancels an in-flight directory scan without applying stale results", async () => {
+    let resolveRead;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+
+    const { result } = renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+        delayFn: () => Promise.resolve(),
+      })
+    );
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/slow");
+    });
+
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledTimes(1)
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    act(() => {
+      result.current.cancelFolderLoad();
+    });
+
+    expect(window.electronAPI.cancelDirectoryScan).toHaveBeenCalledWith(scanId);
+    expect(result.current.isLoadingFolder).toBe(false);
+
+    await act(async () => {
+      resolveRead([
+        { id: "stale", name: "stale", basename: "stale", tags: [] },
+      ]);
+      await loadPromise;
+    });
+
+    expect(result.current.videos).toEqual([]);
+    expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
+    expect(addRecentFolder).not.toHaveBeenCalled();
+  });
+
+  it("keeps the newest folder when scans resolve out of order", async () => {
+    const pending = new Map();
+    window.electronAPI.readDirectory.mockImplementation(
+      (folderPath) =>
+        new Promise((resolve) => {
+          pending.set(folderPath, resolve);
+        })
+    );
+
+    const { result } = renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        renderLimitStep: 5,
+        setRenderLimitStep: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+        delayFn: () => Promise.resolve(),
+      })
+    );
+
+    let firstLoad;
+    act(() => {
+      firstLoad = result.current.handleElectronFolderSelection("/first");
+    });
+    await waitFor(() => expect(pending.has("/first")).toBe(true));
+
+    let secondLoad;
+    act(() => {
+      secondLoad = result.current.handleElectronFolderSelection("/second");
+    });
+    await waitFor(() => expect(pending.has("/second")).toBe(true));
+
+    await act(async () => {
+      pending.get("/second")([
+        { id: "second", name: "second", basename: "second", tags: [] },
+      ]);
+      await secondLoad;
+    });
+
+    await act(async () => {
+      pending.get("/first")([
+        { id: "first", name: "first", basename: "first", tags: [] },
+      ]);
+      await firstLoad;
+    });
+
+    expect(result.current.videos.map((video) => video.id)).toEqual(["second"]);
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/second",
+      false
+    );
+    expect(addRecentFolder).toHaveBeenCalledTimes(1);
+    expect(addRecentFolder).toHaveBeenCalledWith("/second");
   });
 
   it("propagates watcher events into local state", async () => {
