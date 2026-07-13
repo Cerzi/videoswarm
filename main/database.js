@@ -256,6 +256,7 @@ function initDatabase(app, profilePath) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         root_path TEXT NOT NULL UNIQUE,
         label TEXT,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
         recursive INTEGER NOT NULL DEFAULT 1,
         refresh_state TEXT NOT NULL DEFAULT 'idle',
         last_scan_started_at INTEGER,
@@ -326,6 +327,18 @@ function initDatabase(app, profilePath) {
       CREATE INDEX IF NOT EXISTS idx_file_instances_reuse
         ON file_instances(root_id, relative_path, size, mtime_ms);
     `);
+
+    const libraryRootColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(library_roots);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!libraryRootColumns.has('is_pinned')) {
+      db.exec(
+        'ALTER TABLE library_roots ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;'
+      );
+    }
 
     const now = Date.now();
     db.prepare(`
@@ -408,14 +421,14 @@ function createMetadataStore(db) {
 
   const rootInsert = db.prepare(`
     INSERT OR IGNORE INTO library_roots (
-      root_path, label, recursive, refresh_state, last_scan_started_at,
+      root_path, label, is_pinned, recursive, refresh_state, last_scan_started_at,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
   `);
   const rootUpdate = db.prepare(`
     UPDATE library_roots
-    SET label = ?, recursive = ?, refresh_state = ?,
+    SET label = ?, is_pinned = ?, recursive = ?, refresh_state = ?,
         last_scan_started_at = ?, updated_at = ?
     WHERE id = ?;
   `);
@@ -642,6 +655,7 @@ function createMetadataStore(db) {
       id: Number(row.id),
       rootPath: row.root_path,
       label: row.label || null,
+      pinned: Boolean(row.is_pinned),
       recursive: Boolean(row.recursive),
       refreshState: row.refresh_state,
       lastScanStartedAt: row.last_scan_started_at ?? null,
@@ -788,6 +802,9 @@ function createMetadataStore(db) {
     const label = options.label === undefined
       ? row?.label || path.basename(normalizedRoot) || normalizedRoot
       : String(options.label || '').trim() || null;
+    const pinned = options.pinned === undefined
+      ? row ? Boolean(row.is_pinned) : false
+      : Boolean(options.pinned);
     const refreshState = options.refreshState === undefined
       ? row?.refresh_state || 'idle'
       : String(options.refreshState || 'idle');
@@ -800,6 +817,7 @@ function createMetadataStore(db) {
     rootInsert.run(
       normalizedRoot,
       label,
+      pinned ? 1 : 0,
       recursive ? 1 : 0,
       refreshState,
       lastScanStartedAt,
@@ -809,6 +827,7 @@ function createMetadataStore(db) {
     row = rootByPath.get(normalizedRoot);
     rootUpdate.run(
       label,
+      pinned ? 1 : 0,
       recursive ? 1 : 0,
       refreshState,
       lastScanStartedAt,

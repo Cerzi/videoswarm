@@ -296,6 +296,8 @@ function createFolderWatcher({
           /(^|[\/\\])\../,      // ignore dot files/dirs
           "**/node_modules/**",
           "**/.git/**",
+          "**/System Volume Information/**",
+          "**/$RECYCLE.BIN/**",
         ],
         persistent: true,
         ignoreInitial: true,
