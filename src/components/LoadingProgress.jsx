@@ -332,10 +332,6 @@ const LoadingProgress = ({ status: statusProp, memoryStatus, progress, onCancel 
               label="Folders scanned"
               value={finiteNonNegative(status.directoriesScanned).toLocaleString()}
             />
-            <Stat
-              label="Entries inspected"
-              value={finiteNonNegative(status.entriesInspected).toLocaleString()}
-            />
             {hasKnownTotal && (
               <Stat
                 label={stageMetricLabel}

@@ -75,7 +75,7 @@ describe("LoadingProgress", () => {
 
     expect(screen.getByText("Videos found").nextSibling).toHaveTextContent("412");
     expect(screen.getByText("Folders scanned").nextSibling).toHaveTextContent("18");
-    expect(screen.getByText("Entries inspected").nextSibling).toHaveTextContent("930");
+    expect(screen.queryByText("Entries inspected")).not.toBeInTheDocument();
     expect(screen.getByText("Discover").closest("li")).toHaveAttribute(
       "aria-current",
       "step"
@@ -118,6 +118,7 @@ describe("LoadingProgress", () => {
     expect(screen.getByText("Metadata reused").nextSibling).toHaveTextContent(
       "800"
     );
+    expect(document.querySelectorAll(".loading-progress__stat")).toHaveLength(4);
     expect(screen.getByText("Index").closest("li")).toHaveAttribute(
       "aria-current",
       "step"
