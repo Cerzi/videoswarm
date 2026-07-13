@@ -146,9 +146,18 @@ const useVideoCollectionMock = vi.fn(() => ({
   },
   videosToRender: [],
   canLoadVideo: vi.fn(() => true),
+  reserveLoadSlot: vi.fn(() => ({ token: 1 })),
+  queueLoadSlot: vi.fn(() => null),
+  cancelQueuedLoadSlot: vi.fn(() => true),
+  finishLoadSlot: vi.fn(() => ({ token: 1 })),
+  releaseMediaSlot: vi.fn(() => true),
+  isCurrentMediaLease: vi.fn(() => true),
+  getDecoderLease: vi.fn(() => null),
   isVideoPlaying: vi.fn(() => false),
-  reportStarted: vi.fn(),
-  reportPlayError: vi.fn(),
+  reportStarted: vi.fn(() => true),
+  reportPlayError: vi.fn(() => true),
+  reportPaused: vi.fn(() => true),
+  reportPlayerCreationFailure: vi.fn(),
   markHover: vi.fn(),
   activeHoverAudioId: null,
   onCardHoverAudioStart: vi.fn(),
@@ -420,6 +429,23 @@ describe("App hook composition", () => {
       .filter(([props]) => props.video.id === "video-1")
       .at(-1)?.[0];
     expect(loadedProps.isLoaded).toBe(true);
+
+    const currentCollection = useVideoCollectionMock.mock.results.at(-1)?.value;
+    currentCollection.reportPlayError.mockReturnValue(false);
+    let staleErrorAccepted = true;
+    act(() => {
+      staleErrorAccepted = loadedProps.onPlayError(
+        "video-1",
+        new Error("old decoder"),
+        { token: "stale" },
+        null
+      );
+    });
+    expect(staleErrorAccepted).toBe(false);
+    const afterStaleErrorProps = videoCardSpy.mock.calls
+      .filter(([props]) => props.video.id === "video-1")
+      .at(-1)?.[0];
+    expect(afterStaleErrorProps.isLoaded).toBe(true);
 
     act(() => loadedProps.onUnmount("video-1"));
     const unmountedProps = videoCardSpy.mock.calls

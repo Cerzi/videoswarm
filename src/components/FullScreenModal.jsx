@@ -1,24 +1,29 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { toFileURL } from './VideoCard/videoDom';
 
+let fullscreenOwnerSequence = 0;
+
 const detachFullscreenMedia = (element) => {
   if (!element) return;
   try { element.pause(); } catch {}
-  try {
-    element.removeAttribute('src');
-    element.srcObject = null;
-    element.load();
-  } catch {}
+  try { element.removeAttribute('src'); } catch {}
+  try { element.srcObject = null; } catch {}
+  try { element.load(); } catch {}
 };
 
 const FullScreenModal = ({ 
   video, 
   onClose, 
   onNavigate, 
-  showFilenames
+  showFilenames,
+  mediaScheduler = null,
 }) => {
   const modalRef = useRef(null);
   const fallbackRef = useRef(null);
+  const schedulerOwnerIdRef = useRef(null);
+  if (!schedulerOwnerIdRef.current) {
+    schedulerOwnerIdRef.current = `fullscreen:${++fullscreenOwnerSequence}`;
+  }
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
@@ -34,15 +39,48 @@ const FullScreenModal = ({
     const el = fallbackRef.current;
     if (!el) return;
     let ownedBlobUrl = null;
+    let released = false;
+    let loadTimeoutId = null;
+    const decoderLease = mediaScheduler?.reserveExternalDecoder?.(
+      schedulerOwnerIdRef.current
+    ) || null;
+
+    const releaseResources = () => {
+      if (released) return;
+      released = true;
+      if (loadTimeoutId) clearTimeout(loadTimeoutId);
+      loadTimeoutId = null;
+      detachFullscreenMedia(el);
+      if (ownedBlobUrl) {
+        URL.revokeObjectURL(ownedBlobUrl);
+        ownedBlobUrl = null;
+      }
+      if (decoderLease) mediaScheduler?.releaseDecoder?.(decoderLease);
+    };
+
+    if (mediaScheduler?.reserveExternalDecoder && !decoderLease) {
+      setIsLoading(false);
+      setError('Fullscreen playback capacity is busy');
+      return undefined;
+    }
 
     const onCanPlay = () => {
+      if (released) return;
       setIsLoading(false);
       setVideoLoaded(true);
-      el.play?.()?.catch?.(() => {});
+      if (loadTimeoutId) clearTimeout(loadTimeoutId);
+      loadTimeoutId = null;
+      el.play?.()?.catch?.((playError) => {
+        if (playError?.name !== 'NotAllowedError') {
+          onError({ target: { error: playError } });
+        }
+      });
     };
     const onError = (e) => {
+      if (released) return;
       setIsLoading(false);
       setError(e?.target?.error?.message || 'Failed to load video');
+      releaseResources();
     };
 
     el.addEventListener('canplay', onCanPlay);
@@ -63,18 +101,21 @@ const FullScreenModal = ({
     if (!nextSrc) {
       setIsLoading(false);
       setError('No valid video source');
+      releaseResources();
     } else if (el.src !== nextSrc) {
       el.preload = 'auto';
       el.src = nextSrc;
+      loadTimeoutId = setTimeout(() => {
+        onError({ target: { error: new Error('Timed out loading video') } });
+      }, 15000);
     }
 
     return () => {
       el.removeEventListener('canplay', onCanPlay);
       el.removeEventListener('error', onError);
-      detachFullscreenMedia(el);
-      if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+      releaseResources();
     };
-  }, [video]);
+  }, [mediaScheduler, video]);
 
   // Handle keyboard navigation
   useEffect(() => {

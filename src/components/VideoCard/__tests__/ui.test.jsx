@@ -155,7 +155,7 @@ describe("VideoCard", () => {
 
     // Assert error marker appears (match several possible labels)
     const placeholder = await screen.findByText(
-      /⚠|Cannot decode|Error|Failed to load/i
+      /⚠|Cannot decode|Error|Failed to load|File missing|unsupported/i
     );
     expect(placeholder).toBeTruthy();
 
@@ -308,6 +308,86 @@ describe("VideoCard", () => {
 
     await act(async () => queuedInit());
     expect(lastVideoEl).toBeUndefined();
+  });
+
+  it("releases the exact scheduler lease when queued work is cancelled", async () => {
+    let queuedInit;
+    const loaderLease = { kind: "loader", token: 41 };
+    const reserveLoadSlot = vi.fn(() => loaderLease);
+    const finishLoadSlot = vi.fn(() => true);
+    const scheduleInit = vi.fn((fn) => {
+      queuedInit = fn;
+      return vi.fn();
+    });
+
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "leased-queue",
+          name: "leased-queue",
+          fullPath: "/leased-queue.mp4",
+        }}
+        reserveLoadSlot={reserveLoadSlot}
+        finishLoadSlot={finishLoadSlot}
+        scheduleInit={scheduleInit}
+      />
+    );
+
+    await act(async () => {});
+    expect(reserveLoadSlot).toHaveBeenCalledWith(
+      "leased-queue",
+      expect.objectContaining({ replaceResident: false })
+    );
+    expect(scheduleInit).toHaveBeenCalledOnce();
+
+    unmount();
+    expect(finishLoadSlot).toHaveBeenCalledWith(loaderLease, { ready: false });
+
+    await act(async () => queuedInit());
+    expect(lastVideoEl).toBeUndefined();
+  });
+
+  it("does not transition a loader to resident until loadeddata", async () => {
+    const loaderLease = { kind: "loader", token: 51 };
+    const residentLease = { kind: "resident", token: 51 };
+    const reserveLoadSlot = vi.fn(() => loaderLease);
+    const finishLoadSlot = vi.fn((_lease, { ready }) =>
+      ready ? residentLease : true
+    );
+    const releaseMediaSlot = vi.fn(() => true);
+    const onVideoLoad = vi.fn();
+
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "ready-boundary",
+          name: "ready-boundary",
+          fullPath: "/ready-boundary.mp4",
+        }}
+        reserveLoadSlot={reserveLoadSlot}
+        finishLoadSlot={finishLoadSlot}
+        releaseMediaSlot={releaseMediaSlot}
+        onVideoLoad={onVideoLoad}
+        scheduleInit={(fn) => fn()}
+      />
+    );
+
+    await act(async () => {});
+    const element = lastVideoEl;
+    expect(element).toBeTruthy();
+
+    await act(async () => element.dispatchEvent(new Event("loadedmetadata")));
+    expect(finishLoadSlot).not.toHaveBeenCalled();
+    expect(onVideoLoad).not.toHaveBeenCalled();
+
+    await act(async () => element.dispatchEvent(new Event("loadeddata")));
+    expect(finishLoadSlot).toHaveBeenCalledWith(loaderLease, { ready: true });
+    expect(onVideoLoad).toHaveBeenCalledWith("ready-boundary", 16 / 9);
+
+    unmount();
+    expect(releaseMediaSlot).toHaveBeenCalledWith(residentLease);
   });
 
   it("tracks and releases an in-flight media element before loadeddata", async () => {

@@ -68,7 +68,23 @@ describe("mediaSlotScheduler", () => {
     expect(scheduler.reserveLoader("unblocked")).toBeTruthy();
   });
 
-  it("caps decoder leases exactly and reconciles priority synchronously", () => {
+  it("never replaces a resident before its owner acknowledges physical cleanup", () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const resident = scheduler.reserveLoader("same");
+    scheduler.markLoaderReady(resident);
+
+    expect(
+      scheduler.reserveLoader("same", { replaceResident: true })
+    ).toBeNull();
+    expect(scheduler.releaseMedia(resident)).toBe(true);
+    expect(scheduler.reserveLoader("same")).toBeTruthy();
+  });
+
+  it("caps decoder leases and waits for physical-stop acknowledgement before handoff", () => {
     const scheduler = createMediaSlotScheduler({
       maxResident: 4,
       maxLoaders: 4,
@@ -85,9 +101,18 @@ describe("mediaSlotScheduler", () => {
     expect(scheduler.reserveDecoder("c")).toBeNull();
 
     expect(scheduler.reconcileDecoders(["d", "c", "b", "a"])).toEqual(
-      new Set(["d", "c"])
+      new Set()
     );
     expect(scheduler.getSnapshot().decoders).toBe(2);
+    expect(scheduler.getSnapshot().stoppingDecoders).toBe(2);
+
+    const a = scheduler.getDecoderLease("a");
+    const b = scheduler.getDecoderLease("b");
+    expect(scheduler.acknowledgeDecoderStopped(a)).toBe(true);
+    expect(scheduler.acknowledgeDecoderStopped(b)).toBe(true);
+    expect(scheduler.reconcileDecoders(["d", "c", "b", "a"])).toEqual(
+      new Set(["d", "c"])
+    );
   });
 
   it("ties decoder ownership to the resident generation", () => {
@@ -110,7 +135,7 @@ describe("mediaSlotScheduler", () => {
     expect(nextDecoder.ownerToken).not.toBe(decoder.ownerToken);
   });
 
-  it("prunes inactive ids and invalidates all work on scope reset", () => {
+  it("invalidates all work on scope reset", () => {
     const scheduler = createMediaSlotScheduler({
       maxResident: 3,
       maxLoaders: 3,
@@ -122,10 +147,6 @@ describe("mediaSlotScheduler", () => {
     scheduler.markLoaderReady(b);
     scheduler.reconcileDecoders(["a", "b"]);
 
-    scheduler.retainIds(["b"]);
-    expect(scheduler.getSnapshot().residentIds).toEqual(new Set(["b"]));
-    expect(scheduler.getSnapshot().decoderIds).toEqual(new Set(["b"]));
-
     scheduler.reset();
     expect(scheduler.getSnapshot()).toMatchObject({
       loading: 0,
@@ -134,5 +155,89 @@ describe("mediaSlotScheduler", () => {
       reservedResident: 0,
     });
     expect(scheduler.releaseMedia(b)).toBe(false);
+  });
+
+  it("bounds fullscreen decoders in a separate stale-safe lane", () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 0,
+      maxExternalDecoders: 1,
+    });
+
+    const first = scheduler.reserveExternalDecoder("fullscreen-a");
+    expect(first).toBeTruthy();
+    expect(scheduler.reserveExternalDecoder("fullscreen-b")).toBeNull();
+    expect(scheduler.getSnapshot()).toMatchObject({
+      decoders: 0,
+      externalDecoders: 1,
+      totalDecoders: 1,
+    });
+
+    expect(scheduler.releaseDecoder(first)).toBe(true);
+    const replacement = scheduler.reserveExternalDecoder("fullscreen-b");
+    scheduler.reset();
+    expect(scheduler.releaseDecoder(replacement)).toBe(false);
+    expect(scheduler.getSnapshot().externalDecoders).toBe(0);
+  });
+
+  it("wakes queued loaders by priority and never invokes a cancelled waiter", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 3,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const first = scheduler.reserveLoader("first");
+    const granted = [];
+    const background = scheduler.queueLoader(
+      "background",
+      { priority: 1 },
+      (lease) => granted.push(lease.id)
+    );
+    scheduler.queueLoader("visible", { priority: 2 }, (lease) => {
+      granted.push(lease.id);
+    });
+    expect(scheduler.cancelQueuedLoader(background)).toBe(true);
+
+    scheduler.markLoaderReady(first);
+    await Promise.resolve();
+
+    expect(granted).toEqual(["visible"]);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      loading: 1,
+      queuedLoading: 0,
+      reservedResident: 2,
+    });
+  });
+
+  it("blocks reload during native mutation and discards moved waiters", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 2,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const active = scheduler.reserveLoader("failed-trash");
+    scheduler.blockIds(["failed-trash", "moved"]);
+    scheduler.failLoader(active);
+
+    const granted = [];
+    scheduler.queueLoader("failed-trash", { priority: 2 }, (lease) => {
+      granted.push(lease.id);
+    });
+    scheduler.queueLoader("moved", { priority: 2 }, (lease) => {
+      granted.push(lease.id);
+    });
+    await Promise.resolve();
+    expect(granted).toEqual([]);
+
+    scheduler.discardIds(["moved"]);
+    scheduler.unblockIds(["failed-trash", "moved"]);
+    await Promise.resolve();
+
+    expect(granted).toEqual(["failed-trash"]);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      loading: 1,
+      queuedLoading: 0,
+    });
   });
 });

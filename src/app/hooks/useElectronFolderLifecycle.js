@@ -31,6 +31,7 @@ export function useElectronFolderLifecycle({
   setLoadedVideos,
   setLoadingVideos,
   setActualPlaying,
+  resetMediaScheduler,
   refreshTagList,
   addRecentFolder,
 }) {
@@ -81,6 +82,7 @@ export function useElectronFolderLifecycle({
   ]);
 
   const resetDerivedVideoState = useCallback(() => {
+    resetMediaScheduler?.();
     clearSelection();
     setVisibleVideos(new Set());
     setLoadedVideos(new Set());
@@ -88,6 +90,7 @@ export function useElectronFolderLifecycle({
     setActualPlaying(new Set());
   }, [
     clearSelection,
+    resetMediaScheduler,
     setActualPlaying,
     setLoadedVideos,
     setLoadingVideos,

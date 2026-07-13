@@ -54,6 +54,7 @@ import { useMasonryLayout } from "./app/hooks/useMasonryLayout";
 import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
+import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 
 const clampNumber = (value, min, max) =>
   Math.max(min, Math.min(max, value));
@@ -85,6 +86,12 @@ function App() {
   const [visibleVideos, setVisibleVideos] = useState(new Set());
   const [loadedVideos, setLoadedVideos] = useState(new Set());
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+  const mediaSchedulerRef = useRef(null);
+  if (!mediaSchedulerRef.current) {
+    mediaSchedulerRef.current = createMediaSlotScheduler();
+  }
+  const mediaScheduler = mediaSchedulerRef.current;
+  const closeFullScreenRef = useRef(() => {});
 
   const { scheduleInit } = useInitGate({ perFrame: 6 });
 
@@ -236,6 +243,7 @@ function App() {
     setLoadedVideos,
     setLoadingVideos,
     setActualPlaying,
+    resetMediaScheduler: mediaScheduler.reset,
     refreshTagList: invokeRefreshTagList,
     addRecentFolder,
   });
@@ -770,6 +778,45 @@ function App() {
     hideContextMenu();
   }, [hideContextMenu]);
 
+  const invalidateMediaIds = useCallback(
+    (paths = []) => {
+      const ids = new Set(paths.filter(Boolean));
+      if (!ids.size) return;
+
+      for (const id of ids) mediaScheduler.releaseId(id);
+      setLoadedVideos((previous) => removeManyFromSet(previous, ids));
+      setLoadingVideos((previous) => removeManyFromSet(previous, ids));
+      setActualPlaying((previous) => removeManyFromSet(previous, ids));
+      if (fullScreenPinnedId && ids.has(fullScreenPinnedId)) {
+        closeFullScreenRef.current?.();
+      }
+    },
+    [fullScreenPinnedId, mediaScheduler]
+  );
+
+  const releaseManagedVideoHandlesForAsync = useCallback(
+    async (paths) => {
+      // The helper performs its first physical pause/detach synchronously
+      // before yielding. Only then release scheduler authority and mirrors.
+      const releasePromise = releaseVideoHandlesForAsync(paths);
+      invalidateMediaIds(paths);
+      await releasePromise;
+    },
+    [invalidateMediaIds]
+  );
+
+  const beginMediaMutation = useCallback(
+    (paths) => mediaScheduler.blockIds(paths),
+    [mediaScheduler]
+  );
+  const endMediaMutation = useCallback(
+    (paths, movedPaths = []) => {
+      mediaScheduler.discardIds(movedPaths);
+      mediaScheduler.unblockIds(paths);
+    },
+    [mediaScheduler]
+  );
+
   const postConfirmRecovery = useCallback(
     ({ cancelled: _cancelled, lastFocusedSelector } = {}) => {
       if (typeof document === "undefined") return;
@@ -838,7 +885,10 @@ function App() {
     preTrashCleanup,
     postConfirmRecovery,
     captureLastFocusSelector,
-    releaseVideoHandlesForAsync,
+    releaseVideoHandlesForAsync: releaseManagedVideoHandlesForAsync,
+    beginMediaMutation,
+    endMediaMutation,
+    mediaScheduler,
     setVideos,
     setSelected: selection.setSelected,
     setLoadedIds: setLoadedVideos,
@@ -888,6 +938,15 @@ function App() {
     ]
   );
 
+  // fullscreen / context menu
+  const {
+    fullScreenVideo,
+    openFullScreen,
+    closeFullScreen,
+    navigateFullScreen,
+  } = useFullScreenModal(displayVideos);
+  closeFullScreenRef.current = closeFullScreen;
+
   // --- Composite Video Collection Hook ---
   const videoCollection = useVideoCollection({
     videos: orderedVideos,
@@ -911,15 +970,9 @@ function App() {
     suspendEvictions: isLayoutTransitioning,
     renderLimit: renderLimitValue,
     hoverAudioEnabled,
+    mediaScheduler,
+    playbackSuspended: Boolean(fullScreenVideo),
   });
-
-  // fullscreen / context menu
-  const {
-    fullScreenVideo,
-    openFullScreen,
-    closeFullScreen,
-    navigateFullScreen,
-  } = useFullScreenModal(displayVideos);
 
   useEffect(() => {
     setFullScreenPinnedId(fullScreenVideo?.id ?? null);
@@ -928,8 +981,15 @@ function App() {
   const collectionCallbacksRef = useRef(null);
   collectionCallbacksRef.current = {
     canLoadVideo: videoCollection.canLoadVideo,
+    reserveLoadSlot: videoCollection.reserveLoadSlot,
+    queueLoadSlot: videoCollection.queueLoadSlot,
+    cancelQueuedLoadSlot: videoCollection.cancelQueuedLoadSlot,
+    finishLoadSlot: videoCollection.finishLoadSlot,
+    releaseMediaSlot: videoCollection.releaseMediaSlot,
+    isCurrentMediaLease: videoCollection.isCurrentMediaLease,
     reportStarted: videoCollection.reportStarted,
     reportPlayError: videoCollection.reportPlayError,
+    reportPaused: videoCollection.reportPaused,
     reportPlayerCreationFailure: videoCollection.reportPlayerCreationFailure,
     markHover: videoCollection.markHover,
     onCardHoverAudioStart: videoCollection.onCardHoverAudioStart,
@@ -942,16 +1002,61 @@ function App() {
       collectionCallbacksRef.current?.canLoadVideo?.(videoId, options) ?? false,
     []
   );
-  const handleVideoPlay = useCallback((videoId) => {
-    collectionCallbacksRef.current?.reportStarted?.(videoId);
-    setActualPlaying((prev) => updateSetMembership(prev, videoId, true));
+  const handleReserveLoadSlot = useCallback((videoId, options) => {
+    return collectionCallbacksRef.current?.reserveLoadSlot?.(videoId, options) ?? null;
   }, []);
-  const handleVideoPause = useCallback((videoId) => {
-    setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+  const handleQueueLoadSlot = useCallback((videoId, options, onGranted) => {
+    return collectionCallbacksRef.current?.queueLoadSlot?.(
+      videoId,
+      options,
+      onGranted
+    ) ?? null;
   }, []);
-  const handleVideoPlayError = useCallback((videoId, error) => {
-    collectionCallbacksRef.current?.reportPlayError?.(videoId, error);
+  const handleCancelQueuedLoadSlot = useCallback((waiterLease) => {
+    return collectionCallbacksRef.current?.cancelQueuedLoadSlot?.(waiterLease) ?? false;
+  }, []);
+  const handleFinishLoadSlot = useCallback((lease, outcome) => {
+    return collectionCallbacksRef.current?.finishLoadSlot?.(lease, outcome) ?? null;
+  }, []);
+  const handleReleaseMediaSlot = useCallback((lease) => {
+    return collectionCallbacksRef.current?.releaseMediaSlot?.(lease) ?? false;
+  }, []);
+  const handleVideoPlay = useCallback((videoId, decoderLease) => {
+    const accepted =
+      collectionCallbacksRef.current?.reportStarted?.(videoId, decoderLease) ?? false;
+    if (accepted) {
+      setActualPlaying((prev) => updateSetMembership(prev, videoId, true));
+    }
+    return accepted;
+  }, []);
+  const handleVideoPause = useCallback((videoId, decoderLease) => {
+    const accepted =
+      collectionCallbacksRef.current?.reportPaused?.(videoId, decoderLease) ?? false;
+    if (accepted) {
+      setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+    }
+    return accepted;
+  }, []);
+  const handleVideoPlayError = useCallback((
+    videoId,
+    error,
+    decoderLease,
+    mediaLease
+  ) => {
+    const accepted = decoderLease
+      ? collectionCallbacksRef.current?.reportPlayError?.(
+          videoId,
+          error,
+          decoderLease
+        ) ?? false
+      : mediaLease
+        ? collectionCallbacksRef.current?.isCurrentMediaLease?.(mediaLease) ?? false
+        : true;
+    if (!accepted) return false;
     setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+    setLoadedVideos((prev) => updateSetMembership(prev, videoId, false));
+    setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+    return true;
   }, []);
   const handlePlayerCreationFailure = useCallback(() => {
     collectionCallbacksRef.current?.reportPlayerCreationFailure?.();
@@ -1070,8 +1175,14 @@ function App() {
       setVisibleVideos((prev) => updateSetMembership(prev, videoId, Boolean(isVisible)));
     }, []);
 
-    const handleVideoUnmount = useCallback((videoId) => {
+  const handleVideoUnmount = useCallback((videoId) => {
       setVisibleVideos((prev) => updateSetMembership(prev, videoId, false));
+      setLoadedVideos((prev) => updateSetMembership(prev, videoId, false));
+      setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
+      setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
+    }, []);
+
+    const handleMediaInvalidated = useCallback((videoId) => {
       setLoadedVideos((prev) => updateSetMembership(prev, videoId, false));
       setLoadingVideos((prev) => updateSetMembership(prev, videoId, false));
       setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
@@ -1525,6 +1636,12 @@ function App() {
                         onNativeDragStart={handleNativeDragStart}
                         showFilenames={showFilenames}
                         canLoadVideo={handleCanLoadVideo}
+                        reserveLoadSlot={handleReserveLoadSlot}
+                        queueLoadSlot={handleQueueLoadSlot}
+                        cancelQueuedLoadSlot={handleCancelQueuedLoadSlot}
+                        finishLoadSlot={handleFinishLoadSlot}
+                        releaseMediaSlot={handleReleaseMediaSlot}
+                        decoderLease={videoCollection.getDecoderLease(video.id)}
                         isLoading={loadingVideos.has(video.id)}
                         isLoaded={loadedVideos.has(video.id)}
                         isVisible={visibleVideos.has(video.id)}
@@ -1536,6 +1653,7 @@ function App() {
                         onVideoLoad={handleVideoLoaded}
                         onVisibilityChange={handleVideoVisibilityChange}
                         onUnmount={handleVideoUnmount}
+                        onMediaInvalidated={handleMediaInvalidated}
                         onVideoPlay={handleVideoPlay}
                         onVideoPause={handleVideoPause}
                         onPlayError={handleVideoPlayError}
@@ -1584,6 +1702,7 @@ function App() {
               onClose={handleCloseFullScreen}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
+              mediaScheduler={mediaScheduler}
             />
           )}
 

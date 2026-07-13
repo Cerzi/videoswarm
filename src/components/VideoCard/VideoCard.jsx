@@ -5,6 +5,74 @@ import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
 
+const RECOVERY_TIMEOUT_MS = 4000;
+
+const waitForPlayableData = (
+  element,
+  timeoutMs = RECOVERY_TIMEOUT_MS,
+  onCancelReady = null
+) =>
+  new Promise((resolve, reject) => {
+    const readyThreshold =
+      (typeof HTMLMediaElement !== "undefined" &&
+        Number(HTMLMediaElement.HAVE_CURRENT_DATA)) ||
+      2;
+    if (element.readyState >= readyThreshold) {
+      resolve();
+      return;
+    }
+
+    let timeoutId = null;
+    let settled = false;
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      element.removeEventListener("loadeddata", onReady);
+      element.removeEventListener("canplay", onReady);
+      element.removeEventListener("error", onError);
+    };
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onReady = () => {
+      if (element.readyState >= readyThreshold) finish();
+      else finish(new Error("Media recovery did not produce playable data"));
+    };
+    const onError = (event) => {
+      finish(event?.target?.error || new Error("Media recovery failed"));
+    };
+
+    element.addEventListener("loadeddata", onReady);
+    element.addEventListener("canplay", onReady);
+    element.addEventListener("error", onError);
+    timeoutId = setTimeout(() => {
+      finish(new Error("Timed out recovering media data"));
+    }, timeoutMs);
+    onCancelReady?.(() => finish(new Error("Media recovery cancelled")));
+  });
+
+const playWithTimeout = async (element, timeoutMs = RECOVERY_TIMEOUT_MS) => {
+  let timeoutId = null;
+  try {
+    const playResult = element.play();
+    if (!playResult?.then) return;
+    await Promise.race([
+      playResult,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Timed out restarting media playback")),
+          timeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 const VideoCard = memo(function VideoCard({
   video,
   selected,
@@ -23,6 +91,12 @@ const VideoCard = memo(function VideoCard({
   // limits & callbacks (owned by parent/orchestrator)
   canLoadVideo,           // (id, options?) => boolean
   canLoadMoreVideos,      // legacy: (options?) => boolean
+  reserveLoadSlot,        // (id, options?) => opaque loader lease | null
+  queueLoadSlot,          // (id, options, onGranted) => opaque waiter lease
+  cancelQueuedLoadSlot,   // (waiter lease) => boolean
+  finishLoadSlot,         // (lease, { ready }) => resident lease | boolean
+  releaseMediaSlot,       // (resident lease) => boolean
+  decoderLease = null,    // opaque decoder ownership for this card generation
   onStartLoading,         // (id)
   onStopLoading,          // (id)
   onVideoLoad,            // (id, aspectRatio)
@@ -37,6 +111,7 @@ const VideoCard = memo(function VideoCard({
   onHoverAudioStart,      // (id)
   onHoverAudioEnd,        // (id)
   onUnmount,              // (id)
+  onMediaInvalidated,     // (id) file identity changed in-place
 
   // IO registry
   observeIntersection,    // (el, id, cb)
@@ -60,12 +135,21 @@ const VideoCard = memo(function VideoCard({
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
   const scheduledInitCancelRef = useRef(null);
+  const queuedLoadWaiterRef = useRef(null);
   const attemptCleanupRef = useRef(null);
   const loadingReservationRef = useRef(null);
+  const mediaReservationRef = useRef(null);
+  const pendingAspectRatioRef = useRef(null);
+  const watchdogRecoveryRef = useRef(false);
+  const loadVideoRef = useRef(null);
 
   // local mirrors (parent is source of truth)
   const videoId = video.id || video.fullPath || video.name;
+  const mediaIdentity = `${videoId}::${video?.fullPath || ""}::${
+    video?.size ?? ""
+  }::${video?.dateModified ?? ""}`;
   const videoIdRef = useRef(videoId);
+  const mediaIdentityRef = useRef({ signature: mediaIdentity, videoId });
   const onHoverAudioEndRef = useRef(onHoverAudioEnd);
   const onUnmountRef = useRef(onUnmount);
   videoIdRef.current = videoId;
@@ -104,7 +188,6 @@ const VideoCard = memo(function VideoCard({
   const hasRenderableVideo = useCallback(() => {
     const el = videoRef.current;
     if (!el) return false;
-    if (el.dataset?.adopted === "modal") return true;
 
     const container = videoContainerRef.current;
     if (!container) {
@@ -147,23 +230,39 @@ const VideoCard = memo(function VideoCard({
 
   const effectiveAspectRatio = aspectRatioHint && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
 
-  // Is this <video> currently adopted by the fullscreen modal?
-  const isAdoptedByModal = useCallback(() => {
-    const el = videoRef.current;
-    return !!(el && el.dataset && el.dataset.adopted === "modal");
-  }, []);
-
-  const stopLoadingReservation = useCallback((generation = null) => {
+  const stopLoadingReservation = useCallback((generation = null, ready = false) => {
     const reservation = loadingReservationRef.current;
-    if (!reservation) return;
-    if (generation !== null && reservation.generation !== generation) return;
+    if (!reservation) return null;
+    if (generation !== null && reservation.generation !== generation) return null;
 
     loadingReservationRef.current = null;
+    let residentLease = null;
+    if (reservation.lease) {
+      residentLease = finishLoadSlot?.(reservation.lease, { ready }) || null;
+      if (ready && residentLease) {
+        mediaReservationRef.current = residentLease;
+      }
+    }
     reservation.onStopLoading?.(reservation.videoId);
-  }, []);
+    return residentLease;
+  }, [finishLoadSlot]);
+
+  const releaseOwnedMediaSlot = useCallback(() => {
+    const reservation = mediaReservationRef.current;
+    if (!reservation) return false;
+    mediaReservationRef.current = null;
+    return releaseMediaSlot?.(reservation) ?? false;
+  }, [releaseMediaSlot]);
+
+  const cancelQueuedLoad = useCallback(() => {
+    const waiterLease = queuedLoadWaiterRef.current;
+    if (!waiterLease) return false;
+    queuedLoadWaiterRef.current = null;
+    return cancelQueuedLoadSlot?.(waiterLease) ?? false;
+  }, [cancelQueuedLoadSlot]);
 
   const disposeVideoElement = useCallback((el) => {
-    if (!el || el.dataset?.adopted === "modal") return false;
+    if (!el) return false;
 
     try {
       suppressErrorsRef.current = true;
@@ -175,11 +274,14 @@ const VideoCard = memo(function VideoCard({
     }
 
     if (videoRef.current === el) videoRef.current = null;
+    releaseOwnedMediaSlot();
     return true;
-  }, []);
+  }, [releaseOwnedMediaSlot]);
 
   const cancelLoadAttempt = useCallback(() => {
     loadGenerationRef.current += 1;
+
+    cancelQueuedLoad();
 
     scheduledInitCancelRef.current?.();
     scheduledInitCancelRef.current = null;
@@ -190,18 +292,24 @@ const VideoCard = memo(function VideoCard({
     if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
     retryTimeoutRef.current = null;
 
-    stopLoadingReservation();
-
     const el = videoRef.current;
     if (el) disposeVideoElement(el);
+    else releaseOwnedMediaSlot();
+
+    stopLoadingReservation();
 
     loadRequestedRef.current = false;
     metaNotifiedRef.current = false;
-  }, [disposeVideoElement, stopLoadingReservation]);
+    pendingAspectRatioRef.current = null;
+  }, [
+    cancelQueuedLoad,
+    disposeVideoElement,
+    releaseOwnedMediaSlot,
+    stopLoadingReservation,
+  ]);
 
   const syncVideoIntoContainer = useCallback((container, el) => {
     if (!container || !el) return;
-    if (el.dataset?.adopted === "modal") return;
 
     const nodes = Array.from(container.childNodes || []);
     for (const node of nodes) {
@@ -210,7 +318,8 @@ const VideoCard = memo(function VideoCard({
         typeof node?.nodeName === "string" && node.nodeName.toLowerCase() === "video";
       if (isVideoNode && node?.parentNode === container) {
         try {
-          container.removeChild(node);
+          hardDetach(node);
+          node.remove?.();
         } catch {}
       }
     }
@@ -286,69 +395,140 @@ const VideoCard = memo(function VideoCard({
     }
   }, [isVisible, requestThumbnail]);
 
-  // If file content changed, clear sticky error so we can retry
+  // A same-key file update must invalidate every closure and lease from the
+  // prior file generation before a replacement can start.
   useEffect(() => {
-    if (permanentErrorRef.current || errorText) {
-      permanentErrorRef.current = false;
-      retryAttemptsRef.current  = 0;
-      setErrorText(null);
-      loadRequestedRef.current = false;
-      setLoaded(false);
-      setLoading(false);
-      lastFailureAtRef.current = 0;
-    }
-  }, [video.id, video.size, video.dateModified]);
+    const previous = mediaIdentityRef.current;
+    if (previous.signature === mediaIdentity) return;
 
-  // Teardown when parent says not loaded/not loading (unless adopted by modal)
+    cancelLoadAttempt();
+    onMediaInvalidated?.(previous.videoId);
+    mediaIdentityRef.current = { signature: mediaIdentity, videoId };
+    permanentErrorRef.current = false;
+    retryAttemptsRef.current = 0;
+    setErrorText(null);
+    setLoaded(false);
+    setLoading(false);
+    lastFailureAtRef.current = 0;
+  }, [cancelLoadAttempt, mediaIdentity, onMediaInvalidated, videoId]);
+
+  // Teardown when parent says this card no longer owns media resources.
   useEffect(() => {
-    if (isAdoptedByModal()) return;
     if (!isLoaded && !isLoading && videoRef.current) {
       cancelLoadAttempt();
       setLoaded(false);
       setLoading(false);
     }
-  }, [isLoaded, isLoading, isAdoptedByModal, cancelLoadAttempt]);
+  }, [isLoaded, isLoading, cancelLoadAttempt]);
 
   // Orchestrated play/pause + error handling
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
+    const effectGeneration = loadGenerationRef.current;
+    let effectDisposed = false;
+    let recoveryInFlight = false;
+    const isCurrentElement = () =>
+      !effectDisposed &&
+      mountedRef.current &&
+      loadGenerationRef.current === effectGeneration &&
+      videoRef.current === el;
 
     const handlePlaying = () => {
-      onVideoPlay?.(videoId);
+      if (!isCurrentElement()) return;
+      const accepted = onVideoPlay?.(videoId, decoderLease);
+      if (accepted === false) {
+        try { el.pause(); } catch {}
+        onVideoPause?.(videoId, decoderLease);
+        return;
+      }
       requestThumbnail("playing-event");
     };
-    const handlePause   = () => onVideoPause?.(videoId);
+    const handlePause = () => {
+      if (
+        !isCurrentElement() ||
+        recoveryInFlight ||
+        watchdogRecoveryRef.current ||
+        el.dataset.mediaOperation === "frame-capture"
+      ) {
+        return;
+      }
+      onVideoPause?.(videoId, decoderLease);
+    };
 
     const handleError = async (e) => {
-      if (suppressErrorsRef.current) return;
+      if (
+        suppressErrorsRef.current ||
+        !isCurrentElement() ||
+        recoveryInFlight
+      ) {
+        return;
+      }
       const err = e?.target?.error || e;
-      onPlayError?.(videoId, err);
-
       const { terminal, label } = classifyMediaError(err);
-      const code = err?.code ?? null;
-      const decodeWhileActive =
-        code === 3 && el.currentSrc && !suppressErrorsRef.current;
+      recoveryInFlight = true;
+      let recovered = false;
 
-      // Soft recovery first
-      try {
-        const t = el.currentTime || 0;
-        el.pause();
-        el.load();
-        try { el.currentTime = t; } catch {}
-        await el.play();
-        if (!mountedRef.current || videoRef.current !== el) return;
+      if (!terminal) {
+        try {
+          const t = el.currentTime || 0;
+          el.pause();
+          el.load();
+          try { el.currentTime = t; } catch {}
+          await playWithTimeout(el);
+          const readyThreshold =
+            (typeof HTMLMediaElement !== "undefined" &&
+              Number(HTMLMediaElement.HAVE_CURRENT_DATA)) ||
+            2;
+          if (el.readyState < readyThreshold) {
+            throw new Error("Media recovery did not produce playable data");
+          }
+          recovered = isCurrentElement();
+        } catch {}
+      }
+      recoveryInFlight = false;
+
+      if (recovered) {
         setErrorText(null);
         return;
-      } catch {}
-
-      if (!mountedRef.current || videoRef.current !== el) return;
-
-      if (terminal && decodeWhileActive) {
-        permanentErrorRef.current = true;
       }
+      if (!isCurrentElement()) return;
+
+      const currentMediaLease = mediaReservationRef.current;
+      const accepted = onPlayError?.(
+        videoId,
+        err,
+        decoderLease,
+        currentMediaLease
+      );
+      if (accepted === false) return;
+
+      if (terminal) {
+        permanentErrorRef.current = true;
+        if (err?.code === 3 && el.currentSrc) {
+          reportPlayerCreationFailure?.();
+        }
+      }
+      lastFailureAtRef.current = Date.now();
       setErrorText(`⚠️ ${label}`);
-      hardDetach(el);
+      setLoaded(false);
+      setLoading(false);
+      loadRequestedRef.current = false;
+      disposeVideoElement(el);
+      if (!terminal) {
+        retryTimeoutRef.current = setTimeout(() => {
+          retryTimeoutRef.current = null;
+          if (
+            mountedRef.current &&
+            visibilityRef.current &&
+            !videoRef.current &&
+            !loadRequestedRef.current
+          ) {
+            setErrorText(null);
+            loadVideoRef.current?.({ assumeVisible: true });
+          }
+        }, 2500);
+      }
     };
 
     el.addEventListener("playing", handlePlaying);
@@ -362,6 +542,7 @@ const VideoCard = memo(function VideoCard({
       loaded &&
       !permanentErrorRef.current;
     if (shouldPlay) {
+      el.dataset.playbackDesired = "true";
       el.muted = !isHoverAudioActive;
       if (isHoverAudioActive) {
         el.volume = 1;
@@ -372,19 +553,28 @@ const VideoCard = memo(function VideoCard({
           if (isHoverAudioActive && err?.name === "NotAllowedError") {
             try {
               el.muted = true;
-              el.play()?.catch?.(() => {});
+              el.play()?.catch?.((retryError) => {
+                if (isCurrentElement()) {
+                  handleError({ target: { error: retryError } });
+                }
+              });
             } catch {}
             return;
           }
-          handleError({ target: { error: err } });
+          if (isCurrentElement()) {
+            handleError({ target: { error: err } });
+          }
         });
       }
     } else {
+      el.dataset.playbackDesired = "false";
       el.muted = true;
       try { el.pause(); } catch {}
+      onVideoPause?.(videoId, decoderLease);
     }
 
     return () => {
+      effectDisposed = true;
       el.removeEventListener("playing", handlePlaying);
       el.removeEventListener("pause",   handlePause);
       el.removeEventListener("error",   handleError);
@@ -399,17 +589,20 @@ const VideoCard = memo(function VideoCard({
     onVideoPlay,
     onVideoPause,
     onPlayError,
+    decoderLease,
+    disposeVideoElement,
+    reportPlayerCreationFailure,
   ]);
 
   // Quiet stall watchdog (no visual changes)
   useEffect(() => {
-    if (!videoRef.current) return;
+    const watchedElement = videoRef.current;
+    if (!watchedElement) return;
     const enable =
       !playbackSuspended &&
       loaded &&
       isPlaying &&
       isVisible &&
-      !isAdoptedByModal() &&
       !permanentErrorRef.current;
     let teardown = null;
     if (enable) {
@@ -419,232 +612,410 @@ const VideoCard = memo(function VideoCard({
         minDeltaSec: 0.12,
         ticksToStall: 3,     // ~7.5s
         maxLogsPerMin: 1,
+        onRecoveryStart: () => {
+          watchdogRecoveryRef.current = true;
+        },
+        onRecoveryEnd: () => {
+          watchdogRecoveryRef.current = false;
+        },
+        onRecoveryError: (error) => {
+          if (!mountedRef.current || videoRef.current !== watchedElement) return;
+          const accepted = onPlayError?.(
+            videoId,
+            error,
+            decoderLease,
+            mediaReservationRef.current
+          );
+          if (accepted === false) return;
+          lastFailureAtRef.current = Date.now();
+          setErrorText("⚠️ Playback stalled");
+          setLoaded(false);
+          setLoading(false);
+          loadRequestedRef.current = false;
+          disposeVideoElement(watchedElement);
+          retryTimeoutRef.current = setTimeout(() => {
+            retryTimeoutRef.current = null;
+            if (
+              mountedRef.current &&
+              visibilityRef.current &&
+              !videoRef.current &&
+              !loadRequestedRef.current
+            ) {
+              setErrorText(null);
+              loadVideoRef.current?.({ assumeVisible: true });
+            }
+          }, 2500);
+        },
       });
     }
     return () => { if (teardown) teardown(); };
   }, [
-    isAdoptedByModal,
     isPlaying,
     isVisible,
     loaded,
     playbackSuspended,
     videoId,
+    decoderLease,
+    disposeVideoElement,
+    onPlayError,
   ]);
 
   // create & load <video>
   const loadVideo = useCallback((options = {}) => {
     if (!mountedRef.current) return;
-    if (loading || loadRequestedRef.current) return;
+    if (
+      loading ||
+      loadRequestedRef.current ||
+      queuedLoadWaiterRef.current
+    ) {
+      return;
+    }
     if (hasRenderableVideo()) return;
-    const allowLoad = checkCanLoad(options);
-    if (allowLoad === false) return;
     if (permanentErrorRef.current) return;
-    setErrorText(null);
 
-    const generation = loadGenerationRef.current + 1;
-    loadGenerationRef.current = generation;
-    loadRequestedRef.current = true;
-    loadingReservationRef.current = {
-      generation,
-      videoId,
-      onStopLoading,
+    // A detached/stale resident must be physically torn down before its slot
+    // becomes available to a replacement generation.
+    if (videoRef.current || mediaReservationRef.current) {
+      const staleElement = videoRef.current;
+      if (staleElement) disposeVideoElement(staleElement);
+      else releaseOwnedMediaSlot();
+      setLoaded(false);
+      onMediaInvalidated?.(videoId);
+    }
+
+    const admissionOptions = {
+      ...options,
+      replaceResident: false,
     };
-    onStartLoading?.(videoId);
-    setLoading(true);
-
-    const runInit = () => {
-      scheduledInitCancelRef.current = null;
-      if (!mountedRef.current || loadGenerationRef.current !== generation) {
-        stopLoadingReservation(generation);
-        return;
+    const beginReservedLoad = (loaderLease = null) => {
+      if (
+        !mountedRef.current ||
+        loadRequestedRef.current ||
+        hasRenderableVideo() ||
+        permanentErrorRef.current
+      ) {
+        return false;
       }
 
-      const el = document.createElement("video");
-      // Track the node before starting any asynchronous media work. An unmount
-      // that happens before loadeddata must still be able to release its source.
-      videoRef.current = el;
+      setErrorText(null);
+      metaNotifiedRef.current = false;
+      pendingAspectRatioRef.current = null;
 
-      el.muted = true;
-      el.loop = true;
-      el.playsInline = true;
-      el.preload = isVisible ? "auto" : "metadata";
-      el.className = "video-element";
-      el.dataset.videoId = videoId;
-      el.style.width = "100%";
-      el.style.height = "100%";
-      el.style.objectFit = "cover";
-      el.style.display = "block";
+      const generation = loadGenerationRef.current + 1;
+      loadGenerationRef.current = generation;
+      loadRequestedRef.current = true;
+      loadingReservationRef.current = {
+        generation,
+        videoId,
+        onStopLoading,
+        lease: loaderLease,
+      };
+      onStartLoading?.(videoId);
+      setLoading(true);
 
-      const isCurrentAttempt = () =>
-        mountedRef.current &&
-        loadGenerationRef.current === generation &&
-        videoRef.current === el;
-
-      const cleanupAttempt = () => {
-        clearTimeout(loadTimeoutRef.current);
-        loadTimeoutRef.current = null;
-        el.removeEventListener("loadedmetadata", onMeta);
-        el.removeEventListener("loadeddata",    onLoadedData);
-        el.removeEventListener("error",         onErr);
-        if (attemptCleanupRef.current === cleanupAttempt) {
-          attemptCleanupRef.current = null;
+      const runInit = () => {
+        scheduledInitCancelRef.current = null;
+        if (!mountedRef.current || loadGenerationRef.current !== generation) {
+          stopLoadingReservation(generation, false);
+          return;
         }
-      };
 
-      const finishStopLoading = () => {
-        stopLoadingReservation(generation);
-        if (mountedRef.current && loadGenerationRef.current === generation) {
-          setLoading(false);
-          lastFailureAtRef.current = 0;
-        }
-      };
+        const el = document.createElement("video");
+        // Track the node before starting any asynchronous media work. An unmount
+        // that happens before loadeddata must still be able to release its source.
+        videoRef.current = el;
 
-      const onMeta = () => {
-        if (!isCurrentAttempt()) return;
-        if (!metaNotifiedRef.current) {
-          metaNotifiedRef.current = true;
-          const ar =
-            el.videoWidth && el.videoHeight
-              ? el.videoWidth / el.videoHeight
-              : 16 / 9;
-          onVideoLoad?.(videoId, ar);
-        }
-      };
+        el.muted = true;
+        el.loop = true;
+        el.playsInline = true;
+        // Admission is already bounded. `metadata` can stop before loadeddata and
+        // strand a loader forever, so every granted attempt uses one clear ready
+        // transition and a bounded timeout.
+        el.preload = "auto";
+        el.className = "video-element";
+        el.dataset.videoId = videoId;
+        el.style.width = "100%";
+        el.style.height = "100%";
+        el.style.objectFit = "cover";
+        el.style.display = "block";
 
-      const onLoadedData = () => {
-        if (!isCurrentAttempt()) return;
-        cleanupAttempt();
-        finishStopLoading();
-        setLoaded(true);
+        const isCurrentAttempt = () =>
+          mountedRef.current &&
+          loadGenerationRef.current === generation &&
+          videoRef.current === el;
 
-        const container = videoContainerRef.current;
-        syncVideoIntoContainer(container, el);
-      };
-
-      const onErr = async (e) => {
-        if (suppressErrorsRef.current || !isCurrentAttempt()) return;
-        cleanupAttempt();
-
-        const err = e?.target?.error || e;
-        const { terminal, label } = classifyMediaError(err);
-
-        const code = err?.code ?? null;
-        const isLocal = Boolean(video.isElectronFile && video.fullPath);
-        const looksTransientLocal = isLocal && code === 4 && retryAttemptsRef.current < 1;
-
-        // Soft recover once
-        try {
-          const t = el.currentTime || 0;
-          el.pause();
-          el.load();
-          try { el.currentTime = t; } catch {}
-          await el.play();
-          if (el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-            throw new Error("Media recovery did not produce playable data");
+        const cleanupAttempt = () => {
+          clearTimeout(loadTimeoutRef.current);
+          loadTimeoutRef.current = null;
+          el.removeEventListener("loadedmetadata", onMeta);
+          el.removeEventListener("loadeddata",    onLoadedData);
+          el.removeEventListener("error",         onErr);
+          if (attemptCleanupRef.current === cleanupAttempt) {
+            attemptCleanupRef.current = null;
           }
+        };
+
+        const finishStopLoading = (ready = false) => {
+          const hadSchedulerLease = Boolean(
+            loadingReservationRef.current?.lease
+          );
+          const residentLease = stopLoadingReservation(generation, ready);
+          if (mountedRef.current && loadGenerationRef.current === generation) {
+            setLoading(false);
+            if (ready) {
+              loadRequestedRef.current = false;
+              lastFailureAtRef.current = 0;
+            }
+          }
+          return !ready || !hadSchedulerLease || Boolean(residentLease);
+        };
+
+        const onMeta = () => {
+          if (!isCurrentAttempt()) return;
+          if (!metaNotifiedRef.current) {
+            metaNotifiedRef.current = true;
+            pendingAspectRatioRef.current =
+              el.videoWidth && el.videoHeight
+                ? el.videoWidth / el.videoHeight
+                : 16 / 9;
+          }
+        };
+
+        const notifyReady = () => {
+          onMeta();
+          onVideoLoad?.(
+            videoId,
+            pendingAspectRatioRef.current || 16 / 9
+          );
+        };
+
+        const onLoadedData = () => {
+          if (!isCurrentAttempt()) return;
+          cleanupAttempt();
+          syncVideoIntoContainer(videoContainerRef.current, el);
+          if (!finishStopLoading(true)) {
+            disposeVideoElement(el);
+            return;
+          }
+          setLoaded(true);
+          notifyReady();
+        };
+
+        let recoveryInFlight = false;
+        const onErr = async (e) => {
+          if (
+            suppressErrorsRef.current ||
+            !isCurrentAttempt() ||
+            recoveryInFlight
+          ) {
+            return;
+          }
+          recoveryInFlight = true;
+          cleanupAttempt();
+
+          const err = e?.target?.error || e;
+          const { terminal, label } = classifyMediaError(err);
+
+          const code = err?.code ?? null;
+          const isLocal = Boolean(video.isElectronFile && video.fullPath);
+          const looksTransientLocal =
+            isLocal && code === 4 && retryAttemptsRef.current < 1;
+
+          let recovered = false;
+          if (!terminal) {
+            let cancelRecovery = null;
+            const cleanupRecovery = () => {
+              cancelRecovery?.();
+              if (attemptCleanupRef.current === cleanupRecovery) {
+                attemptCleanupRef.current = null;
+              }
+            };
+            attemptCleanupRef.current = cleanupRecovery;
+            try {
+              const t = el.currentTime || 0;
+              const readyPromise = waitForPlayableData(
+                el,
+                RECOVERY_TIMEOUT_MS,
+                (cancel) => {
+                  cancelRecovery = cancel;
+                }
+              );
+              el.pause();
+              el.load();
+              try { el.currentTime = t; } catch {}
+              await readyPromise;
+              recovered = isCurrentAttempt();
+            } catch {}
+            if (attemptCleanupRef.current === cleanupRecovery) {
+              attemptCleanupRef.current = null;
+            }
+          }
+
+          recoveryInFlight = false;
+          if (recovered) {
+            syncVideoIntoContainer(videoContainerRef.current, el);
+            if (!finishStopLoading(true)) {
+              disposeVideoElement(el);
+              return;
+            }
+            setLoaded(true);
+            setErrorText(null);
+            notifyReady();
+            return;
+          }
+
           if (!isCurrentAttempt()) return;
 
-          finishStopLoading();
-          onMeta();
-          setLoaded(true);
-          setErrorText(null);
-          syncVideoIntoContainer(videoContainerRef.current, el);
-          return;
-        } catch {}
+          const currentLoaderLease = loadingReservationRef.current?.lease || null;
+          const accepted = onPlayError?.(
+            videoId,
+            err,
+            null,
+            currentLoaderLease
+          );
+          const shouldDeratePlayerLimit = code === 3 && Boolean(el.currentSrc);
 
-        if (!isCurrentAttempt()) return;
+          loadRequestedRef.current = false;
+          lastFailureAtRef.current = Date.now();
+          disposeVideoElement(el);
+          finishStopLoading(false);
+          if (accepted === false) return;
 
-        finishStopLoading();
-        loadRequestedRef.current = false;
-        lastFailureAtRef.current = Date.now();
-
-        const decodeWhileActive =
-          code === 3 && el.currentSrc && !suppressErrorsRef.current;
-
-        if (terminal && decodeWhileActive && !looksTransientLocal) {
-          permanentErrorRef.current = true;
-          reportPlayerCreationFailure?.();
-        }
-
-        setErrorText(`⚠️ ${looksTransientLocal ? "Temporary read error" : label}`);
-        onPlayError?.(videoId, err);
-
-        // A failed attempt is never reused. Release it before considering a
-        // retry so it cannot retain a file handle or blob URL off-DOM.
-        disposeVideoElement(el);
-
-        // Retry once for transient local errors
-        if (!permanentErrorRef.current && looksTransientLocal) {
-          retryAttemptsRef.current += 1;
-          retryTimeoutRef.current = setTimeout(() => {
-            retryTimeoutRef.current = null;
-            if (
-              mountedRef.current &&
-              loadGenerationRef.current === generation &&
-              visibilityRef.current &&
-              !loadRequestedRef.current &&
-              !videoRef.current &&
-              (checkCanLoad({ assumeVisible: true }) ?? true)
-            ) {
-              loadVideo({ assumeVisible: true });
+          if (terminal && !looksTransientLocal) {
+            permanentErrorRef.current = true;
+            if (shouldDeratePlayerLimit) {
+              reportPlayerCreationFailure?.();
             }
-          }, 1200);
-        }
-      };
+          }
 
-      // Conditional load-timeout (cancelled when invisible)
-      const armLoadTimeout = () => {
+          setErrorText(
+            `⚠️ ${looksTransientLocal ? "Temporary read error" : label}`
+          );
+
+          // Retry once for transient local errors. A fresh attempt must obtain
+          // a fresh scheduler lease (or wait in its priority queue).
+          if (!permanentErrorRef.current && (looksTransientLocal || !terminal)) {
+            if (looksTransientLocal) retryAttemptsRef.current += 1;
+            retryTimeoutRef.current = setTimeout(() => {
+              retryTimeoutRef.current = null;
+              if (
+                mountedRef.current &&
+                loadGenerationRef.current === generation &&
+                visibilityRef.current &&
+                !loadRequestedRef.current &&
+                !videoRef.current
+              ) {
+                loadVideo({ assumeVisible: true });
+              }
+            }, looksTransientLocal ? 1200 : 2500);
+          }
+        };
+
+        // A granted loader always has a deadline, including near-viewport work.
         clearTimeout(loadTimeoutRef.current);
-        if (visibilityRef.current) {
-          loadTimeoutRef.current = setTimeout(() => {
-            if (visibilityRef.current && isCurrentAttempt()) {
-              onErr({ target: { error: new Error("Loading timeout") } });
-            }
-          }, 10000);
+        loadTimeoutRef.current = setTimeout(() => {
+          if (isCurrentAttempt()) {
+            onErr({ target: { error: new Error("Loading timeout") } });
+          }
+        }, 10000);
+
+        el.addEventListener("loadedmetadata", onMeta);
+        el.addEventListener("loadeddata",    onLoadedData);
+        el.addEventListener("error",         onErr);
+        attemptCleanupRef.current = cleanupAttempt;
+
+        try {
+          if (video.isElectronFile && video.fullPath) {
+            el.src = toFileURL(video.fullPath);
+          } else if (video.file) {
+            el.src = URL.createObjectURL(video.file);
+          } else if (video.fullPath || video.relativePath) {
+            el.src = video.fullPath || video.relativePath;
+          } else {
+            throw new Error("No valid video source");
+          }
+
+          el.load();
+          // No warm-start play/pause (keeps CPU/GPU quieter)
+        } catch (err) {
+          onErr({ target: { error: err } });
         }
       };
-      armLoadTimeout();
 
-      el.addEventListener("loadedmetadata", onMeta);
-      el.addEventListener("loadeddata",    onLoadedData);
-      el.addEventListener("error",         onErr);
-      attemptCleanupRef.current = cleanupAttempt;
-
-      try {
-        if (video.isElectronFile && video.fullPath) {
-          el.src = toFileURL(video.fullPath);
-        } else if (video.file) {
-          el.src = URL.createObjectURL(video.file);
-        } else if (video.fullPath || video.relativePath) {
-          el.src = video.fullPath || video.relativePath;
-        } else {
-          throw new Error("No valid video source");
+      const startInit = () => {
+        try {
+          runInit();
+        } catch (error) {
+          const currentLoaderLease =
+            loadingReservationRef.current?.lease || null;
+          const accepted = onPlayError?.(
+            videoId,
+            error,
+            null,
+            currentLoaderLease
+          );
+          const el = videoRef.current;
+          if (el) disposeVideoElement(el);
+          stopLoadingReservation(generation, false);
+          loadRequestedRef.current = false;
+          setLoading(false);
+          if (accepted !== false) {
+            setErrorText("⚠️ Failed to initialize player");
+            reportPlayerCreationFailure?.();
+          }
         }
+      };
 
-        el.load();
-        // No warm-start play/pause (keeps CPU/GPU quieter)
-      } catch (err) {
-        onErr({ target: { error: err } });
+      if (typeof scheduleInit === "function") {
+        let started = false;
+        const cancel = scheduleInit(() => {
+          started = true;
+          startInit();
+        });
+        if (!started && typeof cancel === "function") {
+          scheduledInitCancelRef.current = cancel;
+        }
+      } else {
+        startInit();
       }
+      return true;
     };
 
-    if (typeof scheduleInit === "function") {
-      let started = false;
-      const cancel = scheduleInit(() => {
-        started = true;
-        runInit();
-      });
-      if (!started && typeof cancel === "function") {
-        scheduledInitCancelRef.current = cancel;
+    let loaderLease = null;
+    if (typeof reserveLoadSlot === "function") {
+      loaderLease = reserveLoadSlot(videoId, admissionOptions);
+      if (!loaderLease) {
+        const shouldQueue =
+          typeof queueLoadSlot === "function" &&
+          (Boolean(options?.assumeVisible) || visibilityRef.current);
+        if (!shouldQueue) return;
+
+        let waiterLease = null;
+        waiterLease = queueLoadSlot(
+          videoId,
+          { ...admissionOptions, assumeVisible: true },
+          (grantedLease) => {
+            if (queuedLoadWaiterRef.current !== waiterLease) return false;
+            queuedLoadWaiterRef.current = null;
+            if (!visibilityRef.current) return false;
+            return beginReservedLoad(grantedLease);
+          }
+        );
+        if (waiterLease) queuedLoadWaiterRef.current = waiterLease;
+        return;
       }
     } else {
-      runInit();
+      const allowLoad = checkCanLoad(admissionOptions);
+      if (allowLoad === false) return;
     }
+
+    beginReservedLoad(loaderLease);
   }, [
     video,
     videoId,
-    isVisible,
     checkCanLoad,
+    reserveLoadSlot,
+    queueLoadSlot,
     loading,
     hasRenderableVideo,
     onStartLoading,
@@ -654,8 +1025,12 @@ const VideoCard = memo(function VideoCard({
     scheduleInit,
     syncVideoIntoContainer,
     disposeVideoElement,
+    releaseOwnedMediaSlot,
     stopLoadingReservation,
+    reportPlayerCreationFailure,
+    onMediaInvalidated,
   ]);
+  loadVideoRef.current = loadVideo;
 
   const ensureVisibleAndLoad = useCallback(() => {
     if (!isVisible && !nearStateRef.current) {
@@ -695,10 +1070,11 @@ const VideoCard = memo(function VideoCard({
       }
     }
 
-    const allow = checkCanLoad(assumeVisible ? { assumeVisible: true } : undefined);
-    if (allow === false) return false;
+    const loadOptions = assumeVisible ? { assumeVisible: true } : undefined;
+    const allow = checkCanLoad(loadOptions);
+    if (allow === false && typeof queueLoadSlot !== "function") return false;
 
-    loadVideo(assumeVisible ? { assumeVisible: true } : undefined);
+    loadVideo(loadOptions);
     return true;
   }, [
     checkCanLoad,
@@ -707,6 +1083,7 @@ const VideoCard = memo(function VideoCard({
     scrollRootRef,
     hasRenderableVideo,
     isVisible,
+    queueLoadSlot,
   ]);
 
   useEffect(() => {
@@ -737,12 +1114,17 @@ const VideoCard = memo(function VideoCard({
     return undefined;
   }, [ensureVisibleAndLoad, shouldEnsureLoad]);
 
+  useEffect(() => {
+    if (!isVisible) cancelQueuedLoad();
+  }, [cancelQueuedLoad, isVisible]);
+
   // IO registration for visibility
   useEffect(() => {
     const el = cardRef.current;
     if (!el || !observeIntersection || !unobserveIntersection) return;
 
     const handleVisible = (nowVisible /* boolean */, entry) => {
+      visibilityRef.current = Boolean(nowVisible);
       if (entry) {
         const nextNear = (isNear?.(videoId) ?? true) === true;
         if (nearStateRef.current !== nextNear) {
@@ -782,7 +1164,8 @@ const VideoCard = memo(function VideoCard({
       !loadRequestedRef.current &&
       !videoRef.current &&
       !permanentErrorRef.current &&
-      (checkCanLoad({ assumeVisible: true }) ?? true)
+      ((checkCanLoad({ assumeVisible: true }) ?? true) ||
+        typeof queueLoadSlot === "function")
     ) {
       Promise.resolve().then(() => {
         if (
@@ -793,7 +1176,8 @@ const VideoCard = memo(function VideoCard({
           !loadRequestedRef.current &&
           !videoRef.current &&
           !permanentErrorRef.current &&
-          (checkCanLoad({ assumeVisible: true }) ?? true)
+          ((checkCanLoad({ assumeVisible: true }) ?? true) ||
+            typeof queueLoadSlot === "function")
         ) {
           ensureVisibleAndLoad();
         }
@@ -805,15 +1189,8 @@ const VideoCard = memo(function VideoCard({
     loading,
     checkCanLoad,
     ensureVisibleAndLoad,
+    queueLoadSlot,
   ]);
-
-  // Cancel load timeout if we become invisible
-  useEffect(() => {
-    if (!isVisible && loadTimeoutRef.current) {
-      clearTimeout(loadTimeoutRef.current);
-      loadTimeoutRef.current = null;
-    }
-  }, [isVisible]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1004,7 +1381,7 @@ const VideoCard = memo(function VideoCard({
         </div>
       )}
 
-      {loaded && videoRef.current && !isAdoptedByModal() ? (
+      {loaded && videoRef.current ? (
         <div
           className="video-container"
           style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}

@@ -257,6 +257,7 @@ describe("useElectronFolderLifecycle", () => {
   });
 
   it("handles folder selection lifecycle", async () => {
+    const resetMediaScheduler = vi.fn();
     const { result } = renderHook(() =>
       useElectronFolderLifecycle({
         selection,
@@ -275,6 +276,7 @@ describe("useElectronFolderLifecycle", () => {
         setLoadedVideos: setLoadedVideosMock.setter,
         setLoadingVideos: setLoadingVideosMock.setter,
         setActualPlaying: setActualPlayingMock.setter,
+        resetMediaScheduler,
         refreshTagList,
         addRecentFolder,
       })
@@ -289,6 +291,10 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.videos).toHaveLength(1));
 
     expect(selection.clear).toHaveBeenCalled();
+    expect(resetMediaScheduler).toHaveBeenCalledOnce();
+    expect(resetMediaScheduler.mock.invocationCallOrder[0]).toBeLessThan(
+      selection.clear.mock.invocationCallOrder[0]
+    );
     expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(
       "/videos",
       false,

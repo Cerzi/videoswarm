@@ -8,6 +8,9 @@ export default function useTrashIntegration({
   postConfirmRecovery,
   captureLastFocusSelector,
   releaseVideoHandlesForAsync,
+  beginMediaMutation,
+  endMediaMutation,
+  mediaScheduler,
 
   // your real setters
   setVideos,            // (prev) => next array
@@ -109,6 +112,9 @@ export default function useTrashIntegration({
     confirmMoveToTrash,
     postConfirmRecovery,
     releaseVideoHandlesForAsync,
+    beginMediaMutation,
+    endMediaMutation,
+    mediaScheduler,
     onItemsRemoved,
   };
 }
