@@ -206,14 +206,26 @@ Acceptance criteria:
 
 ### 4. Media lifecycle and scheduler
 
-Media creation is owned by a cancelable scheduler. A card records its media
-element immediately on creation, and every exit path pauses it, removes the
-source, calls `load()` where appropriate, detaches it, and revokes owned blob
-URLs. Scheduled initialization and retries carry a card generation token and
-cannot execute after unmount or identity change.
+Status: **Implemented** (2026-07-13)
 
-The scheduler atomically reserves loader and decoder slots. React state mirrors
-the scheduler but is not the authority for admission.
+Media creation is owned by a scoped, cancelable scheduler. A card records its
+media element immediately on creation, and every exit path pauses it, removes
+the source, calls `load()` where appropriate, detaches it, and revokes owned
+blob URLs. Scheduled initialization, queue admission, recovery, and retries
+carry opaque generation leases and cannot execute after unmount or identity
+change.
+
+The scheduler atomically reserves each loader together with its future resident
+slot. Denied visible cards enter a priority queue and are awakened as capacity
+is released. Decoder ownership is separate: a replacement is not admitted
+until the previous card has physically paused and acknowledged its stop lease.
+React state mirrors scheduler decisions but is not the authority for admission.
+
+Fullscreen playback and one-shot media work use distinct bounded decoder lanes
+so they cannot bypass grid limits without accounting. Folder/profile changes
+invalidate a complete scheduler scope. Destructive file actions block affected
+IDs, release native media handles before mutation, and cannot race an immediate
+reload of the same path.
 
 Acceptance criteria:
 
@@ -222,8 +234,17 @@ Acceptance criteria:
 - Failed recovery is reported rather than treated as success.
 - Scheduler animation frames stop when the queue is empty.
 - Loader reservations cannot overshoot through stale React snapshots.
+- A visible card denied admission is queued, wakes automatically, and releases
+  its wait lease on invisibility, identity change, or unmount.
+- Decoder handoff does not free physical capacity until pause acknowledgement.
+- Stale loader, resident, decoder, recovery, and event callbacks cannot mutate
+  the current card generation.
 - Fullscreen fallback URLs use the shared file URL helper and revoke owned blob
   URLs during navigation and close.
+- Fullscreen and frame-capture decoder lanes are bounded and release their
+  leases on success, failure, timeout, navigation, and teardown.
+- Trash operations prevent affected IDs from being re-admitted until the
+  native result is reconciled.
 
 ### 5. Linux-aware playback modes
 
@@ -357,9 +378,10 @@ Acceptance criteria:
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
 | Stable masonry/observer/card callback identities | **Implemented** | Observer thresholds, collection callbacks, and per-card handlers remain stable across scroll-driven parent renders; landed in `331a360`. |
-| Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; failed recovery and the idle frame pump were fixed with regressions in `e85030a`. |
-| Atomic media loader/decoder scheduler | **Unimplemented** | Current admission mirrors React Sets. |
-| Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen now owns its media element and blob URL, navigates by current record ID, has one keyboard owner, and declaratively suspends/resumes grid playback; landed in `331a360`. |
+| Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; recovery, identity replacement, and stale callback handling landed in `e85030a` and `17ced36`. |
+| Atomic media loader/decoder scheduler | **Implemented** | Opaque scoped leases, exact loader/resident caps, priority wake-up, acknowledged decoder handoff, bounded auxiliary lanes, and React-mirror integration landed in `e804b97` and `17ced36`. |
+| Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen owns its element, source, blob URL, timeout, and dedicated decoder lease; navigation, close, and failure release every owned resource. Grid suspension remains declarative; landed in `331a360` and `17ced36`. |
+| Destructive and one-shot media lifecycle | **Implemented** | Trash blocks affected scheduler IDs while physical handles are released, and serialized frame capture uses a bounded auxiliary lease with deterministic cleanup; landed in `17ced36`. |
 | Linux playback modes and adaptive decoder budget | **Unimplemented** | Requires telemetry and UX controls. |
 | Hidden/minimized work suspension | **Unimplemented** | Background throttling is currently disabled. |
 | Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
@@ -519,6 +541,43 @@ The following adjacent work remains **Unimplemented**:
   Vitest/jsdom coverage rather than an Electron benchmark.
 - Explicit folder headers, a directory tree, sibling-folder cycling, and
   per-folder view restoration remain part of Section 7.
+
+## Media lifecycle and scheduler implementation slice
+
+1. **Implemented** — Make one scoped scheduler the admission authority for
+   loaders, future resident media, and grid decoders. Opaque leases and scope
+   generations reject delayed work after folder/profile reset.
+2. **Implemented** — Reserve loader and resident capacity atomically, queue
+   denied visible cards by priority, wake them as capacity becomes available,
+   and cancel waiters on invisibility, identity replacement, or unmount.
+3. **Implemented** — Track each media element before asynchronous loading,
+   promote it to resident only after `loadeddata`, and physically pause, clear,
+   reload, detach, and release it on every failure or ownership transition.
+4. **Implemented** — Require physical pause acknowledgement before a stopped
+   decoder lease frees capacity. Make runtime recovery single-flight, bounded,
+   generation-owned, and explicit about terminal versus transient failures.
+5. **Implemented** — Give fullscreen playback and serialized frame capture
+   separate bounded decoder lanes. Use shared cross-platform file URLs and
+   release sources, owned blob URLs, timers, callbacks, and leases on all exit
+   paths.
+6. **Implemented** — Block IDs during trash operations, release matching media
+   handles before native mutation, reconcile moved and failed paths, and avoid
+   unsafe suffix or case matching across POSIX, drive-letter, and UNC paths.
+7. **Implemented** — Add focused scheduler, card-integration, playback,
+   recovery, fullscreen, capture, trash, URL, and native-handle regressions,
+   including stale generations and physical cleanup ordering.
+
+The following adjacent work remains **Unimplemented**:
+
+- Adaptive decoder budgets, Linux playback modes, dropped-frame/event-loop
+  telemetry, and user-facing policy controls remain part of Section 5.
+- Hidden/minimized suspension remains part of Section 5; background throttling
+  is still disabled by the current Electron configuration.
+- Process-lifetime cache limits, asynchronous thumbnail IPC, and bounded
+  external child-process work remain part of Section 6.
+- Electron smoke coverage and Linux CPU/RSS/file-handle/playback soak budgets
+  remain part of Section 8. The current scheduler coverage is deterministic
+  Vitest/jsdom coverage rather than a hardware benchmark.
 
 ## Migration and compatibility
 
