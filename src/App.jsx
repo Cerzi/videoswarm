@@ -275,6 +275,7 @@ function App() {
     loadingStage,
     loadingProgress,
     settingsLoaded,
+    cancelFolderLoad,
     handleElectronFolderSelection,
     handleFolderSelect,
     handleWebFileSelection,
@@ -1276,11 +1277,11 @@ function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape" && isLoadingFolder) setIsLoadingFolder(false);
+      if (e.key === "Escape" && isLoadingFolder) cancelFolderLoad();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isLoadingFolder]);
+  }, [cancelFolderLoad, isLoadingFolder]);
 
   // cleanup pass from videoCollection
   // drive the effect by stable scalars; apply deletions, not replacement; de-bounce one tick
@@ -1369,6 +1370,7 @@ function App() {
             show={isLoadingFolder}
             stage={loadingStage}
             progress={loadingProgress}
+            onCancel={cancelFolderLoad}
           />
 
           <HeaderBar

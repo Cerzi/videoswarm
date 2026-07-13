@@ -1,6 +1,7 @@
+import React from "react";
 import LoadingProgress from "../../components/LoadingProgress";
 
-function LoadingOverlay({ show, stage, progress }) {
+function LoadingOverlay({ show, stage, progress, onCancel }) {
   if (!show) return null;
   return (
     <LoadingProgress
@@ -9,6 +10,7 @@ function LoadingOverlay({ show, stage, progress }) {
         total: 100,
         stage: stage || "",
       }}
+      onCancel={onCancel}
     />
   );
 }
