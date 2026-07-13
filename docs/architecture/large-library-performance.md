@@ -626,7 +626,7 @@ The following adjacent work remains **Unimplemented**:
   coverage is deterministic Vitest/jsdom coverage rather than a hardware
   benchmark.
 
-## Linux-aware playback implementation slice
+## Section 5 implementation record — Linux-aware playback modes
 
 1. **Implemented** — Add persisted Balanced, All Motion, and Static + Hover
    controls with live decoder target/safety-cap feedback and explicit Linux
@@ -653,6 +653,13 @@ The following adjacent work remains **Unimplemented**:
    suspension, proxy/child-runner, settings, card-lifecycle, scheduler,
    fullscreen, thumbnail, and application regressions; verify the full
    renderer suite, production build, and unpacked Electron package.
+
+Verification was repeated against the current tree on 2026-07-13: the focused
+Section 5 policy, telemetry, capability, suspension, playback-control,
+VideoCard, proxy, window-activity, and child-runner suites passed (11 files,
+80 tests). The complete renderer suite, production Vite build, Electron-ABI
+native suite, and unpacked Linux package also passed after the later Section 7
+integration. The implementation remains recorded in commit `af73872`.
 
 Hardware-specific Linux decode verification and performance soak thresholds
 remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
