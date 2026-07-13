@@ -73,6 +73,59 @@ if (!database || databaseLoadError) {
       expect(store.getFileInstances(rootPath)).toHaveLength(2);
     });
 
+    it('preserves ordinary copied files as distinct filesystem instances', async () => {
+      const source = createFile('copies/source.mp4', 'byte-identical-content');
+      const copyPath = path.join(rootPath, 'copies/copy.mp4');
+      fs.copyFileSync(source.filePath, copyPath);
+      const copy = { filePath: copyPath, stats: fs.statSync(copyPath) };
+
+      const indexed = await store.indexFiles({
+        rootPath,
+        entries: [source, copy],
+      });
+
+      expect(indexed).toHaveLength(2);
+      expect(indexed[0].instance.id).not.toBe(indexed[1].instance.id);
+      expect(indexed.map((entry) => entry.instance.relativePath)).toEqual([
+        'copies/source.mp4',
+        'copies/copy.mp4',
+      ]);
+      expect(
+        store.getFileInstances(rootPath).map((entry) => entry.absolutePath)
+      ).toEqual([copyPath, source.filePath].sort((left, right) =>
+        left.localeCompare(right, undefined, { sensitivity: 'base' })
+      ));
+    });
+
+    it('does not commit partial instances when cancellation arrives during fingerprinting', async () => {
+      const first = createFile(
+        'cancel/first.mp4',
+        Buffer.alloc(256 * 1024, 0x61)
+      );
+      const second = createFile(
+        'cancel/second.mp4',
+        Buffer.alloc(256 * 1024, 0x62)
+      );
+      const cancellation = Object.assign(new Error('scan cancelled'), {
+        code: 'DIRECTORY_SCAN_CANCELLED',
+      });
+      let cancelled = false;
+
+      const indexing = store.indexFiles({
+        rootPath,
+        entries: [first, second],
+        assertActive: () => {
+          if (cancelled) throw cancellation;
+        },
+      });
+      queueMicrotask(() => {
+        cancelled = true;
+      });
+
+      await expect(indexing).rejects.toBe(cancellation);
+      expect(store.getFileInstances(rootPath)).toEqual([]);
+    });
+
     it('reuses an unchanged instance fingerprint after reopening the profile', async () => {
       const original = createFile('clip.mp4', 'aaaa');
       const first = await store.indexFile({ rootPath, ...original });
@@ -114,6 +167,51 @@ if (!database || databaseLoadError) {
       expect(byPath['inaccessible/kept.mp4'].present).toBe(true);
     });
 
+    it('reconciles wholly deleted directories only when recursive coverage is complete', async () => {
+      const deleted = createFile('deleted/clip.mp4', 'deleted');
+      const unscanned = createFile('unscanned/kept.mp4', 'kept');
+      await store.indexFiles({
+        rootPath,
+        entries: [deleted, unscanned],
+      });
+      fs.rmSync(path.dirname(deleted.filePath), { recursive: true, force: true });
+
+      const partial = store.reconcileLibraryRoot(rootPath, [], {
+        recursive: true,
+        scannedDirectories: [rootPath],
+      });
+      expect(partial.markedMissing).toBe(0);
+      expect(
+        Object.fromEntries(
+          store.getFileInstances(rootPath).map((entry) => [
+            entry.relativePath,
+            entry.present,
+          ])
+        )
+      ).toMatchObject({
+        'deleted/clip.mp4': true,
+        'unscanned/kept.mp4': true,
+      });
+
+      const complete = store.reconcileLibraryRoot(
+        rootPath,
+        [unscanned.filePath],
+        { recursive: true }
+      );
+      expect(complete.markedMissing).toBe(1);
+      expect(
+        Object.fromEntries(
+          store.getFileInstances(rootPath).map((entry) => [
+            entry.relativePath,
+            entry.present,
+          ])
+        )
+      ).toMatchObject({
+        'deleted/clip.mp4': false,
+        'unscanned/kept.mp4': true,
+      });
+    });
+
     it('persists empty directories and aggregate counts across restart', async () => {
       const reviewed = createFile('batch/reviewed.mp4', 'reviewed');
       const missing = createFile('batch/missing.mp4', 'missing');
@@ -122,6 +220,7 @@ if (!database || databaseLoadError) {
         entries: [reviewed, missing],
       });
       store.setRating([reviewedEntry.fingerprint], 4);
+      store.registerLibraryRoot(rootPath, { pinned: true });
       store.registerDirectory(rootPath, path.join(rootPath, 'empty'));
       store.reconcileLibraryRoot(rootPath, [reviewed.filePath], {
         recursive: true,
@@ -136,7 +235,9 @@ if (!database || databaseLoadError) {
       initMetadataStore({ getPath: () => tempDir }, tempDir);
       store = getMetadataStore();
 
-      expect(store.getLibraryRoots()).toHaveLength(1);
+      expect(store.getLibraryRoots()).toEqual([
+        expect.objectContaining({ rootPath, pinned: true }),
+      ]);
       const summaries = Object.fromEntries(
         store.getDirectorySummaries(rootPath).map((entry) => [entry.relativePath, entry])
       );
