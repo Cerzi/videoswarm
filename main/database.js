@@ -11,6 +11,103 @@ let currentProfilePath = null;
 
 const DB_FILE_NAME = 'videoswarm-meta.db';
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
+const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
+const REVIEW_FILTERS = new Set(['any', ...REVIEW_STATES]);
+const SAVED_VIEW_LIMIT = 100;
+const SAVED_VIEW_NAME_LIMIT = 80;
+const SAVED_VIEW_DEFINITION_BYTE_LIMIT = 8192;
+const SAVED_VIEW_VERSION = 1;
+
+function normalizeReviewState(value) {
+  const state = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!REVIEW_STATES.has(state)) {
+    throw new TypeError(`Unsupported review state: ${value}`);
+  }
+  return state;
+}
+
+function normalizeSavedViewDefinition(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new TypeError('Saved view definition must be an object');
+  }
+  if (Number(input.version) !== SAVED_VIEW_VERSION) {
+    throw new TypeError(`Saved view version must be ${SAVED_VIEW_VERSION}`);
+  }
+
+  const filtersInput = input.filters && typeof input.filters === 'object'
+    ? input.filters
+    : {};
+  const normalizeTags = (values) => Array.from(new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+      .slice(0, 100)
+      .map((value) => value.slice(0, 80))
+  )).sort((left, right) => left.localeCompare(right));
+  const normalizeRating = (value, { minimum = 0 } = {}) => {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    return Math.max(minimum, Math.min(5, Math.round(number)));
+  };
+  const reviewFilterCandidate = typeof filtersInput.reviewFilter === 'string'
+    ? filtersInput.reviewFilter.trim().toLowerCase()
+    : 'any';
+  const reviewFilter = REVIEW_FILTERS.has(reviewFilterCandidate)
+    ? reviewFilterCandidate
+    : 'any';
+
+  const sortInput = input.sort && typeof input.sort === 'object' ? input.sort : {};
+  const sortKey = ['name', 'created', 'random'].includes(sortInput.key)
+    ? sortInput.key
+    : 'name';
+  const sortDir = sortInput.dir === 'desc' ? 'desc' : 'asc';
+  const randomSeed = sortInput.randomSeed !== null &&
+    sortInput.randomSeed !== undefined &&
+    Number.isFinite(Number(sortInput.randomSeed))
+      ? Math.trunc(Number(sortInput.randomSeed))
+      : null;
+
+  const scopeInput = input.scope && typeof input.scope === 'object'
+    ? input.scope.mode
+    : input.scopeMode;
+  const scopeMode = [
+    'all-descendants',
+    'current-folder',
+    'current-subtree',
+  ].includes(scopeInput)
+    ? scopeInput
+    : 'all-descendants';
+
+  const normalized = {
+    version: SAVED_VIEW_VERSION,
+    filters: {
+      includeTags: normalizeTags(filtersInput.includeTags),
+      excludeTags: normalizeTags(filtersInput.excludeTags),
+      minRating: normalizeRating(filtersInput.minRating, { minimum: 1 }),
+      exactRating: normalizeRating(filtersInput.exactRating),
+      reviewFilter,
+    },
+    sort: {
+      key: sortKey,
+      dir: sortDir,
+      groupByFolders: sortInput.groupByFolders !== false,
+      randomSeed,
+    },
+    scope: { mode: scopeMode },
+  };
+
+  if (normalized.filters.exactRating !== null) {
+    normalized.filters.minRating = null;
+  }
+  const serialized = JSON.stringify(normalized);
+  if (Buffer.byteLength(serialized, 'utf8') > SAVED_VIEW_DEFINITION_BYTE_LIMIT) {
+    throw new RangeError(
+      `Saved view definition exceeds ${SAVED_VIEW_DEFINITION_BYTE_LIMIT} bytes`
+    );
+  }
+  return normalized;
+}
 
 function isSqliteCorruptionError(error) {
   if (!error) return false;
@@ -283,6 +380,9 @@ function initDatabase(app, profilePath) {
         relative_path TEXT NOT NULL,
         parent_relative_path TEXT,
         name TEXT NOT NULL,
+        is_present INTEGER NOT NULL DEFAULT 1,
+        last_seen_at INTEGER,
+        missing_since INTEGER,
         direct_instance_count INTEGER NOT NULL DEFAULT 0,
         direct_present_count INTEGER NOT NULL DEFAULT 0,
         direct_missing_count INTEGER NOT NULL DEFAULT 0,
@@ -315,6 +415,41 @@ function initDatabase(app, profilePath) {
         FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE SET NULL
       );
 
+      CREATE TABLE IF NOT EXISTS content_review (
+        fingerprint TEXT PRIMARY KEY,
+        state TEXT NOT NULL CHECK (
+          state IN ('unreviewed', 'reviewed', 'pick', 'reject')
+        ),
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS saved_views (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        definition_json TEXT NOT NULL CHECK (
+          length(CAST(definition_json AS BLOB)) <= 8192
+        ),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS instance_generation_metadata (
+        instance_id INTEGER PRIMARY KEY,
+        sidecar_path TEXT NOT NULL,
+        sidecar_size INTEGER NOT NULL,
+        sidecar_mtime_ms REAL NOT NULL,
+        parser_version INTEGER NOT NULL,
+        prompt TEXT,
+        seed TEXT,
+        models_json TEXT NOT NULL DEFAULT '[]',
+        samplers_json TEXT NOT NULL DEFAULT '[]',
+        source_images_json TEXT NOT NULL DEFAULT '[]',
+        generation_run TEXT,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_library_roots_path
         ON library_roots(root_path);
       CREATE INDEX IF NOT EXISTS idx_directories_root_parent
@@ -327,6 +462,10 @@ function initDatabase(app, profilePath) {
         ON file_instances(fingerprint);
       CREATE INDEX IF NOT EXISTS idx_file_instances_reuse
         ON file_instances(root_id, relative_path, size, mtime_ms);
+      CREATE INDEX IF NOT EXISTS idx_content_review_state
+        ON content_review(state);
+      CREATE INDEX IF NOT EXISTS idx_saved_views_updated
+        ON saved_views(updated_at DESC, name COLLATE NOCASE);
     `);
 
     const libraryRootColumns = new Set(
@@ -341,6 +480,24 @@ function initDatabase(app, profilePath) {
       );
     }
 
+    const directoryColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(directories);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!directoryColumns.has('is_present')) {
+      db.exec(
+        'ALTER TABLE directories ADD COLUMN is_present INTEGER NOT NULL DEFAULT 1;'
+      );
+    }
+    if (!directoryColumns.has('last_seen_at')) {
+      db.exec('ALTER TABLE directories ADD COLUMN last_seen_at INTEGER;');
+    }
+    if (!directoryColumns.has('missing_since')) {
+      db.exec('ALTER TABLE directories ADD COLUMN missing_since INTEGER;');
+    }
+
     const now = Date.now();
     db.prepare(`
       INSERT OR IGNORE INTO media_content (
@@ -349,6 +506,14 @@ function initDatabase(app, profilePath) {
       SELECT fingerprint, size, created_ms, width, height, ?, ?
       FROM files;
     `).run(now, now);
+
+    // Preserve the historical meaning of a rating as evidence that an item
+    // was reviewed. Explicit rows always win on subsequent launches, including
+    // an explicit `unreviewed` state.
+    db.prepare(`
+      INSERT OR IGNORE INTO content_review (fingerprint, state, updated_at)
+      SELECT fingerprint, 'reviewed', updated_at FROM ratings;
+    `).run();
 
     // A process can exit while a root is being scanned. On the next launch,
     // expose that state as interrupted rather than leaving the catalog looking
@@ -448,15 +613,24 @@ function createMetadataStore(db) {
   const rootsList = db.prepare(`
     SELECT * FROM library_roots ORDER BY root_path COLLATE NOCASE;
   `);
+  const rootPinUpdate = db.prepare(`
+    UPDATE library_roots
+    SET is_pinned = ?, updated_at = ?
+    WHERE id = ?;
+  `);
 
   const directoryUpsert = db.prepare(`
     INSERT INTO directories (
-      root_id, relative_path, parent_relative_path, name, updated_at
+      root_id, relative_path, parent_relative_path, name, is_present,
+      last_seen_at, missing_since, updated_at
     )
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, 1, ?, NULL, ?)
     ON CONFLICT(root_id, relative_path) DO UPDATE SET
       parent_relative_path=excluded.parent_relative_path,
       name=excluded.name,
+      is_present=1,
+      last_seen_at=excluded.last_seen_at,
+      missing_since=NULL,
       updated_at=excluded.updated_at;
   `);
   const directoryByPath = db.prepare(`
@@ -480,10 +654,20 @@ function createMetadataStore(db) {
         updated_at = @updated_at
     WHERE id = @id;
   `);
+  const markDirectoryMissingById = db.prepare(`
+    UPDATE directories
+    SET is_present = 0,
+        missing_since = COALESCE(missing_since, ?),
+        updated_at = ?
+    WHERE id = ? AND relative_path != '' AND is_present != 0;
+  `);
 
   const fileInstanceByRelativePath = db.prepare(`
     SELECT * FROM file_instances
     WHERE root_id = ? AND relative_path = ?;
+  `);
+  const fileInstanceById = db.prepare(`
+    SELECT * FROM file_instances WHERE id = ?;
   `);
   const fileInstanceUpsert = db.prepare(`
     INSERT INTO file_instances (
@@ -505,9 +689,16 @@ function createMetadataStore(db) {
       missing_since=NULL;
   `);
   const fileInstancesForRoot = db.prepare(`
-    SELECT fi.*, CASE WHEN r.fingerprint IS NULL THEN 0 ELSE 1 END AS reviewed
+    SELECT fi.*,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state,
+      CASE WHEN COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) = 'unreviewed' THEN 0 ELSE 1 END AS reviewed
     FROM file_instances fi
     LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
     WHERE fi.root_id = ?
     ORDER BY fi.relative_path COLLATE NOCASE;
   `);
@@ -520,9 +711,19 @@ function createMetadataStore(db) {
         missing_since = COALESCE(missing_since, ?)
     WHERE id = ? AND is_present != 0;
   `);
-  const rootsForFingerprints = db.prepare(`
-    SELECT DISTINCT root_id FROM file_instances
-    WHERE fingerprint = ?;
+  const presentInstancesForFingerprint = db.prepare(`
+    SELECT root_id, relative_path FROM file_instances
+    WHERE fingerprint = ? AND is_present != 0;
+  `);
+  const directoryReviewedCountsDelta = db.prepare(`
+    UPDATE directories
+    SET direct_reviewed_count = MAX(
+          0,
+          direct_reviewed_count + @direct_reviewed_delta
+        ),
+        reviewed_count = MAX(0, reviewed_count + @reviewed_delta),
+        updated_at = @updated_at
+    WHERE root_id = @root_id AND relative_path = @relative_path;
   `);
 
   const tagInsert = db.prepare(`
@@ -586,6 +787,67 @@ function createMetadataStore(db) {
 
   const deleteRatingStmt = db.prepare(`DELETE FROM ratings WHERE fingerprint = ?;`);
 
+  const getReviewState = db.prepare(`
+    SELECT state FROM content_review WHERE fingerprint = ?;
+  `);
+  const insertReviewStateIfMissing = db.prepare(`
+    INSERT OR IGNORE INTO content_review (fingerprint, state, updated_at)
+    VALUES (?, ?, ?);
+  `);
+  const setReviewStateStmt = db.prepare(`
+    INSERT INTO content_review (fingerprint, state, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      state=excluded.state,
+      updated_at=excluded.updated_at;
+  `);
+
+  const savedViewCount = db.prepare(`SELECT COUNT(*) AS count FROM saved_views;`);
+  const savedViewById = db.prepare(`SELECT * FROM saved_views WHERE id = ?;`);
+  const savedViewsList = db.prepare(`
+    SELECT * FROM saved_views ORDER BY name COLLATE NOCASE, id;
+  `);
+  const savedViewInsert = db.prepare(`
+    INSERT INTO saved_views (name, definition_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?);
+  `);
+  const savedViewUpdate = db.prepare(`
+    UPDATE saved_views
+    SET name = ?, definition_json = ?, updated_at = ?
+    WHERE id = ?;
+  `);
+  const savedViewDelete = db.prepare(`DELETE FROM saved_views WHERE id = ?;`);
+
+  const generationMetadataByInstance = db.prepare(`
+    SELECT * FROM instance_generation_metadata WHERE instance_id = ?;
+  `);
+  const generationMetadataUpsert = db.prepare(`
+    INSERT INTO instance_generation_metadata (
+      instance_id, sidecar_path, sidecar_size, sidecar_mtime_ms,
+      parser_version, prompt, seed, models_json, samplers_json,
+      source_images_json, generation_run, updated_at
+    ) VALUES (
+      @instance_id, @sidecar_path, @sidecar_size, @sidecar_mtime_ms,
+      @parser_version, @prompt, @seed, @models_json, @samplers_json,
+      @source_images_json, @generation_run, @updated_at
+    )
+    ON CONFLICT(instance_id) DO UPDATE SET
+      sidecar_path=excluded.sidecar_path,
+      sidecar_size=excluded.sidecar_size,
+      sidecar_mtime_ms=excluded.sidecar_mtime_ms,
+      parser_version=excluded.parser_version,
+      prompt=excluded.prompt,
+      seed=excluded.seed,
+      models_json=excluded.models_json,
+      samplers_json=excluded.samplers_json,
+      source_images_json=excluded.source_images_json,
+      generation_run=excluded.generation_run,
+      updated_at=excluded.updated_at;
+  `);
+  const generationMetadataDelete = db.prepare(`
+    DELETE FROM instance_generation_metadata WHERE instance_id = ?;
+  `);
+
   const metadataCache = new Map();
 
   function assertOperationActive(assertActive) {
@@ -640,6 +902,16 @@ function createMetadataStore(db) {
     return directoryPath === '.' ? '' : directoryPath;
   }
 
+  function getDirectoryAncestorPaths(directoryRelativePath) {
+    const ancestors = [''];
+    if (!directoryRelativePath) return ancestors;
+    const parts = directoryRelativePath.split('/');
+    for (let index = 1; index <= parts.length; index += 1) {
+      ancestors.push(parts.slice(0, index).join('/'));
+    }
+    return ancestors;
+  }
+
   function normalizeStatSize(stats) {
     const value = Number(stats?.size || 0);
     return Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
@@ -674,6 +946,9 @@ function createMetadataStore(db) {
       relativePath: row.relative_path,
       parentRelativePath: row.parent_relative_path ?? null,
       name: row.name,
+      present: Boolean(row.is_present),
+      lastSeenAt: row.last_seen_at ?? null,
+      missingSince: row.missing_since ?? null,
       directInstanceCount: Number(row.direct_instance_count || 0),
       directPresentCount: Number(row.direct_present_count || 0),
       directMissingCount: Number(row.direct_missing_count || 0),
@@ -698,11 +973,81 @@ function createMetadataStore(db) {
       mtimeMs: Number(row.mtime_ms || 0),
       fingerprint: row.fingerprint || null,
       present: Boolean(row.is_present),
+      reviewState: REVIEW_STATES.has(row.review_state)
+        ? row.review_state
+        : 'unreviewed',
       reviewed: Boolean(row.reviewed),
       firstSeenAt: row.first_seen_at,
       lastSeenAt: row.last_seen_at,
       missingSince: row.missing_since ?? null,
     };
+  }
+
+  function parseJsonArray(value) {
+    try {
+      const parsed = JSON.parse(value || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function mapGenerationMetadataRow(row) {
+    if (!row) return null;
+    const models = parseJsonArray(row.models_json);
+    const samplers = parseJsonArray(row.samplers_json);
+    const sourceImages = parseJsonArray(row.source_images_json);
+    return {
+      instanceId: Number(row.instance_id),
+      sidecarPath: row.sidecar_path,
+      sidecarSize: Number(row.sidecar_size || 0),
+      sidecarMtimeMs: Number(row.sidecar_mtime_ms || 0),
+      parserVersion: Number(row.parser_version || 0),
+      prompt: row.prompt ?? null,
+      seed: row.seed ?? null,
+      model: models[0] ?? null,
+      models,
+      sampler: samplers[0] ?? null,
+      samplers,
+      sourceImage: sourceImages[0] ?? null,
+      sourceImages,
+      generationRun: row.generation_run ?? null,
+      updatedAt: Number(row.updated_at || 0),
+    };
+  }
+
+  function normalizeSavedViewId(value) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new TypeError('A positive saved view id is required');
+    }
+    return id;
+  }
+
+  function normalizeSavedViewName(value) {
+    const name = typeof value === 'string' ? value.trim() : '';
+    if (!name) throw new TypeError('Saved view name is required');
+    if (name.length > SAVED_VIEW_NAME_LIMIT) {
+      throw new RangeError(
+        `Saved view name exceeds ${SAVED_VIEW_NAME_LIMIT} characters`
+      );
+    }
+    return name;
+  }
+
+  function mapSavedViewRow(row) {
+    if (!row) return null;
+    try {
+      return {
+        id: Number(row.id),
+        name: row.name,
+        definition: normalizeSavedViewDefinition(JSON.parse(row.definition_json)),
+        createdAt: Number(row.created_at || 0),
+        updatedAt: Number(row.updated_at || 0),
+      };
+    } catch {
+      return null;
+    }
   }
 
   function cacheKey(filePath, stats) {
@@ -786,6 +1131,7 @@ function createMetadataStore(db) {
         directoryPath,
         parentRelativePath,
         name,
+        now,
         now
       );
       finalRow = directoryByPath.get(rootRow.id, directoryPath);
@@ -840,8 +1186,57 @@ function createMetadataStore(db) {
     return mapRootRow(row);
   }
 
+  function mapLibraryRootSummary(row) {
+    if (!row) return null;
+    const directoryRows = directoriesForRoot.all(row.id);
+    const rootDirectory = directoryRows.find(
+      (directory) => directory.relative_path === ''
+    );
+    const presentDirectoryCount = directoryRows.reduce(
+      (count, directory) => count + (Boolean(directory.is_present) ? 1 : 0),
+      0
+    );
+
+    return {
+      ...mapRootRow(row),
+      directoryCount: presentDirectoryCount,
+      subdirectoryCount: Math.max(0, presentDirectoryCount - 1),
+      directInstanceCount: Number(rootDirectory?.direct_instance_count || 0),
+      directPresentCount: Number(rootDirectory?.direct_present_count || 0),
+      directMissingCount: Number(rootDirectory?.direct_missing_count || 0),
+      directReviewedCount: Number(rootDirectory?.direct_reviewed_count || 0),
+      instanceCount: Number(rootDirectory?.instance_count || 0),
+      presentCount: Number(rootDirectory?.present_count || 0),
+      missingCount: Number(rootDirectory?.missing_count || 0),
+      reviewedCount: Number(rootDirectory?.reviewed_count || 0),
+    };
+  }
+
+  function getLibraryRoot(rootPath) {
+    const row = rootByPath.get(normalizeRootPath(rootPath));
+    return mapLibraryRootSummary(row);
+  }
+
   function getLibraryRoots() {
     return rootsList.all().map(mapRootRow);
+  }
+
+  function listLibraryRoots(options = {}) {
+    const pinnedOnly = Boolean(options?.pinnedOnly);
+    return rootsList
+      .all()
+      .filter((row) => !pinnedOnly || Boolean(row.is_pinned))
+      .map(mapLibraryRootSummary);
+  }
+
+  function setLibraryRootPinned(rootPath, pinned) {
+    const normalizedRoot = normalizeRootPath(rootPath);
+    const row = rootByPath.get(normalizedRoot);
+    if (!row) {
+      throw new Error(`Library root has not been indexed: ${normalizedRoot}`);
+    }
+    rootPinUpdate.run(Boolean(pinned) ? 1 : 0, Date.now(), row.id);
+    return mapLibraryRootSummary(rootById.get(row.id));
   }
 
   function registerDirectories(rootPath, directoryPaths = [], options = {}) {
@@ -928,13 +1323,7 @@ function createMetadataStore(db) {
 
     instanceRows.forEach((instance) => {
       const directPath = getDirectoryRelativePath(instance.relative_path);
-      const ancestors = [''];
-      if (directPath) {
-        const parts = directPath.split('/');
-        for (let index = 1; index <= parts.length; index += 1) {
-          ancestors.push(parts.slice(0, index).join('/'));
-        }
-      }
+      const ancestors = getDirectoryAncestorPaths(directPath);
       const present = Boolean(instance.is_present);
       const reviewed = present && Boolean(instance.reviewed);
 
@@ -972,6 +1361,22 @@ function createMetadataStore(db) {
     return directoriesForRoot.all(row.id).map(mapDirectoryRow);
   }
 
+  function getLibraryTree(rootPath, options = {}) {
+    const row = rootByPath.get(normalizeRootPath(rootPath));
+    if (!row) {
+      return { root: null, directories: [] };
+    }
+    const includeMissing = Boolean(options?.includeMissing);
+    const directories = directoriesForRoot
+      .all(row.id)
+      .filter((directory) => includeMissing || Boolean(directory.is_present))
+      .map(mapDirectoryRow);
+    return {
+      root: mapLibraryRootSummary(row),
+      directories,
+    };
+  }
+
   function getFileInstances(rootPath, options = {}) {
     const row = rootByPath.get(normalizeRootPath(rootPath));
     if (!row) return [];
@@ -980,6 +1385,120 @@ function createMetadataStore(db) {
       .all(row.id)
       .filter((instance) => includeMissing || Boolean(instance.is_present))
       .map(mapFileInstanceRow);
+  }
+
+  function getFileInstanceById(instanceId) {
+    const id = Number(instanceId);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    const row = fileInstanceById.get(id);
+    if (!row) return null;
+    const reviewState = row.fingerprint
+      ? getReviewState.get(row.fingerprint)?.state ||
+        (getRating.get(row.fingerprint) ? 'reviewed' : 'unreviewed')
+      : 'unreviewed';
+    return mapFileInstanceRow({
+      ...row,
+      review_state: reviewState,
+      reviewed: reviewState === 'unreviewed' ? 0 : 1,
+    });
+  }
+
+  function getGenerationMetadata(instanceId) {
+    const instance = getFileInstanceById(instanceId);
+    if (!instance) return null;
+    return mapGenerationMetadataRow(
+      generationMetadataByInstance.get(instance.id)
+    );
+  }
+
+  function setGenerationMetadata(instanceId, metadata = {}) {
+    const instance = getFileInstanceById(instanceId);
+    if (!instance) throw new Error(`File instance does not exist: ${instanceId}`);
+    const clampText = (value, limit) => {
+      if (value === null || value === undefined) return null;
+      const text = String(value).trim();
+      return text ? text.slice(0, limit) : null;
+    };
+    const clampList = (values) => Array.from(new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => clampText(value, 1024))
+        .filter(Boolean)
+        .slice(0, 32)
+    ));
+    const sidecarPath = typeof metadata.sidecarPath === 'string'
+      ? path.resolve(metadata.sidecarPath)
+      : '';
+    if (!sidecarPath) throw new TypeError('Sidecar path is required');
+    const sidecarSize = Math.max(0, Math.round(Number(metadata.sidecarSize) || 0));
+    const sidecarMtimeMs = Math.max(0, Number(metadata.sidecarMtimeMs) || 0);
+    const parserVersion = Math.max(1, Math.round(Number(metadata.parserVersion) || 1));
+    const models = clampList(metadata.models || [metadata.model]);
+    const samplers = clampList(metadata.samplers || [metadata.sampler]);
+    const sourceImages = clampList(
+      metadata.sourceImages || [metadata.sourceImage]
+    );
+    generationMetadataUpsert.run({
+      instance_id: instance.id,
+      sidecar_path: sidecarPath,
+      sidecar_size: sidecarSize,
+      sidecar_mtime_ms: sidecarMtimeMs,
+      parser_version: parserVersion,
+      prompt: clampText(metadata.prompt, 16384),
+      seed: clampText(metadata.seed, 1024),
+      models_json: JSON.stringify(models),
+      samplers_json: JSON.stringify(samplers),
+      source_images_json: JSON.stringify(sourceImages),
+      generation_run: clampText(metadata.generationRun, 1024),
+      updated_at: Date.now(),
+    });
+    return getGenerationMetadata(instance.id);
+  }
+
+  function clearGenerationMetadata(instanceId) {
+    const id = Number(instanceId);
+    if (!Number.isSafeInteger(id) || id <= 0) return false;
+    return generationMetadataDelete.run(id).changes > 0;
+  }
+
+  function listSavedViews() {
+    return savedViewsList.all().map(mapSavedViewRow).filter(Boolean);
+  }
+
+  function createSavedView(name, definition) {
+    const safeName = normalizeSavedViewName(name);
+    const safeDefinition = normalizeSavedViewDefinition(definition);
+    const count = Number(savedViewCount.get()?.count || 0);
+    if (count >= SAVED_VIEW_LIMIT) {
+      throw new RangeError(`Saved view limit of ${SAVED_VIEW_LIMIT} reached`);
+    }
+    const serialized = JSON.stringify(safeDefinition);
+    if (Buffer.byteLength(serialized, 'utf8') > SAVED_VIEW_DEFINITION_BYTE_LIMIT) {
+      throw new RangeError('Saved view definition is too large');
+    }
+    const now = Date.now();
+    const result = savedViewInsert.run(safeName, serialized, now, now);
+    return mapSavedViewRow(savedViewById.get(result.lastInsertRowid));
+  }
+
+  function updateSavedView(savedViewId, changes = {}) {
+    const id = normalizeSavedViewId(savedViewId);
+    const current = savedViewById.get(id);
+    if (!current) throw new Error(`Saved view does not exist: ${id}`);
+    const currentDefinition = JSON.parse(current.definition_json);
+    const safeName = normalizeSavedViewName(
+      changes.name === undefined ? current.name : changes.name
+    );
+    const safeDefinition = normalizeSavedViewDefinition(
+      changes.definition === undefined ? currentDefinition : changes.definition
+    );
+    const serialized = JSON.stringify(safeDefinition);
+    savedViewUpdate.run(safeName, serialized, Date.now(), id);
+    return mapSavedViewRow(savedViewById.get(id));
+  }
+
+  function deleteSavedView(savedViewId) {
+    const id = normalizeSavedViewId(savedViewId);
+    return savedViewDelete.run(id).changes > 0;
   }
 
   function normalizeCatalogPathSet(rootPath, values, { directories = false } = {}) {
@@ -1003,6 +1522,7 @@ function createMetadataStore(db) {
     {
       recursive = true,
       scannedDirectories,
+      completeCoverage,
       assertActive,
     } = {}
   ) {
@@ -1017,6 +1537,10 @@ function createMetadataStore(db) {
           directories: true,
         })
       : null;
+    const coversWholeRoot = Boolean(recursive) && (
+      completeCoverage === true ||
+      (!hasExplicitDirectoryScope && completeCoverage !== false)
+    );
 
     if (hasExplicitDirectoryScope) {
       registerDirectories(normalizedRoot, scannedDirectories, { recursive });
@@ -1025,18 +1549,38 @@ function createMetadataStore(db) {
     const instanceRows = fileInstancesForRoot.all(rootRow.id);
     const missingCandidates = instanceRows.filter((instance) => {
       const directDirectory = getDirectoryRelativePath(instance.relative_path);
-      const directoryWasScanned = scanned
-        ? scanned.has(directDirectory)
-        : recursive || directDirectory === '';
+      const directoryWasScanned = coversWholeRoot
+        ? true
+        : scanned
+          ? scanned.has(directDirectory)
+          : directDirectory === '';
       return directoryWasScanned && !seen.has(instance.relative_path);
     });
+    const missingDirectoryCandidates = coversWholeRoot && scanned
+      ? directoriesForRoot
+          .all(rootRow.id)
+          .filter(
+            (directory) =>
+              directory.relative_path !== '' &&
+              Boolean(directory.is_present) &&
+              !scanned.has(directory.relative_path)
+          )
+      : [];
 
     assertOperationActive(assertActive);
     const now = Date.now();
     let markedMissing = 0;
+    let markedDirectoriesMissing = 0;
     const txn = db.transaction(() => {
       missingCandidates.forEach((instance) => {
         markedMissing += markInstanceMissingById.run(now, instance.id).changes;
+      });
+      missingDirectoryCandidates.forEach((directory) => {
+        markedDirectoriesMissing += markDirectoryMissingById.run(
+          now,
+          now,
+          directory.id
+        ).changes;
       });
       rootComplete.run(recursive ? 1 : 0, now, now, rootRow.id);
     });
@@ -1046,6 +1590,7 @@ function createMetadataStore(db) {
     return {
       root: mapRootRow(rootById.get(rootRow.id)),
       markedMissing,
+      markedDirectoriesMissing,
       directories,
     };
   }
@@ -1101,6 +1646,7 @@ function createMetadataStore(db) {
   function mapMetadataRow(fingerprint) {
     const tags = tagsForFingerprint.all(fingerprint).map((row) => row.name);
     const ratingRow = getRating.get(fingerprint);
+    const reviewRow = getReviewState.get(fingerprint);
     const dimRow = fileSelect.get(fingerprint);
     let dimensions = null;
     if (dimRow) {
@@ -1113,6 +1659,7 @@ function createMetadataStore(db) {
     return {
       tags,
       rating: ratingRow ? ratingRow.value : null,
+      reviewState: reviewRow?.state || (ratingRow ? 'reviewed' : 'unreviewed'),
       dimensions,
     };
   }
@@ -1238,6 +1785,7 @@ function createMetadataStore(db) {
       ...(metadata[entry.fingerprint] || {
         tags: [],
         rating: null,
+        reviewState: 'unreviewed',
         dimensions: null,
       }),
       fingerprintReused: entry.fingerprintReused,
@@ -1293,9 +1841,13 @@ function createMetadataStore(db) {
       const chunk = uniqueFingerprints.slice(offset, offset + chunkSize);
       const placeholders = chunk.map(() => '?').join(', ');
       const metadataRows = db.prepare(`
-        SELECT f.fingerprint, f.width, f.height, r.value AS rating
+        SELECT f.fingerprint, f.width, f.height, r.value AS rating,
+          COALESCE(cr.state,
+            CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+          ) AS review_state
         FROM files f
         LEFT JOIN ratings r ON r.fingerprint = f.fingerprint
+        LEFT JOIN content_review cr ON cr.fingerprint = f.fingerprint
         WHERE f.fingerprint IN (${placeholders});
       `).all(...chunk);
 
@@ -1305,6 +1857,9 @@ function createMetadataStore(db) {
         result[row.fingerprint] = {
           tags: [],
           rating: row.rating ?? null,
+          reviewState: REVIEW_STATES.has(row.review_state)
+            ? row.review_state
+            : 'unreviewed',
           dimensions: width > 0 && height > 0
             ? { width, height, aspectRatio: width / height }
             : null,
@@ -1397,30 +1952,113 @@ function createMetadataStore(db) {
     return removed;
   }
 
+  function isFingerprintReviewed(fingerprint) {
+    const explicitState = getReviewState.get(fingerprint)?.state;
+    if (REVIEW_STATES.has(explicitState)) {
+      return explicitState !== 'unreviewed';
+    }
+    return Boolean(getRating.get(fingerprint));
+  }
+
+  function addReviewedCountDeltasForFingerprint(
+    fingerprint,
+    reviewedDelta,
+    deltasByRoot
+  ) {
+    if (!reviewedDelta) return;
+    presentInstancesForFingerprint.all(fingerprint).forEach((instance) => {
+      const rootId = Number(instance.root_id);
+      let deltasByPath = deltasByRoot.get(rootId);
+      if (!deltasByPath) {
+        deltasByPath = new Map();
+        deltasByRoot.set(rootId, deltasByPath);
+      }
+      const directPath = getDirectoryRelativePath(instance.relative_path);
+      getDirectoryAncestorPaths(directPath).forEach((relativePath) => {
+        const delta = deltasByPath.get(relativePath) || {
+          directReviewedDelta: 0,
+          reviewedDelta: 0,
+        };
+        delta.reviewedDelta += reviewedDelta;
+        deltasByPath.set(relativePath, delta);
+      });
+      const directDelta = deltasByPath.get(directPath) || {
+        directReviewedDelta: 0,
+        reviewedDelta: 0,
+      };
+      directDelta.directReviewedDelta += reviewedDelta;
+      deltasByPath.set(directPath, directDelta);
+    });
+  }
+
+  function applyReviewedCountDeltas(deltasByRoot, updatedAt) {
+    deltasByRoot.forEach((deltasByPath, rootId) => {
+      deltasByPath.forEach((delta, relativePath) => {
+        directoryReviewedCountsDelta.run({
+          root_id: rootId,
+          relative_path: relativePath,
+          direct_reviewed_delta: delta.directReviewedDelta,
+          reviewed_delta: delta.reviewedDelta,
+          updated_at: updatedAt,
+        });
+      });
+    });
+  }
+
   function setRating(fingerprints, rating) {
     const updates = {};
     const now = Date.now();
-    const affectedRootIds = new Set();
-    (fingerprints || []).forEach((fingerprint) => {
-      if (!fingerprint) return;
-      rootsForFingerprints.all(fingerprint).forEach((row) => {
-        affectedRootIds.add(row.root_id);
-      });
-    });
+    const uniqueFingerprints = [...new Set(
+      (Array.isArray(fingerprints) ? fingerprints : []).filter(Boolean)
+    )];
+    const reviewedCountDeltas = new Map();
     const txn = db.transaction(() => {
-      fingerprints.forEach((fingerprint) => {
-        if (!fingerprint) return;
+      uniqueFingerprints.forEach((fingerprint) => {
+        const wasReviewed = isFingerprintReviewed(fingerprint);
         if (rating === null || rating === undefined) {
           deleteRatingStmt.run(fingerprint);
         } else {
           const safeRating = Math.max(0, Math.min(5, Math.round(Number(rating))));
           setRatingStmt.run(fingerprint, safeRating, now);
+          // Rating an item historically meant it had been reviewed. Preserve
+          // that behavior only for content without an explicit review row.
+          insertReviewStateIfMissing.run(fingerprint, 'reviewed', now);
         }
+        const isReviewed = isFingerprintReviewed(fingerprint);
+        addReviewedCountDeltasForFingerprint(
+          fingerprint,
+          Number(isReviewed) - Number(wasReviewed),
+          reviewedCountDeltas
+        );
         updates[fingerprint] = mapMetadataRow(fingerprint);
       });
+      applyReviewedCountDeltas(reviewedCountDeltas, now);
     });
     txn();
-    affectedRootIds.forEach((rootId) => refreshDirectoryCountsByRootId(rootId));
+    return updates;
+  }
+
+  function setReviewState(fingerprints, value) {
+    const reviewState = normalizeReviewState(value);
+    const uniqueFingerprints = [...new Set(
+      (Array.isArray(fingerprints) ? fingerprints : []).filter(Boolean)
+    )];
+    const updates = {};
+    const reviewedCountDeltas = new Map();
+    const now = Date.now();
+    db.transaction(() => {
+      uniqueFingerprints.forEach((fingerprint) => {
+        const wasReviewed = isFingerprintReviewed(fingerprint);
+        setReviewStateStmt.run(fingerprint, reviewState, now);
+        addReviewedCountDeltasForFingerprint(
+          fingerprint,
+          Number(reviewState !== 'unreviewed') - Number(wasReviewed),
+          reviewedCountDeltas
+        );
+        updates[fingerprint] = mapMetadataRow(fingerprint);
+      });
+      applyReviewedCountDeltas(reviewedCountDeltas, now);
+    })();
     return updates;
   }
 
@@ -1433,15 +2071,28 @@ function createMetadataStore(db) {
     getReusableFingerprint,
     reconcileLibraryRoot,
     markFileMissing,
+    getLibraryRoot,
     getLibraryRoots,
+    listLibraryRoots,
+    setLibraryRootPinned,
     getDirectorySummaries,
+    getLibraryTree,
     getFileInstances,
+    getFileInstanceById,
+    getGenerationMetadata,
+    setGenerationMetadata,
+    clearGenerationMetadata,
+    listSavedViews,
+    createSavedView,
+    updateSavedView,
+    deleteSavedView,
     refreshDirectoryCounts,
     getMetadataForFingerprints,
     listTags,
     assignTags,
     removeTag,
     setRating,
+    setReviewState,
     getDimensions,
     setDimensions,
   };

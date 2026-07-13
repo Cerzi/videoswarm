@@ -1025,4 +1025,34 @@ describe("VideoCard", () => {
       playCountBeforeSuspension
     );
   });
+
+  it("shows compact pick and reject review badges but hides unreviewed", () => {
+    const { rerender } = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "review-badge", name: "review.mp4", reviewState: "pick" }}
+        canLoadMoreVideos={() => false}
+      />
+    );
+
+    expect(screen.getByTitle("Review state: Pick")).toHaveTextContent("Pick");
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "review-badge", name: "review.mp4", reviewState: "reject" }}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    expect(screen.getByTitle("Review state: Reject")).toHaveTextContent("Reject");
+
+    rerender(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "review-badge", name: "review.mp4", reviewState: "unreviewed" }}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    expect(screen.queryByTitle(/Review state:/)).toBeNull();
+  });
 });

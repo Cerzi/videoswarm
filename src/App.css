@@ -318,6 +318,12 @@ body {
   color: #ffd43b;
 }
 
+.filters-summary__chip--review {
+  background: rgba(116, 143, 252, 0.16);
+  border-color: rgba(145, 167, 255, 0.28);
+  color: #dbe4ff;
+}
+
 .filters-summary__chip-remove {
   font-weight: 700;
   font-size: 0.85rem;
@@ -818,16 +824,65 @@ body {
   overflow: hidden;
 }
 
+.content-region__workspace,
+.library-home-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.content-region__gallery,
+.library-home-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-home-content {
+  overflow-y: auto;
+}
+
 .content-region__viewport {
   position: relative;
   min-width: 0;
   min-height: 0;
+  flex: 1 1 auto;
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
   overflow-anchor: none;
   transition: padding-bottom 0.3s ease;
   padding-bottom: 0;
+}
+
+.collection-empty-state {
+  margin: 1rem;
+  padding: 2.5rem 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+  color: rgba(255, 255, 255, 0.58);
+  text-align: center;
+}
+
+.collection-empty-state h3 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.collection-empty-state p {
+  max-width: 100%;
+  margin: 0.5rem auto 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
 }
 
 .content-region--dock-hint .content-region__viewport {
@@ -889,6 +944,34 @@ body {
 
 .video-item-rating span.filled {
   color: #ffd43b;
+}
+
+.video-item-review {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(29, 43, 72, 0.78);
+  color: #dbe4ff;
+  padding: 2px 7px;
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+}
+
+.video-item-review--pick {
+  background: rgba(28, 87, 48, 0.82);
+  color: #d3f9d8;
+}
+
+.video-item-review--reject {
+  background: rgba(117, 39, 39, 0.82);
+  color: #ffe3e3;
 }
 
 .video-item-tags {

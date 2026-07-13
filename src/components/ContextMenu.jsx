@@ -114,6 +114,26 @@ const ContextMenu = ({
           label: '🏷️ Add or manage tags',
           action: 'metadata:open',
         },
+        {
+          id: 'metadata-review-pick',
+          label: '✓ Mark as pick',
+          action: 'metadata:review:pick',
+        },
+        {
+          id: 'metadata-review-reviewed',
+          label: '● Mark reviewed',
+          action: 'metadata:review:reviewed',
+        },
+        {
+          id: 'metadata-review-reject',
+          label: '× Mark as reject',
+          action: 'metadata:review:reject',
+        },
+        {
+          id: 'metadata-review-unreviewed',
+          label: '○ Mark unreviewed',
+          action: 'metadata:review:unreviewed',
+        },
       ];
       const quickRatings = [5, 4, 3, 2, 1];
       quickRatings.forEach((stars) => {

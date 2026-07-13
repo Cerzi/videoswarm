@@ -1,5 +1,9 @@
 import { useCallback } from "react";
 import { normalizeVideoFromMain } from "../videoNormalization";
+import {
+  normalizeReviewState,
+  reviewStateLabel,
+} from "../../review/reviewState";
 
 export function useMetadataActions({
   selectedFingerprints,
@@ -103,6 +107,32 @@ export function useMetadataActions({
     handleSetRating(null, selectedFingerprints);
   }, [handleSetRating, selectedFingerprints]);
 
+  const handleSetReviewState = useCallback(
+    async (value, targetFingerprints = selectedFingerprints) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.setReviewState) return;
+      const fingerprints = (targetFingerprints || []).filter(Boolean);
+      if (!fingerprints.length) return;
+      const reviewState = normalizeReviewState(value);
+
+      try {
+        const result = await api.setReviewState(fingerprints, reviewState);
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        if (result?.updates) applyMetadataPatch(result.updates);
+        notify(
+          `Marked ${fingerprints.length} item(s) ${reviewStateLabel(reviewState).toLowerCase()}`,
+          "success"
+        );
+      } catch (error) {
+        console.error("Failed to update review state:", error);
+        notify("Failed to update review state", "error");
+      }
+    },
+    [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
   const handleApplyExistingTag = useCallback(
     (tagName) => handleAddTags([tagName]),
     [handleAddTags]
@@ -127,6 +157,7 @@ export function useMetadataActions({
     handleRemoveTag,
     handleSetRating,
     handleClearRating,
+    handleSetReviewState,
     handleApplyExistingTag,
     refreshTagList,
   };

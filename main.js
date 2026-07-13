@@ -26,6 +26,13 @@ const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
 const { createProxyManager } = require("./main/proxy-manager");
 const proxyManager = createProxyManager();
+const { createSidecarMetadataService } = require("./main/sidecar-metadata");
+const { runProfileOwnedOperation } = require("./main/profile-owned-operation");
+const {
+  normalizeGenerationRequestToken,
+  createGenerationRequestIdentity,
+} = require("./main/generation-request");
+const sidecarMetadataService = createSidecarMetadataService();
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
@@ -455,6 +462,7 @@ async function createVideoFileObject(
     let fingerprint = null;
     let tags = [];
     let rating = null;
+    let reviewState = "unreviewed";
     let dimensions = null;
     let instanceId = null;
 
@@ -481,6 +489,13 @@ async function createVideoFileObject(
         typeof info?.rating === "number" && Number.isFinite(info.rating)
           ? info.rating
           : null;
+      reviewState = ["unreviewed", "reviewed", "pick", "reject"].includes(
+        info?.reviewState
+      )
+        ? info.reviewState
+        : rating !== null
+          ? "reviewed"
+          : "unreviewed";
 
       if (isValidDimensions(info?.dimensions)) {
         dimensions = info.dimensions;
@@ -530,6 +545,7 @@ async function createVideoFileObject(
       fingerprint,
       tags,
       rating,
+      reviewState,
       dimensions: dimensions
         ? {
           width: Math.round(dimensions.width),
@@ -859,6 +875,7 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
   }
 
   const reconfigureGeneration = ++metadataProfileGeneration;
+  sidecarMetadataService.cancelAll();
   invalidateWatcherContext();
   cancelAllDirectoryScans();
   const run = async () => {
@@ -2182,13 +2199,11 @@ ipcMain.handle(
         entries.map((entry) => entry.filePath),
         {
           recursive,
-          // A complete recursive scan may safely mark instances from a
-          // directory that disappeared wholesale. Partial scans use only
-          // directly enumerated directories and deliberately stay
-          // conservative around unreadable/truncated subtrees.
-          ...(partialCoverage
-            ? { scannedDirectories: [...scannedDirectories] }
-            : {}),
+          scannedDirectories: [...scannedDirectories],
+          // A complete recursive scan may safely mark instances and directory
+          // rows from a subtree that disappeared wholesale. Partial scans and
+          // direct-only scans stay conservative around unvisited branches.
+          completeCoverage: Boolean(recursive) && !partialCoverage,
           assertActive,
         }
       );
@@ -2253,7 +2268,13 @@ ipcMain.handle(
         `Found ${videoFiles.length} video files in ${normalizedRoot} (recursive: ${recursive})`
       );
 
-      return videoFiles.sort((a, b) => a.name.localeCompare(b.name));
+      const libraryTree = metadataStore.getLibraryTree(normalizedRoot);
+      return {
+        files: videoFiles.sort((a, b) => a.name.localeCompare(b.name)),
+        root: libraryTree.root,
+        directories: libraryTree.directories,
+        scanId: scan.scanId,
+      };
     } catch (error) {
       if (isDirectoryScanCancelled(error)) {
         progressReporter?.setPhase("cancelled", {
@@ -2298,6 +2319,100 @@ ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => ({
   success: true,
   cancelled: cancelDirectoryScan(event.sender.id, scanId),
 }));
+
+function normalizeLibraryIpcRootPath(payload) {
+  const candidate = typeof payload === "string" ? payload : payload?.rootPath;
+  if (
+    typeof candidate !== "string" ||
+    !candidate.trim() ||
+    candidate.includes("\0")
+  ) {
+    throw new TypeError("A valid library root path is required");
+  }
+  return path.resolve(candidate.trim());
+}
+
+function runMetadataContextOperation(
+  operation,
+  defaultErrorCode = "PROFILE_OPERATION_ERROR"
+) {
+  return runProfileOwnedOperation({
+    captureContext: captureMetadataContext,
+    assertContextActive: assertMetadataContextActive,
+    operation,
+    getFallbackProfileId: getActiveProfileId,
+    getFallbackGeneration: () => metadataProfileGeneration,
+    defaultErrorCode,
+  });
+}
+
+function runLibraryCatalogOperation(operation) {
+  return runMetadataContextOperation(operation, "LIBRARY_CATALOG_ERROR");
+}
+
+ipcMain.handle("library:list-roots", async (_event, options = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    roots: metadataStore.listLibraryRoots({
+      pinnedOnly: Boolean(options?.pinnedOnly),
+    }),
+  }))
+);
+
+ipcMain.handle("library:get-tree", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => {
+    const rootPath = normalizeLibraryIpcRootPath(payload);
+    const tree = metadataStore.getLibraryTree(rootPath, {
+      includeMissing: Boolean(payload?.includeMissing),
+    });
+    if (!tree.root) {
+      throw new Error(`Library root has not been indexed: ${rootPath}`);
+    }
+    return tree;
+  })
+);
+
+ipcMain.handle("library:set-pinned", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => {
+    const rootPath = normalizeLibraryIpcRootPath(payload);
+    if (typeof payload?.pinned !== "boolean") {
+      throw new TypeError("Library pin state must be a boolean");
+    }
+    return {
+      root: metadataStore.setLibraryRootPinned(rootPath, payload.pinned),
+    };
+  })
+);
+
+ipcMain.handle("library:list-saved-views", async () =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    views: metadataStore.listSavedViews(),
+  }))
+);
+
+ipcMain.handle("library:create-saved-view", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    view: metadataStore.createSavedView(payload?.name, payload?.definition),
+  }))
+);
+
+ipcMain.handle("library:update-saved-view", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    view: metadataStore.updateSavedView(payload?.id, {
+      ...(Object.prototype.hasOwnProperty.call(payload, "name")
+        ? { name: payload.name }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload, "definition")
+        ? { definition: payload.definition }
+        : {}),
+    }),
+  }))
+);
+
+ipcMain.handle("library:delete-saved-view", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    deleted: metadataStore.deleteSavedView(payload?.id),
+  }))
+);
 
 ipcMain.handle("metadata:list-tags", async () => {
   try {
@@ -2378,6 +2493,120 @@ ipcMain.handle(
     }
   }
 );
+
+ipcMain.handle(
+  "metadata:set-review-state",
+  async (_event, fingerprints = [], reviewState) =>
+    runMetadataContextOperation((store) => {
+      const cleanFingerprints = Array.isArray(fingerprints)
+        ? [...new Set(fingerprints.filter(Boolean))]
+        : [];
+      if (!cleanFingerprints.length) return { updates: {} };
+      return { updates: store.setReviewState(cleanFingerprints, reviewState) };
+    }, "REVIEW_STATE_ERROR")
+);
+
+ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
+  let context = null;
+  let requestToken = null;
+  const instanceId = Number(
+    typeof payload === "number" ? payload : payload?.instanceId
+  );
+  if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
+    return {
+      success: false,
+      instanceId: null,
+      error: "A positive file instance id is required",
+      code: "INVALID_INSTANCE_ID",
+    };
+  }
+  try {
+    requestToken = normalizeGenerationRequestToken(
+      typeof payload === "object" ? payload?.requestToken : null
+    );
+  } catch (error) {
+    return {
+      success: false,
+      instanceId,
+      requestToken: null,
+      error: error?.message || String(error),
+      code: error?.code || "INVALID_GENERATION_REQUEST_TOKEN",
+    };
+  }
+
+  try {
+    context = captureMetadataContext();
+    assertMetadataContextActive(context);
+    const { ownerId, scopeId } = createGenerationRequestIdentity({
+      profileId: context.profileId,
+      generation: context.generation,
+      webContentsId: event.sender.id,
+      requestToken,
+    });
+    const handleDestroyed = () => sidecarMetadataService.cancelOwner(ownerId);
+    event.sender.once("destroyed", handleDestroyed);
+    try {
+      const result = await sidecarMetadataService.getMetadata({
+        instanceId,
+        ownerId,
+        scopeId,
+        metadataStore: context.metadataStore,
+        assertActive: () => assertMetadataContextActive(context),
+      });
+      assertMetadataContextActive(context);
+      return {
+        success: true,
+        profileId: context.profileId,
+        generation: context.generation,
+        requestToken,
+        ...result,
+        generationMetadata: result.metadata,
+      };
+    } finally {
+      event.sender.removeListener("destroyed", handleDestroyed);
+    }
+  } catch (error) {
+    return {
+      success: false,
+      profileId: context?.profileId || getActiveProfileId(),
+      generation: context?.generation ?? metadataProfileGeneration,
+      instanceId,
+      requestToken,
+      error: error?.message || String(error),
+      code: error?.code || "GENERATION_METADATA_ERROR",
+    };
+  }
+});
+
+ipcMain.handle("metadata:cancel-generation", async (event, payload = {}) => {
+  let requestToken;
+  try {
+    requestToken = normalizeGenerationRequestToken(payload?.requestToken, {
+      required: true,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      requestToken: null,
+      cancelled: 0,
+      error: error?.message || String(error),
+      code: error?.code || "INVALID_GENERATION_REQUEST_TOKEN",
+    };
+  }
+
+  return runMetadataContextOperation((_metadataStore, context) => {
+    const { ownerId } = createGenerationRequestIdentity({
+      profileId: context.profileId,
+      generation: context.generation,
+      webContentsId: event.sender.id,
+      requestToken,
+    });
+    return {
+      requestToken,
+      cancelled: sidecarMetadataService.cancelOwner(ownerId),
+    };
+  }, "GENERATION_METADATA_ERROR");
+});
 
 ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
   try {
@@ -2565,6 +2794,7 @@ app.on("before-quit", async () => {
   disposeMainWindowActivity = null;
   invalidateWatcherContext();
   cancelAllDirectoryScans();
+  sidecarMetadataService.shutdown();
   await folderWatcher.stop();
   await proxyManager.shutdown();
 });

@@ -13,6 +13,9 @@ import RecentFolders from "./components/RecentFolders";
 import MetadataPanel from "./components/MetadataPanel";
 import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
+import CollectionNavigationBar from "./components/CollectionNavigationBar";
+import LibrarySidebar from "./components/LibrarySidebar";
+import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
@@ -55,6 +58,9 @@ import { useMasonryLayout } from "./app/hooks/useMasonryLayout";
 import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
+import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
+import { useSavedViews } from "./app/hooks/useSavedViews";
+import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
 import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
 import usePlaybackCapabilities from "./app/hooks/usePlaybackCapabilities";
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
@@ -63,6 +69,18 @@ import {
   DEFAULT_PLAYBACK_MODE,
   normalizePlaybackMode,
 } from "./playback/playbackPolicy";
+import {
+  FolderScope,
+  buildBreadcrumbs,
+  buildFolderTree,
+  filterVideosByFolderScope,
+  findFolderNode,
+  getParentDirectory,
+  getSiblingNavigation,
+  normalizeRelativePath,
+} from "./library/folderModel";
+import { FolderViewStateCache, makeFolderViewKey } from "./library/folderViewState";
+import { REVIEW_FILTERS } from "./review/reviewState";
 
 const clampNumber = (value, min, max) =>
   Math.max(min, Math.min(max, value));
@@ -70,6 +88,17 @@ const clampNumber = (value, min, max) =>
 const MIN_METADATA_DOCK_HEIGHT = 200;
 const MAX_METADATA_DOCK_HEIGHT = 520;
 const DEFAULT_METADATA_DOCK_HEIGHT = 280;
+
+const expandFolderAncestors = (previous, relativePath) => {
+  const next = new Set(previous instanceof Set ? previous : [""]);
+  next.add("");
+  let cursor = normalizeRelativePath(relativePath);
+  while (cursor) {
+    next.add(cursor);
+    cursor = getParentDirectory(cursor);
+  }
+  return next;
+};
 
 function App() {
   // Selection state (SOLID)
@@ -92,6 +121,23 @@ function App() {
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
+  const [folderLocation, setFolderLocation] = useState({
+    rootPath: null,
+    directory: "",
+    scope: FolderScope.ALL_DESCENDANTS,
+  });
+  const [isLibrarySidebarOpen, setLibrarySidebarOpen] = useState(true);
+  const [expandedFolderPaths, setExpandedFolderPaths] = useState(
+    () => new Set([""])
+  );
+  const [showFolderHeaders, setShowFolderHeaders] = useState(false);
+  const folderViewStateRef = useRef(new FolderViewStateCache());
+  const restoredFolderViewKeyRef = useRef(null);
+  const restoreScrollFrameRef = useRef([]);
+  const beforeExternalFolderSelectionRef = useRef(null);
+  const handleBeforeExternalFolderSelection = useCallback(() => {
+    beforeExternalFolderSelectionRef.current?.();
+  }, []);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -245,6 +291,9 @@ function App() {
   const {
     videos,
     setVideos,
+    activeRootPath,
+    libraryRoot,
+    directorySummaries,
     isLoadingFolder,
     loadingStatus,
     loadingStage,
@@ -252,6 +301,7 @@ function App() {
     settingsLoaded,
     cancelFolderLoad,
     handleElectronFolderSelection,
+    reloadCurrentRoot,
     handleFolderSelect,
     handleWebFileSelection,
   } = useElectronFolderLifecycle({
@@ -278,7 +328,33 @@ function App() {
     resetThumbnailGeneration: thumbService.resetGeneration,
     refreshTagList: invokeRefreshTagList,
     addRecentFolder,
+    beforeExternalFolderSelection: handleBeforeExternalFolderSelection,
   });
+
+  const {
+    pinnedRoots,
+    currentRoot: catalogCurrentRoot,
+    directories: catalogDirectories,
+    setPinned: setLibraryRootPinned,
+  } = useLibraryCatalog({
+    activeRootPath,
+    scannedRoot: libraryRoot,
+    scannedDirectories: directorySummaries,
+  });
+  const {
+    savedViews,
+    createSavedView,
+    deleteSavedView,
+  } = useSavedViews();
+
+  const currentDirectory =
+    folderLocation.rootPath === activeRootPath
+      ? folderLocation.directory
+      : "";
+  const folderScope =
+    folderLocation.rootPath === activeRootPath
+      ? folderLocation.scope
+      : FolderScope.ALL_DESCENDANTS;
 
   const {
     filters,
@@ -291,11 +367,250 @@ function App() {
     ratingSummary,
     handleRemoveIncludeFilter,
     handleRemoveExcludeFilter,
+    clearReviewFilter,
   } = useFilterState({
     videos,
     filtersButtonRef,
     filtersPopoverRef,
   });
+
+  const rootDisplayName = useMemo(() => {
+    const fromCatalog = catalogCurrentRoot?.name || catalogCurrentRoot?.label;
+    if (fromCatalog) return fromCatalog;
+    const parts = String(activeRootPath || "")
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .filter(Boolean);
+    return parts.at(-1) || activeRootPath || "Root";
+  }, [activeRootPath, catalogCurrentRoot]);
+
+  const folderTree = useMemo(
+    () =>
+      activeRootPath
+        ? buildFolderTree({
+            directorySummaries: catalogDirectories,
+            videos,
+            matchingVideos: filteredVideos,
+            rootName: rootDisplayName,
+          })
+        : null,
+    [
+      activeRootPath,
+      catalogDirectories,
+      filteredVideos,
+      rootDisplayName,
+      videos,
+    ]
+  );
+
+  const scopedFilteredVideos = useMemo(
+    () =>
+      filterVideosByFolderScope(filteredVideos, {
+        scope: folderScope,
+        currentDirectory,
+      }),
+    [currentDirectory, filteredVideos, folderScope]
+  );
+
+  const folderBreadcrumb = useMemo(
+    () =>
+      activeRootPath
+        ? buildBreadcrumbs(activeRootPath, currentDirectory, {
+            rootLabel: rootDisplayName,
+          })
+        : [],
+    [activeRootPath, currentDirectory, rootDisplayName]
+  );
+
+  const siblingFolders = useMemo(
+    () => getSiblingNavigation(folderTree, currentDirectory, folderScope),
+    [currentDirectory, folderScope, folderTree]
+  );
+
+  const reviewFilterSummary = useMemo(() => {
+    const value = filters.reviewFilter || REVIEW_FILTERS.ANY;
+    if (value === REVIEW_FILTERS.ANY) return null;
+    const labels = {
+      [REVIEW_FILTERS.UNREVIEWED]: "Unreviewed",
+      [REVIEW_FILTERS.REVIEWED]: "Reviewed",
+      [REVIEW_FILTERS.PICK]: "Picks",
+      [REVIEW_FILTERS.REJECT]: "Rejects",
+    };
+    return labels[value] || null;
+  }, [filters.reviewFilter]);
+
+  const captureFolderViewState = useCallback(() => {
+    if (!activeRootPath || folderLocation.rootPath !== activeRootPath) return null;
+    return folderViewStateRef.current.set(
+      activeRootPath,
+      currentDirectory,
+      folderScope,
+      {
+        scrollTop: scrollContainerRef.current?.scrollTop || 0,
+        selectedIds: selection.selected,
+        sortKey,
+        sortDir,
+        groupByFolders,
+        randomSeed,
+        filters,
+      }
+    );
+  }, [
+    activeRootPath,
+    currentDirectory,
+    filters,
+    folderLocation.rootPath,
+    folderScope,
+    groupByFolders,
+    randomSeed,
+    selection.selected,
+    sortDir,
+    sortKey,
+  ]);
+  beforeExternalFolderSelectionRef.current = captureFolderViewState;
+
+  useEffect(() => {
+    if (typeof cancelAnimationFrame === "function") {
+      restoreScrollFrameRef.current.forEach((frame) => cancelAnimationFrame(frame));
+    }
+    restoreScrollFrameRef.current = [];
+
+    if (!activeRootPath) {
+      setFolderLocation({
+        rootPath: null,
+        directory: "",
+        scope: FolderScope.ALL_DESCENDANTS,
+      });
+      restoredFolderViewKeyRef.current = null;
+      return;
+    }
+
+    setFolderLocation((previous) => {
+      if (previous.rootPath === activeRootPath) return previous;
+      const saved = folderViewStateRef.current.getLocation(activeRootPath);
+      return {
+        rootPath: activeRootPath,
+        directory: saved?.directory || "",
+        scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
+      };
+    });
+    const saved = folderViewStateRef.current.getLocation(activeRootPath);
+    setExpandedFolderPaths((previous) =>
+      expandFolderAncestors(previous, saved?.directory || "")
+    );
+    restoredFolderViewKeyRef.current = null;
+  }, [activeRootPath]);
+
+  useEffect(() => {
+    if (
+      !activeRootPath ||
+      folderLocation.rootPath !== activeRootPath ||
+      isLoadingFolder
+    ) {
+      return undefined;
+    }
+
+    const viewKey = makeFolderViewKey(
+      activeRootPath,
+      currentDirectory,
+      folderScope
+    );
+    if (restoredFolderViewKeyRef.current === viewKey) return undefined;
+    restoredFolderViewKeyRef.current = viewKey;
+
+    const snapshot = folderViewStateRef.current.get(
+      activeRootPath,
+      currentDirectory,
+      folderScope
+    );
+    if (snapshot) {
+      setSortKey(snapshot.sortKey);
+      setSortDir(snapshot.sortDir);
+      setGroupByFolders(snapshot.groupByFolders);
+      setRandomSeed(snapshot.randomSeed);
+      updateFilters(snapshot.filters);
+      const validIds = new Set(videos.map((video) => video.id));
+      selection.setSelected(
+        new Set(snapshot.selectedIds.filter((id) => validIds.has(id)))
+      );
+    } else {
+      selection.clear();
+    }
+
+    const scrollTop = snapshot?.scrollTop || 0;
+    if (typeof requestAnimationFrame !== "function") {
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = scrollTop;
+      return undefined;
+    }
+    const firstFrame = requestAnimationFrame(() => {
+      const secondFrame = requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollTop;
+        }
+        restoreScrollFrameRef.current = [];
+      });
+      restoreScrollFrameRef.current = [secondFrame];
+    });
+    restoreScrollFrameRef.current = [firstFrame];
+
+    return () => {
+      if (typeof cancelAnimationFrame === "function") {
+        restoreScrollFrameRef.current.forEach((frame) => cancelAnimationFrame(frame));
+      }
+      restoreScrollFrameRef.current = [];
+    };
+  }, [
+    activeRootPath,
+    currentDirectory,
+    folderLocation.rootPath,
+    folderScope,
+    isLoadingFolder,
+    selection.clear,
+    selection.setSelected,
+    updateFilters,
+    videos,
+  ]);
+
+  useEffect(() => {
+    if (
+      !activeRootPath ||
+      isLoadingFolder ||
+      folderLocation.rootPath !== activeRootPath ||
+      !currentDirectory ||
+      !folderTree ||
+      findFolderNode(folderTree, currentDirectory)
+    ) {
+      return;
+    }
+
+    folderViewStateRef.current.setLocation(
+      activeRootPath,
+      "",
+      FolderScope.ALL_DESCENDANTS
+    );
+    restoredFolderViewKeyRef.current = null;
+    setFolderLocation({
+      rootPath: activeRootPath,
+      directory: "",
+      scope: FolderScope.ALL_DESCENDANTS,
+    });
+  }, [
+    activeRootPath,
+    currentDirectory,
+    folderLocation.rootPath,
+    folderTree,
+    isLoadingFolder,
+  ]);
+
+  useEffect(() => {
+    const subscribe = window.electronAPI?.profiles?.onChanged;
+    if (!subscribe) return undefined;
+    return subscribe(() => {
+      folderViewStateRef.current.clear();
+      restoredFolderViewKeyRef.current = null;
+      setExpandedFolderPaths(new Set([""]));
+    });
+  }, []);
 
   const totalVideoCount = videos.length;
   const renderLimitValue = useMemo(
@@ -331,7 +646,7 @@ function App() {
     isLayoutTransitioning,
   } = useMasonryLayout({
     videos,
-    filteredVideos,
+    filteredVideos: scopedFilteredVideos,
     sortKey,
     sortDir,
     groupByFolders,
@@ -383,16 +698,6 @@ function App() {
     (id) => activationWindowRef.current.has(id),
     []
   );
-
-  const displayedVideoIds = useMemo(
-    () => new Set(orderForRange),
-    [orderForRange]
-  );
-  const pruneSelectionTo = selection.pruneTo;
-  useEffect(() => {
-    pruneSelectionTo(displayedVideoIds);
-  }, [displayedVideoIds, pruneSelectionTo]);
-
 
   const anchorDefaults = useMemo(
     () =>
@@ -592,13 +897,38 @@ function App() {
     () => new Map(orderedVideos.map((video) => [video.id, video])),
     [orderedVideos]
   );
+  const allVideosById = useMemo(
+    () => new Map(videos.map((video) => [video.id, video])),
+    [videos]
+  );
+  const allVideoIds = useMemo(() => new Set(allVideosById.keys()), [allVideosById]);
   const getById = useCallback((id) => videosById.get(id), [videosById]);
+
+  useEffect(() => {
+    selection.pruneTo?.(allVideoIds);
+  }, [allVideoIds, selection.pruneTo]);
+
+  const { contextMenu, showOnItem, hide: hideContextMenu } = useContextMenu();
 
   const selectedVideos = useMemo(() => {
     return Array.from(selection.selected)
-      .map((id) => getById(id))
+      .map((id) => allVideosById.get(id))
       .filter(Boolean);
-  }, [selection.selected, getById]);
+  }, [allVideosById, selection.selected]);
+
+  const selectedGenerationInstanceId =
+    selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
+  const generationMetadata = useGenerationMetadata({
+    instanceId: selectedGenerationInstanceId,
+    enabled: Boolean(isMetadataPanelOpen && selectedGenerationInstanceId),
+  });
+  const generationMetadataState = useMemo(
+    () =>
+      selectedGenerationInstanceId
+        ? { ...generationMetadata, onRefresh: generationMetadata.refresh }
+        : null,
+    [generationMetadata, selectedGenerationInstanceId]
+  );
 
   const selectedFingerprints = useMemo(() => {
     const set = new Set();
@@ -609,6 +939,16 @@ function App() {
     });
     return Array.from(set);
   }, [selectedVideos]);
+
+  const contextMetadataFingerprints = useMemo(() => {
+    if (selection.size > 1 || !contextMenu?.contextId) {
+      return selectedFingerprints;
+    }
+    const contextVideo = getById(contextMenu.contextId);
+    return contextVideo?.fingerprint
+      ? [contextVideo.fingerprint]
+      : selectedFingerprints;
+  }, [contextMenu?.contextId, getById, selectedFingerprints, selection.size]);
 
   const selectedIdsRef = useRef(selection.selected);
   const selectedVideosRef = useRef(selectedVideos);
@@ -707,6 +1047,7 @@ function App() {
     handleRemoveTag,
     handleSetRating,
     handleClearRating,
+    handleSetReviewState,
     handleApplyExistingTag,
     refreshTagList,
   } = useMetadataActions({
@@ -754,8 +1095,6 @@ function App() {
     setMetadataPanelDismissed,
     setMetadataPanelOpen,
   ]);
-
-  const { contextMenu, showOnItem, hide: hideContextMenu } = useContextMenu();
 
   const captureLastFocusSelector = useCallback(() => {
     if (typeof document === "undefined") return null;
@@ -938,14 +1277,21 @@ function App() {
         openMetadataPanel();
         return;
       }
+      if (actionId.startsWith("metadata:review:")) {
+        const reviewState = actionId.replace("metadata:review:", "");
+        if (contextMetadataFingerprints.length) {
+          handleSetReviewState(reviewState, contextMetadataFingerprints);
+        }
+        return;
+      }
       if (actionId.startsWith("metadata:rate:")) {
-        if (!selectedFingerprints.length) return;
+        if (!contextMetadataFingerprints.length) return;
         if (actionId === "metadata:rate:clear") {
-          handleSetRating(null, selectedFingerprints);
+          handleSetRating(null, contextMetadataFingerprints);
         } else {
           const value = parseInt(actionId.replace("metadata:rate:", ""), 10);
           if (!Number.isNaN(value)) {
-            handleSetRating(value, selectedFingerprints);
+            handleSetRating(value, contextMetadataFingerprints);
           }
         }
         return;
@@ -961,8 +1307,9 @@ function App() {
     },
     [
       openMetadataPanel,
-      selectedFingerprints,
+      contextMetadataFingerprints,
       handleSetRating,
+      handleSetReviewState,
       handleApplyExistingTag,
       runAction,
       selection.selected,
@@ -1148,12 +1495,18 @@ function App() {
       runAction(actionId, currentSelection, contextMenu.contextId),
     [runAction, contextMenu.contextId]
   );
+  const handleReviewHotkey = useCallback(
+    (reviewState) =>
+      handleSetReviewState(reviewState, selectedFingerprints),
+    [handleSetReviewState, selectedFingerprints]
+  );
   // Global hotkeys (Enter / Ctrl+C / Delete) + Zoom (+ / - and Ctrl/⌘ + Wheel)
   useHotkeys(runForHotkeys, () => selection.selected, {
     getZoomIndex: () => zoomLevel,
     setZoomIndexSafe: (z) => handleZoomChangeSafe(z),
     minZoomIndex: ZOOM_MIN_INDEX,
     maxZoomIndex: ZOOM_MAX_INDEX,
+    onSetReviewState: handleReviewHotkey,
     // wheelStepUnits: 100, // optional sensitivity tuning
   });
 
@@ -1261,8 +1614,10 @@ function App() {
       setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
     }, []);
 
-  const toggleRecursive = useCallback(() => {
-    const next = !recursiveMode;
+  const handleRecursiveChange = useCallback(async (nextValue) => {
+    const next = Boolean(nextValue);
+    if (next === recursiveMode) return;
+    captureFolderViewState();
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
       recursiveMode: next,
@@ -1270,7 +1625,251 @@ function App() {
       zoomLevel,
       showFilenames,
     });
-  }, [recursiveMode, renderLimitStep, zoomLevel, showFilenames]);
+    if (activeRootPath) {
+      if (!next && currentDirectory) {
+        folderViewStateRef.current.setLocation(
+          activeRootPath,
+          "",
+          FolderScope.ALL_DESCENDANTS
+        );
+        setFolderLocation({
+          rootPath: activeRootPath,
+          directory: "",
+          scope: FolderScope.ALL_DESCENDANTS,
+        });
+      }
+      restoredFolderViewKeyRef.current = null;
+      await reloadCurrentRoot?.(next);
+    }
+  }, [
+    activeRootPath,
+    captureFolderViewState,
+    currentDirectory,
+    recursiveMode,
+    reloadCurrentRoot,
+    renderLimitStep,
+    showFilenames,
+    zoomLevel,
+  ]);
+
+  const toggleRecursive = useCallback(() => {
+    handleRecursiveChange(!recursiveMode);
+  }, [handleRecursiveChange, recursiveMode]);
+
+  const handleFolderNavigate = useCallback(
+    async (relativePath) => {
+      if (!activeRootPath) return;
+      captureFolderViewState();
+      const directory = normalizeRelativePath(relativePath);
+      const nextScope =
+        directory && folderScope === FolderScope.ALL_DESCENDANTS
+          ? FolderScope.CURRENT_FOLDER
+          : folderScope;
+      folderViewStateRef.current.setLocation(
+        activeRootPath,
+        directory,
+        nextScope
+      );
+      restoredFolderViewKeyRef.current = null;
+      setFolderLocation({
+        rootPath: activeRootPath,
+        directory,
+        scope: nextScope,
+      });
+      setExpandedFolderPaths((previous) =>
+        expandFolderAncestors(previous, directory)
+      );
+
+      if (directory && !recursiveMode) {
+        await handleRecursiveChange(true);
+      }
+    },
+    [
+      activeRootPath,
+      captureFolderViewState,
+      folderScope,
+      handleRecursiveChange,
+      recursiveMode,
+    ]
+  );
+
+  const handleFolderScopeChange = useCallback(
+    (nextScope) => {
+      if (!activeRootPath) return;
+      captureFolderViewState();
+      const normalizedScope = Object.values(FolderScope).includes(nextScope)
+        ? nextScope
+        : FolderScope.ALL_DESCENDANTS;
+      folderViewStateRef.current.setLocation(
+        activeRootPath,
+        currentDirectory,
+        normalizedScope
+      );
+      restoredFolderViewKeyRef.current = null;
+      setFolderLocation({
+        rootPath: activeRootPath,
+        directory: currentDirectory,
+        scope: normalizedScope,
+      });
+    },
+    [activeRootPath, captureFolderViewState, currentDirectory]
+  );
+
+  const handleFolderExpandedToggle = useCallback((path, expanded) => {
+    const normalized = normalizeRelativePath(path);
+    setExpandedFolderPaths((previous) => {
+      const next = new Set(previous);
+      if (expanded) next.add(normalized);
+      else next.delete(normalized);
+      next.add("");
+      return next;
+    });
+  }, []);
+
+  const handlePreviousFolder = useCallback(
+    (node) => handleFolderNavigate(node?.path),
+    [handleFolderNavigate]
+  );
+  const handleNextFolder = useCallback(
+    (node) => handleFolderNavigate(node?.path),
+    [handleFolderNavigate]
+  );
+
+  const handleOpenLibraryRoot = useCallback(
+    async (rootPath) => {
+      if (!rootPath) return;
+      captureFolderViewState();
+      const saved = folderViewStateRef.current.getLocation(rootPath);
+      setFolderLocation({
+        rootPath,
+        directory: saved?.directory || "",
+        scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
+      });
+      setExpandedFolderPaths((previous) =>
+        expandFolderAncestors(previous, saved?.directory || "")
+      );
+      restoredFolderViewKeyRef.current = null;
+      await handleElectronFolderSelection(rootPath);
+    },
+    [captureFolderViewState, handleElectronFolderSelection]
+  );
+
+  const handleToggleLibraryPin = useCallback(
+    async (rootPath, pinned) => {
+      try {
+        await setLibraryRootPinned(rootPath, pinned);
+        notify(pinned ? "Pinned library root" : "Unpinned library root", "success");
+      } catch (error) {
+        console.error("Failed to update library pin:", error);
+        notify("Failed to update library pin", "error");
+      }
+    },
+    [notify, setLibraryRootPinned]
+  );
+
+  const handleSaveCurrentView = useCallback(
+    async (name) => {
+      const definition = {
+        version: 1,
+        filters: {
+          includeTags: filters.includeTags || [],
+          excludeTags: filters.excludeTags || [],
+          minRating: filters.minRating ?? null,
+          exactRating: filters.exactRating ?? null,
+          reviewFilter: filters.reviewFilter || REVIEW_FILTERS.ANY,
+        },
+        sort: {
+          key: sortKey,
+          dir: sortDir,
+          groupByFolders,
+          randomSeed,
+        },
+        scope: { mode: folderScope },
+      };
+      try {
+        const view = await createSavedView(name, definition);
+        if (!view) throw new Error("Saved views are unavailable");
+        notify(`Saved smart view “${view.name}”`, "success");
+        return view;
+      } catch (error) {
+        console.error("Failed to save smart view:", error);
+        notify(error?.message || "Failed to save smart view", "error");
+        throw error;
+      }
+    }, [
+      createSavedView,
+      filters,
+      folderScope,
+      groupByFolders,
+      notify,
+      randomSeed,
+      sortDir,
+      sortKey,
+    ]
+  );
+
+  const handleApplySavedView = useCallback(
+    (view) => {
+      const definition = view?.definition;
+      if (!definition || definition.version !== 1) return;
+      captureFolderViewState();
+      updateFilters(definition.filters || {});
+      setSortKey(definition.sort?.key || SortKey.NAME);
+      setSortDir(definition.sort?.dir === "desc" ? "desc" : "asc");
+      setGroupByFolders(definition.sort?.groupByFolders !== false);
+      setRandomSeed(definition.sort?.randomSeed ?? null);
+      selection.clear();
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+
+      const nextScope = Object.values(FolderScope).includes(definition.scope?.mode)
+        ? definition.scope.mode
+        : FolderScope.ALL_DESCENDANTS;
+      if (activeRootPath) {
+        folderViewStateRef.current.setLocation(
+          activeRootPath,
+          currentDirectory,
+          nextScope
+        );
+        restoredFolderViewKeyRef.current = makeFolderViewKey(
+          activeRootPath,
+          currentDirectory,
+          nextScope
+        );
+        setFolderLocation({
+          rootPath: activeRootPath,
+          directory: currentDirectory,
+          scope: nextScope,
+        });
+      }
+      notify(`Applied smart view “${view.name}”`, "success");
+    }, [
+      activeRootPath,
+      captureFolderViewState,
+      currentDirectory,
+      notify,
+      selection.clear,
+      updateFilters,
+    ]
+  );
+
+  const handleDeleteSavedView = useCallback(
+    async (id, view) => {
+      try {
+        const deleted = await deleteSavedView(id);
+        if (deleted) notify(`Deleted smart view “${view?.name || "view"}”`, "success");
+      } catch (error) {
+        console.error("Failed to delete smart view:", error);
+        notify(error?.message || "Failed to delete smart view", "error");
+      }
+    },
+    [deleteSavedView, notify]
+  );
+
+  const handleChooseFolder = useCallback(async () => {
+    captureFolderViewState();
+    restoredFolderViewKeyRef.current = null;
+    await handleFolderSelect();
+  }, [captureFolderViewState, handleFolderSelect]);
 
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
@@ -1527,7 +2126,7 @@ function App() {
 
           <HeaderBar
             isLoadingFolder={isLoadingFolder}
-            handleFolderSelect={handleFolderSelect}
+            handleFolderSelect={handleChooseFolder}
             handleWebFileSelection={handleWebFileSelection}
             recursiveMode={recursiveMode}
             toggleRecursive={toggleRecursive}
@@ -1557,13 +2156,36 @@ function App() {
             onGroupByFoldersToggle={toggleGroupByFolders}
             onReshuffle={reshuffleRandom}
             recentFolders={recentFolders}
-            onRecentOpen={(path) => handleElectronFolderSelection(path)}
-            hasOpenFolder={videos.length > 0}
+            onRecentOpen={handleOpenLibraryRoot}
+            hasOpenFolder={Boolean(activeRootPath) || videos.length > 0}
             onFiltersToggle={() => setFiltersOpen((open) => !open)}
             filtersActiveCount={filtersActiveCount}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
           />
+
+          {activeRootPath && (
+            <CollectionNavigationBar
+              breadcrumb={folderBreadcrumb}
+              onBreadcrumbSelect={handleFolderNavigate}
+              scope={folderScope}
+              onScopeChange={handleFolderScopeChange}
+              previousSibling={siblingFolders.previous}
+              nextSibling={siblingFolders.next}
+              onPreviousFolder={handlePreviousFolder}
+              onNextFolder={handleNextFolder}
+              recursive={recursiveMode}
+              onRecursiveChange={handleRecursiveChange}
+              sidebarOpen={isLibrarySidebarOpen}
+              onSidebarToggle={setLibrarySidebarOpen}
+              showFolderHeaders={showFolderHeaders}
+              onFolderHeadersToggle={setShowFolderHeaders}
+              folderHeadersAvailable={groupByFolders}
+              matchingCount={scopedFilteredVideos.length}
+              totalCount={videos.length}
+              disabled={isLoadingFolder}
+            />
+          )}
 
           {isFiltersOpen && (
             <FiltersPopover
@@ -1650,6 +2272,23 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {reviewFilterSummary && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Review</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--review"
+                      onClick={clearReviewFilter}
+                      title="Clear review-state filter"
+                    >
+                      {reviewFilterSummary}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1667,114 +2306,172 @@ function App() {
             sortStatus={sortStatus}
           />
 
-          {/* Home state: Recent Locations when nothing is loaded */}
-          {videos.length === 0 && !isLoadingFolder ? (
-            <>
-              <RecentFolders
-                items={recentFolders}
-                onOpen={(path) => handleElectronFolderSelection(path)}
-                onRemove={removeRecentFolder}
-                onClear={clearRecentFolders}
-              />
-              <div className="drop-zone">
-                <h2>🐝 Welcome to Video Swarm 🐝</h2>
-                <p>
-                  Click the green folder icon in the top left to open a directory of videos.
-                </p>
-                <p>
-                  Use the Subfolders toggle to enable recursive loading, which will recursively load all videos in all subfolders as well.
-                </p>
-                {window.innerWidth > 2560 && (
-                  <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
-                    🖥️ Large display detected - zoom will auto-adjust for memory
-                    safety
+          {/* Home state: pinned library roots and recent locations */}
+          {!activeRootPath && videos.length === 0 && !isLoadingFolder ? (
+            <div className="library-home-workspace">
+              {isLibrarySidebarOpen &&
+                (pinnedRoots.length > 0 || savedViews.length > 0) && (
+                <LibrarySidebar
+                  tree={null}
+                  pinnedRoots={pinnedRoots}
+                  currentRoot={null}
+                  onOpenRoot={handleOpenLibraryRoot}
+                  onTogglePin={handleToggleLibraryPin}
+                  savedViews={savedViews}
+                  onApplySavedView={handleApplySavedView}
+                  onSaveCurrentView={handleSaveCurrentView}
+                  onDeleteSavedView={handleDeleteSavedView}
+                  smartViewsEnabled={false}
+                />
+              )}
+              <div className="library-home-content">
+                <RecentFolders
+                  items={recentFolders}
+                  onOpen={handleOpenLibraryRoot}
+                  onRemove={removeRecentFolder}
+                  onClear={clearRecentFolders}
+                />
+                <div className="drop-zone">
+                  <h2>🐝 Welcome to Video Swarm 🐝</h2>
+                  <p>
+                    Open a directory, or choose a pinned library root to continue reviewing.
                   </p>
-                )}
+                  <p>
+                    Index subfolders to browse large generation runs as a tree while keeping the flattened swarm available.
+                  </p>
+                  {window.innerWidth > 2560 && (
+                    <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
+                      🖥️ Large display detected - zoom will auto-adjust for memory
+                      safety
+                    </p>
+                  )}
+                </div>
               </div>
-            </>
+            </div>
           ) : (
             <div
               className={contentRegionClassName}
               ref={contentRegionRef}
               style={contentRegionStyle}
             >
-              <div
-                className="content-region__viewport"
-                ref={attachScrollContainer}
-              >
-                <div
-                  ref={attachGrid}
-                  className={`video-grid masonry-vertical virtualized-masonry ${
-                    !showFilenames ? "hide-filenames" : ""
-                  } ${zoomClassForLevel(zoomLevel)}`}
-                  style={masonryGridStyle}
-                >
-                {orderedVideos.length === 0 &&
-                  videos.length > 0 &&
-                  !isLoadingFolder && (
-                    <div className="filters-empty-state">
-                      No videos match your current filters.
-                    </div>
-                  )}
+              <div className="content-region__workspace">
+                {activeRootPath && isLibrarySidebarOpen && (
+                  <LibrarySidebar
+                    tree={folderTree}
+                    currentPath={currentDirectory}
+                    expandedPaths={expandedFolderPaths}
+                    onToggleExpanded={handleFolderExpandedToggle}
+                    onSelectFolder={handleFolderNavigate}
+                    pinnedRoots={pinnedRoots}
+                    currentRoot={catalogCurrentRoot || libraryRoot}
+                    onOpenRoot={handleOpenLibraryRoot}
+                    onTogglePin={handleToggleLibraryPin}
+                    savedViews={savedViews}
+                    onApplySavedView={handleApplySavedView}
+                    onSaveCurrentView={handleSaveCurrentView}
+                    onDeleteSavedView={handleDeleteSavedView}
+                    disabled={isLoadingFolder}
+                  />
+                )}
 
-                {virtualItems.map((position) => {
-                  const video = position.item;
-                  return (
-                    <div
-                      key={position.id}
-                      className="masonry-slot"
-                      data-masonry-id={position.id}
-                      style={position.style}
-                    >
-                      <VideoCard
-                        video={video}
-                        observeIntersection={ioRegistry.observe}
-                        unobserveIntersection={ioRegistry.unobserve}
-                        scrollRootRef={scrollContainerRef}
-                        selected={selection.selected.has(video.id)}
-                        onSelect={handleVideoSelect}
-                        onContextMenu={handleCardContextMenu}
-                        onNativeDragStart={handleNativeDragStart}
-                        showFilenames={showFilenames}
-                        canLoadVideo={handleCanLoadVideo}
-                        reserveLoadSlot={handleReserveLoadSlot}
-                        queueLoadSlot={handleQueueLoadSlot}
-                        cancelQueuedLoadSlot={handleCancelQueuedLoadSlot}
-                        finishLoadSlot={handleFinishLoadSlot}
-                        releaseMediaSlot={handleReleaseMediaSlot}
-                        decoderLease={videoCollection.getDecoderLease(video.id)}
-                        isLoading={loadingVideos.has(video.id)}
-                        isLoaded={loadedVideos.has(video.id)}
-                        isVisible={visibleVideos.has(video.id)}
-                        isPlaying={videoCollection.isVideoPlaying(video.id)}
-                        playbackSuspended={Boolean(fullScreenVideo)}
-                        workSuspended={workSuspended}
-                        proxyPlaybackEnabled={proxyPlaybackEnabled}
-                        isNear={ioRegistry.isNear}
-                        onStartLoading={handleVideoStartLoading}
-                        onStopLoading={handleVideoStopLoading}
-                        onVideoLoad={handleVideoLoaded}
-                        onVisibilityChange={handleVideoVisibilityChange}
-                        onUnmount={handleVideoUnmount}
-                        onMediaInvalidated={handleMediaInvalidated}
-                        onVideoPlay={handleVideoPlay}
-                        onVideoPause={handleVideoPause}
-                        onPlayError={handleVideoPlayError}
-                        reportPlayerCreationFailure={handlePlayerCreationFailure}
-                        onHover={handleVideoHover}
-                        hoverAudioEnabled={hoverAudioEnabled}
-                        isHoverAudioActive={
-                          hoverAudioEnabled &&
-                          videoCollection.activeHoverAudioId === video.id
-                        }
-                        onHoverAudioStart={handleHoverAudioStart}
-                        onHoverAudioEnd={handleHoverAudioEnd}
-                        scheduleInit={scheduleInit}
-                        registerMediaElement={registerMediaElement}
+                <div className="content-region__gallery">
+                  {activeRootPath &&
+                    !isLibrarySidebarOpen &&
+                    showFolderHeaders &&
+                    groupByFolders && (
+                      <FolderGroupHeaders
+                        tree={folderTree}
+                        currentPath={currentDirectory}
+                        onSelectFolder={handleFolderNavigate}
                       />
+                    )}
+
+                  <div
+                    className="content-region__viewport"
+                    ref={attachScrollContainer}
+                  >
+                    {orderedVideos.length === 0 && !isLoadingFolder && (
+                      <div className="collection-empty-state" role="status">
+                        <h3>
+                          {videos.length === 0
+                            ? "No videos in this collection"
+                            : filteredVideos.length === 0
+                            ? "No videos match the active filters"
+                            : "No matching videos in this folder scope"}
+                        </h3>
+                        {activeRootPath && (
+                          <p>{folderBreadcrumb.at(-1)?.fullPath || activeRootPath}</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div
+                      ref={attachGrid}
+                      className={`video-grid masonry-vertical virtualized-masonry ${
+                        !showFilenames ? "hide-filenames" : ""
+                      } ${zoomClassForLevel(zoomLevel)}`}
+                      style={masonryGridStyle}
+                    >
+                      {virtualItems.map((position) => {
+                        const video = position.item;
+                        return (
+                          <div
+                            key={position.id}
+                            className="masonry-slot"
+                            data-masonry-id={position.id}
+                            style={position.style}
+                          >
+                            <VideoCard
+                              video={video}
+                              observeIntersection={ioRegistry.observe}
+                              unobserveIntersection={ioRegistry.unobserve}
+                              scrollRootRef={scrollContainerRef}
+                              selected={selection.selected.has(video.id)}
+                              onSelect={handleVideoSelect}
+                              onContextMenu={handleCardContextMenu}
+                              onNativeDragStart={handleNativeDragStart}
+                              showFilenames={showFilenames}
+                              canLoadVideo={handleCanLoadVideo}
+                              reserveLoadSlot={handleReserveLoadSlot}
+                              queueLoadSlot={handleQueueLoadSlot}
+                              cancelQueuedLoadSlot={handleCancelQueuedLoadSlot}
+                              finishLoadSlot={handleFinishLoadSlot}
+                              releaseMediaSlot={handleReleaseMediaSlot}
+                              decoderLease={videoCollection.getDecoderLease(video.id)}
+                              isLoading={loadingVideos.has(video.id)}
+                              isLoaded={loadedVideos.has(video.id)}
+                              isVisible={visibleVideos.has(video.id)}
+                              isPlaying={videoCollection.isVideoPlaying(video.id)}
+                              playbackSuspended={Boolean(fullScreenVideo)}
+                              workSuspended={workSuspended}
+                              proxyPlaybackEnabled={proxyPlaybackEnabled}
+                              isNear={ioRegistry.isNear}
+                              onStartLoading={handleVideoStartLoading}
+                              onStopLoading={handleVideoStopLoading}
+                              onVideoLoad={handleVideoLoaded}
+                              onVisibilityChange={handleVideoVisibilityChange}
+                              onUnmount={handleVideoUnmount}
+                              onMediaInvalidated={handleMediaInvalidated}
+                              onVideoPlay={handleVideoPlay}
+                              onVideoPause={handleVideoPause}
+                              onPlayError={handleVideoPlayError}
+                              reportPlayerCreationFailure={handlePlayerCreationFailure}
+                              onHover={handleVideoHover}
+                              hoverAudioEnabled={hoverAudioEnabled}
+                              isHoverAudioActive={
+                                hoverAudioEnabled &&
+                                videoCollection.activeHoverAudioId === video.id
+                              }
+                              onHoverAudioStart={handleHoverAudioStart}
+                              onHoverAudioEnd={handleHoverAudioEnd}
+                              scheduleInit={scheduleInit}
+                              registerMediaElement={registerMediaElement}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
                 </div>
               </div>
               <MetadataPanel
@@ -1790,6 +2487,8 @@ function App() {
                 onApplyTagToSelection={handleApplyExistingTag}
                 onSetRating={handleSetRating}
                 onClearRating={handleClearRating}
+                onSetReviewState={handleSetReviewState}
+                generationMetadataState={generationMetadataState}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
                 dockHeight={metadataDockHeight}

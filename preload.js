@@ -1,4 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const {
+  normalizeGenerationRequestToken,
+} = require("./main/generation-request");
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -265,8 +268,46 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("metadata:remove-tag", fingerprints, tagName),
     setRating: async (fingerprints, rating) =>
       ipcRenderer.invoke("metadata:set-rating", fingerprints, rating),
+    setReviewState: async (fingerprints, reviewState) =>
+      ipcRenderer.invoke("metadata:set-review-state", fingerprints, reviewState),
     get: async (fingerprints) =>
       ipcRenderer.invoke("metadata:get", fingerprints),
+    getGeneration: async (instanceId, requestToken) => {
+      const normalizedToken = normalizeGenerationRequestToken(requestToken);
+      return ipcRenderer.invoke("metadata:get-generation", {
+        instanceId,
+        ...(normalizedToken ? { requestToken: normalizedToken } : {}),
+      });
+    },
+    cancelGeneration: async (requestToken) =>
+      ipcRenderer.invoke("metadata:cancel-generation", {
+        requestToken: normalizeGenerationRequestToken(requestToken, {
+          required: true,
+        }),
+      }),
+  },
+
+  library: {
+    listRoots: async (options = {}) =>
+      ipcRenderer.invoke("library:list-roots", options),
+    getTree: async (rootPath, options = {}) =>
+      ipcRenderer.invoke("library:get-tree", {
+        rootPath,
+        includeMissing: Boolean(options?.includeMissing),
+      }),
+    setPinned: async (rootPath, pinned) =>
+      ipcRenderer.invoke("library:set-pinned", {
+        rootPath,
+        pinned,
+      }),
+    listSavedViews: async () =>
+      ipcRenderer.invoke("library:list-saved-views"),
+    createSavedView: async (name, definition) =>
+      ipcRenderer.invoke("library:create-saved-view", { name, definition }),
+    updateSavedView: async (id, changes = {}) =>
+      ipcRenderer.invoke("library:update-saved-view", { id, ...changes }),
+    deleteSavedView: async (id) =>
+      ipcRenderer.invoke("library:delete-saved-view", { id }),
   },
 
   recent: {

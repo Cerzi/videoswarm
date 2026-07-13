@@ -34,4 +34,31 @@ describe('useHotkeys', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
     expect(run).toHaveBeenCalledWith(ActionIds.MOVE_TO_TRASH, new Set(['x']));
   });
+
+  test.each([
+    ['p', 'pick'],
+    ['r', 'reviewed'],
+    ['x', 'reject'],
+    ['u', 'unreviewed'],
+  ])('%s applies the %s review state to the selection', (key, state) => {
+    const onSetReviewState = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, { onSetReviewState })
+    );
+    document.dispatchEvent(new KeyboardEvent('keydown', { key }));
+    expect(onSetReviewState).toHaveBeenCalledWith(state, new Set(['x']));
+  });
+
+  test('does not apply review shortcuts while typing or using modifiers', () => {
+    const onSetReviewState = vi.fn();
+    renderHook(() => useHotkeys(run, getSelection, { onSetReviewState }));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }));
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'r', ctrlKey: true })
+    );
+    expect(onSetReviewState).not.toHaveBeenCalled();
+    input.remove();
+  });
 });

@@ -69,4 +69,48 @@ describe("useMetadataActions", () => {
     expect(notify).toHaveBeenCalled();
     expect(videos[0].tags).toEqual(["tag"]);
   });
+
+  it("sets normalized review state via electron API", async () => {
+    let videos = [
+      {
+        id: "1",
+        fingerprint: "fp1",
+        rating: null,
+        tags: [],
+        reviewState: "unreviewed",
+        dimensions: null,
+      },
+    ];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        setReviewState: vi.fn().mockResolvedValue({
+          updates: { fp1: { reviewState: "pick" } },
+        }),
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos,
+        setAvailableTags: noop,
+        notify,
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleSetReviewState(" PICK ");
+    });
+
+    expect(window.electronAPI.metadata.setReviewState).toHaveBeenCalledWith(
+      ["fp1"],
+      "pick"
+    );
+    expect(videos[0].reviewState).toBe("pick");
+    expect(notify).toHaveBeenCalledWith("Marked 1 item(s) pick", "success");
+  });
 });

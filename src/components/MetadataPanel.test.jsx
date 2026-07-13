@@ -134,6 +134,68 @@ describe('MetadataPanel tag input', () => {
   });
 });
 
+describe('MetadataPanel review state', () => {
+  it('shows a mixed batch and applies a pick to the selection', () => {
+    const onSetReviewState = vi.fn();
+    renderPanel({
+      selectedVideos: [
+        { name: 'one.mp4', reviewState: 'pick' },
+        { name: 'two.mp4', reviewState: 'reject' },
+      ],
+      onSetReviewState,
+    });
+
+    expect(screen.getByText('Mixed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick' }));
+    expect(onSetReviewState).toHaveBeenCalledWith('pick');
+  });
+
+  it('defaults old records to unreviewed', () => {
+    renderPanel({ selectedVideos: [{ name: 'one.mp4' }] });
+
+    expect(screen.getByRole('button', { name: 'Unreviewed' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+  });
+});
+
+describe('MetadataPanel generation metadata', () => {
+  it('shows bounded extracted sidecar fields for a single clip', () => {
+    renderPanel({
+      selectedVideos: [{ name: 'one.mp4', instanceId: 7 }],
+      generationMetadataState: {
+        loading: false,
+        found: true,
+        cached: true,
+        metadata: {
+          prompt: 'a bee flying over a city',
+          seed: '9007199254740993',
+          models: ['wan2.2'],
+          samplers: ['euler'],
+          generationRun: 'run-42',
+        },
+        onRefresh: vi.fn(),
+      },
+    });
+
+    expect(screen.getByText('a bee flying over a city')).toBeInTheDocument();
+    expect(screen.getByText('9007199254740993')).toBeInTheDocument();
+    expect(screen.getByText('wan2.2')).toBeInTheDocument();
+    expect(screen.getByText('Cached')).toBeInTheDocument();
+  });
+
+  it('reports a missing sidecar without guessing across the folder', () => {
+    renderPanel({
+      selectedVideos: [{ name: 'one.mp4', instanceId: 7 }],
+      generationMetadataState: { loading: false, found: false, metadata: null },
+    });
+    expect(
+      screen.getByText('No matching sidecar found for this clip.')
+    ).toBeInTheDocument();
+  });
+});
+
 describe('MetadataPanel collapsed shell', () => {
   it('renders nothing when closed without a selection and no collapsed hint', () => {
     const { container } = render(

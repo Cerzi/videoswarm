@@ -13,6 +13,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     maxZoomIndex = 4,
     wheelStepUnits = 120,   // 120 ≈ one "notch" after normalization
     maxStepsPerFrame = 3,   // safety: avoid huge jumps per frame
+    onSetReviewState,
   } = opts;
 
   // ----- existing key handling (Enter/Ctrl+C/Delete/+/-) stays the same -----
@@ -54,6 +55,20 @@ export default function useHotkeys(run, getSelection, opts = {}) {
           run(ActionIds.MOVE_TO_TRASH, sel);
           return;
         }
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && onSetReviewState) {
+          const reviewStateByKey = {
+            p: "pick",
+            r: "reviewed",
+            x: "reject",
+            u: "unreviewed",
+          };
+          const reviewState = reviewStateByKey[e.key.toLowerCase()];
+          if (reviewState) {
+            e.preventDefault();
+            onSetReviewState(reviewState, sel);
+            return;
+          }
+        }
       }
 
       // +/- zoom (no modifiers)
@@ -70,7 +85,15 @@ export default function useHotkeys(run, getSelection, opts = {}) {
 
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [run, getSelection, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex]);
+  }, [
+    run,
+    getSelection,
+    getZoomIndex,
+    setZoomIndexSafe,
+    minZoomIndex,
+    maxZoomIndex,
+    onSetReviewState,
+  ]);
 
   // ----- Ctrl/⌘ + Wheel → zoom, coalesced per frame -----
   const accumRef = useRef(0);
