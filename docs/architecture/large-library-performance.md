@@ -124,6 +124,37 @@ activity. The parent deliverable remains **Unimplemented** because enumeration
 still returns one final array and the watcher does not yet buffer events before
 the initial scan.
 
+#### Folder revisit acceleration
+
+Status: **Unimplemented**
+
+A previously indexed root should be able to hydrate a last-known collection
+directly from its profile-local SQLite `file_instances` and content metadata,
+then run the normal generation-owned scan in the background. The UI labels the
+collection as refreshing until that scan reconciles additions, changes, and
+removals; cached rows are a fast preview, never a replacement for filesystem
+validation.
+
+This should not keep inactive React trees, media elements, blob URLs, decoded
+frames, or thumbnails in memory. SQLite remains the primary cache. If profiling
+later justifies a memory tier, it contains only serializable record/layout/view
+state, is limited by both bytes and root count, and is cleared on profile
+changes. It must not extend the current process-lifetime metadata map without
+first replacing that map with a bounded LRU under Section 6.
+
+Acceptance criteria:
+
+- Revisiting an indexed root can show a virtualized last-known grid without
+  waiting for its full recursive scan, including after an application restart.
+- The grid clearly indicates background refresh and safely patches or removes
+  stale records as validation completes.
+- Cached hydration, refresh events, and watcher events remain profile- and
+  scan-generation-owned; switching again cannot resurrect stale state.
+- Inactive roots retain no media/DOM resources, and any optional memory tier
+  has tested byte and root-count limits.
+- Folder-switch profiling demonstrates a meaningful first-grid improvement
+  before an in-memory tier is enabled.
+
 ### 2. Persistent content and file-instance index
 
 Status: **Implemented** (2026-07-13)
@@ -321,6 +352,7 @@ Acceptance criteria:
 | Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
 | Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
 | Incremental enumeration batches | **Unimplemented** | The scan protocol still returns one final array after enumeration and enrichment. |
+| SQLite-backed folder revisit hydration | **Unimplemented** | Reuse the existing persistent instance/content index as a stale-while-revalidate first grid; do not retain inactive media resources or add an unbounded record cache. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
