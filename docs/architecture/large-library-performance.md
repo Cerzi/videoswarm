@@ -144,6 +144,8 @@ Acceptance criteria:
 
 ### 3. Virtualized masonry renderer
 
+Status: **Implemented** (2026-07-13)
+
 The collection model contains every matching record, but the renderer mounts
 only the viewport plus overscan. Masonry positions and total scroll height are
 calculated from persisted or provisional aspect ratios. New measurements patch
@@ -311,11 +313,11 @@ Acceptance criteria:
 | Incremental enumeration batches and real progress | **Unimplemented** | Requires scan protocol expansion. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
-| Virtualized masonry | **Unimplemented** | Current renderer materializes all cards. |
-| Stable masonry/observer/card callback identities | **Unimplemented** | Independent optimization after safety work. |
+| Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
+| Stable masonry/observer/card callback identities | **Implemented** | Observer thresholds, collection callbacks, and per-card handlers remain stable across scroll-driven parent renders; landed in `331a360`. |
 | Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; failed recovery and the idle frame pump were fixed with regressions in `e85030a`. |
 | Atomic media loader/decoder scheduler | **Unimplemented** | Current admission mirrors React Sets. |
-| Fullscreen URL and keyboard lifecycle hardening | **Unimplemented** | Separate correctness slice. |
+| Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen now owns its media element and blob URL, navigates by current record ID, has one keyboard owner, and declaratively suspends/resumes grid playback; landed in `331a360`. |
 | Linux playback modes and adaptive decoder budget | **Unimplemented** | Requires telemetry and UX controls. |
 | Hidden/minimized work suspension | **Unimplemented** | Background throttling is currently disabled. |
 | Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
@@ -343,8 +345,8 @@ streaming or virtualization:
 6. **Implemented** — Add focused regression tests for these guarantees.
 
 The scan still returns one final array after this slice. Incremental batches,
-enrichment workers, virtualization, and adaptive Linux playback remain
-explicitly Unimplemented until their acceptance criteria land.
+enrichment workers, and adaptive Linux playback remain explicitly
+Unimplemented until their acceptance criteria land.
 
 ## Persistent index implementation slice
 
@@ -385,6 +387,50 @@ The following adjacent work remains **Unimplemented**:
   Sections 6 and 8.
 - The SQLite suites execute successfully through Electron's ABI locally, but
   a mandatory non-skippable Electron-ABI CI job remains part of Section 8.
+
+## Virtual masonry implementation slice
+
+1. **Implemented** — Build deterministic, DOM-independent masonry geometry for
+   every displayed ID, including complete positions, total height, visual
+   order, direct ID lookup, and per-column binary-search windowing.
+2. **Implemented** — Mount only the viewport plus one viewport of overscan in
+   lightweight absolute slots. A bounded pinned-ID path preserves the active
+   fullscreen source card without expanding the normal activation window.
+3. **Implemented** — Keep scrolling and observer roots reactive when the
+   conditional grid mounts, support direct scrolling to any logical item, and
+   preserve the first surviving visible ID while dimensions, zoom, filtering,
+   or sorting change.
+4. **Implemented** — Batch aspect-ratio corrections once per animation frame,
+   key them to file signatures, and refresh only mounted observer targets. No
+   card-query pass is performed during React layout.
+5. **Implemented** — Base range selection, filtering reconciliation, focus,
+   render-limit reachability, and fullscreen navigation on the displayed ID
+   model rather than mounted DOM nodes.
+6. **Implemented** — Stabilize observer options and collection-level card
+   callbacks, explicitly clear media/resource membership on virtual unmount,
+   and remove persistent offscreen `will-change`, blur, and placeholder
+   animation costs.
+7. **Implemented** — Make fullscreen media modal-owned, revoke only owned blob
+   URLs, use the shared file URL helper, and suspend/resume the bounded grid's
+   desired playback declaratively.
+8. **Implemented** — Add deterministic 1,000/5,000-record layout and hook
+   regressions covering bounded mounts, top/middle/bottom reachability, visual
+   order, selection ranges, aspect batching, logical anchoring, late mounting,
+   callback stability, unmount cleanup, and fullscreen lifecycle behavior.
+
+The following adjacent work remains **Unimplemented**:
+
+- A dedicated memoized virtual-grid child that keeps scroll-window state out
+  of the top-level `App` render remains a possible follow-up if Electron trace
+  data shows parent reconciliation is material on Linux.
+- Aspect corrections currently recompute logical geometry once per animation
+  frame batch. Incremental suffix/column repair remains a possible follow-up
+  if profiling shows the bounded JavaScript pass is significant.
+- Electron-runtime scroll smoke tests and Linux CPU/RSS/DOM/media soak budgets
+  remain part of Section 8; the current 5,000-record coverage is deterministic
+  Vitest/jsdom coverage rather than an Electron benchmark.
+- Explicit folder headers, a directory tree, sibling-folder cycling, and
+  per-folder view restoration remain part of Section 7.
 
 ## Migration and compatibility
 
