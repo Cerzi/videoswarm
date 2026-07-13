@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { BoundedAsyncCache } = require('./bounded-async-cache');
 const { computeFingerprint } = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
 const profileManager = require('./profile-manager');
@@ -17,6 +18,8 @@ const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
 const SAVED_VIEW_DEFINITION_BYTE_LIMIT = 8192;
 const SAVED_VIEW_VERSION = 1;
+const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
+const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 
 function normalizeReviewState(value) {
   const state = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -251,6 +254,8 @@ function initDatabase(app, profilePath) {
   }
 
   if (dbInstance) {
+    metadataStoreInstance?.dispose?.();
+    metadataStoreInstance = null;
     try {
       dbInstance.close();
     } catch (error) {
@@ -848,9 +853,18 @@ function createMetadataStore(db) {
     DELETE FROM instance_generation_metadata WHERE instance_id = ?;
   `);
 
-  const metadataCache = new Map();
+  const fingerprintCache = new BoundedAsyncCache({
+    maxEntries: FINGERPRINT_CACHE_MAX_ENTRIES,
+    maxInFlight: FINGERPRINT_CACHE_MAX_IN_FLIGHT,
+  });
+  let disposed = false;
 
   function assertOperationActive(assertActive) {
+    if (disposed) {
+      const error = new Error('Metadata store is disposed');
+      error.code = 'METADATA_STORE_DISPOSED';
+      throw error;
+    }
     if (typeof assertActive === 'function') {
       assertActive();
     }
@@ -1061,15 +1075,39 @@ function createMetadataStore(db) {
       assertOperationActive(assertActive);
     }
     const key = cacheKey(filePath, stats);
-    const cached = metadataCache.get(key);
-    if (cached?.fingerprint) {
-      return { fingerprint: cached.fingerprint, createdMs: cached.createdMs };
+    let result;
+    try {
+      result = await fingerprintCache.getOrCreate(key, () =>
+        computeFingerprint(filePath, stats)
+      );
+    } catch (error) {
+      // Profile/store invalidation is authoritative over the cache's internal
+      // generation error and retains the public lifecycle error code.
+      assertOperationActive(assertActive);
+      throw error;
     }
-
-    const result = await computeFingerprint(filePath, stats);
     assertOperationActive(assertActive);
-    metadataCache.set(key, { fingerprint: result.fingerprint, createdMs: result.createdMs });
-    return result;
+    return {
+      fingerprint: result.fingerprint,
+      createdMs: result.createdMs,
+    };
+  }
+
+  function clearFingerprintCache() {
+    fingerprintCache.clear();
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    fingerprintCache.dispose();
+  }
+
+  function getResourceSnapshot() {
+    return {
+      disposed,
+      fingerprintCache: fingerprintCache.getSnapshot(),
+    };
   }
 
   function normalizeDimension(value) {
@@ -2095,6 +2133,9 @@ function createMetadataStore(db) {
     setReviewState,
     getDimensions,
     setDimensions,
+    clearFingerprintCache,
+    dispose,
+    getResourceSnapshot,
   };
 }
 
@@ -2117,6 +2158,7 @@ function getMetadataStore() {
 
 function resetDatabase() {
   if (metadataStoreInstance) {
+    metadataStoreInstance.dispose?.();
     metadataStoreInstance = null;
   }
   if (dbInstance) {
@@ -2131,6 +2173,8 @@ function resetDatabase() {
 }
 
 module.exports = {
+  FINGERPRINT_CACHE_MAX_ENTRIES,
+  FINGERPRINT_CACHE_MAX_IN_FLIGHT,
   initMetadataStore,
   getMetadataStore,
   resetDatabase,

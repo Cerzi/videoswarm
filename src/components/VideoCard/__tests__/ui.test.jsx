@@ -3,6 +3,7 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import VideoCard from "../VideoCard";
+import { thumbService } from "../../../services/thumbService";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
 const NATIVE_CREATE_ELEMENT = document.createElement.bind(document);
@@ -141,6 +142,60 @@ beforeEach(() => {
 });
 
 describe("VideoCard", () => {
+  it("cancels card-owned thumbnail work on signature, visibility, and unmount changes", async () => {
+    const cancelOwner = vi.spyOn(thumbService, "cancelOwner");
+    const video = {
+      id: "thumb-owner",
+      name: "thumb-owner.mp4",
+      fullPath: "/clips/thumb-owner.mp4",
+      size: 100,
+      dateModified: 1,
+      isElectronFile: true,
+    };
+    const props = {
+      ...baseProps,
+      video,
+      canLoadMoreVideos: () => false,
+      isVisible: true,
+    };
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+    cancelOwner.mockClear();
+
+    rendered.rerender(
+      <VideoCard
+        {...props}
+        video={{ ...video, size: 101, dateModified: 2 }}
+      />
+    );
+    await act(async () => {});
+    expect(cancelOwner).toHaveBeenCalledWith(
+      expect.any(Object),
+      "signature-changed"
+    );
+
+    cancelOwner.mockClear();
+    rendered.rerender(
+      <VideoCard
+        {...props}
+        video={{ ...video, size: 101, dateModified: 2 }}
+        isVisible={false}
+      />
+    );
+    await act(async () => {});
+    expect(cancelOwner).toHaveBeenCalledWith(
+      expect.any(Object),
+      "card-invisible"
+    );
+
+    cancelOwner.mockClear();
+    rendered.unmount();
+    expect(cancelOwner).toHaveBeenCalledWith(
+      expect.any(Object),
+      "card-unmounted"
+    );
+  });
+
   it("shows terminal error for non-local code 4 and does not retry", async () => {
     // Override the base createElement mock JUST for this test to make load() throw during init.
     document.createElement.mockImplementation((tag, opts) => {

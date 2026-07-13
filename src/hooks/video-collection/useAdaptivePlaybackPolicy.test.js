@@ -62,4 +62,44 @@ describe("useAdaptivePlaybackPolicy", () => {
       health: "suspended",
     });
   });
+
+  it("does not telemetry-derate explicit All Motion mode", () => {
+    const { result, rerender } = renderHook(
+      (props) => useAdaptivePlaybackPolicy(props),
+      {
+        initialProps: {
+          ...base,
+          mode: "all-motion",
+        },
+      }
+    );
+
+    expect(result.current).toMatchObject({
+      target: 30,
+      safetyCap: 30,
+      health: "unrestricted",
+    });
+
+    act(() => {
+      rerender({
+        ...base,
+        mode: "all-motion",
+        telemetry: {
+          ...base.telemetry,
+          sampleCount: 2,
+          droppedFrameRatio: 0.5,
+          frameDelayMs: 200,
+          longTaskRate: 0.5,
+          workingSetDeltaMB: 1024,
+          availableMemoryMB: 64,
+        },
+      });
+    });
+
+    expect(result.current).toMatchObject({
+      target: 30,
+      safetyCap: 30,
+      health: "unrestricted",
+    });
+  });
 });

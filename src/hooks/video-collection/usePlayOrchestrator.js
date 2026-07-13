@@ -14,6 +14,7 @@ import {
 } from "../../playback/playbackPolicy";
 
 const ERROR_COOLDOWN_MS = 8000;
+export const MAX_PLAYBACK_START_HISTORY = 1024;
 const EMPTY_IDS = Object.freeze([]);
 const EMPTY_SET = new Set();
 
@@ -86,9 +87,18 @@ export default function usePlayOrchestrator({
   const pushStartOrder = useCallback((id) => {
     startOrderRef.current = startOrderRef.current.filter((value) => value !== id);
     startOrderRef.current.push(id);
+    if (startOrderRef.current.length > MAX_PLAYBACK_START_HISTORY) {
+      startOrderRef.current.splice(
+        0,
+        startOrderRef.current.length - MAX_PLAYBACK_START_HISTORY
+      );
+    }
   }, []);
 
   const reconcile = useCallback(() => {
+    startOrderRef.current = startOrderRef.current
+      .filter((id) => loaded.has(id))
+      .slice(-MAX_PLAYBACK_START_HISTORY);
     if (decoderCap <= 0 || playbackSuspended) {
       scheduler.reconcileDecoders([]);
       mirrorScheduler();
@@ -240,6 +250,8 @@ export default function usePlayOrchestrator({
     () => () => {
       for (const timer of errorTimersRef.current.values()) clearTimeout(timer);
       errorTimersRef.current.clear();
+      recentlyErroredRef.current.clear();
+      startOrderRef.current = [];
       if (ownsScheduler) scheduler.reset();
     },
     [ownsScheduler, scheduler]
@@ -248,6 +260,17 @@ export default function usePlayOrchestrator({
   const getDecoderLease = useCallback(
     (id) => scheduler.getDecoderLease(id),
     [scheduler]
+  );
+
+  const getCacheDebugSnapshot = useCallback(
+    () => ({
+      startHistoryEntries: startOrderRef.current.length,
+      staleStartHistoryEntries: startOrderRef.current.filter(
+        (id) => !loaded.has(id)
+      ).length,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+    }),
+    [loaded]
   );
 
   return useMemo(
@@ -261,10 +284,12 @@ export default function usePlayOrchestrator({
       reportPlayError,
       reportPaused,
       getDecoderLease,
+      getCacheDebugSnapshot,
     }),
     [
       activeHoverAudioId,
       getDecoderLease,
+      getCacheDebugSnapshot,
       markHover,
       onCardHoverAudioEnd,
       onCardHoverAudioStart,

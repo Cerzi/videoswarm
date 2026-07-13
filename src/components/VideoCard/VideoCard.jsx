@@ -153,6 +153,9 @@ const VideoCard = memo(function VideoCard({
   const telemetryElementRef = useRef(null);
   const telemetryDisposeRef = useRef(null);
   const ownedSourceUrlRef = useRef(null);
+  const thumbnailOwnerRef = useRef(null);
+  const thumbnailRequestRef = useRef(null);
+  if (!thumbnailOwnerRef.current) thumbnailOwnerRef.current = {};
 
   // local mirrors (parent is source of truth)
   const videoId = video.id || video.fullPath || video.name;
@@ -243,6 +246,16 @@ const VideoCard = memo(function VideoCard({
 
   const effectiveAspectRatio = aspectRatioHint && aspectRatioHint > 0 ? aspectRatioHint : 16 / 9;
 
+  const cancelThumbnailCapture = useCallback((reason = "card-cancelled") => {
+    const request = thumbnailRequestRef.current;
+    thumbnailRequestRef.current = null;
+    if (request) {
+      if (thumbService.cancelRequest) thumbService.cancelRequest(request, reason);
+      else request.cancel?.();
+    }
+    thumbService.cancelOwner?.(thumbnailOwnerRef.current, reason);
+  }, []);
+
   const stopLoadingReservation = useCallback((generation = null, ready = false) => {
     const reservation = loadingReservationRef.current;
     if (!reservation) return null;
@@ -277,6 +290,8 @@ const VideoCard = memo(function VideoCard({
   const disposeVideoElement = useCallback((el) => {
     if (!el) return false;
 
+    cancelThumbnailCapture("media-detached");
+
     if (telemetryElementRef.current === el) {
       telemetryDisposeRef.current?.();
       telemetryDisposeRef.current = null;
@@ -305,7 +320,7 @@ const VideoCard = memo(function VideoCard({
     if (videoRef.current === el) videoRef.current = null;
     releaseOwnedMediaSlot();
     return true;
-  }, [releaseOwnedMediaSlot]);
+  }, [cancelThumbnailCapture, releaseOwnedMediaSlot]);
 
   const cancelLoadAttempt = useCallback(() => {
     loadGenerationRef.current += 1;
@@ -371,7 +386,8 @@ const VideoCard = memo(function VideoCard({
     const nextVisible = Boolean(isVisible);
     visibilityRef.current = nextVisible;
     lastObservedVisibilityRef.current = nextVisible;
-  }, [isVisible]);
+    if (!nextVisible) cancelThumbnailCapture("card-invisible");
+  }, [cancelThumbnailCapture, isVisible]);
 
   useEffect(() => {
     fullPathRef.current = fullPath;
@@ -384,12 +400,23 @@ const VideoCard = memo(function VideoCard({
   }, [isNear, videoId]);
 
   useEffect(() => {
+    if (
+      signatureRef.current &&
+      signatureRef.current !== thumbSignature
+    ) {
+      cancelThumbnailCapture("signature-changed");
+    }
     signatureRef.current = thumbSignature;
     if (!shouldEnsureLoad) return;
     if (fullPath && thumbSignature) {
       thumbService.noteVideoMetadata(fullPath, thumbSignature);
     }
-  }, [fullPath, thumbSignature, shouldEnsureLoad]);
+  }, [
+    cancelThumbnailCapture,
+    fullPath,
+    thumbSignature,
+    shouldEnsureLoad,
+  ]);
 
   const requestThumbnail = useCallback(
     (reason) => {
@@ -398,13 +425,22 @@ const VideoCard = memo(function VideoCard({
       const signature = signatureRef.current;
       const element = videoRef.current;
       if (!path || !signature || !element) return;
-      thumbService.requestCapture({
+      const request = thumbService.requestCapture({
         path,
         signature,
         videoElement: element,
         isVisible: () => visibilityRef.current,
+        owner: thumbnailOwnerRef.current,
         reason,
       });
+      if (!request?.accepted) return request;
+      thumbnailRequestRef.current = request;
+      void request.done.finally(() => {
+        if (thumbnailRequestRef.current === request) {
+          thumbnailRequestRef.current = null;
+        }
+      });
+      return request;
     },
     [canStartNativeDrag]
   );
@@ -1203,6 +1239,7 @@ const VideoCard = memo(function VideoCard({
 
     const handleVisible = (nowVisible /* boolean */, entry) => {
       visibilityRef.current = Boolean(nowVisible);
+      if (!nowVisible) cancelThumbnailCapture("observer-invisible");
       if (entry) {
         const nextNear = (isNear?.(videoId) ?? true) === true;
         if (nearStateRef.current !== nextNear) {
@@ -1231,6 +1268,7 @@ const VideoCard = memo(function VideoCard({
     videoId,
     onVisibilityChange,
     ensureVisibleAndLoad,
+    cancelThumbnailCapture,
     workSuspended,
   ]);
 
@@ -1281,6 +1319,7 @@ const VideoCard = memo(function VideoCard({
       mountedRef.current = false;
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+      cancelThumbnailCapture("card-unmounted");
       cancelLoadAttempt();
       telemetryDisposeRef.current?.();
       telemetryDisposeRef.current = null;
@@ -1289,7 +1328,7 @@ const VideoCard = memo(function VideoCard({
       onHoverAudioEndRef.current?.(videoIdRef.current);
       onUnmountRef.current?.(videoIdRef.current);
     };
-  }, [cancelLoadAttempt]);
+  }, [cancelLoadAttempt, cancelThumbnailCapture]);
 
   // UI handlers (unchanged)
   const handleClick = useCallback((e) => {

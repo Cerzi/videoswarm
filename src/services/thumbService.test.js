@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { thumbService } from "./thumbService";
+import { THUMB_SERVICE_LIMITS, thumbService } from "./thumbService";
+
+const RATE_LIMIT_TEST_MS = 100;
 
 const makeCanvasContext = () => ({
   save: vi.fn(),
@@ -44,14 +46,19 @@ const makeVideo = ({ controlledFrame = false } = {}) => {
   };
 };
 
-const request = (path, signature, videoElement) =>
+const request = (path, signature, videoElement, owner = null) =>
   thumbService.requestCapture({
     path,
     signature,
     videoElement,
     isVisible: () => true,
+    owner,
     reason: "test",
   });
+
+const flushMicrotasks = async (count = 8) => {
+  for (let index = 0; index < count; index += 1) await Promise.resolve();
+};
 
 describe("thumbService work suspension", () => {
   let previousElectronApi;
@@ -62,8 +69,8 @@ describe("thumbService work suspension", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     previousElectronApi = window.electronAPI;
-    getThumbnail = vi.fn(() => ({ ok: true, available: false }));
-    putThumbnail = vi.fn(() => ({ ok: true }));
+    getThumbnail = vi.fn().mockResolvedValue({ ok: true, available: false });
+    putThumbnail = vi.fn().mockResolvedValue({ ok: true });
     window.electronAPI = {
       thumbs: {
         get: getThumbnail,
@@ -98,7 +105,7 @@ describe("thumbService work suspension", () => {
     thumbService.noteVideoMetadata("/clips/a.mp4", "a-v1");
 
     thumbService.setSuspended(true);
-    expect(request("/clips/a.mp4", "a-v1", element)).toBe(false);
+    expect(request("/clips/a.mp4", "a-v1", element).accepted).toBe(false);
     await vi.runAllTimersAsync();
     expect(putThumbnail).not.toHaveBeenCalled();
     expect(thumbService.getDebugSnapshot()).toMatchObject({
@@ -109,7 +116,7 @@ describe("thumbService work suspension", () => {
     });
 
     thumbService.setSuspended(false);
-    expect(request("/clips/a.mp4", "a-v1", element)).toBe(true);
+    expect(request("/clips/a.mp4", "a-v1", element).accepted).toBe(true);
     await vi.runAllTimersAsync();
     expect(putThumbnail).toHaveBeenCalledOnce();
     expect(thumbService.getDebugSnapshot()).toMatchObject({
@@ -126,12 +133,14 @@ describe("thumbService work suspension", () => {
     thumbService.noteVideoMetadata("/clips/first.mp4", "first-v1");
     thumbService.noteVideoMetadata("/clips/delayed.mp4", "delayed-v1");
 
-    expect(request("/clips/first.mp4", "first-v1", first.element)).toBe(true);
+    expect(
+      request("/clips/first.mp4", "first-v1", first.element).accepted
+    ).toBe(true);
     await vi.runAllTimersAsync();
     expect(putThumbnail).toHaveBeenCalledOnce();
 
     expect(
-      request("/clips/delayed.mp4", "delayed-v1", delayed.element)
+      request("/clips/delayed.mp4", "delayed-v1", delayed.element).accepted
     ).toBe(true);
     expect(thumbService.getDebugSnapshot()).toMatchObject({
       queued: 1,
@@ -151,7 +160,7 @@ describe("thumbService work suspension", () => {
 
     thumbService.setSuspended(false);
     expect(
-      request("/clips/delayed.mp4", "delayed-v1", delayed.element)
+      request("/clips/delayed.mp4", "delayed-v1", delayed.element).accepted
     ).toBe(true);
     await vi.runAllTimersAsync();
     expect(putThumbnail).toHaveBeenCalledTimes(2);
@@ -161,9 +170,13 @@ describe("thumbService work suspension", () => {
     const first = makeVideo({ controlledFrame: true });
     thumbService.noteVideoMetadata("/clips/in-flight.mp4", "flight-v1");
 
-    expect(
-      request("/clips/in-flight.mp4", "flight-v1", first.element)
-    ).toBe(true);
+    const firstRequest = request(
+      "/clips/in-flight.mp4",
+      "flight-v1",
+      first.element
+    );
+    expect(firstRequest.accepted).toBe(true);
+    await flushMicrotasks();
     expect(first.element.requestVideoFrameCallback).toHaveBeenCalledOnce();
     expect(thumbService.getDebugSnapshot().active).toBe(true);
 
@@ -181,20 +194,28 @@ describe("thumbService work suspension", () => {
 
     thumbService.setSuspended(false);
     const replacement = makeVideo({ controlledFrame: true });
-    expect(
-      request("/clips/in-flight.mp4", "flight-v1", replacement.element)
-    ).toBe(true);
+    const replacementRequest = request(
+      "/clips/in-flight.mp4",
+      "flight-v1",
+      replacement.element
+    );
+    expect(replacementRequest.accepted).toBe(true);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_TEST_MS);
+    await flushMicrotasks();
+    expect(replacement.element.requestVideoFrameCallback).toHaveBeenCalledOnce();
     replacement.triggerFrame();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await expect(replacementRequest.done).resolves.toMatchObject({
+      status: "succeeded",
+    });
     expect(putThumbnail).toHaveBeenCalledOnce();
   });
 
   it("resetGeneration drops generation-owned metadata and stale captures", async () => {
     const stale = makeVideo({ controlledFrame: true });
     thumbService.noteVideoMetadata("/clips/stale.mp4", "stale-v1");
-    expect(request("/clips/stale.mp4", "stale-v1", stale.element)).toBe(true);
+    expect(
+      request("/clips/stale.mp4", "stale-v1", stale.element).accepted
+    ).toBe(true);
 
     const previousGeneration = thumbService.getDebugSnapshot().generation;
     const nextGeneration = thumbService.resetGeneration();
@@ -213,13 +234,165 @@ describe("thumbService work suspension", () => {
 
     const current = makeVideo({ controlledFrame: true });
     thumbService.noteVideoMetadata("/clips/current.mp4", "current-v1");
-    expect(
-      request("/clips/current.mp4", "current-v1", current.element)
-    ).toBe(true);
+    const currentRequest = request(
+      "/clips/current.mp4",
+      "current-v1",
+      current.element
+    );
+    expect(currentRequest.accepted).toBe(true);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_TEST_MS);
+    await flushMicrotasks();
+    expect(current.element.requestVideoFrameCallback).toHaveBeenCalledOnce();
     current.triggerFrame();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await expect(currentRequest.done).resolves.toMatchObject({
+      status: "succeeded",
+    });
     expect(putThumbnail).toHaveBeenCalledOnce();
+  });
+
+  it("bounds the native lookup/capture lane and settles overflow plus cancellation", async () => {
+    let releaseLookup;
+    getThumbnail.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseLookup = resolve;
+        })
+    );
+    const owner = {};
+    const handles = [];
+
+    for (let index = 0; index < THUMB_SERVICE_LIMITS.maxPending + 2; index += 1) {
+      const path = `/clips/queued-${index}.mp4`;
+      const signature = `queued-${index}-v1`;
+      const { element } = makeVideo();
+      thumbService.noteVideoMetadata(path, signature);
+      handles.push(request(path, signature, element, owner));
+    }
+
+    expect(handles.filter((handle) => handle.accepted)).toHaveLength(
+      THUMB_SERVICE_LIMITS.maxPending + 1
+    );
+    const overflow = handles.at(-1);
+    expect(overflow.accepted).toBe(false);
+    await expect(overflow.done).resolves.toMatchObject({
+      status: "overflow",
+      limit: THUMB_SERVICE_LIMITS.maxPending,
+    });
+    expect(getThumbnail).toHaveBeenCalledOnce();
+    expect(thumbService.getDebugSnapshot()).toMatchObject({
+      queued: THUMB_SERVICE_LIMITS.maxPending,
+      active: true,
+      trackedTasks: THUMB_SERVICE_LIMITS.maxPending + 1,
+      ownerEntries: 1,
+    });
+
+    expect(thumbService.cancelOwner(owner)).toBe(
+      THUMB_SERVICE_LIMITS.maxPending + 1
+    );
+    const results = await Promise.all(
+      handles.filter((handle) => handle.accepted).map((handle) => handle.done)
+    );
+    expect(new Set(results.map((result) => result.status))).toEqual(
+      new Set(["cancelled"])
+    );
+    expect(thumbService.getDebugSnapshot()).toMatchObject({
+      queued: 0,
+      active: false,
+      trackedTasks: 0,
+      ownerEntries: 0,
+      pendingStates: 0,
+      memoryEntries: 0,
+      memoryBytes: 0,
+    });
+
+    releaseLookup?.({ ok: true, available: false });
+    await vi.runAllTimersAsync();
+    expect(putThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates async native lookups and ignores a late result after owner cancellation", async () => {
+    let releaseLookup;
+    getThumbnail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseLookup = resolve;
+        })
+    );
+    const owner = {};
+    const { element } = makeVideo();
+    thumbService.noteVideoMetadata("/clips/dedupe.mp4", "dedupe-v1");
+
+    const first = request("/clips/dedupe.mp4", "dedupe-v1", element, owner);
+    const duplicate = request(
+      "/clips/dedupe.mp4",
+      "dedupe-v1",
+      element,
+      owner
+    );
+    expect(first.accepted).toBe(true);
+    expect(duplicate.accepted).toBe(false);
+    await expect(duplicate.done).resolves.toMatchObject({
+      status: "deduplicated",
+    });
+    expect(getThumbnail).toHaveBeenCalledOnce();
+
+    expect(thumbService.cancelOwner(owner)).toBe(1);
+    await expect(first.done).resolves.toMatchObject({ status: "cancelled" });
+    releaseLookup({ ok: true, available: true });
+    await vi.runAllTimersAsync();
+
+    expect(putThumbnail).not.toHaveBeenCalled();
+    expect(thumbService.metrics.nativeHits).toBe(0);
+    expect(thumbService.getDebugSnapshot()).toMatchObject({
+      trackedTasks: 0,
+      ownerEntries: 0,
+      pendingStates: 0,
+    });
+  });
+
+  it("plateaus metadata across repeated A/B generations with no stale owners", async () => {
+    const { maxMetadataEntries } = THUMB_SERVICE_LIMITS;
+    for (let generationIndex = 0; generationIndex < 3; generationIndex += 1) {
+      const owner = {};
+      const path = `/switch/clip-${generationIndex}.mp4`;
+      const { element } = makeVideo({ controlledFrame: true });
+      thumbService.noteVideoMetadata(path, `${path}::A`);
+      const handle = request(path, `${path}::A`, element, owner);
+      expect(handle.accepted).toBe(true);
+
+      thumbService.noteVideoMetadata(path, `${path}::B`);
+      await expect(handle.done).resolves.toMatchObject({ status: "cancelled" });
+
+      for (let index = 0; index < maxMetadataEntries + 128; index += 1) {
+        const metadataPath = `/generation-${generationIndex}/clip-${index}.mp4`;
+        thumbService.noteVideoMetadata(
+          metadataPath,
+          `${metadataPath}::${generationIndex % 2 ? "B" : "A"}`
+        );
+      }
+
+      expect(thumbService.getDebugSnapshot()).toMatchObject({
+        memoryEntries: 0,
+        memoryBytes: 0,
+        ownerEntries: 0,
+        trackedTasks: 0,
+      });
+      expect(thumbService.getDebugSnapshot().metadataEntries).toBeLessThanOrEqual(
+        maxMetadataEntries
+      );
+      expect(thumbService.getDebugSnapshot().signatureEntries).toBeLessThanOrEqual(
+        maxMetadataEntries
+      );
+
+      thumbService.resetGeneration();
+      expect(thumbService.getDebugSnapshot()).toMatchObject({
+        queued: 0,
+        pendingStates: 0,
+        metadataEntries: 0,
+        signatureEntries: 0,
+        ownerEntries: 0,
+        trackedTasks: 0,
+      });
+    }
   });
 });

@@ -32,9 +32,9 @@ function createDeferred() {
 }
 
 async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe("folder watcher sessions", () => {
@@ -252,5 +252,405 @@ describe("folder watcher sessions", () => {
     );
 
     await watcher.stop();
+  });
+
+  it("bounds change debouncers and preserves evicted notifications", async () => {
+    vi.useFakeTimers();
+    const createVideoFileObject = vi.fn(async (filePath) => ({ id: filePath }));
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      maxChangeDebouncers: 2,
+    });
+    const changed = vi.fn();
+    watcher.on("changed", changed);
+    await watcher.start("/library");
+
+    nativeWatchers[0].emit("change", "/library/one.mp4");
+    nativeWatchers[0].emit("change", "/library/two.mp4");
+    nativeWatchers[0].emit("change", "/library/three.mp4");
+
+    expect(watcher.getSnapshot()).toMatchObject({
+      pendingChangeDebouncers: 2,
+      limits: { maxChangeDebouncers: 2 },
+    });
+    await flushPromises();
+    vi.advanceTimersByTime(1000);
+    await flushPromises();
+
+    expect(createVideoFileObject).toHaveBeenCalledTimes(3);
+    expect(changed).toHaveBeenCalledTimes(3);
+    expect(watcher.getSnapshot()).toMatchObject({
+      pendingChangeDebouncers: 0,
+      activeEnrichments: 0,
+      pendingEnrichments: 0,
+    });
+    await watcher.stop();
+  });
+
+  it("coalesces a bounded enrichment queue and reconciles once after overflow", async () => {
+    const enrichments = [];
+    const createVideoFileObject = vi.fn((filePath) => {
+      const deferred = createDeferred();
+      enrichments.push({ filePath, deferred });
+      return deferred.promise;
+    });
+    const scanFolderForChanges = vi.fn(async () => {});
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges,
+      logger,
+      enrichmentConcurrency: 1,
+      maxPendingEnrichments: 1,
+    });
+    await watcher.start("/library", {
+      context: { profileId: "profile-a" },
+    });
+    const nativeWatcher = nativeWatchers[0];
+
+    nativeWatcher.emit("add", "/library/active.mp4");
+    nativeWatcher.emit("add", "/library/coalesced.mp4");
+    nativeWatcher.emit("add", "/library/coalesced.mp4");
+    nativeWatcher.emit("add", "/library/overflow.mp4");
+
+    expect(createVideoFileObject).toHaveBeenCalledTimes(1);
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 1,
+      pendingEnrichments: 1,
+      reconciliationNeeded: true,
+      limits: {
+        enrichmentConcurrency: 1,
+        maxPendingEnrichments: 1,
+      },
+      totals: { coalesced: 1, overflowed: 1 },
+    });
+    expect(scanFolderForChanges).not.toHaveBeenCalled();
+
+    enrichments[0].deferred.resolve({ id: enrichments[0].filePath });
+    await flushPromises();
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(scanFolderForChanges).not.toHaveBeenCalled();
+
+    enrichments[1].deferred.resolve({ id: enrichments[1].filePath });
+    await flushPromises();
+    await flushPromises();
+    expect(scanFolderForChanges).toHaveBeenCalledTimes(1);
+    expect(scanFolderForChanges).toHaveBeenCalledWith(
+      "/library",
+      expect.objectContaining({
+        profileId: "profile-a",
+        assertActive: expect.any(Function),
+        pollingState: expect.any(Object),
+      })
+    );
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 0,
+      pendingEnrichments: 0,
+      reconciliationNeeded: false,
+      totals: { reconciliations: 1 },
+    });
+    await watcher.stop();
+  });
+
+  it("releases an enrichment lane after rejected file work", async () => {
+    const createVideoFileObject = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary read failure"))
+      .mockResolvedValueOnce({ id: "recovered" });
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      enrichmentConcurrency: 1,
+      maxPendingEnrichments: 1,
+    });
+    await watcher.start("/library");
+
+    nativeWatchers[0].emit("add", "/library/fails.mp4");
+    nativeWatchers[0].emit("add", "/library/recovers.mp4");
+    await flushPromises();
+
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 0,
+      pendingEnrichments: 0,
+      totals: { completed: 2 },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("createVideoFileObject failed"),
+      expect.objectContaining({ message: "temporary read failure" })
+    );
+    await watcher.stop();
+  });
+
+  it("cancels active enrichment on unlink and suppresses its late add", async () => {
+    const enrichment = createDeferred();
+    const createVideoFileObject = vi.fn(() => enrichment.promise);
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      enrichmentConcurrency: 1,
+    });
+    const added = vi.fn();
+    const removed = vi.fn();
+    watcher.on("added", added);
+    watcher.on("removed", removed);
+    await watcher.start("/library");
+
+    nativeWatchers[0].emit("add", "/library/deleted.mp4");
+    const helperOptions = createVideoFileObject.mock.calls[0][2];
+    nativeWatchers[0].emit("unlink", "/library/deleted.mp4");
+
+    expect(helperOptions.signal.aborted).toBe(true);
+    expect(removed).toHaveBeenCalledOnce();
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 0,
+      pendingEnrichments: 0,
+      totals: { cancelled: 1 },
+    });
+
+    enrichment.resolve({ id: "/library/deleted.mp4" });
+    await flushPromises();
+    expect(added).not.toHaveBeenCalled();
+    await watcher.stop();
+  });
+
+  it("coalesces a same-path change behind active add enrichment", async () => {
+    vi.useFakeTimers();
+    const enrichments = [];
+    const createVideoFileObject = vi.fn((filePath) => {
+      const deferred = createDeferred();
+      enrichments.push({ filePath, deferred });
+      return deferred.promise;
+    });
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      enrichmentConcurrency: 1,
+    });
+    const added = vi.fn();
+    const changed = vi.fn();
+    watcher.on("added", added);
+    watcher.on("changed", changed);
+    await watcher.start("/library");
+
+    nativeWatchers[0].emit("add", "/library/same.mp4");
+    nativeWatchers[0].emit("change", "/library/same.mp4");
+    vi.advanceTimersByTime(1000);
+    await flushPromises();
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 1,
+      pendingEnrichments: 0,
+      totals: { coalesced: 1 },
+    });
+
+    enrichments[0].deferred.resolve({ id: "first" });
+    await flushPromises();
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(added).toHaveBeenCalledOnce();
+    expect(changed).not.toHaveBeenCalled();
+
+    enrichments[1].deferred.resolve({ id: "second" });
+    await flushPromises();
+    expect(changed).toHaveBeenCalledOnce();
+    expect(watcher.getSnapshot().activeEnrichments).toBe(0);
+    await watcher.stop();
+  });
+
+  it("releases stale session lanes so a new session can enrich immediately", async () => {
+    const oldEnrichment = createDeferred();
+    const newEnrichment = createDeferred();
+    const createVideoFileObject = vi.fn((filePath) =>
+      filePath.includes("old") ? oldEnrichment.promise : newEnrichment.promise
+    );
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      enrichmentConcurrency: 1,
+    });
+    const added = vi.fn();
+    watcher.on("added", added);
+
+    await watcher.start("/old", { context: { generation: "old" } });
+    nativeWatchers[0].emit("add", "/old/stalled.mp4");
+    expect(watcher.getSnapshot().activeEnrichments).toBe(1);
+
+    await watcher.start("/new", { context: { generation: "new" } });
+    nativeWatchers[1].emit("add", "/new/current.mp4");
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(watcher.getSnapshot()).toMatchObject({
+      currentFolder: "/new",
+      activeEnrichments: 1,
+      totals: { cancelled: 1 },
+    });
+
+    newEnrichment.resolve({ id: "new" });
+    await flushPromises();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(added.mock.calls[0][0]).toEqual({ id: "new" });
+
+    oldEnrichment.resolve({ id: "old" });
+    await flushPromises();
+    expect(added).toHaveBeenCalledTimes(1);
+    await watcher.stop();
+  });
+
+  it("hard-bounds raw enrichment across unlink and session churn", async () => {
+    const enrichments = [];
+    const createVideoFileObject = vi.fn((filePath) => {
+      const deferred = createDeferred();
+      enrichments.push({ filePath, deferred });
+      return deferred.promise;
+    });
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+      enrichmentConcurrency: 1,
+      maxOutstandingEnrichments: 2,
+    });
+    const added = vi.fn();
+    watcher.on("added", added);
+
+    await watcher.start("/old", { context: { generation: "old" } });
+    nativeWatchers[0].emit("add", "/old/one.mp4");
+    nativeWatchers[0].emit("unlink", "/old/one.mp4");
+    nativeWatchers[0].emit("add", "/old/two.mp4");
+    nativeWatchers[0].emit("unlink", "/old/two.mp4");
+    nativeWatchers[0].emit("add", "/old/blocked.mp4");
+
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 0,
+      outstandingEnrichments: 2,
+      retiredEnrichments: 2,
+      pendingEnrichments: 1,
+      limits: { maxOutstandingEnrichments: 2 },
+    });
+
+    await watcher.start("/new", { context: { generation: "new" } });
+    nativeWatchers[1].emit("add", "/new/current.mp4");
+    expect(createVideoFileObject).toHaveBeenCalledTimes(2);
+    expect(watcher.getSnapshot()).toMatchObject({
+      currentFolder: "/new",
+      outstandingEnrichments: 2,
+      retiredEnrichments: 2,
+      pendingEnrichments: 1,
+    });
+
+    // Settling one retired promise creates exactly one unit of admission for
+    // the current session while the other retired promise remains counted.
+    enrichments[0].deferred.resolve({ id: "late-old-one" });
+    await flushPromises();
+    expect(createVideoFileObject).toHaveBeenCalledTimes(3);
+    expect(enrichments[2].filePath).toBe("/new/current.mp4");
+    expect(watcher.getSnapshot()).toMatchObject({
+      activeEnrichments: 1,
+      outstandingEnrichments: 2,
+      retiredEnrichments: 1,
+      pendingEnrichments: 0,
+    });
+
+    enrichments[2].deferred.resolve({ id: "current" });
+    await flushPromises();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(added.mock.calls[0][0]).toEqual({ id: "current" });
+    expect(watcher.getSnapshot()).toMatchObject({
+      outstandingEnrichments: 1,
+      retiredEnrichments: 1,
+    });
+
+    enrichments[1].deferred.resolve({ id: "late-old-two" });
+    await flushPromises();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(watcher.getSnapshot()).toMatchObject({
+      outstandingEnrichments: 0,
+      retiredEnrichments: 0,
+      totals: { rawStarted: 3, rawSettled: 3 },
+    });
+    await watcher.stop();
+  });
+
+  it("keeps overflow reconciliation dirty until a retry succeeds", async () => {
+    vi.useFakeTimers();
+    const scanError = new Error("temporary reconciliation failure");
+    const scanFolderForChanges = vi
+      .fn()
+      .mockRejectedValueOnce(scanError)
+      .mockResolvedValueOnce(undefined);
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges,
+      logger,
+      maxPendingEnrichments: 0,
+      reconciliationRetryBaseMs: 10,
+      maxReconciliationRetries: 2,
+    });
+    const errors = vi.fn();
+    watcher.on("error", errors);
+    await watcher.start("/library");
+
+    nativeWatchers[0].emit("add", "/library/overflow.mp4");
+    await flushPromises();
+    expect(scanFolderForChanges).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith(
+      scanError,
+      expect.objectContaining({ folderPath: "/library" })
+    );
+    expect(watcher.getSnapshot()).toMatchObject({
+      reconciliationNeeded: true,
+      reconciliationRetryScheduled: true,
+      totals: { reconciliationFailures: 1 },
+    });
+
+    vi.advanceTimersByTime(10);
+    await flushPromises();
+    expect(scanFolderForChanges).toHaveBeenCalledTimes(2);
+    expect(watcher.getSnapshot()).toMatchObject({
+      reconciliationNeeded: false,
+      reconciliationInFlight: false,
+      reconciliationRetryScheduled: false,
+      totals: { reconciliationRetries: 1 },
+    });
+    await watcher.stop();
+  });
+
+  it("disposes pending state and prevents watcher reuse", async () => {
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges: vi.fn(),
+      logger,
+    });
+    await watcher.start("/library");
+    nativeWatchers[0].emit("change", "/library/pending.mp4");
+
+    await watcher.dispose();
+
+    expect(watcher.getSnapshot()).toMatchObject({
+      disposed: true,
+      pendingChangeDebouncers: 0,
+      pendingEnrichments: 0,
+      mode: "stopped",
+      limits: {
+        maxChangeDebouncers: 2048,
+        enrichmentConcurrency: 2,
+        maxPendingEnrichments: 2048,
+        maxOutstandingEnrichments: 8,
+      },
+    });
+    await expect(watcher.start("/library")).rejects.toThrow("disposed");
   });
 });

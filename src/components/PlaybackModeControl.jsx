@@ -8,8 +8,10 @@ import {
 const MODE_DESCRIPTIONS = Object.freeze({
   [PLAYBACK_MODES.BALANCED]:
     "Adapts simultaneous playback to frame delay, dropped frames, memory and source resolution.",
+  [PLAYBACK_MODES.ADAPTIVE_MOTION]:
+    "Uses a higher adaptive decoder budget while retaining hardware and health safety limits.",
   [PLAYBACK_MODES.ALL_MOTION]:
-    "Attempts to animate every visible clip within an explicit hardware safety limit.",
+    "Requests motion for every visible clip, matching the pre-mode behavior; this can use substantial CPU and memory.",
   [PLAYBACK_MODES.STATIC_HOVER]:
     "Keeps still first-frame previews and plays only hovered or selected clips.",
 });
@@ -49,8 +51,11 @@ export default function PlaybackModeControl({
             disabled={disabled}
           >
             <option value={PLAYBACK_MODES.BALANCED}>Balanced</option>
+            <option value={PLAYBACK_MODES.ADAPTIVE_MOTION}>
+              Adaptive Motion (safety capped)
+            </option>
             <option value={PLAYBACK_MODES.ALL_MOTION}>
-              All Motion (safety capped)
+              All Motion (uncapped)
             </option>
             <option value={PLAYBACK_MODES.STATIC_HOVER}>
               Static + Hover

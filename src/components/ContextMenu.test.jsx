@@ -1,11 +1,42 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
+import { afterEach, describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ContextMenu from './ContextMenu';
 
-const getById = (id) => ({ id, name: `Video ${id}`, fullPath: `/path/${id}.mp4`, isElectronFile: true });
+const getById = (id) => ({
+  id,
+  name: `Video ${id}`,
+  fullPath: `/path/${id}.mp4`,
+  isElectronFile: true,
+});
+
+const electronAPI = {
+  openInExternalPlayer: vi.fn(),
+  moveToTrash: vi.fn(),
+  showItemInFolder: vi.fn(),
+};
+
+const openSubmenu = (name) => {
+  const trigger = screen.getByRole('menuitem', { name });
+  fireEvent.mouseEnter(trigger);
+  return screen.getByRole('menu', { name });
+};
 
 describe('ContextMenu', () => {
+  const originalWidth = window.innerWidth;
+  const originalHeight = window.innerHeight;
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalWidth,
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalHeight,
+    });
+  });
+
   test('shows filename header for single-item context', () => {
     render(
       <ContextMenu
@@ -21,13 +52,7 @@ describe('ContextMenu', () => {
     expect(screen.getByText('Video a')).toBeInTheDocument();
   });
 
-  test('shows count header and policy labels for multi-selection (electron)', () => {
-    const electronAPI = {
-      openInExternalPlayer: () => {},
-      moveToTrash: () => {},
-      showItemInFolder: () => {},
-    };
-
+  test('retains every pre-library action and adds review actions in dense groups', () => {
     render(
       <ContextMenu
         visible
@@ -41,22 +66,31 @@ describe('ContextMenu', () => {
       />
     );
 
-    // Header reflects multi-select
     expect(screen.getByText('3 items selected')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Open.*this item/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Show in Explorer.*this item/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Properties.*this item/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Move to Recycle Bin.*3 selected/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Add or manage tags/i })).toBeInTheDocument();
 
-    // Single-item verbs are annotated as "(this item)"
-    expect(screen.getByText(/Open.*this item/i)).toBeInTheDocument();
-    expect(screen.getByText(/Show.*this item/i)).toBeInTheDocument();
-    expect(screen.getByText(/Copy Last Frame.*this item/i)).toBeInTheDocument();
+    openSubmenu(/Copy$/i);
+    expect(screen.getByRole('menuitem', { name: /Copy Path.*3 selected/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Copy Relative Path.*3 selected/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Copy Filename.*3 selected/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Copy Last Frame.*this item/i })).toBeInTheDocument();
 
-    // Multi-item verbs annotated as "(3 selected)"
-    expect(screen.getByText(/Copy Path.*3 selected/i)).toBeInTheDocument();
-    expect(screen.getByText(/Copy Relative Path.*3 selected/i)).toBeInTheDocument();
-    expect(screen.getByText(/Copy Filename.*3 selected/i)).toBeInTheDocument();
-    expect(screen.getByText(/Move to Recycle Bin.*3 selected/i)).toBeInTheDocument();
+    openSubmenu(/Rating.*3 selected/i);
+    expect(screen.getAllByRole('menuitem', { name: /Rate [★☆]{5}/i })).toHaveLength(5);
+    expect(screen.getByRole('menuitem', { name: /Clear rating/i })).toBeInTheDocument();
+
+    openSubmenu(/Review status.*3 selected/i);
+    expect(screen.getByRole('menuitem', { name: /Mark as pick/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Mark reviewed/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Mark as reject/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Mark unreviewed/i })).toBeInTheDocument();
   });
 
-  test('clicking a menu item calls onAction and onClose', () => {
+  test('clicking a submenu item calls onAction and onClose', () => {
     const onAction = vi.fn();
     const onClose = vi.fn();
     render(
@@ -70,9 +104,9 @@ describe('ContextMenu', () => {
         onAction={onAction}
       />
     );
-    // Use a label that always exists in single-select
-    const item = screen.getByText(/Copy Filename/i);
-    fireEvent.click(item);
+
+    openSubmenu(/Copy$/i);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Copy Filename/i }));
     expect(onAction).toHaveBeenCalledWith('copy-filename');
     expect(onClose).toHaveBeenCalled();
   });
@@ -91,7 +125,82 @@ describe('ContextMenu', () => {
       />
     );
 
-    fireEvent.click(screen.getByText('✓ Mark as pick'));
+    openSubmenu(/Review status/i);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Mark as pick/i }));
     expect(onAction).toHaveBeenCalledWith('metadata:review:pick');
+  });
+
+  test('keeps desktop actions visible but disabled when the preload bridge is unavailable', () => {
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 50, y: 50 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        electronAPI={null}
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+      />
+    );
+
+    for (const name of [/^.*Open$/i, /Show in Explorer/i, /Move to Recycle Bin/i]) {
+      expect(screen.getByRole('menuitem', { name })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+    }
+    expect(screen.getByRole('menuitem', { name: /Show in Explorer/i })).toHaveAttribute(
+      'title',
+      'Desktop integration is unavailable'
+    );
+  });
+
+  test('fits the root and submenus to the viewport edges', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 400,
+    });
+
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 490, y: 390 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        electronAPI={electronAPI}
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+      />
+    );
+
+    const rootMenu = screen.getByRole('menu', { name: /Actions for Video a/i });
+    expect(rootMenu).toHaveStyle({ left: '212px', top: '40px' });
+
+    const copyMenu = openSubmenu(/Copy$/i);
+    expect(copyMenu).toHaveStyle({ left: '8px' });
+  });
+
+  test('scrolling a constrained menu does not dismiss it', () => {
+    const onClose = vi.fn();
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 10, y: 10 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        electronAPI={electronAPI}
+        onClose={onClose}
+        onAction={vi.fn()}
+      />
+    );
+    fireEvent.scroll(screen.getByRole('menu', { name: /Actions for Video a/i }));
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

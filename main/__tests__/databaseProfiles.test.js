@@ -77,6 +77,68 @@ if (!hasNativeDriver || databaseLoadError) {
       expect(dbAPath).not.toBe(dbBPath);
     });
 
+    it("deduplicates bounded fingerprint work and disposes it on profile changes", async () => {
+      resetDatabase();
+      initMetadataStore(mockApp, profileA);
+      const storeA = getMetadataStore();
+      const filePath = path.join(profileA, "cache-lifecycle.mp4");
+      fs.writeFileSync(filePath, "shared fingerprint work");
+      const stats = fs.statSync(filePath);
+
+      const [first, second] = await Promise.all([
+        storeA.indexFile({ filePath, stats }),
+        storeA.indexFile({ filePath, stats }),
+      ]);
+
+      expect(first.fingerprint).toBe(second.fingerprint);
+      expect(storeA.getResourceSnapshot()).toMatchObject({
+        disposed: false,
+        fingerprintCache: {
+          entries: 1,
+          inFlight: 0,
+          maxEntries: database.FINGERPRINT_CACHE_MAX_ENTRIES,
+          maxInFlight: database.FINGERPRINT_CACHE_MAX_IN_FLIGHT,
+          totals: { deduplicated: 1 },
+        },
+      });
+
+      // Switching profiles directly must dispose the prior store even when a
+      // caller does not explicitly reset the singleton first.
+      initMetadataStore(mockApp, profileB);
+      const storeB = getMetadataStore();
+      expect(storeB).not.toBe(storeA);
+      expect(storeA.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
+
+      resetDatabase();
+      expect(storeB.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
+    });
+
+    it("prevents fingerprint work from resuming into a disposed store", async () => {
+      resetDatabase();
+      initMetadataStore(mockApp, profileA);
+      const store = getMetadataStore();
+      const filePath = path.join(profileA, "disposed-work.mp4");
+      fs.writeFileSync(filePath, Buffer.alloc(1024, 7));
+      const stats = fs.statSync(filePath);
+
+      const indexing = store.indexFile({ filePath, stats });
+      resetDatabase();
+
+      await expect(indexing).rejects.toMatchObject({
+        code: "METADATA_STORE_DISPOSED",
+      });
+      expect(store.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
+    });
+
     it("restores legacy database when corruption is detected", async () => {
       // Create legacy/base database with data
       resetDatabase();

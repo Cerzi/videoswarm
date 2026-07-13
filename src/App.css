@@ -1293,43 +1293,108 @@ body {
 }
 
 /* ===== Context menu ===== */
+.context-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  pointer-events: none;
+}
 .context-menu {
+  position: fixed;
   background: #2d2d2d;
   border: 1px solid #404040;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  min-width: 200px;
-  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  width: min(280px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: inherit;
+  font-size: 0.8125rem;
+  user-select: none;
+  pointer-events: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #666 #242424;
+}
+.context-menu--submenu {
+  width: min(270px, calc(100vw - 16px));
+  z-index: 1;
 }
 .context-menu-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: #1a1a1a;
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.875rem;
   border-bottom: 1px solid #404040;
 }
 .context-menu-title {
-  color: #ccc;
+  color: #fff;
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
   display: block;
 }
 .context-menu-items { padding: 0.25rem 0; }
-.context-menu-item {
-  padding: 0.5rem 0.75rem;
-  color: #ddd;
-  font-size: 0.85rem;
+.context-menu__item {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.875rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #e0e0e0;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  transition: background-color 0.15s ease;
+  justify-content: space-between;
+  gap: 0.75rem;
+  transition: background-color 0.1s ease, color 0.1s ease;
 }
-.context-menu-item:hover { background: #404040; color: #fff; }
-.context-menu-item:active { background: #007acc; }
+.context-menu__item:hover,
+.context-menu__item:focus-visible,
+.context-menu__item[aria-expanded="true"] {
+  outline: none;
+  background: #404040;
+  color: #fff;
+}
+.context-menu__item:active { background: #007acc; }
+.context-menu__item[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.context-menu__item[aria-disabled="true"]:hover {
+  background: transparent;
+  color: #e0e0e0;
+}
+.context-menu__item--dangerous { color: #ff7979; }
+.context-menu__item--dangerous:hover,
+.context-menu__item--dangerous:focus-visible {
+  background: #a52e2e;
+  color: #fff;
+}
+.context-menu__item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-menu__submenu-arrow {
+  flex: 0 0 auto;
+  color: #aaa;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.context-menu__separator {
+  height: 1px;
+  margin: 0.25rem 0;
+  background: #404040;
+}
 
 /* Ensure inner containers inherit radius */
 .video-item .video-element,

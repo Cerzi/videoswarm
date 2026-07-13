@@ -1,5 +1,6 @@
 export const PLAYBACK_MODES = Object.freeze({
   BALANCED: "balanced",
+  ADAPTIVE_MOTION: "adaptive-motion",
   ALL_MOTION: "all-motion",
   STATIC_HOVER: "static-hover",
 });
@@ -51,6 +52,12 @@ export function derivePlaybackSafetyCap({
   const visible = nonNegativeInteger(visibleCount);
   if (visible === 0) return 0;
 
+  // This is the explicit legacy-behaviour mode: every visible card may own a
+  // decoder. Resource ownership, visibility suspension, and physical cleanup
+  // still apply, but telemetry must not silently turn "All Motion" into a
+  // partial-motion mode.
+  if (normalizedMode === PLAYBACK_MODES.ALL_MOTION) return visible;
+
   const linux = String(platform || "").toLowerCase() === "linux";
   const cores = positiveInteger(hardwareConcurrency, 4);
   const systemMB = Math.max(1024, finiteNumber(systemMemoryMB, 8192));
@@ -63,8 +70,8 @@ export function derivePlaybackSafetyCap({
     finiteNumber(averagePixelArea, DEFAULT_PIXEL_AREA)
   );
 
-  const allMotion = normalizedMode === PLAYBACK_MODES.ALL_MOTION;
-  const coreMultiplier = allMotion
+  const adaptiveMotion = normalizedMode === PLAYBACK_MODES.ADAPTIVE_MOTION;
+  const coreMultiplier = adaptiveMotion
     ? linux
       ? 3
       : 4
@@ -74,8 +81,8 @@ export function derivePlaybackSafetyCap({
   const coreCap = Math.max(1, Math.floor(cores * coreMultiplier));
 
   // Keep a meaningful amount of RAM outside Chromium's decoded-frame pool.
-  const totalMemoryPerDecoderMB = allMotion ? 640 : 896;
-  const availableMemoryPerDecoderMB = allMotion ? 256 : 384;
+  const totalMemoryPerDecoderMB = adaptiveMotion ? 640 : 896;
+  const availableMemoryPerDecoderMB = adaptiveMotion ? 256 : 384;
   const totalMemoryCap = Math.max(
     1,
     Math.floor(systemMB / totalMemoryPerDecoderMB)
@@ -87,13 +94,13 @@ export function derivePlaybackSafetyCap({
 
   // Decode cost follows source pixels rather than the rendered tile size.
   const pixelsPerCore = (linux ? 1920 * 1080 : 2560 * 1440) *
-    (allMotion ? 3 : 1.5);
+    (adaptiveMotion ? 3 : 1.5);
   const pixelCap = Math.max(
     1,
     Math.floor((cores * pixelsPerCore) / pixelArea)
   );
 
-  const platformCeiling = allMotion
+  const platformCeiling = adaptiveMotion
     ? linux
       ? 64
       : 96
@@ -157,6 +164,17 @@ export function nextPlaybackDecision(previous = null, input = {}) {
       cleanWindows: 0,
       health: input.suspended ? "suspended" : "idle",
       reasons: [input.suspended ? "suspended" : "no-visible-media"],
+    };
+  }
+
+  if (mode === PLAYBACK_MODES.ALL_MOTION) {
+    return {
+      mode,
+      target: visibleCount,
+      safetyCap: visibleCount,
+      cleanWindows: 0,
+      health: "unrestricted",
+      reasons: [],
     };
   }
 

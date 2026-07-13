@@ -19,6 +19,9 @@ const healthy = {
 
 describe("playback policy", () => {
   it("normalizes persisted mode values", () => {
+    expect(normalizePlaybackMode(PLAYBACK_MODES.ADAPTIVE_MOTION)).toBe(
+      PLAYBACK_MODES.ADAPTIVE_MOTION
+    );
     expect(normalizePlaybackMode(PLAYBACK_MODES.ALL_MOTION)).toBe(
       PLAYBACK_MODES.ALL_MOTION
     );
@@ -95,7 +98,7 @@ describe("playback policy", () => {
     expect(decision.target).toBe(4);
   });
 
-  it("All Motion attempts the visible set but retains an explicit safety cap", () => {
+  it("Adaptive Motion raises the budget but retains an explicit safety cap", () => {
     const balanced = derivePlaybackSafetyCap({
       mode: PLAYBACK_MODES.BALANCED,
       platform: "linux",
@@ -105,8 +108,8 @@ describe("playback policy", () => {
       availableMemoryMB: 8192,
       averagePixelArea: 1280 * 720,
     });
-    const allMotion = nextPlaybackDecision(null, {
-      mode: PLAYBACK_MODES.ALL_MOTION,
+    const adaptiveMotion = nextPlaybackDecision(null, {
+      mode: PLAYBACK_MODES.ADAPTIVE_MOTION,
       platform: "linux",
       visibleCount: 1000,
       hardwareConcurrency: 8,
@@ -115,10 +118,37 @@ describe("playback policy", () => {
       averagePixelArea: 1280 * 720,
     });
 
-    expect(allMotion.target).toBe(allMotion.safetyCap);
-    expect(allMotion.target).toBeGreaterThan(balanced);
-    expect(allMotion.target).toBeLessThan(1000);
-    expect(allMotion.target).toBeLessThanOrEqual(64);
+    expect(adaptiveMotion.target).toBe(adaptiveMotion.safetyCap);
+    expect(adaptiveMotion.target).toBeGreaterThan(balanced);
+    expect(adaptiveMotion.target).toBeLessThan(1000);
+    expect(adaptiveMotion.target).toBeLessThanOrEqual(64);
+  });
+
+  it("All Motion restores the uncapped visible set despite health pressure", () => {
+    const decision = nextPlaybackDecision(
+      { mode: PLAYBACK_MODES.BALANCED, target: 2, cleanWindows: 0 },
+      {
+        mode: PLAYBACK_MODES.ALL_MOTION,
+        platform: "linux",
+        visibleCount: 1000,
+        hardwareConcurrency: 2,
+        systemMemoryMB: 4096,
+        availableMemoryMB: 100,
+        averagePixelArea: 3840 * 2160,
+        frameDelayMs: 180,
+        longTaskRate: 0.4,
+        droppedFrameRatio: 0.3,
+        workingSetDeltaMB: 512,
+      }
+    );
+
+    expect(decision).toMatchObject({
+      mode: PLAYBACK_MODES.ALL_MOTION,
+      target: 1000,
+      safetyCap: 1000,
+      health: "unrestricted",
+      cleanWindows: 0,
+    });
   });
 
   it("returns a zero target while suspended", () => {

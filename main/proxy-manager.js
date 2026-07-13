@@ -10,6 +10,7 @@ const DEFAULTS = Object.freeze({
   maxEntries: 512,
   concurrency: 1,
   maxPending: 4,
+  maxResolveInFlight: 64,
   timeoutMs: 120_000,
   maxStdoutBytes: 1024 * 1024,
   maxStderrBytes: 256 * 1024,
@@ -109,6 +110,11 @@ class ProxyManager {
       DEFAULTS.maxPending,
       0
     );
+    this.maxResolveInFlight = finiteInteger(
+      options.maxResolveInFlight,
+      DEFAULTS.maxResolveInFlight,
+      1
+    );
     this.timeoutMs = finiteInteger(options.timeoutMs, DEFAULTS.timeoutMs, 1);
     this.maxStdoutBytes = finiteInteger(
       options.maxStdoutBytes,
@@ -149,7 +155,8 @@ class ProxyManager {
     this.entries = new Map();
     this.diskBytes = 0;
     this.inFlight = new Map();
-    this.inactiveOwners = new Set();
+    this.ownerStates = new Map();
+    this.ownerResolutionCount = 0;
     this.ffmpegAvailable = null;
     this.persistTimer = null;
     this.persistTail = Promise.resolve();
@@ -163,6 +170,7 @@ class ProxyManager {
       cancelled: 0,
       evicted: 0,
       busy: 0,
+      resolveBusy: 0,
     };
     this.lastError = null;
   }
@@ -200,78 +208,137 @@ class ProxyManager {
     }
 
     const owner = normalizeOwnerId(ownerId);
-    if (this.inactiveOwners.has(owner)) {
+    const existingOwnerState = this.ownerStates.get(owner);
+    if (
+      existingOwnerState &&
+      (!existingOwnerState.active || existingOwnerState.disposed)
+    ) {
+      return this.#resolution(originalPath, "owner-inactive", { ownerId: owner });
+    }
+    if (this.ownerResolutionCount >= this.maxResolveInFlight) {
+      this.totals.resolveBusy += 1;
+      return this.#resolution(originalPath, "busy", {
+        busyReason: "resolve-capacity",
+        limit: this.maxResolveInFlight,
+      });
+    }
+    const ownership = this.#beginOwnerResolution(owner);
+    if (!ownership) {
       return this.#resolution(originalPath, "owner-inactive", { ownerId: owner });
     }
 
-    const requestGeneration = this.generation;
-    let stats;
     try {
-      stats = await this.fs.stat(originalPath);
-    } catch (error) {
-      return this.#resolution(originalPath, "source-error", {
-        error: error?.message || String(error),
-      });
-    }
-    if (requestGeneration !== this.generation || !this.initialized) {
-      return this.#resolution(originalPath, "stale");
-    }
+      const requestGeneration = this.generation;
+      let stats;
+      try {
+        stats = await this.fs.stat(originalPath);
+      } catch (error) {
+        if (requestGeneration !== this.generation || !this.initialized) {
+          return this.#resolution(originalPath, "stale");
+        }
+        if (!this.#isOwnerResolutionCurrent(ownership)) {
+          return this.#resolution(originalPath, "owner-inactive", {
+            ownerId: owner,
+          });
+        }
+        return this.#resolution(originalPath, "source-error", {
+          error: error?.message || String(error),
+        });
+      }
+      if (requestGeneration !== this.generation || !this.initialized) {
+        return this.#resolution(originalPath, "stale");
+      }
+      if (!this.#isOwnerResolutionCurrent(ownership)) {
+        return this.#resolution(originalPath, "owner-inactive", {
+          ownerId: owner,
+        });
+      }
 
-    const signature = sourceSignature(originalPath, stats);
-    const cached = await this.#resolveCachedEntry(signature, {
-      originalPath,
-      stats,
-      generation: requestGeneration,
-    });
-    if (cached) {
-      this.totals.cacheHits += 1;
-      return this.#resolution(originalPath, "cached", {
+      const signature = sourceSignature(originalPath, stats);
+      const cached = await this.#resolveCachedEntry(signature, {
+        originalPath,
+        stats,
+        generation: requestGeneration,
+        isActive: () => this.#isOwnerResolutionCurrent(ownership),
+      });
+      if (requestGeneration !== this.generation || !this.initialized) {
+        return this.#resolution(originalPath, "stale");
+      }
+      if (!this.#isOwnerResolutionCurrent(ownership)) {
+        return this.#resolution(originalPath, "owner-inactive", {
+          ownerId: owner,
+        });
+      }
+      if (cached) {
+        this.totals.cacheHits += 1;
+        return this.#resolution(originalPath, "cached", {
+          signature,
+          proxyPath: cached.proxyPath,
+          usingProxy: true,
+        });
+      }
+
+      if (this.ffmpegAvailable === false) {
+        return this.#resolution(originalPath, "unavailable", { signature });
+      }
+
+      // No asynchronous boundary may occur between this ownership check and
+      // adding the owner to existing work or creating a new task.
+      if (!this.#isOwnerResolutionCurrent(ownership)) {
+        return this.#resolution(originalPath, "owner-inactive", {
+          ownerId: owner,
+        });
+      }
+      const existingTask = this.inFlight.get(signature);
+      if (existingTask && existingTask.generation === requestGeneration) {
+        existingTask.owners.add(owner);
+        this.totals.deduplicated += 1;
+        return this.#resolution(originalPath, "pending", {
+          signature,
+          pending: true,
+        });
+      }
+
+      if (this.inFlight.size >= this.concurrency + this.maxPending) {
+        this.totals.busy += 1;
+        return this.#resolution(originalPath, "busy", { signature });
+      }
+
+      this.#queueGeneration({
         signature,
-        proxyPath: cached.proxyPath,
-        usingProxy: true,
+        originalPath,
+        stats,
+        owner,
+        generation: requestGeneration,
       });
-    }
-
-    if (this.ffmpegAvailable === false) {
-      return this.#resolution(originalPath, "unavailable", { signature });
-    }
-
-    const existingTask = this.inFlight.get(signature);
-    if (existingTask && existingTask.generation === requestGeneration) {
-      existingTask.owners.add(owner);
-      this.totals.deduplicated += 1;
-      return this.#resolution(originalPath, "pending", {
+      return this.#resolution(originalPath, "queued", {
         signature,
         pending: true,
       });
+    } finally {
+      this.#finishOwnerResolution(ownership);
     }
-
-    if (this.inFlight.size >= this.concurrency + this.maxPending) {
-      this.totals.busy += 1;
-      return this.#resolution(originalPath, "busy", { signature });
-    }
-
-    this.#queueGeneration({
-      signature,
-      originalPath,
-      stats,
-      owner,
-      generation: requestGeneration,
-    });
-    return this.#resolution(originalPath, "queued", {
-      signature,
-      pending: true,
-    });
   }
 
   setOwnerActive(ownerId, active) {
     const owner = normalizeOwnerId(ownerId);
-    if (active) {
-      return this.inactiveOwners.delete(owner);
+    const normalizedActive = Boolean(active);
+    let state = this.ownerStates.get(owner);
+    if (!state) {
+      if (normalizedActive) return false;
+      state = this.#createOwnerState(owner);
+      this.ownerStates.set(owner, state);
     }
-    this.inactiveOwners.add(owner);
-    this.cancelOwner(owner);
-    return true;
+    const changed = state.active !== normalizedActive || state.disposed;
+    state.epoch += 1;
+    state.active = normalizedActive;
+    state.disposed = false;
+    if (!normalizedActive) {
+      this.cancelOwner(owner);
+    } else if (state.resolutions === 0) {
+      this.ownerStates.delete(owner);
+    }
+    return changed;
   }
 
   cancelOwner(ownerId) {
@@ -287,6 +354,23 @@ class ProxyManager {
           "Proxy generation no longer has an active owner"
         );
       }
+    }
+    return affected;
+  }
+
+  disposeOwner(ownerId) {
+    const owner = normalizeOwnerId(ownerId);
+    let state = this.ownerStates.get(owner);
+    if (!state) {
+      state = this.#createOwnerState(owner);
+      this.ownerStates.set(owner, state);
+    }
+    state.epoch += 1;
+    state.active = false;
+    state.disposed = true;
+    const affected = this.cancelOwner(owner);
+    if (state.resolutions === 0 && this.ownerStates.get(owner) === state) {
+      this.ownerStates.delete(owner);
     }
     return affected;
   }
@@ -309,7 +393,7 @@ class ProxyManager {
     this.entries.clear();
     this.diskBytes = 0;
     this.inFlight.clear();
-    this.inactiveOwners.clear();
+    this.ownerStates.clear();
     this.profilePath = null;
     this.cacheDir = null;
     this.indexPath = null;
@@ -335,10 +419,17 @@ class ProxyManager {
     ]);
     await this.#flushIndex(true).catch(() => {});
     this.inFlight.clear();
+    this.ownerStates.clear();
     return this.getSnapshot();
   }
 
   getSnapshot() {
+    let inactiveOwners = 0;
+    let ownerTombstones = 0;
+    for (const state of this.ownerStates.values()) {
+      if (state.disposed) ownerTombstones += 1;
+      else if (!state.active) inactiveOwners += 1;
+    }
     return {
       initialized: this.initialized,
       closed: this.closed,
@@ -348,13 +439,18 @@ class ProxyManager {
       entries: this.entries.size,
       diskBytes: this.diskBytes,
       inFlight: this.inFlight.size,
-      inactiveOwners: this.inactiveOwners.size,
+      inactiveOwners,
+      ownerTombstones,
+      ownerResolutions: this.ownerResolutionCount,
+      resolveInFlight: this.ownerResolutionCount,
+      ownerStates: this.ownerStates.size,
       ffmpegAvailable: this.ffmpegAvailable,
       limits: {
         maxDiskBytes: this.maxDiskBytes,
         maxEntries: this.maxEntries,
         concurrency: this.concurrency,
         maxPending: this.maxPending,
+        maxResolveInFlight: this.maxResolveInFlight,
         timeoutMs: this.timeoutMs,
         maxStdoutBytes: this.maxStdoutBytes,
         maxStderrBytes: this.maxStderrBytes,
@@ -363,6 +459,51 @@ class ProxyManager {
       lastError: this.lastError ? { ...this.lastError } : null,
       runner: this.runner.getSnapshot?.() || null,
     };
+  }
+
+  #createOwnerState(owner) {
+    return {
+      owner,
+      epoch: 0,
+      active: true,
+      disposed: false,
+      resolutions: 0,
+    };
+  }
+
+  #beginOwnerResolution(owner) {
+    let state = this.ownerStates.get(owner);
+    if (state && (!state.active || state.disposed)) return null;
+    if (!state) {
+      state = this.#createOwnerState(owner);
+      this.ownerStates.set(owner, state);
+    }
+    state.resolutions += 1;
+    this.ownerResolutionCount += 1;
+    return { owner, state, epoch: state.epoch };
+  }
+
+  #isOwnerResolutionCurrent(ownership) {
+    const { owner, state, epoch } = ownership;
+    return (
+      this.ownerStates.get(owner) === state &&
+      state.epoch === epoch &&
+      state.active &&
+      !state.disposed
+    );
+  }
+
+  #finishOwnerResolution(ownership) {
+    const { owner, state } = ownership;
+    state.resolutions = Math.max(0, state.resolutions - 1);
+    this.ownerResolutionCount = Math.max(0, this.ownerResolutionCount - 1);
+    if (
+      state.resolutions === 0 &&
+      (state.active || state.disposed) &&
+      this.ownerStates.get(owner) === state
+    ) {
+      this.ownerStates.delete(owner);
+    }
   }
 
   async #initialize(profilePath) {
@@ -398,6 +539,8 @@ class ProxyManager {
       usingProxy: Boolean(details.usingProxy && proxyPath),
       pending: Boolean(details.pending),
       ...(details.ownerId ? { ownerId: details.ownerId } : {}),
+      ...(details.busyReason ? { busyReason: details.busyReason } : {}),
+      ...(Number.isFinite(details.limit) ? { limit: details.limit } : {}),
       ...(details.error ? { error: details.error } : {}),
     };
   }
@@ -414,13 +557,24 @@ class ProxyManager {
   }
 
   async #resolveCachedEntry(signature, context) {
-    if (context.generation !== this.generation) return null;
+    if (
+      context.generation !== this.generation ||
+      context.isActive?.() === false
+    ) {
+      return null;
+    }
     let entry = this.entries.get(signature) || null;
     const proxyPath = entry?.proxyPath || this.#proxyPath(signature);
     let proxyStats;
     try {
       proxyStats = await this.fs.stat(proxyPath);
     } catch (error) {
+      if (
+        context.generation !== this.generation ||
+        context.isActive?.() === false
+      ) {
+        return null;
+      }
       if (!isMissingError(error)) {
         this.#rememberError(error);
       }
@@ -431,7 +585,12 @@ class ProxyManager {
       }
       return null;
     }
-    if (context.generation !== this.generation) return null;
+    if (
+      context.generation !== this.generation ||
+      context.isActive?.() === false
+    ) {
+      return null;
+    }
 
     const bytes = Math.max(0, Number(proxyStats.size) || 0);
     if (!entry) {
@@ -447,6 +606,12 @@ class ProxyManager {
       this.entries.set(signature, entry);
       this.diskBytes += bytes;
       await this.#prune();
+      if (
+        context.generation !== this.generation ||
+        context.isActive?.() === false
+      ) {
+        return null;
+      }
     } else {
       const sizeDelta = bytes - entry.bytes;
       entry.bytes = bytes;

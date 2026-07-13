@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SortKey } from "../../sorting/sorting";
-import { useMasonryLayout } from "./useMasonryLayout";
+import {
+  MAX_MASONRY_ASPECT_OVERRIDES,
+  useMasonryLayout,
+} from "./useMasonryLayout";
 
 const io = vi.hoisted(() => ({
   observe: vi.fn(),
@@ -326,5 +329,68 @@ describe("useMasonryLayout virtual layout", () => {
     expect(
       rendered.result.current.virtualItems.some((item) => item.id === "clip-450")
     ).toBe(true);
+  });
+
+  it("plateaus aspect overrides and removes stale A/B generation entries", () => {
+    const count = MAX_MASONRY_ASPECT_OVERRIDES + 128;
+    let videos = makeVideos(count);
+    const rendered = renderLayout({ videos, filteredVideos: videos });
+
+    act(() => {
+      for (const video of videos) {
+        rendered.result.current.updateAspectRatio(video.id, 1.5);
+      }
+    });
+    expect(rendered.result.current.getCacheDebugSnapshot()).toMatchObject({
+      pendingAspectOverrideEntries: MAX_MASONRY_ASPECT_OVERRIDES,
+      stalePendingAspectOverrideEntries: 0,
+      maxAspectOverrideEntries: MAX_MASONRY_ASPECT_OVERRIDES,
+    });
+
+    act(() => flushFrames());
+    expect(rendered.result.current.getCacheDebugSnapshot()).toMatchObject({
+      aspectOverrideEntries: MAX_MASONRY_ASPECT_OVERRIDES,
+      staleAspectOverrideEntries: 0,
+      pendingAspectOverrideEntries: 0,
+    });
+
+    for (let generationIndex = 1; generationIndex <= 3; generationIndex += 1) {
+      videos = videos.map((video) => ({
+        ...video,
+        size: video.size + 1,
+        dateModified: video.dateModified + 1,
+      }));
+      act(() => {
+        rendered.rerender({
+          ...rendered.props,
+          videos,
+          filteredVideos: videos,
+        });
+        flushFrames();
+      });
+      expect(rendered.result.current.getCacheDebugSnapshot()).toMatchObject({
+        aspectOverrideEntries: 0,
+        staleAspectOverrideEntries: 0,
+        pendingAspectOverrideEntries: 0,
+      });
+
+      act(() => {
+        for (const video of videos) {
+          rendered.result.current.updateAspectRatio(
+            video.id,
+            generationIndex % 2 ? 2 : 0.75
+          );
+        }
+        flushFrames();
+      });
+      expect(
+        rendered.result.current.getCacheDebugSnapshot()
+          .aspectOverrideEntries
+      ).toBeLessThanOrEqual(MAX_MASONRY_ASPECT_OVERRIDES);
+      expect(
+        rendered.result.current.getCacheDebugSnapshot()
+          .staleAspectOverrideEntries
+      ).toBe(0);
+    }
   });
 });
