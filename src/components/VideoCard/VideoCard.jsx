@@ -4,6 +4,11 @@ import { classifyMediaError } from "./mediaError";
 import { toFileURL, hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
+import {
+  REVIEW_STATES,
+  normalizeReviewState,
+  reviewStateLabel,
+} from "../../review/reviewState";
 
 const RECOVERY_TIMEOUT_MS = 4000;
 
@@ -220,6 +225,8 @@ const VideoCard = memo(function VideoCard({
   const hasTags = Array.isArray(video?.tags) && video.tags.length > 0;
   const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
+  const reviewState = normalizeReviewState(video?.reviewState);
+  const hasReviewBadge = reviewState !== REVIEW_STATES.UNREVIEWED;
 
   const aspectRatioHint = (() => {
     const direct = Number(video?.aspectRatio);
@@ -1434,6 +1441,15 @@ const VideoCard = memo(function VideoCard({
         aspectRatio: effectiveAspectRatio,
       }}
     >
+      {hasReviewBadge && (
+        <div
+          className={`video-item-review video-item-review--${reviewState}`}
+          title={`Review state: ${reviewStateLabel(reviewState)}`}
+        >
+          {reviewStateLabel(reviewState)}
+        </div>
+      )}
+
       {ratingValue !== null && (
         <div className="video-item-rating" title={`Rated ${ratingValue} / 5`}>
           {Array.from({ length: 5 }).map((_, index) => (

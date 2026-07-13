@@ -6,10 +6,12 @@ describe("normalizeVideoFromMain", () => {
       fingerprint: "abc",
       rating: 4.7,
       tags: ["A", "a", "", null],
+      reviewState: " PICK ",
       dimensions: { width: 1920.2, height: 1080.6 },
     });
 
     expect(result.rating).toBe(5);
+    expect(result.reviewState).toBe("pick");
     expect(result.tags).toEqual(["A", "a"].map((t) => t.trim()).filter(Boolean).slice(0, 2));
     expect(result.dimensions).toEqual({
       width: 1920,
@@ -23,5 +25,6 @@ describe("normalizeVideoFromMain", () => {
     const result = normalizeVideoFromMain({ rating: "nope", tags: "nope" });
     expect(result.rating).toBeNull();
     expect(result.tags).toEqual([]);
+    expect(result.reviewState).toBe("unreviewed");
   });
 });

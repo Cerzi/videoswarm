@@ -76,4 +76,22 @@ describe('ContextMenu', () => {
     expect(onAction).toHaveBeenCalledWith('copy-filename');
     expect(onClose).toHaveBeenCalled();
   });
+
+  test('offers quick review states for batch review', () => {
+    const onAction = vi.fn();
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 50, y: 50 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        onClose={vi.fn()}
+        onAction={onAction}
+      />
+    );
+
+    fireEvent.click(screen.getByText('✓ Mark as pick'));
+    expect(onAction).toHaveBeenCalledWith('metadata:review:pick');
+  });
 });

@@ -7,6 +7,11 @@ import {
   formatRatingLabel,
   useFiltersActiveCount,
 } from "../filters/filtersUtils";
+import {
+  REVIEW_FILTERS,
+  matchesReviewFilter,
+  normalizeReviewFilter,
+} from "../../review/reviewState";
 
 const resolveValue = (value, fallback) =>
   value === undefined ? fallback : value;
@@ -16,12 +21,14 @@ const normalizeFiltersDraft = (draft, prev) => {
   const excludeTagsRaw = resolveValue(draft?.excludeTags, prev.excludeTags);
   const minRatingRaw = resolveValue(draft?.minRating, prev.minRating);
   const exactRatingRaw = resolveValue(draft?.exactRating, prev.exactRating);
+  const reviewFilterRaw = resolveValue(draft?.reviewFilter, prev.reviewFilter);
 
   return {
     includeTags: normalizeTagList(includeTagsRaw),
     excludeTags: normalizeTagList(excludeTagsRaw),
     minRating: sanitizeMinRating(minRatingRaw),
     exactRating: sanitizeExactRating(exactRatingRaw),
+    reviewFilter: normalizeReviewFilter(reviewFilterRaw),
   };
 };
 
@@ -46,6 +53,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     const excludeTags = filters.excludeTags ?? [];
     const minRating = sanitizeMinRating(filters.minRating);
     const exactRating = sanitizeExactRating(filters.exactRating);
+    const reviewFilter = normalizeReviewFilter(filters.reviewFilter);
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -54,7 +62,13 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
       ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
       : null;
 
-    if (!includeSet && !excludeSet && minRating === null && exactRating === null) {
+    if (
+      !includeSet &&
+      !excludeSet &&
+      minRating === null &&
+      exactRating === null &&
+      reviewFilter === REVIEW_FILTERS.ANY
+    ) {
       return videos;
     }
 
@@ -77,6 +91,10 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
             return false;
           }
         }
+      }
+
+      if (!matchesReviewFilter(video.reviewState, reviewFilter)) {
+        return false;
       }
 
       const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
@@ -126,6 +144,10 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
 
   const clearExactRatingFilter = useCallback(() => {
     updateFilters((prev) => ({ ...prev, exactRating: null }));
+  }, [updateFilters]);
+
+  const clearReviewFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, reviewFilter: REVIEW_FILTERS.ANY }));
   }, [updateFilters]);
 
   const ratingSummary = useMemo(() => {
@@ -199,5 +221,6 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     handleRemoveExcludeFilter,
     clearMinRatingFilter,
     clearExactRatingFilter,
+    clearReviewFilter,
   };
 }

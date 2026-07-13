@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen, act } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen, act, waitFor } from "@testing-library/react";
 
 const selectionMock = {
   selected: new Set(),
@@ -94,9 +94,12 @@ const useFullScreenModalMock = vi.fn(() => ({
 const useHotkeysMock = vi.fn();
 
 const electronVideos = [{ id: "video-1" }];
-const useElectronLifecycleMock = vi.fn(() => ({
+const electronLifecycleReturn = {
   videos: electronVideos,
   setVideos: vi.fn(),
+  activeRootPath: null,
+  libraryRoot: null,
+  directorySummaries: [],
   isLoadingFolder: false,
   loadingStatus: null,
   loadingStage: "",
@@ -104,12 +107,20 @@ const useElectronLifecycleMock = vi.fn(() => ({
   settingsLoaded: true,
   cancelFolderLoad: vi.fn(),
   handleElectronFolderSelection: vi.fn(),
+  reloadCurrentRoot: vi.fn(),
   handleFolderSelect: vi.fn(),
   handleWebFileSelection: vi.fn(),
-}));
+};
+const useElectronLifecycleMock = vi.fn(() => electronLifecycleReturn);
 
 const filterStateReturn = {
-  filters: { includeTags: [], excludeTags: [] },
+  filters: {
+    includeTags: [],
+    excludeTags: [],
+    minRating: null,
+    exactRating: null,
+    reviewFilter: "any",
+  },
   setFiltersOpen: vi.fn(),
   isFiltersOpen: false,
   updateFilters: vi.fn(),
@@ -120,6 +131,7 @@ const filterStateReturn = {
   ratingSummary: {},
   handleRemoveIncludeFilter: vi.fn(),
   handleRemoveExcludeFilter: vi.fn(),
+  clearReviewFilter: vi.fn(),
 };
 const useFilterStateMock = vi.fn(() => filterStateReturn);
 
@@ -170,6 +182,7 @@ const metadataActionsReturn = {
   handleRemoveTag: vi.fn(),
   handleSetRating: vi.fn(),
   handleClearRating: vi.fn(),
+  handleSetReviewState: vi.fn(),
   handleApplyExistingTag: vi.fn(),
   refreshTagList: vi.fn(),
 };
@@ -210,6 +223,28 @@ const useVideoCollectionMock = vi.fn(() => ({
 const headerBarSpy = vi.fn();
 const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
+const metadataPanelSpy = vi.fn();
+const setLibraryRootPinnedMock = vi.fn();
+const useLibraryCatalogMock = vi.fn((args = {}) => ({
+  pinnedRoots: [],
+  currentRoot: args.scannedRoot ?? null,
+  directories: args.scannedDirectories ?? [],
+  setPinned: setLibraryRootPinnedMock,
+}));
+const savedViewsReturn = {
+  savedViews: [],
+  createSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+};
+const useSavedViewsMock = vi.fn(() => savedViewsReturn);
+const useGenerationMetadataMock = vi.fn(() => ({
+  loading: false,
+  found: false,
+  cached: false,
+  metadata: null,
+  error: null,
+  refresh: vi.fn(),
+}));
 
 vi.mock("./components/VideoCard/VideoCard", async () => {
   const ReactModule = await vi.importActual("react");
@@ -237,7 +272,10 @@ vi.mock("./components/MetadataPanel", async () => {
   const ReactModule = await vi.importActual("react");
   return {
     __esModule: true,
-    default: ReactModule.default.forwardRef(() => null),
+    default: ReactModule.default.forwardRef((props, _ref) => {
+      metadataPanelSpy(props);
+      return null;
+    }),
   };
 });
 vi.mock("./components/HeaderBar", () => ({
@@ -364,6 +402,18 @@ vi.mock("./app/hooks/useElectronFolderLifecycle", () => ({
   __esModule: true,
   useElectronFolderLifecycle: (...args) => useElectronLifecycleMock(...args),
 }));
+vi.mock("./app/hooks/useLibraryCatalog", () => ({
+  __esModule: true,
+  useLibraryCatalog: (...args) => useLibraryCatalogMock(...args),
+}));
+vi.mock("./app/hooks/useSavedViews", () => ({
+  __esModule: true,
+  useSavedViews: (...args) => useSavedViewsMock(...args),
+}));
+vi.mock("./app/hooks/useGenerationMetadata", () => ({
+  __esModule: true,
+  useGenerationMetadata: (...args) => useGenerationMetadataMock(...args),
+}));
 vi.mock("./app/hooks/useWindowWorkSuspension", () => ({
   __esModule: true,
   default: (...args) => useWindowWorkSuspensionMock(...args),
@@ -387,6 +437,15 @@ vi.mock("./App.css", () => ({}), { virtual: true });
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  useElectronLifecycleMock.mockImplementation(() => electronLifecycleReturn);
+  useFilterStateMock.mockImplementation(() => filterStateReturn);
+  useLibraryCatalogMock.mockImplementation((args = {}) => ({
+    pinnedRoots: [],
+    currentRoot: args.scannedRoot ?? null,
+    directories: args.scannedDirectories ?? [],
+    setPinned: setLibraryRootPinnedMock,
+  }));
+  useSavedViewsMock.mockImplementation(() => savedViewsReturn);
   Object.assign(masonryReturn, {
     orderedVideos: [],
     displayVideos: [],
@@ -410,6 +469,8 @@ afterEach(() => {
   });
   useAdaptivePlaybackPolicyMock.mockReturnValue(playbackDecision);
   delete window.electronAPI;
+  selectionMock.selected = new Set();
+  selectionMock.size = 0;
 });
 
 describe("App hook composition", () => {
@@ -436,6 +497,7 @@ describe("App hook composition", () => {
     expect(typeof electronArgs.setPlaybackMode).toBe("function");
     expect(typeof electronArgs.setProxyPlaybackEnabled).toBe("function");
     expect(typeof electronArgs.resetThumbnailGeneration).toBe("function");
+    expect(typeof electronArgs.beforeExternalFolderSelection).toBe("function");
     electronArgs.resetThumbnailGeneration("folder-change");
     expect(resetThumbnailGenerationMock).toHaveBeenCalledWith("folder-change");
 
@@ -689,6 +751,138 @@ describe("App hook composition", () => {
     expect(unmountedProps.isLoaded).toBe(false);
     expect(unmountedProps.isVisible).toBe(false);
     expect(unmountedProps.isLoading).toBe(false);
+  });
+
+  test("keeps an empty indexed root open and displays its path", async () => {
+    const lifecycle = {
+      ...electronLifecycleReturn,
+      videos: [],
+      activeRootPath: "/models/wan/empty-run",
+      libraryRoot: {
+        rootPath: "/models/wan/empty-run",
+        name: "empty-run",
+        pinned: false,
+      },
+      directorySummaries: [
+        { relativePath: "", name: "empty-run", presentCount: 0 },
+      ],
+    };
+    useElectronLifecycleMock.mockImplementation(() => lifecycle);
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [],
+    }));
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    expect(screen.queryByText(/Welcome to Video Swarm/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Current folder path" })
+    ).toHaveTextContent("empty-run");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No videos in this collection"
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "/models/wan/empty-run"
+    );
+  });
+
+  test("keeps metadata targets for selected videos hidden by filters", async () => {
+    const hiddenVideo = {
+      id: "hidden-video",
+      name: "hidden.mp4",
+      fingerprint: "fingerprint-hidden",
+      reviewState: "pick",
+    };
+    selectionMock.selected = new Set([hiddenVideo.id]);
+    selectionMock.size = 1;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [hiddenVideo],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [],
+    }));
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectionCount: 1,
+      selectedVideos: [hiddenVideo],
+    });
+    expect(useMetadataActionsMock.mock.calls.at(-1)?.[0].selectedFingerprints).toEqual([
+      "fingerprint-hidden",
+    ]);
+    expect(selectionMock.pruneTo).toHaveBeenCalledWith(new Set([hiddenVideo.id]));
+  });
+
+  test("navigates a counted folder, enables recursion, and applies saved views", async () => {
+    const videos = [
+      { id: "root", name: "root.mp4", dirname: "", reviewState: "reviewed" },
+      { id: "a", name: "a.mp4", dirname: "run-a", reviewState: "pick" },
+      { id: "b", name: "b.mp4", dirname: "run-b", reviewState: "unreviewed" },
+    ];
+    const reloadCurrentRoot = vi.fn().mockResolvedValue(true);
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [
+        { relativePath: "", name: "outputs" },
+        { relativePath: "run-a", name: "run-a" },
+        { relativePath: "run-b", name: "run-b" },
+      ],
+      reloadCurrentRoot,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    const smartView = {
+      id: 1,
+      name: "Needs review",
+      definition: {
+        version: 1,
+        filters: { reviewFilter: "unreviewed" },
+        sort: { key: "created", dir: "desc", groupByFolders: true },
+        scope: { mode: "current-subtree" },
+      },
+    };
+    useSavedViewsMock.mockImplementation(() => ({
+      ...savedViewsReturn,
+      savedViews: [smartView],
+    }));
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle("run-a"));
+    await waitFor(() => expect(reloadCurrentRoot).toHaveBeenCalledWith(true));
+    await waitFor(() =>
+      expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual([
+        videos[1],
+      ])
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Needs review" }));
+    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith({
+      reviewFilter: "unreviewed",
+    });
+    expect(selectionMock.clear).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    await waitFor(() => expect(reloadCurrentRoot).toHaveBeenLastCalledWith(false));
+    await waitFor(() =>
+      expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual(videos)
+    );
   });
 
   test("forwards live scan status and whole-app memory to the loading dialog", async () => {

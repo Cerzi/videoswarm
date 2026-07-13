@@ -1,4 +1,8 @@
 import React, { useMemo, useState, forwardRef } from "react";
+import {
+  REVIEW_FILTERS,
+  normalizeReviewFilter,
+} from "../review/reviewState";
 import "./FiltersPopover.css";
 
 const MIN_RATING_OPTIONS = [
@@ -20,6 +24,14 @@ const EXACT_RATING_OPTIONS = [
 ];
 
 const MAX_DEFAULT_TAGS = 10;
+
+const REVIEW_OPTIONS = [
+  { value: REVIEW_FILTERS.ANY, label: "Any" },
+  { value: REVIEW_FILTERS.UNREVIEWED, label: "Unreviewed" },
+  { value: REVIEW_FILTERS.REVIEWED, label: "Reviewed" },
+  { value: REVIEW_FILTERS.PICK, label: "Picks" },
+  { value: REVIEW_FILTERS.REJECT, label: "Rejects" },
+];
 
 function renderTagChip(tag, onRemove, variant) {
   return (
@@ -53,6 +65,7 @@ const FiltersPopover = forwardRef(
     const minRating = filters?.minRating ?? null;
     const exactRating =
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
+    const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
 
     const [tagQuery, setTagQuery] = useState("");
 
@@ -353,6 +366,30 @@ const FiltersPopover = forwardRef(
               })}
             </div>
           </div>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Review state</header>
+          <div className="filters-rating-row" role="group" aria-label="Review state">
+            {REVIEW_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                className={`filters-pill ${
+                  reviewFilter === value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={reviewFilter === value}
+                onClick={() =>
+                  onChange((prev) => ({ ...prev, reviewFilter: value }))
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="filters-empty-hint">
+            Picks and rejects also count as reviewed.
+          </span>
         </section>
       </div>
     );

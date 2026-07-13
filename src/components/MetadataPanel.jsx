@@ -6,6 +6,11 @@ import React, {
   useCallback,
   forwardRef,
 } from "react";
+import {
+  REVIEW_STATES,
+  normalizeReviewState,
+  reviewStateLabel,
+} from "../review/reviewState";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -61,6 +66,8 @@ const MetadataPanel = forwardRef((
     onApplyTagToSelection,
     onSetRating,
     onClearRating,
+    onSetReviewState,
+    generationMetadataState = null,
     focusToken,
     onFocusSelection,
     dockHeight,
@@ -274,6 +281,20 @@ const MetadataPanel = forwardRef((
     }
     const hasAny = values.some((value) => value !== null);
     return { value: null, mixed: true, hasAny };
+  }, [selectedVideos]);
+
+  const reviewInfo = useMemo(() => {
+    if (!selectedVideos.length) {
+      return { value: REVIEW_STATES.UNREVIEWED, mixed: false };
+    }
+    const values = selectedVideos.map((video) =>
+      normalizeReviewState(video?.reviewState)
+    );
+    const unique = new Set(values);
+    return {
+      value: unique.size === 1 ? values[0] : null,
+      mixed: unique.size > 1,
+    };
   }, [selectedVideos]);
 
   const singleSelectionInfo = useMemo(() => {
@@ -629,6 +650,76 @@ const MetadataPanel = forwardRef((
                   </section>
                 )}
 
+                {derivedSelectionCount === 1 && generationMetadataState && (
+                  <section className="metadata-panel__section metadata-panel__generation">
+                    <div className="metadata-panel__section-header">
+                      <span>Generation</span>
+                      <div className="metadata-panel__generation-actions">
+                        {generationMetadataState.cached && (
+                          <span className="metadata-panel__badge">Cached</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => generationMetadataState.onRefresh?.()}
+                          disabled={generationMetadataState.loading}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+                    {generationMetadataState.loading ? (
+                      <p className="metadata-panel__generation-status">
+                        Looking for a matching sidecar…
+                      </p>
+                    ) : generationMetadataState.error ? (
+                      <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
+                        {generationMetadataState.error}
+                      </p>
+                    ) : !generationMetadataState.found ? (
+                      <p className="metadata-panel__generation-status">
+                        No matching sidecar found for this clip.
+                      </p>
+                    ) : (
+                      <dl className="metadata-panel__generation-grid">
+                        {generationMetadataState.metadata?.prompt && (
+                          <div className="metadata-panel__generation-prompt">
+                            <dt>Prompt</dt>
+                            <dd title={generationMetadataState.metadata.prompt}>
+                              {generationMetadataState.metadata.prompt}
+                            </dd>
+                          </div>
+                        )}
+                        {[
+                          ["Seed", generationMetadataState.metadata?.seed],
+                          [
+                            "Model",
+                            generationMetadataState.metadata?.models?.join(", ") ||
+                              generationMetadataState.metadata?.model,
+                          ],
+                          [
+                            "Sampler",
+                            generationMetadataState.metadata?.samplers?.join(", ") ||
+                              generationMetadataState.metadata?.sampler,
+                          ],
+                          ["Run", generationMetadataState.metadata?.generationRun],
+                          [
+                            "Source",
+                            generationMetadataState.metadata?.sourceImages?.join(", ") ||
+                              generationMetadataState.metadata?.sourceImage,
+                          ],
+                        ].map(([label, value]) =>
+                          value ? (
+                            <div key={label}>
+                              <dt>{label}</dt>
+                              <dd title={String(value)}>{String(value)}</dd>
+                            </div>
+                          ) : null
+                        )}
+                      </dl>
+                    )}
+                  </section>
+                )}
+
                 <div className="metadata-panel__grid">
                   <section className="metadata-panel__section metadata-panel__section--rating">
                     <div className="metadata-panel__section-header">
@@ -650,6 +741,53 @@ const MetadataPanel = forwardRef((
                       onClear={onClearRating}
                       disabled={!hasSelection}
                     />
+                  </section>
+
+                  <section className="metadata-panel__section metadata-panel__section--review">
+                    <div className="metadata-panel__section-header">
+                      <span>Review</span>
+                      <span
+                        className={`metadata-panel__badge ${
+                          reviewInfo.value === REVIEW_STATES.PICK
+                            ? "metadata-panel__badge--pick"
+                            : reviewInfo.value === REVIEW_STATES.REJECT
+                            ? "metadata-panel__badge--reject"
+                            : ""
+                        }`}
+                      >
+                        {reviewInfo.mixed
+                          ? "Mixed"
+                          : reviewStateLabel(reviewInfo.value)}
+                      </span>
+                    </div>
+                    <div
+                      className="metadata-panel__review-row"
+                      role="group"
+                      aria-label="Review state"
+                    >
+                      {[
+                        [REVIEW_STATES.PICK, "Pick", "P"],
+                        [REVIEW_STATES.REVIEWED, "Reviewed", "R"],
+                        [REVIEW_STATES.REJECT, "Reject", "X"],
+                        [REVIEW_STATES.UNREVIEWED, "Unreviewed", "U"],
+                      ].map(([value, label, shortcut]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`metadata-panel__review-button metadata-panel__review-button--${value} ${
+                            !reviewInfo.mixed && reviewInfo.value === value
+                              ? "is-active"
+                              : ""
+                          }`}
+                          aria-pressed={!reviewInfo.mixed && reviewInfo.value === value}
+                          onClick={() => onSetReviewState?.(value)}
+                          disabled={!hasSelection}
+                          title={`${label} (${shortcut})`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </section>
 
                   <section className="metadata-panel__section metadata-panel__section--tags">

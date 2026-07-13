@@ -302,6 +302,8 @@ Acceptance criteria:
 
 ### 6. Bounded caches, queues, and native work
 
+Status: **Unimplemented**
+
 Process-lifetime maps for fingerprints, dimensions, masonry ratios, and
 thumbnail signatures use entry or byte bounded LRUs. Folder/profile changes
 prune or reset generation-owned entries. In-flight promise caching deduplicates
@@ -324,6 +326,8 @@ Acceptance criteria:
 
 ### 7. Folder and lightweight library UX
 
+Status: **Implemented** (2026-07-13)
+
 The app supports both a flattened swarm and explicit navigation:
 
 - Visible root breadcrumb and current path.
@@ -337,6 +341,20 @@ The app supports both a flattened swarm and explicit navigation:
 Generative-video review adds pick/reject/reviewed state, saved smart views, and
 optional sidecar/workflow parsing for prompt, seed, model, sampler, source
 image, and generation run. The flattened swarm remains the default workflow.
+
+The implementation keeps this library deliberately lightweight. Pinned roots,
+saved views, directory rows, and metadata remain profile-local references to
+source files; Video Swarm never copies or takes ownership of the media. Folder
+view restoration is a 128-entry in-memory LRU containing only serializable
+scroll offsets, bounded ID selections, filters, and sort state. It never
+retains media elements, React nodes, blobs, or inactive video records.
+
+Sidecar metadata is parsed only when the details panel requests one indexed
+instance. Candidate lookup is exact and ordered (`video.ext.json`, then
+`stem.workflow.json`, then `stem.json`) rather than scanning or guessing across
+the directory. Parsing is bounded to 2 MiB, depth 32, 10,000 nodes, two active
+jobs, 64 queued jobs, and five seconds; only compact extracted fields are
+stored. Profile changes, renderer destruction, and shutdown cancel owned work.
 
 Acceptance criteria:
 
@@ -413,8 +431,9 @@ Acceptance criteria:
 | Hidden/minimized work suspension | **Implemented** | Page Visibility plus BrowserWindow activity drive scheduler limits to zero, physically release media, cancel thumbnail/proxy work, and stop progressive/high-frequency polling. Electron background throttling is enabled. |
 | Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
 | Asynchronous thumbnail IPC and persistence | **Unimplemented** | Current bridge uses synchronous IPC. |
-| Folder tree, scope control, and sibling cycling | **Unimplemented** | Requires root/directory state. |
-| Pinned lightweight libraries and smart views | **Unimplemented** | Pin state now persists, but pin management, navigation, and saved-view UX have not landed. |
+| Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
+| Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
+| Review state and generation sidecars | **Implemented** | Content-keyed Pick/Reviewed/Reject/Unreviewed states, batch controls/shortcuts/filters, reviewed directory aggregates, and bounded instance-keyed sidecar extraction are implemented. |
 | Electron smoke and performance soak harnesses | **Unimplemented** | Existing tests are primarily unit-level. |
 | Electron-ABI SQLite test job | **Unimplemented** | Current suites can silently skip. |
 | Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
@@ -512,9 +531,10 @@ The following adjacent work remains **Unimplemented**:
 
 The following adjacent work remains **Unimplemented**:
 
-- User-facing pin/unpin management, folder navigation, smart views, and an
-  explicit reviewed state remain part of Section 7. Until then,
-  `reviewed_count` means a present item with a rating.
+- SQLite-backed stale-while-revalidate grid hydration remains part of the
+  incremental scan work. Section 7 now consumes the catalog for navigation,
+  counts, pins, and empty directories, but does not retain inactive media
+  records as a renderer cache.
 - Watch-before-scan buffering and renderer-side incremental batches remain
   part of Section 1.
 - Fingerprint format `v1` includes creation time. Ordinary byte-identical
@@ -567,8 +587,9 @@ The following adjacent work remains **Unimplemented**:
 - Electron-runtime scroll smoke tests and Linux CPU/RSS/DOM/media soak budgets
   remain part of Section 8; the current 5,000-record coverage is deterministic
   Vitest/jsdom coverage rather than an Electron benchmark.
-- Explicit folder headers, a directory tree, sibling-folder cycling, and
-  per-folder view restoration remain part of Section 7.
+- Interleaved, full-width headers inside masonry geometry remain a possible
+  follow-up. Section 7 uses a lightweight visible folder-group strip when the
+  tree is hidden so current virtualization geometry stays unchanged.
 
 ## Media lifecycle and scheduler implementation slice
 
@@ -636,6 +657,67 @@ The following adjacent work remains **Unimplemented**:
 Hardware-specific Linux decode verification and performance soak thresholds
 remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
 video decoding.
+
+## Folder and lightweight library implementation slice
+
+1. **Implemented** — Return root and directory catalog data with each completed
+   scan, retain empty folders as an open collection, persist directory
+   presence timestamps, and retire unseen folders only after complete
+   recursive coverage. Direct, partial, cancelled, unreadable, and
+   depth-truncated scans preserve uncertain rows.
+2. **Implemented** — Add profile-generation-owned library IPC for root listing,
+   tree lookup, and path-only pin management. Pinning never copies, moves, or
+   claims ownership of source media.
+3. **Implemented** — Add a dense breadcrumb/scope bar and a collapsible folder
+   tree with direct/subtree video, active-filter match, missing, and reviewed
+   counts. Review mutations update only affected directory aggregates rather
+   than rebuilding them across the whole collection. Current-folder and
+   current-subtree sibling cycling wraps while skipping folders with no active
+   matches.
+4. **Implemented** — Keep the flattened swarm as the default, scope the
+   existing virtual masonry model without mounting inactive cards, and expose
+   a visible folder-group strip when grouping is enabled and the tree is
+   hidden.
+5. **Implemented** — Reload the active root with an explicit recursive value so
+   the toggle cannot race stale React state. Folder navigation automatically
+   indexes subfolders when a previously catalogued descendant is selected.
+6. **Implemented** — Restore scroll, selection, sort, random seed, grouping,
+   and filters per root/folder/scope using a 128-entry LRU. Selections are
+   capped at 500 IDs, remain valid while filters hide their cards, profile
+   switches clear the cache, and no DOM/media/blob ownership enters the cache.
+7. **Implemented** — Add content-keyed `unreviewed`, `reviewed`, `pick`, and
+   `reject` state. Existing ratings backfill reviewed state without
+   overwriting later explicit choices; clearing a rating does not clear review
+   state. Batch panel controls, card badges, filters, context actions, and
+   P/R/X/U shortcuts support high-throughput review.
+8. **Implemented** — Add validated, profile-local smart-view CRUD. Version 1
+   stores allowlisted tag/rating/review filters, sort direction/key, grouping,
+   random seed, and scope; names, count, and UTF-8 definition size are bounded.
+9. **Implemented** — Add on-demand, instance-ID-only sidecar extraction for
+   prompt, seed, model, sampler, source image, and generation run. Candidate
+   paths, input size, recursion depth, node count, field sizes, concurrency,
+   queue depth, time, caching, and cancellation all have explicit bounds.
+   Renderer requests are debounced and superseded requests are cancelled; raw
+   workflow JSON is not retained.
+10. **Implemented** — Add native and renderer regressions for directory
+    reconciliation, pins, review/rating compatibility, reviewed counts, smart
+    view validation/profile isolation, sidecar safety/concurrency/cancellation,
+    empty roots, scopes, sibling navigation, bounded restoration, filters,
+    panels, and application wiring.
+
+The following work remains **Unimplemented** after this slice:
+
+- Section 6 cache/queue/thumbnail work is still unimplemented; the bounded
+  folder-view and sidecar caches are scoped Section 7 exceptions rather than a
+  claim that all process-lifetime caches are now bounded.
+- Section 1 incremental scan delivery and stale-while-revalidate record
+  hydration remain unimplemented, so first open still waits for the complete
+  scan result.
+- Electron smoke, Linux soak, and performance-budget automation remain in
+  Section 8.
+- Full-width interleaved masonry group headers remain optional follow-up work;
+  the implemented group strip satisfies visible grouping without destabilizing
+  the virtual layout.
 
 ## Migration and compatibility
 

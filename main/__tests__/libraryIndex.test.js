@@ -297,7 +297,94 @@ if (!database || databaseLoadError) {
       expect(summaries.empty).toMatchObject({
         instanceCount: 0,
         presentCount: 0,
+        present: true,
       });
+    });
+
+    it('lists root summaries and toggles pin state without deleting catalog data', async () => {
+      const entry = createFile('batch/clip.mp4', 'clip');
+      await store.indexFiles({ rootPath, entries: [entry] });
+      store.registerDirectory(rootPath, path.join(rootPath, 'empty'));
+      store.reconcileLibraryRoot(rootPath, [entry.filePath], {
+        recursive: true,
+        scannedDirectories: [
+          rootPath,
+          path.join(rootPath, 'batch'),
+          path.join(rootPath, 'empty'),
+        ],
+        completeCoverage: true,
+      });
+
+      expect(store.listLibraryRoots({ pinnedOnly: true })).toEqual([]);
+      expect(store.setLibraryRootPinned(rootPath, true)).toMatchObject({
+        rootPath,
+        pinned: true,
+        presentCount: 1,
+        subdirectoryCount: 2,
+      });
+      expect(store.listLibraryRoots({ pinnedOnly: true })).toEqual([
+        expect.objectContaining({ rootPath, pinned: true, presentCount: 1 }),
+      ]);
+
+      expect(store.setLibraryRootPinned(rootPath, false)).toMatchObject({
+        rootPath,
+        pinned: false,
+      });
+      expect(store.getFileInstances(rootPath, { includeMissing: false })).toHaveLength(1);
+      expect(store.getLibraryTree(rootPath).directories).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relativePath: 'empty', present: true }),
+        ])
+      );
+      expect(() =>
+        store.setLibraryRootPinned(path.join(tempDir, 'not-indexed'), true)
+      ).toThrow(/has not been indexed/i);
+    });
+
+    it('retires deleted directories only after complete recursive coverage', () => {
+      const keptPath = path.join(rootPath, 'kept-empty');
+      const uncertainPath = path.join(rootPath, 'uncertain-empty');
+      store.registerDirectories(rootPath, [rootPath, keptPath, uncertainPath]);
+
+      const partial = store.reconcileLibraryRoot(rootPath, [], {
+        recursive: true,
+        scannedDirectories: [rootPath, keptPath],
+        completeCoverage: false,
+      });
+      expect(partial.markedDirectoriesMissing).toBe(0);
+      expect(
+        store
+          .getLibraryTree(rootPath)
+          .directories.map((directory) => directory.relativePath)
+      ).toContain('uncertain-empty');
+
+      const complete = store.reconcileLibraryRoot(rootPath, [], {
+        recursive: true,
+        scannedDirectories: [rootPath, keptPath],
+        completeCoverage: true,
+      });
+      expect(complete.markedDirectoriesMissing).toBe(1);
+      expect(
+        store
+          .getLibraryTree(rootPath)
+          .directories.map((directory) => directory.relativePath)
+      ).not.toContain('uncertain-empty');
+      expect(
+        store
+          .getLibraryTree(rootPath, { includeMissing: true })
+          .directories.find(
+            (directory) => directory.relativePath === 'uncertain-empty'
+          )
+      ).toMatchObject({ present: false, missingSince: expect.any(Number) });
+
+      store.registerDirectory(rootPath, uncertainPath);
+      expect(
+        store
+          .getLibraryTree(rootPath)
+          .directories.find(
+            (directory) => directory.relativePath === 'uncertain-empty'
+          )
+      ).toMatchObject({ present: true, missingSince: null });
     });
 
     it('migrates legacy file metadata into media content', () => {

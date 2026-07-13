@@ -1,3 +1,5 @@
+import { normalizeReviewState } from "../review/reviewState";
+
 export const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
   const fingerprint =
@@ -44,6 +46,7 @@ export const normalizeVideoFromMain = (video) => {
     fingerprint,
     rating,
     tags,
+    reviewState: normalizeReviewState(video.reviewState),
     dimensions: sanitizedDimensions,
     aspectRatio,
   };

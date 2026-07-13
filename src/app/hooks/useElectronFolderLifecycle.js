@@ -38,8 +38,12 @@ export function useElectronFolderLifecycle({
   resetThumbnailGeneration,
   refreshTagList,
   addRecentFolder,
+  beforeExternalFolderSelection,
 }) {
   const [videos, setVideos] = useState([]);
+  const [activeRootPath, setActiveRootPath] = useState(null);
+  const [libraryRoot, setLibraryRoot] = useState(null);
+  const [directorySummaries, setDirectorySummaries] = useState([]);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(
     EMPTY_SCAN_LOADING_STATUS
@@ -183,9 +187,13 @@ export function useElectronFolderLifecycle({
   }, []);
 
   const handleElectronFolderSelection = useCallback(
-    async (folderPath) => {
+    async (folderPath, options = {}) => {
       const api = window.electronAPI;
       if (!api?.readDirectory) return;
+      const scanRecursive =
+        typeof options?.recursive === "boolean"
+          ? options.recursive
+          : recursiveMode;
 
       cancelActiveFolderScan(false);
       const scan = {
@@ -206,7 +214,7 @@ export function useElectronFolderLifecycle({
           createScanLoadingStatus({
             scanId: scan.id,
             rootPath: folderPath,
-            recursive: recursiveMode,
+            recursive: scanRecursive,
             startedAt,
           })
         );
@@ -214,6 +222,7 @@ export function useElectronFolderLifecycle({
         await api.stopFolderWatch?.();
         if (!isCurrentScan()) return;
 
+        setActiveRootPath(folderPath);
         setVideos([]);
         resetDerivedVideoState();
 
@@ -226,7 +235,7 @@ export function useElectronFolderLifecycle({
 
         const result = await api.readDirectory(
           folderPath,
-          recursiveMode,
+          scanRecursive,
           scan.id
         );
         if (!isCurrentScan()) return;
@@ -249,6 +258,14 @@ export function useElectronFolderLifecycle({
             ? result.files
             : [];
         const normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
+        const nextRoot =
+          result && !Array.isArray(result) && result.root
+            ? result.root
+            : { rootPath: folderPath };
+        const nextDirectories =
+          result && !Array.isArray(result) && Array.isArray(result.directories)
+            ? result.directories
+            : [];
 
         setLoadingStatus((previous) => ({
           ...previous,
@@ -265,6 +282,9 @@ export function useElectronFolderLifecycle({
         }));
 
         setVideos(normalizedFiles);
+        setActiveRootPath(nextRoot.rootPath || folderPath);
+        setLibraryRoot(nextRoot);
+        setDirectorySummaries(nextDirectories);
 
         setLoadingStatus((previous) => ({
           ...previous,
@@ -280,7 +300,7 @@ export function useElectronFolderLifecycle({
         try {
           watchResult = await api.startFolderWatch?.(
             folderPath,
-            recursiveMode
+            scanRecursive
           );
         } catch (watchError) {
           console.warn("Failed to start folder watcher:", watchError);
@@ -317,6 +337,16 @@ export function useElectronFolderLifecycle({
     ]
   );
 
+  const reloadCurrentRoot = useCallback(
+    async (recursiveOverride = recursiveMode) => {
+      if (!activeRootPath) return false;
+      await handleElectronFolderSelection(activeRootPath, {
+        recursive: Boolean(recursiveOverride),
+      });
+      return true;
+    }, [activeRootPath, handleElectronFolderSelection, recursiveMode]
+  );
+
   const handleFolderSelect = useCallback(async () => {
     const res = await window.electronAPI?.selectFolder?.();
     if (res?.folderPath) {
@@ -350,6 +380,9 @@ export function useElectronFolderLifecycle({
       }));
 
       setVideos(list);
+      setActiveRootPath(null);
+      setLibraryRoot(null);
+      setDirectorySummaries([]);
       resetDerivedVideoState();
     },
     [cancelActiveFolderScan, resetDerivedVideoState]
@@ -427,8 +460,9 @@ export function useElectronFolderLifecycle({
   }, [loadSettingsFromMain]);
 
   useEffect(() => {
-    const cleanup = window.electronAPI?.onFolderSelected?.((folderPath) => {
-      handleElectronFolderSelection(folderPath);
+    const cleanup = window.electronAPI?.onFolderSelected?.(async (folderPath) => {
+      beforeExternalFolderSelection?.(folderPath);
+      await handleElectronFolderSelection(folderPath);
     });
 
     return () => {
@@ -436,7 +470,7 @@ export function useElectronFolderLifecycle({
         cleanup();
       }
     };
-  }, [handleElectronFolderSelection]);
+  }, [beforeExternalFolderSelection, handleElectronFolderSelection]);
 
   useEffect(() => {
     const profilesApi = window.electronAPI?.profiles;
@@ -451,6 +485,9 @@ export function useElectronFolderLifecycle({
         }
       } catch {}
       setVideos([]);
+      setActiveRootPath(null);
+      setLibraryRoot(null);
+      setDirectorySummaries([]);
       resetDerivedVideoState();
       setSettingsLoaded(false);
       loadSettingsFromMain(payload?.settings);
@@ -562,6 +599,10 @@ export function useElectronFolderLifecycle({
   return {
     videos,
     setVideos,
+    activeRootPath,
+    libraryRoot,
+    directorySummaries,
+    setDirectorySummaries,
     isLoadingFolder,
     loadingStatus,
     loadingStage: loadingStatus.message,
@@ -569,6 +610,7 @@ export function useElectronFolderLifecycle({
     settingsLoaded,
     cancelFolderLoad,
     handleElectronFolderSelection,
+    reloadCurrentRoot,
     handleFolderSelect,
     handleWebFileSelection,
   };

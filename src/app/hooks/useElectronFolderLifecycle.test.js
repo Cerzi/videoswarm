@@ -168,6 +168,28 @@ describe("useElectronFolderLifecycle", () => {
     );
   });
 
+  it("captures the outgoing view before a native menu folder selection", async () => {
+    let nativeFolderSelected;
+    const beforeExternalFolderSelection = vi.fn();
+    window.electronAPI.onFolderSelected.mockImplementation((callback) => {
+      nativeFolderSelected = callback;
+      return vi.fn();
+    });
+    renderDefaultLifecycle({ beforeExternalFolderSelection });
+    await waitFor(() => expect(typeof nativeFolderSelected).toBe("function"));
+
+    await act(async () => {
+      await nativeFolderSelected("/opened-from-menu");
+    });
+
+    expect(beforeExternalFolderSelection).toHaveBeenCalledWith(
+      "/opened-from-menu"
+    );
+    expect(beforeExternalFolderSelection.mock.invocationCallOrder[0]).toBeLessThan(
+      window.electronAPI.readDirectory.mock.invocationCallOrder[0]
+    );
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     delete window.electronAPI;
@@ -341,6 +363,57 @@ describe("useElectronFolderLifecycle", () => {
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
     expect(result.current.isLoadingFolder).toBe(false);
+  });
+
+  it("keeps an empty indexed folder open with its directory tree", async () => {
+    window.electronAPI.readDirectory.mockResolvedValueOnce({
+      files: [],
+      root: { rootPath: "/empty", presentCount: 0, pinned: false },
+      directories: [
+        { relativePath: "", name: "empty", present: true, presentCount: 0 },
+        { relativePath: "batch", name: "batch", present: true, presentCount: 0 },
+      ],
+      scanId: "native-scan",
+    });
+    const { result } = renderDefaultLifecycle();
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/empty");
+    });
+
+    expect(result.current.videos).toEqual([]);
+    expect(result.current.activeRootPath).toBe("/empty");
+    expect(result.current.libraryRoot).toMatchObject({
+      rootPath: "/empty",
+      presentCount: 0,
+    });
+    expect(result.current.directorySummaries).toHaveLength(2);
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(addRecentFolder).toHaveBeenCalledWith("/empty");
+  });
+
+  it("reloads the active root with an explicit recursive override", async () => {
+    const { result } = renderDefaultLifecycle({ recursiveMode: false });
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+    window.electronAPI.readDirectory.mockClear();
+    window.electronAPI.startFolderWatch.mockClear();
+
+    await act(async () => {
+      await result.current.reloadCurrentRoot(true);
+    });
+
+    expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(
+      "/videos",
+      true,
+      expect.stringMatching(/^directory-scan-/)
+    );
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/videos",
+      true
+    );
   });
 
   it("cancels an in-flight directory scan without applying stale results", async () => {
