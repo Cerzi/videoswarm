@@ -28,6 +28,17 @@ const DEFAULT_ASPECT_RATIO = 16 / 9;
 const LAYOUT_PADDING = 16;
 const LAYOUT_GAP = 4;
 const MAX_ACTIVATION_TARGET = 600;
+export const MAX_MASONRY_ASPECT_OVERRIDES = 4096;
+
+const setBoundedLruEntry = (map, key, value, limit) => {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+};
 
 const requestFrame = (callback) => {
   if (typeof requestAnimationFrame === "function") {
@@ -306,19 +317,37 @@ export function useMasonryLayout({
   }, [layoutVideos]);
 
   useEffect(() => {
-    let changed = false;
     const current = aspectOverridesRef.current;
     const next = new Map();
     current.forEach((entry, id) => {
       if (signatureState.get(id) === entry.signature) {
-        next.set(id, entry);
-      } else {
-        changed = true;
+        setBoundedLruEntry(
+          next,
+          id,
+          entry,
+          MAX_MASONRY_ASPECT_OVERRIDES
+        );
       }
     });
-    if (changed) {
+    if (next.size !== current.size) {
       aspectOverridesRef.current = next;
       setAspectRevision((revision) => revision + 1);
+    }
+
+    const pendingCurrent = pendingAspectOverridesRef.current;
+    const pendingNext = new Map();
+    pendingCurrent.forEach((entry, id) => {
+      if (signatureState.get(id) === entry.signature) {
+        setBoundedLruEntry(
+          pendingNext,
+          id,
+          entry,
+          MAX_MASONRY_ASPECT_OVERRIDES
+        );
+      }
+    });
+    if (pendingNext.size !== pendingCurrent.size) {
+      pendingAspectOverridesRef.current = pendingNext;
     }
   }, [signatureState]);
 
@@ -499,7 +528,12 @@ export function useMasonryLayout({
     const signature = signatureByIdRef.current.get(id);
     if (!signature || !Number.isFinite(ratio) || ratio <= 0) return;
 
-    pendingAspectOverridesRef.current.set(id, { ratio, signature });
+    setBoundedLruEntry(
+      pendingAspectOverridesRef.current,
+      id,
+      { ratio, signature },
+      MAX_MASONRY_ASPECT_OVERRIDES
+    );
     if (aspectFlushFrameRef.current) return;
 
     aspectFlushFrameRef.current = requestFrame(() => {
@@ -517,7 +551,12 @@ export function useMasonryLayout({
         ) {
           return;
         }
-        next.set(pendingId, entry);
+        setBoundedLruEntry(
+          next,
+          pendingId,
+          entry,
+          MAX_MASONRY_ASPECT_OVERRIDES
+        );
         changed = true;
       });
       if (changed) {
@@ -569,6 +608,25 @@ export function useMasonryLayout({
     [scrollContainerElement, scrollContainerRef]
   );
 
+  const getCacheDebugSnapshot = useCallback(
+    () => {
+      const signatures = signatureByIdRef.current;
+      return {
+        aspectOverrideEntries: aspectOverridesRef.current.size,
+        staleAspectOverrideEntries: Array.from(
+          aspectOverridesRef.current.entries()
+        ).filter(([id, entry]) => signatures.get(id) !== entry.signature).length,
+        pendingAspectOverrideEntries: pendingAspectOverridesRef.current.size,
+        stalePendingAspectOverrideEntries: Array.from(
+          pendingAspectOverridesRef.current.entries()
+        ).filter(([id, entry]) => signatures.get(id) !== entry.signature).length,
+        currentSignatureEntries: signatures.size,
+        maxAspectOverrideEntries: MAX_MASONRY_ASPECT_OVERRIDES,
+      };
+    },
+    []
+  );
+
   const viewportMetrics = useMemo(
     () => ({
       columnCount: layout.columnCount,
@@ -613,6 +671,7 @@ export function useMasonryLayout({
     viewportMetrics,
     getPositionById,
     scrollToId,
+    getCacheDebugSnapshot,
     withLayoutHold,
     isLayoutTransitioning,
   };

@@ -10,6 +10,7 @@ const {
   dialog,
   Menu,
   nativeImage,
+  clipboard,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -19,13 +20,24 @@ const dataLocationManager = new DataLocationManager({ app, dialog });
 const { source: dataLocationSource } = dataLocationManager.bootstrap(process.argv);
 
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
-const { getVideoDimensions } = require("./main/videoDimensions");
+const {
+  clearVideoDimensionsCache,
+  getVideoDimensions,
+} = require("./main/videoDimensions");
 require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
 const { createProxyManager } = require("./main/proxy-manager");
 const proxyManager = createProxyManager();
+const {
+  createLastFrameCaptureService,
+} = require("./main/last-frame-capture");
+const lastFrameCaptureService = createLastFrameCaptureService();
+const {
+  createNativeOwnerLifecycle,
+} = require("./main/native-owner-lifecycle");
+const nativeOwnerLifecycle = createNativeOwnerLifecycle();
 const { createSidecarMetadataService } = require("./main/sidecar-metadata");
 const { runProfileOwnedOperation } = require("./main/profile-owned-operation");
 const {
@@ -198,6 +210,9 @@ const defaultSettings = {
 let mainWindow;
 let currentSettings = null;
 let disposeMainWindowActivity = null;
+let nativeShutdownRequested = false;
+let nativeShutdownPromise = null;
+let nativeShutdownComplete = false;
 
 // ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
@@ -236,6 +251,8 @@ let configuredMetadataProfileGeneration = 0;
 let profileReconfigureQueue = Promise.resolve();
 let activeWatcherContext = null;
 let watcherContextSequence = 0;
+let videoDimensionsRootPath = null;
+const registeredNativeWorkOwners = new WeakSet();
 
 class DirectoryScanCancelledError extends Error {
   constructor() {
@@ -250,6 +267,22 @@ class ProfileReconfigurationSupersededError extends Error {
     super("Profile switch superseded by a newer request");
     this.name = "ProfileReconfigurationSupersededError";
     this.code = "PROFILE_RECONFIGURATION_SUPERSEDED";
+  }
+}
+
+class ProfileOperationInvalidatedError extends Error {
+  constructor() {
+    super("Profile-scoped operation was invalidated");
+    this.name = "ProfileOperationInvalidatedError";
+    this.code = "PROFILE_OPERATION_INVALIDATED";
+  }
+}
+
+class ApplicationShutdownRequestedError extends Error {
+  constructor() {
+    super("Application shutdown is in progress");
+    this.name = "ApplicationShutdownRequestedError";
+    this.code = "APPLICATION_SHUTDOWN_REQUESTED";
   }
 }
 
@@ -323,7 +356,10 @@ function markDirectoryScanInterrupted(scan) {
 }
 
 function captureMetadataContext() {
-  if (configuredMetadataProfileGeneration !== metadataProfileGeneration) {
+  if (
+    nativeShutdownRequested ||
+    configuredMetadataProfileGeneration !== metadataProfileGeneration
+  ) {
     throw new DirectoryScanCancelledError();
   }
   return {
@@ -336,6 +372,7 @@ function captureMetadataContext() {
 function assertMetadataContextActive(context) {
   if (
     !context ||
+    nativeShutdownRequested ||
     configuredMetadataProfileGeneration !== metadataProfileGeneration ||
     context.generation !== metadataProfileGeneration ||
     context.profileId !== getActiveProfileId()
@@ -344,7 +381,89 @@ function assertMetadataContextActive(context) {
   }
 }
 
+function captureProfileGenerationContext() {
+  if (
+    nativeShutdownRequested ||
+    configuredMetadataProfileGeneration !== metadataProfileGeneration
+  ) {
+    throw new ProfileOperationInvalidatedError();
+  }
+  return {
+    profileId: getActiveProfileId(),
+    generation: metadataProfileGeneration,
+  };
+}
+
+function assertProfileGenerationContextActive(context) {
+  if (
+    !context ||
+    nativeShutdownRequested ||
+    configuredMetadataProfileGeneration !== metadataProfileGeneration ||
+    context.generation !== metadataProfileGeneration ||
+    context.profileId !== getActiveProfileId()
+  ) {
+    throw new ProfileOperationInvalidatedError();
+  }
+}
+
+function setVideoDimensionsRoot(folderPath = null) {
+  const normalized = folderPath ? path.resolve(folderPath) : null;
+  if (normalized === videoDimensionsRootPath) return;
+  clearVideoDimensionsCache();
+  videoDimensionsRootPath = normalized;
+}
+
+function registerNativeWorkOwner(sender) {
+  if (!sender || (typeof sender !== "object" && typeof sender !== "function")) {
+    return null;
+  }
+  const ownerId = sender.id;
+  nativeOwnerLifecycle.ensure(sender);
+  if (!registeredNativeWorkOwners.has(sender)) {
+    registeredNativeWorkOwners.add(sender);
+    sender.once?.("destroyed", () => {
+      disposeNativeWorkOwner(sender);
+    });
+  }
+  return ownerId;
+}
+
+function invalidateNativeWorkOwner(sender) {
+  if (!sender) return false;
+  nativeOwnerLifecycle.invalidate(sender);
+  const ownerId = sender.id;
+  thumbnailCache.cancelOwner(ownerId);
+  lastFrameCaptureService.cancelOwner(ownerId);
+  proxyManager.disposeOwner(ownerId);
+  return true;
+}
+
+function activateNativeWorkOwner(sender) {
+  if (
+    nativeShutdownRequested ||
+    !sender ||
+    !nativeOwnerLifecycle.activate(sender)
+  ) {
+    return false;
+  }
+  proxyManager.setOwnerActive(sender.id, true);
+  return true;
+}
+
+function disposeNativeWorkOwner(sender) {
+  if (!sender) return false;
+  nativeOwnerLifecycle.dispose(sender);
+  const ownerId = sender.id;
+  thumbnailCache.cancelOwner(ownerId);
+  lastFrameCaptureService.cancelOwner(ownerId);
+  proxyManager.disposeOwner(ownerId);
+  return true;
+}
+
 function assertProfileReconfigurationActive(generation) {
+  if (nativeShutdownRequested) {
+    throw new ApplicationShutdownRequestedError();
+  }
   if (generation !== metadataProfileGeneration) {
     throw new ProfileReconfigurationSupersededError();
   }
@@ -863,6 +982,9 @@ function broadcastProfileChange(settings = currentSettings) {
 }
 
 function reconfigureForProfile(profileId, { broadcast = true } = {}) {
+  if (nativeShutdownRequested) {
+    return Promise.reject(new ApplicationShutdownRequestedError());
+  }
   const requestedProfileId =
     typeof profileId === "string" ? profileId.trim() : "";
   const profileExists = requestedProfileId && profileManager
@@ -876,8 +998,13 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
 
   const reconfigureGeneration = ++metadataProfileGeneration;
   sidecarMetadataService.cancelAll();
+  lastFrameCaptureService.cancelAll("Profile changed during frame capture");
+  setVideoDimensionsRoot(null);
   invalidateWatcherContext();
   cancelAllDirectoryScans();
+  const thumbnailResetPromise = thumbnailCache.reset().catch((error) => {
+    console.warn("[profile] Failed to invalidate thumbnail cache", error);
+  });
   const run = async () => {
     assertProfileReconfigurationActive(reconfigureGeneration);
     const targetId = profileManager.setActiveProfile(requestedProfileId);
@@ -906,18 +1033,14 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
     }
     assertProfileReconfigurationActive(reconfigureGeneration);
 
-    if (typeof thumbnailCache.reset === "function") {
-      try {
-        thumbnailCache.reset();
-      } catch (error) {
-        console.warn("[profile] Failed to reset thumbnail cache", error);
-      }
-    }
+    await thumbnailResetPromise;
+    assertProfileReconfigurationActive(reconfigureGeneration);
     try {
-      thumbnailCache.init(app, profilePath);
+      await thumbnailCache.init(app, profilePath);
     } catch (error) {
       console.warn("[profile] Failed to init thumbnail cache for new profile", error);
     }
+    assertProfileReconfigurationActive(reconfigureGeneration);
     try {
       await proxyManager.init(profilePath);
     } catch (error) {
@@ -951,6 +1074,7 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
 
 // ===== Window/Menu =====
 async function createWindow() {
+  if (nativeShutdownRequested) return null;
   const settings = await loadSettings();
   const appVersion = app.getVersion();
 
@@ -987,6 +1111,7 @@ async function createWindow() {
   });
   const createdWindow = mainWindow;
   const playbackOwnerId = createdWindow.webContents.id;
+  registerNativeWorkOwner(createdWindow.webContents);
 
   disposeMainWindowActivity?.();
   disposeMainWindowActivity = attachWindowActivity(createdWindow, (activity) => {
@@ -1019,6 +1144,7 @@ async function createWindow() {
   }
 
   mainWindow.webContents.on("did-finish-load", () => {
+    activateNativeWorkOwner(createdWindow.webContents);
     console.log("Page loaded, sending settings immediately");
     mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
@@ -1044,6 +1170,7 @@ async function createWindow() {
 
   // Enhanced crash detection
   mainWindow.webContents.on("render-process-gone", (event, details) => {
+    invalidateNativeWorkOwner(createdWindow.webContents);
     console.error("🔥 RENDERER PROCESS CRASHED:");
     console.error("  Reason:", details.reason);
     console.error("  Exit code:", details.exitCode);
@@ -1062,7 +1189,7 @@ async function createWindow() {
       console.error("💥 Generic crash - likely memory related");
     }
     setTimeout(() => {
-      if (!mainWindow.isDestroyed()) {
+      if (!nativeShutdownRequested && mainWindow && !mainWindow.isDestroyed()) {
         console.log("🔄 Attempting to reload...");
         mainWindow.reload();
       }
@@ -1079,15 +1206,11 @@ async function createWindow() {
   mainWindow.on("moved", saveWindowBounds);
   mainWindow.on("resized", saveWindowBounds);
   createdWindow.once("closed", () => {
-    proxyManager.cancelOwner(playbackOwnerId);
+    disposeNativeWorkOwner(createdWindow.webContents);
     disposeMainWindowActivity?.();
     disposeMainWindowActivity = null;
     if (mainWindow === createdWindow) mainWindow = null;
   });
-  createdWindow.webContents.once("destroyed", () => {
-    proxyManager.cancelOwner(playbackOwnerId);
-  });
-
   if (isDev) {
     mainWindow.webContents.openDevTools();
   }
@@ -1646,44 +1769,43 @@ ipcMain.handle("profiles:delete", async (_event, profileId) => {
   }
 });
 
-ipcMain.on("thumb:put", (event, payload) => {
+ipcMain.handle("thumb:put", async (event, payload) => {
+  let context = null;
   try {
-    if (!thumbnailCache.initialized) {
-      try {
-        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
-      } catch (initError) {
-        console.warn("[thumb-cache] late init failed", initError);
-      }
-    }
-    const result = thumbnailCache.put(nativeImage, payload);
-    event.returnValue = result;
+    context = captureProfileGenerationContext();
+    const ownerId = registerNativeWorkOwner(event.sender);
+    const result = await thumbnailCache.put(nativeImage, payload, { ownerId });
+    assertProfileGenerationContextActive(context);
+    return result;
   } catch (error) {
     console.error("[thumb-cache] put failed", error);
-    event.returnValue = {
+    return {
       ok: false,
-      error: error?.message || "UNKNOWN_ERROR",
+      error: error?.code || error?.message || "CACHE_INVALIDATED",
     };
   }
 });
 
-ipcMain.on("thumb:get", (event, payload) => {
+ipcMain.handle("thumb:get", async (event, payload) => {
+  let context = null;
   try {
-    if (!thumbnailCache.initialized) {
-      try {
-        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
-      } catch (initError) {
-        console.warn("[thumb-cache] late init failed", initError);
-      }
-    }
+    context = captureProfileGenerationContext();
+    const ownerId = registerNativeWorkOwner(event.sender);
     const pathKey = payload?.path;
     const signature = payload?.signature;
-    const result = thumbnailCache.has(pathKey, signature);
-    event.returnValue = result;
+    const result = await thumbnailCache.has(
+      pathKey,
+      signature,
+      nativeImage,
+      { ownerId }
+    );
+    assertProfileGenerationContextActive(context);
+    return result;
   } catch (error) {
     console.error("[thumb-cache] get failed", error);
-    event.returnValue = {
+    return {
       ok: false,
-      error: error?.message || "UNKNOWN_ERROR",
+      error: error?.code || error?.message || "CACHE_INVALIDATED",
     };
   }
 });
@@ -1701,20 +1823,12 @@ ipcMain.on("dnd:start-file", (event, payload) => {
   };
 
   try {
-    if (!thumbnailCache.initialized) {
-      try {
-        thumbnailCache.init(app, getProfilePath(getActiveProfileId()));
-      } catch (initError) {
-        console.warn("[thumb-cache] late init failed", initError);
-      }
-    }
-
+    registerNativeWorkOwner(event.sender);
     const candidates = normalize(payload).filter(
       (entry) => typeof entry === "string" && entry.trim().length > 0
     );
     const filePath = candidates[0];
     if (!filePath) {
-      event.returnValue = { ok: false, error: "NO_FILE" };
       return;
     }
 
@@ -1724,7 +1838,6 @@ ipcMain.on("dnd:start-file", (event, payload) => {
     }
 
     if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
-      event.returnValue = { ok: false, error: "NO_ICON" };
       return;
     }
 
@@ -1732,13 +1845,8 @@ ipcMain.on("dnd:start-file", (event, payload) => {
       file: filePath,
       icon,
     });
-    event.returnValue = { ok: true };
   } catch (error) {
     console.error("Failed to start native drag:", error);
-    event.returnValue = {
-      ok: false,
-      error: error?.message || "UNKNOWN_ERROR",
-    };
   }
 });
 
@@ -1790,7 +1898,8 @@ ipcMain.handle("playback:get-window-activity", (event) => {
 
 ipcMain.handle("playback:set-renderer-active", (event, active) => {
   const normalizedActive = Boolean(active);
-  proxyManager.setOwnerActive(event.sender.id, normalizedActive);
+  const ownerId = registerNativeWorkOwner(event.sender);
+  proxyManager.setOwnerActive(ownerId, normalizedActive);
   return { success: true, active: normalizedActive };
 });
 
@@ -1800,7 +1909,7 @@ ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
   return proxyManager.resolveSource({
     filePath,
     enabled: Boolean(payload?.enabled),
-    ownerId: event.sender.id,
+    ownerId: registerNativeWorkOwner(event.sender),
   });
 });
 
@@ -1876,56 +1985,22 @@ ipcMain.handle("copy-image-to-clipboard", async (_event, dataUrl) => {
   }
 });
 
-// Copy last frame via ffmpeg
-ipcMain.handle("copy-last-frame-from-file", async (_event, filePath) => {
+// Copy the last frame through a bounded, owner-scoped ffmpeg runner.
+ipcMain.handle("copy-last-frame-from-file", async (event, filePath) => {
   if (!filePath || typeof filePath !== "string") {
     return { success: false, error: "INVALID_PATH" };
   }
+  let context = null;
+  let ownerContext = null;
   try {
-    const { spawn } = require("child_process");
-    const { clipboard, nativeImage } = require("electron");
-
-    const args = [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-sseof",
-      "-0.1",
-      "-i",
-      filePath,
-      "-frames:v",
-      "1",
-      "-f",
-      "image2pipe",
-      "-vcodec",
-      "png",
-      "pipe:1",
-    ];
-
-    const buffer = await new Promise((resolve, reject) => {
-      let stdout = Buffer.alloc(0);
-      let stderr = "";
-      const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
-      proc.stdout.on("data", (chunk) => {
-        stdout = Buffer.concat([stdout, chunk]);
-      });
-      proc.stderr.on("data", (chunk) => {
-        stderr += chunk.toString();
-      });
-      proc.on("error", (error) => {
-        reject(error);
-      });
-      proc.on("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(stderr || `ffmpeg exited with ${code}`));
-          return;
-        }
-        resolve(stdout);
-      });
-    });
-
-    if (!buffer || !buffer.length) {
-      return { success: false, error: "EMPTY_IMAGE" };
+    context = captureProfileGenerationContext();
+    const ownerId = registerNativeWorkOwner(event.sender);
+    ownerContext = nativeOwnerLifecycle.capture(event.sender);
+    const buffer = await lastFrameCaptureService.capture(filePath, { ownerId });
+    assertProfileGenerationContextActive(context);
+    nativeOwnerLifecycle.assertActive(ownerContext);
+    if (event.sender?.isDestroyed?.()) {
+      return { success: false, error: "OWNER_CANCELLED" };
     }
 
     const image = nativeImage.createFromBuffer(buffer);
@@ -1936,7 +2011,10 @@ ipcMain.handle("copy-last-frame-from-file", async (_event, filePath) => {
     return { success: true };
   } catch (error) {
     console.error("Failed to copy last frame with ffmpeg:", error);
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error?.code || error?.message || "FRAME_CAPTURE_FAILED",
+    };
   }
 });
 
@@ -2021,6 +2099,7 @@ ipcMain.handle(
       assertActive();
       const normalizedRoot = path.resolve(folderPath);
       metadataContext = captureMetadataContext();
+      setVideoDimensionsRoot(normalizedRoot);
       scan.metadataContext = metadataContext;
       scan.rootPath = normalizedRoot;
       scan.recursive = Boolean(recursive);
@@ -2788,22 +2867,38 @@ app.on("activate", () => {
   }
 });
 
-// Ensure scan/watcher cleanup on quit
-app.on("before-quit", async () => {
+// Electron does not await async event listeners. Hold the first quit request
+// until native queues and atomic cache persistence have actually settled.
+app.on("before-quit", (event) => {
+  if (nativeShutdownComplete) return;
+  event.preventDefault();
+  if (nativeShutdownPromise) return;
+
+  nativeShutdownRequested = true;
+  metadataProfileGeneration += 1;
   disposeMainWindowActivity?.();
   disposeMainWindowActivity = null;
   invalidateWatcherContext();
   cancelAllDirectoryScans();
   sidecarMetadataService.shutdown();
-  await folderWatcher.stop();
-  await proxyManager.shutdown();
-});
-app.on("will-quit", async () => {
-  invalidateWatcherContext();
-  await folderWatcher.stop();
-  try {
-    thumbnailCache.shutdown();
-  } catch (error) {
-    console.warn("[thumb-cache] shutdown failed", error);
+  lastFrameCaptureService.cancelAll("Application shutdown requested");
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    invalidateNativeWorkOwner(mainWindow.webContents);
   }
+  setVideoDimensionsRoot(null);
+  const pendingProfileReconfiguration = profileReconfigureQueue;
+  nativeShutdownPromise = (async () => {
+    await pendingProfileReconfiguration.catch(() => {});
+    await Promise.allSettled(
+      [
+        () => folderWatcher.dispose(),
+        () => lastFrameCaptureService.shutdown(),
+        () => proxyManager.shutdown(),
+        () => thumbnailCache.shutdown(),
+      ].map((shutdown) => Promise.resolve().then(shutdown))
+    );
+  })().finally(() => {
+    nativeShutdownComplete = true;
+    app.quit();
+  });
 });

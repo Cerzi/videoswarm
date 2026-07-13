@@ -1,7 +1,24 @@
 const { contextBridge, ipcRenderer } = require("electron");
-const {
-  normalizeGenerationRequestToken,
-} = require("./main/generation-request");
+
+function normalizeDragPaths(value) {
+  const candidates = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : value && Array.isArray(value.paths)
+        ? value.paths
+        : [];
+  return candidates.filter(
+    (entry) => typeof entry === "string" && entry.trim().length > 0
+  );
+}
+
+function startFileDrag(paths) {
+  const payloadPaths = normalizeDragPaths(paths);
+  if (!payloadPaths.length) return { ok: false, error: "NO_FILE" };
+  ipcRenderer.send("dnd:start-file", { paths: payloadPaths });
+  return { ok: true, queued: true };
+}
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -224,25 +241,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("open-in-external-player", filePath);
   },
 
-  startFileDragSync: (paths) => {
-    const normalize = (value) => {
-      if (Array.isArray(value)) return value;
-      if (typeof value === "string") return [value];
-      if (value && Array.isArray(value.paths)) return value.paths;
-      return [];
-    };
-    const payloadPaths = normalize(paths).filter(
-      (entry) => typeof entry === "string" && entry.trim().length > 0
-    );
-    if (!payloadPaths.length) {
-      return { ok: false, error: "NO_FILE" };
-    }
-    return ipcRenderer.sendSync("dnd:start-file", { paths: payloadPaths });
-  },
+  startFileDrag,
+  // Compatibility alias for older renderer bundles. This is deliberately
+  // fire-and-forget despite the legacy name so drag start never blocks IPC.
+  startFileDragSync: startFileDrag,
 
   thumbs: {
-    put: (payload) => ipcRenderer.sendSync("thumb:put", payload),
-    get: (payload) => ipcRenderer.sendSync("thumb:get", payload),
+    put: (payload) => ipcRenderer.invoke("thumb:put", payload),
+    get: (payload) => ipcRenderer.invoke("thumb:get", payload),
   },
 
   // Clipboard operations
@@ -273,17 +279,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     get: async (fingerprints) =>
       ipcRenderer.invoke("metadata:get", fingerprints),
     getGeneration: async (instanceId, requestToken) => {
-      const normalizedToken = normalizeGenerationRequestToken(requestToken);
       return ipcRenderer.invoke("metadata:get-generation", {
         instanceId,
-        ...(normalizedToken ? { requestToken: normalizedToken } : {}),
+        ...(requestToken === undefined || requestToken === null || requestToken === ""
+          ? {}
+          : { requestToken }),
       });
     },
     cancelGeneration: async (requestToken) =>
       ipcRenderer.invoke("metadata:cancel-generation", {
-        requestToken: normalizeGenerationRequestToken(requestToken, {
-          required: true,
-        }),
+        requestToken,
       }),
   },
 

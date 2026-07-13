@@ -4,13 +4,19 @@ const DEFAULT_LIMITS = Object.freeze({
   maxDecoders: 1,
   maxExternalDecoders: 1,
   maxAuxiliaryDecoders: 1,
+  loaderWaiterAdmissionTarget: 1024,
 });
+
+export const MAX_LOADER_WAITERS = 1024;
 
 const finiteLimit = (value, fallback) => {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(0, Math.floor(number));
 };
+
+const loaderWaiterLimit = (value, fallback) =>
+  Math.min(MAX_LOADER_WAITERS, finiteLimit(value, fallback));
 
 const normalizeId = (id) => {
   if (typeof id === "string" && id) return id;
@@ -50,6 +56,10 @@ export function createMediaSlotScheduler(initialLimits = {}) {
       DEFAULT_LIMITS.maxAuxiliaryDecoders
     ),
   };
+  let loaderWaiterAdmissionTarget = loaderWaiterLimit(
+    initialLimits.maxLoaderWaiters,
+    DEFAULT_LIMITS.loaderWaiterAdmissionTarget
+  );
 
   const loadersById = new Map();
   const residentsById = new Map();
@@ -60,6 +70,14 @@ export function createMediaSlotScheduler(initialLimits = {}) {
   const loaderWaiters = new Map();
   const blockedIds = new Set();
   let loaderPumpScheduled = false;
+  let loaderWaiterAdmissionRejections = 0;
+  let lastLoaderWaiterRejection = null;
+
+  const reportLimits = () => ({
+    ...limits,
+    loaderWaiterAdmissionTarget,
+    hardMaxLoaderWaiters: MAX_LOADER_WAITERS,
+  });
 
   const makeLease = (kind, id, ownerToken = null) =>
     Object.freeze({
@@ -166,8 +184,12 @@ export function createMediaSlotScheduler(initialLimits = {}) {
         limits.maxAuxiliaryDecoders
       ),
     };
+    loaderWaiterAdmissionTarget = loaderWaiterLimit(
+      nextLimits.maxLoaderWaiters,
+      loaderWaiterAdmissionTarget
+    );
     scheduleLoaderPump();
-    return { ...limits };
+    return reportLimits();
   };
 
   const canReserveLoader = (idValue, options = {}) => {
@@ -204,12 +226,23 @@ export function createMediaSlotScheduler(initialLimits = {}) {
   const queueLoader = (idValue, options = {}, onGranted) => {
     const id = normalizeId(idValue);
     if (!id || typeof onGranted !== "function") return null;
+    if (loaderWaiters.size >= loaderWaiterAdmissionTarget) {
+      loaderWaiterAdmissionRejections += 1;
+      lastLoaderWaiterRejection = Object.freeze({
+        reason: "admission-capacity",
+        id,
+        limit: loaderWaiterAdmissionTarget,
+        admissionTarget: loaderWaiterAdmissionTarget,
+        hardLimit: MAX_LOADER_WAITERS,
+      });
+      return null;
+    }
 
     const waiterLease = makeLease("loader-waiter", id);
     loaderWaiters.set(waiterLease.token, {
       id,
       lease: waiterLease,
-      options: {},
+      options: { ...options },
       priority: finiteLimit(options.priority, 0),
       onGranted,
     });
@@ -434,12 +467,13 @@ export function createMediaSlotScheduler(initialLimits = {}) {
     auxiliaryDecodersById.clear();
     loaderWaiters.clear();
     blockedIds.clear();
+    lastLoaderWaiterRejection = null;
     return scope;
   };
 
   const getSnapshot = () => ({
     scope,
-    limits: { ...limits },
+    limits: reportLimits(),
     loadingIds: new Set(loadersById.keys()),
     queuedLoadingIds: new Set(
       Array.from(loaderWaiters.values(), (waiter) => waiter.id)
@@ -456,6 +490,14 @@ export function createMediaSlotScheduler(initialLimits = {}) {
     auxiliaryDecoderIds: new Set(auxiliaryDecodersById.keys()),
     loading: loadersById.size,
     queuedLoading: loaderWaiters.size,
+    loaderWaiterAdmissionTarget,
+    hardMaxLoaderWaiters: MAX_LOADER_WAITERS,
+    loaderWaiterAdmissionOverage: Math.max(
+      0,
+      loaderWaiters.size - loaderWaiterAdmissionTarget
+    ),
+    loaderWaiterAdmissionRejections,
+    lastLoaderWaiterRejection,
     resident: residentsById.size,
     decoders: decodersById.size,
     stoppingDecoders: stoppingDecoderIds.size,

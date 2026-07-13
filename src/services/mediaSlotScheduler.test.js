@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createMediaSlotScheduler } from "./mediaSlotScheduler";
+import {
+  MAX_LOADER_WAITERS,
+  createMediaSlotScheduler,
+} from "./mediaSlotScheduler";
 
 describe("mediaSlotScheduler", () => {
   it("atomically caps same-tick loader and future resident reservations", () => {
@@ -238,6 +241,77 @@ describe("mediaSlotScheduler", () => {
     expect(scheduler.getSnapshot()).toMatchObject({
       loading: 1,
       queuedLoading: 0,
+    });
+  });
+
+  it("rejects loader waiter overflow observably and hard-caps configuration", () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 0,
+      maxLoaders: 0,
+      maxLoaderWaiters: 2,
+    });
+    const onGranted = () => {};
+
+    expect(scheduler.queueLoader("first", {}, onGranted)).toBeTruthy();
+    expect(scheduler.queueLoader("second", {}, onGranted)).toBeTruthy();
+    expect(scheduler.queueLoader("overflow", {}, onGranted)).toBeNull();
+    expect(scheduler.getSnapshot()).toMatchObject({
+      queuedLoading: 2,
+      loaderWaiterAdmissionRejections: 1,
+      lastLoaderWaiterRejection: {
+        reason: "admission-capacity",
+        id: "overflow",
+        limit: 2,
+      },
+    });
+
+    expect(
+      scheduler.configure({ maxLoaderWaiters: MAX_LOADER_WAITERS * 10 })
+        .loaderWaiterAdmissionTarget
+    ).toBe(MAX_LOADER_WAITERS);
+    expect(scheduler.getSnapshot().hardMaxLoaderWaiters).toBe(
+      MAX_LOADER_WAITERS
+    );
+  });
+
+  it("reports a lowered admission target separately while existing waiters drain", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 0,
+      maxLoaders: 0,
+      maxLoaderWaiters: 4,
+    });
+    const granted = [];
+    for (const id of ["one", "two", "three", "four"]) {
+      expect(
+        scheduler.queueLoader(id, {}, (lease) => granted.push(lease.id))
+      ).toBeTruthy();
+    }
+
+    expect(
+      scheduler.configure({ maxLoaderWaiters: 2 })
+    ).toMatchObject({
+      loaderWaiterAdmissionTarget: 2,
+      hardMaxLoaderWaiters: MAX_LOADER_WAITERS,
+    });
+    expect(scheduler.getSnapshot()).toMatchObject({
+      queuedLoading: 4,
+      loaderWaiterAdmissionTarget: 2,
+      hardMaxLoaderWaiters: MAX_LOADER_WAITERS,
+      loaderWaiterAdmissionOverage: 2,
+    });
+    expect(
+      scheduler.queueLoader("new-overflow", {}, () => {})
+    ).toBeNull();
+    expect(scheduler.getSnapshot().queuedLoading).toBeLessThanOrEqual(
+      scheduler.getSnapshot().hardMaxLoaderWaiters
+    );
+
+    scheduler.configure({ maxResident: 4, maxLoaders: 4 });
+    await Promise.resolve();
+    expect(granted).toEqual(["one", "two", "three", "four"]);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      queuedLoading: 0,
+      loaderWaiterAdmissionOverage: 0,
     });
   });
 });

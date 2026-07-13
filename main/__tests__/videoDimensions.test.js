@@ -1,7 +1,15 @@
-import { describe, it, expect } from "vitest";
+import fs from "fs";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import videoDimensions from "../videoDimensions";
 
-const { __internals } = videoDimensions;
+const {
+  VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+  VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+  __internals,
+  clearVideoDimensionsCache,
+  getVideoDimensions,
+  getVideoDimensionsCacheSnapshot,
+} = videoDimensions;
 
 const {
   parseTkhd,
@@ -80,6 +88,11 @@ function makeEbmlElement(idBytes, payload) {
 }
 
 describe("videoDimensions internals", () => {
+  afterEach(() => {
+    clearVideoDimensionsCache();
+    vi.restoreAllMocks();
+  });
+
   it("extracts width/height from tkhd without rotation", () => {
     const data = makeTkhdData({ width: 1920, height: 1080 });
     const dims = parseTkhd(data);
@@ -137,5 +150,54 @@ describe("videoDimensions internals", () => {
     expect(dims).toBeTruthy();
     expect(dims.width).toBe(1920);
     expect(dims.height).toBe(1080);
+  });
+
+  it("stats before forming a key when callers omit file stats", async () => {
+    const stat = vi
+      .spyOn(fs.promises, "stat")
+      .mockResolvedValueOnce({ size: 10, mtimeMs: 100 })
+      .mockResolvedValueOnce({ size: 20, mtimeMs: 200 });
+
+    await expect(getVideoDimensions("/virtual/clip.avi")).resolves.toBeNull();
+    await expect(getVideoDimensions("/virtual/clip.avi")).resolves.toBeNull();
+
+    expect(stat).toHaveBeenCalledTimes(2);
+    expect(getVideoDimensionsCacheSnapshot()).toMatchObject({
+      entries: 2,
+      inFlight: 0,
+      maxEntries: VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+      maxInFlight: VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+    });
+  });
+
+  it("deduplicates active parsing and exposes deterministic cache reset", async () => {
+    const read = vi.fn(async () => ({ bytesRead: 0 }));
+    const close = vi.fn(async () => {});
+    const open = vi
+      .spyOn(fs.promises, "open")
+      .mockResolvedValue({ read, close });
+    const stats = { size: 64, mtimeMs: 1234 };
+
+    const [first, second] = await Promise.all([
+      getVideoDimensions("/virtual/shared.mp4", stats),
+      getVideoDimensions("/virtual/shared.mp4", stats),
+    ]);
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(getVideoDimensionsCacheSnapshot()).toMatchObject({
+      entries: 1,
+      inFlight: 0,
+      maxEntries: VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+      maxInFlight: VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+    });
+
+    clearVideoDimensionsCache();
+    expect(getVideoDimensionsCacheSnapshot()).toMatchObject({
+      entries: 0,
+      inFlight: 0,
+    });
   });
 });

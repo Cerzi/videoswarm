@@ -250,12 +250,15 @@ Acceptance criteria:
 
 Status: **Implemented** (2026-07-13)
 
-Playback policy has three user-facing modes:
+Playback policy has four user-facing modes:
 
 - **Balanced:** adaptive decoder cap with viewport-center, hover, selection,
   and fullscreen priority.
-- **All Motion:** attempts to animate all visible cards within explicit safety
-  limits.
+- **Adaptive Motion:** uses the higher motion-oriented decoder budget while
+  retaining platform, memory, source-pixel, and runtime-health limits.
+- **All Motion:** requests a decoder for every visible card, matching the
+  pre-mode behavior without telemetry derating. This is an explicit user
+  opt-in to higher CPU and memory use.
 - **Static + Hover:** retains a paused first-frame preview and activates motion
   only on hover, selection, or fullscreen.
 
@@ -270,12 +273,14 @@ replace originals.
 One collection-wide sampler measures p95 animation-frame delay, long-task
 occupancy, decoded/dropped frame deltas from the exact registered media
 elements, source pixel area, whole-application working-set growth, and
-available system memory. Balanced policy reductions are immediate; recovery
-adds at most one decoder after three consecutive clean samples. All Motion is
-still bounded by platform, core, memory, source-pixel, and absolute safety
-ceilings. Static + Hover retains paused first-frame media for nearby cards and
-admits decoders only for hovered or selected cards; fullscreen uses its
-separate scheduler lane.
+available system memory. Balanced and Adaptive Motion policy reductions are
+immediate; recovery adds at most one decoder after three consecutive clean
+samples. All Motion deliberately bypasses those adaptive decoder caps and sets
+its target to the complete visible set; it still obeys visibility, scheduler
+ownership, physical cleanup, fullscreen, and app-suspension lifecycles.
+Static + Hover retains paused first-frame media for nearby cards and admits
+decoders only for hovered or selected cards; fullscreen uses its separate
+scheduler lane.
 
 Page Visibility and main-process BrowserWindow activity jointly suspend work.
 Suspension physically detaches grid/fullscreen sources, drives every scheduler
@@ -295,6 +300,8 @@ remain untouched and are always the fallback.
 Acceptance criteria:
 
 - Balanced mode reduces active decoders when dropped frames or long tasks rise.
+- Adaptive Motion preserves the former higher safety-capped policy.
+- All Motion targets every visible card and is not silently telemetry-derated.
 - The minimum decoder target is not forced to 100 on weak systems.
 - Hidden/minimized windows stop expensive media work by default.
 - The UI states that Linux hardware decoding is detected, not guaranteed.
@@ -302,27 +309,40 @@ Acceptance criteria:
 
 ### 6. Bounded caches, queues, and native work
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-07-13)
 
 Process-lifetime maps for fingerprints, dimensions, masonry ratios, and
-thumbnail signatures use entry or byte bounded LRUs. Folder/profile changes
-prune or reset generation-owned entries. In-flight promise caching deduplicates
-repeated fingerprint and dimension work.
+thumbnail signatures use entry or byte bounded LRUs. Collection/root changes
+prune renderer ratios and dimensions; metadata-store/profile disposal resets
+fingerprints. Fingerprint and dimension work is deduplicated, limited to 64
+outstanding operations per cache, and cannot start or repopulate after its
+generation is cleared.
 
 Thumbnail IPC is asynchronous. Disk writes and recency persistence are batched
 outside renderer-critical work. Thumbnail tasks do not retain stale media DOM
-nodes after a generation changes.
+nodes after a generation changes. The renderer has one capture lane and 64
+pending requests; the native cache has two read lanes plus 64 pending reads and
+one serialized write lane plus 64 pending writes. Native thumbnails are capped
+by entry count, encoded bytes, decoded pixels, and index bytes. Index failures
+receive three bounded exponential retries before waiting for a later mutation
+or explicit flush.
 
 External `ffmpeg` work has concurrency, stdout/stderr caps, timeouts, and child
-process cancellation on renderer destruction and shutdown.
+process cancellation on renderer destruction and shutdown. Watcher enrichment,
+change debouncing, overflow reconciliation, playback waiters, proxy ownership,
+and one-shot frame capture also have explicit admission and disposal rules.
 
 Acceptance criteria:
 
 - Every cache and queue has a documented limit and reset path.
-- Repeated A/B folder switching reaches a stable post-GC memory plateau.
+- Repeated folder/profile generations keep deterministic cache and queue
+  snapshots within their limits and stale generations cannot repopulate them.
 - Thumbnail reads/writes do not use synchronous renderer IPC.
 - Thumbnail eviction accounts for bytes or pixels, not only entry count.
 - Child processes cannot run indefinitely or buffer unlimited output.
+
+Live Electron RSS/post-GC plateau measurement remains part of the Section 8
+Linux soak harness; it is not inferred from deterministic unit tests.
 
 ### 7. Folder and lightweight library UX
 
@@ -356,6 +376,14 @@ the directory. Parsing is bounded to 2 MiB, depth 32, 10,000 nodes, two active
 jobs, 64 queued jobs, and five seconds; only compact extracted fields are
 stored. Profile changes, renderer destruction, and shutdown cancel owned work.
 
+The sandboxed preload remains self-contained: it imports Electron only, while
+generation-request validation stays in the main-process IPC trust boundary. A
+preload failure must not make native context actions silently disappear. Open,
+Show in Explorer, and Move to Recycle Bin remain discoverable with an explicit
+disabled state when desktop integration is unavailable. Copy, review, and
+rating actions use compact submenus; root menus and submenus clamp to the
+viewport and scroll internally when space is constrained.
+
 Acceptance criteria:
 
 - An empty folder remains an open root and displays its path.
@@ -363,6 +391,10 @@ Acceptance criteria:
 - Folder grouping has visible structure rather than sort adjacency alone.
 - Users can cycle sibling folders without reopening the native picker.
 - Library roots do not copy or take ownership of source media.
+- Electron's sandboxed preload initializes without arbitrary local module
+  imports and exposes profile, metadata, filesystem, and settings bridges.
+- Every historical video context action remains reachable and the menu cannot
+  extend irretrievably beyond the viewport.
 
 ### 8. Observability, testing, and CI
 
@@ -427,13 +459,14 @@ Acceptance criteria:
 | Atomic media loader/decoder scheduler | **Implemented** | Opaque scoped leases, exact loader/resident caps, priority wake-up, acknowledged decoder handoff, bounded auxiliary lanes, and React-mirror integration landed in `e804b97` and `17ced36`. |
 | Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen owns its element, source, blob URL, timeout, and dedicated decoder lease; navigation, close, and failure release every owned resource. Grid suspension remains declarative; landed in `331a360` and `17ced36`. |
 | Destructive and one-shot media lifecycle | **Implemented** | Trash blocks affected scheduler IDs while physical handles are released, and serialized frame capture uses a bounded auxiliary lease with deterministic cleanup; landed in `17ced36`. |
-| Linux playback modes and adaptive decoder budget | **Implemented** | Balanced, All Motion, and Static + Hover modes use source-pixel, frame-delay, long-task, dropped-frame, working-set, memory, and hardware inputs. Explicit UI controls, conservative Linux capability wording, and bounded proxy fallback are covered by focused policy, telemetry, IPC, card, and app tests. |
+| Linux playback modes and adaptive decoder budget | **Implemented** | Balanced and Adaptive Motion use source-pixel, frame-delay, long-task, dropped-frame, working-set, memory, and hardware inputs; Static + Hover limits eligibility; explicit All Motion restores the uncapped visible set. UI controls, conservative Linux capability wording, and bounded proxy fallback are covered by focused policy, telemetry, IPC, card, and app tests. |
 | Hidden/minimized work suspension | **Implemented** | Page Visibility plus BrowserWindow activity drive scheduler limits to zero, physically release media, cancel thumbnail/proxy work, and stop progressive/high-frequency polling. Electron background throttling is enabled. |
-| Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
-| Asynchronous thumbnail IPC and persistence | **Unimplemented** | Current bridge uses synchronous IPC. |
+| Bounded process-lifetime caches and queues | **Implemented** | Fingerprint, dimensions, masonry, thumbnail, playback-history, waiter, watcher, and native-work state now have explicit entry/work limits, generation invalidation, snapshots, and disposal. |
+| Asynchronous thumbnail IPC and persistence | **Implemented** | Thumbnail reads/writes use asynchronous IPC, bounded read/write lanes, byte/pixel-aware memory and disk LRUs, atomic files, and coalesced bounded index persistence. |
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
 | Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
 | Review state and generation sidecars | **Implemented** | Content-keyed Pick/Reviewed/Reject/Unreviewed states, batch controls/shortcuts/filters, reviewed directory aggregates, and bounded instance-keyed sidecar extraction are implemented. |
+| Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
 | Electron smoke and performance soak harnesses | **Unimplemented** | Existing tests are primarily unit-level. |
 | Electron-ABI SQLite test job | **Unimplemented** | Current suites can silently skip. |
 | Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
@@ -618,8 +651,6 @@ The following adjacent work remains **Unimplemented**:
 
 The following adjacent work remains **Unimplemented**:
 
-- Process-lifetime cache limits, asynchronous thumbnail IPC, and bounded
-  external child-process work remain part of Section 6.
 - Electron smoke coverage and Linux CPU/RSS/file-handle/playback soak budgets
   remain part of Section 8. Capability reporting is deliberately observational
   and does not promise Linux/NVIDIA hardware video decoding; current scheduler
@@ -628,9 +659,9 @@ The following adjacent work remains **Unimplemented**:
 
 ## Section 5 implementation record — Linux-aware playback modes
 
-1. **Implemented** — Add persisted Balanced, All Motion, and Static + Hover
-   controls with live decoder target/safety-cap feedback and explicit Linux
-   wording that acceleration is detected, not guaranteed.
+1. **Implemented** — Add persisted Balanced, Adaptive Motion, All Motion, and
+   Static + Hover controls with live decoder target/cap feedback and explicit
+   Linux wording that acceleration is detected, not guaranteed.
 2. **Implemented** — Derive conservative decoder ceilings from platform, cores,
    system/available memory, and average source pixel area. Derate immediately
    on dropped frames, p95 frame delay, long-task occupancy, working-set growth,
@@ -653,6 +684,12 @@ The following adjacent work remains **Unimplemented**:
    suspension, proxy/child-runner, settings, card-lifecycle, scheduler,
    fullscreen, thumbnail, and application regressions; verify the full
    renderer suite, production build, and unpacked Electron package.
+8. **Implemented** — Correct the user-facing All Motion contract after the
+   original safety-capped implementation regressed pre-mode playback. Preserve
+   that useful higher capped policy as Adaptive Motion, while true All Motion
+   targets every visible card even under adverse telemetry. It does not bypass
+   scheduler ownership, media cleanup, fullscreen suspension, or hidden-window
+   suspension.
 
 Verification was repeated against the current tree on 2026-07-13: the focused
 Section 5 policy, telemetry, capability, suspension, playback-control,
@@ -664,6 +701,69 @@ integration. The implementation remains recorded in commit `af73872`.
 Hardware-specific Linux decode verification and performance soak thresholds
 remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
 video decoding.
+
+## Section 6 implementation record — Bounded caches, queues, and native work
+
+1. **Implemented** — Replace process-lifetime fingerprint and video-dimension
+   maps with 4,096-entry LRUs that deduplicate work, admit no more than 64
+   outstanding operations each, reject excess work explicitly, and prevent a
+   cleared generation from starting scheduled work or repopulating the cache.
+   Metadata-store/profile disposal resets fingerprints; folder-root/profile
+   changes and shutdown reset dimensions.
+2. **Implemented** — Bound both active masonry aspect-ratio maps to 4,096
+   entries and prune values outside the current collection signature. Cancel
+   every chunk/layout animation frame on replacement or unmount. Bound loader
+   waiters to 1,024 and playback start history to 1,024 while preserving
+   already-admitted waiters as a configured target is lowered.
+3. **Implemented** — Give renderer thumbnail work one active capture lane and
+   64 pending requests, with at most 2,048 signature/path metadata entries.
+   Requests expose settlement and cancellation handles, hold queued video
+   nodes weakly, release media references before native I/O, and cancel on
+   invisibility, media detachment, identity change, suspension, and unmount.
+4. **Implemented** — Move thumbnail reads, writes, and native drag startup off
+   synchronous renderer IPC. The profile-local native cache is capped at 500
+   entries/32 MiB decoded memory and 5,000 entries/256 MiB disk, with 512 KiB
+   payload, 65,536-pixel image, and 8 MiB index limits. It uses two active plus
+   64 pending reads and one active plus 64 pending writes, bounded file reads,
+   atomic publication, coalesced index persistence, corrupt/orphan cleanup,
+   one-to-one path/signature accounting, and generation/renderer-owner
+   cancellation. Index persistence retries at most three times with 500 ms
+   exponential backoff capped at four seconds, then waits for a structural
+   mutation or explicit flush to rearm it.
+5. **Implemented** — Bound watcher state to 2 active and 2,048 pending
+   enrichment paths plus 2,048 change debouncers. No more than 8 raw
+   `createVideoFileObject` operations may remain outstanding, including work
+   logically retired by unlink or session replacement. Same-path events
+   coalesce, unlink cancels active work, stale sessions cannot emit, and
+   overflow marks a reconciliation generation that clears only after success.
+   Failed reconciliation uses a 250 ms exponential backoff with three retries
+   and is rearmed by later activity without an unbounded retry loop. Polling
+   and reconciliation retain their own independent single-flight scan lane.
+6. **Implemented** — Route last-frame extraction through the shared child
+   runner with one active job, two pending jobs, a 30-second timeout, 64 MiB
+   stdout, 256 KiB stderr, a 500 ms kill grace, `-nostdin`, and a no-upscale
+   3,840 × 2,160 output box before native image decoding. Renderer crashes and
+   destruction, profile changes, window teardown, and coordinated app shutdown
+   cancel frame, thumbnail, watcher, and proxy ownership. Owner epochs prevent
+   a pre-crash frame continuation from committing the clipboard after reload.
+   Proxy owner epochs prevent delayed stat/cache continuations from queuing
+   work after disposal, and at most 64 source/cache resolution preflights may
+   remain outstanding before new requests return an explicit busy result.
+7. **Implemented** — Add deterministic cache-capacity, generation-reset,
+   queue-overflow, owner-cancellation, stale-continuation, unlink, retry,
+   persistence, corrupt-file, asynchronous preload IPC, and bounded child-work
+   regressions. Cache and queue snapshots expose their configured limits and
+   current ownership for future profiling assertions. Shutdown permanently
+   closes native thumbnail admission, invalidates profile generations, and
+   waits the serialized profile-reconfiguration queue before the final native
+   flush so profile work cannot reopen resources during quit.
+
+The following measurement work remains **Unimplemented** in Section 8:
+
+- Real Electron A/B-folder and Linux soak automation for RSS/post-GC heap, OS
+  file handles, decoder counts, and CPU/event-loop trends. Section 6 verifies
+  deterministic ownership and hard bounds, not a hardware-specific memory
+  plateau.
 
 ## Folder and lightweight library implementation slice
 
@@ -711,12 +811,24 @@ video decoding.
     view validation/profile isolation, sidecar safety/concurrency/cancellation,
     empty roots, scopes, sibling navigation, bounded restoration, filters,
     panels, and application wiring.
+11. **Implemented** — Repair the Section 7 sandbox regression by removing the
+    local CommonJS import from `preload.js` and keeping request-token validation
+    in the main process. A restricted-loader regression now rejects any preload
+    dependency other than Electron, and a real Electron 43 launch reaches DOM
+    ready with the complete bridge exposed. A read-only recovery audit confirms
+    both registered profile databases are healthy and that every tag,
+    tag-association, and rating in the older backup remains unchanged in the
+    larger current database; replacing it with the backup would lose newer
+    data, so no destructive restore is performed.
+12. **Implemented** — Compare the video context menu against the immediate
+    pre-Section-7 commit. No source action was deleted; the failed preload made
+    the old capability gate hide Open, Show in Explorer, and Move to Recycle
+    Bin. Keep those actions visible with a clear unavailable state, group Copy,
+    Review, and Rating into submenus, and clamp/scroll root and nested menus on
+    every viewport edge.
 
 The following work remains **Unimplemented** after this slice:
 
-- Section 6 cache/queue/thumbnail work is still unimplemented; the bounded
-  folder-view and sidecar caches are scoped Section 7 exceptions rather than a
-  claim that all process-lifetime caches are now bounded.
 - Section 1 incremental scan delivery and stale-while-revalidate record
   hydration remain unimplemented, so first open still waits for the complete
   scan result.

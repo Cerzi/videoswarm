@@ -1,16 +1,22 @@
 const fs = require("fs");
 const path = require("path");
+const { BoundedAsyncCache } = require("./bounded-async-cache");
 
 const MP4_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".qt"]); // quicktime family
 
 const MATROSKA_EXTENSIONS = new Set([".mkv", ".webm", ".mk3d", ".mka"]);
 
-const CACHE = new Map();
+const VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES = 4096;
+const VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT = 64;
+const dimensionCache = new BoundedAsyncCache({
+  maxEntries: VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+  maxInFlight: VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+});
 
 function cacheKey(filePath, stats) {
-  const size = stats?.size ?? 0;
-  const mtimeMs = stats?.mtimeMs ?? 0;
-  return `${filePath}::${size}::${mtimeMs}`;
+  const size = Number(stats.size) || 0;
+  const mtimeMs = Number(stats.mtimeMs) || 0;
+  return `${path.resolve(filePath)}::${size}::${mtimeMs}`;
 }
 
 function readFixed1616(buffer, offset) {
@@ -363,42 +369,59 @@ async function extractMatroskaDimensions(filePath) {
 }
 
 async function getVideoDimensions(filePath, stats = null) {
-  const key = cacheKey(filePath, stats);
-  if (CACHE.has(key)) {
-    return CACHE.get(key);
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-  let dims = null;
-
-  try {
-    if (MP4_EXTENSIONS.has(ext)) {
-      dims = await extractMp4Dimensions(filePath);
-    } else if (MATROSKA_EXTENSIONS.has(ext)) {
-      dims = await extractMatroskaDimensions(filePath);
+  let safeStats = stats;
+  if (!safeStats) {
+    try {
+      safeStats = await fs.promises.stat(filePath);
+    } catch (error) {
+      console.warn(`[dimensions] Failed to stat ${filePath}:`, error.message || error);
+      return null;
     }
-  } catch (error) {
-    console.warn(`[dimensions] Failed to parse ${filePath}:`, error.message || error);
-    dims = null;
   }
+  const key = cacheKey(filePath, safeStats);
 
-  if (dims && dims.width > 0 && dims.height > 0) {
-    dims = {
-      width: Math.round(dims.width),
-      height: Math.round(dims.height),
-      aspectRatio: dims.width / dims.height,
-    };
-  } else {
-    dims = null;
-  }
+  return dimensionCache.getOrCreate(key, async () => {
+    const ext = path.extname(filePath).toLowerCase();
+    let dims = null;
 
-  CACHE.set(key, dims);
-  return dims;
+    try {
+      if (MP4_EXTENSIONS.has(ext)) {
+        dims = await extractMp4Dimensions(filePath);
+      } else if (MATROSKA_EXTENSIONS.has(ext)) {
+        dims = await extractMatroskaDimensions(filePath);
+      }
+    } catch (error) {
+      console.warn(`[dimensions] Failed to parse ${filePath}:`, error.message || error);
+      dims = null;
+    }
+
+    if (dims && dims.width > 0 && dims.height > 0) {
+      return {
+        width: Math.round(dims.width),
+        height: Math.round(dims.height),
+        aspectRatio: dims.width / dims.height,
+      };
+    }
+    return null;
+  });
+}
+
+function clearVideoDimensionsCache() {
+  dimensionCache.clear();
+}
+
+function getVideoDimensionsCacheSnapshot() {
+  return dimensionCache.getSnapshot();
 }
 
 module.exports = {
+  VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+  VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+  clearVideoDimensionsCache,
   getVideoDimensions,
+  getVideoDimensionsCacheSnapshot,
   __internals: {
+    cacheKey,
     parseTkhd,
     detectRotationFromMatrix,
     parseMp4Moov,

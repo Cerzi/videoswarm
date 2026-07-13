@@ -16,7 +16,8 @@ describe("PlaybackModeControl", () => {
 
     const select = screen.getByRole("combobox", { name: "Playback mode" });
     expect(select).toHaveTextContent("Balanced");
-    expect(select).toHaveTextContent("All Motion (safety capped)");
+    expect(select).toHaveTextContent("Adaptive Motion (safety capped)");
+    expect(select).toHaveTextContent("All Motion (uncapped)");
     expect(select).toHaveTextContent("Static + Hover");
     fireEvent.change(select, { target: { value: "static-hover" } });
     expect(onModeChange).toHaveBeenCalledWith("static-hover");

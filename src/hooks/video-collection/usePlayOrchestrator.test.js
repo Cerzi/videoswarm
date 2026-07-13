@@ -1,6 +1,8 @@
 import { describe, test, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import usePlayOrchestrator from './usePlayOrchestrator';
+import usePlayOrchestrator, {
+  MAX_PLAYBACK_START_HISTORY,
+} from './usePlayOrchestrator';
 import { createMediaSlotScheduler } from '../../services/mediaSlotScheduler';
 
 const setOf = (arr) => new Set(arr);
@@ -273,6 +275,45 @@ describe('usePlayOrchestrator', () => {
     expect(result.current.playingSet).toEqual(new Set(['selected']));
     act(() => {
       expect(result.current.reportPaused('hover', hoverLease)).toBe(true);
+    });
+  });
+
+  test('bounds start history and prunes stale collection generations', () => {
+    const idsA = Array.from(
+      { length: MAX_PLAYBACK_START_HISTORY + 128 },
+      (_, index) => `a-${index}`
+    );
+    const propsA = {
+      visibleIds: setOf(idsA),
+      loadedIds: setOf(idsA),
+      maxPlaying: idsA.length,
+    };
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      { initialProps: propsA }
+    );
+
+    act(() => {
+      idsA.forEach((id) => result.current.reportStarted(id));
+    });
+    expect(result.current.getCacheDebugSnapshot()).toEqual({
+      startHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+      staleStartHistoryEntries: 0,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+    });
+
+    const idsB = Array.from({ length: 8 }, (_, index) => `b-${index}`);
+    act(() => {
+      rerender({
+        visibleIds: setOf(idsB),
+        loadedIds: setOf(idsB),
+        maxPlaying: idsB.length,
+      });
+    });
+    expect(result.current.getCacheDebugSnapshot()).toEqual({
+      startHistoryEntries: 0,
+      staleStartHistoryEntries: 0,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
     });
   });
 });

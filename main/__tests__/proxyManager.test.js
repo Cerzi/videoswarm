@@ -5,9 +5,37 @@ import { createRequire } from "module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createProxyManager } = require("../proxy-manager");
+const { createProxyManager, sourceSignature } = require("../proxy-manager");
 
 const fsPromises = fs.promises;
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createFsApi(stat) {
+  return new Proxy(fsPromises, {
+    get(target, property) {
+      if (property === "stat") return stat;
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("Condition was not reached");
+}
 
 function cancellationError(code, message) {
   const error = new Error(message);
@@ -332,6 +360,267 @@ describe("ProxyManager", () => {
       })
     ).toMatchObject({ status: "owner-inactive" });
     await manager.shutdown();
+  });
+
+  it("invalidates a disposed owner while its source stat is pending", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sourcePath = await makeSource(root, "slow-source.mp4");
+    const sourceStats = await fsPromises.stat(sourcePath);
+    const deferredStat = createDeferred();
+    const stat = vi.fn((targetPath) =>
+      path.resolve(targetPath) === path.resolve(sourcePath)
+        ? deferredStat.promise
+        : fsPromises.stat(targetPath)
+    );
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({ runner, fs: createFsApi(stat) });
+    await manager.init(profilePath);
+
+    const resolution = manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "retired-during-stat",
+    });
+    await waitFor(() => stat.mock.calls.some(([target]) =>
+      path.resolve(target) === path.resolve(sourcePath)
+    ));
+    expect(manager.getSnapshot()).toMatchObject({ ownerResolutions: 1 });
+
+    manager.disposeOwner("retired-during-stat");
+    expect(manager.getSnapshot()).toMatchObject({
+      ownerResolutions: 1,
+      ownerTombstones: 1,
+    });
+    deferredStat.resolve(sourceStats);
+
+    await expect(resolution).resolves.toMatchObject({
+      status: "owner-inactive",
+      ownerId: "retired-during-stat",
+    });
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(manager.getSnapshot()).toMatchObject({
+      ownerResolutions: 0,
+      ownerTombstones: 0,
+      ownerStates: 0,
+    });
+    await manager.shutdown();
+  });
+
+  it("does not return or queue cached work after owner deactivation", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sourcePath = await makeSource(root, "slow-cache.mp4");
+    const sourceStats = await fsPromises.stat(sourcePath);
+    const signature = sourceSignature(sourcePath, sourceStats);
+    const proxyPath = path.join(profilePath, "proxy-cache", `${signature}.mp4`);
+    await fsPromises.mkdir(path.dirname(proxyPath), { recursive: true });
+    await fsPromises.writeFile(proxyPath, "cached proxy");
+    const proxyStats = await fsPromises.stat(proxyPath);
+    const deferredProxyStat = createDeferred();
+    let deferProxyLookup = false;
+    const stat = vi.fn((targetPath) =>
+      deferProxyLookup && path.resolve(targetPath) === path.resolve(proxyPath)
+        ? deferredProxyStat.promise
+        : fsPromises.stat(targetPath)
+    );
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({ runner, fs: createFsApi(stat) });
+    await manager.init(profilePath);
+    deferProxyLookup = true;
+    stat.mockClear();
+
+    const resolution = manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "paused-during-cache",
+    });
+    await waitFor(() => stat.mock.calls.some(([target]) =>
+      path.resolve(target) === path.resolve(proxyPath)
+    ));
+    manager.setOwnerActive("paused-during-cache", false);
+    deferredProxyStat.resolve(proxyStats);
+
+    await expect(resolution).resolves.toMatchObject({
+      status: "owner-inactive",
+      ownerId: "paused-during-cache",
+    });
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(manager.getSnapshot()).toMatchObject({
+      ownerResolutions: 0,
+      inactiveOwners: 1,
+      totals: { cacheHits: 0, queued: 0, deduplicated: 0 },
+    });
+    manager.setOwnerActive("paused-during-cache", true);
+    expect(manager.getSnapshot().ownerStates).toBe(0);
+    await manager.shutdown();
+  });
+
+  it("hard-bounds outstanding source preflights and readmits after settlement", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sources = await Promise.all([
+      makeSource(root, "preflight-a.mp4"),
+      makeSource(root, "preflight-b.mp4"),
+      makeSource(root, "preflight-c.mp4"),
+    ]);
+    const sourceStats = await Promise.all(sources.map((filePath) =>
+      fsPromises.stat(filePath)
+    ));
+    const deferredStats = new Map([
+      [path.resolve(sources[0]), createDeferred()],
+      [path.resolve(sources[1]), createDeferred()],
+    ]);
+    const stat = vi.fn((targetPath) =>
+      deferredStats.get(path.resolve(targetPath))?.promise ||
+      fsPromises.stat(targetPath)
+    );
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({
+      runner,
+      fs: createFsApi(stat),
+      maxResolveInFlight: 2,
+    });
+    await manager.init(profilePath);
+
+    const first = manager.resolveSource({
+      filePath: sources[0],
+      enabled: true,
+      ownerId: "preflight-a",
+    });
+    const second = manager.resolveSource({
+      filePath: sources[1],
+      enabled: true,
+      ownerId: "preflight-b",
+    });
+    expect(manager.getSnapshot()).toMatchObject({
+      resolveInFlight: 2,
+      limits: { maxResolveInFlight: 2 },
+    });
+
+    await expect(manager.resolveSource({
+      filePath: sources[2],
+      enabled: true,
+      ownerId: "preflight-c",
+    })).resolves.toMatchObject({
+      status: "busy",
+      busyReason: "resolve-capacity",
+      limit: 2,
+      pending: false,
+    });
+    expect(stat).not.toHaveBeenCalledWith(path.resolve(sources[2]));
+    expect(manager.getSnapshot()).toMatchObject({
+      resolveInFlight: 2,
+      totals: { resolveBusy: 1 },
+    });
+
+    deferredStats.get(path.resolve(sources[0])).resolve(sourceStats[0]);
+    await expect(first).resolves.toMatchObject({ status: "queued" });
+    expect(manager.getSnapshot().resolveInFlight).toBe(1);
+    await expect(manager.resolveSource({
+      filePath: sources[2],
+      enabled: true,
+      ownerId: "preflight-c",
+    })).resolves.toMatchObject({ status: "queued" });
+
+    deferredStats.get(path.resolve(sources[1])).resolve(sourceStats[1]);
+    await expect(second).resolves.toMatchObject({ status: "queued" });
+    expect(manager.getSnapshot().resolveInFlight).toBe(0);
+    await manager.shutdown();
+  });
+
+  it("retains cache-preflight admission across reset until old work settles", async () => {
+    const { root, profilePath } = await makeFixture();
+    const secondProfile = path.join(root, "profile-after-reset");
+    await fsPromises.mkdir(secondProfile, { recursive: true });
+    const sourcePath = await makeSource(root, "reset-cache-preflight.mp4");
+    const sourceStats = await fsPromises.stat(sourcePath);
+    const signature = sourceSignature(sourcePath, sourceStats);
+    const proxyPath = path.join(profilePath, "proxy-cache", `${signature}.mp4`);
+    await fsPromises.mkdir(path.dirname(proxyPath), { recursive: true });
+    await fsPromises.writeFile(proxyPath, "cached proxy");
+    const proxyStats = await fsPromises.stat(proxyPath);
+    const deferredProxyStat = createDeferred();
+    let deferProxyLookup = false;
+    const stat = vi.fn((targetPath) =>
+      deferProxyLookup && path.resolve(targetPath) === path.resolve(proxyPath)
+        ? deferredProxyStat.promise
+        : fsPromises.stat(targetPath)
+    );
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({
+      runner,
+      fs: createFsApi(stat),
+      maxResolveInFlight: 1,
+    });
+    await manager.init(profilePath);
+    deferProxyLookup = true;
+    stat.mockClear();
+
+    const staleResolution = manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "old-profile-owner",
+    });
+    await waitFor(() => stat.mock.calls.some(([target]) =>
+      path.resolve(target) === path.resolve(proxyPath)
+    ));
+    await manager.reset(secondProfile);
+    expect(manager.getSnapshot()).toMatchObject({
+      profilePath: path.resolve(secondProfile),
+      resolveInFlight: 1,
+    });
+
+    await expect(manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "new-profile-owner",
+    })).resolves.toMatchObject({
+      status: "busy",
+      busyReason: "resolve-capacity",
+      limit: 1,
+    });
+
+    deferredProxyStat.resolve(proxyStats);
+    await expect(staleResolution).resolves.toMatchObject({ status: "stale" });
+    expect(manager.getSnapshot().resolveInFlight).toBe(0);
+    await expect(manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "new-profile-owner",
+    })).resolves.toMatchObject({ status: "queued" });
+    await manager.shutdown();
+  });
+
+  it("disposes owner tombstones and cancels only that owner's work", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sourcePath = await makeSource(root, "disposed-owner.mp4");
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({ runner });
+    await manager.init(profilePath);
+
+    manager.setOwnerActive("retired", false);
+    expect(manager.getSnapshot().inactiveOwners).toBe(1);
+    expect(manager.disposeOwner("retired")).toBe(0);
+    expect(manager.getSnapshot().inactiveOwners).toBe(0);
+
+    await manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "retired",
+    });
+    await manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "survivor",
+    });
+
+    expect(manager.disposeOwner("retired")).toBe(1);
+    expect(runner.cancelOwner).not.toHaveBeenCalled();
+    expect(manager.disposeOwner("survivor")).toBe(1);
+    expect(runner.cancelOwner).toHaveBeenCalledTimes(1);
+    await waitForIdle(manager);
+    manager.setOwnerActive("shutdown-only", false);
+    expect(manager.getSnapshot().inactiveOwners).toBe(1);
+    await manager.shutdown();
+    expect(manager.getSnapshot().inactiveOwners).toBe(0);
   });
 
   it("degrades gracefully and stops retrying when ffmpeg is unavailable", async () => {
