@@ -271,6 +271,78 @@ describe("VideoCard", () => {
     }
   });
 
+  it("cancels queued initialization and cannot create media after unmount", async () => {
+    let queuedInit;
+    const cancelInit = vi.fn();
+    const scheduleInit = vi.fn((fn) => {
+      queuedInit = fn;
+      return cancelInit;
+    });
+    const onStopLoading = vi.fn();
+
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "queued-unmount",
+          name: "queued-unmount",
+          fullPath: "/queued-unmount.mp4",
+          isElectronFile: false,
+        }}
+        scheduleInit={scheduleInit}
+        onStopLoading={onStopLoading}
+      />
+    );
+
+    await act(async () => {});
+    expect(scheduleInit).toHaveBeenCalledOnce();
+    expect(lastVideoEl).toBeUndefined();
+
+    unmount();
+    expect(cancelInit).toHaveBeenCalledOnce();
+    expect(onStopLoading).toHaveBeenCalledWith("queued-unmount");
+
+    await act(async () => queuedInit());
+    expect(lastVideoEl).toBeUndefined();
+  });
+
+  it("tracks and releases an in-flight media element before loadeddata", async () => {
+    const onStopLoading = vi.fn();
+    const onVideoLoad = vi.fn();
+    const { unmount } = render(
+      <VideoCard
+        {...baseProps}
+        video={{
+          id: "in-flight-unmount",
+          name: "in-flight-unmount",
+          fullPath: "/in-flight-unmount.mp4",
+          isElectronFile: false,
+        }}
+        scheduleInit={(fn) => fn()}
+        onStopLoading={onStopLoading}
+        onVideoLoad={onVideoLoad}
+      />
+    );
+
+    await act(async () => {});
+    const inFlight = lastVideoEl;
+    expect(inFlight).toBeTruthy();
+    expect(inFlight.src).toContain("/in-flight-unmount.mp4");
+
+    unmount();
+
+    expect(inFlight.pause).toHaveBeenCalled();
+    expect(inFlight.removeAttribute).toHaveBeenCalledWith("src");
+    expect(inFlight.load).toHaveBeenCalledTimes(2);
+    expect(inFlight.remove).toHaveBeenCalled();
+    expect(onStopLoading).toHaveBeenCalledWith("in-flight-unmount");
+
+    await act(async () => {
+      inFlight.dispatchEvent(new Event("loadeddata"));
+    });
+    expect(onVideoLoad).not.toHaveBeenCalled();
+  });
+
   it("removes stray video elements when load completes", async () => {
     const video = {
       id: "v3",
