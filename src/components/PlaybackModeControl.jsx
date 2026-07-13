@@ -11,7 +11,7 @@ const MODE_DESCRIPTIONS = Object.freeze({
   [PLAYBACK_MODES.ADAPTIVE_MOTION]:
     "Uses a higher adaptive decoder budget while retaining hardware and health safety limits.",
   [PLAYBACK_MODES.ALL_MOTION]:
-    "Requests motion for every visible clip, matching the pre-mode behavior; this can use substantial CPU and memory.",
+    "Requests every visible clip and disables Chromium background throttling; this can use substantial CPU and memory.",
   [PLAYBACK_MODES.STATIC_HOVER]:
     "Keeps still first-frame previews and plays only hovered or selected clips.",
 });

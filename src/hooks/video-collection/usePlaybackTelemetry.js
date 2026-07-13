@@ -8,9 +8,11 @@ export const MAX_REGISTERED_MEDIA = 1024;
 const DEFAULT_SAMPLE_INTERVAL_MS = 1000;
 const MAX_FRAME_SAMPLES = 300;
 const HITCH_THRESHOLD_MS = 80;
+const LONG_TASK_DECAY_MS = 800;
 
 const initialTelemetry = () => ({
   suspended: false,
+  detailed: true,
   sampleCount: 0,
   sampledAt: 0,
   frameDelayMs: null,
@@ -189,6 +191,7 @@ const sampleRegisteredMedia = (registry) => {
 export function usePlaybackTelemetry({
   suspended = false,
   sampleIntervalMs = DEFAULT_SAMPLE_INTERVAL_MS,
+  detailed = true,
 } = {}) {
   const safeIntervalMs = Math.max(
     100,
@@ -235,6 +238,7 @@ export function usePlaybackTelemetry({
       setTelemetry((previous) => ({
         ...previous,
         suspended: true,
+        detailed: Boolean(detailed),
         frameDelayMs: null,
         longTaskRate: null,
         droppedFrameRatio: null,
@@ -251,6 +255,7 @@ export function usePlaybackTelemetry({
     let alive = true;
     let rafId = null;
     let intervalId = null;
+    let longTaskDecayId = null;
     let observer = null;
     let sampling = false;
     let lastFrameAt = null;
@@ -261,17 +266,48 @@ export function usePlaybackTelemetry({
     let longTaskCount = 0;
     let observerAvailable = false;
 
+    setTelemetry((previous) => ({
+      ...previous,
+      suspended: false,
+      detailed: Boolean(detailed),
+      ...(detailed
+        ? {}
+        : {
+            frameDelayMs: null,
+            longTaskRate: null,
+            droppedFrameRatio: null,
+            averagePixelArea: 0,
+            activeMedia: 0,
+            qualitySupportedMedia: 0,
+            workingSetDeltaMB: null,
+          }),
+    }));
+
+    const noteLongTask = () => {
+      setHadLongTaskRecently(true);
+      if (detailed) return;
+      if (longTaskDecayId !== null) clearTimeout(longTaskDecayId);
+      longTaskDecayId = setTimeout(() => {
+        longTaskDecayId = null;
+        if (alive && generationRef.current === generation) {
+          setHadLongTaskRecently(false);
+        }
+      }, LONG_TASK_DECAY_MS);
+    };
+
     const onFrame = (timestamp) => {
       if (!alive || generationRef.current !== generation) return;
       const frameAt = finite(timestamp) ?? now();
       if (lastFrameAt !== null) {
         const delay = frameAt - lastFrameAt;
         if (delay >= 0 && Number.isFinite(delay)) {
-          frameDelays.push(delay);
-          if (frameDelays.length > MAX_FRAME_SAMPLES) frameDelays.shift();
+          if (detailed) {
+            frameDelays.push(delay);
+            if (frameDelays.length > MAX_FRAME_SAMPLES) frameDelays.shift();
+          }
           if (delay >= HITCH_THRESHOLD_MS) {
             hadHitch = true;
-            setHadLongTaskRecently(true);
+            noteLongTask();
           }
         }
       }
@@ -289,11 +325,13 @@ export function usePlaybackTelemetry({
           if (!alive || generationRef.current !== generation) return;
           const entries = list?.getEntries?.() || [];
           if (!entries.length) return;
-          for (const entry of entries) {
-            longTaskDurationMs += Math.max(0, finite(entry?.duration) ?? 0);
-            longTaskCount += 1;
+          if (detailed) {
+            for (const entry of entries) {
+              longTaskDurationMs += Math.max(0, finite(entry?.duration) ?? 0);
+              longTaskCount += 1;
+            }
           }
-          setHadLongTaskRecently(true);
+          noteLongTask();
         });
         observer.observe({ entryTypes: ["longtask"] });
         observerAvailable = true;
@@ -349,6 +387,7 @@ export function usePlaybackTelemetry({
       setHadLongTaskRecently(unhealthyWindow);
       setTelemetry((previous) => ({
         suspended: false,
+        detailed: true,
         sampleCount: previous.sampleCount + 1,
         sampledAt: Date.now(),
         frameDelayMs,
@@ -366,10 +405,12 @@ export function usePlaybackTelemetry({
       sampling = false;
     };
 
-    void collect();
-    intervalId = setInterval(() => {
+    if (detailed) {
       void collect();
-    }, safeIntervalMs);
+      intervalId = setInterval(() => {
+        void collect();
+      }, safeIntervalMs);
+    }
 
     return () => {
       alive = false;
@@ -378,13 +419,18 @@ export function usePlaybackTelemetry({
         cancelAnimationFrame(rafId);
       }
       if (intervalId !== null) clearInterval(intervalId);
+      if (longTaskDecayId !== null) clearTimeout(longTaskDecayId);
       try {
         observer?.disconnect?.();
       } catch {}
       resetQualityBaselines(registryRef.current);
       previousWorkingSetRef.current = null;
     };
-  }, [safeIntervalMs, suspended]);
+  }, [
+    detailed,
+    safeIntervalMs,
+    suspended,
+  ]);
 
   return {
     telemetry,

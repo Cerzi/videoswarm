@@ -161,6 +161,58 @@ describe("useVideoCollection (composite)", () => {
     expect(result.current.playingVideos).toEqual(new Set(["v2", "v1"]));
   });
 
+  it("keeps All Motion leases stable while a stale policy target catches up", () => {
+    const videos = makeVideos(3);
+    const loadedVideos = new Set(["v0", "v1", "v2"]);
+    const mediaScheduler = createMediaSlotScheduler({
+      maxResident: 3,
+      maxLoaders: 3,
+      maxDecoders: 2,
+    });
+    for (const id of loadedVideos) {
+      const loader = mediaScheduler.reserveLoader(id);
+      mediaScheduler.markLoaderReady(loader);
+    }
+
+    const { result, rerender } = renderHook(
+      ({ visibleVideos, centerPriorityIds }) =>
+        useVideoCollection({
+          videos,
+          visibleVideos,
+          loadedVideos,
+          decoderTarget: 2,
+          activationTarget: 4,
+          playbackMode: "all-motion",
+          centerPriorityIds,
+          mediaScheduler,
+        }),
+      {
+        initialProps: {
+          visibleVideos: new Set(["v0", "v1"]),
+          centerPriorityIds: ["v0", "v1"],
+        },
+      }
+    );
+
+    const firstLease = result.current.getDecoderLease("v0");
+    const secondLease = result.current.getDecoderLease("v1");
+    expect(result.current.playingVideos).toEqual(new Set(["v0", "v1"]));
+
+    rerender({
+      visibleVideos: new Set(["v0", "v1", "v2"]),
+      // A changed center order used to evict v1 while the passive playback
+      // policy still exposed the prior two-decoder target.
+      centerPriorityIds: ["v2", "v0", "v1"],
+    });
+
+    expect(result.current.playingVideos).toEqual(
+      new Set(["v2", "v0", "v1"])
+    );
+    expect(result.current.getDecoderLease("v0")).toBe(firstLease);
+    expect(result.current.getDecoderLease("v1")).toBe(secondLease);
+    expect(mediaScheduler.getSnapshot().stoppingDecoders).toBe(0);
+  });
+
   it("pauses progressive growth and drives media admission to zero while work is suspended", () => {
     const videos = makeVideos(100);
     const { result, rerender } = renderHook(

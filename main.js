@@ -48,6 +48,7 @@ const sidecarMetadataService = createSidecarMetadataService();
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
+  applyPlaybackModeScheduling,
   createPlaybackCapabilities,
   normalizePlaybackMode,
 } = require("./main/playback-capabilities");
@@ -1902,6 +1903,10 @@ ipcMain.handle("playback:set-renderer-active", (event, active) => {
   proxyManager.setOwnerActive(ownerId, normalizedActive);
   return { success: true, active: normalizedActive };
 });
+
+ipcMain.handle("playback:set-mode-scheduling", (event, mode) =>
+  applyPlaybackModeScheduling(event.sender, mode)
+);
 
 ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
   const filePath =

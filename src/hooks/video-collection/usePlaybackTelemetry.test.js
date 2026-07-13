@@ -226,6 +226,24 @@ describe("usePlaybackTelemetry", () => {
     expect(rafCallbacks.size).toBe(0);
   });
 
+  it("decays the lightweight long-task signal without detailed samples", async () => {
+    const { result } = renderHook(() =>
+      usePlaybackTelemetry({ detailed: false })
+    );
+    await flushAsync();
+    expect(result.current.telemetry.detailed).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    act(() => {
+      MockPerformanceObserver.instances[0].emit([{ duration: 120 }]);
+    });
+    expect(result.current.hadLongTaskRecently).toBe(true);
+
+    await advanceSample(800);
+    expect(result.current.hadLongTaskRecently).toBe(false);
+    expect(window.appMem.get).not.toHaveBeenCalled();
+  });
+
   it("reports long tasks without adding per-card observers", async () => {
     const { result } = renderHook(() => usePlaybackTelemetry());
     await flushAsync();
@@ -271,4 +289,3 @@ describe("usePlaybackTelemetry", () => {
     expect(result.current.telemetry.workingSetDeltaMB).toBe(0);
   });
 });
-

@@ -301,6 +301,13 @@ vi.mock("./components/HeaderBar", () => ({
         </button>
         <button
           type="button"
+          aria-label="Use All Motion playback"
+          onClick={() => props.onPlaybackModeChange?.("all-motion")}
+        >
+          All Motion
+        </button>
+        <button
+          type="button"
           aria-label="Toggle proxy playback"
           aria-pressed={Boolean(props.proxyPlaybackEnabled)}
           onClick={() => props.onProxyPlaybackToggle?.()}
@@ -486,7 +493,10 @@ describe("App hook composition", () => {
     expect(useZoomControlsMock).toHaveBeenCalled();
     expect(useWindowWorkSuspensionMock).toHaveBeenCalledWith();
     expect(usePlaybackCapabilitiesMock).toHaveBeenCalledWith();
-    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({ suspended: false });
+    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({
+      suspended: false,
+      detailed: true,
+    });
     expect(useInitGateMock).toHaveBeenCalledWith({
       perFrame: 6,
       suspended: false,
@@ -565,7 +575,10 @@ describe("App hook composition", () => {
     const { default: App } = await import("./App.jsx");
     render(<App />);
 
-    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({ suspended: true });
+    expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({
+      suspended: true,
+      detailed: true,
+    });
     expect(useInitGateMock).toHaveBeenCalledWith({
       perFrame: 6,
       suspended: true,
@@ -590,7 +603,11 @@ describe("App hook composition", () => {
 
   test("persists explicit playback and proxy controls", async () => {
     const saveSettingsPartial = vi.fn();
-    window.electronAPI = { saveSettingsPartial };
+    const setModeScheduling = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI = {
+      saveSettingsPartial,
+      playback: { setModeScheduling },
+    };
 
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
@@ -607,6 +624,21 @@ describe("App hook composition", () => {
     expect(saveSettingsPartial).toHaveBeenCalledWith({
       playbackMode: "static-hover",
     });
+    expect(setModeScheduling).toHaveBeenCalledWith("static-hover");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use All Motion playback" })
+    );
+
+    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
+    expect(headerProps.playbackMode).toBe("all-motion");
+    expect(collectionArgs.playbackMode).toBe("all-motion");
+    expect(usePlaybackTelemetryMock).toHaveBeenLastCalledWith({
+      suspended: false,
+      detailed: false,
+    });
+    expect(setModeScheduling).toHaveBeenLastCalledWith("all-motion");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Toggle proxy playback" })

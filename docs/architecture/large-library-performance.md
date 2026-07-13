@@ -1,7 +1,7 @@
 # Large Library, Playback, and Reliability Architecture
 
 Status: Active design specification  
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 ## Purpose
 
@@ -257,8 +257,8 @@ Playback policy has four user-facing modes:
 - **Adaptive Motion:** uses the higher motion-oriented decoder budget while
   retaining platform, memory, source-pixel, and runtime-health limits.
 - **All Motion:** requests a decoder for every visible card, matching the
-  pre-mode behavior without telemetry derating. This is an explicit user
-  opt-in to higher CPU and memory use.
+  pre-mode behavior without telemetry derating or Chromium background
+  throttling. This is an explicit user opt-in to higher CPU and memory use.
 - **Static + Hover:** retains a paused first-frame preview and activates motion
   only on hover, selection, or fullscreen.
 
@@ -282,12 +282,22 @@ Static + Hover retains paused first-frame media for nearby cards and admits
 decoders only for hovered or selected cards; fullscreen uses its separate
 scheduler lane.
 
+Chromium owns media-clock synchronization and normally drops decoded frames
+while keeping `currentTime` at normal playback speed. Video Swarm does not
+periodically seek playing tiles to simulate frame dropping: forced catch-up
+seeks flush decoder state, can create a visible slow/jump cadence, and add work
+under software-decode pressure. Detailed per-element quality and
+adaptive-policy memory polling is disabled in All Motion because it cannot
+influence that mode; the independent resource-ownership memory limit,
+lightweight long-task signal, and lifecycle safeguards remain active.
+
 Page Visibility and main-process BrowserWindow activity jointly suspend work.
 Suspension physically detaches grid/fullscreen sources, drives every scheduler
 lane to zero, cancels queued initialization and thumbnail work, pauses
 progressive growth, telemetry, and memory polling, and cancels renderer-owned
-proxy jobs. Electron background throttling is enabled. Restoring the window
-resumes from current collection state rather than rebuilding the folder.
+proxy jobs. Electron background throttling remains enabled for bounded modes
+and is disabled only while All Motion is selected. Restoring the window resumes
+from current collection state rather than rebuilding the folder.
 
 The optional profile-local proxy cache returns the original immediately while
 one background ffmpeg worker runs. It permits four additional pending jobs,
@@ -302,6 +312,9 @@ Acceptance criteria:
 - Balanced mode reduces active decoders when dropped frames or long tasks rise.
 - Adaptive Motion preserves the former higher safety-capped policy.
 - All Motion targets every visible card and is not silently telemetry-derated.
+- All Motion disables Chromium background throttling while selected and leaves
+  frame dropping and media-clock synchronization to Chromium without forced
+  seek-based catch-up.
 - The minimum decoder target is not forced to 100 on weak systems.
 - Hidden/minimized windows stop expensive media work by default.
 - The UI states that Linux hardware decoding is detected, not guaranteed.
@@ -690,13 +703,22 @@ The following adjacent work remains **Unimplemented**:
    targets every visible card even under adverse telemetry. It does not bypass
    scheduler ownership, media cleanup, fullscreen suspension, or hidden-window
    suspension.
+9. **Implemented** — Restore the remaining pre-mode scheduling headroom for
+   All Motion by disabling Chromium background throttling only while that mode
+   is selected, retaining a synchronous activation-window decoder allowance
+   while candidates remain visibility-gated, and suppressing detailed
+   telemetry that cannot affect its uncapped decision. This prevents a
+   one-render policy delay from pausing and regranting still-visible cards.
+   Keep one lightweight long-task loop, but do not use periodic media seeks as
+   a frame-dropping mechanism because they can flush decoder state and create
+   a slow/jump cadence. Mode switches restore normal background throttling.
 
-Verification was repeated against the current tree on 2026-07-13: the focused
-Section 5 policy, telemetry, capability, suspension, playback-control,
-VideoCard, proxy, window-activity, and child-runner suites passed (11 files,
-80 tests). The complete renderer suite, production Vite build, Electron-ABI
-native suite, and unpacked Linux package also passed after the later Section 7
-integration. The implementation remains recorded in commit `af73872`.
+Verification was repeated against the current tree on 2026-07-14: the focused
+playback, telemetry, scheduling, preload, and application suites passed (8
+files, 69 tests). The complete host suite passed (515 tests, 8 skipped), as did
+the production Vite build, Electron-ABI native suite (145 tests), and unpacked
+Linux package. The base implementation is recorded in commit `af73872`; the
+later All Motion fidelity fixes are part of this follow-up implementation.
 
 Hardware-specific Linux decode verification and performance soak thresholds
 remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU

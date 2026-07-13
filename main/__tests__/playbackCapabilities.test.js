@@ -1,4 +1,5 @@
 const {
+  applyPlaybackModeScheduling,
   createPlaybackCapabilities,
   isHardwareDecodeDetected,
   normalizePlaybackMode,
@@ -25,6 +26,7 @@ describe("playback capabilities", () => {
 
   test.each([
     ["balanced", "balanced"],
+    ["ADAPTIVE-MOTION", "adaptive-motion"],
     ["ALL-MOTION", "all-motion"],
     ["static-hover", "static-hover"],
     ["legacy", "balanced"],
@@ -51,5 +53,40 @@ describe("playback capabilities", () => {
       hardwareDecodeGuaranteed: false,
       proxyAvailable: false,
     });
+  });
+
+  test("disables Chromium background throttling only for explicit All Motion", () => {
+    const webContents = {
+      isDestroyed: () => false,
+      setBackgroundThrottling: vi.fn(),
+    };
+
+    expect(applyPlaybackModeScheduling(webContents, "all-motion")).toEqual({
+      success: true,
+      mode: "all-motion",
+      backgroundThrottling: false,
+    });
+    expect(applyPlaybackModeScheduling(webContents, "adaptive-motion")).toEqual({
+      success: true,
+      mode: "adaptive-motion",
+      backgroundThrottling: true,
+    });
+    expect(webContents.setBackgroundThrottling.mock.calls).toEqual([
+      [false],
+      [true],
+    ]);
+  });
+
+  test("does not touch destroyed renderer scheduling state", () => {
+    const webContents = {
+      isDestroyed: () => true,
+      setBackgroundThrottling: vi.fn(),
+    };
+    expect(applyPlaybackModeScheduling(webContents, "all-motion")).toMatchObject({
+      success: false,
+      mode: "all-motion",
+      error: "WEB_CONTENTS_UNAVAILABLE",
+    });
+    expect(webContents.setBackgroundThrottling).not.toHaveBeenCalled();
   });
 });

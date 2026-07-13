@@ -2,6 +2,10 @@
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
+import {
+  PLAYBACK_MODES,
+  normalizePlaybackMode,
+} from "../../playback/playbackPolicy";
 
 const EMPTY_SET = new Set();
 const EMPTY_IDS = Object.freeze([]);
@@ -146,8 +150,24 @@ export default function useVideoCollection({
   const policyDecoderTarget = Number.isFinite(decoderTarget)
     ? Math.max(0, Math.floor(decoderTarget))
     : null;
+  const normalizedPlaybackMode = normalizePlaybackMode(playbackMode);
+  const currentVisibleCount = Number.isFinite(visibleVideos?.size)
+    ? Math.max(0, Math.floor(visibleVideos.size))
+    : 0;
+  // All Motion must not inherit the adaptive hook's one-render delay. Keep
+  // the pre-mode activation-window allowance as synchronous headroom while
+  // usePlayOrchestrator continues to admit visible candidates only. This
+  // avoids pause/regrant churn when visibility grows or the center order
+  // changes before the passive policy update lands.
+  const allMotionDecoderTarget = Math.max(
+    policyDecoderTarget ?? 0,
+    Number.isFinite(playingCap) ? Math.max(0, playingCap) : 0,
+    currentVisibleCount
+  );
   const maxDecoders = playbackSuspended || workSuspended
     ? 0
+    : normalizedPlaybackMode === PLAYBACK_MODES.ALL_MOTION
+      ? allMotionDecoderTarget
     : policyDecoderTarget !== null
       ? policyDecoderTarget
     : Number.isFinite(playingCap) && playingCap > 0
@@ -204,7 +224,7 @@ export default function useVideoCollection({
       hoverAudioEnabled,
       mediaScheduler: slotScheduler,
       playbackSuspended: playbackSuspended || workSuspended,
-      playbackMode,
+      playbackMode: normalizedPlaybackMode,
       selectedIds,
       centerPriorityIds,
       hoveredId,
