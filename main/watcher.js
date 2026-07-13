@@ -3,8 +3,17 @@
 // Emits: 'mode', 'ready', 'added', 'removed', 'changed', 'error'
 
 const chokidar = require("chokidar");
-const path = require("path");
 const { EventEmitter } = require("events");
+
+const EMPTY_CONTEXT = Object.freeze({});
+
+class StaleWatcherSessionError extends Error {
+  constructor() {
+    super("Watcher session is no longer active");
+    this.name = "StaleWatcherSessionError";
+    this.code = "WATCHER_SESSION_STALE";
+  }
+}
 
 function createFolderWatcher({
   isVideoFile,
@@ -28,33 +37,112 @@ function createFolderWatcher({
   let fileWatcher = null; // active chokidar watcher (native events)
   let pollingInterval = null; // setInterval id (polling fallback)
   let currentFolder = null; // current root
-  let fellBackThisSession = false; // one-shot fallback flag per folder
-  let currentOptions = { recursive: true }; // last requested options
+  let currentOptions = { recursive: true, context: EMPTY_CONTEXT };
+  let activeSession = null;
+  let sessionSequence = 0;
+  let lifecycleGeneration = 0;
   const changeTimeouts = new Map(); // debounce timers per file
 
   // ---- helpers ----
   function isPolling() {
     return !!pollingInterval;
   }
+
   function getCurrentFolder() {
     return currentFolder;
   }
+
   function clearChangeDebouncers() {
-    for (const t of changeTimeouts.values()) clearTimeout(t);
+    for (const entry of changeTimeouts.values()) {
+      clearTimeout(entry.timer);
+    }
     changeTimeouts.clear();
   }
 
-  async function stop() {
-    try {
-      if (fileWatcher) {
-        fileWatcher.removeAllListeners?.();
-        await fileWatcher.close();
-      }
-    } catch (e) {
-      logger.warn("[watch] Error closing watcher:", e);
-    } finally {
-      fileWatcher = null;
+  function isSessionActive(session) {
+    return !!session &&
+      session.active &&
+      activeSession === session &&
+      session.context?.cancelled !== true;
+  }
+
+  function assertSessionActive(session) {
+    if (!isSessionActive(session)) {
+      throw new StaleWatcherSessionError();
     }
+  }
+
+  function isStaleSessionError(error) {
+    return error?.code === "WATCHER_SESSION_STALE";
+  }
+
+  function eventMetadata(session) {
+    return {
+      folderPath: session.folderPath,
+      sessionId: session.sessionId,
+      context: session.context,
+    };
+  }
+
+  function helperContext(session) {
+    return {
+      ...session.context,
+      assertActive: () => assertSessionActive(session),
+    };
+  }
+
+  function pollingOptions(session) {
+    return {
+      recursive: session.recursive,
+      ...session.context,
+      assertActive: () => assertSessionActive(session),
+      pollingState: session.pollingState,
+    };
+  }
+
+  function createSession(folderPath, options) {
+    const context =
+      options.context && typeof options.context === "object"
+        ? options.context
+        : EMPTY_CONTEXT;
+    const session = {
+      sessionId: `watch-${++sessionSequence}`,
+      folderPath,
+      recursive: options.recursive,
+      context,
+      active: true,
+      fellBack: false,
+      pollInFlight: null,
+      pollingState: {
+        lastFiles: new Map(),
+        initialized: false,
+      },
+    };
+
+    activeSession = session;
+    currentFolder = folderPath;
+    currentOptions = {
+      recursive: options.recursive,
+      context,
+    };
+    return session;
+  }
+
+  function invalidateActiveSession() {
+    const session = activeSession;
+    if (session) {
+      session.active = false;
+    }
+    activeSession = null;
+    return session;
+  }
+
+  // Detach synchronously. In particular, stop() must invalidate assertActive
+  // before it waits for chokidar.close(), and an old close must never clear a
+  // newer watcher's state when starts overlap.
+  function detachActiveResources() {
+    const watcherToClose = fileWatcher;
+    fileWatcher = null;
 
     if (pollingInterval) {
       clearInterval(pollingInterval);
@@ -62,189 +150,272 @@ function createFolderWatcher({
     }
 
     clearChangeDebouncers();
+    invalidateActiveSession();
     currentFolder = null;
-    currentOptions = { recursive: true };
+    currentOptions = { recursive: true, context: EMPTY_CONTEXT };
+    return watcherToClose;
   }
 
-  function startPollingMode(folderPath, options = currentOptions) {
-    const resolvedOptions = {
-      recursive: true,
-      ...options,
-    };
-    // Ensure single instance
-    stop().catch(() => {});
-    currentFolder = folderPath;
-    currentOptions = resolvedOptions;
+  async function closeNativeWatcher(watcherToClose) {
+    if (!watcherToClose) return;
+    try {
+      watcherToClose.removeAllListeners?.();
+      await watcherToClose.close();
+    } catch (error) {
+      logger.warn("[watch] Error closing watcher:", error);
+    }
+  }
+
+  async function stop() {
+    lifecycleGeneration += 1;
+    const watcherToClose = detachActiveResources();
+    await closeNativeWatcher(watcherToClose);
+  }
+
+  async function runPollingScan(session, label = "scan") {
+    if (!isSessionActive(session)) return;
+    if (session.pollInFlight) return session.pollInFlight;
+
+    let runPromise;
+    runPromise = Promise.resolve()
+      .then(async () => {
+        assertSessionActive(session);
+        await scanFolderForChanges(
+          session.folderPath,
+          pollingOptions(session)
+        );
+        assertSessionActive(session);
+      })
+      .catch((error) => {
+        if (!isSessionActive(session) || isStaleSessionError(error)) return;
+        logger.error(`[watch] Polling ${label} failed:`, error);
+        events.emit("error", error, eventMetadata(session));
+      })
+      .finally(() => {
+        if (session.pollInFlight === runPromise) {
+          session.pollInFlight = null;
+        }
+      });
+
+    session.pollInFlight = runPromise;
+    return runPromise;
+  }
+
+  function startPollingMode(session) {
+    if (!isSessionActive(session)) return;
 
     logger.log(
       "[watch] Starting polling mode:",
-      folderPath,
-      `(recursive=${resolvedOptions.recursive})`
+      session.folderPath,
+      `(recursive=${session.recursive})`
     );
     events.emit("mode", {
       mode: "polling",
-      folderPath,
-      recursive: resolvedOptions.recursive,
+      recursive: session.recursive,
+      ...eventMetadata(session),
     });
 
-    // Initial scan
-    try {
-      scanFolderForChanges(folderPath, resolvedOptions);
-    } catch (e) {
-      logger.error("[watch] Polling initial scan failed:", e);
-      events.emit("error", e);
-    }
-
-    // Poll every 5 seconds (matches your previous behavior)
+    // Initial scan. runPollingScan owns rejection handling and coalesces timer
+    // ticks while a previous scan is still in flight.
+    void runPollingScan(session, "initial scan");
     pollingInterval = setInterval(() => {
-      try {
-        scanFolderForChanges(folderPath, resolvedOptions);
-      } catch (e) {
-        logger.error("[watch] Polling scan failed:", e);
-        events.emit("error", e);
-      }
+      void runPollingScan(session);
     }, 5000);
 
-    return { success: true, mode: "polling", recursive: resolvedOptions.recursive };
+    return {
+      success: true,
+      mode: "polling",
+      recursive: session.recursive,
+      sessionId: session.sessionId,
+    };
+  }
+
+  async function emitVideoEvent(session, eventName, filePath) {
+    if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+
+    try {
+      assertSessionActive(session);
+      const videoFile = await createVideoFileObject(
+        filePath,
+        session.folderPath,
+        helperContext(session)
+      );
+      assertSessionActive(session);
+      if (videoFile) {
+        events.emit(eventName, videoFile, eventMetadata(session));
+      }
+    } catch (error) {
+      if (!isSessionActive(session) || isStaleSessionError(error)) return;
+      logger.error(
+        `[watch:${eventName === "added" ? "add" : "change"}] createVideoFileObject failed:`,
+        error
+      );
+      events.emit("error", error, eventMetadata(session));
+    }
   }
 
   async function start(folderPath, options = {}) {
-    const { recursive = true } = options;
-    // If already watching the same folder, return current mode
+    const recursive = options.recursive ?? true;
+    const context =
+      options.context && typeof options.context === "object"
+        ? options.context
+        : EMPTY_CONTEXT;
+
+    // An identical request can reuse the existing watcher. A new context is a
+    // new ownership generation even when the root path did not change.
     if (
       currentFolder === folderPath &&
       currentOptions.recursive === recursive &&
+      currentOptions.context === context &&
+      isSessionActive(activeSession) &&
       (fileWatcher || pollingInterval)
     ) {
-      return { success: true, mode: isPolling() ? "polling" : "watch" };
+      return {
+        success: true,
+        mode: isPolling() ? "polling" : "watch",
+        recursive,
+        sessionId: activeSession.sessionId,
+      };
     }
 
-    await stop();
-    currentFolder = folderPath;
-    currentOptions = { recursive };
-    fellBackThisSession = false; // allow native attempt on each new folder
+    const startGeneration = ++lifecycleGeneration;
+    const watcherToClose = detachActiveResources();
+    await closeNativeWatcher(watcherToClose);
 
-    // Create chokidar watcher (native events)
-    fileWatcher = chokidar.watch(folderPath, {
-      ignored: [
-        /(^|[\/\\])\../,      // ignore dot files/dirs
-        "**/node_modules/**",
-        "**/.git/**",
-      ],
-      persistent: true,
-      ignoreInitial: true,
-      ...(recursive
-        ? { depth }
-        : { depth: 0 }), // follow recursion preference
+    // A later start/stop superseded this request while the old watcher closed.
+    if (startGeneration !== lifecycleGeneration) {
+      return { success: false, cancelled: true, recursive };
+    }
 
-      // Prefer native events
-      usePolling: false,
-      awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+    const session = createSession(folderPath, { recursive, context });
+    let nativeWatcher;
+    try {
+      // Create chokidar watcher (native events)
+      nativeWatcher = chokidar.watch(folderPath, {
+        ignored: [
+          /(^|[\/\\])\../,      // ignore dot files/dirs
+          "**/node_modules/**",
+          "**/.git/**",
+        ],
+        persistent: true,
+        ignoreInitial: true,
+        ...(recursive
+          ? { depth }
+          : { depth: 0 }), // follow recursion preference
 
-      // Churn/permissions
-      atomic: true,
-      alwaysStat: false,
-      followSymlinks: false,
-      ignorePermissionErrors: true,
+        // Prefer native events
+        usePolling: false,
+        awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
 
-      // Platform quirks
-      ...(process.platform === "darwin" && { useFsEvents: true }),
-      ...(process.platform === "win32" && { useReaddir: false }),
-    });
+        // Churn/permissions
+        atomic: true,
+        alwaysStat: false,
+        followSymlinks: false,
+        ignorePermissionErrors: true,
+
+        // Platform quirks
+        ...(process.platform === "darwin" && { useFsEvents: true }),
+        ...(process.platform === "win32" && { useReaddir: false }),
+      });
+    } catch (error) {
+      if (isSessionActive(session)) {
+        detachActiveResources();
+      }
+      throw error;
+    }
+
+    fileWatcher = nativeWatcher;
 
     // ---- events ----
-    fileWatcher.on("ready", () => {
+    nativeWatcher.on("ready", () => {
+      if (!isSessionActive(session) || fileWatcher !== nativeWatcher) return;
       // Instrumentation: count directories/files chokidar believes it has
       try {
-        const watched = fileWatcher.getWatched?.() || {};
+        const watched = nativeWatcher.getWatched?.() || {};
         const dirs = Object.keys(watched).length;
-        let files = 0; for (const d in watched) files += watched[d].length;
+        let files = 0;
+        for (const dir in watched) files += watched[dir].length;
         logger.log(`[watch] ready: dirs=${dirs} files=${files}`);
       } catch {}
       events.emit("mode", {
         mode: "watch",
-        folderPath,
-        recursive: currentOptions.recursive,
+        recursive: session.recursive,
+        ...eventMetadata(session),
       });
-      events.emit("ready", { folderPath });
-      logger.log("[watch] Watching:", folderPath);
+      events.emit("ready", eventMetadata(session));
+      logger.log("[watch] Watching:", session.folderPath);
     });
 
-    fileWatcher.on("add", async (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("add", (filePath) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
       logger.log("Video file added:", filePath);
-      try {
-        const videoFile = await createVideoFileObject(filePath, folderPath);
-        if (videoFile) events.emit("added", videoFile);
-      } catch (e) {
-        logger.error("[watch:add] createVideoFileObject failed:", e);
-        events.emit("error", e);
-      }
+      void emitVideoEvent(session, "added", filePath);
     });
 
-    fileWatcher.on("unlink", (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("unlink", (filePath) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
       logger.log("Video file removed:", filePath);
-      events.emit("removed", filePath);
+      events.emit("removed", filePath, eventMetadata(session));
     });
 
-    fileWatcher.on("change", async (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("change", (filePath) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
 
-      if (changeTimeouts.has(filePath)) {
-        clearTimeout(changeTimeouts.get(filePath));
+      const existing = changeTimeouts.get(filePath);
+      if (existing) {
+        clearTimeout(existing.timer);
       }
-      changeTimeouts.set(
-        filePath,
-        setTimeout(async () => {
-          logger.log("Video file changed:", filePath);
-          try {
-            const videoFile = await createVideoFileObject(filePath, folderPath);
-            if (videoFile) events.emit("changed", videoFile);
-          } catch (e) {
-            logger.error("[watch:change] createVideoFileObject failed:", e);
-            events.emit("error", e);
-          } finally {
-            changeTimeouts.delete(filePath);
-          }
-        }, 1000)
-      );
+
+      const entry = { session, timer: null };
+      entry.timer = setTimeout(() => {
+        if (changeTimeouts.get(filePath) !== entry) return;
+        changeTimeouts.delete(filePath);
+        if (!isSessionActive(session)) return;
+        logger.log("Video file changed:", filePath);
+        void emitVideoEvent(session, "changed", filePath);
+      }, 1000);
+      changeTimeouts.set(filePath, entry);
     });
 
-    fileWatcher.on("error", async (error) => {
+    nativeWatcher.on("error", async (error) => {
+      if (!isSessionActive(session)) return;
       const code = error && error.code;
       const isLimitError = code === "EMFILE" || code === "ENOSPC";
 
-      if (isLimitError && !fellBackThisSession) {
-        fellBackThisSession = true; // one-shot per folder
+      if (isLimitError && !session.fellBack) {
+        session.fellBack = true; // one-shot per watcher session
         logger.warn("[watch] Limit hit:", code, "→ switching to polling");
-        // Preserve context before tearing down
-        const prevFolder = currentFolder;
-        const prevOptions = currentOptions;
-        // Close partially-initialized watcher before falling back
-        try {
-          await stop();
-        } catch {}
-        // Emit mode explicitly because 'ready' may never fire when erroring early
-        events.emit("mode", {
-          mode: "polling",
-          folderPath: prevFolder,
-          recursive: prevOptions.recursive,
-        });
-        if (prevFolder) {
-          startPollingMode(prevFolder, prevOptions);
+
+        // Detach this native watcher before awaiting close. A new start/stop can
+        // now invalidate the session without being clobbered by this callback.
+        if (fileWatcher === nativeWatcher) {
+          fileWatcher = null;
         }
-        // Optional UI hint
-        events.emit("error", new Error("Switched to polling mode"));
+        clearChangeDebouncers();
+        await closeNativeWatcher(nativeWatcher);
+        if (!isSessionActive(session)) return;
+
+        startPollingMode(session);
+        // Preserve the existing UI hint while attaching session metadata.
+        events.emit(
+          "error",
+          new Error("Switched to polling mode"),
+          eventMetadata(session)
+        );
         return;
       }
 
       // Non-limit errors or repeated limit errors
       logger.error("File watcher error:", error);
-      events.emit("error", error);
+      events.emit("error", error, eventMetadata(session));
     });
 
-    return { success: true, mode: "watch", recursive };
+    return {
+      success: true,
+      mode: "watch",
+      recursive,
+      sessionId: session.sessionId,
+    };
   }
 
   // public API
