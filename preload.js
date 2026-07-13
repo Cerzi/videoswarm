@@ -45,6 +45,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("cancel-directory-scan", scanId);
   },
 
+  onDirectoryScanProgress: (callback) => {
+    if (typeof callback !== "function") {
+      return () => {};
+    }
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on("directory-scan-progress", handler);
+    return () =>
+      ipcRenderer.removeListener("directory-scan-progress", handler);
+  },
+
   // File system watching
   startFolderWatch: async (folderPath, recursive) => {
     return await ipcRenderer.invoke(

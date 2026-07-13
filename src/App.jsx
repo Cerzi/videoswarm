@@ -210,6 +210,7 @@ function App() {
     videos,
     setVideos,
     isLoadingFolder,
+    loadingStatus,
     loadingStage,
     loadingProgress,
     settingsLoaded,
@@ -1313,8 +1314,10 @@ function App() {
           {/* Loading overlay */}
           <LoadingOverlay
             show={isLoadingFolder}
+            status={loadingStatus}
             stage={loadingStage}
             progress={loadingProgress}
+            memoryStatus={videoCollection.memoryStatus}
             onCancel={cancelFolderLoad}
           />
 

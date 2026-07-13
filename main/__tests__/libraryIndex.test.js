@@ -73,6 +73,47 @@ if (!database || databaseLoadError) {
       expect(store.getFileInstances(rootPath)).toHaveLength(2);
     });
 
+    it('reports monotonic indexing and persisted fingerprint reuse progress', async () => {
+      const first = createFile('progress/first.mp4', 'first');
+      const second = createFile('progress/second.mp4', 'second');
+      await store.indexFiles({ rootPath, entries: [first, second] });
+      const updates = [];
+
+      const indexed = await store.indexFiles({
+        rootPath,
+        entries: [first, second],
+        onProgress: (update) => updates.push(update),
+      });
+
+      expect(indexed).toHaveLength(2);
+      expect(updates.map((update) => update.indexedFiles)).toEqual([0, 1, 2]);
+      expect(updates.map((update) => update.totalFiles)).toEqual([2, 2, 2]);
+      expect(updates.map((update) => update.fingerprintsReused)).toEqual([
+        0,
+        1,
+        2,
+      ]);
+      expect(updates.at(-1)).toMatchObject({
+        filePath: 'progress/second.mp4',
+        indexedFiles: 2,
+        fingerprintsReused: 2,
+      });
+    });
+
+    it('does not let progress observers fail catalog indexing', async () => {
+      const entry = createFile('progress/observer.mp4', 'observer');
+
+      await expect(
+        store.indexFiles({
+          rootPath,
+          entries: [entry],
+          onProgress: () => {
+            throw new Error('telemetry failed');
+          },
+        })
+      ).resolves.toHaveLength(1);
+    });
+
     it('preserves ordinary copied files as distinct filesystem instances', async () => {
       const source = createFile('copies/source.mp4', 'byte-identical-content');
       const copyPath = path.join(rootPath, 'copies/copy.mp4');

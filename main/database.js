@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { computeFingerprint } = require('./fingerprint');
+const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
 const profileManager = require('./profile-manager');
 
 let dbInstance = null;
@@ -1121,14 +1122,35 @@ function createMetadataStore(db) {
     entries = [],
     recursive = true,
     assertActive,
+    onProgress,
   } = {}) {
     assertOperationActive(assertActive);
     const normalizedRoot = normalizeRootPath(rootPath);
     const root = registerLibraryRoot(normalizedRoot, { recursive });
     const rootRow = rootById.get(root.id);
     const preparedEntries = [];
+    const sourceEntries = Array.isArray(entries) ? entries : [];
+    const maybeYield = createPeriodicEventLoopYielder();
+    let fingerprintsReused = 0;
 
-    for (const input of Array.isArray(entries) ? entries : []) {
+    const notifyProgress = (filePath = null) => {
+      if (typeof onProgress !== 'function') return;
+      try {
+        const notification = onProgress({
+          indexedFiles: preparedEntries.length,
+          totalFiles: sourceEntries.length,
+          fingerprintsReused,
+          filePath,
+        });
+        notification?.catch?.(() => {});
+      } catch {
+        // Telemetry must never make catalog indexing fail.
+      }
+    };
+
+    notifyProgress();
+
+    for (const input of sourceEntries) {
       assertOperationActive(assertActive);
       if (!input?.filePath) {
         throw new TypeError('Every indexed entry requires a filePath');
@@ -1175,6 +1197,17 @@ function createMetadataStore(db) {
         createdMs: fingerprintResult.createdMs,
         fingerprintReused: reusedPersistedFingerprint,
       });
+
+      if (reusedPersistedFingerprint) {
+        fingerprintsReused += 1;
+      }
+      notifyProgress(location.relativePath);
+
+      const pendingYield = maybeYield();
+      if (pendingYield) {
+        await pendingYield;
+        assertOperationActive(assertActive);
+      }
     }
 
     // Fingerprinting and stat calls above are asynchronous. Re-check ownership
