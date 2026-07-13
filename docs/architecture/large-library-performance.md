@@ -117,12 +117,15 @@ Acceptance criteria:
 
 ### 2. Persistent content and file-instance index
 
+Status: **Implemented** (2026-07-13)
+
 The database separates content identity from filesystem instances:
 
-- `library_roots`: pinned roots and refresh state.
+- `library_roots`: indexed roots, explicit pin state, and refresh state.
 - `directories`: root-relative hierarchy and aggregate review counts.
-- `media_content`: fingerprint-keyed technical metadata, tags, rating, and
-  thumbnail identity.
+- `media_content`: fingerprint-keyed technical metadata and thumbnail identity.
+  Existing fingerprint-keyed tag/rating tables remain the compatibility
+  storage surface for the same content identity.
 - `file_instances`: root plus relative path, size, modification time,
   fingerprint, and presence state.
 
@@ -307,7 +310,7 @@ Acceptance criteria:
 | Loading overlay and Escape cancellation | **Implemented** | The overlay forwards one cancellation action and Escape uses the same path; landed in `062e23a`. |
 | Incremental enumeration batches and real progress | **Unimplemented** | Requires scan protocol expansion. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
-| Persistent content/file-instance schema | **Unimplemented** | Existing schema stores one last-known path. |
+| Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Unimplemented** | Current renderer materializes all cards. |
 | Stable masonry/observer/card callback identities | **Unimplemented** | Independent optimization after safety work. |
 | Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; failed recovery and the idle frame pump were fixed with regressions in `e85030a`. |
@@ -318,7 +321,7 @@ Acceptance criteria:
 | Bounded process-lifetime caches and queues | **Unimplemented** | Main and renderer maps need ownership limits. |
 | Asynchronous thumbnail IPC and persistence | **Unimplemented** | Current bridge uses synchronous IPC. |
 | Folder tree, scope control, and sibling cycling | **Unimplemented** | Requires root/directory state. |
-| Pinned lightweight libraries and smart views | **Unimplemented** | Depends on file-instance schema. |
+| Pinned lightweight libraries and smart views | **Unimplemented** | Pin state now persists, but pin management, navigation, and saved-view UX have not landed. |
 | Electron smoke and performance soak harnesses | **Unimplemented** | Existing tests are primarily unit-level. |
 | Electron-ABI SQLite test job | **Unimplemented** | Current suites can silently skip. |
 | Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
@@ -340,8 +343,48 @@ streaming or virtualization:
 6. **Implemented** — Add focused regression tests for these guarantees.
 
 The scan still returns one final array after this slice. Incremental batches,
-enrichment workers, virtualization, library schema changes, and adaptive Linux
-playback remain explicitly Unimplemented until their acceptance criteria land.
+enrichment workers, virtualization, and adaptive Linux playback remain
+explicitly Unimplemented until their acceptance criteria land.
+
+## Persistent index implementation slice
+
+1. **Implemented** — Add additive, transactional `library_roots`,
+   `directories`, `media_content`, and `file_instances` tables without
+   discarding the existing fingerprint metadata/tag/rating surface.
+2. **Implemented** — Persist root pin/refresh state, empty directories,
+   file-instance presence, and direct/subtree aggregate counts per profile.
+3. **Implemented** — Reuse a persisted fingerprint when root-relative path,
+   size, and modification time are unchanged, including across restart.
+4. **Implemented** — Enumerate cheap file stats first, index the scan in a
+   batch transaction, then construct renderer records without fingerprinting a
+   second time.
+5. **Implemented** — Reconcile only complete or explicitly successful
+   directory coverage; cancelled, unreadable, and depth-truncated work cannot
+   mark uncertain branches missing.
+6. **Implemented** — Propagate captured root/profile ownership through native
+   and polling watcher sessions. Native unlink and polling deltas update
+   instance presence, stale sessions are dropped, and polling reconciles its
+   first pass against persisted state.
+7. **Implemented** — Serialize profile reconfiguration with latest-request
+   ownership and dispose watcher/window listeners on close.
+8. **Implemented** — Add database, cancellation, copied-instance, recursive
+   reconciliation, watcher-session, and polling-baseline regressions.
+
+The following adjacent work remains **Unimplemented**:
+
+- User-facing pin/unpin management, folder navigation, smart views, and an
+  explicit reviewed state remain part of Section 7. Until then,
+  `reviewed_count` means a present item with a rating.
+- Watch-before-scan buffering and renderer-side incremental batches remain
+  part of Section 1.
+- Fingerprint format `v1` includes creation time. Ordinary byte-identical
+  copies are safely represented as distinct instances but may occupy distinct
+  content rows; a versioned content-digest migration is deferred.
+- Watcher bursts still refresh directory aggregates per event. Debounced or
+  incremental aggregate maintenance and its burst benchmark remain part of
+  Sections 6 and 8.
+- The SQLite suites execute successfully through Electron's ABI locally, but
+  a mandatory non-skippable Electron-ABI CI job remains part of Section 8.
 
 ## Migration and compatibility
 
