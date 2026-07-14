@@ -362,6 +362,65 @@ describe("VideoCard scheduler integration", () => {
     expect(scheduler.getSnapshot().decoders).toBe(0);
   });
 
+  it("ignores a delayed pause event after a replacement decoder starts", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const onVideoPause = vi.fn((_id, lease) =>
+      lease ? scheduler.acknowledgeDecoderStopped(lease) : false
+    );
+    const props = cardProps(scheduler, {
+      video: {
+        id: "pause-race",
+        name: "pause-race.mp4",
+        fullPath: "/pause-race.mp4",
+        isElectronFile: true,
+      },
+      onVideoPause,
+    });
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+    const element = mediaElements[0];
+    await act(async () => element.dispatchEvent(new Event("loadeddata")));
+
+    const firstLease = scheduler.reserveDecoder("pause-race");
+    rendered.rerender(
+      <VideoCard {...props} isLoaded isPlaying decoderLease={firstLease} />
+    );
+    await act(async () => {});
+
+    scheduler.requestDecoderStop(firstLease);
+    rendered.rerender(
+      <VideoCard
+        {...props}
+        isLoaded
+        isPlaying={false}
+        decoderLease={firstLease}
+      />
+    );
+    await act(async () => {});
+    expect(scheduler.getDecoderLease("pause-race")).toBeNull();
+
+    const replacementLease = scheduler.reserveDecoder("pause-race");
+    rendered.rerender(
+      <VideoCard
+        {...props}
+        isLoaded
+        isPlaying
+        decoderLease={replacementLease}
+      />
+    );
+    await act(async () => {});
+    onVideoPause.mockClear();
+
+    await act(async () => element.dispatchEvent(new Event("pause")));
+
+    expect(onVideoPause).not.toHaveBeenCalled();
+    expect(scheduler.getDecoderLease("pause-race")).toBe(replacementLease);
+  });
+
   it("ignores a rejected play promise from a revoked decoder effect", async () => {
     const scheduler = createMediaSlotScheduler({
       maxResident: 1,

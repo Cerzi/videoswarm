@@ -508,7 +508,7 @@ const VideoCard = memo(function VideoCard({
       const accepted = onVideoPlay?.(videoId, decoderLease);
       if (accepted === false) {
         try { el.pause(); } catch {}
-        onVideoPause?.(videoId, decoderLease);
+        if (decoderLease) onVideoPause?.(videoId, decoderLease);
         return;
       }
     };
@@ -517,7 +517,9 @@ const VideoCard = memo(function VideoCard({
         !isCurrentElement() ||
         recoveryInFlight ||
         watchdogRecoveryRef.current ||
-        el.dataset.mediaOperation === "frame-capture"
+        el.dataset.mediaOperation === "frame-capture" ||
+        el.dataset.playbackDesired !== "false" ||
+        !decoderLease
       ) {
         return;
       }
@@ -639,7 +641,11 @@ const VideoCard = memo(function VideoCard({
       el.dataset.playbackDesired = "false";
       el.muted = true;
       try { el.pause(); } catch {}
-      onVideoPause?.(videoId, decoderLease);
+      // The scheduler uses exact, generation-owned leases. A first render may
+      // still say `isPlaying=false` while its parent layout effect has already
+      // granted a new decoder; acknowledging with null would release that
+      // newer decoder and create an endless pause/play loop after scrolling.
+      if (decoderLease) onVideoPause?.(videoId, decoderLease);
     }
 
     return () => {

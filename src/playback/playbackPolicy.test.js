@@ -49,7 +49,7 @@ describe("playback policy", () => {
     expect(decision.target).toBeGreaterThan(0);
   });
 
-  it("reduces quickly on decode and event-loop pressure", () => {
+  it("reports pressure without recursively changing the structural target", () => {
     const previous = { target: 10, cleanWindows: 2 };
     const decision = nextPlaybackDecision(previous, {
       mode: PLAYBACK_MODES.BALANCED,
@@ -66,14 +66,14 @@ describe("playback policy", () => {
     });
 
     expect(decision.health).toBe("critical");
-    expect(decision.target).toBeLessThanOrEqual(6);
+    expect(decision.target).toBe(decision.safetyCap);
     expect(decision.cleanWindows).toBe(0);
     expect(decision.reasons).toEqual(
       expect.arrayContaining(["dropped-frames", "frame-delay"])
     );
   });
 
-  it("does not reapply a health window during a structural update", () => {
+  it("recomputes the structural cap while retaining advisory health", () => {
     const previous = {
       mode: PLAYBACK_MODES.BALANCED,
       target: 6,
@@ -95,13 +95,13 @@ describe("playback policy", () => {
     });
 
     expect(decision).toMatchObject({
-      target: 6,
       health: "critical",
       reasons: ["dropped-frames"],
     });
+    expect(decision.target).toBe(decision.safetyCap);
   });
 
-  it("recovers by at most one only after consecutive clean windows", () => {
+  it("does not collapse after consecutive adverse telemetry windows", () => {
     const input = {
       mode: PLAYBACK_MODES.BALANCED,
       platform: "linux",
@@ -109,21 +109,16 @@ describe("playback policy", () => {
       hardwareConcurrency: 12,
       systemMemoryMB: 32768,
       averagePixelArea: 640 * 360,
-      ...healthy,
       availableMemoryMB: 16000,
+      droppedFrameRatio: 0.2,
     };
-    let decision = { target: 3, cleanWindows: 0 };
+    let decision = { target: 12, cleanWindows: 0 };
 
-    decision = nextPlaybackDecision(decision, input);
-    expect(decision.target).toBe(3);
-    decision = nextPlaybackDecision(decision, input);
-    expect(decision.target).toBe(3);
-    decision = nextPlaybackDecision(decision, input);
-    expect(decision.target).toBe(4);
-    expect(decision.cleanWindows).toBe(0);
-
-    decision = nextPlaybackDecision(decision, input);
-    expect(decision.target).toBe(4);
+    for (let sample = 0; sample < 10; sample += 1) {
+      decision = nextPlaybackDecision(decision, input);
+      expect(decision.target).toBe(decision.safetyCap);
+      expect(decision.health).toBe("critical");
+    }
   });
 
   it("Adaptive Motion raises the budget but retains an explicit safety cap", () => {

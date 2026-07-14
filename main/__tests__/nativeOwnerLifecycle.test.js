@@ -43,6 +43,9 @@ describe("NativeOwnerLifecycle", () => {
 
   it("wires crash invalidation and did-finish-load reactivation in main", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "main.js"), "utf8");
+    expect(source).toContain(
+      "const createdWebContents = createdWindow.webContents"
+    );
     const crashStart = source.indexOf(
       'mainWindow.webContents.on("render-process-gone"'
     );
@@ -53,7 +56,7 @@ describe("NativeOwnerLifecycle", () => {
     const crashHandler = source.slice(crashStart, crashEnd);
     expect(crashStart).toBeGreaterThan(-1);
     expect(crashHandler).toContain(
-      "invalidateNativeWorkOwner(createdWindow.webContents)"
+      "invalidateNativeWorkOwner(createdWebContents)"
     );
 
     const loadStart = source.indexOf(
@@ -66,8 +69,21 @@ describe("NativeOwnerLifecycle", () => {
     const loadHandler = source.slice(loadStart, loadEnd);
     expect(loadStart).toBeGreaterThan(-1);
     expect(loadHandler).toContain(
-      "activateNativeWorkOwner(createdWindow.webContents)"
+      "activateNativeWorkOwner(createdWebContents)"
     );
+  });
+
+  it("does not dereference a destroyed BrowserWindow during owner cleanup", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "main.js"), "utf8");
+    const closedStart = source.indexOf('createdWindow.once("closed"');
+    const closedEnd = source.indexOf("if (isDev)", closedStart);
+    const closedHandler = source.slice(closedStart, closedEnd);
+
+    expect(closedStart).toBeGreaterThan(-1);
+    expect(closedHandler).toContain(
+      "disposeNativeWorkOwner(createdWebContents)"
+    );
+    expect(closedHandler).not.toContain("createdWindow.webContents");
   });
 
   it("invalidates profile work and awaits its queue before native shutdown", () => {

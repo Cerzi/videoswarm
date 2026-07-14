@@ -7,9 +7,9 @@ import {
 
 const MODE_DESCRIPTIONS = Object.freeze({
   [PLAYBACK_MODES.BALANCED]:
-    "Adapts simultaneous playback to frame delay, dropped frames, memory and source resolution.",
+    "Uses a conservative system-aware decoder budget based on CPU, memory and source resolution.",
   [PLAYBACK_MODES.ADAPTIVE_MOTION]:
-    "Uses a higher adaptive decoder budget while retaining hardware and health safety limits.",
+    "Uses a higher system-aware decoder budget while retaining structural safety limits.",
   [PLAYBACK_MODES.ALL_MOTION]:
     "Requests every visible clip using the original unrestricted scheduling path; this can use substantial CPU and memory.",
   [PLAYBACK_MODES.STATIC_HOVER]:

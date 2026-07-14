@@ -11,6 +11,7 @@ import {
   buildPlaybackPriority,
   DEFAULT_PLAYBACK_MODE,
   normalizePlaybackMode,
+  PLAYBACK_MODES,
 } from "../../playback/playbackPolicy";
 
 const ERROR_COOLDOWN_MS = 8000;
@@ -64,6 +65,11 @@ export default function usePlayOrchestrator({
   const centerOrder = Array.isArray(centerPriorityIds)
     ? centerPriorityIds
     : EMPTY_IDS;
+  // All Motion deliberately retains the pre-mode ordering. In particular,
+  // viewport-center changes must not make already-playing media hand its
+  // decoder back merely because the user scrolled a few pixels.
+  const boundedCenterOrder =
+    normalizedMode === PLAYBACK_MODES.ALL_MOTION ? EMPTY_IDS : centerOrder;
   const decoderCap = playbackSuspended
     ? 0
     : Math.max(0, Math.floor(Number(maxPlaying) || 0));
@@ -107,14 +113,58 @@ export default function usePlayOrchestrator({
 
     const now = performance.now();
     const recentOrder = [...startOrderRef.current].reverse();
-    const priority = buildPlaybackPriority({
-      mode: normalizedMode,
-      visibleIds: visible,
-      loadedIds: loaded,
-      centerOrderedIds: centerOrder.length ? centerOrder : recentOrder,
-      hoveredId: hoveredId !== undefined ? hoveredId : hoveredRef.current,
-      selectedIds: selected,
-    });
+    const retained = scheduler.getSnapshot().decoderIds;
+    let priority;
+    if (normalizedMode === PLAYBACK_MODES.ALL_MOTION) {
+      const included = new Set();
+      priority = [];
+      const add = (id) => {
+        if (
+          id == null ||
+          included.has(id) ||
+          !visible.has(id) ||
+          !loaded.has(id)
+        ) {
+          return;
+        }
+        included.add(id);
+        priority.push(id);
+      };
+
+      add(hoveredId !== undefined ? hoveredId : hoveredRef.current);
+      for (const id of retained) add(id);
+      for (const id of recentOrder) add(id);
+      for (const id of visible) add(id);
+    } else {
+      const ranked = buildPlaybackPriority({
+        mode: normalizedMode,
+        visibleIds: visible,
+        loadedIds: loaded,
+        centerOrderedIds: boundedCenterOrder.length
+          ? boundedCenterOrder
+          : recentOrder,
+        hoveredId: hoveredId !== undefined ? hoveredId : hoveredRef.current,
+        selectedIds: selected,
+      });
+      const rankedSet = new Set(ranked);
+      const included = new Set();
+      priority = [];
+      const add = (id) => {
+        if (id == null || included.has(id) || !rankedSet.has(id)) return;
+        included.add(id);
+        priority.push(id);
+      };
+
+      // Explicit interaction can preempt a decoder. Otherwise retain current
+      // visible owners before admitting the rest of the center-ranked list, so
+      // small scroll/layout changes do not churn healthy decoders.
+      add(hoveredId !== undefined ? hoveredId : hoveredRef.current);
+      for (const id of ranked) {
+        if (selected.has(id)) add(id);
+      }
+      for (const id of retained) add(id);
+      for (const id of ranked) add(id);
+    }
     const candidates = priority.filter((id) => {
       if (!scheduler.getResidentLease(id)) return false;
       const failedAt = recentlyErroredRef.current.get(id);
@@ -132,7 +182,7 @@ export default function usePlayOrchestrator({
     reconcileRevision,
     scheduler,
     selected,
-    centerOrder,
+    boundedCenterOrder,
     hoveredId,
     visible,
   ]);
@@ -205,7 +255,9 @@ export default function usePlayOrchestrator({
   const reportPaused = useCallback(
     (id, lease = null) => {
       const current = scheduler.getDecoderLease(id);
-      if (!current || (lease && current !== lease)) return false;
+      // A pause acknowledgement is an ownership mutation. Never let a stale
+      // render with no lease release a decoder granted by a newer layout pass.
+      if (!lease || !current || current !== lease) return false;
       scheduler.acknowledgeDecoderStopped(current);
       mirrorScheduler();
       setReconcileRevision((value) => value + 1);

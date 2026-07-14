@@ -222,6 +222,95 @@ describe('usePlayOrchestrator', () => {
     expect(result.current.getDecoderLease(nextId)).toBe(nextLease);
   });
 
+  test('never lets a lease-less pause release a newly granted decoder', () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    scheduler.markLoaderReady(scheduler.reserveLoader('fresh'));
+
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: setOf(['fresh']),
+        loadedIds: setOf(['fresh']),
+        maxPlaying: 1,
+        mediaScheduler: scheduler,
+      })
+    );
+    const freshLease = result.current.getDecoderLease('fresh');
+    expect(freshLease).toBeTruthy();
+
+    act(() => {
+      expect(result.current.reportPaused('fresh', null)).toBe(false);
+    });
+
+    expect(result.current.getDecoderLease('fresh')).toBe(freshLease);
+    expect(result.current.playingSet).toEqual(new Set(['fresh']));
+  });
+
+  test('All Motion retains admitted decoders when viewport-center order changes', () => {
+    const visible = setOf(['first', 'second', 'third']);
+    const loaded = setOf(['first', 'second', 'third']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 2,
+          playbackMode: 'all-motion',
+          centerPriorityIds: ['first', 'second', 'third'],
+        },
+      }
+    );
+    const firstLease = result.current.getDecoderLease('first');
+    const secondLease = result.current.getDecoderLease('second');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      playbackMode: 'all-motion',
+      centerPriorityIds: ['third', 'second', 'first'],
+    });
+
+    expect(result.current.getDecoderLease('first')).toBe(firstLease);
+    expect(result.current.getDecoderLease('second')).toBe(secondLease);
+    expect(result.current.getDecoderLease('third')).toBeNull();
+  });
+
+  test('bounded modes retain visible decoders across center-order churn', () => {
+    const visible = setOf(['first', 'second', 'third']);
+    const loaded = setOf(['first', 'second', 'third']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 2,
+          playbackMode: 'balanced',
+          centerPriorityIds: ['first', 'second', 'third'],
+        },
+      }
+    );
+    const firstLease = result.current.getDecoderLease('first');
+    const secondLease = result.current.getDecoderLease('second');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      playbackMode: 'balanced',
+      centerPriorityIds: ['third', 'second', 'first'],
+    });
+
+    expect(result.current.getDecoderLease('first')).toBe(firstLease);
+    expect(result.current.getDecoderLease('second')).toBe(secondLease);
+    expect(result.current.getDecoderLease('third')).toBeNull();
+  });
+
   test('prioritizes hover, selection, then viewport center', () => {
     const visible = setOf(['edge', 'selected', 'center', 'hover']);
     const loaded = setOf(['edge', 'selected', 'center', 'hover']);

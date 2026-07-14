@@ -23,7 +23,7 @@ const base = {
 };
 
 describe("useAdaptivePlaybackPolicy", () => {
-  it("shrinks on unhealthy telemetry and recovers no faster than one slot", () => {
+  it("reports unhealthy telemetry without shrinking the structural budget", () => {
     const rendered = renderHook((props) => useAdaptivePlaybackPolicy(props), {
       initialProps: base,
     });
@@ -39,8 +39,11 @@ describe("useAdaptivePlaybackPolicy", () => {
         },
       });
     });
-    const reduced = rendered.result.current.target;
-    expect(reduced).toBeLessThan(initial);
+    expect(rendered.result.current).toMatchObject({
+      target: initial,
+      safetyCap: initial,
+      health: "critical",
+    });
 
     for (let sampleCount = 3; sampleCount <= 5; sampleCount += 1) {
       act(() => {
@@ -50,10 +53,10 @@ describe("useAdaptivePlaybackPolicy", () => {
         });
       });
     }
-    expect(rendered.result.current.target).toBeLessThanOrEqual(reduced + 1);
+    expect(rendered.result.current.target).toBe(initial);
   });
 
-  it("applies a telemetry sample only once across scroll and layout updates", () => {
+  it("does not recursively collapse across samples, scroll, or layout updates", () => {
     const rendered = renderHook((props) => useAdaptivePlaybackPolicy(props), {
       initialProps: base,
     });
@@ -68,7 +71,7 @@ describe("useAdaptivePlaybackPolicy", () => {
         },
       });
     });
-    const reducedOnce = rendered.result.current.target;
+    const structuralTarget = rendered.result.current.target;
 
     for (const visibleCount of [31, 32, 30, 29]) {
       act(() => {
@@ -82,7 +85,7 @@ describe("useAdaptivePlaybackPolicy", () => {
           },
         });
       });
-      expect(rendered.result.current.target).toBe(reducedOnce);
+      expect(rendered.result.current.target).toBe(structuralTarget);
     }
 
     act(() => {
@@ -96,7 +99,11 @@ describe("useAdaptivePlaybackPolicy", () => {
         },
       });
     });
-    expect(rendered.result.current.target).toBeLessThan(reducedOnce);
+    expect(rendered.result.current).toMatchObject({
+      target: structuralTarget,
+      safetyCap: structuralTarget,
+      health: "critical",
+    });
   });
 
   it("immediately returns zero while suspended", () => {
