@@ -55,6 +55,23 @@ describe("releaseVideoHandles", () => {
     expect(element.getAttribute("src")).toBeNull();
   });
 
+  it("matches an opaque Electron source through its owned native path", () => {
+    const element = document.createElement("video");
+    element.setAttribute(
+      "src",
+      "videoswarm-media://instance/42?v=100-200&g=3"
+    );
+    element.setAttribute("data-file-path", "/library/run/clip.mp4");
+    document.body.appendChild(element);
+
+    releaseVideoHandlesFor(["/library/run/clip.mp4"]);
+
+    expect(element.getAttribute("src")).toBeNull();
+    expect(element.getAttribute("data-file-path")).toBeNull();
+    expect(pauseSpy).toHaveBeenCalledOnce();
+    expect(loadSpy).toHaveBeenCalledOnce();
+  });
+
   it("finishes async release when animation frames are suspended", async () => {
     vi.useFakeTimers();
     const element = appendVideo("/tmp/hidden-window.mp4");

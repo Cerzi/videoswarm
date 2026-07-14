@@ -45,6 +45,7 @@ async function pollFolderForChanges({
   assertActive = () => {},
   pollingState = {},
   fsApi = defaultFs,
+  refreshDirectoryCounts = true,
 } = {}) {
   if (!rootPath) {
     throw new TypeError("pollFolderForChanges requires rootPath");
@@ -147,6 +148,9 @@ async function pollFolderForChanges({
       rootPath: normalizedRoot,
       recursive,
       assertActive,
+      ...(refreshDirectoryCounts === false
+        ? { refreshDirectoryCounts: false }
+        : {}),
     });
     assertActive();
     if (videoFile) {
@@ -161,6 +165,9 @@ async function pollFolderForChanges({
     metadataStore.markFileMissing(filePath, {
       rootPath: normalizedRoot,
       assertActive,
+      ...(refreshDirectoryCounts === false
+        ? { refreshDirectoryCounts: false }
+        : {}),
     });
     assertActive();
     await sendEvent("file-removed", filePath);

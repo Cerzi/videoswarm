@@ -20,6 +20,22 @@ function startFileDrag(paths) {
   return { ok: true, queued: true };
 }
 
+function normalizePlaybackSourceRequest(payload) {
+  const instanceId = Number(payload?.instanceId);
+  const sourceUrl = typeof payload?.sourceUrl === "string"
+    ? payload.sourceUrl
+    : "";
+  return {
+    instanceId:
+      Number.isSafeInteger(instanceId) && instanceId > 0 ? instanceId : null,
+    sourceUrl:
+      sourceUrl.length <= 2048 && sourceUrl.startsWith("videoswarm-media://")
+        ? sourceUrl
+        : null,
+    enabled: Boolean(payload?.enabled),
+  };
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -146,11 +162,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("file-watch-error", handler);
   },
 
-  // Get file info
-  getFileInfo: async (filePath) => {
-    return await ipcRenderer.invoke("get-file-info", filePath);
-  },
-
   // Folder selection dialog
   selectFolder: async () => {
     return await ipcRenderer.invoke("select-folder");
@@ -187,9 +198,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   onSettingsLoaded: (callback) => {
-    ipcRenderer.on("settings-loaded", (event, settings) => {
+    const handler = (_event, settings) => {
       callback(settings);
-    });
+    };
+    ipcRenderer.on("settings-loaded", handler);
+    return () => ipcRenderer.removeListener("settings-loaded", handler);
   },
 
   profiles: {
@@ -234,7 +247,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setRendererActive: (active) =>
       ipcRenderer.invoke("playback:set-renderer-active", Boolean(active)),
     resolveSource: (payload) =>
-      ipcRenderer.invoke("playback:resolve-source", payload),
+      ipcRenderer.invoke(
+        "playback:resolve-source",
+        normalizePlaybackSourceRequest(payload)
+      ),
     onWindowActivity: (callback) => {
       if (typeof callback !== "function") return () => {};
       const handler = (_event, activity) => callback(activity);
@@ -245,28 +261,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Additional file operations (from your main.js)
-  bulkMoveToTrash: async (paths) => {
-    return await ipcRenderer.invoke('bulk-move-to-trash', paths);
+  bulkMoveToTrash: async (paths, confirmationToken) => {
+    return await ipcRenderer.invoke("bulk-move-to-trash", {
+      paths,
+      confirmationToken,
+    });
   },
-  moveToTrash: async (filePath) => {
-    return await ipcRenderer.invoke("move-to-trash", filePath);
+  moveToTrash: async (filePath, confirmationToken) => {
+    return await ipcRenderer.invoke("bulk-move-to-trash", {
+      paths: [filePath],
+      confirmationToken,
+    });
   },
 
   confirmMoveToTrash: async (payload) => {
     const result = await ipcRenderer.invoke("confirm-move-to-trash", payload);
-    if (typeof result === "boolean") return result;
-    if (result && typeof result.confirmed === "boolean") {
-      return result.confirmed;
-    }
-    return !!result;
-  },
-
-  copyFile: async (sourcePath, destPath) => {
-    return await ipcRenderer.invoke("copy-file", sourcePath, destPath);
-  },
-
-  getFileProperties: async (filePath) => {
-    return await ipcRenderer.invoke("get-file-properties", filePath);
+    if (result && typeof result === "object") return result;
+    return { confirmed: result === true, token: null };
   },
 
   // External player integration
@@ -328,6 +339,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   library: {
     listRoots: async (options = {}) =>
       ipcRenderer.invoke("library:list-roots", options),
+    authorizeRoot: async (rootPath) =>
+      ipcRenderer.invoke("library:authorize-root", { rootPath }),
     getTree: async (rootPath, options = {}) =>
       ipcRenderer.invoke("library:get-tree", {
         rootPath,

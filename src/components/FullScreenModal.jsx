@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { toFileURL } from './VideoCard/videoDom';
 import { FULLSCREEN_SHORTCUTS } from '../hotkeys/shortcutCatalog';
+import { getOpaqueMediaSource, getWebMediaSource } from '../utils/mediaSource';
 
 let fullscreenOwnerSequence = 0;
 
@@ -8,6 +8,7 @@ const detachFullscreenMedia = (element) => {
   if (!element) return;
   try { element.pause(); } catch {}
   try { element.removeAttribute('src'); } catch {}
+  try { element.removeAttribute('data-file-path'); } catch {}
   try { element.srcObject = null; } catch {}
   try { element.load(); } catch {}
 };
@@ -94,16 +95,21 @@ const FullScreenModal = ({
     el.addEventListener('canplay', onCanPlay);
     el.addEventListener('error', onError);
 
-    let nextSrc = '';
+    let nextSrc = getOpaqueMediaSource(video) || '';
     if (video.isElectronFile && video.fullPath) {
-      nextSrc = toFileURL(video.fullPath);
-    } else if (video.blobUrl) {
-      nextSrc = video.blobUrl;
-    } else if (video.file) {
-      ownedBlobUrl = URL.createObjectURL(video.file);
-      nextSrc = ownedBlobUrl;
+      el.dataset.filePath = video.fullPath;
     } else {
-      nextSrc = video.fullPath || video.relativePath || '';
+      el.removeAttribute('data-file-path');
+    }
+    if (!video.isElectronFile) {
+      if (video.blobUrl) {
+        nextSrc = video.blobUrl;
+      } else if (video.file) {
+        ownedBlobUrl = URL.createObjectURL(video.file);
+        nextSrc = ownedBlobUrl;
+      } else {
+        nextSrc = getWebMediaSource(video) || '';
+      }
     }
 
     if (!nextSrc) {
@@ -112,6 +118,7 @@ const FullScreenModal = ({
       releaseResources();
     } else if (el.src !== nextSrc) {
       el.preload = 'auto';
+      el.crossOrigin = 'anonymous';
       el.src = nextSrc;
       loadTimeoutId = setTimeout(() => {
         onError({ target: { error: new Error('Timed out loading video') } });

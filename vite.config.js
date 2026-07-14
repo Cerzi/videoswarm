@@ -4,9 +4,21 @@ import { resolve } from 'path'
 import fs from 'fs'
 
 const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf-8'))
+const DEV_CONNECT_SOURCES = 'ws://localhost:* ws://127.0.0.1:*'
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ command }) => ({
+  plugins: [
+    react(),
+    {
+      name: 'videoswarm-environment-csp',
+      transformIndexHtml(html) {
+        return html.replace(
+          '__VIDEOSWARM_DEV_CONNECT_SOURCES__',
+          command === 'serve' ? DEV_CONNECT_SOURCES : ''
+        )
+      },
+    },
+  ],
   base: './', // Important for Electron file:// protocol
   build: {
     outDir: 'dist-react',
@@ -68,4 +80,4 @@ export default defineConfig({
     include: ['react', 'react-dom'],
     exclude: ['electron']
   }
-})
+}))

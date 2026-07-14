@@ -102,6 +102,7 @@ describe("Integration: local transient unsupported → file-changed recovery", (
       relativePath: "new.mp4",
       extension: ".mp4",
       isElectronFile: true, // local → first code-4 is transient
+      sourceUrl: "videoswarm-media://instance/1?v=1024-1",
       size: 1024,
       dateModified: new Date().toISOString(),
       metadata: { folder: "/tmp" },
@@ -128,6 +129,7 @@ describe("Integration: local transient unsupported → file-changed recovery", (
       ...base,
       size: 8 * 1024 * 1024,
       dateModified: new Date(Date.now() + 1000).toISOString(),
+      sourceUrl: "videoswarm-media://instance/1?v=8388608-2",
     };
     // Update harness video prop (this mimics your App responding to onFileChanged)
     await act(async () => {

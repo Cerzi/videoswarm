@@ -110,6 +110,7 @@ describe("VideoCard local transient errors", () => {
           name: "new.mp4",
           fullPath: "/tmp/new.mp4",
           isElectronFile: true, // local → first code-4 is transient
+          sourceUrl: "videoswarm-media://instance/1?v=retry-one",
           size: 1024,
           dateModified: new Date().toISOString(),
         }}
@@ -184,6 +185,7 @@ describe("VideoCard local transient errors", () => {
       name: "bad.mkv",
       fullPath: "/tmp/bad.mkv",
       isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/2?v=retry-permanent",
       size: 2048,
       dateModified: new Date().toISOString(),
     };
@@ -249,6 +251,7 @@ describe("VideoCard local transient errors", () => {
       name: "new.mp4",
       fullPath: "/tmp/new.mp4",
       isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/3?v=retry-changed",
       size: 1024,
       dateModified: new Date().toISOString(),
     };

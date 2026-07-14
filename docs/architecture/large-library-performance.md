@@ -140,7 +140,8 @@ have focused regressions.
 
 #### Folder revisit acceleration
 
-Status: **Partially Implemented** (2026-07-14)
+Status: **Unimplemented** (SQLite hydration implemented; hardware acceptance
+remains, 2026-07-14)
 
 A previously indexed root should be able to hydrate a last-known collection
 directly from its profile-local SQLite `file_instances` and content metadata,
@@ -268,8 +269,8 @@ Acceptance criteria:
   scheduler pass.
 - Stale loader, resident, decoder, recovery, and event callbacks cannot mutate
   the current card generation.
-- Fullscreen fallback URLs use the shared file URL helper and revoke owned blob
-  URLs during navigation and close.
+- Electron grid and fullscreen media use generation-bound opaque protocol URLs;
+  imported web files revoke only blob URLs they own during navigation/close.
 - Fullscreen and frame-capture decoder lanes are bounded and release their
   leases on success, failure, timeout, navigation, and teardown.
 - Trash operations prevent affected IDs from being re-admitted until the
@@ -541,20 +542,95 @@ than silently skip when the required Electron ABI gate is active.
 
 ### 9. Electron boundary and shutdown hardening
 
-Local media should eventually use a registered application protocol so
-`webSecurity` can be restored. IPC validates sender, payload type/size, and
-filesystem scope for destructive operations. Window, watcher, cache, scan, and
-child-process ownership all have explicit disposal during close and quit.
+Status: **Implemented** (2026-07-14)
+
+Local media uses the privileged `videoswarm-media://` application protocol, so
+production windows keep `webSecurity`, renderer sandbox preferences, context
+isolation, and a restrictive content-security policy enabled. Media elements
+and playback-source responses use profile-generation-bound opaque instance or
+proxy URLs instead of renderer `file://` URLs; records still retain `fullPath`
+for explicitly authorized native actions. The main process resolves the active
+profile's instance, validates its authorized library root, and serves only
+`GET`/`HEAD` single-range responses. Profile-owned proxy URLs resolve only
+signature-derived files whose canonical paths remain inside the current proxy
+cache.
+
+All static inbound IPC channels pass through one registrar that accepts only
+the live application window's main frame at the canonical packaged document
+URL or selected development origin, applies a default serialized payload
+ceiling, and disposes its registrations on shutdown. Per-channel validators
+bound paths, arrays, settings, metadata, scan priorities, and other larger
+inputs. Clipboard PNG input is bounded by encoded size and pre-decode width,
+height, and pixel count. Native folder selection, recents, and on-demand
+indexed-library selection grant canonical, owner-and-profile-scoped filesystem
+authority through a bounded LRU. Existing canonical paths outside those grants,
+including existing symlink escapes, are rejected before file playback,
+watching, thumbnail, drag, shell, capture, or trash work. Data-location changes
+accept only the exact canonical directory returned by that renderer's native
+picker. A trash dialog names and authorizes the actual canonical file identities
+with a bounded, 30-second, owner/profile/generation capability; execution and
+each bounded retry consume one exact-path grant.
+
+Settings use an allowlisted schema and a profile-scoped serialized writer.
+Partial updates merge in order; resize/move updates debounce; every write uses
+a same-directory mode-0600 temporary file, file sync, atomic rename, and
+best-effort directory sync. Reads use a single file handle and a 64 KiB hard
+limit, including growth-race detection. The profile catalog uses an equivalent
+same-handle bounded read and atomic replacement, validates contained IDs, caps
+profiles at 64, reconstructs valid contained IDs from intact profile
+directories when the catalog is unreadable, and quarantines a directory around
+catalog deletion so a crash cannot expose a half-deleted profile. Reconstructed
+display names and the active choice safely reset because those cannot be
+inferred from directory names. A failed profile creation removes its new empty
+directory. Deleting the active profile first quiesces its watcher/jobs, closes
+its SQLite store, and switches to a fallback profile; a pre-commit deletion
+failure restores the original runtime or publishes the actual safe fallback.
+
+Profile changes flush settings and directory aggregates before invalidating
+ownership. Data-location bootstrap files use monotonic revisions plus a
+source-signature supersession marker, so a newer home-directory fallback wins
+over the exact readable-but-unwritable app-folder copy it replaced without
+overriding an unrelated portable configuration. Quit and data-location restart
+share one coordinated shutdown that stops the watcher, drains confirmed trash,
+flushes bounded persistence, cancels media streams/scans/native jobs, awaits
+profile work, disposes native
+services, and only then permits process exit or relaunch. Flush/disposal
+failures are named and logged, with a final settings retry rather than silent
+discard. One application-instance lock prevents concurrent processes from
+mutating the same SQLite stores, catalogs, settings, and cache indexes. Startup,
+macOS activation, and second-instance restoration share one window-creation
+single flight; fatal startup failure releases the invisible primary rather than
+leaving the lock-owning process headless.
+
+The packaged Linux launcher no longer disables Chromium's OS sandbox by
+default. A user can explicitly set `VIDEOSWARM_DISABLE_SANDBOX=1` as a
+diagnostic compatibility escape hatch, which emits a warning and must not be
+treated as the production security baseline. Development and CI launchers may
+still opt out where their container forbids user namespaces; the packaged
+default is the acceptance surface here.
 
 Acceptance criteria:
 
 - `webSecurity` is enabled for production windows.
-- Destructive file operations are restricted to authorized roots where
-  feasible and use one tested implementation.
+- Media trash operations are restricted to authorized roots, require a
+  main-issued identity-bound exact-path confirmation capability, and use one
+  tested implementation.
 - Watcher/window listeners are disposed on close and do not retain destroyed
   windows.
 - Settings writes are serialized, debounced, and atomic.
+- Settings/profile/bootstrap reads are bounded; catalog reconstruction keeps
+  valid intact profile IDs discoverable after catalog corruption.
+- A second application process cannot concurrently write the active data root.
 - Shutdown reliably cancels jobs and flushes bounded persistence.
+
+The production Electron smoke verifies sandboxed renderer globals, CSP,
+blocked popup creation, opaque media URLs, byte-range protocol delivery,
+active-profile deletion, settings persistence, and clean shutdown in addition
+to the Section 8 app lifecycle. Focused tests cover sender/frame/origin
+rejection, payload/image bounds, canonical root authority and existing symlink
+escape, media URL/range parsing, proxy cache containment, confirmation
+capabilities, atomic write failure, bounded/growing reads, concurrent settings
+updates, catalog recovery/profile isolation, and shutdown ownership.
 
 ## Delivery status
 
@@ -564,9 +640,10 @@ Acceptance criteria:
 | Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
 | Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
 | Incremental enumeration batches | **Implemented** | Opt-in scan protocol version 1 streams bounded cheap-record batches and rich patches into a scan-owned renderer ID map, while legacy callers retain the final-array response. |
-| SQLite-backed folder revisit hydration | **Partially Implemented** | Bulk, profile/scan-owned SQLite hydration now provides a stale-while-revalidate first grid with a visible refresh status and without retaining inactive media resources. A real-hardware first-grid A/B budget remains. |
+| SQLite-backed folder revisit hydration | **Unimplemented** | The bulk, profile/scan-owned SQLite groundwork provides a stale-while-revalidate first grid with a visible refresh status and without retaining inactive media resources. Streamed enumeration preserves an indexed opaque source until its replacement enrichment arrives, but the real-hardware first-grid A/B acceptance budget remains. |
 | Watch-before-scan reconciliation | **Implemented** | A bounded watcher generation captures the pre-ready baseline, coalesces initialization changes, seeds polling fallback, reconciles overflow, and drains atomically before live delivery. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
+| Coalesced watcher directory aggregates | **Implemented** | Watcher and polling mutations defer full directory-count recomputation into a profile/generation-owned 150 ms debounce with a one-second maximum wait, 128-root bound, serialized refresh lane, bounded retries, and explicit flushes before cached-grid/tree correctness reads, profile changes, watcher stop, and shutdown. A 1,000-event burst regression requires one refresh. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
 | Stable masonry/observer/card callback identities | **Implemented** | Observer thresholds, collection callbacks, and per-card handlers remain stable across scroll-driven parent renders; landed in `331a360`. |
 | Cancel-safe media initialization | **Implemented** | Queued and in-flight work is generation-owned and cleaned on unmount; recovery, identity replacement, and stale callback handling landed in `e85030a` and `17ced36`. |
@@ -586,7 +663,59 @@ Acceptance criteria:
 | Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
 | Electron-ABI SQLite test job | **Implemented** | Coverage and focused native suites run through Electron's Node runtime with an environment gate that converts ABI load failures into test failures rather than skips. |
 | Node, lint, coverage, and build CI gates | **Implemented** | Node 22.12 repository/workflow pins, zero-warning ESLint, cleaned ratcheted coverage, explicit Vite build, Electron smoke, and unpacked packaging are mandatory. |
-| Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
+| Production Electron boundary hardening | **Implemented** | Sandboxed, web-secure windows now use opaque range-capable media URLs, one trusted and bounded IPC registrar, profile/owner-scoped path grants, confirmation-bound trash, atomic/bounded settings and profile catalogs, single-instance ownership, denied popup/navigation/permissions, and coordinated native shutdown/relaunch. |
+
+## Production boundary and deferred-work implementation slice
+
+1. **Implemented** — Register a privileged opaque media protocol before app
+   readiness and resolve current-profile file instances without returning raw
+   paths from playback-source resolution or constructing renderer `file://`
+   media URLs. Support bounded MIME allowlisting, `GET`, `HEAD`, and one
+   RFC-compatible byte range while cancelling open streams and pending
+   preflights on profile change and shutdown.
+2. **Implemented** — Keep proxy playback opaque as well. Resolve only current
+   cache signatures and reject canonical proxy paths that escape the
+   profile-local cache, including through a replaced symlink.
+3. **Implemented** — Enable production `webSecurity`, renderer sandbox
+   preferences, context isolation, and a secure-by-default packaged Linux
+   launcher; deny popups, webviews, unexpected navigation, redirects, and
+   permission requests. Production CSP removes Vite's localhost WebSocket
+   sources, while the development HTML transform adds only those local HMR
+   endpoints.
+4. **Implemented** — Put every static inbound IPC handler behind live-window,
+   main-frame, exact-origin trust and a default payload-size ceiling. Add
+   channel-specific shape/count/string bounds and dispose registrations with
+   the native owner.
+5. **Implemented** — Grant filesystem roots only from trusted native/recent/
+   indexed-library sources, with indexed roots regranted on demand rather than
+   through an unbounded catalog list. Scope the bounded LRU by renderer and
+   profile, resolve existing symlinks before containment checks, and require
+   grants for filesystem reads, playback, watching, thumbnails, drag, shell
+   actions, capture, and trash.
+6. **Implemented** — Consolidate trash into one injected, authorized,
+   bounded implementation. Bind execution to a short-lived exact-path
+   confirmation capability and drain active operations at ownership changes.
+   Serialize allowlisted settings through bounded reads and debounced, atomic,
+   profile-isolated writes; atomically persist and recover the bounded profile
+   catalog as well.
+7. **Implemented** — Coordinate profile transition, normal quit, and
+   data-location relaunch so watcher mutation stops before persistence flush;
+   scans, streams, trash, queues, caches, listeners, and child work are then
+   cancelled or drained before Electron exits. Active profile deletion switches
+   and closes SQLite before quarantining its directory, shutdown persistence
+   failures are surfaced and retried, and a single-instance lock excludes
+   competing writers.
+8. **Implemented** — Replace per-event watcher directory-count recomputation
+   with a generation-owned aggregate batcher. A 150 ms debounce and one-second
+   maximum wait coalesce bursts, one lane serializes roots, 128 dirty roots and
+   three retries bound retained work, and correctness-sensitive reads and
+   lifecycle transitions flush outstanding roots.
+9. **Deferred by evidence** — Do not add the optional masonry child split,
+   incremental geometry repair, or decoder auto-derating without an Electron
+   trace or attributable decoder signal demonstrating the need. Do not change
+   fingerprint identity without a versioned migration. These remain listed in
+   the outstanding-work section rather than being marked implemented by
+   unrelated optimization work.
 
 ## Initial implementation slice
 
@@ -707,11 +836,14 @@ The following adjacent work remains **Unimplemented**:
 - Fingerprint format `v1` includes creation time. Ordinary byte-identical
   copies are safely represented as distinct instances but may occupy distinct
   content rows; a versioned content-digest migration is deferred.
-- Watcher bursts still refresh directory aggregates per event. Debounced or
-  incremental aggregate maintenance and its burst benchmark remain part of
-  Sections 6 and 8.
-- Watch-before-scan streaming and the mandatory non-skippable Electron-ABI CI
-  gate are now implemented in Sections 1 and 8.
+
+Watcher aggregate maintenance is now **Implemented** as a bounded, debounced,
+serialized refresh lane. A deterministic 1,000-event burst regression verifies
+one refresh; focused batcher drain/retry and watcher close-overlap tests cover
+queue semantics, while main wiring flushes cached-grid/tree correctness reads
+and ownership boundaries. Watch-before-scan streaming and the
+mandatory non-skippable Electron-ABI CI gate are also implemented in Sections
+1 and 8.
 
 ## Virtual masonry implementation slice
 
@@ -736,8 +868,8 @@ The following adjacent work remains **Unimplemented**:
    and remove persistent offscreen `will-change`, blur, and placeholder
    animation costs.
 7. **Implemented** — Make fullscreen media modal-owned, revoke only owned blob
-   URLs, use the shared file URL helper, and suspend/resume the bounded grid's
-   desired playback declaratively.
+   URLs, use the profile-generation-bound opaque media protocol for native
+   clips, and suspend/resume the bounded grid's desired playback declaratively.
 8. **Implemented** — Add deterministic 1,000/5,000-record layout and hook
    regressions covering bounded mounts, top/middle/bottom reachability, visual
    order, selection ranges, aspect batching, logical anchoring, late mounting,
@@ -773,9 +905,9 @@ The following adjacent work remains **Unimplemented**:
    decoder lease frees capacity. Make runtime recovery single-flight, bounded,
    generation-owned, and explicit about terminal versus transient failures.
 5. **Implemented** — Give fullscreen playback and serialized frame capture
-   separate bounded decoder lanes. Use shared cross-platform file URLs and
-   release sources, owned blob URLs, timers, callbacks, and leases on all exit
-   paths.
+   separate bounded decoder lanes. Use opaque native media URLs, preserve
+   cross-platform native paths only for authorized file actions, and release
+   sources, owned blob URLs, timers, callbacks, and leases on all exit paths.
 6. **Implemented** — Block IDs during trash operations, release matching media
    handles before native mutation, reconcile moved and failed paths, and avoid
    unsafe suffix or case matching across POSIX, drive-letter, and UNC paths.
@@ -1025,6 +1157,64 @@ The following work remains **Unimplemented** after this slice:
 Section 1 incremental delivery and Section 8 Electron smoke/Linux profiling
 automation are now implemented.
 
+## Outstanding work and validation risks
+
+The primary architecture in Sections 1-9 is implemented, with the explicitly
+unfinished/optional items below deliberately left open rather than being implied
+complete by the performance, security, or batching changes above:
+
+- **Folder-revisit hardware budget:** SQLite stale-while-revalidate hydration
+  is implemented, but a repeatable real-machine 1,000/6,000-clip A/B result for
+  request-to-first-grid is still required before the folder-revisit
+  deliverable can be marked **Implemented**. No in-memory
+  media cache should be added without that evidence.
+- **Versioned content identity:** fingerprint `v1` includes creation time, so
+  byte-identical copies may occupy distinct content rows. A creation-time-free
+  content digest needs an explicit schema/data migration and compatibility
+  period; it is not a safe opportunistic rewrite.
+- **Causal adaptive derating:** automatic playback reduction remains
+  unimplemented because current whole-app telemetry cannot attribute pressure
+  specifically to decoding. Balanced and Adaptive Motion retain stable
+  structural caps; All Motion retains its explicit full-visible contract.
+- **Profiling-triggered masonry refinements:** a dedicated memoized grid child
+  and incremental suffix/column geometry repair remain optional. Implement
+  either only if Electron traces show parent reconciliation or the bounded
+  geometry pass is material on target Linux hardware.
+- **Interleaved folder headers:** full-width group headers inside virtual
+  masonry remain an optional UX enhancement. The implemented folder tree and
+  group strip already provide navigation and visible grouping without changing
+  layout geometry.
+- **Cross-platform packaged validation:** Linux production smoke now exercises
+  the security boundary and custom media ranges. Windows and macOS packaged
+  runs should be added when runners are available, particularly for custom
+  protocol playback, atomic replacement semantics, native trash/shell actions,
+  macOS activation, and shutdown/relaunch behavior. Add a true two-process
+  single-instance smoke rather than relying only on focused lifecycle wiring
+  coverage. A real-host Linux launch should also verify the secure-by-default
+  package on distributions with supported user namespaces; the automated
+  container smoke intentionally opts out of the OS sandbox. This is a
+  validation gap, not a known application-boundary defect.
+- **Descriptor-level filesystem race hardening:** canonical root validation
+  rejects existing symlink escapes, but an external process can still replace
+  a validated path between validation and some path-based shell/media/native
+  operations. Where platform APIs permit it, future hardening should open once
+  with no-follow semantics and validate/use the same descriptor. This is a
+  residual local-filesystem race, not an observed ordinary-workflow defect.
+- **Persistent-storage failure UX:** settings and catalogs retain the previous
+  valid atomic file, report named shutdown failures, and retry the final
+  settings flush once. A permanently read-only/full volume still has no
+  interactive retry/export choice during quit; adding one is a reliability UX
+  follow-up rather than silently claiming the newest in-memory state reached
+  disk.
+- **Very large profile deletion:** active-profile ordering and crash recovery
+  are implemented, but final quarantine cleanup is synchronous. If profiling
+  shows multi-gigabyte proxy/cache profiles block the main process, move that
+  rebuildable-directory cleanup to a bounded asynchronous worker while keeping
+  the catalog commit/quarantine boundary unchanged.
+- **Hardware decode support:** guaranteed NVIDIA video decode on Linux remains
+  a non-goal until Electron/Chromium exposes a verified target-hardware path.
+  Existing capability reporting is observational only.
+
 ## Migration and compatibility
 
 - Existing `readDirectory(folderPath, recursive)` callers remain supported
@@ -1033,6 +1223,8 @@ automation are now implemented.
   ratings, and tags.
 - Existing full-path video IDs can remain compatibility aliases while the
   collection moves toward stable file-instance IDs.
-- Windows path encoding must continue to use the shared file URL helper.
+- Native Windows/UNC paths remain available only to authorized main-process
+  file actions; Electron media elements use opaque instance URLs instead of
+  renderer-generated file URLs.
 - Generated caches, proxy files, and indexes remain rebuildable and must not be
   committed to the repository.

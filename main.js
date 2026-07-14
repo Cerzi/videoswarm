@@ -6,14 +6,20 @@ const {
   app,
   BrowserWindow,
   shell,
-  ipcMain,
+  ipcMain: rawIpcMain,
   dialog,
   Menu,
   nativeImage,
   clipboard,
+  protocol,
 } = require("electron");
+const ownsSingleInstanceLock = app.requestSingleInstanceLock();
+if (!ownsSingleInstanceLock) {
+  app.quit();
+}
 const path = require("path");
 const fs = require("fs");
+const { pathToFileURL } = require("url");
 const fsPromises = fs.promises;
 const { DataLocationManager } = require("./main/data-location-manager");
 const dataLocationManager = new DataLocationManager({ app, dialog });
@@ -24,7 +30,6 @@ const {
   clearVideoDimensionsCache,
   getVideoDimensions,
 } = require("./main/videoDimensions");
-require("./main/ipc-trash")(ipcMain);
 const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
@@ -62,6 +67,41 @@ const {
 const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
+const {
+  IPC_LIMITS,
+  assertBoolean,
+  assertInteger,
+  assertPathString,
+  assertPayloadSize,
+  assertPlainObject,
+  assertPngDataUrlDimensions,
+  assertString,
+  assertStringArray,
+  createIpcTrustValidator,
+  createPathAuthority,
+  createTrustedIpcRegistrar,
+  isAllowedFrameUrl,
+} = require("./main/ipc-security");
+const {
+  createMediaInstanceUrl,
+  createMediaProxyUrl,
+  createMediaProtocolService,
+  registerMediaScheme,
+} = require("./main/media-protocol");
+const {
+  createSettingsWriter,
+  readSettingsFileBounded,
+} = require("./main/settings-writer");
+const {
+  createDirectoryAggregateBatcher,
+} = require("./main/directory-aggregate-batcher");
+const {
+  createTrashConfirmationStore,
+  trashAuthorizedPaths,
+} = require("./main/ipc-trash");
+
+// Custom schemes must be declared before Electron finishes app readiness.
+registerMediaScheme(protocol);
 
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
 
@@ -147,7 +187,6 @@ app.commandLine.appendSwitch("js-flags", "--expose-gc");
 console.log("🧠 Enabled garbage collection access");
 
 let activeProfileId = null;
-let currentSettingsProfileId = null;
 
 // Enhanced default zoom detection based on screen size
 function getDefaultZoomForScreen() {
@@ -213,9 +252,254 @@ const defaultSettings = {
 let mainWindow;
 let currentSettings = null;
 let disposeMainWindowActivity = null;
+let applicationInitializationPromise = null;
+let applicationInitializationComplete = false;
+let windowCreationPromise = null;
+let nativeShutdownPreparing = false;
 let nativeShutdownRequested = false;
 let nativeShutdownPromise = null;
 let nativeShutdownComplete = false;
+let profileReconfigurationPending = 0;
+let profileReconfigurationInProgress = false;
+const pendingProfilePromptCancellations = new Set();
+const dataLocationPathGrants = new Map();
+const DATA_LOCATION_GRANT_TTL_MS = 5 * 60 * 1000;
+
+app.on("second-instance", () => {
+  if (!ownsSingleInstanceLock) return;
+  void ensureMainWindow()
+    .then((window) => focusMainWindow(window))
+    .catch((error) => {
+      console.error("[window] Failed to restore the primary window", error);
+    });
+});
+
+async function grantDataLocationPath(sender, candidate) {
+  if (!sender || sender.isDestroyed?.() || !Number.isSafeInteger(sender.id)) {
+    throw new Error("Data-location picker owner is no longer available");
+  }
+  const canonicalPath = path.resolve(await fsPromises.realpath(candidate));
+  const stats = await fsPromises.stat(canonicalPath);
+  if (!stats.isDirectory()) {
+    throw new Error("The selected data location is not a directory");
+  }
+  if (sender.isDestroyed?.()) {
+    throw new Error("Data-location picker owner is no longer available");
+  }
+  dataLocationPathGrants.set(sender.id, {
+    path: canonicalPath,
+    expiresAt: Date.now() + DATA_LOCATION_GRANT_TTL_MS,
+  });
+  return canonicalPath;
+}
+
+async function assertGrantedDataLocationPath(sender, candidate) {
+  if (!sender || sender.isDestroyed?.()) {
+    throw new Error("Data-location picker owner is no longer available");
+  }
+  const grant = dataLocationPathGrants.get(sender.id);
+  if (!grant || grant.expiresAt < Date.now()) {
+    dataLocationPathGrants.delete(sender.id);
+    throw new Error("Select the data folder with the native picker first");
+  }
+  const requestedPath = assertPathString(candidate, {
+    name: "custom data location",
+  });
+  const canonicalPath = path.resolve(await fsPromises.realpath(requestedPath));
+  if (
+    sender.isDestroyed?.() ||
+    dataLocationPathGrants.get(sender.id) !== grant ||
+    canonicalPath !== grant.path
+  ) {
+    throw new Error("The requested data folder is not authorized");
+  }
+  return canonicalPath;
+}
+
+function cancelPendingProfilePrompts() {
+  const pending = [...pendingProfilePromptCancellations];
+  pending.forEach((cancel) => cancel());
+  return pending.length;
+}
+
+const PACKAGED_RENDERER_URL = pathToFileURL(
+  path.join(__dirname, "dist-react", "index.html")
+).href;
+
+function getDevRendererOrigin() {
+  try {
+    return new URL(
+      process.env.VITE_DEV_SERVER_URL || "http://localhost:5173"
+    ).origin;
+  } catch {
+    return "http://localhost:5173";
+  }
+}
+
+function isDevelopmentRuntime() {
+  return (
+    !app.isPackaged &&
+    (process.argv.includes("--dev") || Boolean(process.env.VITE_DEV_SERVER_URL))
+  );
+}
+
+function getTrustedDevOrigins() {
+  return isDevelopmentRuntime() ? [getDevRendererOrigin()] : [];
+}
+
+function isTrustedRendererUrl(url) {
+  return isAllowedFrameUrl(url, {
+    allowedFrameUrls: [PACKAGED_RENDERER_URL],
+    allowedOrigins: getTrustedDevOrigins(),
+  });
+}
+
+const validateTrustedSender = createIpcTrustValidator({
+  getMainWindow: () => mainWindow,
+  allowedFrameUrls: () => [PACKAGED_RENDERER_URL],
+  allowedOrigins: getTrustedDevOrigins,
+});
+const assertTrustedSender = (event) => {
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
+    const error = new Error("Application shutdown is in progress");
+    error.code = "APPLICATION_SHUTDOWN_REQUESTED";
+    throw error;
+  }
+  if (profileReconfigurationInProgress) {
+    const error = new Error("Profile reconfiguration is in progress");
+    error.code = "PROFILE_RECONFIGURATION_IN_PROGRESS";
+    throw error;
+  }
+  return validateTrustedSender(event);
+};
+const trustedIpc = createTrustedIpcRegistrar({
+  ipcMain: rawIpcMain,
+  assertTrustedSender,
+  logger: console,
+});
+
+// Keep existing registration call sites readable while ensuring every static
+// inbound channel passes through the same sender/frame/payload boundary.
+const ipcMain = Object.freeze({
+  handle: (...args) => trustedIpc.handle(...args),
+  on: (...args) => trustedIpc.on(...args),
+});
+
+const pathAuthority = createPathAuthority();
+const trashConfirmationStore = createTrashConfirmationStore();
+const activeTrashOperations = new Set();
+let trashAdmissionOpen = true;
+
+function trashFileIdentity(stats) {
+  if (!stats?.isFile?.()) {
+    throw new Error("Trash confirmation target is not a regular file");
+  }
+  return [
+    Number(stats.dev) || 0,
+    Number(stats.ino) || 0,
+    Number(stats.size) || 0,
+    Number(stats.mtimeMs) || 0,
+    Number(stats.ctimeMs) || 0,
+    Number(stats.birthtimeMs) || 0,
+  ].join(":");
+}
+
+async function readTrashFileIdentity(filePath) {
+  return trashFileIdentity(await fsPromises.stat(filePath));
+}
+
+async function drainActiveTrashOperations() {
+  while (activeTrashOperations.size > 0) {
+    await Promise.allSettled([...activeTrashOperations]);
+  }
+}
+
+function trackTrashOperation(operation) {
+  const tracked = Promise.resolve(operation);
+  activeTrashOperations.add(tracked);
+  tracked.then(
+    () => activeTrashOperations.delete(tracked),
+    () => activeTrashOperations.delete(tracked)
+  );
+  return tracked;
+}
+
+function getAuthorityScopeId() {
+  return getActiveProfileId() || "startup";
+}
+
+async function grantRendererRoot(sender, rootPath) {
+  if (
+    !sender ||
+    !Number.isSafeInteger(sender.id) ||
+    sender.isDestroyed?.()
+  ) {
+    throw new TypeError("A live renderer owner is required");
+  }
+  if (profileReconfigurationInProgress) {
+    throw Object.assign(new Error("Profile reconfiguration is in progress"), {
+      code: "PROFILE_RECONFIGURATION_IN_PROGRESS",
+    });
+  }
+  const scopeId = getAuthorityScopeId();
+  const profileGeneration = metadataProfileGeneration;
+  const canonicalRoot = await pathAuthority.grantRoot({
+    ownerId: sender.id,
+    scopeId,
+    rootPath,
+  });
+  if (
+    profileReconfigurationInProgress ||
+    nativeShutdownPreparing ||
+    nativeShutdownRequested ||
+    sender.isDestroyed?.() ||
+    scopeId !== getAuthorityScopeId() ||
+    profileGeneration !== metadataProfileGeneration
+  ) {
+    pathAuthority.revokeScope(scopeId);
+    throw Object.assign(new Error("Profile root grant became stale"), {
+      code: "PROFILE_RECONFIGURATION_IN_PROGRESS",
+    });
+  }
+  return canonicalRoot;
+}
+
+async function grantKnownRendererRoots(sender, rootPaths) {
+  const results = await Promise.allSettled(
+    [...new Set((Array.isArray(rootPaths) ? rootPaths : []).filter(Boolean))]
+      .slice(0, 256)
+      .map((rootPath) => grantRendererRoot(sender, rootPath))
+  );
+  return results.filter((result) => result.status === "fulfilled").length;
+}
+
+async function assertRendererPath(event, targetPath, kind = null) {
+  if (profileReconfigurationInProgress) {
+    throw Object.assign(new Error("Profile reconfiguration is in progress"), {
+      code: "PROFILE_RECONFIGURATION_IN_PROGRESS",
+    });
+  }
+  const scopeId = getAuthorityScopeId();
+  const profileGeneration = metadataProfileGeneration;
+  const authorized = await pathAuthority.assertAuthorizedPath({
+    ownerId: event.sender.id,
+    scopeId,
+    targetPath: assertPathString(targetPath),
+    kind,
+  });
+  if (
+    profileReconfigurationInProgress ||
+    nativeShutdownPreparing ||
+    nativeShutdownRequested ||
+    scopeId !== getAuthorityScopeId() ||
+    profileGeneration !== metadataProfileGeneration
+  ) {
+    throw Object.assign(new Error("Filesystem authority became stale"), {
+      code: "PROFILE_RECONFIGURATION_IN_PROGRESS",
+    });
+  }
+  return authorized;
+}
 
 // ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
@@ -405,6 +689,7 @@ function markDirectoryScanInterrupted(scan) {
 
 function captureMetadataContext() {
   if (
+    profileReconfigurationInProgress ||
     nativeShutdownRequested ||
     configuredMetadataProfileGeneration !== metadataProfileGeneration
   ) {
@@ -431,6 +716,7 @@ function assertMetadataContextActive(context) {
 
 function captureProfileGenerationContext() {
   if (
+    profileReconfigurationInProgress ||
     nativeShutdownRequested ||
     configuredMetadataProfileGeneration !== metadataProfileGeneration
   ) {
@@ -453,6 +739,50 @@ function assertProfileGenerationContextActive(context) {
     throw new ProfileOperationInvalidatedError();
   }
 }
+
+const mediaProtocolService = createMediaProtocolService({
+  resolveInstance: async (instanceId, { target } = {}) => {
+    const context = captureMetadataContext();
+    if (target?.generation !== context.generation) return null;
+    const instance = context.metadataStore.getFileInstanceById(instanceId);
+    assertMetadataContextActive(context);
+    if (!instance?.present || !instance.absolutePath) return null;
+    return { path: instance.absolutePath, present: true, instanceId };
+  },
+  resolveProxy: async (signature, { target } = {}) => {
+    const context = captureMetadataContext();
+    if (target?.generation !== context.generation) return null;
+    const resolved = await proxyManager.resolveProtocolProxy(signature);
+    assertMetadataContextActive(context);
+    return resolved;
+  },
+  authorizePath: async (canonicalPath, target) => {
+    if (target?.kind === "proxy") {
+      // ProxyManager resolves only the current generation's signature-derived
+      // file and rejects cache-directory symlink escapes. It is an
+      // application-owned path, not a renderer-selected library path.
+      return;
+    }
+    const sender = mainWindow?.webContents;
+    if (!sender || sender.isDestroyed?.()) {
+      const error = new Error("Media owner is unavailable");
+      error.status = 403;
+      throw error;
+    }
+    try {
+      await pathAuthority.assertAuthorizedPath({
+        ownerId: sender.id,
+        scopeId: getAuthorityScopeId(),
+        targetPath: canonicalPath,
+        kind: "file",
+      });
+    } catch (error) {
+      error.status = 403;
+      throw error;
+    }
+  },
+  logger: console,
+});
 
 function setVideoDimensionsRoot(folderPath = null) {
   const normalized = folderPath ? path.resolve(folderPath) : null;
@@ -488,6 +818,7 @@ function invalidateNativeWorkOwner(sender) {
 
 function activateNativeWorkOwner(sender) {
   if (
+    nativeShutdownPreparing ||
     nativeShutdownRequested ||
     !sender ||
     !nativeOwnerLifecycle.activate(sender)
@@ -505,11 +836,14 @@ function disposeNativeWorkOwner(sender) {
   thumbnailCache.cancelOwner(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
+  pathAuthority.revokeOwner(ownerId);
+  trashConfirmationStore.revokeOwner(ownerId);
+  dataLocationPathGrants.delete(ownerId);
   return true;
 }
 
 function assertProfileReconfigurationActive(generation) {
-  if (nativeShutdownRequested) {
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
     throw new ApplicationShutdownRequestedError();
   }
   if (generation !== metadataProfileGeneration) {
@@ -564,6 +898,46 @@ function isWatcherContextActive(context) {
   }
 }
 
+const directoryAggregateBatcher = createDirectoryAggregateBatcher({
+  refresh: async ({ rootPath, profileId, generation, assertActive }) => {
+    const context = {
+      profileId,
+      generation,
+      metadataStore: getMetadataStore(),
+    };
+    assertMetadataContextActive(context);
+    assertActive();
+    const directories = context.metadataStore.refreshDirectoryCounts(rootPath);
+    assertActive();
+    assertMetadataContextActive(context);
+    return directories;
+  },
+  isContextActive: ({ profileId, generation }) =>
+    !nativeShutdownRequested &&
+    configuredMetadataProfileGeneration === generation &&
+    metadataProfileGeneration === generation &&
+    getActiveProfileId() === profileId,
+  logger: console,
+  debounceMs: 150,
+  maxWaitMs: 1000,
+  maxDirtyRoots: 128,
+});
+
+function activeAggregateOwnership() {
+  return {
+    profileId: getActiveProfileId(),
+    generation: metadataProfileGeneration,
+  };
+}
+
+async function flushDirectoryAggregates(rootPath = null) {
+  if (!rootPath) return directoryAggregateBatcher.flushAll();
+  return directoryAggregateBatcher.flushRoot({
+    ...activeAggregateOwnership(),
+    rootPath: path.resolve(rootPath),
+  });
+}
+
 // Helper function to check if file is a video
 function isVideoFile(fileName) {
   const videoExtensions = [
@@ -613,6 +987,7 @@ function createEnumeratedVideoFileObject(filePath, baseFolderPath, stats) {
   return {
     id: filePath,
     instanceId: null,
+    sourceUrl: null,
     name: fileName,
     fullPath: filePath,
     relativePath: path.relative(baseFolderPath, filePath),
@@ -671,6 +1046,7 @@ async function createVideoFileObject(
     metadataStore: providedMetadataStore,
     rootPath = baseFolderPath,
     recursive = true,
+    refreshDirectoryCounts = true,
   } = options;
   const hasIndexedInfo = Object.prototype.hasOwnProperty.call(
     options,
@@ -702,6 +1078,7 @@ async function createVideoFileObject(
           rootPath,
           recursive,
           assertActive,
+          refreshDirectoryCounts,
         });
       assertActive?.();
       fingerprint = info?.fingerprint ?? null;
@@ -750,9 +1127,23 @@ async function createVideoFileObject(
       );
     }
 
+    const sourceUrl = instanceId
+      ? createMediaInstanceUrl(instanceId, {
+          version: `${Math.max(0, Number(stats.size) || 0)}-${Math.max(
+            0,
+            Number(stats.mtimeMs) || 0
+          )}`,
+          generation:
+            options.generation === undefined
+              ? metadataProfileGeneration
+              : options.generation,
+        })
+      : null;
+
     return {
       ...createEnumeratedVideoFileObject(filePath, baseFolderPath, stats),
       instanceId,
+      sourceUrl,
       fingerprint,
       tags,
       rating,
@@ -803,6 +1194,7 @@ async function scanFolderForChanges(folderPath, options = {}) {
     isIgnoredDirectory: isIgnoredScanDirectory,
     assertActive: options.assertActive,
     pollingState: options.pollingState,
+    refreshDirectoryCounts: options.refreshDirectoryCounts,
     sendEvent:
       typeof options.sendEvent === "function"
         ? options.sendEvent
@@ -824,6 +1216,8 @@ const folderWatcher = createFolderWatcher({
   isVideoFile,
   createVideoFileObject,
   scanFolderForChanges,
+  onDirectoryAggregatesDirty: ({ rootPath, profileId, generation }) =>
+    directoryAggregateBatcher.markDirty({ rootPath, profileId, generation }),
   logger: console,
   depth: 10, // unchanged from your previous config
 });
@@ -865,6 +1259,7 @@ function wireWatcherEvents(win) {
       context.metadataStore.markFileMissing(filePath, {
         rootPath: context.rootPath,
         assertActive: () => assertWatcherContextActive(context),
+        refreshDirectoryCounts: false,
       });
       assertWatcherContextActive(context);
       sendToRenderer("file-removed", {
@@ -949,22 +1344,85 @@ function computeDefaultZoomLevel() {
 }
 
 function normaliseLoadedSettings(rawSettings) {
-  const {
-    layoutMode: _layoutMode,
-    autoplayEnabled: _autoplayEnabled,
-    ...cleanSettings
-  } = rawSettings || {};
-  const merged = { ...defaultSettings, ...cleanSettings };
-  const hasZoom = Object.prototype.hasOwnProperty.call(cleanSettings, "zoomLevel")
-    && cleanSettings.zoomLevel !== null
-    && cleanSettings.zoomLevel !== undefined;
-  if (!hasZoom) {
-    merged.zoomLevel = computeDefaultZoomLevel();
-  }
-  merged.playbackMode = normalizePlaybackMode(merged.playbackMode);
-  merged.proxyPlaybackEnabled = Boolean(merged.proxyPlaybackEnabled);
-  return merged;
+  const source = rawSettings && typeof rawSettings === "object" &&
+    !Array.isArray(rawSettings)
+    ? rawSettings
+    : {};
+  const bounds = source.windowBounds &&
+    typeof source.windowBounds === "object" &&
+    !Array.isArray(source.windowBounds)
+    ? source.windowBounds
+    : {};
+  const clampInteger = (value, fallback, minimum, maximum) => {
+    const number = Number(value);
+    return Number.isFinite(number)
+      ? Math.max(minimum, Math.min(maximum, Math.round(number)))
+      : fallback;
+  };
+  const normalizeCoordinate = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number)
+      ? Math.max(-100_000, Math.min(100_000, Math.round(number)))
+      : undefined;
+  };
+  const hasZoom = Object.prototype.hasOwnProperty.call(source, "zoomLevel") &&
+    source.zoomLevel !== null && source.zoomLevel !== undefined;
+  const sortKey = ["name", "created", "random"].includes(source.sortKey)
+    ? source.sortKey
+    : defaultSettings.sortKey;
+  const randomSeed = source.randomSeed !== null &&
+    source.randomSeed !== undefined &&
+    Number.isFinite(Number(source.randomSeed))
+    ? Math.max(
+        Number.MIN_SAFE_INTEGER,
+        Math.min(Number.MAX_SAFE_INTEGER, Math.round(Number(source.randomSeed)))
+      )
+    : null;
+
+  return {
+    recursiveMode: Boolean(source.recursiveMode),
+    renderLimitStep: clampInteger(
+      source.renderLimitStep,
+      defaultSettings.renderLimitStep,
+      0,
+      10
+    ),
+    playbackMode: normalizePlaybackMode(source.playbackMode),
+    proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
+    zoomLevel: clampInteger(
+      hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
+      defaultSettings.zoomLevel,
+      0,
+      4
+    ),
+    showFilenames:
+      source.showFilenames === undefined
+        ? defaultSettings.showFilenames
+        : Boolean(source.showFilenames),
+    sortKey,
+    sortDir: source.sortDir === "desc" ? "desc" : "asc",
+    groupByFolders:
+      source.groupByFolders === undefined
+        ? defaultSettings.groupByFolders
+        : Boolean(source.groupByFolders),
+    randomSeed,
+    windowBounds: {
+      width: clampInteger(bounds.width, defaultSettings.windowBounds.width, 800, 10_000),
+      height: clampInteger(bounds.height, defaultSettings.windowBounds.height, 600, 10_000),
+      x: normalizeCoordinate(bounds.x),
+      y: normalizeCoordinate(bounds.y),
+    },
+  };
 }
+
+const settingsWriter = createSettingsWriter({
+  resolvePath: (profileId) => getSettingsPath(profileId),
+  normalizeSettings: normaliseLoadedSettings,
+  debounceMs: 150,
+  maxWaitMs: 1000,
+  maxBytes: 64 * 1024,
+  logger: console,
+});
 
 async function tryMigrateLegacySettings(profileId, targetPath) {
   if (profileId !== profileManager.DEFAULT_PROFILE_ID) {
@@ -988,7 +1446,10 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
   }
 
   try {
-    const legacyRaw = await fsPromises.readFile(legacyPath, "utf8");
+    const legacyRaw = await readSettingsFileBounded(legacyPath, {
+      fsApi: fsPromises,
+      maxBytes: 64 * 1024,
+    });
     const legacySettings = JSON.parse(legacyRaw);
     const migrated = normaliseLoadedSettings(legacySettings);
     const {
@@ -996,8 +1457,7 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
       autoplayEnabled: _autoplayEnabled,
       ...toPersist
     } = migrated;
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, JSON.stringify(toPersist, null, 2));
+    await settingsWriter.replace(profileId, toPersist);
     console.log("[settings] Migrated legacy settings.json into profile scope");
     return migrated;
   } catch (error) {
@@ -1008,23 +1468,39 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
   }
 }
 
-async function loadSettings(profileId = getActiveProfileId()) {
+async function loadSettings(
+  profileId = getActiveProfileId(),
+  { allowDuringReconfiguration = false } = {}
+) {
+  const loadContext = {
+    profileId,
+    generation: metadataProfileGeneration,
+  };
+  const publishIfCurrent = (settings, allowDuringReconfiguration = false) => {
+    if (
+      loadContext.profileId === getActiveProfileId() &&
+      loadContext.generation === metadataProfileGeneration &&
+      (allowDuringReconfiguration || !profileReconfigurationInProgress)
+    ) {
+      currentSettings = settings;
+    }
+    return settings;
+  };
   const settingsFile = getSettingsPath(profileId);
   try {
-    const data = await fsPromises.readFile(settingsFile, "utf8");
-    const parsed = JSON.parse(data);
-    const settings = normaliseLoadedSettings(parsed);
-    currentSettingsProfileId = profileId;
-    currentSettings = settings;
-    return currentSettings;
-  } catch (error) {
-    const migrated = await tryMigrateLegacySettings(profileId, settingsFile);
-    if (migrated) {
-      currentSettingsProfileId = profileId;
-      currentSettings = migrated;
-      return currentSettings;
+    let targetExists = true;
+    try {
+      await fsPromises.access(settingsFile);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      targetExists = false;
     }
-
+    if (!targetExists) {
+      await tryMigrateLegacySettings(profileId, settingsFile);
+    }
+    const settings = await settingsWriter.getSnapshot(profileId);
+    return publishIfCurrent(settings, allowDuringReconfiguration);
+  } catch (error) {
     if (error?.code !== "ENOENT") {
       console.warn(
         "[settings] Failed to read settings for profile, using defaults",
@@ -1039,50 +1515,60 @@ async function loadSettings(profileId = getActiveProfileId()) {
     }
 
     const defaults = normaliseLoadedSettings(null);
-    currentSettingsProfileId = profileId;
-    currentSettings = defaults;
-    return currentSettings;
+    await settingsWriter.forget(profileId, { flush: false }).catch(() => {});
+    settingsWriter.seed(profileId, defaults);
+    return publishIfCurrent(defaults, allowDuringReconfiguration);
   }
 }
 
 async function saveSettings(settings, profileId = getActiveProfileId()) {
-  try {
-    const {
-      layoutMode: _layoutMode,
-      autoplayEnabled: _autoplayEnabled,
-      ...cleanSettings
-    } = settings || {};
-    const settingsFile = getSettingsPath(profileId);
-    await fsPromises.mkdir(path.dirname(settingsFile), { recursive: true });
-    await fsPromises.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
-    currentSettingsProfileId = profileId;
-    currentSettings = normaliseLoadedSettings(cleanSettings);
-    console.log("Settings saved for profile", profileId);
-  } catch (error) {
-    console.error("Failed to save settings:", error);
+  const generation = metadataProfileGeneration;
+  const snapshot = await settingsWriter.replace(profileId, settings);
+  if (
+    profileId === getActiveProfileId() &&
+    generation === metadataProfileGeneration &&
+    !profileReconfigurationInProgress
+  ) {
+    currentSettings = snapshot;
   }
+  console.log("Settings saved for profile", profileId);
+  return snapshot;
 }
 
-function saveWindowBounds() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const bounds = mainWindow.getBounds();
-    const settings = {
-      windowBounds: bounds,
-    };
-    saveSettingsPartial(settings).catch(console.error);
+async function saveSettingsPartial(
+  partialSettings,
+  profileId = getActiveProfileId(),
+  options = {}
+) {
+  const generation = metadataProfileGeneration;
+  const snapshot = await settingsWriter.patch(profileId, partialSettings, options);
+  if (
+    profileId === getActiveProfileId() &&
+    generation === metadataProfileGeneration &&
+    !profileReconfigurationInProgress
+  ) {
+    currentSettings = snapshot;
   }
+  return snapshot;
 }
 
-async function saveSettingsPartial(partialSettings, profileId = getActiveProfileId()) {
-  try {
-    const current =
-      currentSettings && currentSettingsProfileId === profileId
-        ? currentSettings
-        : await loadSettings(profileId);
-    const newSettings = { ...current, ...partialSettings };
-    await saveSettings(newSettings, profileId);
-  } catch (error) {
-    console.error("Failed to save partial settings:", error);
+function captureSettingsContext() {
+  return {
+    profileId: getActiveProfileId(),
+    generation: metadataProfileGeneration,
+  };
+}
+
+function assertSettingsContextActive(context) {
+  if (
+    !context ||
+    profileReconfigurationInProgress ||
+    nativeShutdownPreparing ||
+    nativeShutdownRequested ||
+    context.profileId !== getActiveProfileId() ||
+    context.generation !== metadataProfileGeneration
+  ) {
+    throw new ProfileOperationInvalidatedError();
   }
 }
 
@@ -1099,9 +1585,134 @@ function broadcastProfileChange(settings = currentSettings) {
   }
 }
 
-function reconfigureForProfile(profileId, { broadcast = true } = {}) {
-  if (nativeShutdownRequested) {
-    return Promise.reject(new ApplicationShutdownRequestedError());
+async function initializeProfileRuntime(
+  targetId,
+  generation,
+  { migrateLegacy = true } = {}
+) {
+  const profilePath = getProfilePath(targetId);
+  if (migrateLegacy && typeof profileManager.getUserDataPath === "function") {
+    try {
+      await migrateLegacyProfileData({
+        profileId: targetId,
+        profilePath,
+        userDataPath: profileManager.getUserDataPath(),
+        defaultProfileId: profileManager.DEFAULT_PROFILE_ID,
+      });
+    } catch (error) {
+      console.warn("[profile] Legacy data migration failed", error);
+    }
+    assertProfileReconfigurationActive(generation);
+  }
+
+  await thumbnailCache.reset().catch((error) => {
+    console.warn("[profile] Failed to invalidate thumbnail cache", error);
+  });
+  assertProfileReconfigurationActive(generation);
+  try {
+    await thumbnailCache.init(app, profilePath);
+  } catch (error) {
+    console.warn("[profile] Failed to init thumbnail cache for profile", error);
+  }
+  assertProfileReconfigurationActive(generation);
+  try {
+    await proxyManager.init(profilePath);
+  } catch (error) {
+    console.warn("[profile] Failed to initialize playback proxy cache", error);
+  }
+
+  assertProfileReconfigurationActive(generation);
+  resetDatabase();
+  initMetadataStore(app, profilePath);
+  await ensureRecentStore(targetId);
+  assertProfileReconfigurationActive(generation);
+
+  const settings = await loadSettings(targetId, {
+    allowDuringReconfiguration: true,
+  });
+  assertProfileReconfigurationActive(generation);
+  configuredMetadataProfileGeneration = generation;
+  directoryAggregateBatcher.activate({ profileId: targetId, generation });
+  return settings;
+}
+
+async function performProfileReconfiguration(requestedProfileId, broadcast) {
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
+    throw new ApplicationShutdownRequestedError();
+  }
+
+  const outgoingProfileId = getActiveProfileId();
+  // Quiesce filesystem producers before the durable boundary. Cancellation is
+  // cooperative but immediate: any scan continuation must reassert ownership
+  // before another database mutation. Watcher.stop() then drains native event
+  // delivery, after which the aggregate flush can be genuinely final.
+  cancelAllDirectoryScans();
+  try {
+    await folderWatcher.stop();
+  } catch (error) {
+    console.warn("[profile] Failed to stop watcher before profile flush", error);
+  }
+  invalidateWatcherContext();
+  sidecarMetadataService.cancelAll();
+  lastFrameCaptureService.cancelAll("Profile changed during frame capture");
+  mediaProtocolService.cancelActiveStreams();
+  await Promise.all([
+    settingsWriter.flush(outgoingProfileId),
+    flushDirectoryAggregates(),
+  ]);
+
+  const reconfigureGeneration = ++metadataProfileGeneration;
+  configuredMetadataProfileGeneration = 0;
+  currentSettings = null;
+  setVideoDimensionsRoot(null);
+  directoryAggregateBatcher.invalidate();
+  if (outgoingProfileId) pathAuthority.revokeScope(outgoingProfileId);
+
+  let targetId = null;
+  try {
+    assertProfileReconfigurationActive(reconfigureGeneration);
+    targetId = profileManager.setActiveProfile(requestedProfileId);
+    activeProfileId = targetId;
+    const settings = await initializeProfileRuntime(
+      targetId,
+      reconfigureGeneration
+    );
+    if (broadcast) broadcastProfileChange(settings);
+    createMenu();
+    return settings;
+  } catch (error) {
+    const rollbackGeneration = ++metadataProfileGeneration;
+    configuredMetadataProfileGeneration = 0;
+    currentSettings = null;
+    directoryAggregateBatcher.invalidate();
+    if (targetId) pathAuthority.revokeScope(targetId);
+    try {
+      const restoredProfileId = profileManager.setActiveProfile(
+        outgoingProfileId
+      );
+      activeProfileId = restoredProfileId;
+      const restoredSettings = await initializeProfileRuntime(
+        restoredProfileId,
+        rollbackGeneration,
+        { migrateLegacy: false }
+      );
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        broadcastProfileChange(restoredSettings);
+      }
+      createMenu();
+    } catch (rollbackError) {
+      configuredMetadataProfileGeneration = 0;
+      currentSettings = null;
+      error.rollbackError = rollbackError;
+      console.error("[profile] Failed to restore outgoing profile", rollbackError);
+    }
+    throw error;
+  }
+}
+
+async function reconfigureForProfile(profileId, { broadcast = true } = {}) {
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
+    throw new ApplicationShutdownRequestedError();
   }
   const requestedProfileId =
     typeof profileId === "string" ? profileId.trim() : "";
@@ -1109,92 +1720,120 @@ function reconfigureForProfile(profileId, { broadcast = true } = {}) {
     .listProfiles()
     .some((profile) => profile.id === requestedProfileId);
   if (!profileExists) {
-    return Promise.reject(
-      new Error(`Profile '${requestedProfileId || profileId}' does not exist`)
-    );
+    throw new Error(`Profile '${requestedProfileId || profileId}' does not exist`);
   }
 
-  const reconfigureGeneration = ++metadataProfileGeneration;
-  sidecarMetadataService.cancelAll();
-  lastFrameCaptureService.cancelAll("Profile changed during frame capture");
-  setVideoDimensionsRoot(null);
-  invalidateWatcherContext();
-  cancelAllDirectoryScans();
-  const thumbnailResetPromise = thumbnailCache.reset().catch((error) => {
-    console.warn("[profile] Failed to invalidate thumbnail cache", error);
-  });
-  const run = async () => {
-    assertProfileReconfigurationActive(reconfigureGeneration);
-    const targetId = profileManager.setActiveProfile(requestedProfileId);
-    activeProfileId = targetId;
-    const profilePath = getProfilePath(targetId);
+  return runSerializedProfileOperation(() =>
+    performProfileReconfiguration(requestedProfileId, broadcast)
+  );
+}
 
-    if (typeof profileManager.getUserDataPath === "function") {
-      try {
-        const userDataPath = profileManager.getUserDataPath();
-        await migrateLegacyProfileData({
-          profileId: targetId,
-          profilePath,
-          userDataPath,
-          defaultProfileId: profileManager.DEFAULT_PROFILE_ID,
-        });
-      } catch (error) {
-        console.warn("[profile] Legacy data migration failed", error);
+async function runSerializedProfileOperation(run) {
+  if (typeof run !== "function") {
+    throw new TypeError("A profile operation is required");
+  }
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
+    throw new ApplicationShutdownRequestedError();
+  }
+  profileReconfigurationPending += 1;
+  profileReconfigurationInProgress = true;
+  const guardedRun = async () => {
+    trashAdmissionOpen = false;
+    await drainActiveTrashOperations();
+    trashConfirmationStore.revokeAll();
+    try {
+      return await run();
+    } finally {
+      if (!nativeShutdownPreparing && !nativeShutdownRequested) {
+        trashAdmissionOpen = true;
       }
-      assertProfileReconfigurationActive(reconfigureGeneration);
     }
-
-    try {
-      await folderWatcher.stop();
-    } catch (error) {
-      console.warn("[profile] Failed to stop watcher during profile switch", error);
-    }
-    assertProfileReconfigurationActive(reconfigureGeneration);
-
-    await thumbnailResetPromise;
-    assertProfileReconfigurationActive(reconfigureGeneration);
-    try {
-      await thumbnailCache.init(app, profilePath);
-    } catch (error) {
-      console.warn("[profile] Failed to init thumbnail cache for new profile", error);
-    }
-    assertProfileReconfigurationActive(reconfigureGeneration);
-    try {
-      await proxyManager.init(profilePath);
-    } catch (error) {
-      console.warn("[profile] Failed to initialize playback proxy cache", error);
-    }
-
-    assertProfileReconfigurationActive(reconfigureGeneration);
-    resetDatabase();
-    initMetadataStore(app, profilePath);
-    await ensureRecentStore(targetId);
-    assertProfileReconfigurationActive(reconfigureGeneration);
-
-    currentSettings = null;
-    currentSettingsProfileId = null;
-    const settings = await loadSettings(targetId);
-    assertProfileReconfigurationActive(reconfigureGeneration);
-    configuredMetadataProfileGeneration = reconfigureGeneration;
-
-    if (broadcast) {
-      broadcastProfileChange(settings);
-    }
-
-    createMenu();
-    return settings;
   };
-
-  const operation = profileReconfigureQueue.then(run, run);
+  const operation = profileReconfigureQueue.then(guardedRun, guardedRun);
   profileReconfigureQueue = operation.catch(() => {});
-  return operation;
+  try {
+    return await operation;
+  } finally {
+    profileReconfigurationPending = Math.max(
+      0,
+      profileReconfigurationPending - 1
+    );
+    profileReconfigurationInProgress = profileReconfigurationPending > 0;
+  }
+}
+
+async function deleteProfileWithTransition(profileId, { broadcast = true } = {}) {
+  const requestedProfileId =
+    typeof profileId === "string" ? profileId.trim() : "";
+  if (!requestedProfileId) {
+    throw new Error("Profile id must be provided");
+  }
+
+  return runSerializedProfileOperation(async () => {
+    const profiles = profileManager.listProfiles();
+    const target = profiles.find((profile) => profile.id === requestedProfileId);
+    if (!target) {
+      throw new Error(`Profile '${requestedProfileId}' does not exist`);
+    }
+    if (profiles.length <= 1) {
+      throw new Error("Cannot delete the last remaining profile");
+    }
+
+    const switchedFromDeletedProfile =
+      requestedProfileId === getActiveProfileId();
+    if (switchedFromDeletedProfile) {
+      const fallback = profiles.find(
+        (profile) => profile.id !== requestedProfileId
+      );
+      await performProfileReconfiguration(fallback.id, false);
+    }
+
+    let removed;
+    try {
+      await settingsWriter.forget(requestedProfileId, { flush: false });
+      try {
+        removed = profileManager.deleteProfile(requestedProfileId);
+      } catch (error) {
+        if (!error?.profileDeleted) throw error;
+        // The catalog commit is authoritative; quarantine cleanup is retried on
+        // the next startup and must not leave the renderer believing the profile
+        // is still selectable.
+        console.warn("[profile] Deleted profile needs deferred cleanup", error);
+        removed = { ...target, cleanupPending: true };
+      }
+    } catch (error) {
+      if (switchedFromDeletedProfile && !error?.profileDeleted) {
+        try {
+          await performProfileReconfiguration(requestedProfileId, false);
+        } catch (rollbackError) {
+          error.rollbackError = rollbackError;
+          console.error(
+            "[profile] Failed to restore profile after deletion failure",
+            rollbackError
+          );
+        }
+        createMenu();
+        if (broadcast) broadcastProfileChange(currentSettings);
+      }
+      throw error;
+    }
+    createMenu();
+    if (broadcast) broadcastProfileChange(currentSettings);
+    return removed;
+  });
 }
 
 // ===== Window/Menu =====
 async function createWindow() {
-  if (nativeShutdownRequested) return null;
+  if (nativeShutdownPreparing || nativeShutdownRequested) return null;
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   const settings = await loadSettings();
+  // loadSettings may cross profile I/O. Reassert both shutdown and singleton
+  // state before allocating native resources.
+  if (nativeShutdownPreparing || nativeShutdownRequested) return null;
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   const appVersion = app.getVersion();
+  const isDev = isDevelopmentRuntime();
 
   // Choose the right icon per platform
   const iconPath =
@@ -1203,7 +1842,7 @@ async function createWindow() {
       : assetPath("assets", "icons", "videoswarm.png");
 
 
-  mainWindow = new BrowserWindow({
+  const createdWindow = new BrowserWindow({
     width: settings.windowBounds.width,
     height: settings.windowBounds.height,
     x: settings.windowBounds.x,
@@ -1213,11 +1852,13 @@ async function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: path.join(__dirname, "preload.js"),
-      webSecurity: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      devTools: isDev,
 
       // Enhanced memory management
-      experimentalFeatures: true,
       // Keep Chromium scheduling consistent for every media element from the
       // moment the renderer is created. The renderer already physically
       // suspends media and background work when the window is hidden or
@@ -1232,7 +1873,7 @@ async function createWindow() {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     title: `Video Swarm v${appVersion}`,
   });
-  const createdWindow = mainWindow;
+  mainWindow = createdWindow;
   // BrowserWindow.webContents throws once the window has been destroyed. Keep
   // the owner reference captured while the window is alive so late lifecycle
   // callbacks (notably `closed`) can finish idempotent native-work cleanup.
@@ -1240,13 +1881,26 @@ async function createWindow() {
   const playbackOwnerId = createdWebContents.id;
   registerNativeWorkOwner(createdWebContents);
 
+  createdWebContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const preventUntrustedNavigation = (event, url) => {
+    if (!isTrustedRendererUrl(url)) event.preventDefault();
+  };
+  createdWebContents.on("will-navigate", preventUntrustedNavigation);
+  createdWebContents.on("will-redirect", preventUntrustedNavigation);
+  createdWebContents.on("will-attach-webview", (event) => event.preventDefault());
+  createdWebContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false)
+  );
+  createdWebContents.session.setPermissionCheckHandler(() => false);
+
   disposeMainWindowActivity?.();
-  disposeMainWindowActivity = attachWindowActivity(createdWindow, (activity) => {
+  const createdWindowActivityDisposer = attachWindowActivity(createdWindow, (activity) => {
     proxyManager.setOwnerActive(playbackOwnerId, activity.active);
     if (!createdWindow.isDestroyed()) {
-      createdWindow.webContents.send("playback:window-activity", activity);
+      createdWebContents.send("playback:window-activity", activity);
     }
   });
+  disposeMainWindowActivity = createdWindowActivityDisposer;
 
   // set the dock icon explicitly on macOS
   if (process.platform === "darwin") {
@@ -1257,25 +1911,31 @@ async function createWindow() {
     } catch { }
   }
 
-  const isDev =
-    process.argv.includes("--dev") || !!process.env.VITE_DEV_SERVER_URL;
-
   if (isDev) {
+    const devRendererUrl =
+      process.env.VITE_DEV_SERVER_URL || "http://localhost:5173";
     console.log(
-      "Development mode: Loading from Vite server at http://localhost:5173"
+      `Development mode: Loading from Vite server at ${devRendererUrl}`
     );
-    mainWindow.loadURL("http://localhost:5173");
+    createdWindow.loadURL(devRendererUrl);
   } else {
     console.log("Production mode: Loading from index.html");
-    mainWindow.loadFile(path.join(__dirname, "dist-react", "index.html"));
+    createdWindow.loadFile(path.join(__dirname, "dist-react", "index.html"));
   }
 
-  mainWindow.webContents.on("did-finish-load", () => {
+  createdWebContents.on("did-finish-load", () => {
+    if (
+      mainWindow !== createdWindow ||
+      createdWindow.isDestroyed() ||
+      createdWebContents.isDestroyed?.()
+    ) {
+      return;
+    }
     activateNativeWorkOwner(createdWebContents);
     console.log("Page loaded, sending settings immediately");
-    mainWindow.setTitle(`Video Swarm v${appVersion}`);
-    mainWindow.webContents.send("settings-loaded", currentSettings);
-    mainWindow.webContents.send("profile-changed", {
+    createdWindow.setTitle(`Video Swarm v${appVersion}`);
+    createdWebContents.send("settings-loaded", currentSettings);
+    createdWebContents.send("profile-changed", {
       profileId: getActiveProfileId(),
       profileName: getProfileDisplayName(),
       profiles: profileManager.listProfiles(),
@@ -1283,11 +1943,18 @@ async function createWindow() {
     });
   });
 
-  mainWindow.webContents.on("dom-ready", () => {
+  createdWebContents.on("dom-ready", () => {
+    if (
+      mainWindow !== createdWindow ||
+      createdWindow.isDestroyed() ||
+      createdWebContents.isDestroyed?.()
+    ) {
+      return;
+    }
     console.log("DOM ready, sending settings");
-    mainWindow.setTitle(`Video Swarm v${appVersion}`);
-    mainWindow.webContents.send("settings-loaded", currentSettings);
-    mainWindow.webContents.send("profile-changed", {
+    createdWindow.setTitle(`Video Swarm v${appVersion}`);
+    createdWebContents.send("settings-loaded", currentSettings);
+    createdWebContents.send("profile-changed", {
       profileId: getActiveProfileId(),
       profileName: getProfileDisplayName(),
       profiles: profileManager.listProfiles(),
@@ -1296,7 +1963,7 @@ async function createWindow() {
   });
 
   // Enhanced crash detection
-  mainWindow.webContents.on("render-process-gone", (event, details) => {
+  createdWebContents.on("render-process-gone", (event, details) => {
     invalidateNativeWorkOwner(createdWebContents);
     console.error("🔥 RENDERER PROCESS CRASHED:");
     console.error("  Reason:", details.reason);
@@ -1316,34 +1983,118 @@ async function createWindow() {
       console.error("💥 Generic crash - likely memory related");
     }
     setTimeout(() => {
-      if (!nativeShutdownRequested && mainWindow && !mainWindow.isDestroyed()) {
+      if (
+        !nativeShutdownPreparing &&
+        !nativeShutdownRequested &&
+        mainWindow === createdWindow &&
+        !createdWindow.isDestroyed() &&
+        !createdWebContents.isDestroyed?.()
+      ) {
         console.log("🔄 Attempting to reload...");
-        mainWindow.reload();
+        createdWindow.reload();
       }
     }, 1000);
   });
 
-  mainWindow.webContents.on("unresponsive", () => {
+  createdWebContents.on("unresponsive", () => {
     console.error("🔥 RENDERER UNRESPONSIVE");
   });
-  mainWindow.webContents.on("responsive", () => {
+  createdWebContents.on("responsive", () => {
     console.log("✅ RENDERER RESPONSIVE AGAIN");
   });
 
-  mainWindow.on("moved", saveWindowBounds);
-  mainWindow.on("resized", saveWindowBounds);
+  const saveCreatedWindowBounds = () => {
+    if (mainWindow !== createdWindow || createdWindow.isDestroyed()) return;
+    saveSettingsPartial(
+      { windowBounds: createdWindow.getBounds() },
+      getActiveProfileId(),
+      { debounce: true }
+    ).catch(console.error);
+  };
+  createdWindow.on("moved", saveCreatedWindowBounds);
+  createdWindow.on("resized", saveCreatedWindowBounds);
   createdWindow.once("closed", () => {
+    const closingWatcherRoot =
+      activeWatcherContext?.ownerWebContentsId === createdWebContents.id
+        ? activeWatcherContext.rootPath
+        : null;
+    if (closingWatcherRoot) invalidateWatcherContext();
+    cancelDirectoryScan(createdWebContents.id);
+    cancelPendingProfilePrompts();
+    if (mainWindow === createdWindow) {
+      disposeWatcherEventWiring?.();
+      disposeWatcherEventWiring = null;
+    }
+    mediaProtocolService.cancelActiveStreams();
     disposeNativeWorkOwner(createdWebContents);
-    disposeMainWindowActivity?.();
-    disposeMainWindowActivity = null;
+    createdWebContents.removeListener(
+      "will-navigate",
+      preventUntrustedNavigation
+    );
+    createdWebContents.removeListener(
+      "will-redirect",
+      preventUntrustedNavigation
+    );
+    if (disposeMainWindowActivity === createdWindowActivityDisposer) {
+      createdWindowActivityDisposer?.();
+      disposeMainWindowActivity = null;
+    }
     if (mainWindow === createdWindow) mainWindow = null;
+    if (closingWatcherRoot) {
+      void folderWatcher.stop()
+        .then(() => flushDirectoryAggregates(closingWatcherRoot))
+        .catch((error) => {
+          console.warn("[window] Failed to stop watcher during close", error);
+        });
+    }
   });
   if (isDev) {
-    mainWindow.webContents.openDevTools();
+    createdWebContents.openDevTools();
   }
 
   // Wire watcher events after window exists
-  wireWatcherEvents(mainWindow);
+  wireWatcherEvents(createdWindow);
+  return createdWindow;
+}
+
+function focusMainWindow(window = mainWindow) {
+  if (!window || window.isDestroyed()) return false;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  return true;
+}
+
+function ensureMainWindow() {
+  if (
+    !ownsSingleInstanceLock ||
+    nativeShutdownPreparing ||
+    nativeShutdownRequested
+  ) {
+    return Promise.resolve(null);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return Promise.resolve(mainWindow);
+  }
+  if (!applicationInitializationComplete) {
+    if (!applicationInitializationPromise) {
+      return Promise.reject(
+        new Error("Application initialization has not started")
+      );
+    }
+    return applicationInitializationPromise.then(() => ensureMainWindow());
+  }
+  if (windowCreationPromise) return windowCreationPromise;
+
+  let trackedCreation;
+  const creation = Promise.resolve().then(() => createWindow());
+  trackedCreation = creation.finally(() => {
+    if (windowCreationPromise === trackedCreation) {
+      windowCreationPromise = null;
+    }
+  });
+  windowCreationPromise = trackedCreation;
+  return trackedCreation;
 }
 
 async function promptForProfileName(defaultValue, { title, message }) {
@@ -1365,33 +2116,50 @@ async function promptForProfileName(defaultValue, { title, message }) {
   }
 
   if (mainWindow?.webContents) {
+    const expectedSender = mainWindow.webContents;
     const requestId = `profile-prompt-${Date.now()}-${Math.random()
       .toString(16)
       .slice(2)}`;
     return await new Promise((resolve) => {
       let settled = false;
+      let timeoutId = null;
+      let cancelPrompt = null;
       const channel = "profiles:prompt-response";
       const cleanup = () => {
         if (settled) return;
         settled = true;
-        ipcMain.removeListener(channel, handler);
-        clearTimeout(timeoutId);
+        rawIpcMain.removeListener(channel, handler);
+        if (timeoutId) clearTimeout(timeoutId);
+        if (cancelPrompt) {
+          pendingProfilePromptCancellations.delete(cancelPrompt);
+        }
       };
-      const handler = (_event, payload) => {
+      const settle = (value) => {
+        if (settled) return;
+        cleanup();
+        resolve(value);
+      };
+      const handler = (event, payload) => {
+        try {
+          assertTrustedSender(event);
+          assertPayloadSize(payload, 4096);
+          assertPlainObject(payload, "profile prompt response");
+        } catch {
+          return;
+        }
+        if (event.sender !== expectedSender) return;
         if (!payload || payload.requestId !== requestId) {
           return;
         }
-        cleanup();
         const value =
           typeof payload.value === "string" ? payload.value.trim() : "";
-        resolve(value.length ? value : null);
+        settle(value.length ? value : null);
       };
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        resolve(null);
-      }, 45000);
+      cancelPrompt = () => settle(null);
+      pendingProfilePromptCancellations.add(cancelPrompt);
+      timeoutId = setTimeout(cancelPrompt, 45000);
 
-      ipcMain.on(channel, handler);
+      rawIpcMain.on(channel, handler);
       try {
         mainWindow.webContents.send("profiles:prompt-input", {
           requestId,
@@ -1400,9 +2168,8 @@ async function promptForProfileName(defaultValue, { title, message }) {
           message,
         });
       } catch (error) {
-        cleanup();
         console.warn("[profiles] Failed to request renderer prompt", error);
-        resolve(null);
+        settle(null);
       }
     });
   }
@@ -1499,8 +2266,7 @@ async function handleDeleteActiveProfileFromMenu() {
   }
 
   try {
-    profileManager.deleteProfile(activeId);
-    await reconfigureForProfile(profileManager.getActiveProfile());
+    await deleteProfileWithTransition(activeId);
   } catch (error) {
     console.error("Failed to delete profile", error);
     await dialog.showMessageBox(mainWindow || null, {
@@ -1577,15 +2343,37 @@ function createMenu() {
           label: "Open Folder",
           accelerator: "CmdOrCtrl+O",
           click: async () => {
-            const result = await dialog.showOpenDialog(mainWindow, {
+            const targetWindow = mainWindow;
+            const targetWebContents = targetWindow?.webContents;
+            if (
+              !targetWindow ||
+              targetWindow.isDestroyed() ||
+              targetWebContents?.isDestroyed?.()
+            ) {
+              return;
+            }
+            const result = await dialog.showOpenDialog(targetWindow, {
               properties: ["openDirectory"],
               title: "Select Video Folder",
             });
-            if (!result.canceled && result.filePaths.length > 0) {
-              mainWindow.webContents.send(
-                "folder-selected",
+            if (
+              !result.canceled &&
+              result.filePaths.length > 0 &&
+              mainWindow === targetWindow &&
+              !targetWindow.isDestroyed() &&
+              !targetWebContents.isDestroyed?.()
+            ) {
+              const grantedPath = await grantRendererRoot(
+                targetWebContents,
                 result.filePaths[0]
               );
+              if (
+                mainWindow === targetWindow &&
+                !targetWindow.isDestroyed() &&
+                !targetWebContents.isDestroyed?.()
+              ) {
+                targetWebContents.send("folder-selected", grantedPath);
+              }
             }
           },
         },
@@ -1619,7 +2407,7 @@ function createMenu() {
       submenu: [
         { role: "reload" },
         { role: "forceReload" },
-        { role: "toggleDevTools" },
+        ...(app.isPackaged ? [] : [{ role: "toggleDevTools" }]),
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },
@@ -1808,14 +2596,39 @@ ipcMain.handle("data-location:get-state", async () => {
   }
 });
 
-ipcMain.handle("data-location:browse", async () => {
-  const browser = BrowserWindow.getFocusedWindow() || mainWindow || null;
-  return dataLocationManager.browseForDirectory(browser);
+ipcMain.handle("data-location:browse", async (event) => {
+  const browser = BrowserWindow.fromWebContents(event.sender);
+  if (!browser || browser.isDestroyed()) return null;
+  const selectedPath = await dataLocationManager.browseForDirectory(browser);
+  if (
+    !selectedPath ||
+    browser.isDestroyed() ||
+    event.sender.isDestroyed?.() ||
+    mainWindow !== browser
+  ) {
+    return null;
+  }
+  return grantDataLocationPath(event.sender, selectedPath);
 });
 
-ipcMain.handle("data-location:apply", async (_event, payload) => {
-  const browser = BrowserWindow.getFocusedWindow() || mainWindow || null;
-  return dataLocationManager.applySelection(payload, browser);
+ipcMain.handle("data-location:apply", async (event, payload) => {
+  assertPlainObject(payload, "data location selection");
+  assertPayloadSize(payload, 16 * 1024);
+  const browser = BrowserWindow.fromWebContents(event.sender);
+  if (!browser || browser.isDestroyed()) {
+    throw new Error("Data-location window is no longer available");
+  }
+  const useDefault = assertBoolean(payload.useDefault, "useDefault");
+  const customPath = useDefault
+    ? null
+    : await assertGrantedDataLocationPath(event.sender, payload.customPath);
+  return dataLocationManager.applySelection(
+    { useDefault, customPath },
+    browser,
+    {
+      beforeRestart: beginNativeShutdown,
+    }
+  );
 });
 
 ipcMain.handle("profiles:list", async () => ({
@@ -1833,7 +2646,13 @@ ipcMain.handle("profiles:get-active", async () => ({
 
 ipcMain.handle("profiles:set-active", async (_event, profileId) => {
   try {
-    await reconfigureForProfile(profileId);
+    const normalizedProfileId = assertString(profileId, {
+      name: "profileId",
+      minChars: 1,
+      maxChars: 256,
+      trim: true,
+    });
+    await reconfigureForProfile(normalizedProfileId);
     return {
       success: true,
       profileId: getActiveProfileId(),
@@ -1848,7 +2667,12 @@ ipcMain.handle("profiles:set-active", async (_event, profileId) => {
 
 ipcMain.handle("profiles:create", async (_event, name) => {
   try {
-    const profile = profileManager.createProfile(name);
+    const profile = profileManager.createProfile(assertString(name, {
+      name: "profile name",
+      minChars: 1,
+      maxChars: 128,
+      trim: true,
+    }));
     await reconfigureForProfile(profile.id);
     return {
       success: true,
@@ -1864,9 +2688,23 @@ ipcMain.handle("profiles:create", async (_event, name) => {
 
 ipcMain.handle("profiles:rename", async (_event, profileId, newName) => {
   try {
-    const renamed = profileManager.renameProfile(profileId, newName);
+    const normalizedProfileId = assertString(profileId, {
+      name: "profileId",
+      minChars: 1,
+      maxChars: 256,
+      trim: true,
+    });
+    const renamed = profileManager.renameProfile(
+      normalizedProfileId,
+      assertString(newName, {
+        name: "profile name",
+        minChars: 1,
+        maxChars: 128,
+        trim: true,
+      })
+    );
     createMenu();
-    if (profileId === getActiveProfileId()) {
+    if (normalizedProfileId === getActiveProfileId()) {
       broadcastProfileChange(currentSettings);
     }
     return {
@@ -1880,10 +2718,45 @@ ipcMain.handle("profiles:rename", async (_event, profileId, newName) => {
   }
 });
 
-ipcMain.handle("profiles:delete", async (_event, profileId) => {
+ipcMain.handle("profiles:delete", async (event, profileId) => {
   try {
-    const removed = profileManager.deleteProfile(profileId);
-    await reconfigureForProfile(profileManager.getActiveProfile());
+    const normalizedProfileId = assertString(profileId, {
+      name: "profileId",
+      minChars: 1,
+      maxChars: 64,
+      trim: true,
+    });
+    const profile = profileManager
+      .listProfiles()
+      .find((candidate) => candidate.id === normalizedProfileId);
+    if (!profile) {
+      throw new Error(`Profile '${normalizedProfileId}' does not exist`);
+    }
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const { response } = await dialog.showMessageBox(ownerWindow || null, {
+      type: "warning",
+      buttons: ["Delete", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: "Delete Profile",
+      message: `Delete the profile "${profile.name}"?`,
+      detail:
+        "All settings and cached data for this profile will be removed. This cannot be undone.",
+    });
+    if (
+      response !== 0 ||
+      ownerWindow?.isDestroyed?.() ||
+      event.sender.isDestroyed?.()
+    ) {
+      return {
+        success: false,
+        cancelled: true,
+        activeProfileId: getActiveProfileId(),
+        profiles: profileManager.listProfiles(),
+      };
+    }
+    const removed = await deleteProfileWithTransition(normalizedProfileId);
     return {
       success: true,
       removed,
@@ -1892,16 +2765,28 @@ ipcMain.handle("profiles:delete", async (_event, profileId) => {
     };
   } catch (error) {
     console.error("Failed to delete profile via IPC", error);
-    return { success: false, error: error?.message || String(error) };
+    return {
+      success: false,
+      error: error?.message || String(error),
+      activeProfileId: getActiveProfileId(),
+      profiles: profileManager.listProfiles(),
+    };
   }
 });
 
 ipcMain.handle("thumb:put", async (event, payload) => {
   let context = null;
   try {
+    assertPlainObject(payload, "thumbnail payload");
+    assertPayloadSize(payload, IPC_LIMITS.maxImageDataUrlBytes);
+    const authorized = await assertRendererPath(event, payload?.path, "file");
     context = captureProfileGenerationContext();
     const ownerId = registerNativeWorkOwner(event.sender);
-    const result = await thumbnailCache.put(nativeImage, payload, { ownerId });
+    const result = await thumbnailCache.put(
+      nativeImage,
+      { ...payload, path: authorized.path },
+      { ownerId }
+    );
     assertProfileGenerationContextActive(context);
     return result;
   } catch (error) {
@@ -1911,14 +2796,16 @@ ipcMain.handle("thumb:put", async (event, payload) => {
       error: error?.code || error?.message || "CACHE_INVALIDATED",
     };
   }
-});
+}, { maxPayloadBytes: IPC_LIMITS.maxImageDataUrlBytes + 64 * 1024 });
 
 ipcMain.handle("thumb:get", async (event, payload) => {
   let context = null;
   try {
+    assertPlainObject(payload, "thumbnail payload");
+    const authorized = await assertRendererPath(event, payload?.path, "file");
     context = captureProfileGenerationContext();
     const ownerId = registerNativeWorkOwner(event.sender);
-    const pathKey = payload?.path;
+    const pathKey = authorized.path;
     const signature = payload?.signature;
     const result = await thumbnailCache.has(
       pathKey,
@@ -1937,7 +2824,7 @@ ipcMain.handle("thumb:get", async (event, payload) => {
   }
 });
 
-ipcMain.on("dnd:start-file", (event, payload) => {
+ipcMain.on("dnd:start-file", async (event, payload) => {
   const normalize = (value) => {
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object" && Array.isArray(value.paths)) {
@@ -1953,13 +2840,14 @@ ipcMain.on("dnd:start-file", (event, payload) => {
     registerNativeWorkOwner(event.sender);
     const candidates = normalize(payload).filter(
       (entry) => typeof entry === "string" && entry.trim().length > 0
-    );
+    ).slice(0, 16);
     const filePath = candidates[0];
     if (!filePath) {
       return;
     }
+    const authorized = await assertRendererPath(event, filePath, "file");
 
-    let icon = thumbnailCache.getForDrag(nativeImage, filePath);
+    let icon = thumbnailCache.getForDrag(nativeImage, authorized.path);
     if (!icon || (typeof icon.isEmpty === "function" && icon.isEmpty())) {
       icon = getEmbeddedDragIcon(nativeImage);
     }
@@ -1969,7 +2857,7 @@ ipcMain.on("dnd:start-file", (event, payload) => {
     }
 
     event.sender.startDrag({
-      file: filePath,
+      file: authorized.path,
       icon,
     });
   } catch (error) {
@@ -1978,12 +2866,18 @@ ipcMain.on("dnd:start-file", (event, payload) => {
 });
 
 ipcMain.handle("save-settings", async (_event, settings) => {
-  await saveSettings(settings);
+  assertPlainObject(settings, "settings");
+  assertPayloadSize(settings, 64 * 1024);
+  const context = captureSettingsContext();
+  await saveSettings(settings, context.profileId);
+  assertSettingsContextActive(context);
   return { success: true };
 });
 
 ipcMain.handle("load-settings", async () => {
-  const settings = await loadSettings();
+  const context = captureSettingsContext();
+  const settings = await loadSettings(context.profileId);
+  assertSettingsContextActive(context);
   return settings;
 });
 
@@ -1994,10 +2888,10 @@ ipcMain.handle("get-settings", async () => {
 });
 
 // NEW: Request settings (for refresh scenarios)
-ipcMain.handle("request-settings", async () => {
+ipcMain.handle("request-settings", async (event) => {
   console.log("request-settings called, sending settings via IPC");
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(
+  if (!event.sender.isDestroyed()) {
+    event.sender.send(
       "settings-loaded",
       currentSettings || defaultSettings
     );
@@ -2006,7 +2900,11 @@ ipcMain.handle("request-settings", async () => {
 });
 
 ipcMain.handle("save-settings-partial", async (_event, partialSettings) => {
-  await saveSettingsPartial(partialSettings);
+  assertPlainObject(partialSettings, "partial settings");
+  assertPayloadSize(partialSettings, 64 * 1024);
+  const context = captureSettingsContext();
+  await saveSettingsPartial(partialSettings, context.profileId);
+  assertSettingsContextActive(context);
   return { success: true };
 });
 
@@ -2024,31 +2922,68 @@ ipcMain.handle("playback:get-window-activity", (event) => {
 });
 
 ipcMain.handle("playback:set-renderer-active", (event, active) => {
-  const normalizedActive = Boolean(active);
+  const normalizedActive = assertBoolean(active, "renderer active");
   const ownerId = registerNativeWorkOwner(event.sender);
   proxyManager.setOwnerActive(ownerId, normalizedActive);
   return { success: true, active: normalizedActive };
 });
 
 ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
-  const filePath =
-    typeof payload?.filePath === "string" ? payload.filePath : "";
-  return proxyManager.resolveSource({
-    filePath,
+  assertPlainObject(payload, "playback source request");
+  const instanceId = assertInteger(Number(payload?.instanceId), {
+    name: "instanceId",
+    min: 1,
+  });
+  const context = captureMetadataContext();
+  const instance = context.metadataStore.getFileInstanceById(instanceId);
+  assertMetadataContextActive(context);
+  if (!instance?.present || !instance.absolutePath) {
+    return { status: "missing", sourceUrl: null, usingProxy: false, pending: false };
+  }
+  const authorized = await assertRendererPath(event, instance.absolutePath, "file");
+  const originalSourceUrl = createMediaInstanceUrl(instanceId, {
+    version: `${instance.size}-${instance.mtimeMs}`,
+    generation: context.generation,
+  });
+  const resolved = await proxyManager.resolveSource({
+    filePath: authorized.path,
     enabled: Boolean(payload?.enabled),
     ownerId: registerNativeWorkOwner(event.sender),
   });
+  assertMetadataContextActive(context);
+  return {
+    status: resolved.status,
+    sourceUrl:
+      resolved.usingProxy && resolved.signature
+        ? createMediaProxyUrl(resolved.signature, {
+            generation: context.generation,
+          })
+        : originalSourceUrl,
+    usingProxy: Boolean(resolved.usingProxy),
+    pending: Boolean(resolved.pending),
+  };
 });
 
-ipcMain.handle("select-folder", async () => {
+ipcMain.handle("select-folder", async (event) => {
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow || targetWindow.isDestroyed()) {
+      return { success: false, error: "Window is no longer available" };
+    }
+    const result = await dialog.showOpenDialog(targetWindow, {
       properties: ["openDirectory"],
       title: "Select Video Folder",
     });
 
-    if (!result.canceled && result.filePaths.length > 0) {
-      return { success: true, folderPath: result.filePaths[0] };
+    if (
+      !result.canceled &&
+      result.filePaths.length > 0 &&
+      mainWindow === targetWindow &&
+      !targetWindow.isDestroyed() &&
+      !event.sender.isDestroyed?.()
+    ) {
+      const folderPath = await grantRendererRoot(event.sender, result.filePaths[0]);
+      return { success: true, folderPath };
     } else {
       return { success: false, canceled: true };
     }
@@ -2059,10 +2994,11 @@ ipcMain.handle("select-folder", async () => {
 });
 
 // Handle file manager opening
-ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
+ipcMain.handle("show-item-in-folder", async (event, filePath) => {
   try {
-    console.log("Attempting to show in folder:", filePath);
-    shell.showItemInFolder(filePath);
+    const authorized = await assertRendererPath(event, filePath, "file");
+    console.log("Attempting to show in folder:", authorized.path);
+    shell.showItemInFolder(authorized.path);
     return { success: true };
   } catch (error) {
     console.error("Failed to show item in folder:", error);
@@ -2071,10 +3007,12 @@ ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
 });
 
 // Open file in external application (default video player)
-ipcMain.handle("open-in-external-player", async (_event, filePath) => {
+ipcMain.handle("open-in-external-player", async (event, filePath) => {
   try {
-    console.log("Opening in external player:", filePath);
-    await shell.openPath(filePath);
+    const authorized = await assertRendererPath(event, filePath, "file");
+    console.log("Opening in external player:", authorized.path);
+    const openError = await shell.openPath(authorized.path);
+    if (openError) throw new Error(openError);
     return { success: true };
   } catch (error) {
     console.error("Failed to open in external player:", error);
@@ -2085,9 +3023,15 @@ ipcMain.handle("open-in-external-player", async (_event, filePath) => {
 // Copy text to clipboard
 ipcMain.handle("copy-to-clipboard", async (_event, text) => {
   try {
-    const { clipboard } = require("electron");
-    clipboard.writeText(text);
-    console.log("Copied to clipboard:", text);
+    const cleanText = assertString(text, {
+      name: "clipboard text",
+      maxChars: IPC_LIMITS.maxClipboardBytes,
+    });
+    if (Buffer.byteLength(cleanText, "utf8") > IPC_LIMITS.maxClipboardBytes) {
+      throw new TypeError("Clipboard text is too large");
+    }
+    clipboard.writeText(cleanText);
+    console.log("Copied text to clipboard");
     return { success: true };
   } catch (error) {
     console.error("Failed to copy to clipboard:", error);
@@ -2098,8 +3042,13 @@ ipcMain.handle("copy-to-clipboard", async (_event, text) => {
 // Copy image to clipboard
 ipcMain.handle("copy-image-to-clipboard", async (_event, dataUrl) => {
   try {
-    const { clipboard, nativeImage } = require("electron");
-    const image = nativeImage.createFromDataURL(String(dataUrl || ""));
+    const normalizedDataUrl = assertString(dataUrl, {
+      name: "clipboard image",
+      minChars: 1,
+      maxChars: IPC_LIMITS.maxImageDataUrlBytes,
+    });
+    assertPngDataUrlDimensions(normalizedDataUrl);
+    const image = nativeImage.createFromDataURL(normalizedDataUrl);
     if (!image || image.isEmpty()) {
       return { success: false, error: "EMPTY_IMAGE" };
     }
@@ -2110,20 +3059,18 @@ ipcMain.handle("copy-image-to-clipboard", async (_event, dataUrl) => {
     console.error("Failed to copy image to clipboard:", error);
     return { success: false, error: error.message };
   }
-});
+}, { maxPayloadBytes: IPC_LIMITS.maxImageDataUrlBytes + 64 * 1024 });
 
 // Copy the last frame through a bounded, owner-scoped ffmpeg runner.
 ipcMain.handle("copy-last-frame-from-file", async (event, filePath) => {
-  if (!filePath || typeof filePath !== "string") {
-    return { success: false, error: "INVALID_PATH" };
-  }
   let context = null;
   let ownerContext = null;
   try {
     context = captureProfileGenerationContext();
+    const authorized = await assertRendererPath(event, filePath, "file");
     const ownerId = registerNativeWorkOwner(event.sender);
     ownerContext = nativeOwnerLifecycle.capture(event.sender);
-    const buffer = await lastFrameCaptureService.capture(filePath, { ownerId });
+    const buffer = await lastFrameCaptureService.capture(authorized.path, { ownerId });
     assertProfileGenerationContextActive(context);
     nativeOwnerLifecycle.assertActive(ownerContext);
     if (event.sender?.isDestroyed?.()) {
@@ -2146,16 +3093,41 @@ ipcMain.handle("copy-last-frame-from-file", async (event, filePath) => {
 });
 
 ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
-  const requester = event?.sender;
-  const win = requester ? BrowserWindow.fromWebContents(requester) : mainWindow;
-  const count = Number(payload?.count) || 0;
-  const sampleName = payload?.sampleName || "";
+  assertPlainObject(payload, "trash confirmation");
+  if (!trashAdmissionOpen) {
+    throw new ProfileOperationInvalidatedError();
+  }
+  const requestedPaths = assertStringArray(payload.paths, {
+    name: "trash confirmation paths",
+    minEntries: 1,
+    maxEntries: 2_000,
+    item: { minChars: 1, maxChars: IPC_LIMITS.maxPathChars, trim: true },
+    dedupe: true,
+  });
+  const context = captureProfileGenerationContext();
+  const canonicalPaths = [];
+  const bindings = {};
+  for (const requestedPath of requestedPaths) {
+    const authorized = await assertRendererPath(event, requestedPath, "file");
+    canonicalPaths.push(authorized.path);
+    bindings[authorized.path] = await readTrashFileIdentity(authorized.path);
+  }
+  assertProfileGenerationContextActive(context);
 
-  const message = count === 1 && sampleName
-    ? `Move "${sampleName}" to Recycle Bin?`
-    : count === 1
-      ? "Move this item to Recycle Bin?"
-      : `Move ${count} item${count === 1 ? "" : "s"} to Recycle Bin?`;
+  const requester = event.sender;
+  const win = BrowserWindow.fromWebContents(requester);
+  if (!win || win.isDestroyed()) {
+    return { confirmed: false };
+  }
+  // Never let display text weaken the native confirmation boundary. The
+  // renderer can supply only candidate paths; the prompt names the canonical
+  // path that was actually authorized and identity-bound above.
+  const sampleName = path.basename(canonicalPaths[0]);
+  const count = canonicalPaths.length;
+  const message =
+    count === 1
+      ? `Move "${sampleName}" to Recycle Bin?`
+      : `Move ${count} items to Recycle Bin?`;
 
   try {
     const { response } = await dialog.showMessageBox(win, {
@@ -2167,31 +3139,44 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
       message,
     });
 
-    const confirmed = response === 0;
+    if (
+      response !== 0 ||
+      win.isDestroyed() ||
+      requester.isDestroyed?.() ||
+      !trashAdmissionOpen ||
+      profileReconfigurationInProgress
+    ) {
+      return { confirmed: false };
+    }
+    assertProfileGenerationContextActive(context);
+    const grant = trashConfirmationStore.issue({
+      ownerId: requester.id,
+      scopeId: context.profileId,
+      generation: context.generation,
+      paths: canonicalPaths,
+      bindings,
+    });
 
     const refocus = () => {
-      if (!win || win.isDestroyed()) return;
+      if (win.isDestroyed()) return;
       try {
         win.focus();
-      } catch { }
-      try {
         win.webContents.focus();
       } catch { }
     };
-
     refocus();
     setTimeout(refocus, 0);
 
-    return confirmed;
+    return { confirmed: true, token: grant.token, expiresAt: grant.expiresAt };
   } catch (error) {
     console.error("Failed to show confirm dialog:", error);
-    if (win && !win.isDestroyed()) {
+    if (!win.isDestroyed()) {
       try {
         win.focus();
         win.webContents.focus();
       } catch { }
     }
-    return false;
+    return { confirmed: false };
   }
 });
 
@@ -2200,9 +3185,23 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
 // are retained in the main process.
 ipcMain.handle(
   "read-directory-cache",
-  async (_event, folderPath, recursive = false, requestedScanId = null) => {
+  async (event, folderPath, recursive = false, requestedScanId = null) => {
+    const authorizedRoot = await assertRendererPath(
+      event,
+      folderPath,
+      "directory"
+    );
+    assertBoolean(recursive, "recursive");
+    if (requestedScanId !== null) {
+      assertString(requestedScanId, {
+        name: "scanId",
+        minChars: 1,
+        maxChars: 256,
+      });
+    }
     const metadataContext = captureMetadataContext();
-    const normalizedRoot = path.resolve(folderPath);
+    const normalizedRoot = authorizedRoot.path;
+    await flushDirectoryAggregates(normalizedRoot);
     assertMetadataContextActive(metadataContext);
     const snapshot = metadataContext.metadataStore.getCachedLibrarySnapshot(
       normalizedRoot,
@@ -2215,7 +3214,8 @@ ipcMain.handle(
     return createCachedLibraryResponse(
       snapshot,
       normalizedRoot,
-      requestedScanId
+      requestedScanId,
+      { generation: metadataContext.generation }
     );
   }
 );
@@ -2249,8 +3249,9 @@ async function stopWatcherForDirectoryScan(scan) {
   ) {
     return false;
   }
-  invalidateWatcherContext();
   await folderWatcher.stop();
+  await flushDirectoryAggregates(context.rootPath);
+  invalidateWatcherContext();
   return true;
 }
 
@@ -2264,6 +3265,21 @@ ipcMain.handle(
     requestedScanId = null,
     scanOptions = {}
   ) => {
+    const authorizedRoot = await assertRendererPath(
+      event,
+      folderPath,
+      "directory"
+    );
+    assertBoolean(recursive, "recursive");
+    if (requestedScanId !== null) {
+      assertString(requestedScanId, {
+        name: "scanId",
+        minChars: 1,
+        maxChars: 256,
+      });
+    }
+    assertPlainObject(scanOptions || {}, "scan options");
+    assertPayloadSize(scanOptions || {}, 16 * 1024);
     const scan = beginDirectoryScan(event.sender.id, requestedScanId);
     const streamRecords = Boolean(scanOptions?.streamRecords);
     let metadataContext = null;
@@ -2292,7 +3308,7 @@ ipcMain.handle(
 
     try {
       assertActive();
-      const normalizedRoot = path.resolve(folderPath);
+      const normalizedRoot = authorizedRoot.path;
       metadataContext = captureMetadataContext();
       setVideoDimensionsRoot(normalizedRoot);
       scan.metadataContext = metadataContext;
@@ -2590,6 +3606,7 @@ ipcMain.handle(
                 metadataStore,
                 rootPath: normalizedRoot,
                 recursive,
+                generation: metadataContext.generation,
                 assertActive,
               }
             );
@@ -2630,6 +3647,8 @@ ipcMain.handle(
       flushPatchRecords();
 
       await releaseWatcherInitializationForScan(scan, entries);
+      assertActive();
+      await flushDirectoryAggregates(normalizedRoot);
       assertActive();
 
       progressReporter.setPhase("finalizing", {
@@ -2704,6 +3723,13 @@ ipcMain.handle(
 );
 
 ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => {
+  if (scanId !== null) {
+    assertString(scanId, {
+      name: "scanId",
+      minChars: 1,
+      maxChars: 256,
+    });
+  }
   const scan = activeDirectoryScans.get(event.sender.id) || null;
   const cancelled = cancelDirectoryScan(event.sender.id, scanId);
   if (cancelled && scan) {
@@ -2715,10 +3741,21 @@ ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => {
 });
 
 ipcMain.on("prioritize-directory-scan", (event, payload = {}) => {
+  assertPlainObject(payload, "scan priority");
+  const scanId = assertString(payload?.scanId, {
+    name: "scanId",
+    minChars: 1,
+    maxChars: 256,
+  });
+  const ids = assertStringArray(payload?.ids || [], {
+    name: "priority ids",
+    maxEntries: DIRECTORY_SCAN_PRIORITY_LIMIT,
+    item: { minChars: 1, maxChars: IPC_LIMITS.maxPathChars },
+  });
   updateDirectoryScanPriorities(
     event.sender.id,
-    payload?.scanId,
-    payload?.ids
+    scanId,
+    ids
   );
 });
 
@@ -2752,17 +3789,47 @@ function runLibraryCatalogOperation(operation) {
   return runMetadataContextOperation(operation, "LIBRARY_CATALOG_ERROR");
 }
 
-ipcMain.handle("library:list-roots", async (_event, options = {}) =>
-  runLibraryCatalogOperation((metadataStore) => ({
+ipcMain.handle("library:list-roots", async (_event, options = {}) => {
+  assertPlainObject(options, "library list options");
+  return runLibraryCatalogOperation((metadataStore) => ({
     roots: metadataStore.listLibraryRoots({
       pinnedOnly: Boolean(options?.pinnedOnly),
     }),
-  }))
-);
+  }));
+});
 
-ipcMain.handle("library:get-tree", async (_event, payload = {}) =>
-  runLibraryCatalogOperation((metadataStore) => {
-    const rootPath = normalizeLibraryIpcRootPath(payload);
+// Catalog listing is intentionally not itself an unbounded authority grant.
+// When the user opens an indexed root, grant that exact database-known root
+// on demand and let the bounded LRU retain the roots that are actually used.
+ipcMain.handle("library:authorize-root", async (event, payload = {}) => {
+  assertPlainObject(payload, "library root authorization");
+  const rootPath = normalizeLibraryIpcRootPath(payload);
+  const catalogResult = runLibraryCatalogOperation((metadataStore) => {
+    const root = metadataStore.getLibraryRoot(rootPath);
+    if (!root) {
+      throw new Error(`Library root has not been indexed: ${rootPath}`);
+    }
+    return { root };
+  });
+  if (catalogResult?.success === false) return catalogResult;
+  if (
+    catalogResult.profileId !== getActiveProfileId() ||
+    catalogResult.generation !== metadataProfileGeneration
+  ) {
+    throw new ProfileOperationInvalidatedError();
+  }
+  const grantedPath = await grantRendererRoot(
+    event.sender,
+    catalogResult.root.rootPath
+  );
+  return { ...catalogResult, rootPath: grantedPath };
+});
+
+ipcMain.handle("library:get-tree", async (_event, payload = {}) => {
+  assertPlainObject(payload, "library tree request");
+  const rootPath = normalizeLibraryIpcRootPath(payload);
+  await flushDirectoryAggregates(rootPath);
+  return runLibraryCatalogOperation((metadataStore) => {
     const tree = metadataStore.getLibraryTree(rootPath, {
       includeMissing: Boolean(payload?.includeMissing),
     });
@@ -2770,8 +3837,8 @@ ipcMain.handle("library:get-tree", async (_event, payload = {}) =>
       throw new Error(`Library root has not been indexed: ${rootPath}`);
     }
     return tree;
-  })
-);
+  });
+});
 
 ipcMain.handle("library:set-pinned", async (_event, payload = {}) =>
   runLibraryCatalogOperation((metadataStore) => {
@@ -2816,6 +3883,14 @@ ipcMain.handle("library:delete-saved-view", async (_event, payload = {}) =>
   }))
 );
 
+function normalizeFingerprintArray(fingerprints) {
+  return assertStringArray(fingerprints, {
+    name: "fingerprints",
+    maxEntries: IPC_LIMITS.maxArrayEntries,
+    item: { minChars: 1, maxChars: 512 },
+  });
+}
+
 ipcMain.handle("metadata:list-tags", async () => {
   try {
     const store = getMetadataStore();
@@ -2831,14 +3906,12 @@ ipcMain.handle(
   async (_event, fingerprints = [], tagNames = []) => {
     try {
       const store = getMetadataStore();
-      const cleanFingerprints = Array.isArray(fingerprints)
-        ? fingerprints.filter(Boolean)
-        : [];
-      const cleanNames = Array.isArray(tagNames)
-        ? tagNames
-          .map((name) => (name ?? "").toString().trim())
-          .filter(Boolean)
-        : [];
+      const cleanFingerprints = normalizeFingerprintArray(fingerprints);
+      const cleanNames = assertStringArray(tagNames, {
+        name: "tag names",
+        maxEntries: 128,
+        item: { minChars: 1, maxChars: 256, trim: true },
+      });
       if (!cleanFingerprints.length || !cleanNames.length) {
         return { updates: {}, tags: store.listTags() };
       }
@@ -2856,10 +3929,13 @@ ipcMain.handle(
   async (_event, fingerprints = [], tagName) => {
     try {
       const store = getMetadataStore();
-      const cleanFingerprints = Array.isArray(fingerprints)
-        ? fingerprints.filter(Boolean)
-        : [];
-      const cleanName = (tagName ?? "").toString().trim();
+      const cleanFingerprints = normalizeFingerprintArray(fingerprints);
+      const cleanName = assertString(tagName, {
+        name: "tag name",
+        minChars: 1,
+        maxChars: 256,
+        trim: true,
+      });
       if (!cleanFingerprints.length || !cleanName) {
         return { updates: {}, tags: store.listTags() };
       }
@@ -2877,16 +3953,18 @@ ipcMain.handle(
   async (_event, fingerprints = [], ratingValue) => {
     try {
       const store = getMetadataStore();
-      const cleanFingerprints = Array.isArray(fingerprints)
-        ? fingerprints.filter(Boolean)
-        : [];
+      const cleanFingerprints = normalizeFingerprintArray(fingerprints);
       if (!cleanFingerprints.length) {
         return { updates: {} };
       }
       const rating =
         ratingValue === null || ratingValue === undefined
           ? null
-          : Math.max(0, Math.min(5, Math.round(Number(ratingValue))));
+          : assertInteger(Number(ratingValue), {
+              name: "rating",
+              min: 0,
+              max: 5,
+            });
       const updates = store.setRating(cleanFingerprints, rating);
       return { updates };
     } catch (error) {
@@ -2900,15 +3978,24 @@ ipcMain.handle(
   "metadata:set-review-state",
   async (_event, fingerprints = [], reviewState) =>
     runMetadataContextOperation((store) => {
-      const cleanFingerprints = Array.isArray(fingerprints)
-        ? [...new Set(fingerprints.filter(Boolean))]
-        : [];
+      const cleanFingerprints = normalizeFingerprintArray(fingerprints);
+      const normalizedReviewState = assertString(reviewState, {
+        name: "review state",
+        minChars: 1,
+        maxChars: 32,
+      });
+      if (!["unreviewed", "reviewed", "pick", "reject"].includes(normalizedReviewState)) {
+        throw new TypeError("Invalid review state");
+      }
       if (!cleanFingerprints.length) return { updates: {} };
-      return { updates: store.setReviewState(cleanFingerprints, reviewState) };
+      return { updates: store.setReviewState(cleanFingerprints, normalizedReviewState) };
     }, "REVIEW_STATE_ERROR")
 );
 
 ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
+  if (typeof payload !== "number") {
+    assertPlainObject(payload, "generation metadata request");
+  }
   let context = null;
   let requestToken = null;
   const instanceId = Number(
@@ -2939,6 +4026,14 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
   try {
     context = captureMetadataContext();
     assertMetadataContextActive(context);
+    const instance = context.metadataStore.getFileInstanceById(instanceId);
+    if (!instance?.present || !instance.absolutePath) {
+      throw Object.assign(new Error("File instance does not exist"), {
+        code: "INSTANCE_NOT_FOUND",
+      });
+    }
+    await assertRendererPath(event, instance.absolutePath, "file");
+    assertMetadataContextActive(context);
     const { ownerId, scopeId } = createGenerationRequestIdentity({
       profileId: context.profileId,
       generation: context.generation,
@@ -2954,6 +4049,10 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
         scopeId,
         metadataStore: context.metadataStore,
         assertActive: () => assertMetadataContextActive(context),
+        authorizePath: async (candidatePath) => {
+          await assertRendererPath(event, candidatePath, "file");
+          assertMetadataContextActive(context);
+        },
       });
       assertMetadataContextActive(context);
       return {
@@ -2981,6 +4080,7 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
 });
 
 ipcMain.handle("metadata:cancel-generation", async (event, payload = {}) => {
+  assertPlainObject(payload, "generation cancellation");
   let requestToken;
   try {
     requestToken = normalizeGenerationRequestToken(payload?.requestToken, {
@@ -3013,9 +4113,7 @@ ipcMain.handle("metadata:cancel-generation", async (event, payload = {}) => {
 ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
   try {
     const store = getMetadataStore();
-    const cleanFingerprints = Array.isArray(fingerprints)
-      ? fingerprints.filter(Boolean)
-      : [];
+    const cleanFingerprints = normalizeFingerprintArray(fingerprints);
     return { updates: store.getMetadataForFingerprints(cleanFingerprints) };
   } catch (error) {
     console.error("Failed to load metadata:", error);
@@ -3023,72 +4121,140 @@ ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
   }
 });
 
-// File info helpers
-ipcMain.handle("get-file-info", async (_event, filePath) => {
-  try {
-    const stats = await fsPromises.stat(filePath);
-    return {
-      name: path.basename(filePath),
-      size: stats.size,
-      isFile: stats.isFile(),
-      path: filePath,
-    };
-  } catch (error) {
-    console.error("Error getting file info:", error);
-    return null;
+ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
+  assertPlainObject(payload, "trash request");
+  if (!trashAdmissionOpen) {
+    throw new ProfileOperationInvalidatedError();
   }
-});
-
-// keep single-file API but implement it via bulk for consistency
-ipcMain.handle("move-to-trash", async (_event, filePath) => {
-  try {
-    await shell.trashItem(filePath);
-    return { success: true };
-  } catch (error) {
-    console.error("Failed to move to trash:", error);
-    return { success: false, error: error.message };
+  const paths = assertStringArray(payload.paths, {
+    name: "trash paths",
+    minEntries: 1,
+    maxEntries: 2_000,
+    item: { minChars: 1, maxChars: IPC_LIMITS.maxPathChars, trim: true },
+    dedupe: true,
+  });
+  const token = assertString(payload.confirmationToken, {
+    name: "trash confirmation token",
+    minChars: 64,
+    maxChars: 64,
+    trim: true,
+  });
+  const context = captureProfileGenerationContext();
+  const requester = event.sender;
+  const requesterId = requester.id;
+  const canonicalByRequestedPath = new Map();
+  for (const requestedPath of paths) {
+    const authorized = await assertRendererPath(event, requestedPath, "file");
+    canonicalByRequestedPath.set(requestedPath, authorized.path);
   }
-});
-
-ipcMain.handle("copy-file", async (_event, sourcePath, destPath) => {
-  try {
-    await fsPromises.copyFile(sourcePath, destPath);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle("get-file-properties", async (_event, filePath) => {
-  try {
-    const stats = await fsPromises.stat(filePath);
-    return {
-      size: stats.size,
-      created: stats.birthtime,
-      modified: stats.mtime,
-      isDirectory: stats.isDirectory(),
-      permissions: stats.mode,
-    };
-  } catch {
-    return null;
-  }
+  assertProfileGenerationContextActive(context);
+  const confirmed = trashConfirmationStore.consume({
+    token,
+    ownerId: requesterId,
+    scopeId: context.profileId,
+    generation: context.generation,
+    paths: [...canonicalByRequestedPath.values()],
+  });
+  const operation = (async () => {
+    for (const canonicalPath of canonicalByRequestedPath.values()) {
+      const currentIdentity = await readTrashFileIdentity(canonicalPath);
+      if (currentIdentity !== confirmed.bindings[canonicalPath]) {
+        throw new Error("A trash target changed after confirmation");
+      }
+    }
+    const result = await trashAuthorizedPaths({
+      paths,
+      shell,
+      authorizePath: async (filePath) => ({
+        path: canonicalByRequestedPath.get(filePath),
+      }),
+      logger: console,
+    });
+    const retryPaths = [];
+    const retryBindings = {};
+    for (const failure of result.failed) {
+      const canonicalPath = canonicalByRequestedPath.get(failure.path);
+      if (!canonicalPath) continue;
+      try {
+        const currentIdentity = await readTrashFileIdentity(canonicalPath);
+        if (currentIdentity !== confirmed.bindings[canonicalPath]) {
+          failure.error = "File changed after trash confirmation";
+          continue;
+        }
+        retryPaths.push(canonicalPath);
+        retryBindings[canonicalPath] = currentIdentity;
+      } catch {
+        // A missing path cannot be retried and needs no lingering capability.
+      }
+    }
+    let retryContextActive = false;
+    if (
+      retryPaths.length > 0 &&
+      trashAdmissionOpen &&
+      !profileReconfigurationInProgress &&
+      !requester.isDestroyed?.() &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.webContents === requester
+    ) {
+      try {
+        assertProfileGenerationContextActive(context);
+        retryContextActive = true;
+      } catch {
+        // The completed result remains useful, but no capability may cross a
+        // renderer/profile/shutdown ownership boundary.
+      }
+    }
+    if (retryContextActive) {
+      const retryGrant = trashConfirmationStore.issue({
+        ownerId: requesterId,
+        scopeId: context.profileId,
+        generation: context.generation,
+        paths: retryPaths,
+        bindings: retryBindings,
+      });
+      result.retryConfirmationToken = retryGrant.token;
+    }
+    return result;
+  })();
+  return trackTrashOperation(operation);
 });
 
 // Recent folders IPC
-ipcMain.handle("recent:get", async () => await getRecentFolders());
-ipcMain.handle("recent:add", async (_e, folderPath) => await addRecentFolder(folderPath));
-ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFolder(folderPath));
+ipcMain.handle("recent:get", async (event) => {
+  const items = await getRecentFolders();
+  await grantKnownRendererRoots(event.sender, items.map((item) => item.path));
+  return items;
+});
+ipcMain.handle("recent:add", async (event, folderPath) => {
+  const authorizedRoot = await assertRendererPath(
+    event,
+    folderPath,
+    "directory"
+  );
+  return addRecentFolder(authorizedRoot.path);
+});
+ipcMain.handle("recent:remove", async (_e, folderPath) =>
+  removeRecentFolder(assertPathString(folderPath))
+);
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 // Watcher IPC (delegated to file watcher module)
 ipcMain.handle(
   "start-folder-watch",
   async (event, folderPath, recursive, watchOptions = {}) => {
-  const normalizedRecursive = recursive ?? true;
+  const authorizedRoot = await assertRendererPath(
+    event,
+    folderPath,
+    "directory"
+  );
+  const normalizedRecursive = assertBoolean(recursive ?? true, "recursive");
+  assertPlainObject(watchOptions || {}, "watch options");
+  assertPayloadSize(watchOptions || {}, 16 * 1024);
   let context = null;
   try {
     context = createWatcherContext(
-      folderPath,
+      authorizedRoot.path,
       normalizedRecursive,
       watchOptions
     );
@@ -3124,9 +4290,11 @@ ipcMain.handle(
 );
 
 ipcMain.handle("stop-folder-watch", async () => {
-  invalidateWatcherContext();
   try {
+    const rootPath = activeWatcherContext?.rootPath || null;
     await folderWatcher.stop();
+    if (rootPath) await flushDirectoryAggregates(rootPath);
+    invalidateWatcherContext();
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message || String(e) };
@@ -3174,63 +4342,145 @@ ipcMain.handle('mem:get', () => {
 
 
 // App lifecycle
+async function settleShutdownTasks(phase, tasks) {
+  const entries = Object.entries(tasks);
+  const results = await Promise.allSettled(
+    entries.map(([, task]) => Promise.resolve().then(task))
+  );
+  const failures = [];
+  results.forEach((result, index) => {
+    if (result.status !== "rejected") return;
+    const [name] = entries[index];
+    failures.push({ name, error: result.reason });
+    console.error(`[shutdown] ${phase} task '${name}' failed`, result.reason);
+  });
+  return failures;
+}
+
+async function performNativeShutdown() {
+  // Mark scans interrupted while their old profile generation is still valid,
+  // then stop every filesystem producer before the durable flush boundary.
+  trashAdmissionOpen = false;
+  cancelAllDirectoryScans();
+  cancelPendingProfilePrompts();
+  await drainActiveTrashOperations();
+  trashConfirmationStore.revokeAll();
+  await folderWatcher.stop().catch((error) => {
+    console.warn("[shutdown] Failed to stop watcher before flush", error);
+  });
+  invalidateWatcherContext();
+  sidecarMetadataService.cancelAll();
+  lastFrameCaptureService.cancelAll("Application shutdown requested");
+  mediaProtocolService.cancelActiveStreams();
+  const flushFailures = await settleShutdownTasks("flush", {
+    directoryAggregates: () => flushDirectoryAggregates(),
+    settings: () => settingsWriter.flush(),
+  });
+  if (flushFailures.some((failure) => failure.name === "settings")) {
+    // Atomic replacement preserves the prior valid file. Make one final
+    // explicit attempt so a transient rename/lock failure does not discard the
+    // latest in-memory settings silently.
+    await settleShutdownTasks("settings retry", {
+      settings: () => settingsWriter.flush(),
+    });
+  }
+
+  nativeShutdownRequested = true;
+  metadataProfileGeneration += 1;
+  disposeMainWindowActivity?.();
+  disposeMainWindowActivity = null;
+  sidecarMetadataService.shutdown();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    invalidateNativeWorkOwner(mainWindow.webContents);
+  }
+  setVideoDimensionsRoot(null);
+  const pendingProfileReconfiguration = profileReconfigureQueue;
+  await pendingProfileReconfiguration.catch(() => {});
+  await settleShutdownTasks("dispose", {
+    folderWatcher: () => folderWatcher.dispose(),
+    frameCapture: () => lastFrameCaptureService.shutdown(),
+    proxyManager: () => proxyManager.shutdown(),
+    thumbnailCache: () => thumbnailCache.shutdown(),
+    settingsWriter: () => settingsWriter.dispose(),
+    directoryAggregates: () =>
+      directoryAggregateBatcher.dispose({ flush: false }),
+  });
+  mediaProtocolService.dispose();
+  trashConfirmationStore.dispose();
+  dataLocationPathGrants.clear();
+  pathAuthority.dispose();
+  trustedIpc.dispose();
+}
+
+function beginNativeShutdown() {
+  if (nativeShutdownPromise) return nativeShutdownPromise;
+  nativeShutdownPreparing = true;
+  nativeShutdownPromise = performNativeShutdown();
+  return nativeShutdownPromise;
+}
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-app.whenReady().then(async () => {
-  try {
-    await dataLocationManager.ensureReady();
-    profileManager.initializeProfileManager(app.getPath("userData"));
-    activeProfileId = profileManager.getActiveProfile();
-    console.log("GPU status:", app.getGPUFeatureStatus());
-    await reconfigureForProfile(activeProfileId, { broadcast: false });
-    await createWindow();
-    broadcastProfileChange(currentSettings || defaultSettings);
-  } catch (err) {
-    console.error("❌ Startup failure:", err);
+applicationInitializationPromise = app.whenReady().then(async () => {
+  if (!ownsSingleInstanceLock) return;
+  await dataLocationManager.ensureReady();
+  profileManager.initializeProfileManager(app.getPath("userData"));
+  activeProfileId = profileManager.getActiveProfile();
+  console.log("GPU status:", app.getGPUFeatureStatus());
+  await reconfigureForProfile(activeProfileId, { broadcast: false });
+  mediaProtocolService.register(protocol);
+  applicationInitializationComplete = true;
+  await ensureMainWindow();
+  broadcastProfileChange(currentSettings || defaultSettings);
+});
+
+void applicationInitializationPromise.catch((error) => {
+  if (
+    nativeShutdownPreparing ||
+    nativeShutdownRequested ||
+    error?.code === "APPLICATION_SHUTDOWN_REQUESTED"
+  ) {
+    console.log("[startup] Initialization cancelled by application shutdown");
+    return;
   }
+  console.error("❌ Startup failure:", error);
+  try {
+    dialog.showErrorBox(
+      "Video Swarm could not start",
+      error?.message || "The application failed during startup."
+    );
+  } catch (_) {}
+  // The process owns the single-instance lock, so a failed startup must not
+  // remain as an invisible primary instance. Settle native work, then exit.
+  void beginNativeShutdown()
+    .catch((shutdownError) => {
+      console.error("[shutdown] Startup-failure cleanup failed", shutdownError);
+    })
+    .finally(() => {
+      nativeShutdownComplete = true;
+      app.exit(1);
+    });
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (!ownsSingleInstanceLock) return;
+  void ensureMainWindow().catch((error) => {
+    console.error("[window] Failed to activate application window", error);
+  });
 });
 
 // Electron does not await async event listeners. Hold the first quit request
 // until native queues and atomic cache persistence have actually settled.
 app.on("before-quit", (event) => {
+  if (!ownsSingleInstanceLock) return;
   if (nativeShutdownComplete) return;
   event.preventDefault();
   if (nativeShutdownPromise) return;
-
-  nativeShutdownRequested = true;
-  metadataProfileGeneration += 1;
-  disposeMainWindowActivity?.();
-  disposeMainWindowActivity = null;
-  invalidateWatcherContext();
-  cancelAllDirectoryScans();
-  sidecarMetadataService.shutdown();
-  lastFrameCaptureService.cancelAll("Application shutdown requested");
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    invalidateNativeWorkOwner(mainWindow.webContents);
-  }
-  setVideoDimensionsRoot(null);
-  const pendingProfileReconfiguration = profileReconfigureQueue;
-  nativeShutdownPromise = (async () => {
-    await pendingProfileReconfiguration.catch(() => {});
-    await Promise.allSettled(
-      [
-        () => folderWatcher.dispose(),
-        () => lastFrameCaptureService.shutdown(),
-        () => proxyManager.shutdown(),
-        () => thumbnailCache.shutdown(),
-      ].map((shutdown) => Promise.resolve().then(shutdown))
-    );
-  })().finally(() => {
+  beginNativeShutdown().finally(() => {
     nativeShutdownComplete = true;
     app.quit();
   });

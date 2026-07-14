@@ -68,6 +68,32 @@ describe("pollFolderForChanges", () => {
     expect(pollingState.lastFiles.size).toBe(0);
   });
 
+  it("supports deferring aggregate refreshes for a polling burst", async () => {
+    const missingPath = path.join(rootPath, "gone.mp4");
+    const addedPath = path.join(rootPath, "new.mp4");
+    fs.writeFileSync(addedPath, "video");
+    metadataStore.getFileInstances.mockReturnValue([
+      {
+        absolutePath: missingPath,
+        relativePath: "gone.mp4",
+        size: 42,
+        mtimeMs: 100,
+      },
+    ]);
+
+    await run({ refreshDirectoryCounts: false });
+
+    expect(createVideoFileObject).toHaveBeenCalledWith(
+      addedPath,
+      rootPath,
+      expect.objectContaining({ refreshDirectoryCounts: false })
+    );
+    expect(metadataStore.markFileMissing).toHaveBeenCalledWith(
+      missingPath,
+      expect.objectContaining({ refreshDirectoryCounts: false })
+    );
+  });
+
   it("emits an add when an empty baseline discovers a file", async () => {
     const addedPath = path.join(rootPath, "new.mp4");
     fs.writeFileSync(addedPath, "video");

@@ -590,6 +590,45 @@ describe("App hook composition", () => {
     expect(setThumbSuspendedMock).toHaveBeenCalledWith(true);
   });
 
+  test("authorizes a catalog root on demand before opening it", async () => {
+    const handleElectronFolderSelection = vi.fn().mockResolvedValue(undefined);
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [],
+      handleElectronFolderSelection,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [],
+    }));
+    useLibraryCatalogMock.mockImplementation(() => ({
+      pinnedRoots: [
+        { id: 300, rootPath: "/library/root-300", label: "Run 300" },
+      ],
+      currentRoot: null,
+      directories: [],
+      setPinned: setLibraryRootPinnedMock,
+    }));
+    const authorizeRoot = vi.fn().mockResolvedValue({
+      success: true,
+      rootPath: "/canonical/library/root-300",
+    });
+    window.electronAPI = { library: { authorizeRoot } };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle("/library/root-300"));
+
+    await waitFor(() =>
+      expect(authorizeRoot).toHaveBeenCalledWith("/library/root-300")
+    );
+    expect(handleElectronFolderSelection).toHaveBeenCalledWith(
+      "/canonical/library/root-300"
+    );
+  });
+
   test("propagates minimized-window suspension through all expensive work", async () => {
     useWindowWorkSuspensionMock.mockReturnValue({
       isSuspended: true,

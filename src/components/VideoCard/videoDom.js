@@ -34,6 +34,7 @@ export function hardDetach(el, { revokeBlobUrl = true } = {}) {
     try { URL.revokeObjectURL(el.src); } catch {}
   }
   try { el.removeAttribute("src"); } catch {}
+  try { el.removeAttribute("data-file-path"); } catch {}
   try { el.srcObject = null; } catch {}
   try { el.load(); } catch {}
 }

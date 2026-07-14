@@ -23,10 +23,13 @@ let directoryScanSequence = 0;
 const preserveEnumeratedMetadata = (existing, incoming) => {
   if (!existing) return normalizeVideoFromMain(incoming);
   const normalized = normalizeVideoFromMain(incoming);
+  const instanceId = existing.instanceId ?? normalized.instanceId ?? null;
+  const sourceUrl = normalized.sourceUrl ?? existing.sourceUrl ?? null;
   return {
     ...existing,
     ...normalized,
-    instanceId: existing.instanceId ?? normalized.instanceId ?? null,
+    instanceId,
+    sourceUrl,
     fingerprint: existing.fingerprint ?? null,
     tags: Array.isArray(existing.tags) ? existing.tags : [],
     rating: existing.rating ?? null,
@@ -34,7 +37,9 @@ const preserveEnumeratedMetadata = (existing, incoming) => {
     dimensions: existing.dimensions ?? null,
     aspectRatio: existing.aspectRatio ?? null,
     enrichmentState:
-      existing.enrichmentState === "ready" ? "ready" : "enumerated",
+      existing.enrichmentState === "ready" || (instanceId && sourceUrl)
+        ? "ready"
+        : "enumerated",
   };
 };
 

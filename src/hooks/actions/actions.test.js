@@ -1,6 +1,6 @@
 // src/hooks/actions/actions.test.js
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { actionRegistry, ActionIds } from "./actions";
+import { actionRegistry, ActionIds, resolveVideoSource } from "./actions";
 import { createMediaSlotScheduler } from "../../services/mediaSlotScheduler";
 
 const makeVideo = (p) => ({
@@ -8,6 +8,29 @@ const makeVideo = (p) => ({
   name: p.split("/").pop(),
   isElectronFile: true,
   fullPath: p,
+});
+
+describe("resolveVideoSource", () => {
+  it("uses opaque protocol URLs without exposing a native file path", () => {
+    const video = {
+      isElectronFile: true,
+      fullPath: "/private/library/clip.mp4",
+      sourceUrl: "videoswarm-media://instance/91?v=5",
+    };
+
+    expect(resolveVideoSource(video)).toEqual({
+      src: "videoswarm-media://instance/91?v=5",
+    });
+  });
+
+  it("does not turn an Electron path into a file URL", () => {
+    expect(
+      resolveVideoSource({
+        isElectronFile: true,
+        fullPath: "/private/library/clip.mp4",
+      })
+    ).toEqual({});
+  });
 });
 
 describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
@@ -20,7 +43,11 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
 
   beforeEach(() => {
     notify = vi.fn();
-    confirmMoveToTrash = vi.fn(async () => ({ confirmed: true, lastFocusedSelector: '.tag-input' }));
+    confirmMoveToTrash = vi.fn(async () => ({
+      confirmed: true,
+      confirmationToken: "confirmed-token",
+      lastFocusedSelector: '.tag-input',
+    }));
     postConfirmRecovery = vi.fn();
     releaseVideoHandlesForAsync = vi.fn(async () => {});
     onItemsRemoved = vi.fn();
@@ -56,7 +83,10 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
 
     // bulk called once with all paths
     expect(electronAPI.bulkMoveToTrash).toHaveBeenCalledTimes(1);
-    expect(electronAPI.bulkMoveToTrash).toHaveBeenCalledWith(["/x", "/y"]);
+    expect(electronAPI.bulkMoveToTrash).toHaveBeenCalledWith(
+      ["/x", "/y"],
+      "confirmed-token"
+    );
 
     // handle releases: pre + post (with moved)
     expect(releaseVideoHandlesForAsync).toHaveBeenCalledTimes(2);
@@ -85,6 +115,7 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
         success: true,
         moved: ["/ok"],
         failed: [{ path: "/locked", error: "EBUSY: in use" }],
+        retryConfirmationToken: "retry-token",
       })
       .mockResolvedValueOnce({
         success: true,
@@ -109,6 +140,10 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
       )
     ).toBe(true);
     expect(calls.some((a) => Array.isArray(a) && a.length === 1 && a[0] === "/locked")).toBe(true);
+    expect(electronAPI.bulkMoveToTrash.mock.calls.map(([, token]) => token)).toEqual([
+      "confirmed-token",
+      "retry-token",
+    ]);
 
     // pruning: union of all prune calls must include both moved items
     expect(onItemsRemoved).toHaveBeenCalled();
@@ -123,12 +158,19 @@ describe("actionRegistry → MOVE_TO_TRASH (bulk)", () => {
   it("retries transient failures and still fails one; prunes what moved; shows some toast", async () => {
     const videos = [makeVideo("/ok"), makeVideo("/locked")];
 
-    // 1st: move '/ok', fail '/locked'; 2nd (retry): still fail '/locked'
+    // 1st: move '/ok', then exhaust two one-shot retry grants for '/locked'.
     electronAPI.bulkMoveToTrash
       .mockResolvedValueOnce({
         success: true,
         moved: ["/ok"],
         failed: [{ path: "/locked", error: "EBUSY: in use" }],
+        retryConfirmationToken: "retry-token-1",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        moved: [],
+        failed: [{ path: "/locked", error: "EBUSY" }],
+        retryConfirmationToken: "retry-token-2",
       })
       .mockResolvedValueOnce({
         success: true,

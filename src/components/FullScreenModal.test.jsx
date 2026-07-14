@@ -50,11 +50,13 @@ describe("FullScreenModal media ownership", () => {
     }
   });
 
-  it("uses the shared encoded file URL and releases its element on close", () => {
+  it("uses its opaque native source URL and releases its element on close", () => {
     const video = {
       id: "local",
+      instanceId: 81,
       name: "local.mp4",
       fullPath: "C:\\clips\\a b#c.mp4",
+      sourceUrl: "videoswarm-media://instance/81?v=4",
       isElectronFile: true,
     };
     const rendered = render(
@@ -66,8 +68,9 @@ describe("FullScreenModal media ownership", () => {
       />
     );
     const element = rendered.container.querySelector("video");
-    expect(element.src).toContain("/C:/clips/a%20b%23c.mp4");
-    expect(element.src).not.toContain("%5C");
+    expect(element.src).toBe("videoswarm-media://instance/81?v=4");
+    expect(element.crossOrigin).toBe("anonymous");
+    expect(element.src).not.toContain(video.fullPath);
 
     rendered.unmount();
     expect(pauseSpy).toHaveBeenCalled();
@@ -204,6 +207,7 @@ describe("FullScreenModal media ownership", () => {
         id: "suspend",
         name: "suspend.mp4",
         fullPath: "/suspend.mp4",
+        sourceUrl: "videoswarm-media://instance/82?v=4",
         isElectronFile: true,
       },
       onClose: vi.fn(),

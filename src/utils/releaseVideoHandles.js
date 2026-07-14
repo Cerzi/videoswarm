@@ -46,8 +46,10 @@ function hardReleaseVideoElement(v) {
   }
 
   try { v.removeAttribute("src"); } catch {}
+  try { v.removeAttribute("data-file-path"); } catch {}
   try { v.srcObject = null; } catch {}
   for (const source of sourceElements) {
+    try { source.removeAttribute("data-file-path"); } catch {}
     try { source.remove(); } catch {}
   }
   try { v.removeAttribute("poster"); } catch {}

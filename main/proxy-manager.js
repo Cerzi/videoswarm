@@ -320,6 +320,63 @@ class ProxyManager {
     }
   }
 
+  async resolveProtocolProxy(signature) {
+    const normalizedSignature = String(signature || "").toLowerCase();
+    if (
+      !/^[a-f0-9]{64}$/.test(normalizedSignature) ||
+      this.closed ||
+      !this.initialized
+    ) {
+      return null;
+    }
+    const requestGeneration = this.generation;
+    const entry = this.entries.get(normalizedSignature);
+    if (!entry?.proxyPath) return null;
+    try {
+      // Protocol requests may only resolve the exact filename derived from the
+      // current cache signature. Resolve both paths so a replaced cache entry
+      // cannot use a symlink to escape the profile-local proxy directory.
+      const expectedPath = this.#proxyPath(normalizedSignature);
+      if (path.resolve(entry.proxyPath) !== path.resolve(expectedPath)) {
+        return null;
+      }
+      const [canonicalCacheDir, canonicalProxyPath] = await Promise.all([
+        this.fs.realpath(this.cacheDir),
+        this.fs.realpath(expectedPath),
+      ]);
+      const relativePath = path.relative(canonicalCacheDir, canonicalProxyPath);
+      if (
+        !relativePath ||
+        relativePath === ".." ||
+        relativePath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativePath)
+      ) {
+        return null;
+      }
+      const stats = await this.fs.stat(canonicalProxyPath);
+      if (
+        requestGeneration !== this.generation ||
+        !this.initialized ||
+        this.entries.get(normalizedSignature) !== entry ||
+        !stats?.isFile?.()
+      ) {
+        return null;
+      }
+      return {
+        path: canonicalProxyPath,
+        present: true,
+        signature: normalizedSignature,
+      };
+    } catch (error) {
+      if (isMissingError(error) && this.entries.get(normalizedSignature) === entry) {
+        this.entries.delete(normalizedSignature);
+        this.diskBytes = Math.max(0, this.diskBytes - (entry.bytes || 0));
+        this.#schedulePersist();
+      }
+      return null;
+    }
+  }
+
   setOwnerActive(ownerId, active) {
     const owner = normalizeOwnerId(ownerId);
     const normalizedActive = Boolean(active);

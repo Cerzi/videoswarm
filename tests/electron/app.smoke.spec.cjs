@@ -73,6 +73,32 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
         hasDirectoryBridge: true,
         hasProfileBridge: true,
       });
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          requireType: typeof window.require,
+          processType: typeof window.process,
+          csp: document
+            .querySelector('meta[http-equiv="Content-Security-Policy"]')
+            ?.getAttribute("content"),
+        }))
+      )
+      .toMatchObject({
+        requireType: "undefined",
+        processType: "undefined",
+        csp: expect.stringContaining("videoswarm-media:"),
+      });
+    const productionCsp = await page.evaluate(() =>
+      document
+        .querySelector('meta[http-equiv="Content-Security-Policy"]')
+        ?.getAttribute("content") || ""
+    );
+    expect(productionCsp).not.toContain("ws://");
+
+    expect(
+      await page.evaluate(() => window.open("https://example.invalid/") === null)
+    ).toBe(true);
+    await expect.poll(() => electronApp.windows().length).toBe(1);
 
     await page.evaluate(() => {
       window.__videoSwarmFolderMetrics = [];
@@ -85,6 +111,31 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
     await waitForVideoTotal(page, fixtureCount);
     await expect(page.getByRole("region", { name: "Video gallery" })).toBeVisible();
     await expect(page.locator(".video-item").first()).toBeVisible();
+    await expect
+      .poll(() =>
+        page.locator(".video-item video").first().evaluate((video) =>
+          video.currentSrc || video.src || ""
+        )
+      )
+      .toMatch(/^videoswarm-media:\/\/instance\/\d+\?v=/);
+    const opaqueMediaUrl = await page
+      .locator(".video-item video")
+      .first()
+      .evaluate((video) => video.currentSrc || video.src || "");
+    expect(opaqueMediaUrl).not.toContain(folderPath);
+    const rangeResponse = await page.evaluate(async (url) => {
+      const response = await fetch(url, { headers: { Range: "bytes=0-3" } });
+      return {
+        status: response.status,
+        contentRange: response.headers.get("content-range"),
+        bytes: (await response.arrayBuffer()).byteLength,
+      };
+    }, opaqueMediaUrl);
+    expect(rangeResponse).toMatchObject({
+      status: 206,
+      bytes: 4,
+      contentRange: expect.stringMatching(/^bytes 0-3\//),
+    });
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -123,16 +174,16 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
     expect(initialIds.length).toBeGreaterThan(0);
     expect(initialIds.length).toBeLessThan(100);
 
-    await page.locator(".content-region__viewport").evaluate((viewport) => {
-      viewport.scrollTop = viewport.scrollHeight;
-      viewport.dispatchEvent(new Event("scroll"));
-    });
     await expect
-      .poll(() =>
-        page
+      .poll(async () => {
+        await page.locator(".content-region__viewport").evaluate((viewport) => {
+          viewport.scrollTop = viewport.scrollHeight;
+          viewport.dispatchEvent(new Event("scroll"));
+        });
+        return page
           .locator(".masonry-slot")
-          .evaluateAll((nodes) => nodes.map((node) => node.dataset.masonryId))
-      )
+          .evaluateAll((nodes) => nodes.map((node) => node.dataset.masonryId));
+      })
       .not.toEqual(initialIds);
     expect(await page.locator(".masonry-slot").count()).toBeLessThan(100);
 
@@ -167,9 +218,19 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
       .toMatchObject({ profileId: createdProfileId });
     await expect(page.locator(".app").getByText("Welcome to Video Swarm")).toBeVisible();
 
-    await page.evaluate(() => window.electronAPI.profiles.setActive("default"));
-    await page.evaluate((profileId) =>
+    await electronApp.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (_window, options = {}) => ({
+        response: options.title === "Delete Profile" ? 0 : 1,
+        checkboxChecked: false,
+      });
+    });
+    const deletedProfile = await page.evaluate((profileId) =>
       window.electronAPI.profiles.delete(profileId), createdProfileId
+    );
+    expect(deletedProfile).toMatchObject({ success: true });
+    expect(deletedProfile.activeProfileId).toBe("default");
+    expect(deletedProfile.profiles.map((profile) => profile.id)).not.toContain(
+      createdProfileId
     );
 
     await electronApp.evaluate(({ BrowserWindow }) => {
@@ -183,8 +244,36 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
     });
     await expect(page).toHaveTitle(/Video Swarm/);
 
+    const userDataPath = await electronApp.evaluate(({ app }) =>
+      app.getPath("userData")
+    );
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setBounds({
+        x: 40,
+        y: 50,
+        width: 1110,
+        height: 780,
+      });
+    });
+    await page.evaluate(() =>
+      window.electronAPI.saveSettingsPartial({
+        windowBounds: { x: 40, y: 50, width: 1110, height: 780 },
+      })
+    );
+
     await electronApp.close();
     closed = true;
+
+    const persistedSettings = JSON.parse(
+      fs.readFileSync(
+        path.join(userDataPath, "profiles", "default", "settings.json"),
+        "utf8"
+      )
+    );
+    expect(persistedSettings.windowBounds).toMatchObject({
+      width: 1110,
+      height: 780,
+    });
 
     const fatalMainPattern =
       /Uncaught Exception|Unable to load preload|Startup failure|Object has been destroyed|RENDERER PROCESS CRASHED/i;
