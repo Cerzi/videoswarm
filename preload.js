@@ -52,12 +52,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Directory reading with enhanced metadata
-  readDirectory: async (folderPath, recursive = false, scanId = null) => {
+  readDirectory: async (
+    folderPath,
+    recursive = false,
+    scanId = null,
+    options = undefined
+  ) => {
     return await ipcRenderer.invoke(
       "read-directory",
       folderPath,
       recursive,
-      scanId
+      scanId,
+      options
     );
   },
 
@@ -84,12 +90,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("directory-scan-progress", handler);
   },
 
+  onDirectoryScanRecords: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("directory-scan-records", handler);
+    return () => ipcRenderer.removeListener("directory-scan-records", handler);
+  },
+
+  prioritizeDirectoryScan: (scanId, ids = []) => {
+    ipcRenderer.send("prioritize-directory-scan", {
+      scanId,
+      ids: Array.isArray(ids) ? ids : [],
+    });
+  },
+
   // File system watching
-  startFolderWatch: async (folderPath, recursive) => {
+  startFolderWatch: async (folderPath, recursive, options = undefined) => {
     return await ipcRenderer.invoke(
       "start-folder-watch",
       folderPath,
-      recursive
+      recursive,
+      options
     );
   },
 
@@ -99,19 +120,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // File system events
   onFileAdded: (callback) => {
-    const handler = (_event, videoFile) => callback(videoFile);
+    const handler = (_event, payload) =>
+      callback(payload?.videoFile || payload, payload?.watch || null);
     ipcRenderer.on("file-added", handler);
     return () => ipcRenderer.removeListener("file-added", handler);
   },
 
   onFileRemoved: (callback) => {
-    const handler = (_event, filePath) => callback(filePath);
+    const handler = (_event, payload) =>
+      callback(payload?.filePath || payload, payload?.watch || null);
     ipcRenderer.on("file-removed", handler);
     return () => ipcRenderer.removeListener("file-removed", handler);
   },
 
   onFileChanged: (callback) => {
-    const handler = (_event, videoFile) => callback(videoFile);
+    const handler = (_event, payload) =>
+      callback(payload?.videoFile || payload, payload?.watch || null);
     ipcRenderer.on("file-changed", handler);
     return () => ipcRenderer.removeListener("file-changed", handler);
   },

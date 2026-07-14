@@ -248,6 +248,14 @@ function getProfileDisplayName(profileId = getActiveProfileId()) {
 // generation in the main process prevents a slow, older request from continuing
 // to index files after the renderer has opened another folder or changed profile.
 const activeDirectoryScans = new Map();
+const DIRECTORY_SCAN_PROTOCOL_VERSION = 1;
+const DIRECTORY_SCAN_FIRST_BATCH_SIZE = 32;
+const DIRECTORY_SCAN_BATCH_SIZE = 128;
+const DIRECTORY_SCAN_PATCH_BATCH_SIZE = 32;
+const DIRECTORY_SCAN_INDEX_BATCH_SIZE = 64;
+const DIRECTORY_SCAN_INDEX_CONCURRENCY = 4;
+const DIRECTORY_SCAN_ENRICHMENT_CONCURRENCY = 2;
+const DIRECTORY_SCAN_PRIORITY_LIMIT = 256;
 let legacyDirectoryScanSequence = 0;
 let metadataProfileGeneration = 0;
 let configuredMetadataProfileGeneration = 0;
@@ -304,9 +312,46 @@ function beginDirectoryScan(senderId, requestedScanId) {
     typeof requestedScanId === "string" && requestedScanId.length > 0
       ? requestedScanId
       : `legacy-${Date.now()}-${++legacyDirectoryScanSequence}`;
-  const scan = { senderId, scanId, cancelled: false };
+  const scan = {
+    senderId,
+    scanId,
+    cancelled: false,
+    recordSequence: 0,
+    priorityIds: [],
+  };
   activeDirectoryScans.set(senderId, scan);
   return scan;
+}
+
+function updateDirectoryScanPriorities(senderId, scanId, ids) {
+  const scan = activeDirectoryScans.get(senderId);
+  if (!scan || scan.cancelled || scan.scanId !== scanId) return false;
+  const seen = new Set();
+  scan.priorityIds = (Array.isArray(ids) ? ids : [])
+    .filter((id) => {
+      if (typeof id !== "string" || !id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .slice(0, DIRECTORY_SCAN_PRIORITY_LIMIT);
+  return true;
+}
+
+function takePrioritizedDirectoryScanBatch(pending, scan, limit) {
+  const batch = [];
+  for (const id of scan.priorityIds) {
+    const entry = pending.get(id);
+    if (!entry) continue;
+    pending.delete(id);
+    batch.push(entry);
+    if (batch.length >= limit) return batch;
+  }
+  while (batch.length < limit && pending.size > 0) {
+    const [id, entry] = pending.entries().next().value;
+    pending.delete(id);
+    batch.push(entry);
+  }
+  return batch;
 }
 
 function assertDirectoryScanActive(scan) {
@@ -479,13 +524,19 @@ function invalidateWatcherContext() {
   activeWatcherContext = null;
 }
 
-function createWatcherContext(folderPath, recursive) {
+function createWatcherContext(folderPath, recursive, options = {}) {
   const metadataContext = captureMetadataContext();
   const context = {
     ...metadataContext,
     watcherContextId: ++watcherContextSequence,
     rootPath: path.resolve(folderPath),
     recursive: Boolean(recursive),
+    scanId:
+      typeof options.scanId === "string" && options.scanId
+        ? options.scanId
+        : null,
+    bufferInitialEvents: Boolean(options.bufferInitialEvents),
+    watcherSessionId: null,
     cancelled: false,
   };
   invalidateWatcherContext();
@@ -554,6 +605,59 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+function createEnumeratedVideoFileObject(filePath, baseFolderPath, stats) {
+  const fileName = path.basename(filePath);
+  const ext = path.extname(fileName).toLowerCase();
+  let dirname = path.relative(baseFolderPath, path.dirname(filePath));
+  if (dirname === ".") dirname = "";
+  return {
+    id: filePath,
+    instanceId: null,
+    name: fileName,
+    fullPath: filePath,
+    relativePath: path.relative(baseFolderPath, filePath),
+    extension: ext,
+    size: stats.size,
+    dateModified: stats.mtime,
+    dateCreated: stats.birthtime,
+    isElectronFile: true,
+    basename: fileName,
+    dirname,
+    createdMs: stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
+    fingerprint: null,
+    tags: [],
+    rating: null,
+    reviewState: "unreviewed",
+    dimensions: null,
+    aspectRatio: null,
+    enrichmentState: "enumerated",
+    metadata: {
+      folder: path.dirname(filePath),
+      baseName: path.basename(fileName, ext),
+      sizeFormatted: formatFileSize(stats.size),
+      dateModifiedFormatted: stats.mtime.toLocaleDateString(),
+      dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
+    },
+  };
+}
+
+function sendDirectoryScanRecords(scan, sender, rootPath, kind, records) {
+  if (!Array.isArray(records) || records.length === 0) return false;
+  assertDirectoryScanActive(scan);
+  if (sender?.isDestroyed?.()) throw new DirectoryScanCancelledError();
+  scan.recordSequence += 1;
+  sender.send("directory-scan-records", {
+    protocolVersion: DIRECTORY_SCAN_PROTOCOL_VERSION,
+    scanId: scan.scanId,
+    sequence: scan.recordSequence,
+    rootPath,
+    recursive: Boolean(scan.recursive),
+    kind,
+    records,
+  });
+  return true;
+}
+
 // Helper function to create rich file object
 async function createVideoFileObject(
   filePath,
@@ -576,10 +680,6 @@ async function createVideoFileObject(
   try {
     const stats = providedStats || (await fsPromises.stat(filePath));
     assertActive?.();
-    const fileName = path.basename(filePath);
-    const ext = path.extname(fileName).toLowerCase();
-    let dirname = path.relative(baseFolderPath, path.dirname(filePath));
-    if (dirname === ".") dirname = "";
 
     let fingerprint = null;
     let tags = [];
@@ -651,23 +751,13 @@ async function createVideoFileObject(
     }
 
     return {
-      id: filePath,
+      ...createEnumeratedVideoFileObject(filePath, baseFolderPath, stats),
       instanceId,
-      name: fileName,
-      fullPath: filePath,
-      relativePath: path.relative(baseFolderPath, filePath),
-      extension: ext,
-      size: stats.size,
-      dateModified: stats.mtime,
-      dateCreated: stats.birthtime,
-      isElectronFile: true,
-      basename: fileName,
-      dirname,
-      createdMs: stats.birthtimeMs || stats.ctimeMs || stats.mtimeMs,
       fingerprint,
       tags,
       rating,
       reviewState,
+      enrichmentState: "ready",
       dimensions: dimensions
         ? {
           width: Math.round(dimensions.width),
@@ -684,13 +774,6 @@ async function createVideoFileObject(
             ? dimensions.aspectRatio
             : dimensions.width / dimensions.height)
           : null,
-      metadata: {
-        folder: path.dirname(filePath),
-        baseName: path.basename(fileName, ext),
-        sizeFormatted: formatFileSize(stats.size),
-        dateModifiedFormatted: stats.mtime.toLocaleDateString(),
-        dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
-      },
     };
   } catch (error) {
     if (isDirectoryScanCancelled(error)) {
@@ -720,16 +803,19 @@ async function scanFolderForChanges(folderPath, options = {}) {
     isIgnoredDirectory: isIgnoredScanDirectory,
     assertActive: options.assertActive,
     pollingState: options.pollingState,
-    sendEvent: (channel, payload) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (
-        ownerWebContentsId !== undefined &&
-        mainWindow.webContents.id !== ownerWebContentsId
-      ) {
-        return;
-      }
-      mainWindow.webContents.send(channel, payload);
-    },
+    sendEvent:
+      typeof options.sendEvent === "function"
+        ? options.sendEvent
+        : (channel, payload) => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            if (
+              ownerWebContentsId !== undefined &&
+              mainWindow.webContents.id !== ownerWebContentsId
+            ) {
+              return;
+            }
+            mainWindow.webContents.send(channel, payload);
+          },
   });
 }
 
@@ -759,10 +845,18 @@ function wireWatcherEvents(win) {
       context.ownerWebContentsId === ownerWebContentsId
     );
   };
+  const createWatchMetadata = (eventMetadata) => ({
+    sessionId: eventMetadata?.sessionId || null,
+    scanId: eventMetadata?.context?.scanId || null,
+    rootPath: eventMetadata?.folderPath || null,
+  });
 
   const handleAdded = (videoFile, eventMetadata) => {
     if (!ownsEvent(eventMetadata)) return;
-    sendToRenderer("file-added", videoFile);
+    sendToRenderer("file-added", {
+      videoFile,
+      watch: createWatchMetadata(eventMetadata),
+    });
   };
   const handleRemoved = (filePath, eventMetadata) => {
     const context = eventMetadata?.context;
@@ -773,20 +867,29 @@ function wireWatcherEvents(win) {
         assertActive: () => assertWatcherContextActive(context),
       });
       assertWatcherContextActive(context);
-      sendToRenderer("file-removed", filePath);
+      sendToRenderer("file-removed", {
+        filePath,
+        watch: createWatchMetadata(eventMetadata),
+      });
     } catch (error) {
       if (isDirectoryScanCancelled(error)) return;
       console.warn(`[metadata] Failed to mark ${filePath} missing:`, error);
       // The filesystem event remains authoritative for the live UI even if
       // catalog persistence failed. A future scan can repair the index.
       if (isWatcherContextActive(context)) {
-        sendToRenderer("file-removed", filePath);
+        sendToRenderer("file-removed", {
+          filePath,
+          watch: createWatchMetadata(eventMetadata),
+        });
       }
     }
   };
   const handleChanged = (videoFile, eventMetadata) => {
     if (!ownsEvent(eventMetadata)) return;
-    sendToRenderer("file-changed", videoFile);
+    sendToRenderer("file-changed", {
+      videoFile,
+      watch: createWatchMetadata(eventMetadata),
+    });
   };
   const handleMode = ({ mode, folderPath, context }) => {
     if (!ownsEvent({ context })) return;
@@ -846,7 +949,11 @@ function computeDefaultZoomLevel() {
 }
 
 function normaliseLoadedSettings(rawSettings) {
-  const { layoutMode, autoplayEnabled, ...cleanSettings } = rawSettings || {};
+  const {
+    layoutMode: _layoutMode,
+    autoplayEnabled: _autoplayEnabled,
+    ...cleanSettings
+  } = rawSettings || {};
   const merged = { ...defaultSettings, ...cleanSettings };
   const hasZoom = Object.prototype.hasOwnProperty.call(cleanSettings, "zoomLevel")
     && cleanSettings.zoomLevel !== null
@@ -884,7 +991,11 @@ async function tryMigrateLegacySettings(profileId, targetPath) {
     const legacyRaw = await fsPromises.readFile(legacyPath, "utf8");
     const legacySettings = JSON.parse(legacyRaw);
     const migrated = normaliseLoadedSettings(legacySettings);
-    const { layoutMode, autoplayEnabled, ...toPersist } = migrated;
+    const {
+      layoutMode: _layoutMode,
+      autoplayEnabled: _autoplayEnabled,
+      ...toPersist
+    } = migrated;
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, JSON.stringify(toPersist, null, 2));
     console.log("[settings] Migrated legacy settings.json into profile scope");
@@ -936,7 +1047,11 @@ async function loadSettings(profileId = getActiveProfileId()) {
 
 async function saveSettings(settings, profileId = getActiveProfileId()) {
   try {
-    const { layoutMode, autoplayEnabled, ...cleanSettings } = settings || {};
+    const {
+      layoutMode: _layoutMode,
+      autoplayEnabled: _autoplayEnabled,
+      ...cleanSettings
+    } = settings || {};
     const settingsFile = getSettingsPath(profileId);
     await fsPromises.mkdir(path.dirname(settingsFile), { recursive: true });
     await fsPromises.writeFile(settingsFile, JSON.stringify(cleanSettings, null, 2));
@@ -2105,11 +2220,52 @@ ipcMain.handle(
   }
 );
 
+async function releaseWatcherInitializationForScan(scan, entries) {
+  const context = activeWatcherContext;
+  if (
+    !context ||
+    context.cancelled ||
+    context.ownerWebContentsId !== scan.senderId ||
+    context.scanId !== scan.scanId ||
+    !context.watcherSessionId
+  ) {
+    return { success: false, unavailable: true };
+  }
+  const result = await folderWatcher.releaseInitialization(
+    context.watcherSessionId,
+    entries
+  );
+  assertDirectoryScanActive(scan);
+  assertWatcherContextActive(context);
+  return result;
+}
+
+async function stopWatcherForDirectoryScan(scan) {
+  const context = activeWatcherContext;
+  if (
+    !context ||
+    context.ownerWebContentsId !== scan.senderId ||
+    context.scanId !== scan.scanId
+  ) {
+    return false;
+  }
+  invalidateWatcherContext();
+  await folderWatcher.stop();
+  return true;
+}
+
 // Read directory and return video files with metadata
 ipcMain.handle(
   "read-directory",
-  async (event, folderPath, recursive = false, requestedScanId = null) => {
+  async (
+    event,
+    folderPath,
+    recursive = false,
+    requestedScanId = null,
+    scanOptions = {}
+  ) => {
     const scan = beginDirectoryScan(event.sender.id, requestedScanId);
+    const streamRecords = Boolean(scanOptions?.streamRecords);
     let metadataContext = null;
     let progressReporter = null;
     const progressCounters = {
@@ -2128,7 +2284,9 @@ ipcMain.handle(
       }
     };
     const handleSenderDestroyed = () => {
-      cancelDirectoryScan(scan.senderId, scan.scanId);
+      if (cancelDirectoryScan(scan.senderId, scan.scanId)) {
+        void stopWatcherForDirectoryScan(scan).catch(() => {});
+      }
     };
     event.sender.once("destroyed", handleSenderDestroyed);
 
@@ -2163,10 +2321,36 @@ ipcMain.handle(
       );
       const entries = [];
       const scannedDirectories = new Set();
-      const videoFiles = [];
+      const videoFiles = streamRecords ? null : [];
+      const pendingEnumerationRecords = [];
+      const pendingPatchRecords = [];
+      let nextEnumerationBatchSize = DIRECTORY_SCAN_FIRST_BATCH_SIZE;
+      let enrichedVideoCount = 0;
       let partialCoverage = false;
       const maybeYieldEnumeration = createPeriodicEventLoopYielder();
       const maybeYieldEnrichment = createPeriodicEventLoopYielder();
+
+      const flushEnumerationRecords = () => {
+        if (!streamRecords || pendingEnumerationRecords.length === 0) return;
+        sendDirectoryScanRecords(
+          scan,
+          event.sender,
+          normalizedRoot,
+          "enumeration",
+          pendingEnumerationRecords.splice(0)
+        );
+        nextEnumerationBatchSize = DIRECTORY_SCAN_BATCH_SIZE;
+      };
+      const flushPatchRecords = () => {
+        if (!streamRecords || pendingPatchRecords.length === 0) return;
+        sendDirectoryScanRecords(
+          scan,
+          event.sender,
+          normalizedRoot,
+          "patch",
+          pendingPatchRecords.splice(0)
+        );
+      };
 
       const relativeProgressPath = (candidatePath) => {
         if (!candidatePath) return "";
@@ -2198,8 +2382,26 @@ ipcMain.handle(
             try {
               const stats = await fsPromises.stat(fullPath);
               assertActive();
-              entries.push({ filePath: fullPath, stats });
+              const entry = { filePath: fullPath, stats };
+              entries.push(entry);
               progressCounters.videosFound = entries.length;
+              if (streamRecords) {
+                pendingEnumerationRecords.push(
+                  createEnumeratedVideoFileObject(
+                    fullPath,
+                    normalizedRoot,
+                    stats
+                  )
+                );
+                if (scan.priorityIds.length < DIRECTORY_SCAN_PRIORITY_LIMIT) {
+                  scan.priorityIds.push(fullPath);
+                }
+                if (
+                  pendingEnumerationRecords.length >= nextEnumerationBatchSize
+                ) {
+                  flushEnumerationRecords();
+                }
+              }
             } catch (error) {
               if (isDirectoryScanCancelled(error)) {
                 throw error;
@@ -2250,6 +2452,7 @@ ipcMain.handle(
 
       await scanDirectory(normalizedRoot);
       assertActive();
+      flushEnumerationRecords();
       progressReporter.report(
         { ...progressCounters, currentPath: "." },
         { force: true }
@@ -2269,27 +2472,47 @@ ipcMain.handle(
       );
       assertActive();
 
-      const indexedResults = await metadataStore.indexFiles({
-        rootPath: normalizedRoot,
-        entries,
-        recursive,
-        assertActive,
-        onProgress: ({
-          indexedFiles,
-          totalFiles,
-          fingerprintsReused,
-          filePath,
-        }) => {
-          progressCounters.indexedFiles = indexedFiles;
-          progressCounters.fingerprintsReused = fingerprintsReused;
-          progressReporter.report({
-            ...progressCounters,
-            phaseCurrent: indexedFiles,
-            phaseTotal: totalFiles,
-            currentPath: filePath || "",
-          });
-        },
-      });
+      const indexedResults = [];
+      const pendingIndexEntries = new Map(
+        entries.map((entry) => [entry.filePath, entry])
+      );
+      while (pendingIndexEntries.size > 0) {
+        assertActive();
+        const batch = takePrioritizedDirectoryScanBatch(
+          pendingIndexEntries,
+          scan,
+          DIRECTORY_SCAN_INDEX_BATCH_SIZE
+        );
+        const indexedOffset = indexedResults.length;
+        const reusedOffset = progressCounters.fingerprintsReused;
+        const batchResults = await metadataStore.indexFiles({
+          rootPath: normalizedRoot,
+          entries: batch,
+          recursive,
+          assertActive,
+          concurrency: DIRECTORY_SCAN_INDEX_CONCURRENCY,
+          onProgress: ({ indexedFiles, fingerprintsReused, filePath }) => {
+            progressCounters.indexedFiles = indexedOffset + indexedFiles;
+            progressCounters.fingerprintsReused =
+              reusedOffset + fingerprintsReused;
+            progressReporter.report({
+              ...progressCounters,
+              phaseCurrent: progressCounters.indexedFiles,
+              phaseTotal: entries.length,
+              currentPath: filePath || "",
+            });
+          },
+        });
+        assertActive();
+        indexedResults.push(...batchResults);
+        progressCounters.indexedFiles = indexedResults.length;
+        progressCounters.fingerprintsReused =
+          reusedOffset +
+          batchResults.reduce(
+            (count, result) => count + (result.fingerprintReused ? 1 : 0),
+            0
+          );
+      }
       assertActive();
       progressCounters.indexedFiles = entries.length;
       progressReporter.report(
@@ -2338,61 +2561,107 @@ ipcMain.handle(
         phaseTotal: entries.length,
         currentPath: "",
       });
-      for (const entry of entries) {
-        assertActive();
-        const videoFile = await createVideoFileObject(
-          entry.filePath,
-          normalizedRoot,
-          {
-            stats: entry.stats,
-            indexedInfo: indexedByPath.get(path.resolve(entry.filePath)) || null,
-            metadataStore,
-            rootPath: normalizedRoot,
-            recursive,
-            assertActive,
-          }
-        );
-        assertActive();
-        if (videoFile) {
-          videoFiles.push(videoFile);
-        } else {
-          progressCounters.warnings += 1;
-        }
-        progressCounters.enrichedFiles += 1;
-        progressReporter.report({
-          ...progressCounters,
-          phaseCurrent: progressCounters.enrichedFiles,
-          phaseTotal: entries.length,
-          currentPath: relativeProgressPath(entry.filePath),
-        });
+      const pendingEnrichmentEntries = new Map(
+        entries.map((entry) => [entry.filePath, entry])
+      );
+      const enrichmentWorkers = Array.from(
+        {
+          length: Math.min(
+            DIRECTORY_SCAN_ENRICHMENT_CONCURRENCY,
+            Math.max(1, entries.length)
+          ),
+        },
+        async () => {
+          while (pendingEnrichmentEntries.size > 0) {
+            assertActive();
+            const [entry] = takePrioritizedDirectoryScanBatch(
+              pendingEnrichmentEntries,
+              scan,
+              1
+            );
+            if (!entry) return;
+            const videoFile = await createVideoFileObject(
+              entry.filePath,
+              normalizedRoot,
+              {
+                stats: entry.stats,
+                indexedInfo:
+                  indexedByPath.get(path.resolve(entry.filePath)) || null,
+                metadataStore,
+                rootPath: normalizedRoot,
+                recursive,
+                assertActive,
+              }
+            );
+            assertActive();
+            if (videoFile) {
+              enrichedVideoCount += 1;
+              if (videoFiles) videoFiles.push(videoFile);
+              if (streamRecords) {
+                pendingPatchRecords.push(videoFile);
+                if (
+                  pendingPatchRecords.length >=
+                  DIRECTORY_SCAN_PATCH_BATCH_SIZE
+                ) {
+                  flushPatchRecords();
+                }
+              }
+            } else {
+              progressCounters.warnings += 1;
+            }
+            progressCounters.enrichedFiles += 1;
+            progressReporter.report({
+              ...progressCounters,
+              phaseCurrent: progressCounters.enrichedFiles,
+              phaseTotal: entries.length,
+              currentPath: relativeProgressPath(entry.filePath),
+            });
 
-        const pendingYield = maybeYieldEnrichment();
-        if (pendingYield) {
-          await pendingYield;
-          assertActive();
+            const pendingYield = maybeYieldEnrichment();
+            if (pendingYield) {
+              await pendingYield;
+              assertActive();
+            }
+          }
         }
-      }
+      );
+      await Promise.all(enrichmentWorkers);
+      assertActive();
+      flushPatchRecords();
+
+      await releaseWatcherInitializationForScan(scan, entries);
+      assertActive();
 
       progressReporter.setPhase("finalizing", {
         ...progressCounters,
-        phaseCurrent: videoFiles.length,
-        phaseTotal: videoFiles.length,
+        phaseCurrent: enrichedVideoCount,
+        phaseTotal: enrichedVideoCount,
         currentPath: "",
       });
 
       console.log(
-        `Found ${videoFiles.length} video files in ${normalizedRoot} (recursive: ${recursive})`
+        `Found ${enrichedVideoCount} video files in ${normalizedRoot} (recursive: ${recursive})`
       );
 
       const libraryTree = metadataStore.getLibraryTree(normalizedRoot);
       return {
-        files: videoFiles.sort((a, b) => a.name.localeCompare(b.name)),
+        ...(streamRecords
+          ? { streamed: true, fileCount: enrichedVideoCount }
+          : {
+              files: videoFiles.sort((a, b) =>
+                a.name.localeCompare(b.name)
+              ),
+            }),
         root: libraryTree.root,
         directories: libraryTree.directories,
         scanId: scan.scanId,
+        recordSequence: scan.recordSequence,
       };
     } catch (error) {
       if (isDirectoryScanCancelled(error)) {
+        try {
+          await stopWatcherForDirectoryScan(scan);
+        } catch {}
         progressReporter?.setPhase("cancelled", {
           ...progressCounters,
           phaseTotal: null,
@@ -2401,6 +2670,9 @@ ipcMain.handle(
         return { cancelled: true, scanId: scan.scanId, files: [] };
       }
       progressCounters.warnings += 1;
+      try {
+        await stopWatcherForDirectoryScan(scan);
+      } catch {}
       progressReporter?.setPhase("error", {
         ...progressCounters,
         phaseTotal: null,
@@ -2431,10 +2703,24 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => ({
-  success: true,
-  cancelled: cancelDirectoryScan(event.sender.id, scanId),
-}));
+ipcMain.handle("cancel-directory-scan", async (event, scanId = null) => {
+  const scan = activeDirectoryScans.get(event.sender.id) || null;
+  const cancelled = cancelDirectoryScan(event.sender.id, scanId);
+  if (cancelled && scan) {
+    try {
+      await stopWatcherForDirectoryScan(scan);
+    } catch {}
+  }
+  return { success: true, cancelled };
+});
+
+ipcMain.on("prioritize-directory-scan", (event, payload = {}) => {
+  updateDirectoryScanPriorities(
+    event.sender.id,
+    payload?.scanId,
+    payload?.ids
+  );
+});
 
 function normalizeLibraryIpcRootPath(payload) {
   const candidate = typeof payload === "string" ? payload : payload?.rootPath;
@@ -2756,7 +3042,7 @@ ipcMain.handle("get-file-info", async (_event, filePath) => {
 // keep single-file API but implement it via bulk for consistency
 ipcMain.handle("move-to-trash", async (_event, filePath) => {
   try {
-    await trash([filePath]); // batch of size 1
+    await shell.trashItem(filePath);
     return { success: true };
   } catch (error) {
     console.error("Failed to move to trash:", error);
@@ -2795,11 +3081,17 @@ ipcMain.handle("recent:remove", async (_e, folderPath) => await removeRecentFold
 ipcMain.handle("recent:clear", async () => await clearRecentFolders());
 
 // Watcher IPC (delegated to file watcher module)
-ipcMain.handle("start-folder-watch", async (event, folderPath, recursive) => {
+ipcMain.handle(
+  "start-folder-watch",
+  async (event, folderPath, recursive, watchOptions = {}) => {
   const normalizedRecursive = recursive ?? true;
   let context = null;
   try {
-    context = createWatcherContext(folderPath, normalizedRecursive);
+    context = createWatcherContext(
+      folderPath,
+      normalizedRecursive,
+      watchOptions
+    );
     context.ownerWebContentsId = event.sender.id;
     assertWatcherContextActive(context);
     context.metadataStore.registerLibraryRoot(context.rootPath, {
@@ -2808,13 +3100,16 @@ ipcMain.handle("start-folder-watch", async (event, folderPath, recursive) => {
     const result = await folderWatcher.start(context.rootPath, {
       recursive: normalizedRecursive,
       context,
+      bufferInitialEvents: context.bufferInitialEvents,
     });
     assertWatcherContextActive(context);
+    context.watcherSessionId = result.sessionId || null;
     return {
       success: true,
       mode: result.mode,
       recursive: result.recursive,
       sessionId: result.sessionId,
+      initializing: Boolean(result.initializing),
     };
   } catch (e) {
     if (context && activeWatcherContext === context) {
@@ -2825,7 +3120,8 @@ ipcMain.handle("start-folder-watch", async (event, folderPath, recursive) => {
     }
     return { success: false, error: e.message || String(e) };
   }
-});
+  }
+);
 
 ipcMain.handle("stop-folder-watch", async () => {
   invalidateWatcherContext();

@@ -73,8 +73,7 @@ but unfinished parent deliverables remain Unimplemented.
 
 ### 1. Scan coordinator and incremental folder opening
 
-Status: **Unimplemented** (live scan feedback is implemented; incremental
-delivery and watcher reconciliation remain outstanding)
+Status: **Implemented** (2026-07-14)
 
 Folder opening becomes a job coordinated by the Electron main process.
 
@@ -119,11 +118,25 @@ Acceptance criteria:
 - Progress reports real discovered, enumerated, and enriched counts.
 - Watcher events created during initialization are reconciled without loss.
 
-The live-progress portion of this section is **Implemented**: scan-owned phase
-events now report real discovery, indexing, reconciliation, and enrichment
-activity. The parent deliverable remains **Unimplemented** because enumeration
-still returns one final array and the watcher does not yet buffer events before
-the initial scan.
+The complete coordinator is now **Implemented**. Opt-in protocol version 1
+streams an initial batch of 32 cheap records, then bounded 128-record
+enumeration batches and 32-record enrichment patches. Indexing uses
+64-record transactions with four bounded fingerprint workers; rich record
+enrichment uses two workers. The renderer keeps one scan-owned ID map, applies
+only monotonic batches from the active scan, prioritizes up to 256 viewport
+IDs, waits for the final record sequence, and performs an authoritative stale
+record prune without cloning a final full array across IPC. Legacy callers
+that do not request streaming still receive the original final-array response.
+
+The watcher is started before enumeration. During initialization, chokidar
+captures its bounded 16,384-entry observed baseline with stat signatures,
+coalesces changes until ready, compares those signatures with the scan, and
+drains changes to quiescence before entering live delivery. Polling fallback
+is seeded from the scan baseline, and overflow performs one authoritative
+reconciliation rather than replaying every known file as newly added.
+Cancellation, profile/window ownership, pre-ready watcher failures, response
+versus event ordering, cached stale-row removal, and buffered add/remove races
+have focused regressions.
 
 #### Folder revisit acceleration
 
@@ -479,6 +492,8 @@ Acceptance criteria:
 
 ### 8. Observability, testing, and CI
 
+Status: **Implemented** (2026-07-14)
+
 Performance measurements use stable marks for folder request, first batch,
 first usable grid, scan completion, and enrichment completion. Electron tracing
 and heap snapshots support local profiling. CI begins with baseline-relative
@@ -506,6 +521,24 @@ Acceptance criteria:
 - Lint is a real static-analysis command.
 - Performance failures report measured regressions rather than arbitrary sleeps.
 
+Stable User Timing marks and bounded `videoswarm:folder-performance` events now
+cover request, SQLite preview, first streamed batch, first committed usable
+grid, enrichment completion, scan completion, cancellation, and failure. The
+production Electron smoke suite waits on those events and exercises preload
+startup, folder opening, bounded virtual scrolling, filters, fullscreen,
+watcher add/remove, profile isolation, minimize/restore, and clean shutdown.
+A Linux-only local soak runner records RSS/private memory, optional post-GC
+renderer heap, CPU, event-loop delay, long tasks, DOM/media/playing counts,
+dropped frames, file descriptors, inotify watches, database growth, folder
+timings, and optional Chromium traces/heap snapshots; its pure budget evaluator
+supports absolute plateau/slope limits and baseline-relative ratchets.
+
+CI and release use Node 22.12 via repository version files. CI runs a zero-skip
+Electron-ABI coverage suite with generated output excluded and ratcheted
+thresholds, real ESLint static analysis, an explicit renderer build, the Linux
+Electron smoke under Xvfb, and unpacked packaging. SQLite suites fail rather
+than silently skip when the required Electron ABI gate is active.
+
 ### 9. Electron boundary and shutdown hardening
 
 Local media should eventually use a registered application protocol so
@@ -527,12 +560,12 @@ Acceptance criteria:
 
 | Deliverable | Status | Notes |
 | --- | --- | --- |
-| Scan cancellation and latest-request-wins safety | **Implemented** | Request IDs, cooperative cancellation, stale-result rejection, profile/window/app teardown, and focused renderer tests landed in `062e23a`. The scan still returns one final array. |
+| Scan cancellation and latest-request-wins safety | **Implemented** | Request IDs, cooperative cancellation, stale-result rejection, profile/window/app teardown, streamed sequence settlement, and focused renderer/native tests prevent older work from replacing the active collection. |
 | Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
 | Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
-| Incremental enumeration batches | **Unimplemented** | The scan protocol still returns one final array after enumeration and enrichment. |
+| Incremental enumeration batches | **Implemented** | Opt-in scan protocol version 1 streams bounded cheap-record batches and rich patches into a scan-owned renderer ID map, while legacy callers retain the final-array response. |
 | SQLite-backed folder revisit hydration | **Partially Implemented** | Bulk, profile/scan-owned SQLite hydration now provides a stale-while-revalidate first grid with a visible refresh status and without retaining inactive media resources. A real-hardware first-grid A/B budget remains. |
-| Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
+| Watch-before-scan reconciliation | **Implemented** | A bounded watcher generation captures the pre-ready baseline, coalesces initialization changes, seeds polling fallback, reconciles overflow, and drains atomically before live delivery. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
 | Stable masonry/observer/card callback identities | **Implemented** | Observer thresholds, collection callbacks, and per-card handlers remain stable across scroll-driven parent renders; landed in `331a360`. |
@@ -550,8 +583,9 @@ Acceptance criteria:
 | Review state and generation sidecars | **Implemented** | Content-keyed Pick/Reviewed/Reject/Unreviewed states, batch controls/shortcuts/filters, reviewed directory aggregates, and bounded instance-keyed sidecar extraction are implemented. |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
 | Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
-| Electron smoke and performance soak harnesses | **Unimplemented** | Existing tests are primarily unit-level. |
-| Electron-ABI SQLite test job | **Unimplemented** | Current suites can silently skip. |
+| Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
+| Electron-ABI SQLite test job | **Implemented** | Coverage and focused native suites run through Electron's Node runtime with an environment gate that converts ABI load failures into test failures rather than skips. |
+| Node, lint, coverage, and build CI gates | **Implemented** | Node 22.12 repository/workflow pins, zero-warning ESLint, cleaned ratcheted coverage, explicit Vite build, Electron smoke, and unpacked packaging are mandatory. |
 | Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
 
 ## Initial implementation slice
@@ -570,11 +604,11 @@ streaming or virtualization:
    elements immediately, and stop the scheduler's animation frame while idle.
 6. **Implemented** — Add focused regression tests for these guarantees.
 
-The scan still returns one final array after this slice. Incremental batches
-and bounded enrichment workers remain **Unimplemented**. Adaptive Linux
-playback was outside this initial slice and is now implemented in its dedicated
-slice below. Live phase telemetry is implemented in the following slice without
-claiming incremental delivery.
+That original slice deliberately returned one final array. The later
+incremental-scan slice below now completes bounded streaming, priority
+enrichment, and watch-before-scan reconciliation while preserving this legacy
+call contract. Adaptive Linux playback remains documented in its dedicated
+slice.
 
 ## Live scan feedback implementation slice
 
@@ -610,16 +644,36 @@ claiming incremental delivery.
    for stale events and cancellation, and component/application tests for
    progress semantics, memory labels, focus, errors, and status wiring.
 
-The following adjacent work remains **Unimplemented**:
+The formerly adjacent incremental delivery, watcher initialization, bounded
+priority enrichment, folder-open marks, Electron smoke, and Linux profiling
+harnesses are now **Implemented** in Sections 1 and 8.
 
-- Enumeration batches and record patches are not streamed to the renderer;
-  a first-time uncached grid still waits for the final scan result.
-- The watcher does not start before enumeration or reconcile a buffered event
-  generation with the initial result.
-- Enrichment does not yet use a bounded worker pool that prioritizes the first
-  visible viewport.
-- Folder-open performance marks, Electron-runtime smoke coverage, and Linux
-  CPU/RSS/event-loop soak budgets remain part of Section 8.
+## Incremental scan and verification implementation slice
+
+1. **Implemented** — Stream a 32-record first enumeration batch, subsequent
+   128-record batches, and 32-record rich patches under one scan ID and
+   monotonic record sequence. Preserve the legacy final-array call unless the
+   renderer opts into protocol version 1 behavior.
+2. **Implemented** — Merge batches into a scan-owned renderer ID map, preserve
+   cached rich metadata while cheap records arrive, wait for the advertised
+   final record sequence, and prune stale cached IDs only after authoritative
+   completion.
+3. **Implemented** — Run fingerprint preparation with four bounded workers in
+   64-record transactions and rich enrichment with two workers. Re-read up to
+   256 virtual-viewport IDs between batches so visible work is preferred
+   without creating an unbounded native queue.
+4. **Implemented** — Start the watcher before enumeration, capture and compare
+   a bounded pre-ready signature baseline, coalesce initialization mutations,
+   seed polling fallback from the scan, and drain buffered generations before
+   live delivery. Overflow performs one full reconciliation.
+5. **Implemented** — Add response/event-order settlement plus regressions for
+   cancellation, stale scans, cached pruning, watcher add/remove survival,
+   6,000-record-safe initialization capacity, pre-ready changes/errors, and
+   polling fallback.
+6. **Implemented** — Publish stable folder-open User Timing milestones and
+   require Electron-ABI coverage, zero-warning lint, an explicit renderer
+   build, production Electron lifecycle smoke, and unpacked packaging in
+   Node 22.12 CI. Add a local baseline-relative Linux soak/profiling runner.
 
 ## Persistent index implementation slice
 
@@ -650,16 +704,14 @@ The following adjacent work remains **Unimplemented**:
 - A real-hardware first-grid A/B budget must still quantify the implemented
   SQLite stale-while-revalidate hydration. The hydration and Section 7 catalog
   navigation retain no inactive media/DOM resources as a renderer cache.
-- Watch-before-scan buffering and renderer-side incremental batches remain
-  part of Section 1.
 - Fingerprint format `v1` includes creation time. Ordinary byte-identical
   copies are safely represented as distinct instances but may occupy distinct
   content rows; a versioned content-digest migration is deferred.
 - Watcher bursts still refresh directory aggregates per event. Debounced or
   incremental aggregate maintenance and its burst benchmark remain part of
   Sections 6 and 8.
-- The SQLite suites execute successfully through Electron's ABI locally, but
-  a mandatory non-skippable Electron-ABI CI job remains part of Section 8.
+- Watch-before-scan streaming and the mandatory non-skippable Electron-ABI CI
+  gate are now implemented in Sections 1 and 8.
 
 ## Virtual masonry implementation slice
 
@@ -699,9 +751,9 @@ The following adjacent work remains **Unimplemented**:
 - Aspect corrections currently recompute logical geometry once per animation
   frame batch. Incremental suffix/column repair remains a possible follow-up
   if profiling shows the bounded JavaScript pass is significant.
-- Electron-runtime scroll smoke tests and Linux CPU/RSS/DOM/media soak budgets
-  remain part of Section 8; the current 5,000-record coverage is deterministic
-  Vitest/jsdom coverage rather than an Electron benchmark.
+- Electron-runtime scroll smoke and Linux CPU/RSS/DOM/media soak tooling are
+  implemented in Section 8. The deterministic 5,000-record suite remains the
+  CI geometry bound; hardware playback budgets are baseline-relative and local.
 - Interleaved, full-width headers inside masonry geometry remain a possible
   follow-up. Section 7 uses a lightweight visible folder-group strip when the
   tree is hidden so current virtualization geometry stays unchanged.
@@ -731,13 +783,10 @@ The following adjacent work remains **Unimplemented**:
    recovery, fullscreen, capture, trash, URL, and native-handle regressions,
    including stale generations and physical cleanup ordering.
 
-The following adjacent work remains **Unimplemented**:
-
-- Electron smoke coverage and Linux CPU/RSS/file-handle/playback soak budgets
-  remain part of Section 8. Capability reporting is deliberately observational
-  and does not promise Linux/NVIDIA hardware video decoding; current scheduler
-  coverage is deterministic Vitest/jsdom coverage rather than a hardware
-  benchmark.
+Electron smoke coverage and Linux CPU/RSS/file-handle/playback soak tooling are
+now implemented in Section 8. Capability reporting remains deliberately
+observational and does not promise Linux/NVIDIA hardware video decoding; local
+hardware baselines are not portable CI thresholds.
 
 ## Section 5 implementation record — Linux-aware playback modes
 
@@ -816,9 +865,9 @@ than being inferred from the earlier run. The base implementation is recorded
 in commit `af73872`; the playback-fidelity fixes are part of this follow-up
 implementation.
 
-Hardware-specific Linux decode verification and performance soak thresholds
-remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
-video decoding.
+Hardware-specific Linux decode verification remains environment-dependent;
+Section 8 now provides the soak and baseline-threshold tooling, while Section 5
+still does not claim guaranteed GPU video decoding.
 
 ## Section 6 implementation record — Bounded caches, queues, and native work
 
@@ -884,12 +933,11 @@ video decoding.
    the main-process `Object has been destroyed` shutdown dialog; a source-level
    lifecycle regression guards the ordering.
 
-The following measurement work remains **Unimplemented** in Section 8:
-
-- Real Electron A/B-folder and Linux soak automation for RSS/post-GC heap, OS
-  file handles, decoder counts, and CPU/event-loop trends. Section 6 verifies
-  deterministic ownership and hard bounds, not a hardware-specific memory
-  plateau.
+Section 8 now implements Real Electron folder timing and Linux soak automation
+for RSS/post-GC heap when exposed, OS file handles, media/playing counts,
+dropped frames, inotify watches, database growth, and CPU/event-loop trends.
+Hardware-specific plateau values remain machine-local baselines rather than
+universal limits.
 
 ## Folder and lightweight library implementation slice
 
@@ -970,14 +1018,12 @@ The following measurement work remains **Unimplemented** in Section 8:
 
 The following work remains **Unimplemented** after this slice:
 
-- Section 1 incremental scan delivery remains unimplemented, so a first-time
-  uncached open still waits for the complete scan result. Indexed revisits now
-  hydrate from SQLite while that authoritative scan runs in the background.
-- Electron smoke, Linux soak, and performance-budget automation remain in
-  Section 8.
 - Full-width interleaved masonry group headers remain optional follow-up work;
   the implemented group strip satisfies visible grouping without destabilizing
   the virtual layout.
+
+Section 1 incremental delivery and Section 8 Electron smoke/Linux profiling
+automation are now implemented.
 
 ## Migration and compatibility
 

@@ -7,10 +7,7 @@ export default function DebugSummary({
   inView,
   activeWindow,
   activationTarget,
-  progressiveVisible,
   memoryStatus, // { currentMemoryMB, memoryPressure, isNearLimit, safetyMarginMB }
-  zoomLevel,
-  getMinimumZoomLevel,
   sortStatus,
   playbackDecision,
   playbackMode,

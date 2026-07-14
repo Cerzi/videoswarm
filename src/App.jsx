@@ -63,6 +63,10 @@ import { useSavedViews } from "./app/hooks/useSavedViews";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
 import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
 import usePlaybackCapabilities from "./app/hooks/usePlaybackCapabilities";
+import {
+  FOLDER_OPEN_MILESTONES,
+  recordFolderOpenMilestone,
+} from "./app/performance/folderOpenMetrics";
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
 import {
@@ -302,11 +306,13 @@ function App() {
     directorySummaries,
     isLoadingFolder,
     isRefreshingFolder,
+    activeScanId,
     loadingStatus,
     loadingStage,
     loadingProgress,
     settingsLoaded,
     cancelFolderLoad,
+    prioritizeActiveDirectoryScan,
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,
@@ -701,16 +707,50 @@ function App() {
     activationWindowRef.current = activationWindow.idSet;
   }, [activationWindow.idSet]);
 
+  useEffect(() => {
+    if (!activeScanId) return;
+    prioritizeActiveDirectoryScan(activationIds);
+  }, [activeScanId, activationIds, prioritizeActiveDirectoryScan]);
+
+  useEffect(() => {
+    if (!activeScanId) return undefined;
+    const hasUsableGrid = virtualItems.length > 0;
+    const hasCompletedEmptyGrid =
+      Boolean(activeRootPath) &&
+      videos.length === 0 &&
+      !isLoadingFolder &&
+      !isRefreshingFolder;
+    if (!hasUsableGrid && !hasCompletedEmptyGrid) return undefined;
+
+    let cancelled = false;
+    const reportCommittedGrid = () => {
+      if (cancelled) return;
+      recordFolderOpenMilestone(
+        activeScanId,
+        FOLDER_OPEN_MILESTONES.FIRST_USABLE_GRID,
+        {
+          recordCount: videos.length,
+          renderedCount: virtualItems.length,
+          empty: hasCompletedEmptyGrid,
+        }
+      );
+    };
+    const frameId = requestAnimationFrame(reportCommittedGrid);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+    };
+  }, [
+    activeRootPath,
+    activeScanId,
+    isLoadingFolder,
+    isRefreshingFolder,
+    videos.length,
+    virtualItems.length,
+  ]);
+
   const isWithinActivation = useCallback(
     (id) => activationWindowRef.current.has(id),
-    []
-  );
-
-  const anchorDefaults = useMemo(
-    () =>
-      feature.stableViewFixes
-        ? { settleFrames: 2, stabilizeFrames: 2, maxWaitMs: 700 }
-        : { settleFrames: 1, stabilizeFrames: 1, maxWaitMs: 400 },
     []
   );
 
@@ -986,7 +1026,6 @@ function App() {
   }, []);
 
   const {
-    applyMetadataPatch,
     handleAddTags,
     handleRemoveTag,
     handleSetRating,
@@ -2032,11 +2071,16 @@ function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape" && isLoadingFolder) cancelFolderLoad();
+      if (
+        e.key === "Escape" &&
+        (isLoadingFolder || isRefreshingFolder)
+      ) {
+        cancelFolderLoad();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [cancelFolderLoad, isLoadingFolder]);
+  }, [cancelFolderLoad, isLoadingFolder, isRefreshingFolder]);
 
   // cleanup pass from videoCollection
   // drive the effect by stable scalars; apply deletions, not replacement; de-bounce one tick

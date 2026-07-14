@@ -20,6 +20,7 @@ const SAVED_VIEW_DEFINITION_BYTE_LIMIT = 8192;
 const SAVED_VIEW_VERSION = 1;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
+const DEFAULT_INDEX_CONCURRENCY = 1;
 
 function normalizeReviewState(value) {
   const state = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -1796,21 +1797,24 @@ function createMetadataStore(db) {
     recursive = true,
     assertActive,
     onProgress,
+    concurrency = DEFAULT_INDEX_CONCURRENCY,
   } = {}) {
     assertOperationActive(assertActive);
     const normalizedRoot = normalizeRootPath(rootPath);
     const root = registerLibraryRoot(normalizedRoot, { recursive });
     const rootRow = rootById.get(root.id);
-    const preparedEntries = [];
+    const preparedEntries = new Array(
+      Array.isArray(entries) ? entries.length : 0
+    );
     const sourceEntries = Array.isArray(entries) ? entries : [];
-    const maybeYield = createPeriodicEventLoopYielder();
+    let completedEntryCount = 0;
     let fingerprintsReused = 0;
 
     const notifyProgress = (filePath = null) => {
       if (typeof onProgress !== 'function') return;
       try {
         const notification = onProgress({
-          indexedFiles: preparedEntries.length,
+          indexedFiles: completedEntryCount,
           totalFiles: sourceEntries.length,
           fingerprintsReused,
           filePath,
@@ -1823,7 +1827,7 @@ function createMetadataStore(db) {
 
     notifyProgress();
 
-    for (const input of sourceEntries) {
+    const prepareEntry = async (input, index) => {
       assertOperationActive(assertActive);
       if (!input?.filePath) {
         throw new TypeError('Every indexed entry requires a filePath');
@@ -1861,7 +1865,7 @@ function createMetadataStore(db) {
       }
       assertOperationActive(assertActive);
 
-      preparedEntries.push({
+      const prepared = {
         filePath: location.absolutePath,
         relativePath: location.relativePath,
         stats: safeStats,
@@ -1869,19 +1873,42 @@ function createMetadataStore(db) {
         fingerprint: fingerprintResult.fingerprint,
         createdMs: fingerprintResult.createdMs,
         fingerprintReused: reusedPersistedFingerprint,
-      });
+      };
+      preparedEntries[index] = prepared;
 
       if (reusedPersistedFingerprint) {
         fingerprintsReused += 1;
       }
+      completedEntryCount += 1;
       notifyProgress(location.relativePath);
+    };
 
-      const pendingYield = maybeYield();
-      if (pendingYield) {
-        await pendingYield;
+    const workerCount = Math.max(
+      1,
+      Math.min(
+        sourceEntries.length || 1,
+        Number.isFinite(Number(concurrency))
+          ? Math.floor(Number(concurrency))
+          : DEFAULT_INDEX_CONCURRENCY
+      )
+    );
+    let nextEntryIndex = 0;
+    const workers = Array.from({ length: workerCount }, async () => {
+      const maybeYield = createPeriodicEventLoopYielder();
+      while (true) {
         assertOperationActive(assertActive);
+        const entryIndex = nextEntryIndex;
+        nextEntryIndex += 1;
+        if (entryIndex >= sourceEntries.length) return;
+        await prepareEntry(sourceEntries[entryIndex], entryIndex);
+        const pendingYield = maybeYield();
+        if (pendingYield) {
+          await pendingYield;
+          assertOperationActive(assertActive);
+        }
       }
-    }
+    });
+    await Promise.all(workers);
 
     // Fingerprinting and stat calls above are asynchronous. Re-check ownership
     // immediately before entering this synchronous transaction so stale scan

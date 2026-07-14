@@ -1,6 +1,4 @@
 module.exports = function registerTrashIPC(ipcMain) {
-    const { shell } = require('electron');
-    const fsRaw = require('fs');
     ipcMain.handle('bulk-move-to-trash', async (_event, paths) => {
         // ===== Bulk move-to-trash =====
         const { shell } = require('electron');

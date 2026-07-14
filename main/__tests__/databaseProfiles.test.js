@@ -3,8 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
+import { requireSqliteSuite } from "./sqliteTestGate";
 
 let database;
 let databaseLoadError;
@@ -26,8 +25,15 @@ try {
   databaseLoadError = error;
 }
 
+const sqliteDescribe = requireSqliteSuite(
+  describe,
+  !hasNativeDriver || databaseLoadError
+    ? databaseLoadError || new Error("better-sqlite3 probe failed")
+    : null
+);
+
 if (!hasNativeDriver || databaseLoadError) {
-  describe.skip("profile-aware database", () => {});
+  sqliteDescribe("profile-aware database", () => {});
 } else {
   const { initMetadataStore, getMetadataStore, resetDatabase } = database;
 

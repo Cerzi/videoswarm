@@ -1,5 +1,5 @@
 // src/hooks/selection/useSelectionState.js
-import { useMemo, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 export default function useSelectionState() {
   const [selected, setSelected] = useState(() => new Set());

@@ -111,4 +111,48 @@ describe("preload native-work bridge", () => {
     expect(ipcRenderer.sendSync).not.toHaveBeenCalled();
   });
 
+  it("exposes disposable streamed scan records and viewport priorities", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const callback = vi.fn();
+    const dispose = api.onDirectoryScanRecords(callback);
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "directory-scan-records"
+    )[1];
+    const payload = {
+      scanId: "scan-9",
+      sequence: 1,
+      kind: "enumeration",
+      records: [{ id: "/library/clip.mp4" }],
+    };
+
+    handler({}, payload);
+    api.prioritizeDirectoryScan("scan-9", ["/library/clip.mp4"]);
+    dispose();
+
+    expect(callback).toHaveBeenCalledWith(payload);
+    expect(ipcRenderer.send).toHaveBeenCalledWith(
+      "prioritize-directory-scan",
+      { scanId: "scan-9", ids: ["/library/clip.mp4"] }
+    );
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "directory-scan-records",
+      handler
+    );
+  });
+
+  it("unwraps generation metadata from watcher events", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const added = vi.fn();
+    api.onFileAdded(added);
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "file-added"
+    )[1];
+    const videoFile = { id: "/library/new.mp4" };
+    const watch = { scanId: "scan-10", sessionId: "watch-2" };
+
+    handler({}, { videoFile, watch });
+
+    expect(added).toHaveBeenCalledWith(videoFile, watch);
+  });
+
 });
