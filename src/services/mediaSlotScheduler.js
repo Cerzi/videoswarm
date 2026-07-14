@@ -192,7 +192,7 @@ export function createMediaSlotScheduler(initialLimits = {}) {
     return reportLimits();
   };
 
-  const canReserveLoader = (idValue, options = {}) => {
+  const canReserveLoader = (idValue, _options = {}) => {
     const id = normalizeId(idValue);
     if (
       !id ||

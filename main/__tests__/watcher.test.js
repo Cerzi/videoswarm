@@ -123,6 +123,197 @@ describe("folder watcher sessions", () => {
     await watcher.stop();
   });
 
+  it("captures the pre-ready baseline and replays only initialization deltas", async () => {
+    const createVideoFileObject = vi.fn(async (filePath) => ({ id: filePath }));
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      logger,
+    });
+    const added = vi.fn();
+    const changed = vi.fn();
+    const removed = vi.fn();
+    watcher.on("added", added);
+    watcher.on("changed", changed);
+    watcher.on("removed", removed);
+
+    const result = await watcher.start("/library", {
+      context: { scanId: "scan-1" },
+      bufferInitialEvents: true,
+    });
+    const nativeWatcher = nativeWatchers[0];
+    expect(chokidar.watch).toHaveBeenCalledWith(
+      "/library",
+      expect.objectContaining({ ignoreInitial: false, alwaysStat: true })
+    );
+
+    nativeWatcher.emit("add", "/library/unchanged.mp4", {
+      size: 10,
+      mtimeMs: 100,
+    });
+    const release = watcher.releaseInitialization(result.sessionId, [
+      {
+        filePath: "/library/unchanged.mp4",
+        stats: { size: 10, mtimeMs: 100 },
+      },
+      {
+        filePath: "/library/changed.mp4",
+        stats: { size: 20, mtimeMs: 100 },
+      },
+      {
+        filePath: "/library/removed.mp4",
+        stats: { size: 30, mtimeMs: 100 },
+      },
+    ]);
+
+    // This mutation arrives after release was requested but before chokidar's
+    // initial attachment completed. It must still belong to the init generation.
+    nativeWatcher.emit("change", "/library/changed.mp4", {
+      size: 21,
+      mtimeMs: 200,
+    });
+    nativeWatcher.emit("add", "/library/new.mp4", {
+      size: 40,
+      mtimeMs: 200,
+    });
+    nativeWatcher.emit("unlink", "/library/removed.mp4");
+    nativeWatcher.emit("ready");
+
+    await expect(release).resolves.toMatchObject({
+      success: true,
+      buffered: 4,
+      replayed: 2,
+      removed: 1,
+    });
+    await flushPromises();
+
+    expect(createVideoFileObject.mock.calls.map((call) => call[0]).sort()).toEqual([
+      "/library/changed.mp4",
+      "/library/new.mp4",
+    ]);
+    expect(changed).toHaveBeenCalledWith(
+      { id: "/library/changed.mp4" },
+      expect.objectContaining({ sessionId: result.sessionId })
+    );
+    expect(added).toHaveBeenCalledWith(
+      { id: "/library/new.mp4" },
+      expect.objectContaining({ sessionId: result.sessionId })
+    );
+    expect(removed).toHaveBeenCalledWith(
+      "/library/removed.mp4",
+      expect.objectContaining({ sessionId: result.sessionId })
+    );
+    expect(watcher.getSnapshot()).toMatchObject({
+      initializing: false,
+      bufferedInitializationEvents: 0,
+    });
+    await watcher.stop();
+  });
+
+  it("seeds overflow reconciliation from the authoritative scan baseline", async () => {
+    const scanFolderForChanges = vi.fn(async (_folderPath, options) => {
+      expect(options.pollingState).toMatchObject({ initialized: true });
+      expect([...options.pollingState.lastFiles.keys()].sort()).toEqual([
+        "/library/one.mp4",
+        "/library/two.mp4",
+      ]);
+    });
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges,
+      logger,
+      maxInitializationEvents: 1,
+    });
+
+    const result = await watcher.start("/library", {
+      bufferInitialEvents: true,
+    });
+    nativeWatchers[0].emit("add", "/library/one.mp4", {
+      size: 1,
+      mtimeMs: 1,
+    });
+    nativeWatchers[0].emit("add", "/library/two.mp4", {
+      size: 2,
+      mtimeMs: 2,
+    });
+    nativeWatchers[0].emit("ready");
+
+    await expect(
+      watcher.releaseInitialization(result.sessionId, [
+        { filePath: "/library/one.mp4", stats: { size: 1, mtimeMs: 1 } },
+        { filePath: "/library/two.mp4", stats: { size: 2, mtimeMs: 2 } },
+      ])
+    ).resolves.toMatchObject({
+      success: true,
+      overflowed: true,
+      fullReconciliation: true,
+    });
+    expect(scanFolderForChanges).toHaveBeenCalledOnce();
+    await watcher.stop();
+  });
+
+  it("detects an enumerated file deleted before chokidar attached its subtree", async () => {
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges: vi.fn(),
+      logger,
+    });
+    const removed = vi.fn();
+    watcher.on("removed", removed);
+    const result = await watcher.start("/library", {
+      bufferInitialEvents: true,
+    });
+
+    // Chokidar reaches ready without ever observing the file that the main
+    // enumeration saw. The one targeted verification closes that attach race.
+    nativeWatchers[0].emit("ready");
+    await expect(
+      watcher.releaseInitialization(result.sessionId, [
+        {
+          filePath: "/library/deleted-before-attach.mp4",
+          stats: { size: 10, mtimeMs: 10 },
+        },
+      ])
+    ).resolves.toMatchObject({ success: true, removed: 1 });
+
+    expect(removed).toHaveBeenCalledWith(
+      "/library/deleted-before-attach.mp4",
+      expect.objectContaining({ sessionId: result.sessionId })
+    );
+    await watcher.stop();
+  });
+
+  it("cannot hang initialization when native watching errors before ready", async () => {
+    const scanFolderForChanges = vi.fn(async () => {});
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges,
+      logger,
+    });
+    watcher.on("error", vi.fn());
+    const result = await watcher.start("/library", {
+      bufferInitialEvents: true,
+    });
+
+    nativeWatchers[0].emit(
+      "error",
+      Object.assign(new Error("permission failure"), { code: "EACCES" })
+    );
+
+    await expect(
+      watcher.releaseInitialization(result.sessionId, [])
+    ).resolves.toMatchObject({
+      success: true,
+      fullReconciliation: true,
+    });
+    expect(scanFolderForChanges).toHaveBeenCalledOnce();
+    await watcher.stop();
+  });
+
   it("invalidates synchronously and silently drops stale async enrichment", async () => {
     const enrichment = createDeferred();
     const createVideoFileObject = vi.fn(() => enrichment.promise);
@@ -649,6 +840,7 @@ describe("folder watcher sessions", () => {
         enrichmentConcurrency: 2,
         maxPendingEnrichments: 2048,
         maxOutstandingEnrichments: 8,
+        maxInitializationEvents: 16384,
       },
     });
     await expect(watcher.start("/library")).rejects.toThrow("disposed");

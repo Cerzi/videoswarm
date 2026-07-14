@@ -4,6 +4,8 @@
 
 const chokidar = require("chokidar");
 const { EventEmitter } = require("events");
+const { promises: fsPromises } = require("fs");
+const path = require("path");
 
 const EMPTY_CONTEXT = Object.freeze({});
 const DEFAULT_WATCHER_LIMITS = Object.freeze({
@@ -11,6 +13,7 @@ const DEFAULT_WATCHER_LIMITS = Object.freeze({
   enrichmentConcurrency: 2,
   maxPendingEnrichments: 2048,
   maxOutstandingEnrichments: 8,
+  maxInitializationEvents: 16384,
   reconciliationRetryBaseMs: 250,
   maxReconciliationRetries: 3,
 });
@@ -39,6 +42,7 @@ function createFolderWatcher({
   enrichmentConcurrency = DEFAULT_WATCHER_LIMITS.enrichmentConcurrency,
   maxPendingEnrichments = DEFAULT_WATCHER_LIMITS.maxPendingEnrichments,
   maxOutstandingEnrichments = DEFAULT_WATCHER_LIMITS.maxOutstandingEnrichments,
+  maxInitializationEvents = DEFAULT_WATCHER_LIMITS.maxInitializationEvents,
   reconciliationRetryBaseMs = DEFAULT_WATCHER_LIMITS.reconciliationRetryBaseMs,
   maxReconciliationRetries = DEFAULT_WATCHER_LIMITS.maxReconciliationRetries,
 }) {
@@ -71,6 +75,11 @@ function createFolderWatcher({
   const outstandingEnrichmentLimit = finiteInteger(
     maxOutstandingEnrichments,
     DEFAULT_WATCHER_LIMITS.maxOutstandingEnrichments,
+    1
+  );
+  const initializationEventLimit = finiteInteger(
+    maxInitializationEvents,
+    DEFAULT_WATCHER_LIMITS.maxInitializationEvents,
     1
   );
   const reconciliationRetryBase = finiteInteger(
@@ -108,6 +117,10 @@ function createFolderWatcher({
     reconciliationRetries: 0,
     rawStarted: 0,
     rawSettled: 0,
+    initializationBuffered: 0,
+    initializationCoalesced: 0,
+    initializationOverflowed: 0,
+    initializationReconciliations: 0,
   };
 
   // ---- helpers ----
@@ -148,11 +161,16 @@ function createFolderWatcher({
       reconciliationRetryExhausted: Boolean(
         activeSession?.reconciliationRetryExhausted
       ),
+      initializing: Boolean(activeSession?.initializing),
+      bufferedInitializationEvents:
+        activeSession?.initializationEvents?.size || 0,
+      initializationOverflow: Boolean(activeSession?.initializationOverflow),
       limits: {
         maxChangeDebouncers: changeDebouncerLimit,
         enrichmentConcurrency: enrichmentConcurrencyLimit,
         maxPendingEnrichments: pendingEnrichmentLimit,
         maxOutstandingEnrichments: outstandingEnrichmentLimit,
+        maxInitializationEvents: initializationEventLimit,
         reconciliationRetryBaseMs: reconciliationRetryBase,
         maxReconciliationRetries: reconciliationRetryLimit,
       },
@@ -215,6 +233,16 @@ function createFolderWatcher({
       ...session.context,
       assertActive: () => assertSessionActive(session),
       pollingState: session.pollingState,
+      sendEvent: (channel, payload) => {
+        assertSessionActive(session);
+        if (channel === "file-added") {
+          events.emit("added", payload, eventMetadata(session));
+        } else if (channel === "file-changed") {
+          events.emit("changed", payload, eventMetadata(session));
+        } else if (channel === "file-removed") {
+          events.emit("removed", payload, eventMetadata(session));
+        }
+      },
     };
   }
 
@@ -223,6 +251,10 @@ function createFolderWatcher({
       options.context && typeof options.context === "object"
         ? options.context
         : EMPTY_CONTEXT;
+    let resolveReady;
+    const readyPromise = new Promise((resolve) => {
+      resolveReady = resolve;
+    });
     const session = {
       sessionId: `watch-${++sessionSequence}`,
       folderPath,
@@ -237,6 +269,12 @@ function createFolderWatcher({
       reconciliationAttempts: 0,
       reconciliationRetryExhausted: false,
       reconciliationRetryTimer: null,
+      initializing: Boolean(options.bufferInitialEvents),
+      initializationEvents: new Map(),
+      initializationOverflow: false,
+      watcherReady: false,
+      readyPromise,
+      resolveReady,
       pollingState: {
         lastFiles: new Map(),
         initialized: false,
@@ -256,9 +294,45 @@ function createFolderWatcher({
     const session = activeSession;
     if (session) {
       session.active = false;
+      session.resolveReady?.();
+      session.resolveReady = null;
     }
     activeSession = null;
     return session;
+  }
+
+  function bufferInitializationEvent(
+    session,
+    eventName,
+    filePath,
+    stats = null
+  ) {
+    if (!isSessionActive(session) || !session.initializing) return false;
+    const normalizedPath = path.resolve(filePath);
+    const entry = {
+      eventName,
+      initial: !session.watcherReady && eventName === "added",
+      stats:
+        stats && Number.isFinite(Number(stats.size))
+          ? {
+              size: Number(stats.size),
+              mtimeMs: Number(stats.mtimeMs || stats.mtime || 0),
+            }
+          : null,
+    };
+    if (session.initializationEvents.has(normalizedPath)) {
+      session.initializationEvents.set(normalizedPath, entry);
+      enrichmentTotals.initializationCoalesced += 1;
+      return true;
+    }
+    if (session.initializationEvents.size >= initializationEventLimit) {
+      session.initializationOverflow = true;
+      enrichmentTotals.initializationOverflowed += 1;
+      return true;
+    }
+    session.initializationEvents.set(normalizedPath, entry);
+    enrichmentTotals.initializationBuffered += 1;
+    return true;
   }
 
   // Detach synchronously. In particular, stop() must invalidate assertActive
@@ -342,6 +416,193 @@ function createFolderWatcher({
     return runPromise;
   }
 
+  function normalizeInitializationBaseline(entries) {
+    const baseline = new Map();
+    const source = entries instanceof Map
+      ? entries.entries()
+      : (Array.isArray(entries) ? entries : []).map((entry) => [
+          entry?.filePath,
+          entry?.stats || entry,
+        ]);
+    for (const [filePath, stats] of source) {
+      if (typeof filePath !== "string" || !filePath) continue;
+      baseline.set(path.resolve(filePath), {
+        size: Number(stats?.size || 0),
+        mtimeMs: Number(stats?.mtimeMs || stats?.mtime || 0),
+      });
+    }
+    return baseline;
+  }
+
+  async function releaseInitialization(sessionId, baselineEntries = []) {
+    const session = activeSession;
+    if (
+      !isSessionActive(session) ||
+      session.sessionId !== sessionId ||
+      !session.initializing
+    ) {
+      return { success: false, stale: true };
+    }
+
+    await session.readyPromise;
+    assertSessionActive(session);
+
+    const baseline = normalizeInitializationBaseline(baselineEntries);
+    // Polling reconciliation must compare against the authoritative scan, not
+    // an empty session baseline that would replay every file as a fresh add.
+    session.pollingState.lastFiles = new Map(
+      [...baseline.entries()].map(([filePath, stats]) => [
+        filePath,
+        { size: stats.size, mtime: stats.mtimeMs },
+      ])
+    );
+    session.pollingState.initialized = true;
+
+    const outcomes = new Map();
+    let bufferedCount = 0;
+    let overflowed = false;
+    let usedFullReconciliation = false;
+    let replayed = 0;
+    let removed = 0;
+    let reconciliationSucceeded = true;
+    let comparedObservedBaseline = false;
+
+    // Keep native events in a fresh generation while each snapshot is being
+    // inspected. The empty check and transition to live mode are synchronous,
+    // so an event is either in the last snapshot or delivered by the live path.
+    while (true) {
+      assertSessionActive(session);
+      const snapshot = session.initializationEvents;
+      let snapshotOverflowed = session.initializationOverflow;
+      session.initializationEvents = new Map();
+      session.initializationOverflow = false;
+      if (!comparedObservedBaseline) {
+        comparedObservedBaseline = true;
+        for (const filePath of baseline.keys()) {
+          if (snapshot.has(filePath)) continue;
+          if (snapshot.size >= initializationEventLimit) {
+            snapshotOverflowed = true;
+            break;
+          }
+          // A file enumerated by the scan but absent from chokidar's complete
+          // initial observation may have disappeared before its subtree was
+          // attached. Verify it once instead of silently trusting the scan.
+          snapshot.set(filePath, {
+            eventName: "verify",
+            initial: false,
+            stats: null,
+          });
+        }
+      }
+      bufferedCount += snapshot.size;
+      overflowed = overflowed || snapshotOverflowed;
+
+      if (snapshotOverflowed || isPolling()) {
+        usedFullReconciliation = true;
+        outcomes.clear();
+        enrichmentTotals.initializationReconciliations += 1;
+        const result = await runPollingScan(
+          session,
+          snapshotOverflowed
+            ? "initialization overflow reconciliation"
+            : "initialization reconciliation"
+        );
+        reconciliationSucceeded = reconciliationSucceeded && Boolean(result?.success);
+        if (result?.stale) {
+          return { success: false, stale: true };
+        }
+      } else if (snapshot.size > 0) {
+        const pending = [...snapshot.entries()];
+        let nextIndex = 0;
+        const workerCount = Math.min(8, pending.length);
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (true) {
+            assertSessionActive(session);
+            const index = nextIndex;
+            nextIndex += 1;
+            if (index >= pending.length) return;
+            const [filePath, bufferedEvent] = pending[index];
+            const baselineStats = baseline.get(filePath);
+            const observedStats = bufferedEvent?.stats;
+            if (
+              bufferedEvent?.eventName !== "removed" &&
+              observedStats
+            ) {
+              const signatureMatches =
+                baselineStats &&
+                baselineStats.size === observedStats.size &&
+                baselineStats.mtimeMs === observedStats.mtimeMs;
+              if (bufferedEvent.initial && signatureMatches) {
+                outcomes.delete(filePath);
+                continue;
+              }
+              outcomes.set(filePath, {
+                exists: true,
+                wasPresent: Boolean(baselineStats),
+              });
+              continue;
+            }
+            let stats = null;
+            try {
+              stats = await fsPromises.stat(filePath);
+              assertSessionActive(session);
+            } catch (error) {
+              assertSessionActive(session);
+              if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") {
+                // A permission or transient read error is not evidence of
+                // removal; leave the prior collection record untouched.
+                outcomes.delete(filePath);
+                continue;
+              }
+            }
+            outcomes.set(filePath, {
+              exists: Boolean(stats?.isFile?.() && isVideoFile(filePath)),
+              wasPresent: baseline.has(filePath),
+            });
+          }
+        });
+        await Promise.all(workers);
+      }
+
+      assertSessionActive(session);
+      if (
+        session.initializationEvents.size === 0 &&
+        !session.initializationOverflow
+      ) {
+        session.initializing = false;
+        break;
+      }
+    }
+
+    // Full polling already emitted its authoritative delta. Targeted outcomes
+    // cover only events that were buffered outside that full reconciliation.
+    for (const [filePath, outcome] of outcomes) {
+      assertSessionActive(session);
+      if (outcome.exists) {
+        enqueueVideoEvent(
+          session,
+          outcome.wasPresent ? "changed" : "added",
+          filePath
+        );
+        replayed += 1;
+      } else if (outcome.wasPresent) {
+        events.emit("removed", filePath, eventMetadata(session));
+        removed += 1;
+      }
+    }
+
+    return {
+      success: reconciliationSucceeded,
+      stale: false,
+      overflowed,
+      reconciled: true,
+      fullReconciliation: usedFullReconciliation,
+      buffered: bufferedCount,
+      replayed,
+      removed,
+    };
+  }
+
   function startPollingMode(session) {
     if (!isSessionActive(session)) return;
 
@@ -358,9 +619,13 @@ function createFolderWatcher({
 
     // Polling owns a separate single-flight scan lane. It must not wait for a
     // retired native-event enrichment that may be stalled indefinitely.
-    void runPollingScan(session, "initial scan");
+    if (!session.initializing) {
+      void runPollingScan(session, "initial scan");
+    }
     pollingInterval = setInterval(() => {
-      void runPollingScan(session);
+      if (!session.initializing) {
+        void runPollingScan(session);
+      }
     }, 5000);
 
     return {
@@ -368,6 +633,7 @@ function createFolderWatcher({
       mode: "polling",
       recursive: session.recursive,
       sessionId: session.sessionId,
+      initializing: session.initializing,
     };
   }
 
@@ -681,6 +947,7 @@ function createFolderWatcher({
         mode: isPolling() ? "polling" : "watch",
         recursive,
         sessionId: activeSession.sessionId,
+        initializing: activeSession.initializing,
       };
     }
 
@@ -693,7 +960,11 @@ function createFolderWatcher({
       return { success: false, cancelled: true, recursive };
     }
 
-    const session = createSession(folderPath, { recursive, context });
+    const session = createSession(folderPath, {
+      recursive,
+      context,
+      bufferInitialEvents: Boolean(options.bufferInitialEvents),
+    });
     let nativeWatcher;
     try {
       // Create chokidar watcher (native events)
@@ -706,7 +977,11 @@ function createFolderWatcher({
           "**/$RECYCLE.BIN/**",
         ],
         persistent: true,
-        ignoreInitial: true,
+        // During an initial folder scan, capture chokidar's own observed
+        // baseline instead of suppressing it. Signatures matching the main
+        // enumeration are discarded at release without a second stat pass;
+        // differences close the pre-ready attachment race.
+        ignoreInitial: !session.initializing,
         ...(recursive
           ? { depth }
           : { depth: 0 }), // follow recursion preference
@@ -717,7 +992,7 @@ function createFolderWatcher({
 
         // Churn/permissions
         atomic: true,
-        alwaysStat: false,
+        alwaysStat: session.initializing,
         followSymlinks: false,
         ignorePermissionErrors: true,
 
@@ -737,6 +1012,9 @@ function createFolderWatcher({
     // ---- events ----
     nativeWatcher.on("ready", () => {
       if (!isSessionActive(session) || fileWatcher !== nativeWatcher) return;
+      session.watcherReady = true;
+      session.resolveReady?.();
+      session.resolveReady = null;
       // Instrumentation: count directories/files chokidar believes it has
       try {
         const watched = nativeWatcher.getWatched?.() || {};
@@ -754,14 +1032,16 @@ function createFolderWatcher({
       logger.log("[watch] Watching:", session.folderPath);
     });
 
-    nativeWatcher.on("add", (filePath) => {
+    nativeWatcher.on("add", (filePath, stats) => {
       if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "added", filePath, stats)) return;
       logger.log("Video file added:", filePath);
       enqueueVideoEvent(session, "added", filePath);
     });
 
     nativeWatcher.on("unlink", (filePath) => {
       if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "removed", filePath)) return;
       const pendingChange = changeTimeouts.get(filePath);
       if (pendingChange) {
         clearTimeout(pendingChange.timer);
@@ -777,8 +1057,9 @@ function createFolderWatcher({
       drainEnrichmentQueue();
     });
 
-    nativeWatcher.on("change", (filePath) => {
+    nativeWatcher.on("change", (filePath, stats) => {
       if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "changed", filePath, stats)) return;
 
       const existing = changeTimeouts.get(filePath);
       if (existing) {
@@ -804,6 +1085,9 @@ function createFolderWatcher({
 
       if (isLimitError && !session.fellBack) {
         session.fellBack = true; // one-shot per watcher session
+        session.watcherReady = true;
+        session.resolveReady?.();
+        session.resolveReady = null;
         logger.warn("[watch] Limit hit:", code, "→ switching to polling");
 
         // Detach this native watcher before awaiting close. A new start/stop can
@@ -828,6 +1112,15 @@ function createFolderWatcher({
       }
 
       // Non-limit errors or repeated limit errors
+      if (session.initializing && !session.watcherReady) {
+        // Chokidar is not guaranteed to emit `ready` after an early native
+        // failure. Release the waiter and force one authoritative polling
+        // reconciliation instead of hanging folder completion indefinitely.
+        session.initializationOverflow = true;
+        session.watcherReady = true;
+        session.resolveReady?.();
+        session.resolveReady = null;
+      }
       logger.error("File watcher error:", error);
       events.emit("error", error, eventMetadata(session));
     });
@@ -837,6 +1130,7 @@ function createFolderWatcher({
       mode: "watch",
       recursive,
       sessionId: session.sessionId,
+      initializing: session.initializing,
     };
   }
 
@@ -848,6 +1142,7 @@ function createFolderWatcher({
     isPolling,
     getCurrentFolder,
     getSnapshot,
+    releaseInitialization,
     on: (...args) => events.on(...args),
     off: (...args) => events.off?.(...args) || events.removeListener(...args),
     once: (...args) => events.once(...args),

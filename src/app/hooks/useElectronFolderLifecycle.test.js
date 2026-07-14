@@ -27,6 +27,8 @@ describe("useElectronFolderLifecycle", () => {
   let disposeError;
   let directoryScanProgressHandler;
   let disposeDirectoryScanProgress;
+  let directoryScanRecordsHandler;
+  let disposeDirectoryScanRecords;
 
   const renderDefaultLifecycle = (overrides = {}) =>
     renderHook(() =>
@@ -79,6 +81,8 @@ describe("useElectronFolderLifecycle", () => {
     disposeError = vi.fn();
     directoryScanProgressHandler = undefined;
     disposeDirectoryScanProgress = vi.fn();
+    directoryScanRecordsHandler = undefined;
+    disposeDirectoryScanRecords = vi.fn();
 
     window.electronAPI = {
       getSettings: vi.fn().mockResolvedValue({
@@ -114,6 +118,11 @@ describe("useElectronFolderLifecycle", () => {
         directoryScanProgressHandler = callback;
         return disposeDirectoryScanProgress;
       }),
+      onDirectoryScanRecords: vi.fn((callback) => {
+        directoryScanRecordsHandler = callback;
+        return disposeDirectoryScanRecords;
+      }),
+      prioritizeDirectoryScan: vi.fn(),
       onFileAdded: vi.fn((cb) => {
         onFileAddedHandler = cb;
         return disposeAdded;
@@ -198,6 +207,7 @@ describe("useElectronFolderLifecycle", () => {
     onFileRemovedHandler = undefined;
     onFileChangedHandler = undefined;
     directoryScanProgressHandler = undefined;
+    directoryScanRecordsHandler = undefined;
   });
 
   it("loads persisted settings on mount", async () => {
@@ -355,11 +365,16 @@ describe("useElectronFolderLifecycle", () => {
     expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(
       "/videos",
       false,
-      expect.stringMatching(/^directory-scan-/)
+      expect.stringMatching(/^directory-scan-/),
+      { streamRecords: true }
     );
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/videos",
-      false
+      false,
+      expect.objectContaining({
+        scanId: expect.stringMatching(/^directory-scan-/),
+        bufferInitialEvents: true,
+      })
     );
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
@@ -418,7 +433,11 @@ describe("useElectronFolderLifecycle", () => {
       rootPath: "/large",
       refreshState: "refreshing",
     });
-    expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/large",
+      true,
+      expect.objectContaining({ bufferInitialEvents: true })
+    );
 
     await act(async () => {
       resolveRefresh({
@@ -447,8 +466,277 @@ describe("useElectronFolderLifecycle", () => {
     expect(result.current.libraryRoot.refreshState).toBe("idle");
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/large",
-      true
+      true,
+      expect.objectContaining({ bufferInitialEvents: true })
     );
+  });
+
+  it("renders streamed enumeration records before enrichment and final completion", async () => {
+    let resolveScan;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle();
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/streamed");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledOnce()
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            id: "/streamed/first.mp4",
+            fullPath: "/streamed/first.mp4",
+            name: "first.mp4",
+            basename: "first.mp4",
+            tags: [],
+            enrichmentState: "enumerated",
+          },
+        ],
+      });
+    });
+
+    expect(result.current.videos).toHaveLength(1);
+    expect(result.current.videos[0]).toMatchObject({
+      id: "/streamed/first.mp4",
+      enrichmentState: "enumerated",
+    });
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(result.current.isRefreshingFolder).toBe(true);
+    expect(result.current.activeScanId).toBe(scanId);
+
+    act(() => {
+      result.current.prioritizeActiveDirectoryScan([
+        "/streamed/first.mp4",
+      ]);
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 2,
+        kind: "patch",
+        records: [
+          {
+            id: "/streamed/first.mp4",
+            fullPath: "/streamed/first.mp4",
+            name: "first.mp4",
+            basename: "first.mp4",
+            fingerprint: "fp-first",
+            tags: ["ready"],
+            enrichmentState: "ready",
+          },
+        ],
+      });
+    });
+    expect(window.electronAPI.prioritizeDirectoryScan).toHaveBeenCalledWith(
+      scanId,
+      ["/streamed/first.mp4"]
+    );
+    expect(result.current.videos[0]).toMatchObject({
+      fingerprint: "fp-first",
+      tags: ["ready"],
+      enrichmentState: "ready",
+    });
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "patch",
+        records: [
+          {
+            id: "/streamed/first.mp4",
+            fingerprint: "stale-fp",
+            tags: ["stale"],
+          },
+        ],
+      });
+    });
+    expect(result.current.videos[0].fingerprint).toBe("fp-first");
+
+    await act(async () => {
+      resolveScan({
+        streamed: true,
+        scanId,
+        recordSequence: 2,
+        fileCount: 1,
+        root: { rootPath: "/streamed", refreshState: "idle" },
+        directories: [],
+      });
+      await loadPromise;
+    });
+    expect(result.current.videos).toHaveLength(1);
+    expect(result.current.isRefreshingFolder).toBe(false);
+    expect(result.current.activeScanId).toBe(scanId);
+  });
+
+  it("waits for streamed records that arrive after the invoke response", async () => {
+    let resolveScan;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle();
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/ordered");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledOnce()
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    await act(async () => {
+      resolveScan({
+        streamed: true,
+        scanId,
+        recordSequence: 1,
+        fileCount: 1,
+        root: { rootPath: "/ordered", refreshState: "idle" },
+        directories: [],
+      });
+      await Promise.resolve();
+    });
+
+    expect(result.current.isLoadingFolder).toBe(true);
+    expect(addRecentFolder).not.toHaveBeenCalled();
+
+    await act(async () => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            id: "/ordered/late.mp4",
+            fullPath: "/ordered/late.mp4",
+            name: "late.mp4",
+            basename: "late.mp4",
+            tags: [],
+            enrichmentState: "enumerated",
+          },
+        ],
+      });
+      await loadPromise;
+    });
+
+    expect(result.current.videos.map((video) => video.id)).toEqual([
+      "/ordered/late.mp4",
+    ]);
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(result.current.isRefreshingFolder).toBe(false);
+    expect(addRecentFolder).toHaveBeenCalledWith("/ordered");
+  });
+
+  it("prunes stale cached records while preserving matching watcher deltas", async () => {
+    let resolveScan;
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: [
+          {
+            id: "/library/keep.mp4",
+            fullPath: "/library/keep.mp4",
+            name: "keep.mp4",
+            basename: "keep.mp4",
+            fingerprint: "cached-fp",
+            tags: ["cached"],
+          },
+          {
+            id: "/library/stale.mp4",
+            fullPath: "/library/stale.mp4",
+            name: "stale.mp4",
+            basename: "stale.mp4",
+            tags: [],
+          },
+        ],
+      })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle();
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/library");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledOnce()
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            id: "/library/keep.mp4",
+            fullPath: "/library/keep.mp4",
+            name: "keep.mp4",
+            basename: "keep.mp4",
+            tags: [],
+          },
+          {
+            id: "/library/removed-during-scan.mp4",
+            fullPath: "/library/removed-during-scan.mp4",
+            name: "removed-during-scan.mp4",
+            basename: "removed-during-scan.mp4",
+            tags: [],
+          },
+        ],
+      });
+      onFileAddedHandler?.(
+        {
+          id: "/library/added-during-scan.mp4",
+          fullPath: "/library/added-during-scan.mp4",
+          name: "added-during-scan.mp4",
+          basename: "added-during-scan.mp4",
+          tags: [],
+        },
+        { scanId }
+      );
+      onFileRemovedHandler?.("/library/removed-during-scan.mp4", { scanId });
+    });
+
+    await act(async () => {
+      resolveScan({
+        streamed: true,
+        scanId,
+        recordSequence: 1,
+        fileCount: 2,
+        root: { rootPath: "/library", refreshState: "idle" },
+        directories: [],
+      });
+      await loadPromise;
+    });
+
+    expect(result.current.videos.map((video) => video.id).sort()).toEqual([
+      "/library/added-during-scan.mp4",
+      "/library/keep.mp4",
+    ]);
+    expect(result.current.videos.find((video) => video.id.endsWith("keep.mp4")))
+      .toMatchObject({ fingerprint: "cached-fp", tags: ["cached"] });
   });
 
   it("ignores a stale cache generation and keeps the normal loading flow", async () => {
@@ -582,11 +870,13 @@ describe("useElectronFolderLifecycle", () => {
     expect(window.electronAPI.readDirectory).toHaveBeenCalledWith(
       "/videos",
       true,
-      expect.stringMatching(/^directory-scan-/)
+      expect.stringMatching(/^directory-scan-/),
+      { streamRecords: true }
     );
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/videos",
-      true
+      true,
+      expect.objectContaining({ bufferInitialEvents: true })
     );
   });
 
@@ -647,7 +937,11 @@ describe("useElectronFolderLifecycle", () => {
     });
 
     expect(result.current.videos).toEqual([]);
-    expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/slow",
+      false,
+      expect.objectContaining({ bufferInitialEvents: true })
+    );
     expect(addRecentFolder).not.toHaveBeenCalled();
   });
 
@@ -791,9 +1085,11 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() =>
       expect(window.electronAPI.onDirectoryScanProgress).toHaveBeenCalledOnce()
     );
+    expect(window.electronAPI.onDirectoryScanRecords).toHaveBeenCalledOnce();
 
     unmount();
     expect(disposeDirectoryScanProgress).toHaveBeenCalledOnce();
+    expect(disposeDirectoryScanRecords).toHaveBeenCalledOnce();
   });
 
   it("keeps the newest folder when scans resolve out of order", async () => {
@@ -855,10 +1151,11 @@ describe("useElectronFolderLifecycle", () => {
     });
 
     expect(result.current.videos.map((video) => video.id)).toEqual(["second"]);
-    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledTimes(2);
     expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
       "/second",
-      false
+      false,
+      expect.objectContaining({ bufferInitialEvents: true })
     );
     expect(addRecentFolder).toHaveBeenCalledTimes(1);
     expect(addRecentFolder).toHaveBeenCalledWith("/second");
@@ -1074,7 +1371,8 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(window.electronAPI.startFolderWatch).toHaveBeenLastCalledWith(
       "/videos",
-      false
+      false,
+      expect.objectContaining({ bufferInitialEvents: true })
     );
 
     window.electronAPI.startFolderWatch.mockClear();
@@ -1087,7 +1385,8 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(window.electronAPI.startFolderWatch).toHaveBeenLastCalledWith(
       "/videos",
-      true
+      true,
+      expect.objectContaining({ bufferInitialEvents: true })
     );
   });
 });

@@ -11,20 +11,78 @@ import {
   mergeScanLoadingProgress,
 } from "../loading/scanLoadingStatus";
 import { normalizePlaybackMode } from "../../playback/playbackPolicy";
+import {
+  FOLDER_OPEN_MILESTONES,
+  beginFolderOpenMeasurement,
+  recordFolderOpenMilestone,
+} from "../performance/folderOpenMetrics";
 
 const __DEV__ = import.meta.env.MODE !== "production";
 let directoryScanSequence = 0;
+
+const preserveEnumeratedMetadata = (existing, incoming) => {
+  if (!existing) return normalizeVideoFromMain(incoming);
+  const normalized = normalizeVideoFromMain(incoming);
+  return {
+    ...existing,
+    ...normalized,
+    instanceId: existing.instanceId ?? normalized.instanceId ?? null,
+    fingerprint: existing.fingerprint ?? null,
+    tags: Array.isArray(existing.tags) ? existing.tags : [],
+    rating: existing.rating ?? null,
+    reviewState: existing.reviewState || "unreviewed",
+    dimensions: existing.dimensions ?? null,
+    aspectRatio: existing.aspectRatio ?? null,
+    enrichmentState:
+      existing.enrichmentState === "ready" ? "ready" : "enumerated",
+  };
+};
+
+const mergeReadyRecord = (existing, incoming) =>
+  normalizeVideoFromMain({ ...(existing || {}), ...(incoming || {}) });
+
+const snapshotRecordMap = (scan) => [...scan.recordsById.values()];
+
+const settleRecordSequenceWaiters = (scan, completed = false) => {
+  if (!scan?.recordSequenceWaiters?.length) return;
+  const remaining = [];
+  for (const waiter of scan.recordSequenceWaiters) {
+    if (completed || scan.lastRecordSequence >= waiter.target) {
+      clearTimeout(waiter.timeout);
+      waiter.resolve(!completed);
+    } else {
+      remaining.push(waiter);
+    }
+  }
+  scan.recordSequenceWaiters = remaining;
+};
+
+const waitForRecordSequence = (scan, target) => {
+  if (!Number.isFinite(target) || target <= scan.lastRecordSequence) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    const waiter = { target, resolve, timeout: null };
+    waiter.timeout = setTimeout(() => {
+      scan.recordSequenceWaiters = scan.recordSequenceWaiters.filter(
+        (candidate) => candidate !== waiter
+      );
+      resolve(false);
+    }, 5000);
+    scan.recordSequenceWaiters.push(waiter);
+  });
+};
 
 export function useElectronFolderLifecycle({
   selection,
   recursiveMode,
   setRecursiveMode,
   setShowFilenames,
-  renderLimitStep,
+  renderLimitStep: _renderLimitStep,
   setRenderLimitStep,
   setSortKey,
   setSortDir,
-  groupByFolders,
+  groupByFolders: _groupByFolders,
   setGroupByFolders,
   setRandomSeed,
   setPlaybackMode,
@@ -46,6 +104,7 @@ export function useElectronFolderLifecycle({
   const [directorySummaries, setDirectorySummaries] = useState([]);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [isRefreshingFolder, setIsRefreshingFolder] = useState(false);
+  const [activeScanId, setActiveScanId] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(
     EMPTY_SCAN_LOADING_STATUS
   );
@@ -126,7 +185,13 @@ export function useElectronFolderLifecycle({
     }
 
     scan.cancelled = true;
+    settleRecordSequenceWaiters(scan, true);
     activeFolderScanRef.current = null;
+    recordFolderOpenMilestone(
+      scan.id,
+      FOLDER_OPEN_MILESTONES.CANCELLED,
+      { recordCount: scan.recordsById?.size || 0 }
+    );
 
     try {
       const cancellation = window.electronAPI?.cancelDirectoryScan?.(scan.id);
@@ -181,12 +246,79 @@ export function useElectronFolderLifecycle({
         setLoadingStatus((previous) =>
           mergeScanLoadingProgress(previous, payload)
         );
+        if (payload.phase === "finalizing") {
+          recordFolderOpenMilestone(
+            scan.id,
+            FOLDER_OPEN_MILESTONES.ENRICHMENT_COMPLETE,
+            {
+              recordCount:
+                Number(payload.enrichedFiles) || scan.recordsById?.size || 0,
+            }
+          );
+        }
       }
     );
 
     return () => {
       if (typeof unsubscribe === "function") unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onDirectoryScanRecords?.(
+      (payload) => {
+        const scan = activeFolderScanRef.current;
+        if (
+          !mountedRef.current ||
+          !scan ||
+          scan.cancelled ||
+          !payload ||
+          payload.scanId !== scan.id ||
+          !Array.isArray(payload.records)
+        ) {
+          return;
+        }
+
+        const sequence = Number(payload.sequence);
+        if (Number.isFinite(sequence)) {
+          if (sequence <= scan.lastRecordSequence) return;
+          scan.lastRecordSequence = sequence;
+        }
+
+        const isEnumeration = payload.kind === "enumeration";
+        let changed = false;
+        for (const incoming of payload.records) {
+          if (!incoming?.id) continue;
+          const existing = scan.recordsById.get(incoming.id);
+          const next = isEnumeration
+            ? preserveEnumeratedMetadata(existing, incoming)
+            : mergeReadyRecord(existing, incoming);
+          scan.recordsById.set(next.id, next);
+          scan.authoritativeIds.add(next.id);
+          changed = true;
+        }
+        if (!changed || activeFolderScanRef.current !== scan) return;
+
+        if (!scan.incrementalPreviewApplied) {
+          recordFolderOpenMilestone(
+            scan.id,
+            FOLDER_OPEN_MILESTONES.FIRST_BATCH,
+            {
+              batchSize: payload.records.length,
+              recordCount: scan.recordsById.size,
+              batchKind: payload.kind || "unknown",
+            }
+          );
+        }
+        scan.incrementalPreviewApplied = true;
+        settleRecordSequenceWaiters(scan);
+        setVideos(snapshotRecordMap(scan));
+        setIsLoadingFolder(false);
+        setIsRefreshingFolder(true);
+      }
+    );
+
+    return () => unsubscribe?.();
   }, []);
 
   const handleElectronFolderSelection = useCallback(
@@ -203,13 +335,26 @@ export function useElectronFolderLifecycle({
         id: `directory-scan-${Date.now()}-${++directoryScanSequence}`,
         cancelled: false,
         lastProgressSequence: -1,
+        lastRecordSequence: -1,
+        recordsById: new Map(),
+        authoritativeIds: new Set(),
+        incrementalPreviewApplied: false,
+        lastPrioritySignature: "",
+        recordSequenceWaiters: [],
       };
       activeFolderScanRef.current = scan;
+      setActiveScanId(scan.id);
+      beginFolderOpenMeasurement({
+        scanId: scan.id,
+        rootPath: folderPath,
+        recursive: scanRecursive,
+      });
       const isCurrentScan = () =>
         mountedRef.current &&
         !scan.cancelled &&
         activeFolderScanRef.current === scan;
       let cachedPreviewApplied = false;
+      let watchStarted = false;
 
       try {
         const startedAt = Date.now();
@@ -228,8 +373,37 @@ export function useElectronFolderLifecycle({
         if (!isCurrentScan()) return;
 
         setActiveRootPath(folderPath);
+        setLibraryRoot({
+          rootPath: folderPath,
+          refreshState: "scanning",
+        });
+        setDirectorySummaries([]);
         setVideos([]);
         resetDerivedVideoState();
+
+        if (typeof api.startFolderWatch === "function") {
+          try {
+            const watchResult = await api.startFolderWatch(
+              folderPath,
+              scanRecursive,
+              {
+                scanId: scan.id,
+                bufferInitialEvents: true,
+              }
+            );
+            if (!isCurrentScan()) return;
+            watchStarted = Boolean(watchResult?.success);
+            if (!watchStarted && watchResult?.error) {
+              console.warn(
+                "Failed to start folder watcher:",
+                new Error(watchResult.error)
+              );
+            }
+          } catch (watchError) {
+            console.warn("Failed to start folder watcher:", watchError);
+          }
+        }
+        if (!isCurrentScan()) return;
 
         if (typeof api.readDirectoryCache === "function") {
           try {
@@ -246,6 +420,9 @@ export function useElectronFolderLifecycle({
             ) {
               const cachedFiles = cachedResult.files.map((file) =>
                 normalizeVideoFromMain(file)
+              );
+              scan.recordsById = new Map(
+                cachedFiles.map((file) => [file.id, file])
               );
               setVideos(cachedFiles);
               setActiveRootPath(cachedResult.root?.rootPath || folderPath);
@@ -269,6 +446,14 @@ export function useElectronFolderLifecycle({
                 updatedAt: Date.now(),
               }));
               cachedPreviewApplied = true;
+              recordFolderOpenMilestone(
+                scan.id,
+                FOLDER_OPEN_MILESTONES.CACHED_PREVIEW,
+                {
+                  recordCount: cachedFiles.length,
+                  previewSource: "sqlite",
+                }
+              );
               setIsLoadingFolder(false);
               setIsRefreshingFolder(true);
             }
@@ -292,12 +477,19 @@ export function useElectronFolderLifecycle({
         const result = await api.readDirectory(
           folderPath,
           scanRecursive,
-          scan.id
+          scan.id,
+          { streamRecords: true }
         );
         if (!isCurrentScan()) return;
 
         if (result?.cancelled) {
+          settleRecordSequenceWaiters(scan, true);
           activeFolderScanRef.current = null;
+          recordFolderOpenMilestone(
+            scan.id,
+            FOLDER_OPEN_MILESTONES.CANCELLED,
+            { recordCount: scan.recordsById.size }
+          );
           setLoadingStatus((previous) => ({
             ...previous,
             phase: "cancelled",
@@ -309,12 +501,45 @@ export function useElectronFolderLifecycle({
           return;
         }
 
+        const streamed = Boolean(result?.streamed);
+        if (streamed) {
+          const receivedCompleteStream = await waitForRecordSequence(
+            scan,
+            Number(result?.recordSequence) || 0
+          );
+          if (!isCurrentScan()) return;
+          if (!receivedCompleteStream) {
+            throw new Error("The folder record stream did not complete");
+          }
+        }
         const files = Array.isArray(result)
           ? result
           : Array.isArray(result?.files)
             ? result.files
             : [];
-        const normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
+        let normalizedFiles;
+        if (streamed) {
+          for (const id of scan.recordsById.keys()) {
+            if (!scan.authoritativeIds.has(id)) {
+              scan.recordsById.delete(id);
+            }
+          }
+          normalizedFiles = snapshotRecordMap(scan);
+        } else {
+          normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
+          scan.recordsById = new Map(
+            normalizedFiles.map((file) => [file.id, file])
+          );
+          scan.authoritativeIds = new Set(scan.recordsById.keys());
+        }
+        const completedFileCount = streamed
+          ? Number(result?.fileCount) || normalizedFiles.length
+          : normalizedFiles.length;
+        recordFolderOpenMilestone(
+          scan.id,
+          FOLDER_OPEN_MILESTONES.ENRICHMENT_COMPLETE,
+          { recordCount: completedFileCount }
+        );
         const nextRoot =
           result && !Array.isArray(result) && result.root
             ? result.root
@@ -330,11 +555,11 @@ export function useElectronFolderLifecycle({
           message: "Preparing the video grid",
           videosDiscovered: Math.max(
             previous.videosDiscovered || 0,
-            files.length
+            completedFileCount
           ),
-          prepared: files.length,
-          completed: files.length,
-          total: files.length,
+          prepared: completedFileCount,
+          completed: completedFileCount,
+          total: completedFileCount,
           updatedAt: Date.now(),
         }));
 
@@ -351,17 +576,29 @@ export function useElectronFolderLifecycle({
         }));
         setIsLoadingFolder(false);
         setIsRefreshingFolder(false);
+        recordFolderOpenMilestone(
+          scan.id,
+          FOLDER_OPEN_MILESTONES.SCAN_COMPLETE,
+          {
+            recordCount: completedFileCount,
+            streamed,
+            cachedPreview: cachedPreviewApplied,
+          }
+        );
 
         refreshTagList();
 
-        let watchResult = null;
-        try {
-          watchResult = await api.startFolderWatch?.(
-            folderPath,
-            scanRecursive
-          );
-        } catch (watchError) {
-          console.warn("Failed to start folder watcher:", watchError);
+        let watchResult = watchStarted ? { success: true } : null;
+        if (!watchStarted) {
+          try {
+            watchResult = await api.startFolderWatch?.(
+              folderPath,
+              scanRecursive,
+              { scanId: scan.id, bufferInitialEvents: false }
+            );
+          } catch (watchError) {
+            console.warn("Failed to start folder watcher:", watchError);
+          }
         }
         if (!isCurrentScan()) return;
         if (watchResult?.success && __DEV__) {
@@ -370,12 +607,22 @@ export function useElectronFolderLifecycle({
 
         addRecentFolder(folderPath);
         if (activeFolderScanRef.current === scan) {
+          settleRecordSequenceWaiters(scan, true);
           activeFolderScanRef.current = null;
         }
       } catch (error) {
         if (!isCurrentScan()) return;
         console.error("Error reading directory:", error);
+        settleRecordSequenceWaiters(scan, true);
         activeFolderScanRef.current = null;
+        recordFolderOpenMilestone(
+          scan.id,
+          FOLDER_OPEN_MILESTONES.ERROR,
+          {
+            recordCount: scan.recordsById.size,
+            error: error?.message || "The folder could not be read.",
+          }
+        );
         setLoadingStatus((previous) => ({
           ...previous,
           phase: "error",
@@ -384,11 +631,13 @@ export function useElectronFolderLifecycle({
           updatedAt: Date.now(),
         }));
         setLibraryRoot((previous) =>
-          cachedPreviewApplied && previous
+          (cachedPreviewApplied || scan.incrementalPreviewApplied) && previous
             ? { ...previous, refreshState: "error" }
             : previous
         );
-        setIsLoadingFolder(!cachedPreviewApplied);
+        setIsLoadingFolder(
+          !(cachedPreviewApplied || scan.incrementalPreviewApplied)
+        );
         setIsRefreshingFolder(false);
       }
     },
@@ -444,6 +693,7 @@ export function useElectronFolderLifecycle({
       }));
 
       setVideos(list);
+      setActiveScanId(null);
       setActiveRootPath(null);
       setLibraryRoot(null);
       setDirectorySummaries([]);
@@ -549,6 +799,7 @@ export function useElectronFolderLifecycle({
         }
       } catch {}
       setVideos([]);
+      setActiveScanId(null);
       setActiveRootPath(null);
       setLibraryRoot(null);
       setDirectorySummaries([]);
@@ -571,29 +822,55 @@ export function useElectronFolderLifecycle({
     const api = window.electronAPI;
     if (!api) return undefined;
 
-    const handleFileAdded = (videoFile) => {
+    const resolveWatcherScan = (watch) => {
+      const scan = activeFolderScanRef.current;
+      if (!scan || scan.cancelled) return null;
+      if (watch?.scanId && watch.scanId !== scan.id) return false;
+      return scan;
+    };
+
+    const handleFileAdded = (videoFile, watch) => {
       const normalized = normalizeVideoFromMain(videoFile);
-      setVideos((prev) => {
-        const existingIndex = prev.findIndex((v) => v.id === normalized.id);
-        if (existingIndex !== -1) {
-          const next = prev.slice();
-          next[existingIndex] = normalized;
-          return next;
-        }
-        return [...prev, normalized].sort((a, b) =>
-          a.basename.localeCompare(b.basename, undefined, {
-            numeric: true,
-            sensitivity: "base",
-          })
+      const scan = resolveWatcherScan(watch);
+      if (scan === false) return;
+      if (scan) {
+        scan.recordsById.set(
+          normalized.id,
+          mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
         );
-      });
+        scan.authoritativeIds.add(normalized.id);
+        setVideos(snapshotRecordMap(scan));
+      } else {
+        setVideos((prev) => {
+          const existingIndex = prev.findIndex((v) => v.id === normalized.id);
+          if (existingIndex !== -1) {
+            const next = prev.slice();
+            next[existingIndex] = normalized;
+            return next;
+          }
+          return [...prev, normalized].sort((a, b) =>
+            a.basename.localeCompare(b.basename, undefined, {
+              numeric: true,
+              sensitivity: "base",
+            })
+          );
+        });
+      }
       if (normalized.tags.length) {
         refreshTagList();
       }
     };
 
-    const handleFileRemoved = (filePath) => {
-      setVideos((prev) => prev.filter((v) => v.id !== filePath));
+    const handleFileRemoved = (filePath, watch) => {
+      const scan = resolveWatcherScan(watch);
+      if (scan === false) return;
+      if (scan) {
+        scan.recordsById.delete(filePath);
+        scan.authoritativeIds.delete(filePath);
+        setVideos(snapshotRecordMap(scan));
+      } else {
+        setVideos((prev) => prev.filter((v) => v.id !== filePath));
+      }
       if (typeof removeSelection === "function") {
         removeSelection(filePath);
       } else {
@@ -626,11 +903,22 @@ export function useElectronFolderLifecycle({
       refreshTagList();
     };
 
-    const handleFileChanged = (videoFile) => {
+    const handleFileChanged = (videoFile, watch) => {
       const normalized = normalizeVideoFromMain(videoFile);
-      setVideos((prev) =>
-        prev.map((v) => (v.id === normalized.id ? normalized : v))
-      );
+      const scan = resolveWatcherScan(watch);
+      if (scan === false) return;
+      if (scan) {
+        scan.recordsById.set(
+          normalized.id,
+          mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
+        );
+        scan.authoritativeIds.add(normalized.id);
+        setVideos(snapshotRecordMap(scan));
+      } else {
+        setVideos((prev) =>
+          prev.map((v) => (v.id === normalized.id ? normalized : v))
+        );
+      }
       if (normalized.tags.length) {
         refreshTagList();
       }
@@ -660,6 +948,26 @@ export function useElectronFolderLifecycle({
     setVisibleVideos,
   ]);
 
+  const prioritizeActiveDirectoryScan = useCallback((ids) => {
+    const scan = activeFolderScanRef.current;
+    const prioritize = window.electronAPI?.prioritizeDirectoryScan;
+    if (!scan || scan.cancelled || typeof prioritize !== "function") {
+      return false;
+    }
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(ids) ? ids : [])
+          .filter((id) => typeof id === "string" && id)
+          .slice(0, 256)
+      )
+    );
+    const signature = normalizedIds.join("\n");
+    if (signature === scan.lastPrioritySignature) return false;
+    scan.lastPrioritySignature = signature;
+    prioritize(scan.id, normalizedIds);
+    return true;
+  }, []);
+
   return {
     videos,
     setVideos,
@@ -669,11 +977,13 @@ export function useElectronFolderLifecycle({
     setDirectorySummaries,
     isLoadingFolder,
     isRefreshingFolder,
+    activeScanId,
     loadingStatus,
     loadingStage: loadingStatus.message,
     loadingProgress: getLoadingProgressPercent(loadingStatus),
     settingsLoaded,
     cancelFolderLoad,
+    prioritizeActiveDirectoryScan,
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,

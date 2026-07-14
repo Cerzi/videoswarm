@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
+import { requireSqliteSuite } from './sqliteTestGate';
 
 const require = createRequire(import.meta.url);
 
@@ -19,8 +20,15 @@ try {
   databaseLoadError = error;
 }
 
+const sqliteDescribe = requireSqliteSuite(
+  describe,
+  !database || databaseLoadError
+    ? databaseLoadError || new Error('better-sqlite3 probe failed')
+    : null
+);
+
 if (!database || databaseLoadError) {
-  describe.skip('persistent library index', () => {});
+  sqliteDescribe('persistent library index', () => {});
 } else {
   const { initMetadataStore, getMetadataStore, resetDatabase } = database;
 
@@ -71,6 +79,25 @@ if (!database || databaseLoadError) {
         'run-b/clip.mp4',
       ]);
       expect(store.getFileInstances(rootPath)).toHaveLength(2);
+    });
+
+    it('preserves caller order with bounded concurrent fingerprint preparation', async () => {
+      const entries = [
+        createFile('bounded/three.mp4', 'three'),
+        createFile('bounded/one.mp4', 'one'),
+        createFile('bounded/two.mp4', 'two'),
+      ];
+
+      const indexed = await store.indexFiles({
+        rootPath,
+        entries,
+        concurrency: 2,
+      });
+
+      expect(indexed.map((entry) => entry.filePath)).toEqual(
+        entries.map((entry) => entry.filePath)
+      );
+      expect(store.getFileInstances(rootPath)).toHaveLength(3);
     });
 
     it('reports monotonic indexing and persisted fingerprint reuse progress', async () => {

@@ -3,20 +3,26 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
+import { requireSqliteSuite } from './sqliteTestGate';
 
 const require = createRequire(import.meta.url);
 let database;
 let BetterSqlite;
+let databaseLoadError = null;
 try {
   BetterSqlite = require('better-sqlite3');
   const probe = new BetterSqlite(':memory:');
   probe.close();
   database = require('../database');
-} catch {
+} catch (error) {
   database = null;
+  databaseLoadError = error;
 }
 
-const maybeDescribe = database ? describe : describe.skip;
+const maybeDescribe = requireSqliteSuite(
+  describe,
+  database ? null : databaseLoadError || new Error('better-sqlite3 probe failed')
+);
 
 maybeDescribe('review state and saved library views', () => {
   let tempDir;

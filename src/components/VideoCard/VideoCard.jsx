@@ -683,6 +683,9 @@ const VideoCard = memo(function VideoCard({
       !permanentErrorRef.current;
     let teardown = null;
     if (enable) {
+      // This is an imperative watchdog subscription factory retained for API
+      // compatibility; despite its historical name, it is not a React hook.
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       teardown = useVideoStallWatchdog(videoRef, {
         id: videoId,
         tickMs: 2500,        // slightly slower to reduce overhead
