@@ -224,8 +224,43 @@ describe("ProxyManager", () => {
       usingProxy: true,
       proxyPath: expect.stringMatching(/\.mp4$/),
     });
+    await expect(manager.resolveProtocolProxy(cached.signature)).resolves.toEqual({
+      path: cached.proxyPath,
+      present: true,
+      signature: cached.signature,
+    });
+    await expect(manager.resolveProtocolProxy("../proxy.mp4")).resolves.toBeNull();
     expect(await fsPromises.readFile(sourcePath, "utf8")).toBe("untouched-original");
     expect((await fsPromises.stat(cached.proxyPath)).size).toBe(8);
+    await manager.shutdown();
+  });
+
+  it("refuses a protocol proxy symlink that escapes the profile cache", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sourcePath = await makeSource(root, "escape-source.mp4", "source");
+    const outsidePath = await makeSource(root, "outside.mp4", "outside");
+    const runner = new FakeRunner({ outputBytes: 8 });
+    const manager = createProxyManager({ runner, persistDelayMs: 1 });
+    await manager.init(profilePath);
+
+    const queued = await manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "window-1",
+    });
+    await waitForIdle(manager);
+    const cached = await manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "window-1",
+    });
+    expect(queued.signature).toBe(cached.signature);
+    expect(cached.status).toBe("cached");
+
+    await fsPromises.rm(cached.proxyPath);
+    await fsPromises.symlink(outsidePath, cached.proxyPath);
+
+    await expect(manager.resolveProtocolProxy(cached.signature)).resolves.toBeNull();
     await manager.shutdown();
   });
 

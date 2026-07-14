@@ -123,12 +123,50 @@ describe("folder watcher sessions", () => {
     await watcher.stop();
   });
 
-  it("captures the pre-ready baseline and replays only initialization deltas", async () => {
+  it("defers per-file counts and marks the owning root dirty for native events", async () => {
+    const onDirectoryAggregatesDirty = vi.fn();
     const createVideoFileObject = vi.fn(async (filePath) => ({ id: filePath }));
     const watcher = createFolderWatcher({
       isVideoFile: (filePath) => filePath.endsWith(".mp4"),
       createVideoFileObject,
       scanFolderForChanges: vi.fn(),
+      onDirectoryAggregatesDirty,
+      logger,
+    });
+    const context = { profileId: "profile-a", generation: 7 };
+    await watcher.start("/library", { context });
+
+    nativeWatchers[0].emit("add", "/library/added.mp4");
+    await flushPromises();
+    nativeWatchers[0].emit("unlink", "/library/removed.mp4");
+
+    expect(createVideoFileObject).toHaveBeenCalledWith(
+      "/library/added.mp4",
+      "/library",
+      expect.objectContaining({ refreshDirectoryCounts: false })
+    );
+    expect(onDirectoryAggregatesDirty).toHaveBeenCalledTimes(2);
+    expect(onDirectoryAggregatesDirty).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        rootPath: "/library",
+        profileId: "profile-a",
+        generation: 7,
+        assertActive: expect.any(Function),
+      })
+    );
+
+    await watcher.stop();
+  });
+
+  it("captures the pre-ready baseline and replays only initialization deltas", async () => {
+    const createVideoFileObject = vi.fn(async (filePath) => ({ id: filePath }));
+    const onDirectoryAggregatesDirty = vi.fn();
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject,
+      scanFolderForChanges: vi.fn(),
+      onDirectoryAggregatesDirty,
       logger,
     });
     const added = vi.fn();
@@ -192,6 +230,7 @@ describe("folder watcher sessions", () => {
       "/library/changed.mp4",
       "/library/new.mp4",
     ]);
+    expect(onDirectoryAggregatesDirty).toHaveBeenCalledTimes(3);
     expect(changed).toHaveBeenCalledWith(
       { id: "/library/changed.mp4" },
       expect.objectContaining({ sessionId: result.sessionId })
@@ -348,6 +387,62 @@ describe("folder watcher sessions", () => {
     expect(errors).not.toHaveBeenCalled();
   });
 
+  it("makes overlapping stop calls await the same native close boundary", async () => {
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges: vi.fn(),
+      logger,
+    });
+    await watcher.start("/library");
+    const closeGate = createDeferred();
+    nativeWatchers[0].close.mockImplementation(() => closeGate.promise);
+
+    const firstStop = watcher.stop();
+    let secondSettled = false;
+    const secondStop = watcher.stop().then(() => {
+      secondSettled = true;
+    });
+    await flushPromises();
+
+    expect(nativeWatchers[0].close).toHaveBeenCalledOnce();
+    expect(secondSettled).toBe(false);
+    closeGate.resolve();
+    await Promise.all([firstStop, secondStop]);
+    expect(secondSettled).toBe(true);
+  });
+
+  it("makes stop await a native close already queued by watch-limit fallback", async () => {
+    const watcher = createFolderWatcher({
+      isVideoFile: (filePath) => filePath.endsWith(".mp4"),
+      createVideoFileObject: vi.fn(),
+      scanFolderForChanges: vi.fn(),
+      logger,
+    });
+    await watcher.start("/library");
+    const closeGate = createDeferred();
+    nativeWatchers[0].close.mockImplementation(() => closeGate.promise);
+
+    nativeWatchers[0].emit(
+      "error",
+      Object.assign(new Error("watch limit"), { code: "ENOSPC" })
+    );
+    await flushPromises();
+
+    let stopSettled = false;
+    const stopping = watcher.stop().then(() => {
+      stopSettled = true;
+    });
+    await flushPromises();
+
+    expect(nativeWatchers[0].close).toHaveBeenCalledOnce();
+    expect(stopSettled).toBe(false);
+    closeGate.resolve();
+    await stopping;
+    expect(stopSettled).toBe(true);
+    expect(watcher.isPolling()).toBe(false);
+  });
+
   it("treats an invalidated owner context as stale before watcher teardown", async () => {
     const context = { profileId: "profile-a", cancelled: false };
     const createVideoFileObject = vi.fn();
@@ -385,6 +480,7 @@ describe("folder watcher sessions", () => {
       isVideoFile: (filePath) => filePath.endsWith(".mp4"),
       createVideoFileObject: vi.fn(),
       scanFolderForChanges,
+      onDirectoryAggregatesDirty: vi.fn(),
       logger,
     });
     const errors = vi.fn();
@@ -408,6 +504,8 @@ describe("folder watcher sessions", () => {
       profileId: "profile-a",
       profileGeneration: 7,
       assertActive: expect.any(Function),
+      refreshDirectoryCounts: false,
+      sendEvent: expect.any(Function),
       pollingState: {
         initialized: true,
         lastFiles: expect.any(Map),

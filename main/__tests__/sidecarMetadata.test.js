@@ -237,6 +237,53 @@ describe('bounded sidecar metadata service', () => {
     service.shutdown();
   });
 
+  it('authorizes the concrete sidecar before reading or caching it', async () => {
+    const instances = new Map();
+    addInstance(instances, 1, 'one');
+    const store = createFakeStore(instances);
+    const denial = Object.assign(new Error('outside granted root'), {
+      code: 'PATH_NOT_AUTHORIZED',
+    });
+    const authorizePath = vi.fn(async () => {
+      throw denial;
+    });
+    const service = createSidecarMetadataService();
+
+    await expect(service.getMetadata({
+      instanceId: 1,
+      metadataStore: store,
+      authorizePath,
+    })).rejects.toBe(denial);
+    expect(authorizePath).toHaveBeenCalledWith(
+      path.resolve(`${instances.get(1).absolutePath}.json`)
+    );
+    expect(store.setGenerationMetadata).not.toHaveBeenCalled();
+    service.shutdown();
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a sidecar symlink before opening its target',
+    async () => {
+      const instances = new Map();
+      addInstance(instances, 1, 'one');
+      const sidecarPath = `${instances.get(1).absolutePath}.json`;
+      const outsidePath = path.join(tempDir, 'outside.json');
+      fs.writeFileSync(outsidePath, JSON.stringify({ prompt: 'outside' }));
+      fs.rmSync(sidecarPath);
+      fs.symlinkSync(outsidePath, sidecarPath);
+      const store = createFakeStore(instances);
+      const service = createSidecarMetadataService();
+
+      await expect(service.getMetadata({
+        instanceId: 1,
+        metadataStore: store,
+        authorizePath: vi.fn(),
+      })).rejects.toMatchObject({ code: 'SIDECAR_SYMLINK_REJECTED' });
+      expect(store.setGenerationMetadata).not.toHaveBeenCalled();
+      service.shutdown();
+    }
+  );
+
   it('times out and cancels owned work without allowing an unbounded queue', async () => {
     const instances = new Map();
     addInstance(instances, 1, 'one');

@@ -36,12 +36,18 @@ function getSidecarCandidatePaths(videoPath, pathImpl = path) {
 
 async function findSidecarCandidate(
   videoPath,
-  { fsPromises = fs.promises, pathImpl = path, maxBytes = DEFAULT_LIMITS.maxBytes } = {}
+  {
+    fsPromises = fs.promises,
+    pathImpl = path,
+    maxBytes = DEFAULT_LIMITS.maxBytes,
+    authorizePath = null,
+  } = {}
 ) {
   const candidate = await openSidecarCandidate(videoPath, {
     fsPromises,
     pathImpl,
     maxBytes,
+    authorizePath,
   });
   if (!candidate) return null;
   try {
@@ -54,13 +60,34 @@ async function findSidecarCandidate(
 
 async function openSidecarCandidate(
   videoPath,
-  { fsPromises = fs.promises, pathImpl = path, maxBytes = DEFAULT_LIMITS.maxBytes } = {}
+  {
+    fsPromises = fs.promises,
+    pathImpl = path,
+    maxBytes = DEFAULT_LIMITS.maxBytes,
+    authorizePath = null,
+  } = {}
 ) {
   for (const candidatePath of getSidecarCandidatePaths(videoPath, pathImpl)) {
     let handle = null;
     let stats;
     try {
-      handle = await fsPromises.open(candidatePath, 'r');
+      if (typeof fsPromises.lstat === 'function') {
+        const linkStats = await fsPromises.lstat(candidatePath);
+        if (linkStats?.isSymbolicLink?.()) {
+          throw new SidecarMetadataError(
+            'SIDECAR_SYMLINK_REJECTED',
+            'Sidecar symbolic links are not allowed'
+          );
+        }
+      }
+      const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+      handle = await fsPromises.open(
+        candidatePath,
+        Number(fs.constants.O_RDONLY || 0) | noFollow
+      );
+      if (typeof authorizePath === 'function') {
+        await authorizePath(pathImpl.resolve(candidatePath));
+      }
       stats = await handle.stat();
     } catch (error) {
       if (handle) {
@@ -334,6 +361,7 @@ function createSidecarMetadataService(options = {}) {
       fsPromises,
       pathImpl,
       maxBytes: limits.maxBytes,
+      authorizePath: job.authorizePath,
     });
     if (!candidate) {
       job.assertActive?.();
@@ -407,6 +435,7 @@ function createSidecarMetadataService(options = {}) {
     scopeId = ownerId,
     metadataStore,
     assertActive,
+    authorizePath,
   }) => {
     if (closed) {
       return Promise.reject(
@@ -419,6 +448,9 @@ function createSidecarMetadataService(options = {}) {
     }
     if (!metadataStore?.getFileInstanceById) {
       return Promise.reject(new TypeError('A metadata store is required'));
+    }
+    if (authorizePath !== undefined && typeof authorizePath !== 'function') {
+      return Promise.reject(new TypeError('authorizePath must be a function'));
     }
     const key = `${String(scopeId)}:${normalizedInstanceId}`;
     if (inFlight.has(key)) return inFlight.get(key);
@@ -440,6 +472,7 @@ function createSidecarMetadataService(options = {}) {
       instanceId: normalizedInstanceId,
       metadataStore,
       assertActive,
+      authorizePath,
       resolve(value) {
         if (job.settled) return false;
         job.settled = true;

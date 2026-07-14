@@ -568,5 +568,52 @@ if (!database || databaseLoadError) {
         directMissingCount: 1,
       });
     });
+
+    it('defers per-file directory aggregates until an explicit root refresh', async () => {
+      const entry = createFile('deferred/clip.mp4', 'deferred');
+      await store.indexFile({
+        rootPath,
+        ...entry,
+        refreshDirectoryCounts: false,
+      });
+
+      let deferredDirectory = store
+        .getDirectorySummaries(rootPath)
+        .find((directory) => directory.relativePath === 'deferred');
+      expect(deferredDirectory).toMatchObject({
+        directPresentCount: 0,
+        directMissingCount: 0,
+      });
+
+      store.refreshDirectoryCounts(rootPath);
+      deferredDirectory = store
+        .getDirectorySummaries(rootPath)
+        .find((directory) => directory.relativePath === 'deferred');
+      expect(deferredDirectory).toMatchObject({
+        directPresentCount: 1,
+        directMissingCount: 0,
+      });
+
+      store.markFileMissing(entry.filePath, {
+        rootPath,
+        refreshDirectoryCounts: false,
+      });
+      deferredDirectory = store
+        .getDirectorySummaries(rootPath)
+        .find((directory) => directory.relativePath === 'deferred');
+      expect(deferredDirectory).toMatchObject({
+        directPresentCount: 1,
+        directMissingCount: 0,
+      });
+
+      store.refreshDirectoryCounts(rootPath);
+      deferredDirectory = store
+        .getDirectorySummaries(rootPath)
+        .find((directory) => directory.relativePath === 'deferred');
+      expect(deferredDirectory).toMatchObject({
+        directPresentCount: 0,
+        directMissingCount: 1,
+      });
+    });
   });
 }

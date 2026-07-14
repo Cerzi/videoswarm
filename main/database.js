@@ -1722,7 +1722,14 @@ function createMetadataStore(db) {
     };
   }
 
-  function markFileMissing(filePath, { rootPath, assertActive } = {}) {
+  function markFileMissing(
+    filePath,
+    {
+      rootPath,
+      assertActive,
+      refreshDirectoryCounts: shouldRefreshDirectoryCounts = true,
+    } = {}
+  ) {
     if (!filePath) return { markedMissing: 0, instances: [] };
     assertOperationActive(assertActive);
     const absolutePath = path.resolve(filePath);
@@ -1747,7 +1754,9 @@ function createMetadataStore(db) {
         affectedRootIds.add(row.root_id);
       });
     })();
-    affectedRootIds.forEach((rootId) => refreshDirectoryCountsByRootId(rootId));
+    if (shouldRefreshDirectoryCounts !== false) {
+      affectedRootIds.forEach((rootId) => refreshDirectoryCountsByRootId(rootId));
+    }
 
     const instances = rows.map((row) => {
       const updated = fileInstanceByRelativePath.get(row.root_id, row.relative_path);
@@ -1953,6 +1962,7 @@ function createMetadataStore(db) {
     rootPath,
     recursive = true,
     assertActive,
+    refreshDirectoryCounts: shouldRefreshDirectoryCounts = true,
   } = {}) {
     if (!filePath) return null;
     if (rootPath) {
@@ -1962,7 +1972,9 @@ function createMetadataStore(db) {
         recursive,
         assertActive,
       });
-      refreshDirectoryCounts(rootPath);
+      if (shouldRefreshDirectoryCounts !== false) {
+        refreshDirectoryCounts(rootPath);
+      }
       return result || null;
     }
 

@@ -471,6 +471,82 @@ describe("useElectronFolderLifecycle", () => {
     );
   });
 
+  it("preserves an indexed media source when enumeration has not enriched it yet", async () => {
+    let resolveScan;
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: [
+          {
+            id: "/library/cached.mp4",
+            instanceId: 17,
+            fullPath: "/library/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            sourceUrl: "videoswarm-media://instance/17?v=cached&g=1",
+            enrichmentState: "ready",
+          },
+        ],
+      })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/library");
+    });
+    await waitFor(() =>
+      expect(result.current.videos[0]?.sourceUrl).toContain("v=cached")
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            id: "/library/cached.mp4",
+            instanceId: null,
+            fullPath: "/library/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            sourceUrl: null,
+            enrichmentState: "enumerated",
+          },
+        ],
+      });
+    });
+
+    expect(result.current.videos[0]).toMatchObject({
+      instanceId: 17,
+      sourceUrl: "videoswarm-media://instance/17?v=cached&g=1",
+      enrichmentState: "ready",
+    });
+
+    await act(async () => {
+      resolveScan({
+        streamed: true,
+        scanId,
+        recordSequence: 1,
+        fileCount: 1,
+        root: { rootPath: "/library", refreshState: "idle" },
+        directories: [],
+      });
+      await loadPromise;
+    });
+  });
+
   it("renders streamed enumeration records before enrichment and final completion", async () => {
     let resolveScan;
     window.electronAPI.readDirectory.mockImplementationOnce(

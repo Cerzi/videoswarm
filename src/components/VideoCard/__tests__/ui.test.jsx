@@ -150,6 +150,7 @@ describe("VideoCard", () => {
       id: "lazy-thumb",
       name: "lazy-thumb.mp4",
       fullPath: "/clips/lazy-thumb.mp4",
+      sourceUrl: "videoswarm-media://instance/11?v=100-1",
       size: 100,
       dateModified: 1,
       isElectronFile: true,
@@ -336,12 +337,14 @@ describe("VideoCard", () => {
     expect(onVisibilityChange).toHaveBeenLastCalledWith("vid-1", false);
   });
 
-  it("builds proper file:// URL (no %5C)", async () => {
+  it("uses the opaque source URL granted by the main process", async () => {
     const video = {
       id: "v2",
+      instanceId: 42,
       name: "v2",
       isElectronFile: true,
       fullPath: "C:\\Users\\me\\a b#c.mp4",
+      sourceUrl: "videoswarm-media://instance/42?v=100-200",
     };
 
     render(<VideoCard {...baseProps} video={video} />);
@@ -352,10 +355,9 @@ describe("VideoCard", () => {
     const created = lastVideoEl;
     expect(created).toBeTruthy();
 
-    // src should already be set by the component
-    expect(created.src).toMatch(/^file:\/\//);
-    expect(created.src.includes("%5C")).toBe(false);
-    expect(created.src).toContain("/C:/Users/me/a%20b%23c.mp4");
+    expect(created.src).toBe("videoswarm-media://instance/42?v=100-200");
+    expect(created.crossOrigin).toBe("anonymous");
+    expect(created.src).not.toContain(video.fullPath);
 
     // Optionally finish the "load" to attach <video> into the container
     await act(async () => {
@@ -364,10 +366,45 @@ describe("VideoCard", () => {
     });
   });
 
+  it("waits for the indexed source patch before creating native media", async () => {
+    const enumeratedVideo = {
+      id: "progressive-native",
+      name: "progressive-native.mp4",
+      fullPath: "/library/progressive-native.mp4",
+      isElectronFile: true,
+      enrichmentState: "enumerated",
+    };
+    const rendered = render(
+      <VideoCard {...baseProps} video={enumeratedVideo} />
+    );
+
+    await act(async () => {});
+    expect(lastVideoEl).toBeUndefined();
+
+    rendered.rerender(
+      <VideoCard
+        {...baseProps}
+        video={{
+          ...enumeratedVideo,
+          instanceId: 44,
+          sourceUrl: "videoswarm-media://instance/44?v=100-200",
+          enrichmentState: "indexed",
+        }}
+      />
+    );
+    await act(async () => {});
+
+    expect(lastVideoEl).toBeTruthy();
+    expect(lastVideoEl.src).toBe(
+      "videoswarm-media://instance/44?v=100-200"
+    );
+  });
+
   it("uses a cached proxy source returned by the Electron playback bridge", async () => {
     const resolveSource = vi.fn().mockResolvedValue({
       status: "cached",
-      path: "/profile/proxies/proxy clip.mp4",
+      sourceUrl:
+        "videoswarm-media://proxy/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
@@ -379,8 +416,10 @@ describe("VideoCard", () => {
         {...baseProps}
         video={{
           id: "proxy-source",
+          instanceId: 51,
           name: "source.mp4",
           fullPath: "/source/source.mp4",
+          sourceUrl: "videoswarm-media://instance/51?v=1",
           isElectronFile: true,
         }}
         proxyPlaybackEnabled
@@ -394,11 +433,12 @@ describe("VideoCard", () => {
 
     expect(resolveSource).toHaveBeenCalledOnce();
     expect(resolveSource).toHaveBeenCalledWith({
-      filePath: "/source/source.mp4",
+      instanceId: 51,
+      sourceUrl: "videoswarm-media://instance/51?v=1",
       enabled: true,
     });
-    expect(lastVideoEl.src).toContain(
-      "/profile/proxies/proxy%20clip.mp4"
+    expect(lastVideoEl.src).toBe(
+      "videoswarm-media://proxy/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
     expect(lastVideoEl.dataset.proxyStatus).toBe("cached");
     expect(lastVideoEl.load).toHaveBeenCalledOnce();
@@ -422,8 +462,10 @@ describe("VideoCard", () => {
         {...baseProps}
         video={{
           id: "stale-proxy",
+          instanceId: 52,
           name: "stale.mp4",
           fullPath: "/source/stale.mp4",
+          sourceUrl: "videoswarm-media://instance/52?v=1",
           isElectronFile: true,
         }}
         proxyPlaybackEnabled
@@ -439,7 +481,8 @@ describe("VideoCard", () => {
     await act(async () => {
       resolveProxy({
         status: "cached",
-        path: "/profile/proxies/stale-proxy.mp4",
+        sourceUrl:
+          "videoswarm-media://proxy/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -490,8 +533,10 @@ describe("VideoCard", () => {
         {...baseProps}
         video={{
           id: "telemetry-card",
+          instanceId: 45,
           name: "telemetry-card.mp4",
           fullPath: "/telemetry-card.mp4",
+          sourceUrl: "videoswarm-media://instance/45?v=1",
           isElectronFile: true,
         }}
         registerMediaElement={registerMediaElement}
@@ -526,6 +571,7 @@ describe("VideoCard", () => {
         name: "v3",
         isElectronFile: true,
         fullPath: "C:\\Users\\me\\visible-only.mp4",
+        sourceUrl: "videoswarm-media://instance/43?v=1",
       };
 
       render(<VideoCard {...baseProps} video={video} isVisible={true} />);
@@ -535,8 +581,7 @@ describe("VideoCard", () => {
 
       // The backup effect should have triggered a load
       expect(lastVideoEl).toBeTruthy();
-      expect(lastVideoEl.src).toMatch(/^file:\/\//);
-      expect(lastVideoEl.src.includes("%5C")).toBe(false);
+      expect(lastVideoEl.src).toBe("videoswarm-media://instance/43?v=1");
     } finally {
       // @ts-ignore
       global.IntersectionObserver = PrevIO;

@@ -1,4 +1,5 @@
 const path = require("path");
+const { createMediaInstanceUrl } = require("./media-protocol");
 
 function formatFileSize(bytes) {
   if (bytes === 0) return "0 Bytes";
@@ -11,7 +12,7 @@ function formatFileSize(bytes) {
   return `${parseFloat((bytes / Math.pow(k, index)).toFixed(2))} ${sizes[index]}`;
 }
 
-function createCachedVideoFileObject(record, rootPath) {
+function createCachedVideoFileObject(record, rootPath, options = {}) {
   if (!record?.absolutePath) return null;
   const filePath = path.resolve(record.absolutePath);
   const fileName = path.basename(filePath);
@@ -33,9 +34,16 @@ function createCachedVideoFileObject(record, rootPath) {
   let dirname = path.relative(rootPath, path.dirname(filePath));
   if (dirname === ".") dirname = "";
 
+  const instanceId = Number(record.instanceId) || null;
   return {
     id: filePath,
-    instanceId: Number(record.instanceId) || null,
+    instanceId,
+    sourceUrl: instanceId
+      ? createMediaInstanceUrl(instanceId, {
+          version: `${size}-${modifiedMs}`,
+          generation: options.generation,
+        })
+      : null,
     name: fileName,
     fullPath: filePath,
     relativePath: path.relative(rootPath, filePath),
@@ -63,11 +71,16 @@ function createCachedVideoFileObject(record, rootPath) {
   };
 }
 
-function createCachedLibraryResponse(snapshot, rootPath, scanId = null) {
+function createCachedLibraryResponse(
+  snapshot,
+  rootPath,
+  scanId = null,
+  options = {}
+) {
   if (!snapshot?.root || !Array.isArray(snapshot.records)) return null;
   return {
     files: snapshot.records
-      .map((record) => createCachedVideoFileObject(record, rootPath))
+      .map((record) => createCachedVideoFileObject(record, rootPath, options))
       .filter(Boolean)
       .sort((left, right) => left.name.localeCompare(right.name)),
     root: { ...snapshot.root, refreshState: "refreshing" },

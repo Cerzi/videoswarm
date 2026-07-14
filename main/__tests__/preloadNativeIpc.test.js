@@ -111,6 +111,17 @@ describe("preload native-work bridge", () => {
     expect(ipcRenderer.sendSync).not.toHaveBeenCalled();
   });
 
+  it("authorizes an indexed library root on demand", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.library.authorizeRoot("/library/root-300");
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "library:authorize-root",
+      { rootPath: "/library/root-300" }
+    );
+  });
+
   it("exposes disposable streamed scan records and viewport priorities", () => {
     const { api, ipcRenderer } = loadPreload();
     const callback = vi.fn();
@@ -153,6 +164,69 @@ describe("preload native-work bridge", () => {
     handler({}, { videoFile, watch });
 
     expect(added).toHaveBeenCalledWith(videoFile, watch);
+  });
+
+  it("only forwards the bounded opaque playback source contract", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.playback.resolveSource({
+      instanceId: 73,
+      sourceUrl: "videoswarm-media://instance/73?v=100-200",
+      filePath: "/private/library/clip.mp4",
+      enabled: 1,
+      ignored: "renderer-controlled",
+    });
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "playback:resolve-source",
+      {
+        instanceId: 73,
+        sourceUrl: "videoswarm-media://instance/73?v=100-200",
+        enabled: true,
+      }
+    );
+  });
+
+  it("exposes disposable settings events", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const callback = vi.fn();
+    const dispose = api.onSettingsLoaded(callback);
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "settings-loaded"
+    )[1];
+
+    handler({}, { recursiveMode: true });
+    dispose();
+
+    expect(callback).toHaveBeenCalledWith({ recursiveMode: true });
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "settings-loaded",
+      handler
+    );
+  });
+
+  it("binds destructive trash work to its main-process confirmation token", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    ipcRenderer.invoke.mockResolvedValueOnce({
+      confirmed: true,
+      token: "a".repeat(64),
+    });
+
+    await expect(
+      api.confirmMoveToTrash({ paths: ["/clip.mp4"], sampleName: "clip.mp4" })
+    ).resolves.toMatchObject({ confirmed: true, token: "a".repeat(64) });
+    await api.bulkMoveToTrash(["/clip.mp4"], "a".repeat(64));
+
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      1,
+      "confirm-move-to-trash",
+      { paths: ["/clip.mp4"], sampleName: "clip.mp4" }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      "bulk-move-to-trash",
+      { paths: ["/clip.mp4"], confirmationToken: "a".repeat(64) }
+    );
   });
 
 });

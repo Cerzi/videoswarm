@@ -36,6 +36,7 @@ function createFolderWatcher({
   isVideoFile,
   createVideoFileObject,
   scanFolderForChanges,   // used for polling fallback
+  onDirectoryAggregatesDirty = null,
   logger = console,
   depth = 10,             // keep your previous recursion limit; set to undefined for unlimited
   maxChangeDebouncers = DEFAULT_WATCHER_LIMITS.maxChangeDebouncers,
@@ -54,6 +55,14 @@ function createFolderWatcher({
   }
   if (typeof scanFolderForChanges !== "function") {
     throw new Error("createFolderWatcher: scanFolderForChanges(fn) is required");
+  }
+  if (
+    onDirectoryAggregatesDirty !== null &&
+    typeof onDirectoryAggregatesDirty !== "function"
+  ) {
+    throw new Error(
+      "createFolderWatcher: onDirectoryAggregatesDirty must be a function"
+    );
   }
 
   const events = new EventEmitter();
@@ -100,6 +109,7 @@ function createFolderWatcher({
   let activeSession = null;
   let sessionSequence = 0;
   let lifecycleGeneration = 0;
+  let nativeCloseTail = Promise.resolve();
   const changeTimeouts = new Map(); // debounce timers per file
   const pendingEnrichments = new Map(); // one coalesced job per path
   const activeEnrichments = new Map(); // at most one current-session job per path
@@ -217,6 +227,13 @@ function createFolderWatcher({
   function helperContext(session, item = null) {
     return {
       ...session.context,
+      // Native watcher bursts must not recalculate the full directory tree for
+      // every file when a deferred aggregate owner is installed. The
+      // main-process record creator forwards this flag to the metadata store;
+      // onDirectoryAggregatesDirty schedules the one refresh for the root.
+      ...(onDirectoryAggregatesDirty
+        ? { refreshDirectoryCounts: false }
+        : {}),
       ...(item?.abortController
         ? { signal: item.abortController.signal }
         : {}),
@@ -227,14 +244,33 @@ function createFolderWatcher({
     };
   }
 
+  function markDirectoryAggregatesDirty(session) {
+    if (!onDirectoryAggregatesDirty || !isSessionActive(session)) return false;
+    try {
+      return onDirectoryAggregatesDirty({
+        ...session.context,
+        rootPath: session.folderPath,
+        assertActive: () => assertSessionActive(session),
+      }) !== false;
+    } catch (error) {
+      if (!isSessionActive(session) || isStaleSessionError(error)) return false;
+      logger.warn("[watch] Failed to schedule directory aggregate refresh:", error);
+      return false;
+    }
+  }
+
   function pollingOptions(session) {
     return {
       recursive: session.recursive,
       ...session.context,
       assertActive: () => assertSessionActive(session),
       pollingState: session.pollingState,
+      ...(onDirectoryAggregatesDirty
+        ? { refreshDirectoryCounts: false }
+        : {}),
       sendEvent: (channel, payload) => {
         assertSessionActive(session);
+        markDirectoryAggregatesDirty(session);
         if (channel === "file-added") {
           events.emit("added", payload, eventMetadata(session));
         } else if (channel === "file-changed") {
@@ -370,10 +406,18 @@ function createFolderWatcher({
     }
   }
 
+  function queueNativeWatcherClose(watcherToClose) {
+    const operation = nativeCloseTail.then(() =>
+      closeNativeWatcher(watcherToClose)
+    );
+    nativeCloseTail = operation;
+    return operation;
+  }
+
   async function stop() {
     lifecycleGeneration += 1;
     const watcherToClose = detachActiveResources();
-    await closeNativeWatcher(watcherToClose);
+    await queueNativeWatcherClose(watcherToClose);
   }
 
   async function dispose() {
@@ -587,6 +631,7 @@ function createFolderWatcher({
         replayed += 1;
       } else if (outcome.wasPresent) {
         events.emit("removed", filePath, eventMetadata(session));
+        markDirectoryAggregatesDirty(session);
         removed += 1;
       }
     }
@@ -700,6 +745,7 @@ function createFolderWatcher({
       if (outcome.error) throw outcome.error;
       assertEnrichmentActive(item);
       if (outcome.videoFile) {
+        markDirectoryAggregatesDirty(session);
         events.emit(eventName, outcome.videoFile, eventMetadata(session));
       }
     } catch (error) {
@@ -953,7 +999,7 @@ function createFolderWatcher({
 
     const startGeneration = ++lifecycleGeneration;
     const watcherToClose = detachActiveResources();
-    await closeNativeWatcher(watcherToClose);
+    await queueNativeWatcherClose(watcherToClose);
 
     // A later start/stop superseded this request while the old watcher closed.
     if (startGeneration !== lifecycleGeneration) {
@@ -1054,6 +1100,7 @@ function createFolderWatcher({
       }
       logger.log("Video file removed:", filePath);
       events.emit("removed", filePath, eventMetadata(session));
+      markDirectoryAggregatesDirty(session);
       drainEnrichmentQueue();
     });
 
@@ -1098,7 +1145,10 @@ function createFolderWatcher({
         clearChangeDebouncers();
         clearPendingEnrichments();
         cancelActiveEnrichmentsForSession(session);
-        await closeNativeWatcher(nativeWatcher);
+        // Join the same close tail used by start/stop. Otherwise a concurrent
+        // stop can observe the detached watcher and resolve while chokidar is
+        // still closing this fallback instance.
+        await queueNativeWatcherClose(nativeWatcher);
         if (!isSessionActive(session)) return;
 
         startPollingMode(session);

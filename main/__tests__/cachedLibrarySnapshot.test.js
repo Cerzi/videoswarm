@@ -30,7 +30,8 @@ describe("cached library snapshot", () => {
         ],
       },
       rootPath,
-      "scan-11"
+      "scan-11",
+      { generation: 9 }
     );
 
     expect(response).toMatchObject({
@@ -53,6 +54,9 @@ describe("cached library snapshot", () => {
         },
       ],
     });
+    expect(response.files[0].sourceUrl).toBe(
+      "videoswarm-media://instance/11?v=2048-2000&g=9"
+    );
   });
 
   it("returns no preview for an unindexed root", () => {

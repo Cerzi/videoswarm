@@ -1790,20 +1790,33 @@ function App() {
   const handleOpenLibraryRoot = useCallback(
     async (rootPath) => {
       if (!rootPath) return;
-      captureFolderViewState();
-      const saved = folderViewStateRef.current.getLocation(rootPath);
-      setFolderLocation({
-        rootPath,
-        directory: saved?.directory || "",
-        scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
-      });
-      setExpandedFolderPaths((previous) =>
-        expandFolderAncestors(previous, saved?.directory || "")
-      );
-      restoredFolderViewKeyRef.current = null;
-      await handleElectronFolderSelection(rootPath);
+      try {
+        const authorization =
+          await window.electronAPI?.library?.authorizeRoot?.(rootPath);
+        if (authorization?.success === false) {
+          throw new Error(
+            authorization.error || "Could not authorize library root"
+          );
+        }
+        const authorizedRootPath = authorization?.rootPath || rootPath;
+        captureFolderViewState();
+        const saved = folderViewStateRef.current.getLocation(authorizedRootPath);
+        setFolderLocation({
+          rootPath: authorizedRootPath,
+          directory: saved?.directory || "",
+          scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
+        });
+        setExpandedFolderPaths((previous) =>
+          expandFolderAncestors(previous, saved?.directory || "")
+        );
+        restoredFolderViewKeyRef.current = null;
+        await handleElectronFolderSelection(authorizedRootPath);
+      } catch (error) {
+        console.error("Failed to open library root:", error);
+        notify("Could not open that library root", "error");
+      }
     },
-    [captureFolderViewState, handleElectronFolderSelection]
+    [captureFolderViewState, handleElectronFolderSelection, notify]
   );
 
   const handleToggleLibraryPin = useCallback(

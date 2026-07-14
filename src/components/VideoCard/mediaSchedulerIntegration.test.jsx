@@ -29,30 +29,35 @@ const schedulerProps = (scheduler) => ({
   releaseMediaSlot: (lease) => scheduler.releaseMedia(lease),
 });
 
-const cardProps = (scheduler, overrides = {}) => ({
-  selected: false,
-  video: {
-    id: "video",
-    name: "video.mp4",
-    fullPath: "/video.mp4",
-    isElectronFile: true,
-  },
-  isPlaying: false,
-  isLoaded: false,
-  isLoading: false,
-  isVisible: true,
-  showFilenames: false,
-  scrollRootRef: makeScrollRootRef(),
-  scheduleInit: (start) => start(),
-  onStartLoading: vi.fn(),
-  onStopLoading: vi.fn(),
-  onVideoLoad: vi.fn(),
-  onVideoPlay: vi.fn(() => true),
-  onVideoPause: vi.fn(() => true),
-  onPlayError: vi.fn(() => true),
-  ...schedulerProps(scheduler),
-  ...overrides,
-});
+const cardProps = (scheduler, overrides = {}) => {
+  const { video: videoOverride = {}, ...otherOverrides } = overrides;
+  return {
+    selected: false,
+    video: {
+      id: "video",
+      name: "video.mp4",
+      fullPath: "/video.mp4",
+      isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/1?v=scheduler-test",
+      ...videoOverride,
+    },
+    isPlaying: false,
+    isLoaded: false,
+    isLoading: false,
+    isVisible: true,
+    showFilenames: false,
+    scrollRootRef: makeScrollRootRef(),
+    scheduleInit: (start) => start(),
+    onStartLoading: vi.fn(),
+    onStopLoading: vi.fn(),
+    onVideoLoad: vi.fn(),
+    onVideoPlay: vi.fn(() => true),
+    onVideoPause: vi.fn(() => true),
+    onPlayError: vi.fn(() => true),
+    ...schedulerProps(scheduler),
+    ...otherOverrides,
+  };
+};
 
 describe("VideoCard scheduler integration", () => {
   let mediaElements;
@@ -281,6 +286,7 @@ describe("VideoCard scheduler integration", () => {
       name: "old.mp4",
       fullPath: "/old.mp4",
       isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/2?v=old",
       size: 1,
       dateModified: 1,
     };
@@ -296,6 +302,7 @@ describe("VideoCard scheduler integration", () => {
           ...oldVideo,
           name: "new.mp4",
           fullPath: "/new.mp4",
+          sourceUrl: "videoswarm-media://instance/2?v=new",
           size: 2,
           dateModified: 2,
         }}
@@ -310,8 +317,47 @@ describe("VideoCard scheduler integration", () => {
     });
 
     expect(mediaElements).toHaveLength(1);
-    expect(mediaElements[0].src).toContain("/new.mp4");
-    expect(mediaElements[0].src).not.toContain("/old.mp4");
+    expect(mediaElements[0].src).toContain("v=new");
+    expect(mediaElements[0].src).not.toContain("v=old");
+  });
+
+  it("invalidates a same-file element when only its opaque source changes", async () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 2,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    const initialVideo = {
+      id: "same-source",
+      name: "same.mp4",
+      fullPath: "/same.mp4",
+      isElectronFile: true,
+      instanceId: 9,
+      sourceUrl: "videoswarm-media://instance/9?v=old&g=1",
+      size: 100,
+      dateModified: 10,
+    };
+    const props = cardProps(scheduler, { video: initialVideo });
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+    expect(mediaElements).toHaveLength(1);
+    const oldElement = mediaElements[0];
+    expect(oldElement.src).toContain("v=old");
+
+    rendered.rerender(
+      <VideoCard
+        {...props}
+        video={{
+          ...initialVideo,
+          sourceUrl: "videoswarm-media://instance/9?v=new&g=1",
+        }}
+      />
+    );
+    await act(async () => {});
+
+    expect(oldElement.getAttribute("src")).toBeNull();
+    expect(mediaElements).toHaveLength(2);
+    expect(mediaElements[1].src).toContain("v=new");
   });
 
   it("pauses physically before acknowledging a decoder handoff", async () => {

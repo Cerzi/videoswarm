@@ -4,7 +4,7 @@
  * No React here. Easy to unit test.
  */
 
-import { toFileURL } from "../../components/VideoCard/videoDom";
+import { getOpaqueMediaSource, getWebMediaSource } from "../../utils/mediaSource";
 
 export const ActionIds = {
     OPEN_EXTERNAL: 'open-external',
@@ -107,16 +107,15 @@ const findExistingVideoElement = (video) => {
   }
 };
 
-const resolveVideoSource = (video) => {
+export const resolveVideoSource = (video) => {
   if (!video) return {};
-  if (video.isElectronFile && video.fullPath) {
-    return { src: toFileURL(video.fullPath) };
+  const opaqueSource = getOpaqueMediaSource(video);
+  if (opaqueSource) {
+    return { src: opaqueSource };
   }
-  if (video.fullPath) {
-    return { src: toFileURL(video.fullPath) };
-  }
-  if (video.blobUrl) {
-    return { src: video.blobUrl };
+  const webSource = getWebMediaSource(video);
+  if (webSource) {
+    return { src: webSource };
   }
   if (video.file) {
     const objectUrl = URL.createObjectURL(video.file);
@@ -383,7 +382,11 @@ export const actionRegistry = {
 
         const sampleName = videos[0]?.name || '';
         const confirmResult = confirmMoveToTrash
-          ? await confirmMoveToTrash({ count: candidates.length, sampleName })
+          ? await confirmMoveToTrash({
+              paths: candidates,
+              count: candidates.length,
+              sampleName,
+            })
           : (() => {
               const fn = typeof confirm === 'function' ? confirm : window?.confirm;
               const message = candidates.length === 1
@@ -403,66 +406,85 @@ export const actionRegistry = {
         beginMediaMutation?.(candidates);
         let moved = new Set();
         try {
-        // 1) Pre-release (awaited)
-        try { await releaseVideoHandlesForAsync?.(candidates); } catch {}
-      
-        // 2) First bulk attempt
-        let result = await electronAPI?.bulkMoveToTrash?.(candidates);
-        const failed = Array.isArray(result?.failed) ? result.failed.slice() : [];
-      
-        // 3) Targeted retries on transient errors (per-file; bounded)
-        const retryList = failed
-          .filter(f => isTransient(String(f.error || '').toLowerCase()))
-          .map(f => f.path)
-          .filter(Boolean);
-      
-        const finalFailed = failed.filter(f => !retryList.includes(f.path));
-        for (const p of retryList) {
-          let ok = false;
-          for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
+          // 1) Pre-release (awaited)
+          try { await releaseVideoHandlesForAsync?.(candidates); } catch {}
+
+          // 2) First bulk attempt consumes the one-shot confirmation grant.
+          let result = await electronAPI?.bulkMoveToTrash?.(
+            candidates,
+            confirmResult?.confirmationToken
+          );
+          for (const path of result?.moved || []) moved.add(path);
+          const initialFailures = Array.isArray(result?.failed)
+            ? result.failed.slice()
+            : [];
+          let retryPaths = initialFailures
+            .filter((failure) =>
+              isTransient(String(failure.error || '').toLowerCase())
+            )
+            .map((failure) => failure.path)
+            .filter(Boolean);
+          let retryToken = result?.retryConfirmationToken || null;
+          const retrySet = new Set(retryPaths);
+          const finalFailed = initialFailures.filter(
+            (failure) => !retrySet.has(failure.path)
+          );
+          if (!retryToken) {
+            finalFailed.push(
+              ...initialFailures.filter((failure) => retrySet.has(failure.path))
+            );
+            retryPaths = [];
+          }
+
+          // 3) Retry the remaining confirmed set as a batch. Each native
+          // response returns a new one-shot token only for unchanged failures.
+          for (let attempt = 1; attempt <= 2 && retryPaths.length; attempt++) {
             await sleep(100 * attempt);
-            try { await releaseVideoHandlesForAsync?.([p]); } catch {}
-            const res = await electronAPI?.bulkMoveToTrash?.([p]);
-            if (res?.moved?.includes?.(p)) ok = true;
-            else {
-              const err = res?.failed?.find?.(f => f.path === p)?.error;
-              if (!isTransient(String(err || '')) || attempt === 2) {
-                finalFailed.push({ path: p, error: err || 'Unknown error' });
-              }
-            }
+            try { await releaseVideoHandlesForAsync?.(retryPaths); } catch {}
+            result = await electronAPI?.bulkMoveToTrash?.(retryPaths, retryToken);
+            for (const path of result?.moved || []) moved.add(path);
+            const failures = Array.isArray(result?.failed)
+              ? result.failed.slice()
+              : retryPaths.map((path) => ({ path, error: 'Unknown error' }));
+            const canRetryAgain = attempt < 2 && result?.retryConfirmationToken;
+            const nextRetry = canRetryAgain
+              ? failures.filter((failure) =>
+                  isTransient(String(failure.error || '').toLowerCase())
+                )
+              : [];
+            const nextRetrySet = new Set(nextRetry.map((failure) => failure.path));
+            finalFailed.push(
+              ...failures.filter((failure) => !nextRetrySet.has(failure.path))
+            );
+            retryPaths = nextRetry.map((failure) => failure.path).filter(Boolean);
+            retryToken = result?.retryConfirmationToken || null;
           }
-          if (ok) {
-            result.moved = [...(result.moved || []), p];
+
+          // 4) Optimistically update the model NOW (so cards unmount immediately)
+          if (moved.size) onItemsRemoved?.(moved);
+
+          // 5) Final release pass for the confirmed moved files
+          if (moved.size) {
+            try { await releaseVideoHandlesForAsync?.(Array.from(moved)); } catch {}
           }
-        }
-      
-        moved = new Set(result?.moved || []);
-      
-        // 4) Optimistically update the model NOW (so cards unmount immediately)
-        if (moved.size) onItemsRemoved?.(moved);
-      
-        // 5) Final release pass for the confirmed moved files
-        if (moved.size) {
-          try { await releaseVideoHandlesForAsync?.(Array.from(moved)); } catch {}
-        }
 
-        // 6) Notify
-        const movedCount = moved.size;
-        const failedCount = finalFailed.length;
-        if (movedCount && !failedCount) {
-          notify(`Moved ${movedCount} item(s) to Recycle Bin`, 'success');
-        } else if (movedCount && failedCount) {
-          notify(`Moved ${movedCount}, ${failedCount} failed (in use)`, 'warning');
-          console.warn('[trash] failed entries:', finalFailed);
-        } else {
-          notify('Failed to move items to Recycle Bin', 'error');
-          console.warn('[trash] bulk failure:', result);
-        }
+          // 6) Notify
+          const movedCount = moved.size;
+          const failedCount = finalFailed.length;
+          if (movedCount && !failedCount) {
+            notify(`Moved ${movedCount} item(s) to Recycle Bin`, 'success');
+          } else if (movedCount && failedCount) {
+            notify(`Moved ${movedCount}, ${failedCount} failed (in use)`, 'warning');
+            console.warn('[trash] failed entries:', finalFailed);
+          } else {
+            notify('Failed to move items to Recycle Bin', 'error');
+            console.warn('[trash] bulk failure:', result);
+          }
 
-        postConfirmRecovery?.({
-          cancelled: false,
-          lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
-        });
+          postConfirmRecovery?.({
+            cancelled: false,
+            lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
+          });
         } finally {
           endMediaMutation?.(candidates, moved);
         }

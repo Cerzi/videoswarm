@@ -1,9 +1,14 @@
 // src/components/VideoCard/VideoCard.jsx
 import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from "react";
 import { classifyMediaError } from "./mediaError";
-import { toFileURL, hardDetach } from "./videoDom";
+import { hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
+import {
+  getOpaqueMediaSource,
+  getWebMediaSource,
+  normalizeOpaqueMediaSource,
+} from "../../utils/mediaSource";
 import {
   REVIEW_STATES,
   normalizeReviewState,
@@ -159,9 +164,15 @@ const VideoCard = memo(function VideoCard({
 
   // local mirrors (parent is source of truth)
   const videoId = video.id || video.fullPath || video.name;
-  const mediaIdentity = `${videoId}::${video?.fullPath || ""}::${
-    video?.size ?? ""
-  }::${video?.dateModified ?? ""}`;
+  const modifiedIdentity =
+    video?.dateModified instanceof Date
+      ? video.dateModified.getTime()
+      : (video?.dateModified ?? "");
+  const mediaIdentity = `${videoId}::${video?.instanceId ?? ""}::${
+    video?.fullPath || ""
+  }::${video?.size ?? ""}::${modifiedIdentity}::${
+    getOpaqueMediaSource(video) || ""
+  }`;
   const videoIdRef = useRef(videoId);
   const mediaIdentityRef = useRef({ signature: mediaIdentity, videoId });
   const onHoverAudioEndRef = useRef(onHoverAudioEnd);
@@ -744,6 +755,9 @@ const VideoCard = memo(function VideoCard({
   // create & load <video>
   const loadVideo = useCallback((options = {}) => {
     if (!mountedRef.current || workSuspended) return;
+    // Enumeration records arrive before the database has granted an instance
+    // URL. Wait for the indexed patch instead of creating a doomed media node.
+    if (video.isElectronFile && !getOpaqueMediaSource(video)) return;
     if (
       loading ||
       loadRequestedRef.current ||
@@ -813,12 +827,16 @@ const VideoCard = memo(function VideoCard({
         el.muted = true;
         el.loop = true;
         el.playsInline = true;
+        el.crossOrigin = "anonymous";
         // Admission is already bounded. `metadata` can stop before loadeddata and
         // strand a loader forever, so every granted attempt uses one clear ready
         // transition and a bounded timeout.
         el.preload = "auto";
         el.className = "video-element";
         el.dataset.videoId = videoId;
+        if (video.isElectronFile && fullPath) {
+          el.dataset.filePath = fullPath;
+        }
         el.style.width = "100%";
         el.style.height = "100%";
         el.style.objectFit = "cover";
@@ -1011,29 +1029,36 @@ const VideoCard = memo(function VideoCard({
 
         const assignSource = async () => {
           try {
-            if (video.isElectronFile && video.fullPath) {
-              let selectedPath = video.fullPath;
+            const opaqueSource = getOpaqueMediaSource(video);
+            const webSource = getWebMediaSource(video);
+            if (video.isElectronFile) {
+              if (!opaqueSource) {
+                throw new Error("No authorized media source");
+              }
+              let selectedSourceUrl = opaqueSource;
               let proxyStatus = "disabled";
               if (
                 proxyPlaybackEnabled &&
                 window.electronAPI?.playback?.resolveSource
               ) {
                 const resolved = await window.electronAPI.playback.resolveSource({
-                  filePath: video.fullPath,
+                  instanceId: video.instanceId,
+                  sourceUrl: opaqueSource,
                   enabled: true,
                 });
                 if (!isCurrentAttempt()) return;
-                selectedPath = resolved?.path || resolved?.sourcePath || selectedPath;
+                selectedSourceUrl =
+                  normalizeOpaqueMediaSource(resolved?.sourceUrl) || opaqueSource;
                 proxyStatus = resolved?.status || "unavailable";
               }
               el.dataset.proxyStatus = proxyStatus;
-              el.src = toFileURL(selectedPath);
+              el.src = selectedSourceUrl;
             } else if (video.file) {
               const ownedUrl = URL.createObjectURL(video.file);
               ownedSourceUrlRef.current = { element: el, url: ownedUrl };
               el.src = ownedUrl;
-            } else if (video.fullPath || video.relativePath) {
-              el.src = video.fullPath || video.relativePath;
+            } else if (webSource) {
+              el.src = webSource;
             } else {
               throw new Error("No valid video source");
             }
