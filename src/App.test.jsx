@@ -5,6 +5,7 @@ import { render, cleanup, fireEvent, screen, act, waitFor } from "@testing-libra
 const selectionMock = {
   selected: new Set(),
   size: 0,
+  anchorId: null,
   setSelected: vi.fn(),
   pruneTo: vi.fn(),
   clear: vi.fn(),
@@ -225,6 +226,7 @@ const headerBarSpy = vi.fn();
 const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
 const metadataPanelSpy = vi.fn();
+const contextMenuSpy = vi.fn();
 const setLibraryRootPinnedMock = vi.fn();
 const useLibraryCatalogMock = vi.fn((args = {}) => ({
   pinnedRoots: [],
@@ -253,7 +255,13 @@ vi.mock("./components/VideoCard/VideoCard", async () => {
     __esModule: true,
     default: ReactModule.default.memo((props) => {
       videoCardSpy(props);
-      return <div data-testid="video-card" data-video-id={props.video.id} />;
+      return (
+        <div
+          className="video-item"
+          data-testid="video-card"
+          data-video-id={props.video.id}
+        />
+      );
     }),
   };
 });
@@ -263,7 +271,10 @@ vi.mock("./components/FullScreenModal", () => ({
 }));
 vi.mock("./components/ContextMenu", () => ({
   __esModule: true,
-  default: () => null,
+  default: (props) => {
+    contextMenuSpy(props);
+    return null;
+  },
 }));
 vi.mock("./components/RecentFolders", () => ({
   __esModule: true,
@@ -486,6 +497,12 @@ afterEach(() => {
   delete window.electronAPI;
   selectionMock.selected = new Set();
   selectionMock.size = 0;
+  selectionMock.anchorId = null;
+  Object.assign(contextMenuReturn.contextMenu, {
+    visible: false,
+    position: { x: 0, y: 0 },
+    contextId: null,
+  });
 });
 
 describe("App hook composition", () => {
@@ -842,6 +859,157 @@ describe("App hook composition", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "/models/wan/empty-run"
     );
+  });
+
+  test("keeps floating details selection-scoped without stealing passive focus", async () => {
+    const videos = [
+      { id: "video-a", name: "a.mp4", fingerprint: "fingerprint-a" },
+      { id: "video-b", name: "b.mp4", fingerprint: "fingerprint-b" },
+    ];
+    selectionMock.selected = new Set(["video-a"]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = "video-a";
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({
+        id: video.id,
+        item: video,
+        style: {},
+      })),
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+
+    await waitFor(() => {
+      expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen).toBe(true);
+    });
+    let panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
+    expect(panelProps).toMatchObject({
+      selectionKey: '["video-a"]',
+      anchorId: "video-a",
+      focusToken: 0,
+    });
+    expect(panelProps.resolveAnchorRect("video-a")).toBeTruthy();
+    const contentRegion = document.querySelector(".content-region");
+    const viewport = document.querySelector(".content-region__viewport");
+    viewport.scrollTop = 240;
+    expect(contentRegion.className).toBe("content-region");
+    expect(viewport.style.paddingBottom).toBe("");
+
+    act(() => panelProps.onClose());
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen).toBe(false);
+    expect(selectionMock.selected).toEqual(new Set(["video-a"]));
+    expect(viewport.scrollTop).toBe(240);
+
+    const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
+    act(() => hotkeyOptions.onOpenDetails());
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen).toBe(true);
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0].focusToken).toBe(0);
+
+    act(() => {
+      selectionMock.selected = new Set(["video-b"]);
+      selectionMock.size = 1;
+      selectionMock.anchorId = "video-b";
+      rendered.rerender(<App />);
+    });
+    await waitFor(() => {
+      expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+        isOpen: true,
+        selectionKey: '["video-b"]',
+        anchorId: "video-b",
+        selectedVideos: [videos[1]],
+      });
+    });
+
+    act(() => {
+      selectionMock.selected = new Set();
+      selectionMock.size = 0;
+      selectionMock.anchorId = null;
+      rendered.rerender(<App />);
+    });
+    await waitFor(() => {
+      expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen).toBe(false);
+    });
+  });
+
+  test("opens details opposite the fitted context menu and adopts its single target", async () => {
+    const videos = [
+      { id: "video-a", name: "a.mp4", fingerprint: "fingerprint-a" },
+      { id: "video-b", name: "b.mp4", fingerprint: "fingerprint-b" },
+    ];
+    selectionMock.selected = new Set(["video-a"]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = "video-a";
+    Object.assign(contextMenuReturn.contextMenu, {
+      visible: true,
+      position: { x: 900, y: 160 },
+      contextId: "video-b",
+    });
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({ id: video.id, item: video, style: {} })),
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    await waitFor(() => expect(contextMenuSpy).toHaveBeenCalled());
+
+    const menuRect = {
+      x: 700,
+      y: 160,
+      left: 700,
+      top: 160,
+      right: 980,
+      bottom: 520,
+      width: 280,
+      height: 360,
+    };
+    let menuProps = contextMenuSpy.mock.calls.at(-1)?.[0];
+    act(() =>
+      menuProps.onPlacementChange({
+        contextId: "video-b",
+        rect: menuRect,
+        side: "left",
+      })
+    );
+    menuProps = contextMenuSpy.mock.calls.at(-1)?.[0];
+    act(() => menuProps.onAction("metadata:open"));
+
+    expect(selectionMock.selectOnly).toHaveBeenCalledWith("video-b");
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      isOpen: true,
+      anchorId: "video-b",
+      focusToken: 1,
+      placementRequest: expect.objectContaining({
+        anchorId: "video-b",
+        avoidRect: menuRect,
+        reason: "context-menu-open-details",
+      }),
+    });
   });
 
   test("keeps metadata targets for selected videos hidden by filters", async () => {

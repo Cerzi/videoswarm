@@ -21,6 +21,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     onPreviousFolder,
     onNextFolder,
     onOpenHelp,
+    onOpenDetails,
     enabled = true,
   } = opts;
 
@@ -49,6 +50,18 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       const size = sel?.size ?? 0;
 
       if (size) {
+        if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          e.key.toLowerCase() === "i" &&
+          onOpenDetails
+        ) {
+          e.preventDefault();
+          onOpenDetails();
+          return;
+        }
         if (e.key === "Enter") {
           if (!isEnabledForToolbar(ActionIds.OPEN_EXTERNAL, size)) return;
           e.preventDefault();
@@ -126,6 +139,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     onPreviousFolder,
     onNextFolder,
     onOpenHelp,
+    onOpenDetails,
     enabled,
   ]);
 

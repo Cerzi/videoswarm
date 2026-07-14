@@ -50,6 +50,43 @@ const fitToViewport = ({ x, y }, { width, height }) => {
   };
 };
 
+const placementRect = ({ x, y }, { width, height }) => ({
+  x,
+  y,
+  left: x,
+  top: y,
+  right: x + width,
+  bottom: y + height,
+  width,
+  height,
+});
+
+/**
+ * Reports which horizontal side of the raw requested pointer position contains
+ * the final menu midpoint. A menu that is clamped back from the right viewport
+ * edge therefore reports "left"; an ordinarily placed menu reports "right".
+ */
+const placementSide = (rect, requestedX) =>
+  rect.left + rect.width / 2 < (Number(requestedX) || 0) ? 'left' : 'right';
+
+const rootMenuSize = (element, items) => {
+  const measuredRect = element?.getBoundingClientRect?.();
+  const viewport = getViewport();
+  return {
+    width:
+      measuredRect?.width > 0
+        ? measuredRect.width
+        : Math.min(ROOT_MENU_WIDTH, Math.max(0, viewport.width - MENU_MARGIN * 2)),
+    height:
+      measuredRect?.height > 0
+        ? measuredRect.height
+        : Math.min(
+            estimatedHeight(items, true),
+            Math.max(0, viewport.height - MENU_MARGIN * 2)
+          ),
+  };
+};
+
 const ContextMenu = ({
   visible,
   position,
@@ -59,12 +96,16 @@ const ContextMenu = ({
   electronAPI = typeof window !== 'undefined' ? window.electronAPI : undefined,
   onClose,
   onAction,
+  onPlacementChange,
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
   const menuRef = useRef(null);
   const submenuRef = useRef(null);
   const submenuTriggerRefs = useRef(new Map());
+  const onPlacementChangeRef = useRef(onPlacementChange);
+  const lastPlacementReportRef = useRef(null);
+  onPlacementChangeRef.current = onPlacementChange;
   const [activeSubmenu, setActiveSubmenu] = useState(null);
   const [rootPosition, setRootPosition] = useState(requestedPosition);
   const [submenuPosition, setSubmenuPosition] = useState(null);
@@ -144,7 +185,7 @@ const ContextMenu = ({
     pushSection([
       {
         id: 'metadata-open',
-        label: '🏷️ Add or manage tags',
+        label: 'ⓘ Open details',
         action: 'metadata:open',
       },
       {
@@ -248,22 +289,65 @@ const ContextMenu = ({
 
   useLayoutEffect(() => {
     if (!visible || !position) return;
-    const rect = menuRef.current?.getBoundingClientRect();
-    const nextPosition = fitToViewport(requestedPosition, {
-      width: rect?.width || ROOT_MENU_WIDTH,
-      height:
-        rect?.height ||
-        Math.min(
-          estimatedHeight(menuItems, true),
-          getViewport().height - MENU_MARGIN * 2
-        ),
-    });
+    const nextPosition = fitToViewport(
+      requestedPosition,
+      rootMenuSize(menuRef.current, menuItems)
+    );
     setRootPosition((previous) =>
       previous?.x === nextPosition.x && previous?.y === nextPosition.y
         ? previous
         : nextPosition
     );
   }, [menuItems, position, requestedPosition.x, requestedPosition.y, visible]);
+
+  useLayoutEffect(() => {
+    const hasPlacementCallback =
+      typeof onPlacementChangeRef.current === 'function';
+    if (!visible || !position || !hasPlacementCallback) {
+      lastPlacementReportRef.current = null;
+      return;
+    }
+
+    const { width, height } = rootMenuSize(menuRef.current, menuItems);
+    const fittedPosition = fitToViewport(requestedPosition, { width, height });
+
+    // The request may have changed while state still contains the previous
+    // fitted position. Wait for the clamped position to reach the DOM rather
+    // than reporting that stale intermediate geometry.
+    if (
+      rootPosition.x !== fittedPosition.x ||
+      rootPosition.y !== fittedPosition.y
+    ) {
+      return;
+    }
+
+    const rect = placementRect(fittedPosition, { width, height });
+    const side = placementSide(rect, requestedPosition.x);
+    const signature = [
+      contextId ?? '',
+      Number(requestedPosition.x) || 0,
+      Number(requestedPosition.y) || 0,
+      rect.left,
+      rect.top,
+      rect.width,
+      rect.height,
+      side,
+    ].join(':');
+
+    if (lastPlacementReportRef.current === signature) return;
+    lastPlacementReportRef.current = signature;
+    onPlacementChangeRef.current({ contextId, rect, side });
+  }, [
+    contextId,
+    menuItems,
+    position,
+    requestedPosition.x,
+    requestedPosition.y,
+    rootPosition.x,
+    rootPosition.y,
+    visible,
+    Boolean(onPlacementChange),
+  ]);
 
   useLayoutEffect(() => {
     if (!visible) return;

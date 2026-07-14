@@ -1,6 +1,6 @@
 # Floating Selection Inspector
 
-Status: **Proposed** (2026-07-14)
+Status: **Implemented** (2026-07-14)
 
 ## Summary
 
@@ -240,20 +240,42 @@ Returning to a wider gallery restores automatic anchored placement.
 
 ## Implementation plan
 
-1. **Unimplemented** — Add pure, tested gallery-relative placement and clamping
-   helpers.
-2. **Unimplemented** — Report the fitted root context-menu rectangle to App.
-3. **Unimplemented** — Replace global dock dismissal with selection-scoped open
-   and close lifecycle, including deselect close and context-target correction.
-4. **Unimplemented** — Convert `MetadataPanel` to the floating inspector shell,
-   add bounded pointer/keyboard dragging, ResizeObserver clamping, and narrow
-   sheet behavior while preserving metadata content.
-5. **Unimplemented** — Remove dock height state, stable-anchor transitions,
-   collapsed drawer UI, and gallery padding changes.
-6. **Unimplemented** — Add the `I` reopen shortcut to the shared shortcut
-   catalog and help surface.
-7. **Unimplemented** — Add placement, component, context-menu, App lifecycle,
-   focus, drag cleanup, and no-layout-shift regressions.
+1. **Implemented** — Pure viewport-space placement and clamping helpers score
+   left, right, below, and above candidates, avoid the fitted menu and anchor,
+   provide a stable unmounted-card fallback, and select the narrow sheet.
+2. **Implemented** — `ContextMenu` reports its measured, post-clamp root
+   rectangle once per distinct placement and suppresses stale or duplicate
+   reports during request transitions.
+3. **Implemented** — App now owns a selection-scoped open/dismiss lifecycle:
+   deselection closes, close preserves selection, a changed selection opens,
+   and a single unselected context target is adopted before details open.
+4. **Implemented** — `MetadataPanel` is now the non-modal floating inspector
+   with bounded pointer/rAF dragging, Arrow/Shift/Home movement,
+   ResizeObserver/window/sidebar reclamping, Escape/X close, and a non-draggable
+   narrow sheet while retaining all metadata controls.
+5. **Implemented** — Dock sizing, collapsed hints, metadata transition holds,
+   and conditional viewport padding were removed. Opening details does not
+   schedule masonry work or change gallery geometry.
+6. **Implemented** — Modifier-free `I` reopens details for a non-empty
+   selection and is rendered by the shared shortcut catalog/help dialog.
+7. **Implemented** — Focused geometry, component, context-menu, hotkey, help,
+   and App lifecycle regressions cover opposite placement, clamping, cleanup,
+   scoped dismissal, focus-token consumption, context targeting, narrow mode,
+   and invariant viewport padding/scroll state.
+
+## Implementation notes
+
+- The implementation remains one renderer-local overlay; it creates no second
+  Electron window, renderer process, video element, or persistent coordinate
+  store.
+- App retains only selection IDs and plain placement rectangles. Card elements
+  are queried on demand from the bounded virtual window and are never retained.
+- Passive selection does not increment the input focus token. Explicit context
+  detail management consumes each token once, so a later `I` reopen does not
+  unexpectedly focus the tag field.
+- The context menu remains visually above the inspector. Its actual fitted
+  rectangle, rather than the raw pointer location, drives opposite-side
+  placement at viewport edges.
 
 ## Acceptance criteria
 
