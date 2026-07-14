@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_PLAYBACK_MODE,
   nextPlaybackDecision,
@@ -54,10 +54,18 @@ export default function useAdaptivePlaybackPolicy({
   const [decision, setDecision] = useState(() =>
     nextPlaybackDecision(null, input)
   );
+  const sampleCount = Number.isFinite(Number(telemetry?.sampleCount))
+    ? Number(telemetry.sampleCount)
+    : null;
+  const lastProcessedSampleRef = useRef(sampleCount);
 
   useEffect(() => {
-    setDecision((previous) => nextPlaybackDecision(previous, input));
-  }, [input, telemetry?.sampleCount]);
+    const advanceHealth = lastProcessedSampleRef.current !== sampleCount;
+    lastProcessedSampleRef.current = sampleCount;
+    setDecision((previous) =>
+      nextPlaybackDecision(previous, { ...input, advanceHealth })
+    );
+  }, [input, sampleCount]);
 
   return decision;
 }

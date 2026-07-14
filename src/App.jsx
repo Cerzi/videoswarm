@@ -175,15 +175,6 @@ function App() {
     return () => thumbService.setSuspended(true);
   }, [workSuspended]);
 
-  useEffect(() => {
-    try {
-      const update = window.electronAPI?.playback?.setModeScheduling?.(
-        playbackMode
-      );
-      update?.catch?.(() => {});
-    } catch {}
-  }, [playbackMode]);
-
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
   const [metadataPanelDismissed, setMetadataPanelDismissed] = useState(false);

@@ -48,7 +48,6 @@ const sidecarMetadataService = createSidecarMetadataService();
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
-  applyPlaybackModeScheduling,
   createPlaybackCapabilities,
   normalizePlaybackMode,
 } = require("./main/playback-capabilities");
@@ -1101,7 +1100,12 @@ async function createWindow() {
 
       // Enhanced memory management
       experimentalFeatures: true,
-      backgroundThrottling: true,
+      // Keep Chromium scheduling consistent for every media element from the
+      // moment the renderer is created. The renderer already physically
+      // suspends media and background work when the window is hidden or
+      // minimized, so changing this at runtime only destabilizes players
+      // admitted after a scroll/mode transition.
+      backgroundThrottling: false,
       offscreen: false,
       spellcheck: false,
       v8CacheOptions: "bypassHeatCheck",
@@ -1903,10 +1907,6 @@ ipcMain.handle("playback:set-renderer-active", (event, active) => {
   proxyManager.setOwnerActive(ownerId, normalizedActive);
   return { success: true, active: normalizedActive };
 });
-
-ipcMain.handle("playback:set-mode-scheduling", (event, mode) =>
-  applyPlaybackModeScheduling(event.sender, mode)
-);
 
 ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
   const filePath =

@@ -73,6 +73,34 @@ describe("playback policy", () => {
     );
   });
 
+  it("does not reapply a health window during a structural update", () => {
+    const previous = {
+      mode: PLAYBACK_MODES.BALANCED,
+      target: 6,
+      safetyCap: 12,
+      cleanWindows: 0,
+      health: "critical",
+      reasons: ["dropped-frames"],
+    };
+    const decision = nextPlaybackDecision(previous, {
+      mode: PLAYBACK_MODES.BALANCED,
+      platform: "linux",
+      visibleCount: 31,
+      hardwareConcurrency: 16,
+      systemMemoryMB: 32768,
+      availableMemoryMB: 16000,
+      averagePixelArea: 640 * 360,
+      droppedFrameRatio: 0.2,
+      advanceHealth: false,
+    });
+
+    expect(decision).toMatchObject({
+      target: 6,
+      health: "critical",
+      reasons: ["dropped-frames"],
+    });
+  });
+
   it("recovers by at most one only after consecutive clean windows", () => {
     const input = {
       mode: PLAYBACK_MODES.BALANCED,

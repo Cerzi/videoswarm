@@ -33,25 +33,6 @@ function isHardwareDecodeDetected(status) {
   );
 }
 
-function applyPlaybackModeScheduling(webContents, value) {
-  const mode = normalizePlaybackMode(value);
-  const backgroundThrottling = mode !== "all-motion";
-  if (
-    !webContents ||
-    webContents.isDestroyed?.() ||
-    typeof webContents.setBackgroundThrottling !== "function"
-  ) {
-    return {
-      success: false,
-      mode,
-      backgroundThrottling,
-      error: "WEB_CONTENTS_UNAVAILABLE",
-    };
-  }
-  webContents.setBackgroundThrottling(backgroundThrottling);
-  return { success: true, mode, backgroundThrottling };
-}
-
 function createPlaybackCapabilities({
   platform = process.platform,
   gpuFeatureStatus = {},
@@ -75,7 +56,6 @@ function createPlaybackCapabilities({
 }
 
 module.exports = {
-  applyPlaybackModeScheduling,
   createPlaybackCapabilities,
   isHardwareDecodeDetected,
   normalizePlaybackMode,

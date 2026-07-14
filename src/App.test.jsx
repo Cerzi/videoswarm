@@ -603,11 +603,7 @@ describe("App hook composition", () => {
 
   test("persists explicit playback and proxy controls", async () => {
     const saveSettingsPartial = vi.fn();
-    const setModeScheduling = vi.fn().mockResolvedValue({ success: true });
-    window.electronAPI = {
-      saveSettingsPartial,
-      playback: { setModeScheduling },
-    };
+    window.electronAPI = { saveSettingsPartial };
 
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
@@ -624,7 +620,6 @@ describe("App hook composition", () => {
     expect(saveSettingsPartial).toHaveBeenCalledWith({
       playbackMode: "static-hover",
     });
-    expect(setModeScheduling).toHaveBeenCalledWith("static-hover");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Use All Motion playback" })
@@ -638,7 +633,6 @@ describe("App hook composition", () => {
       suspended: false,
       detailed: false,
     });
-    expect(setModeScheduling).toHaveBeenLastCalledWith("all-motion");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Toggle proxy playback" })

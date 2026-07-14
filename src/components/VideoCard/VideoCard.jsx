@@ -449,17 +449,6 @@ const VideoCard = memo(function VideoCard({
   useEffect(() => setLoaded(isLoaded), [isLoaded]);
   useEffect(() => setLoading(isLoading), [isLoading]);
 
-  const isPlayingRef = useRef(isPlaying);
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
-
-  useEffect(() => {
-    if (visibilityRef.current && isPlayingRef.current) {
-      requestThumbnail("visible-change");
-    }
-  }, [isVisible, requestThumbnail]);
-
   // A same-key file update must invalidate every closure and lease from the
   // prior file generation before a replacement can start.
   useEffect(() => {
@@ -522,7 +511,6 @@ const VideoCard = memo(function VideoCard({
         onVideoPause?.(videoId, decoderLease);
         return;
       }
-      requestThumbnail("playing-event");
     };
     const handlePause = () => {
       if (
@@ -1353,10 +1341,20 @@ const VideoCard = memo(function VideoCard({
 
   const handleMouseEnter = useCallback(() => {
     onHover?.(videoId);
+    // Drag thumbnails are interaction affordances, not playback work. Capture
+    // on intent instead of doing canvas/PNG/native I/O for every newly playing
+    // card as the user scrolls through a large collection.
+    requestThumbnail("hover-intent");
     if (hoverAudioEnabled) {
       onHoverAudioStart?.(videoId);
     }
-  }, [onHover, videoId, hoverAudioEnabled, onHoverAudioStart]);
+  }, [
+    hoverAudioEnabled,
+    onHover,
+    onHoverAudioStart,
+    requestThumbnail,
+    videoId,
+  ]);
 
   const handleMouseLeave = useCallback(() => {
     onHover?.(null);
@@ -1370,6 +1368,7 @@ const VideoCard = memo(function VideoCard({
       if (!onNativeDragStart || !canStartNativeDrag) return;
       reactEvent.preventDefault();
       reactEvent.stopPropagation();
+      requestThumbnail("drag-intent");
       const nativeEvent = reactEvent.nativeEvent;
       if (nativeEvent?.dataTransfer) {
         try {
@@ -1379,7 +1378,7 @@ const VideoCard = memo(function VideoCard({
       }
       onNativeDragStart(nativeEvent, video);
     },
-    [onNativeDragStart, video, canStartNativeDrag]
+    [onNativeDragStart, video, canStartNativeDrag, requestThumbnail]
   );
 
   const renderPlaceholder = () => {

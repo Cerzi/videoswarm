@@ -213,6 +213,64 @@ describe("useVideoCollection (composite)", () => {
     expect(mediaScheduler.getSnapshot().stoppingDecoders).toBe(0);
   });
 
+  it("keeps retained All Motion leases stable as the viewport scrolls", () => {
+    const videos = makeVideos(3);
+    const loadedVideos = new Set(["v0", "v1", "v2"]);
+    const mediaScheduler = createMediaSlotScheduler({
+      maxResident: 3,
+      maxLoaders: 3,
+      maxDecoders: 3,
+    });
+    for (const id of loadedVideos) {
+      const loader = mediaScheduler.reserveLoader(id);
+      mediaScheduler.markLoaderReady(loader);
+    }
+
+    const { result, rerender } = renderHook(
+      ({ visibleVideos, centerPriorityIds }) =>
+        useVideoCollection({
+          videos,
+          visibleVideos,
+          loadedVideos,
+          decoderTarget: visibleVideos.size,
+          activationTarget: 3,
+          playbackMode: "all-motion",
+          centerPriorityIds,
+          mediaScheduler,
+        }),
+      {
+        initialProps: {
+          visibleVideos: new Set(["v0", "v1"]),
+          centerPriorityIds: ["v0", "v1"],
+        },
+      }
+    );
+
+    const leavingLease = result.current.getDecoderLease("v0");
+    const retainedLease = result.current.getDecoderLease("v1");
+
+    rerender({
+      visibleVideos: new Set(["v1", "v2"]),
+      centerPriorityIds: ["v2", "v1"],
+    });
+
+    expect(result.current.playingVideos).toEqual(new Set(["v2", "v1"]));
+    expect(result.current.getDecoderLease("v1")).toBe(retainedLease);
+    expect(result.current.getDecoderLease("v2")).toBeTruthy();
+    expect(mediaScheduler.getSnapshot()).toMatchObject({
+      decoders: 3,
+      stoppingDecoders: 1,
+    });
+
+    act(() => {
+      expect(result.current.reportPaused("v0", leavingLease)).toBe(true);
+    });
+    expect(mediaScheduler.getSnapshot()).toMatchObject({
+      decoders: 2,
+      stoppingDecoders: 0,
+    });
+  });
+
   it("pauses progressive growth and drives media admission to zero while work is suspended", () => {
     const videos = makeVideos(100);
     const { result, rerender } = renderHook(
