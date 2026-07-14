@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { toFileURL } from './VideoCard/videoDom';
+import { FULLSCREEN_SHORTCUTS } from '../hotkeys/shortcutCatalog';
 
 let fullscreenOwnerSequence = 0;
 
@@ -391,9 +392,17 @@ const FullScreenModal = ({
             fontSize: '14px',
             textAlign: 'center'
           }}>
-            <span style={{ marginRight: '20px' }}>← → Navigate</span>
-            <span style={{ marginRight: '20px' }}>Space Play/Pause</span>
-            <span>Esc Close</span>
+            {FULLSCREEN_SHORTCUTS.map((shortcut, index) => (
+              <span
+                key={shortcut.id}
+                style={{
+                  marginRight:
+                    index < FULLSCREEN_SHORTCUTS.length - 1 ? '20px' : 0,
+                }}
+              >
+                {shortcut.keys.join(' / ')} {shortcut.label}
+              </span>
+            ))}
           </div>
         </div>
       </div>

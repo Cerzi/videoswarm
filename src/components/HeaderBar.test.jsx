@@ -41,6 +41,8 @@ const baseProps = {
   proxyPlaybackEnabled: false,
   onProxyPlaybackToggle: vi.fn(),
   proxyPlaybackAvailable: true,
+  isRefreshingFolder: false,
+  onHotkeyHelp: vi.fn(),
 };
 
 describe("HeaderBar hover audio control", () => {
@@ -103,5 +105,20 @@ describe("HeaderBar playback policy control", () => {
       screen.getByRole("button", { name: "Use generated playback proxies" })
     );
     expect(baseProps.onProxyPlaybackToggle).toHaveBeenCalledOnce();
+  });
+});
+
+describe("HeaderBar keyboard help and background refresh", () => {
+  it("opens the shortcut guide from an accessible help button", () => {
+    const onHotkeyHelp = vi.fn();
+    render(<HeaderBar {...baseProps} onHotkeyHelp={onHotkeyHelp} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(onHotkeyHelp).toHaveBeenCalledOnce();
+  });
+
+  it("shows a subtle status while a cached folder is revalidated", () => {
+    render(<HeaderBar {...baseProps} isRefreshingFolder />);
+    expect(screen.getByRole("status")).toHaveTextContent("Refreshing index");
   });
 });

@@ -45,6 +45,7 @@ export function useElectronFolderLifecycle({
   const [libraryRoot, setLibraryRoot] = useState(null);
   const [directorySummaries, setDirectorySummaries] = useState([]);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
+  const [isRefreshingFolder, setIsRefreshingFolder] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(
     EMPTY_SCAN_LOADING_STATUS
   );
@@ -118,6 +119,7 @@ export function useElectronFolderLifecycle({
     if (!scan) {
       if (updateLoadingState && mountedRef.current) {
         setIsLoadingFolder(false);
+        setIsRefreshingFolder(false);
         setLoadingStatus(EMPTY_SCAN_LOADING_STATUS);
       }
       return false;
@@ -139,6 +141,7 @@ export function useElectronFolderLifecycle({
         updatedAt: Date.now(),
       }));
       setIsLoadingFolder(false);
+      setIsRefreshingFolder(false);
     }
     return true;
   }, []);
@@ -206,10 +209,12 @@ export function useElectronFolderLifecycle({
         mountedRef.current &&
         !scan.cancelled &&
         activeFolderScanRef.current === scan;
+      let cachedPreviewApplied = false;
 
       try {
         const startedAt = Date.now();
         setIsLoadingFolder(true);
+        setIsRefreshingFolder(false);
         setLoadingStatus(
           createScanLoadingStatus({
             scanId: scan.id,
@@ -226,10 +231,61 @@ export function useElectronFolderLifecycle({
         setVideos([]);
         resetDerivedVideoState();
 
+        if (typeof api.readDirectoryCache === "function") {
+          try {
+            const cachedResult = await api.readDirectoryCache(
+              folderPath,
+              scanRecursive,
+              scan.id
+            );
+            if (!isCurrentScan()) return;
+            if (
+              cachedResult?.cached === true &&
+              cachedResult.scanId === scan.id &&
+              Array.isArray(cachedResult.files)
+            ) {
+              const cachedFiles = cachedResult.files.map((file) =>
+                normalizeVideoFromMain(file)
+              );
+              setVideos(cachedFiles);
+              setActiveRootPath(cachedResult.root?.rootPath || folderPath);
+              setLibraryRoot(
+                cachedResult.root || {
+                  rootPath: folderPath,
+                  refreshState: "refreshing",
+                }
+              );
+              setDirectorySummaries(
+                Array.isArray(cachedResult.directories)
+                  ? cachedResult.directories
+                  : []
+              );
+              setLoadingStatus((previous) => ({
+                ...previous,
+                phase: "refreshing",
+                message: "Showing indexed videos while checking the folder",
+                videosDiscovered: cachedFiles.length,
+                prepared: cachedFiles.length,
+                updatedAt: Date.now(),
+              }));
+              cachedPreviewApplied = true;
+              setIsLoadingFolder(false);
+              setIsRefreshingFolder(true);
+            }
+          } catch (cacheError) {
+            // The filesystem scan remains authoritative. A missing, old, or
+            // temporarily unreadable cache must never prevent a normal open.
+            console.warn("Failed to hydrate indexed folder preview:", cacheError);
+          }
+        }
+        if (!isCurrentScan()) return;
+
         setLoadingStatus((previous) => ({
           ...previous,
           phase: "enumerating",
-          message: "Discovering video files",
+          message: cachedPreviewApplied
+            ? "Refreshing indexed videos"
+            : "Discovering video files",
           updatedAt: Date.now(),
         }));
 
@@ -249,6 +305,7 @@ export function useElectronFolderLifecycle({
             updatedAt: Date.now(),
           }));
           setIsLoadingFolder(false);
+          setIsRefreshingFolder(false);
           return;
         }
 
@@ -293,6 +350,7 @@ export function useElectronFolderLifecycle({
           updatedAt: Date.now(),
         }));
         setIsLoadingFolder(false);
+        setIsRefreshingFolder(false);
 
         refreshTagList();
 
@@ -325,7 +383,13 @@ export function useElectronFolderLifecycle({
           error: error?.message || "The folder could not be read.",
           updatedAt: Date.now(),
         }));
-        setIsLoadingFolder(true);
+        setLibraryRoot((previous) =>
+          cachedPreviewApplied && previous
+            ? { ...previous, refreshState: "error" }
+            : previous
+        );
+        setIsLoadingFolder(!cachedPreviewApplied);
+        setIsRefreshingFolder(false);
       }
     },
     [
@@ -604,6 +668,7 @@ export function useElectronFolderLifecycle({
     directorySummaries,
     setDirectorySummaries,
     isLoadingFolder,
+    isRefreshingFolder,
     loadingStatus,
     loadingStage: loadingStatus.message,
     loadingProgress: getLoadingProgressPercent(loadingStatus),

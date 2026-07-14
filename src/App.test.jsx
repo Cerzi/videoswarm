@@ -101,6 +101,7 @@ const electronLifecycleReturn = {
   libraryRoot: null,
   directorySummaries: [],
   isLoadingFolder: false,
+  isRefreshingFolder: false,
   loadingStatus: null,
   loadingStage: "",
   loadingProgress: 0,
@@ -313,6 +314,13 @@ vi.mock("./components/HeaderBar", () => ({
           onClick={() => props.onProxyPlaybackToggle?.()}
         >
           Proxy playback
+        </button>
+        <button
+          type="button"
+          aria-label="Keyboard shortcuts"
+          onClick={() => props.onHotkeyHelp?.()}
+        >
+          ?
         </button>
       </>
     );
@@ -557,6 +565,7 @@ describe("App hook composition", () => {
       proxyPlaybackEnabled: false,
       proxyPlaybackAvailable: true,
       workSuspended: false,
+      isRefreshingFolder: false,
     });
     expect(setThumbSuspendedMock).toHaveBeenCalledWith(false);
 
@@ -663,6 +672,26 @@ describe("App hook composition", () => {
     const updatedArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(updatedArgs.hoverAudioEnabled).toBe(true);
     expect(headerBarSpy).toHaveBeenCalled();
+  });
+
+  test("opens and closes keyboard shortcut help from the header", async () => {
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(
+      screen.getByRole("dialog", { name: "Keyboard shortcuts" })
+    ).toBeInTheDocument();
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2].enabled).toBe(false);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close keyboard shortcuts" })
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Keyboard shortcuts" })
+    ).not.toBeInTheDocument();
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2].enabled).toBe(true);
   });
 
   test("renders only the virtual window with stable collection-level callbacks", async () => {
@@ -847,7 +876,7 @@ describe("App hook composition", () => {
     expect(selectionMock.pruneTo).toHaveBeenCalledWith(new Set([hiddenVideo.id]));
   });
 
-  test("navigates a counted folder, enables recursion, and applies saved views", async () => {
+  test("restores recursive scope when navigating from a child folder to the root", async () => {
     const videos = [
       { id: "root", name: "root.mp4", dirname: "", reviewState: "reviewed" },
       { id: "a", name: "a.mp4", dirname: "run-a", reviewState: "pick" },
@@ -896,6 +925,26 @@ describe("App hook composition", () => {
       expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual([
         videos[1],
       ])
+    );
+
+    const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
+    expect(hotkeyOptions.onPreviousFolder).toEqual(expect.any(Function));
+    expect(hotkeyOptions.onNextFolder).toEqual(expect.any(Function));
+    await act(async () => hotkeyOptions.onNextFolder());
+    await waitFor(() =>
+      expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual([
+        videos[2],
+      ])
+    );
+
+    fireEvent.click(screen.getByTitle("outputs"));
+    await waitFor(() =>
+      expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual(
+        videos
+      )
+    );
+    expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+      "all-descendants"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Needs review" }));

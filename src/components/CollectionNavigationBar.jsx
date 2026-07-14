@@ -58,7 +58,7 @@ function CollectionNavigationBar({
             )}`}
             title={
               previousSibling
-                ? `Previous matching folder: ${siblingLabel(previousSibling, "")}`
+                ? `Previous matching folder: ${siblingLabel(previousSibling, "")} ([)`
                 : "No previous matching folder"
             }
             disabled={disabled || !previousSibling}
@@ -75,7 +75,7 @@ function CollectionNavigationBar({
             )}`}
             title={
               nextSibling
-                ? `Next matching folder: ${siblingLabel(nextSibling, "")}`
+                ? `Next matching folder: ${siblingLabel(nextSibling, "")} (])`
                 : "No next matching folder"
             }
             disabled={disabled || !nextSibling}

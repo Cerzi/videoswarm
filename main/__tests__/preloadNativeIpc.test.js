@@ -97,4 +97,18 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("exposes asynchronous last-known folder hydration", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.readDirectoryCache("/library", true, "scan-7");
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "read-directory-cache",
+      "/library",
+      true,
+      "scan-7"
+    );
+    expect(ipcRenderer.sendSync).not.toHaveBeenCalled();
+  });
+
 });

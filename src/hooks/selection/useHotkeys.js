@@ -2,6 +2,10 @@
 import { useEffect, useRef } from "react";
 import { ActionIds } from "../actions/actions";
 import { isEnabledForToolbar } from "../actions/actionPolicies";
+import {
+  FOLDER_DIRECTION_BY_KEY,
+  REVIEW_STATE_BY_KEY,
+} from "../../hotkeys/shortcutCatalog";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
 
@@ -14,10 +18,16 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     wheelStepUnits = 120,   // 120 ≈ one "notch" after normalization
     maxStepsPerFrame = 3,   // safety: avoid huge jumps per frame
     onSetReviewState,
+    onPreviousFolder,
+    onNextFolder,
+    onOpenHelp,
+    enabled = true,
   } = opts;
 
   // ----- existing key handling (Enter/Ctrl+C/Delete/+/-) stays the same -----
   useEffect(() => {
+    if (!enabled) return undefined;
+
     const onKey = (e) => {
       const target = e.target;
       if (target) {
@@ -56,13 +66,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
           return;
         }
         if (!e.ctrlKey && !e.metaKey && !e.altKey && onSetReviewState) {
-          const reviewStateByKey = {
-            p: "pick",
-            r: "reviewed",
-            x: "reject",
-            u: "unreviewed",
-          };
-          const reviewState = reviewStateByKey[e.key.toLowerCase()];
+          const reviewState = REVIEW_STATE_BY_KEY[e.key.toLowerCase()];
           if (reviewState) {
             e.preventDefault();
             onSetReviewState(reviewState, sel);
@@ -71,8 +75,34 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         }
       }
 
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === "?" && onOpenHelp) {
+          e.preventDefault();
+          onOpenHelp();
+          return;
+        }
+        const folderDirection = FOLDER_DIRECTION_BY_KEY[e.key];
+        const navigateFolder =
+          folderDirection === "previous"
+            ? onPreviousFolder
+            : folderDirection === "next"
+              ? onNextFolder
+              : null;
+        if (navigateFolder) {
+          e.preventDefault();
+          navigateFolder();
+          return;
+        }
+      }
+
       // +/- zoom (no modifiers)
-      if (getZoomIndex && setZoomIndexSafe) {
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        getZoomIndex &&
+        setZoomIndexSafe
+      ) {
         if (e.key === "+" || e.key === "=") {
           e.preventDefault();
           setZoomIndexSafe(clampIndex(getZoomIndex() + 1, minZoomIndex, maxZoomIndex));
@@ -93,6 +123,10 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     minZoomIndex,
     maxZoomIndex,
     onSetReviewState,
+    onPreviousFolder,
+    onNextFolder,
+    onOpenHelp,
+    enabled,
   ]);
 
   // ----- Ctrl/⌘ + Wheel → zoom, coalesced per frame -----
@@ -108,7 +142,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
   };
 
   useEffect(() => {
-    if (!getZoomIndex || !setZoomIndexSafe) return;
+    if (!enabled || !getZoomIndex || !setZoomIndexSafe) return;
 
     const tick = () => {
       rafRef.current = 0;
@@ -161,5 +195,5 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       accumRef.current = 0;
       lastDirRef.current = 0;
     };
-  }, [getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, wheelStepUnits, maxStepsPerFrame]);
+  }, [enabled, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, wheelStepUnits, maxStepsPerFrame]);
 }

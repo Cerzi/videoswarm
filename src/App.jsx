@@ -20,6 +20,7 @@ import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
+import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -120,6 +121,7 @@ function App() {
   const [fullScreenPinnedId, setFullScreenPinnedId] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
+  const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
   const [folderLocation, setFolderLocation] = useState({
@@ -300,6 +302,7 @@ function App() {
     libraryRoot,
     directorySummaries,
     isLoadingFolder,
+    isRefreshingFolder,
     loadingStatus,
     loadingStage,
     loadingProgress,
@@ -1505,16 +1508,6 @@ function App() {
       handleSetReviewState(reviewState, selectedFingerprints),
     [handleSetReviewState, selectedFingerprints]
   );
-  // Global hotkeys (Enter / Ctrl+C / Delete) + Zoom (+ / - and Ctrl/⌘ + Wheel)
-  useHotkeys(runForHotkeys, () => selection.selected, {
-    getZoomIndex: () => zoomLevel,
-    setZoomIndexSafe: (z) => handleZoomChangeSafe(z),
-    minZoomIndex: ZOOM_MIN_INDEX,
-    maxZoomIndex: ZOOM_MAX_INDEX,
-    onSetReviewState: handleReviewHotkey,
-    // wheelStepUnits: 100, // optional sensitivity tuning
-  });
-
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onOpenAbout?.(() => {
       setAboutOpen(true);
@@ -1667,9 +1660,11 @@ function App() {
       captureFolderViewState();
       const directory = normalizeRelativePath(relativePath);
       const nextScope =
-        directory && folderScope === FolderScope.ALL_DESCENDANTS
-          ? FolderScope.CURRENT_FOLDER
-          : folderScope;
+        !directory
+          ? FolderScope.ALL_DESCENDANTS
+          : folderScope === FolderScope.ALL_DESCENDANTS
+            ? FolderScope.CURRENT_FOLDER
+            : folderScope;
       folderViewStateRef.current.setLocation(
         activeRootPath,
         directory,
@@ -1739,6 +1734,33 @@ function App() {
     (node) => handleFolderNavigate(node?.path),
     [handleFolderNavigate]
   );
+
+  const appHotkeysEnabled =
+    !isHotkeyHelpOpen &&
+    !isAboutOpen &&
+    !isDataLocationOpen &&
+    !profilePromptRequest &&
+    !fullScreenVideo &&
+    !contextMenu.visible &&
+    !isFiltersOpen;
+
+  useHotkeys(runForHotkeys, () => selection.selected, {
+    enabled: appHotkeysEnabled,
+    getZoomIndex: () => zoomLevel,
+    setZoomIndexSafe: (z) => handleZoomChangeSafe(z),
+    minZoomIndex: ZOOM_MIN_INDEX,
+    maxZoomIndex: ZOOM_MAX_INDEX,
+    onSetReviewState: handleReviewHotkey,
+    onPreviousFolder:
+      !isLoadingFolder && siblingFolders.previous
+        ? () => handlePreviousFolder(siblingFolders.previous)
+        : null,
+    onNextFolder:
+      !isLoadingFolder && siblingFolders.next
+        ? () => handleNextFolder(siblingFolders.next)
+        : null,
+    onOpenHelp: () => setHotkeyHelpOpen(true),
+  });
 
   const handleOpenLibraryRoot = useCallback(
     async (rootPath) => {
@@ -2147,6 +2169,8 @@ function App() {
             onProxyPlaybackToggle={toggleProxyPlayback}
             proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
             workSuspended={workSuspended}
+            isRefreshingFolder={isRefreshingFolder}
+            onHotkeyHelp={() => setHotkeyHelpOpen(true)}
             renderLimitStep={renderLimitStep}
             renderLimitLabel={renderLimitLabel}
             renderLimitMaxStep={RENDER_LIMIT_STEPS}
@@ -2204,6 +2228,10 @@ function App() {
           )}
 
           <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
+          <KeyboardShortcutsDialog
+            open={isHotkeyHelpOpen}
+            onClose={() => setHotkeyHelpOpen(false)}
+          />
           <DataLocationDialog
             open={isDataLocationOpen}
             onClose={() => setDataLocationOpen(false)}
