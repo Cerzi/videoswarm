@@ -119,8 +119,8 @@ Planned for upcoming versions:
 ## Installation & Development
 
 ### Prerequisites
-- **Node.js 20 LTS or later** (Node 22 recommended)  
-  > Note: Some dependencies such as `better-sqlite3@12`, `conf@14`, and `electron-store@10` require Node 20+.  
+- **Node.js 22.12.0 or later**
+  > Note: Electron 43 requires Node 22.12.0+, and some dependencies such as `better-sqlite3@12`, `conf@14`, and `electron-store@10` require Node 20+.
 
 ### Setup
 ```bash
