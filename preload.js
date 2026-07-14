@@ -200,8 +200,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("playback:get-window-activity"),
     setRendererActive: (active) =>
       ipcRenderer.invoke("playback:set-renderer-active", Boolean(active)),
-    setModeScheduling: (mode) =>
-      ipcRenderer.invoke("playback:set-mode-scheduling", mode),
     resolveSource: (payload) =>
       ipcRenderer.invoke("playback:resolve-source", payload),
     onWindowActivity: (callback) => {

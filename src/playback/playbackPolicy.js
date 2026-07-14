@@ -130,12 +130,17 @@ const readPreviousDecision = (previous) => {
       target: nonNegativeInteger(previous),
       cleanWindows: 0,
       mode: null,
+      health: "unknown",
+      reasons: [],
     };
   }
   return {
     target: nonNegativeInteger(previous?.target),
     cleanWindows: nonNegativeInteger(previous?.cleanWindows),
     mode: previous?.mode ? normalizePlaybackMode(previous.mode) : null,
+    health:
+      typeof previous?.health === "string" ? previous.health : "unknown",
+    reasons: Array.isArray(previous?.reasons) ? previous.reasons : [],
   };
 };
 
@@ -185,6 +190,22 @@ export function nextPlaybackDecision(previous = null, input = {}) {
     : prior.target > 0
     ? Math.min(prior.target, safetyCap)
     : safetyCap;
+
+  // Visibility, layout, and source-pixel updates can all arrive between two
+  // telemetry samples. Recalculate the structural cap for those updates, but
+  // do not repeatedly apply the same health window and collapse the budget.
+  if (input.advanceHealth === false) {
+    const resetHealth =
+      modeChanged || prior.health === "suspended" || prior.health === "idle";
+    return {
+      mode,
+      target,
+      safetyCap,
+      cleanWindows: resetHealth ? 0 : prior.cleanWindows,
+      health: resetHealth ? "unknown" : prior.health,
+      reasons: resetHealth ? [] : prior.reasons,
+    };
+  }
 
   const frameDelayMs = finiteNumber(input.frameDelayMs, 0);
   const longTaskRate = finiteNumber(input.longTaskRate, 0);

@@ -248,7 +248,7 @@ Acceptance criteria:
 
 ### 5. Linux-aware playback modes
 
-Status: **Implemented** (2026-07-13)
+Status: **Implemented** (2026-07-14)
 
 Playback policy has four user-facing modes:
 
@@ -274,10 +274,13 @@ One collection-wide sampler measures p95 animation-frame delay, long-task
 occupancy, decoded/dropped frame deltas from the exact registered media
 elements, source pixel area, whole-application working-set growth, and
 available system memory. Balanced and Adaptive Motion policy reductions are
-immediate; recovery adds at most one decoder after three consecutive clean
-samples. All Motion deliberately bypasses those adaptive decoder caps and sets
-its target to the complete visible set; it still obeys visibility, scheduler
-ownership, physical cleanup, fullscreen, and app-suspension lifecycles.
+immediate and each telemetry sample can change the budget only once; scroll,
+visibility, and layout updates between samples may clamp a structural safety
+cap but cannot repeatedly reapply stale health pressure. Recovery adds at most
+one decoder after three consecutive clean samples. All Motion deliberately
+bypasses those adaptive decoder caps and sets its target to the complete
+visible set; it still obeys visibility, scheduler ownership, physical cleanup,
+fullscreen, and app-suspension lifecycles.
 Static + Hover retains paused first-frame media for nearby cards and admits
 decoders only for hovered or selected cards; fullscreen uses its separate
 scheduler lane.
@@ -295,9 +298,12 @@ Page Visibility and main-process BrowserWindow activity jointly suspend work.
 Suspension physically detaches grid/fullscreen sources, drives every scheduler
 lane to zero, cancels queued initialization and thumbnail work, pauses
 progressive growth, telemetry, and memory polling, and cancels renderer-owned
-proxy jobs. Electron background throttling remains enabled for bounded modes
-and is disabled only while All Motion is selected. Restoring the window resumes
-from current collection state rather than rebuilding the folder.
+proxy jobs. The BrowserWindow is constructed with Chromium background
+throttling disabled, matching the stable pre-mode media scheduling baseline;
+playback-mode changes never flip that process-wide scheduling state. Physical
+hidden/minimized suspension remains the sole background-work control. Restoring
+the window resumes from current collection state rather than rebuilding the
+folder.
 
 The optional profile-local proxy cache returns the original immediately while
 one background ffmpeg worker runs. It permits four additional pending jobs,
@@ -312,9 +318,12 @@ Acceptance criteria:
 - Balanced mode reduces active decoders when dropped frames or long tasks rise.
 - Adaptive Motion preserves the former higher safety-capped policy.
 - All Motion targets every visible card and is not silently telemetry-derated.
-- All Motion disables Chromium background throttling while selected and leaves
-  frame dropping and media-clock synchronization to Chromium without forced
-  seek-based catch-up.
+- The BrowserWindow starts with background throttling disabled and mode changes
+  do not reconfigure existing or newly admitted Chromium media players.
+- Health feedback is consumed once per telemetry sample, never once per scroll
+  or layout render.
+- All Motion leaves frame dropping and media-clock synchronization to Chromium
+  without forced seek-based catch-up.
 - The minimum decoder target is not forced to 100 on weak systems.
 - Hidden/minimized windows stop expensive media work by default.
 - The UI states that Linux hardware decoding is detected, not guaranteed.
@@ -472,8 +481,8 @@ Acceptance criteria:
 | Atomic media loader/decoder scheduler | **Implemented** | Opaque scoped leases, exact loader/resident caps, priority wake-up, acknowledged decoder handoff, bounded auxiliary lanes, and React-mirror integration landed in `e804b97` and `17ced36`. |
 | Fullscreen URL and keyboard lifecycle hardening | **Implemented** | Fullscreen owns its element, source, blob URL, timeout, and dedicated decoder lease; navigation, close, and failure release every owned resource. Grid suspension remains declarative; landed in `331a360` and `17ced36`. |
 | Destructive and one-shot media lifecycle | **Implemented** | Trash blocks affected scheduler IDs while physical handles are released, and serialized frame capture uses a bounded auxiliary lease with deterministic cleanup; landed in `17ced36`. |
-| Linux playback modes and adaptive decoder budget | **Implemented** | Balanced and Adaptive Motion use source-pixel, frame-delay, long-task, dropped-frame, working-set, memory, and hardware inputs; Static + Hover limits eligibility; explicit All Motion restores the uncapped visible set. UI controls, conservative Linux capability wording, and bounded proxy fallback are covered by focused policy, telemetry, IPC, card, and app tests. |
-| Hidden/minimized work suspension | **Implemented** | Page Visibility plus BrowserWindow activity drive scheduler limits to zero, physically release media, cancel thumbnail/proxy work, and stop progressive/high-frequency polling. Electron background throttling is enabled. |
+| Linux playback modes and adaptive decoder budget | **Implemented** | Balanced and Adaptive Motion consume each health sample once; Static + Hover limits eligibility; explicit All Motion restores the uncapped visible set and original construction-time Chromium scheduling. UI controls, conservative Linux capability wording, and bounded proxy fallback are covered by focused policy, telemetry, scheduler, card, and app tests. |
+| Hidden/minimized work suspension | **Implemented** | Page Visibility plus BrowserWindow activity drive scheduler limits to zero, physically release media, cancel thumbnail/proxy work, and stop progressive/high-frequency polling. The BrowserWindow remains unthrottled from construction so mode changes cannot destabilize media scheduling. |
 | Bounded process-lifetime caches and queues | **Implemented** | Fingerprint, dimensions, masonry, thumbnail, playback-history, waiter, watcher, and native-work state now have explicit entry/work limits, generation invalidation, snapshots, and disposal. |
 | Asynchronous thumbnail IPC and persistence | **Implemented** | Thumbnail reads/writes use asynchronous IPC, bounded read/write lanes, byte/pixel-aware memory and disk LRUs, atomic files, and coalesced bounded index persistence. |
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
@@ -678,7 +687,9 @@ The following adjacent work remains **Unimplemented**:
 2. **Implemented** — Derive conservative decoder ceilings from platform, cores,
    system/available memory, and average source pixel area. Derate immediately
    on dropped frames, p95 frame delay, long-task occupancy, working-set growth,
-   or low memory and recover one slot only after three clean windows.
+   or low memory and recover one slot only after three clean windows. Consume
+   each sampled health window once so intervening scroll/layout renders cannot
+   compound the same reduction.
 3. **Implemented** — Prioritize hover, selected cards, then viewport-center
    order while preserving the scheduler's exact pause acknowledgement. Keep
    Static + Hover decoder eligibility limited to hover/selection and retain
@@ -688,7 +699,8 @@ The following adjacent work remains **Unimplemented**:
 5. **Implemented** — Combine renderer visibility and BrowserWindow activity to
    suspend media, scheduler lanes, initialization, progressive rendering,
    thumbnails, telemetry, memory polling, frame capture, and proxy generation;
-   enable Chromium background throttling.
+   retain the original construction-time unthrottled Chromium media scheduling
+   baseline while using physical hidden/minimized suspension to stop work.
 6. **Implemented** — Generate optional profile-local 720p proxies through one
    bounded child-process runner with concurrency, pending-work, timeout,
    output-buffer, owner-cancellation, atomic-publish, entry, and disk-byte
@@ -703,22 +715,32 @@ The following adjacent work remains **Unimplemented**:
    targets every visible card even under adverse telemetry. It does not bypass
    scheduler ownership, media cleanup, fullscreen suspension, or hidden-window
    suspension.
-9. **Implemented** — Restore the remaining pre-mode scheduling headroom for
-   All Motion by disabling Chromium background throttling only while that mode
-   is selected, retaining a synchronous activation-window decoder allowance
-   while candidates remain visibility-gated, and suppressing detailed
-   telemetry that cannot affect its uncapped decision. This prevents a
-   one-render policy delay from pausing and regranting still-visible cards.
-   Keep one lightweight long-task loop, but do not use periodic media seeks as
-   a frame-dropping mechanism because they can flush decoder state and create
-   a slow/jump cadence. Mode switches restore normal background throttling.
+9. **Implemented** — Restore the exact pre-mode BrowserWindow scheduling
+   baseline by setting `backgroundThrottling: false` when the renderer is
+   created and removing runtime mode-dependent scheduling flips. Retain a
+   synchronous activation-window decoder allowance in All Motion while
+   candidates remain visibility-gated, and suppress detailed telemetry that
+   cannot affect its uncapped decision. Keep one lightweight long-task loop,
+   but do not use periodic media seeks as a frame-dropping mechanism because
+   they can flush decoder state and create a slow/jump cadence.
+10. **Implemented** — Prevent Balanced and Adaptive Motion from repeatedly
+    applying one adverse telemetry sample when scroll, visibility, or layout
+    changes rerender the policy hook. Structural updates still recompute and
+    clamp the safety cap; health derating and recovery advance exactly once per
+    new sampler window.
+11. **Implemented** — Remove eager drag-thumbnail lookup/capture from video
+    `playing` and visibility transitions. Thumbnail work now begins only on
+    hover or drag intent, so scrolling into uncached clips cannot add serialized
+    video-frame readback, canvas PNG encoding, and native cache I/O to the
+    software-decoding hot path; native drag retains its embedded-icon fallback.
 
 Verification was repeated against the current tree on 2026-07-14: the focused
-playback, telemetry, scheduling, preload, and application suites passed (8
-files, 69 tests). The complete host suite passed (515 tests, 8 skipped), as did
-the production Vite build, Electron-ABI native suite (145 tests), and unpacked
-Linux package. The base implementation is recorded in commit `af73872`; the
-later All Motion fidelity fixes are part of this follow-up implementation.
+playback, telemetry, scheduling, preload, card, and application suites passed
+(10 files, 96 tests). The complete host suite passed (517 tests, 8 skipped), as
+did the production Vite build, Electron-ABI native suite (143 tests), and
+unpacked Linux package. The base implementation is recorded in commit
+`af73872`; the later playback-fidelity fixes are part of this follow-up
+implementation.
 
 Hardware-specific Linux decode verification and performance soak thresholds
 remain **Unimplemented** in Section 8; Section 5 does not claim guaranteed GPU
@@ -742,6 +764,8 @@ video decoding.
    Requests expose settlement and cancellation handles, hold queued video
    nodes weakly, release media references before native I/O, and cancel on
    invisibility, media detachment, identity change, suspension, and unmount.
+   Capture is interaction-lazy (hover/drag intent), rather than automatically
+   running for every newly playing card during scroll.
 4. **Implemented** — Move thumbnail reads, writes, and native drag startup off
    synchronous renderer IPC. The profile-local native cache is capped at 500
    entries/32 MiB decoded memory and 5,000 entries/256 MiB disk, with 512 KiB

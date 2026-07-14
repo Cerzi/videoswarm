@@ -97,14 +97,4 @@ describe("preload native-work bridge", () => {
     );
   });
 
-  it("delegates playback scheduling mode to the main process", async () => {
-    const { api, ipcRenderer } = loadPreload();
-
-    await api.playback.setModeScheduling("all-motion");
-
-    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
-      "playback:set-mode-scheduling",
-      "all-motion"
-    );
-  });
 });

@@ -53,6 +53,52 @@ describe("useAdaptivePlaybackPolicy", () => {
     expect(rendered.result.current.target).toBeLessThanOrEqual(reduced + 1);
   });
 
+  it("applies a telemetry sample only once across scroll and layout updates", () => {
+    const rendered = renderHook((props) => useAdaptivePlaybackPolicy(props), {
+      initialProps: base,
+    });
+
+    act(() => {
+      rendered.rerender({
+        ...base,
+        telemetry: {
+          ...base.telemetry,
+          sampleCount: 2,
+          droppedFrameRatio: 0.2,
+        },
+      });
+    });
+    const reducedOnce = rendered.result.current.target;
+
+    for (const visibleCount of [31, 32, 30, 29]) {
+      act(() => {
+        rendered.rerender({
+          ...base,
+          visibleCount,
+          telemetry: {
+            ...base.telemetry,
+            sampleCount: 2,
+            droppedFrameRatio: 0.2,
+          },
+        });
+      });
+      expect(rendered.result.current.target).toBe(reducedOnce);
+    }
+
+    act(() => {
+      rendered.rerender({
+        ...base,
+        visibleCount: 29,
+        telemetry: {
+          ...base.telemetry,
+          sampleCount: 3,
+          droppedFrameRatio: 0.2,
+        },
+      });
+    });
+    expect(rendered.result.current.target).toBeLessThan(reducedOnce);
+  });
+
   it("immediately returns zero while suspended", () => {
     const { result } = renderHook(() =>
       useAdaptivePlaybackPolicy({ ...base, suspended: true })

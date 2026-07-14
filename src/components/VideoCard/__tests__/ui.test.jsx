@@ -142,6 +142,51 @@ beforeEach(() => {
 });
 
 describe("VideoCard", () => {
+  it("defers drag-thumbnail work until hover or drag intent", async () => {
+    const requestCapture = vi
+      .spyOn(thumbService, "requestCapture")
+      .mockReturnValue({ accepted: false });
+    const video = {
+      id: "lazy-thumb",
+      name: "lazy-thumb.mp4",
+      fullPath: "/clips/lazy-thumb.mp4",
+      size: 100,
+      dateModified: 1,
+      isElectronFile: true,
+    };
+    const props = {
+      ...baseProps,
+      video,
+      isVisible: true,
+      isPlaying: false,
+      isLoaded: false,
+    };
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+
+    await act(async () => {
+      lastVideoEl.dispatchEvent(new Event("loadeddata"));
+    });
+    rendered.rerender(
+      <VideoCard {...props} isPlaying isLoaded />
+    );
+    await act(async () => {
+      lastVideoEl.dispatchEvent(new Event("playing"));
+    });
+
+    expect(requestCapture).not.toHaveBeenCalled();
+
+    fireEvent.mouseEnter(rendered.container.querySelector(".video-item"));
+    expect(requestCapture).toHaveBeenCalledOnce();
+    expect(requestCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: video.fullPath,
+        reason: "hover-intent",
+        videoElement: lastVideoEl,
+      })
+    );
+  });
+
   it("cancels card-owned thumbnail work on signature, visibility, and unmount changes", async () => {
     const cancelOwner = vi.spyOn(thumbService, "cancelOwner");
     const video = {
