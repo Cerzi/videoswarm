@@ -21,6 +21,8 @@ import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
+import ReviewToolbar from "./components/ReviewToolbar";
+import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -32,9 +34,11 @@ import useAdaptivePlaybackPolicy from "./hooks/video-collection/useAdaptivePlayb
 import useSelectionState from "./hooks/selection/useSelectionState";
 import { useContextMenu } from "./hooks/context-menu/useContextMenu";
 import useActionDispatch from "./hooks/actions/useActionDispatch";
+import { ActionIds, actionRegistry } from "./hooks/actions/actions";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
+import useReviewWorkflow from "./hooks/review/useReviewWorkflow";
 
 import { SortKey } from "./sorting/sorting.js";
 import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
@@ -106,6 +110,7 @@ function App() {
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
+  const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
   const [hoveredVideoId, setHoveredVideoId] = useState(null);
   const hoveredVideoIdRef = useRef(null);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
@@ -118,8 +123,10 @@ function App() {
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
+  const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
+  const [reviewProfileEpoch, setReviewProfileEpoch] = useState(0);
   const [folderLocation, setFolderLocation] = useState({
     rootPath: null,
     directory: "",
@@ -331,6 +338,7 @@ function App() {
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setReviewAutoAdvance,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
     setVisibleVideos,
@@ -368,6 +376,10 @@ function App() {
     folderLocation.rootPath === activeRootPath
       ? folderLocation.scope
       : FolderScope.ALL_DESCENDANTS;
+
+  useEffect(() => {
+    setProcessResultsOpen(false);
+  }, [activeRootPath]);
 
   const {
     filters,
@@ -425,6 +437,49 @@ function App() {
     [currentDirectory, filteredVideos, folderScope]
   );
 
+  // Review progress and result processing follow navigation scope, not the
+  // transient tag/rating/review filters applied to the visible grid.
+  const reviewScopeVideos = useMemo(
+    () =>
+      filterVideosByFolderScope(videos, {
+        scope: folderScope,
+        currentDirectory,
+      }),
+    [currentDirectory, folderScope, videos]
+  );
+  const reviewScopeLabel = useMemo(() => {
+    const location = currentDirectory
+      ? `${rootDisplayName} / ${currentDirectory}`
+      : rootDisplayName;
+    if (folderScope === FolderScope.CURRENT_FOLDER) {
+      return `Current folder: ${location}`;
+    }
+    if (folderScope === FolderScope.CURRENT_SUBTREE) {
+      return `Current subtree: ${location}`;
+    }
+    return `All descendants of ${rootDisplayName}`;
+  }, [currentDirectory, folderScope, rootDisplayName]);
+  const reviewScopeHasAuthoritativeCoverage = Boolean(libraryRoot?.recursive) || (
+    folderScope === FolderScope.CURRENT_FOLDER && !currentDirectory
+  );
+  const reviewProcessingReady = Boolean(
+    activeRootPath &&
+      !isLoadingFolder &&
+      !isRefreshingFolder &&
+      loadingStatus?.phase === "complete" &&
+      (!libraryRoot?.refreshState || libraryRoot.refreshState === "idle") &&
+      reviewScopeHasAuthoritativeCoverage
+  );
+  const reviewProcessingReason = isRefreshingFolder
+    ? "Wait for the indexed folder refresh to finish."
+    : isLoadingFolder
+      ? "Wait for folder loading to finish."
+      : loadingStatus?.phase !== "complete"
+        ? "Complete an authoritative folder scan before processing results."
+        : !reviewScopeHasAuthoritativeCoverage
+          ? "Choose Current folder, or enable subfolder indexing, before processing results."
+        : "Review results are not ready for this folder scope.";
+
   const folderBreadcrumb = useMemo(
     () =>
       activeRootPath
@@ -446,7 +501,7 @@ function App() {
     const labels = {
       [REVIEW_FILTERS.UNREVIEWED]: "Unreviewed",
       [REVIEW_FILTERS.REVIEWED]: "Reviewed",
-      [REVIEW_FILTERS.PICK]: "Picks",
+      [REVIEW_FILTERS.PICK]: "Accepted",
       [REVIEW_FILTERS.REJECT]: "Rejects",
     };
     return labels[value] || null;
@@ -622,6 +677,7 @@ function App() {
       folderViewStateRef.current.clear();
       restoredFolderViewKeyRef.current = null;
       setExpandedFolderPaths(new Set([""]));
+      setReviewProfileEpoch((epoch) => epoch + 1);
     });
   }, []);
 
@@ -1029,14 +1085,38 @@ function App() {
     handleAddTags,
     handleRemoveTag,
     handleSetRating,
-    handleClearRating,
     handleSetReviewState,
+    handleRestoreReviewMetadata,
     handleApplyExistingTag,
     refreshTagList,
   } = useMetadataActions({
     selectedFingerprints,
     setVideos,
     setAvailableTags,
+    notify,
+  });
+
+  const reviewOwnershipKey = useMemo(
+    () => JSON.stringify([
+      reviewProfileEpoch,
+      activeRootPath || "",
+      currentDirectory,
+      folderScope,
+    ]),
+    [activeRootPath, currentDirectory, folderScope, reviewProfileEpoch]
+  );
+  const reviewWorkflow = useReviewWorkflow({
+    scopeVideos: reviewScopeVideos,
+    orderedVideoIds: orderForRange,
+    selectedIds: selection.selected,
+    selectExactly: selection.selectExactly,
+    setSelectedIds: selection.setSelectedIds,
+    scrollToId,
+    ownershipKey: reviewOwnershipKey,
+    setReviewState: handleSetReviewState,
+    setRating: handleSetRating,
+    restoreReviewMetadata: handleRestoreReviewMetadata,
+    autoAdvance: reviewAutoAdvance,
     notify,
   });
 
@@ -1276,6 +1356,38 @@ function App() {
 
   const { runAction } = useActionDispatch(deps, getById);
 
+  const handleTrashReviewRejects = useCallback(
+    async (rejectVideos) => {
+      const executor = actionRegistry[ActionIds.MOVE_TO_TRASH];
+      if (typeof executor !== "function") {
+        throw new Error("Trash action is unavailable");
+      }
+      await executor(rejectVideos, deps);
+    },
+    [deps]
+  );
+
+  const handleExportReviewManifest = useCallback(async () => {
+    const exportManifest = window.electronAPI?.review?.exportManifest;
+    if (typeof exportManifest !== "function") {
+      throw new Error("Review manifest export is unavailable");
+    }
+    const result = await exportManifest({
+      rootPath: activeRootPath,
+      directory: currentDirectory,
+      scope: folderScope,
+    });
+    if (result?.success === false) {
+      throw new Error(result.error || "Review manifest export failed");
+    }
+    if (result?.cancelled) return result;
+    notify(
+      `Exported ${Number(result?.fileCount || 0).toLocaleString()} review record(s)`,
+      "success"
+    );
+    return result;
+  }, [activeRootPath, currentDirectory, folderScope, notify]);
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
@@ -1309,18 +1421,27 @@ function App() {
       if (actionId.startsWith("metadata:review:")) {
         const reviewState = actionId.replace("metadata:review:", "");
         if (contextMetadataFingerprints.length) {
-          handleSetReviewState(reviewState, contextMetadataFingerprints);
+          reviewWorkflow.applyReviewState(reviewState, {
+            fingerprints: contextMetadataFingerprints,
+            allowAdvance: false,
+          });
         }
         return;
       }
       if (actionId.startsWith("metadata:rate:")) {
         if (!contextMetadataFingerprints.length) return;
         if (actionId === "metadata:rate:clear") {
-          handleSetRating(null, contextMetadataFingerprints);
+          reviewWorkflow.applyRating(null, {
+            fingerprints: contextMetadataFingerprints,
+            allowAdvance: false,
+          });
         } else {
           const value = parseInt(actionId.replace("metadata:rate:", ""), 10);
           if (!Number.isNaN(value)) {
-            handleSetRating(value, contextMetadataFingerprints);
+            reviewWorkflow.applyRating(value, {
+              fingerprints: contextMetadataFingerprints,
+              allowAdvance: false,
+            });
           }
         }
         return;
@@ -1338,8 +1459,8 @@ function App() {
       openMetadataPanel,
       metadataAnchorId,
       contextMetadataFingerprints,
-      handleSetRating,
-      handleSetReviewState,
+      reviewWorkflow.applyRating,
+      reviewWorkflow.applyReviewState,
       handleApplyExistingTag,
       runAction,
       selection.selectOnly,
@@ -1528,9 +1649,16 @@ function App() {
     [runAction, contextMenu.contextId]
   );
   const handleReviewHotkey = useCallback(
-    (reviewState) =>
-      handleSetReviewState(reviewState, selectedFingerprints),
-    [handleSetReviewState, selectedFingerprints]
+    (reviewState) => reviewWorkflow.applyReviewState(reviewState),
+    [reviewWorkflow.applyReviewState]
+  );
+  const handleRatingHotkey = useCallback(
+    (rating) => reviewWorkflow.applyRating(rating),
+    [reviewWorkflow.applyRating]
+  );
+  const handleReviewUndo = useCallback(
+    () => reviewWorkflow.undo(),
+    [reviewWorkflow.undo]
   );
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onOpenAbout?.(() => {
@@ -1766,7 +1894,8 @@ function App() {
     !profilePromptRequest &&
     !fullScreenVideo &&
     !contextMenu.visible &&
-    !isFiltersOpen;
+    !isFiltersOpen &&
+    !isProcessResultsOpen;
 
   useHotkeys(runForHotkeys, () => selection.selected, {
     enabled: appHotkeysEnabled,
@@ -1775,6 +1904,8 @@ function App() {
     minZoomIndex: ZOOM_MIN_INDEX,
     maxZoomIndex: ZOOM_MAX_INDEX,
     onSetReviewState: handleReviewHotkey,
+    onSetRating: handleRatingHotkey,
+    onUndoReview: handleReviewUndo,
     onPreviousFolder:
       !isLoadingFolder && siblingFolders.previous
         ? () => handlePreviousFolder(siblingFolders.previous)
@@ -1965,6 +2096,12 @@ function App() {
       });
       return next;
     });
+  }, []);
+
+  const handleReviewAutoAdvanceChange = useCallback((value) => {
+    const next = value === true;
+    setReviewAutoAdvance(next);
+    window.electronAPI?.saveSettingsPartial?.({ reviewAutoAdvance: next });
   }, []);
 
   const handleRenderLimitStepChange = useCallback(
@@ -2223,6 +2360,22 @@ function App() {
             />
           )}
 
+          {activeRootPath && (
+            <ReviewToolbar
+              progress={reviewWorkflow.progress}
+              selectedCount={selection.size}
+              autoAdvance={reviewAutoAdvance}
+              canUndo={reviewWorkflow.canUndo}
+              isBusy={reviewWorkflow.isBusy}
+              canProcessResults={reviewProcessingReady}
+              processResultsReason={reviewProcessingReason}
+              onSetReviewState={reviewWorkflow.applyReviewState}
+              onAutoAdvanceChange={handleReviewAutoAdvanceChange}
+              onUndo={reviewWorkflow.undo}
+              onProcessResults={() => setProcessResultsOpen(true)}
+            />
+          )}
+
           {isFiltersOpen && (
             <FiltersPopover
               ref={filtersPopoverRef}
@@ -2238,6 +2391,17 @@ function App() {
           <KeyboardShortcutsDialog
             open={isHotkeyHelpOpen}
             onClose={() => setHotkeyHelpOpen(false)}
+          />
+          <ProcessReviewResultsDialog
+            open={isProcessResultsOpen}
+            videos={reviewScopeVideos}
+            scopeLabel={reviewScopeLabel}
+            processingReady={reviewProcessingReady}
+            readinessMessage={reviewProcessingReason}
+            busy={reviewWorkflow.isBusy}
+            onClose={() => setProcessResultsOpen(false)}
+            onTrashRejects={handleTrashReviewRejects}
+            onExportManifest={handleExportReviewManifest}
           />
           <DataLocationDialog
             open={isDataLocationOpen}
@@ -2535,9 +2699,9 @@ function App() {
                 onAddTag={handleAddTags}
                 onRemoveTag={handleRemoveTag}
                 onApplyTagToSelection={handleApplyExistingTag}
-                onSetRating={handleSetRating}
-                onClearRating={handleClearRating}
-                onSetReviewState={handleSetReviewState}
+                onSetRating={reviewWorkflow.applyRating}
+                onClearRating={() => reviewWorkflow.applyRating(null)}
+                onSetReviewState={reviewWorkflow.applyReviewState}
                 generationMetadataState={generationMetadataState}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}

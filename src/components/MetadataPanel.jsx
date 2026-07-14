@@ -12,6 +12,7 @@ import {
   normalizeReviewState,
   reviewStateLabel,
 } from "../review/reviewState";
+import { REVIEW_PRIMARY_KEY_BY_STATE } from "../hotkeys/shortcutCatalog";
 import {
   clampFloatingPanelPosition,
   computeFloatingPanelPosition,
@@ -1133,7 +1134,9 @@ const MetadataPanel = forwardRef((
                 <div className="metadata-panel__grid">
                   <section className="metadata-panel__section metadata-panel__section--rating">
                     <div className="metadata-panel__section-header">
-                      <span>Rating</span>
+                      <span title="Setting a rating also marks an Unreviewed clip as Reviewed">
+                        Rating
+                      </span>
                       {ratingInfo.mixed ? (
                         <span className="metadata-panel__badge">Mixed</span>
                       ) : ratingInfo.hasAny ? (
@@ -1176,11 +1179,11 @@ const MetadataPanel = forwardRef((
                       aria-label="Review state"
                     >
                       {[
-                        [REVIEW_STATES.PICK, "Pick", "P"],
-                        [REVIEW_STATES.REVIEWED, "Reviewed", "R"],
-                        [REVIEW_STATES.REJECT, "Reject", "X"],
-                        [REVIEW_STATES.UNREVIEWED, "Unreviewed", "U"],
-                      ].map(([value, label, shortcut]) => (
+                        [REVIEW_STATES.PICK, "Accept"],
+                        [REVIEW_STATES.REVIEWED, "Reviewed"],
+                        [REVIEW_STATES.REJECT, "Reject"],
+                        [REVIEW_STATES.UNREVIEWED, "Unreviewed"],
+                      ].map(([value, label]) => (
                         <button
                           key={value}
                           type="button"
@@ -1192,7 +1195,11 @@ const MetadataPanel = forwardRef((
                           aria-pressed={!reviewInfo.mixed && reviewInfo.value === value}
                           onClick={() => onSetReviewState?.(value)}
                           disabled={!hasSelection}
-                          title={`${label} (${shortcut})`}
+                          title={`${label} (${REVIEW_PRIMARY_KEY_BY_STATE[value]})${
+                            value === REVIEW_STATES.UNREVIEWED
+                              ? "; clears rating, keeps tags"
+                              : ""
+                          }`}
                         >
                           {label}
                         </button>

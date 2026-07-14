@@ -99,6 +99,17 @@ const {
   createTrashConfirmationStore,
   trashAuthorizedPaths,
 } = require("./main/ipc-trash");
+const {
+  REVIEW_MANIFEST_MAX_RECORDS,
+  normalizeManifestDirectory,
+  normalizeManifestScope,
+} = require("./main/review-manifest");
+const {
+  createReviewManifestExportCoordinator,
+} = require("./main/review-manifest-export-coordinator");
+const {
+  normalizeReviewRestoreSnapshots,
+} = require("./main/review-metadata-restore");
 
 // Custom schemes must be declared before Electron finishes app readiness.
 registerMediaScheme(protocol);
@@ -235,6 +246,7 @@ const defaultSettings = {
   renderLimitStep: 10,
   playbackMode: "balanced",
   proxyPlaybackEnabled: false,
+  reviewAutoAdvance: false,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -1389,6 +1401,7 @@ function normaliseLoadedSettings(rawSettings) {
     ),
     playbackMode: normalizePlaybackMode(source.playbackMode),
     proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
+    reviewAutoAdvance: source.reviewAutoAdvance === true,
     zoomLevel: clampInteger(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
       defaultSettings.zoomLevel,
@@ -1739,13 +1752,17 @@ async function runSerializedProfileOperation(run) {
   profileReconfigurationInProgress = true;
   const guardedRun = async () => {
     trashAdmissionOpen = false;
-    await drainActiveTrashOperations();
+    await Promise.all([
+      drainActiveTrashOperations(),
+      reviewManifestExportCoordinator.pauseAndDrain(),
+    ]);
     trashConfirmationStore.revokeAll();
     try {
       return await run();
     } finally {
       if (!nativeShutdownPreparing && !nativeShutdownRequested) {
         trashAdmissionOpen = true;
+        reviewManifestExportCoordinator.resume();
       }
     }
   };
@@ -3789,6 +3806,71 @@ function runLibraryCatalogOperation(operation) {
   return runMetadataContextOperation(operation, "LIBRARY_CATALOG_ERROR");
 }
 
+const reviewManifestExportCoordinator =
+  createReviewManifestExportCoordinator({
+    captureContext: ({ owner }) => {
+      const context = captureMetadataContext();
+      registerNativeWorkOwner(owner);
+      return {
+        ...context,
+        profileName: getProfileDisplayName(context.profileId),
+        ownerContext: nativeOwnerLifecycle.capture(owner),
+      };
+    },
+    assertActive: ({ owner, context }) => {
+      assertMetadataContextActive(context);
+      nativeOwnerLifecycle.assertActive(context.ownerContext);
+      if (
+        !owner ||
+        owner.isDestroyed?.() ||
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        mainWindow.webContents !== owner
+      ) {
+        throw new ProfileOperationInvalidatedError();
+      }
+    },
+    authorizeRoot: ({ owner, rootPath }) =>
+      assertRendererPath({ sender: owner }, rootPath, "directory"),
+    getRoot: ({ context, rootPath }) =>
+      context.metadataStore.getLibraryRoot(rootPath),
+    showSaveDialog: async ({ owner, root, defaultName }) => {
+      const win = BrowserWindow.fromWebContents(owner);
+      if (!win || win.isDestroyed() || owner.isDestroyed?.()) {
+        throw new ProfileOperationInvalidatedError();
+      }
+      return dialog.showSaveDialog(win, {
+        title: "Export review manifest",
+        defaultPath: path.join(app.getPath("documents"), defaultName),
+        filters: [{ name: "JSON manifest", extensions: ["json"] }],
+        properties: ["createDirectory", "showOverwriteConfirmation"],
+      });
+    },
+    queryScopeRecords: ({
+      context,
+      rootPath,
+      directory,
+      scope,
+      limit,
+      assertActive,
+    }) => {
+      const requestedMaximum = Number(limit) - 1;
+      const maxRecords = Number.isSafeInteger(requestedMaximum)
+        ? Math.max(
+            1,
+            Math.min(REVIEW_MANIFEST_MAX_RECORDS, requestedMaximum)
+          )
+        : REVIEW_MANIFEST_MAX_RECORDS;
+      return context.metadataStore.getReviewManifestSnapshot(rootPath, {
+        directory,
+        scope,
+        maxRecords,
+        assertActive,
+      });
+    },
+    logger: console,
+  });
+
 ipcMain.handle("library:list-roots", async (_event, options = {}) => {
   assertPlainObject(options, "library list options");
   return runLibraryCatalogOperation((metadataStore) => ({
@@ -3837,6 +3919,30 @@ ipcMain.handle("library:get-tree", async (_event, payload = {}) => {
       throw new Error(`Library root has not been indexed: ${rootPath}`);
     }
     return tree;
+  });
+});
+
+ipcMain.handle("review:export-manifest", async (event, payload = {}) => {
+  assertPlainObject(payload, "review manifest request");
+  const requestedRoot = normalizeLibraryIpcRootPath(payload);
+  const directory = normalizeManifestDirectory(
+    assertString(payload?.directory ?? "", {
+      name: "review manifest directory",
+      maxChars: IPC_LIMITS.maxPathChars,
+    })
+  );
+  const scope = normalizeManifestScope(
+    assertString(payload?.scope, {
+      name: "review manifest scope",
+      minChars: 1,
+      maxChars: 32,
+    })
+  );
+  return reviewManifestExportCoordinator.exportManifest({
+    owner: event.sender,
+    rootPath: requestedRoot,
+    directory,
+    scope,
   });
 });
 
@@ -3992,6 +4098,18 @@ ipcMain.handle(
     }, "REVIEW_STATE_ERROR")
 );
 
+ipcMain.handle("metadata:restore-review", async (_event, snapshots = []) =>
+  runMetadataContextOperation((store, context) => {
+    const normalizedSnapshots = normalizeReviewRestoreSnapshots(snapshots);
+    if (!normalizedSnapshots.length) return { updates: {} };
+    return {
+      updates: store.restoreReviewMetadata(normalizedSnapshots, {
+        assertActive: () => assertMetadataContextActive(context),
+      }),
+    };
+  }, "REVIEW_RESTORE_ERROR")
+);
+
 ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
   if (typeof payload !== "number") {
     assertPlainObject(payload, "generation metadata request");
@@ -4139,7 +4257,7 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
     maxChars: 64,
     trim: true,
   });
-  const context = captureProfileGenerationContext();
+  const context = captureMetadataContext();
   const requester = event.sender;
   const requesterId = requester.id;
   const canonicalByRequestedPath = new Map();
@@ -4147,7 +4265,7 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
     const authorized = await assertRendererPath(event, requestedPath, "file");
     canonicalByRequestedPath.set(requestedPath, authorized.path);
   }
-  assertProfileGenerationContextActive(context);
+  assertMetadataContextActive(context);
   const confirmed = trashConfirmationStore.consume({
     token,
     ownerId: requesterId,
@@ -4170,6 +4288,26 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
       }),
       logger: console,
     });
+    const canonicalMovedPaths = result.moved
+      .map((requestedPath) => canonicalByRequestedPath.get(requestedPath))
+      .filter(Boolean);
+    if (canonicalMovedPaths.length > 0) {
+      try {
+        const catalogResult = context.metadataStore.markFilesMissing(
+          canonicalMovedPaths,
+          { assertActive: () => assertMetadataContextActive(context) }
+        );
+        result.catalogReconciled = true;
+        result.catalogMarkedMissing = catalogResult.markedMissing;
+      } catch (error) {
+        // The filesystem result remains authoritative and must still reach the
+        // renderer so moved cards are removed. Surface the catalog failure for
+        // diagnostics; the active watcher/revisit scan can repair it later.
+        console.error("[trash] Failed to reconcile moved files with metadata", error);
+        result.catalogReconciled = false;
+        result.catalogError = error?.message || String(error);
+      }
+    }
     const retryPaths = [];
     const retryBindings = {};
     for (const failure of result.failed) {
@@ -4198,7 +4336,7 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
       mainWindow.webContents === requester
     ) {
       try {
-        assertProfileGenerationContextActive(context);
+        assertMetadataContextActive(context);
         retryContextActive = true;
       } catch {
         // The completed result remains useful, but no capability may cross a
@@ -4361,9 +4499,14 @@ async function performNativeShutdown() {
   // Mark scans interrupted while their old profile generation is still valid,
   // then stop every filesystem producer before the durable flush boundary.
   trashAdmissionOpen = false;
+  const manifestShutdownDrain =
+    reviewManifestExportCoordinator.closeAndDrain();
   cancelAllDirectoryScans();
   cancelPendingProfilePrompts();
-  await drainActiveTrashOperations();
+  await Promise.all([
+    drainActiveTrashOperations(),
+    manifestShutdownDrain,
+  ]);
   trashConfirmationStore.revokeAll();
   await folderWatcher.stop().catch((error) => {
     console.warn("[shutdown] Failed to stop watcher before flush", error);

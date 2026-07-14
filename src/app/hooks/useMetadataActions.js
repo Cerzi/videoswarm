@@ -76,17 +76,28 @@ export function useMetadataActions({
   );
 
   const handleSetRating = useCallback(
-    async (value, targetFingerprints = selectedFingerprints) => {
+    async (
+      value,
+      targetFingerprints = selectedFingerprints,
+      { quiet = false } = {}
+    ) => {
       const api = window.electronAPI?.metadata;
-      if (!api?.setRating) return;
+      if (!api?.setRating) {
+        return { success: false, error: "Rating service is unavailable" };
+      }
       const fingerprints = (targetFingerprints || []).filter(Boolean);
-      if (!fingerprints.length) return;
+      if (!fingerprints.length) {
+        return { success: false, error: "No reviewable clips selected" };
+      }
       try {
         const result = await api.setRating(fingerprints, value);
+        if (result?.error) {
+          throw new Error(result.error);
+        }
         if (result?.updates) applyMetadataPatch(result.updates);
-        if (value === null || value === undefined) {
+        if (!quiet && (value === null || value === undefined)) {
           notify(`Cleared rating for ${fingerprints.length} item(s)`, "success");
-        } else {
+        } else if (!quiet) {
           const safeRating = Math.max(0, Math.min(5, Math.round(Number(value))));
           notify(
             `Rated ${fingerprints.length} item(s) ${safeRating} star${
@@ -95,24 +106,38 @@ export function useMetadataActions({
             "success"
           );
         }
+        return {
+          success: true,
+          updates: result?.updates || {},
+          result,
+        };
       } catch (error) {
         console.error("Failed to update rating:", error);
         notify("Failed to update rating", "error");
+        return { success: false, error };
       }
     },
     [selectedFingerprints, applyMetadataPatch, notify]
   );
 
   const handleClearRating = useCallback(() => {
-    handleSetRating(null, selectedFingerprints);
+    return handleSetRating(null, selectedFingerprints);
   }, [handleSetRating, selectedFingerprints]);
 
   const handleSetReviewState = useCallback(
-    async (value, targetFingerprints = selectedFingerprints) => {
+    async (
+      value,
+      targetFingerprints = selectedFingerprints,
+      { quiet = false } = {}
+    ) => {
       const api = window.electronAPI?.metadata;
-      if (!api?.setReviewState) return;
+      if (!api?.setReviewState) {
+        return { success: false, error: "Review service is unavailable" };
+      }
       const fingerprints = (targetFingerprints || []).filter(Boolean);
-      if (!fingerprints.length) return;
+      if (!fingerprints.length) {
+        return { success: false, error: "No reviewable clips selected" };
+      }
       const reviewState = normalizeReviewState(value);
 
       try {
@@ -121,16 +146,66 @@ export function useMetadataActions({
           throw new Error(result.error);
         }
         if (result?.updates) applyMetadataPatch(result.updates);
-        notify(
-          `Marked ${fingerprints.length} item(s) ${reviewStateLabel(reviewState).toLowerCase()}`,
-          "success"
-        );
+        if (!quiet) {
+          notify(
+            `Marked ${fingerprints.length} item(s) ${reviewStateLabel(reviewState).toLowerCase()}`,
+            "success"
+          );
+        }
+        return {
+          success: true,
+          updates: result?.updates || {},
+          result,
+        };
       } catch (error) {
         console.error("Failed to update review state:", error);
         notify("Failed to update review state", "error");
+        return { success: false, error };
       }
     },
     [selectedFingerprints, applyMetadataPatch, notify]
+  );
+
+  const handleRestoreReviewMetadata = useCallback(
+    async (snapshots) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.restoreReview) {
+        return { success: false, error: "Review restore service is unavailable" };
+      }
+
+      const cleanSnapshots = (Array.isArray(snapshots) ? snapshots : [])
+        .filter((snapshot) => snapshot?.fingerprint)
+        .map((snapshot) => ({
+          fingerprint: snapshot.fingerprint,
+          reviewState: normalizeReviewState(snapshot.reviewState),
+          rating:
+            typeof snapshot.rating === "number" &&
+            Number.isFinite(snapshot.rating)
+              ? snapshot.rating
+              : null,
+        }));
+      if (!cleanSnapshots.length) {
+        return { success: false, error: "No review metadata to restore" };
+      }
+
+      try {
+        const result = await api.restoreReview(cleanSnapshots);
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        if (result?.updates) applyMetadataPatch(result.updates);
+        return {
+          success: true,
+          updates: result?.updates || {},
+          result,
+        };
+      } catch (error) {
+        console.error("Failed to restore review metadata:", error);
+        notify("Failed to undo review change", "error");
+        return { success: false, error };
+      }
+    },
+    [applyMetadataPatch, notify]
   );
 
   const handleApplyExistingTag = useCallback(
@@ -158,6 +233,7 @@ export function useMetadataActions({
     handleSetRating,
     handleClearRating,
     handleSetReviewState,
+    handleRestoreReviewMetadata,
     handleApplyExistingTag,
     refreshTagList,
   };

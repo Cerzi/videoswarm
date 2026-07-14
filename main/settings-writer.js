@@ -161,8 +161,11 @@ async function removeTemporaryFile(fsApi, temporaryPath) {
 async function writeFileAtomically(
   destination,
   contents,
-  { fsApi = fs.promises, sequence = 0 } = {}
+  { fsApi = fs.promises, sequence = 0, assertActive = null } = {}
 ) {
+  if (assertActive !== null && typeof assertActive !== "function") {
+    throw new TypeError("writeFileAtomically assertActive must be a function");
+  }
   const filePath = path.resolve(destination);
   const directory = path.dirname(filePath);
   const temporaryPath = path.join(
@@ -179,6 +182,10 @@ async function writeFileAtomically(
     await handle.sync();
     await handle.close();
     handle = null;
+    // This is the publication ownership boundary. Callers that captured a
+    // renderer/profile generation can prevent stale work from replacing the
+    // destination after an asynchronous write or native dialog yield.
+    assertActive?.();
     await fsApi.rename(temporaryPath, filePath);
     renamed = true;
 

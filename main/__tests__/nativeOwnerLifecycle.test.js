@@ -104,7 +104,7 @@ describe("NativeOwnerLifecycle", () => {
     expect(bulkHandler).toContain("!requester.isDestroyed?.()");
     expect(bulkHandler).toContain("mainWindow.webContents === requester");
     expect(bulkHandler).toContain(
-      "assertProfileGenerationContextActive(context)"
+      "assertMetadataContextActive(context)"
     );
   });
 

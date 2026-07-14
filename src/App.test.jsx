@@ -11,6 +11,8 @@ const selectionMock = {
   clear: vi.fn(),
   toggle: vi.fn(),
   selectOnly: vi.fn(),
+  selectExactly: vi.fn(),
+  setSelectedIds: vi.fn(),
   selectRange: vi.fn(),
 };
 
@@ -185,6 +187,7 @@ const metadataActionsReturn = {
   handleSetRating: vi.fn(),
   handleClearRating: vi.fn(),
   handleSetReviewState: vi.fn(),
+  handleRestoreReviewMetadata: vi.fn(),
   handleApplyExistingTag: vi.fn(),
   refreshTagList: vi.fn(),
 };
@@ -1051,6 +1054,141 @@ describe("App hook composition", () => {
     });
   });
 
+  test("routes panel and context review mutations through workflow undo", async () => {
+    const videos = [
+      {
+        id: "video-a",
+        name: "a.mp4",
+        fingerprint: "fingerprint-a",
+        reviewState: "unreviewed",
+        rating: null,
+      },
+      {
+        id: "video-b",
+        name: "b.mp4",
+        fingerprint: "fingerprint-b",
+        reviewState: "unreviewed",
+        rating: null,
+      },
+    ];
+    selectionMock.selected = new Set(["video-a"]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = "video-a";
+    Object.assign(contextMenuReturn.contextMenu, {
+      visible: true,
+      position: { x: 900, y: 160 },
+      contextId: "video-b",
+    });
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({ id: video.id, item: video, style: {} })),
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
+    await act(async () => panelProps.onSetReviewState("pick"));
+    const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
+    await act(async () => hotkeyOptions.onUndoReview());
+
+    expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+      "pick",
+      ["fingerprint-a"]
+    );
+    expect(metadataActionsReturn.handleRestoreReviewMetadata).toHaveBeenCalledWith([
+      {
+        fingerprint: "fingerprint-a",
+        reviewState: "unreviewed",
+        rating: null,
+      },
+    ]);
+
+    metadataActionsReturn.handleSetReviewState.mockClear();
+    metadataActionsReturn.handleRestoreReviewMetadata.mockClear();
+    const menuProps = contextMenuSpy.mock.calls.at(-1)?.[0];
+    await act(async () => menuProps.onAction("metadata:review:reject"));
+    await act(async () => hotkeyOptions.onUndoReview());
+
+    expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+      "reject",
+      ["fingerprint-b"]
+    );
+    expect(metadataActionsReturn.handleRestoreReviewMetadata).toHaveBeenCalledWith([
+      {
+        fingerprint: "fingerprint-b",
+        reviewState: "unreviewed",
+        rating: null,
+      },
+    ]);
+  });
+
+  test("invalidates review undo when the active profile changes", async () => {
+    const activeVideo = {
+      id: "video-a",
+      name: "a.mp4",
+      fingerprint: "fingerprint-a",
+      reviewState: "unreviewed",
+      rating: null,
+    };
+    selectionMock.selected = new Set([activeVideo.id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = activeVideo.id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [activeVideo],
+      activeRootPath: "/same-root",
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [activeVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [activeVideo],
+      displayVideos: [activeVideo],
+      orderedIds: [activeVideo.id],
+      orderForRange: [activeVideo.id],
+    });
+    let profileChanged;
+    window.electronAPI = {
+      profiles: {
+        onChanged: vi.fn((callback) => {
+          profileChanged = callback;
+          return vi.fn();
+        }),
+      },
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
+    await act(async () => panelProps.onSetReviewState("pick"));
+    metadataActionsReturn.handleSetReviewState.mockClear();
+    metadataActionsReturn.handleRestoreReviewMetadata.mockClear();
+
+    act(() => profileChanged({ profileName: "other-profile" }));
+    const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
+    await act(async () => hotkeyOptions.onUndoReview());
+
+    expect(metadataActionsReturn.handleSetReviewState).not.toHaveBeenCalled();
+    expect(metadataActionsReturn.handleRestoreReviewMetadata).not.toHaveBeenCalled();
+  });
+
   test("keeps metadata targets for selected videos hidden by filters", async () => {
     const hiddenVideo = {
       id: "hidden-video",
@@ -1081,6 +1219,48 @@ describe("App hook composition", () => {
       "fingerprint-hidden",
     ]);
     expect(selectionMock.pruneTo).toHaveBeenCalledWith(new Set([hiddenVideo.id]));
+  });
+
+  test("requires an authoritative direct-folder scope before processing a nonrecursive root", async () => {
+    const rootVideo = {
+      id: "root-video",
+      name: "root.mp4",
+      dirname: "",
+      fingerprint: "fingerprint-root",
+      reviewState: "reject",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [rootVideo],
+      activeRootPath: "/outputs",
+      libraryRoot: {
+        rootPath: "/outputs",
+        name: "outputs",
+        recursive: false,
+        refreshState: "idle",
+      },
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [rootVideo],
+    }));
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const processResults = screen.getByRole("button", { name: "Process results" });
+    expect(processResults).toBeDisabled();
+    expect(processResults).toHaveAttribute(
+      "title",
+      expect.stringContaining("Choose Current folder")
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Folder scope" }), {
+      target: { value: "current-folder" },
+    });
+    await waitFor(() => expect(processResults).toBeEnabled());
   });
 
   test("restores recursive scope when navigating from a child folder to the root", async () => {

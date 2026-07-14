@@ -102,8 +102,9 @@ describe("useMetadataActions", () => {
       })
     );
 
+    let mutationResult;
     await act(async () => {
-      await result.current.handleSetReviewState(" PICK ");
+      mutationResult = await result.current.handleSetReviewState(" PICK ");
     });
 
     expect(window.electronAPI.metadata.setReviewState).toHaveBeenCalledWith(
@@ -111,6 +112,154 @@ describe("useMetadataActions", () => {
       "pick"
     );
     expect(videos[0].reviewState).toBe("pick");
-    expect(notify).toHaveBeenCalledWith("Marked 1 item(s) pick", "success");
+    expect(notify).toHaveBeenCalledWith("Marked 1 item(s) accept", "success");
+    expect(mutationResult).toMatchObject({ success: true });
+  });
+
+  it("returns a failed result so workflow navigation does not advance", async () => {
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        setRating: vi.fn().mockResolvedValue({ error: "profile changed" }),
+      },
+    };
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos: noop,
+        setAvailableTags: noop,
+        notify,
+      })
+    );
+
+    let mutationResult;
+    await act(async () => {
+      mutationResult = await result.current.handleSetRating(4);
+    });
+
+    expect(mutationResult.success).toBe(false);
+    expect(notify).toHaveBeenCalledWith("Failed to update rating", "error");
+    consoleSpy.mockRestore();
+  });
+
+  it("supports quiet workflow restoration without suppressing the metadata patch", async () => {
+    let videos = [
+      { id: "1", fingerprint: "fp1", rating: null, reviewState: "reject" },
+    ];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        setReviewState: vi.fn().mockResolvedValue({
+          updates: { fp1: { reviewState: "reviewed", rating: 4 } },
+        }),
+        setRating: vi.fn().mockResolvedValue({
+          updates: { fp1: { reviewState: "reviewed", rating: 4 } },
+        }),
+      },
+    };
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos,
+        setAvailableTags: noop,
+        notify,
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleSetReviewState("reviewed", ["fp1"], { quiet: true });
+      await result.current.handleSetRating(4, ["fp1"], { quiet: true });
+    });
+
+    expect(videos[0]).toMatchObject({ reviewState: "reviewed", rating: 4 });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("restores review metadata atomically and never forwards tags", async () => {
+    let videos = [
+      {
+        id: "1",
+        fingerprint: "fp1",
+        rating: null,
+        reviewState: "reject",
+        tags: ["keep-me"],
+      },
+    ];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        restoreReview: vi.fn().mockResolvedValue({
+          updates: { fp1: { reviewState: "reviewed", rating: 4 } },
+        }),
+      },
+    };
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos,
+        setAvailableTags: noop,
+        notify,
+      })
+    );
+
+    let restoreResult;
+    await act(async () => {
+      restoreResult = await result.current.handleRestoreReviewMetadata([
+        {
+          fingerprint: "fp1",
+          reviewState: "reviewed",
+          rating: 4,
+          tags: ["must-not-cross-the-boundary"],
+        },
+      ]);
+    });
+
+    expect(window.electronAPI.metadata.restoreReview).toHaveBeenCalledWith([
+      { fingerprint: "fp1", reviewState: "reviewed", rating: 4 },
+    ]);
+    expect(restoreResult).toMatchObject({ success: true });
+    expect(videos[0]).toMatchObject({
+      reviewState: "reviewed",
+      rating: 4,
+      tags: ["keep-me"],
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured failure when atomic review restore fails", async () => {
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        restoreReview: vi.fn().mockResolvedValue({ error: "profile changed" }),
+      },
+    };
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos: noop,
+        setAvailableTags: noop,
+        notify,
+      })
+    );
+
+    let restoreResult;
+    await act(async () => {
+      restoreResult = await result.current.handleRestoreReviewMetadata([
+        { fingerprint: "fp1", reviewState: "reviewed", rating: 4 },
+      ]);
+    });
+
+    expect(restoreResult.success).toBe(false);
+    expect(notify).toHaveBeenCalledWith("Failed to undo review change", "error");
+    consoleSpy.mockRestore();
   });
 });

@@ -4,7 +4,10 @@ import { ActionIds } from "../actions/actions";
 import { isEnabledForToolbar } from "../actions/actionPolicies";
 import {
   FOLDER_DIRECTION_BY_KEY,
+  REVIEW_CLEAR_RATING_KEYS,
+  REVIEW_RATING_BY_KEY,
   REVIEW_STATE_BY_KEY,
+  REVIEW_UNDO_KEYS,
 } from "../../hotkeys/shortcutCatalog";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
@@ -18,6 +21,8 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     wheelStepUnits = 120,   // 120 ≈ one "notch" after normalization
     maxStepsPerFrame = 3,   // safety: avoid huge jumps per frame
     onSetReviewState,
+    onSetRating,
+    onUndoReview,
     onPreviousFolder,
     onNextFolder,
     onOpenHelp,
@@ -78,7 +83,14 @@ export default function useHotkeys(run, getSelection, opts = {}) {
           run(ActionIds.MOVE_TO_TRASH, sel);
           return;
         }
-        if (!e.ctrlKey && !e.metaKey && !e.altKey && onSetReviewState) {
+        if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          !e.repeat &&
+          onSetReviewState
+        ) {
           const reviewState = REVIEW_STATE_BY_KEY[e.key.toLowerCase()];
           if (reviewState) {
             e.preventDefault();
@@ -86,9 +98,40 @@ export default function useHotkeys(run, getSelection, opts = {}) {
             return;
           }
         }
+        if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          !e.repeat &&
+          onSetRating
+        ) {
+          const key = e.key.toLowerCase();
+          const rating = REVIEW_RATING_BY_KEY[key];
+          if (rating !== undefined) {
+            e.preventDefault();
+            onSetRating(rating, sel);
+            return;
+          }
+          if (REVIEW_CLEAR_RATING_KEYS.includes(key)) {
+            e.preventDefault();
+            onSetRating(null, sel);
+            return;
+          }
+        }
       }
 
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (
+          !e.shiftKey &&
+          !e.repeat &&
+          onUndoReview &&
+          REVIEW_UNDO_KEYS.includes(e.key.toLowerCase())
+        ) {
+          e.preventDefault();
+          onUndoReview();
+          return;
+        }
         if (e.key === "?" && onOpenHelp) {
           e.preventDefault();
           onOpenHelp();
@@ -136,6 +179,8 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     minZoomIndex,
     maxZoomIndex,
     onSetReviewState,
+    onSetRating,
+    onUndoReview,
     onPreviousFolder,
     onNextFolder,
     onOpenHelp,

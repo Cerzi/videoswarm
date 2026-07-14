@@ -24,7 +24,7 @@ describe("FiltersPopover review filters", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Picks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Accepted" }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(current.reviewFilter).toBe("pick");

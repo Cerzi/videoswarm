@@ -1180,7 +1180,7 @@ describe("VideoCard", () => {
       />
     );
 
-    expect(screen.getByTitle("Review state: Pick")).toHaveTextContent("Pick");
+    expect(screen.getByTitle("Review state: Accept")).toHaveTextContent("Accept");
 
     rerender(
       <VideoCard

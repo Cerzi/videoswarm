@@ -92,6 +92,7 @@ export function useElectronFolderLifecycle({
   setRandomSeed,
   setPlaybackMode,
   setProxyPlaybackEnabled,
+  setReviewAutoAdvance,
   setZoomLevelFromSettings,
   setVisibleVideos,
   setLoadedVideos,
@@ -131,6 +132,7 @@ export function useElectronFolderLifecycle({
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setReviewAutoAdvance,
     setZoomLevelFromSettings,
   });
 
@@ -145,6 +147,7 @@ export function useElectronFolderLifecycle({
       setRandomSeed,
       setPlaybackMode,
       setProxyPlaybackEnabled,
+      setReviewAutoAdvance,
       setZoomLevelFromSettings,
     };
   }, [
@@ -157,6 +160,7 @@ export function useElectronFolderLifecycle({
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setReviewAutoAdvance,
     setZoomLevelFromSettings,
   ]);
 
@@ -719,6 +723,7 @@ export function useElectronFolderLifecycle({
       setRandomSeed: applyRandomSeed,
       setPlaybackMode: applyPlaybackMode,
       setProxyPlaybackEnabled: applyProxyPlaybackEnabled,
+      setReviewAutoAdvance: applyReviewAutoAdvance,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
 
@@ -748,6 +753,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.proxyPlaybackEnabled !== undefined) {
       applyProxyPlaybackEnabled?.(Boolean(settings.proxyPlaybackEnabled));
+    }
+    if (settings.reviewAutoAdvance !== undefined) {
+      applyReviewAutoAdvance?.(settings.reviewAutoAdvance === true);
     }
   }, []);
 

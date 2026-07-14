@@ -23,6 +23,25 @@ export default function useSelectionState() {
     });
   }, []);
 
+  const selectExactly = useCallback((id) => {
+    if (id == null) {
+      setSelected(new Set());
+      setAnchorId(null);
+      return;
+    }
+    setSelected(new Set([id]));
+    setAnchorId(id);
+  }, []);
+
+  const setSelectedIds = useCallback((ids) => {
+    const next = ids instanceof Set ? new Set(ids) : new Set(ids || []);
+    setSelected(next);
+    setAnchorId((previous) => {
+      if (previous != null && next.has(previous)) return previous;
+      return next.values().next().value ?? null;
+    });
+  }, []);
+
   const toggle = useCallback((id) => {
     setSelected(prev => {
       const ns = new Set(prev);
@@ -87,6 +106,8 @@ export default function useSelectionState() {
     anchorId,
     setSelected,  // used by FS watcher cleanup
     selectOnly,
+    selectExactly,
+    setSelectedIds,
     toggle,
     clear,
     remove,

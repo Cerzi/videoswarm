@@ -97,6 +97,21 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("forwards atomic review snapshots through one invoke", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    const snapshots = [
+      { fingerprint: "fp-a", reviewState: "reviewed", rating: 4 },
+      { fingerprint: "fp-b", reviewState: "unreviewed", rating: null },
+    ];
+
+    await api.metadata.restoreReview(snapshots);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "metadata:restore-review",
+      snapshots
+    );
+  });
+
   it("exposes asynchronous last-known folder hydration", async () => {
     const { api, ipcRenderer } = loadPreload();
 
@@ -119,6 +134,26 @@ describe("preload native-work bridge", () => {
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(
       "library:authorize-root",
       { rootPath: "/library/root-300" }
+    );
+  });
+
+  it("exports a review manifest by scope without accepting renderer records", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.review.exportManifest({
+      rootPath: "/library/root",
+      directory: "batch/one",
+      scope: "current-folder",
+      clips: [{ absolutePath: "/private/clip.mp4" }],
+    });
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "review:export-manifest",
+      {
+        rootPath: "/library/root",
+        directory: "batch/one",
+        scope: "current-folder",
+      }
     );
   });
 

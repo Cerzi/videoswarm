@@ -348,15 +348,21 @@ describe("MetadataPanel review state", () => {
     });
 
     expect(screen.getByText("Mixed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Pick" }));
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     expect(onSetReviewState).toHaveBeenCalledWith("pick");
   });
 
   it("defaults old records to unreviewed", () => {
     renderPanel({ selectedVideos: [{ name: "one.mp4" }] });
-    expect(screen.getByRole("button", { name: "Unreviewed" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
+    expect(screen.getByText("Rating")).toHaveAttribute(
+      "title",
+      expect.stringContaining("marks an Unreviewed clip as Reviewed")
+    );
+    const unreviewed = screen.getByRole("button", { name: "Unreviewed" });
+    expect(unreviewed).toHaveAttribute("aria-pressed", "true");
+    expect(unreviewed).toHaveAttribute(
+      "title",
+      expect.stringContaining("clears rating, keeps tags")
     );
   });
 });

@@ -29,7 +29,7 @@ const REVIEW_OPTIONS = [
   { value: REVIEW_FILTERS.ANY, label: "Any" },
   { value: REVIEW_FILTERS.UNREVIEWED, label: "Unreviewed" },
   { value: REVIEW_FILTERS.REVIEWED, label: "Reviewed" },
-  { value: REVIEW_FILTERS.PICK, label: "Picks" },
+  { value: REVIEW_FILTERS.PICK, label: "Accepted" },
   { value: REVIEW_FILTERS.REJECT, label: "Rejects" },
 ];
 
@@ -388,7 +388,7 @@ const FiltersPopover = forwardRef(
             ))}
           </div>
           <span className="filters-empty-hint">
-            Picks and rejects also count as reviewed.
+            Accepted and rejected clips also count as reviewed.
           </span>
         </section>
       </div>

@@ -569,6 +569,54 @@ if (!database || databaseLoadError) {
       });
     });
 
+    it('marks a native batch missing atomically and refreshes each affected root once', async () => {
+      const first = createFile('batch/first.mp4', 'first');
+      const secondRoot = path.join(tempDir, 'second-library');
+      const secondPath = path.join(secondRoot, 'nested', 'second.mp4');
+      fs.mkdirSync(path.dirname(secondPath), { recursive: true });
+      fs.writeFileSync(secondPath, 'second');
+      const second = { filePath: secondPath, stats: fs.statSync(secondPath) };
+
+      await store.indexFiles({ rootPath, entries: [first] });
+      store.reconcileLibraryRoot(rootPath, [first.filePath], {
+        recursive: true,
+        completeCoverage: true,
+      });
+      await store.indexFiles({ rootPath: secondRoot, entries: [second] });
+      store.reconcileLibraryRoot(secondRoot, [second.filePath], {
+        recursive: true,
+        completeCoverage: true,
+      });
+
+      let checks = 0;
+      expect(() => store.markFilesMissing([first.filePath], {
+        assertActive: () => {
+          checks += 1;
+          if (checks === 2) throw new Error('invalidated');
+        },
+      })).toThrow('invalidated');
+      expect(store.getLibraryRoot(rootPath).presentCount).toBe(1);
+
+      const result = store.markFilesMissing([
+        first.filePath,
+        second.filePath,
+        first.filePath,
+      ]);
+      expect(result).toMatchObject({
+        markedMissing: 2,
+        affectedRootCount: 2,
+      });
+      expect(result.instances.every((instance) => instance.present === false)).toBe(true);
+      expect(store.getLibraryRoot(rootPath)).toMatchObject({
+        presentCount: 0,
+        missingCount: 1,
+      });
+      expect(store.getLibraryRoot(secondRoot)).toMatchObject({
+        presentCount: 0,
+        missingCount: 1,
+      });
+    });
+
     it('defers per-file directory aggregates until an explicit root refresh', async () => {
       const entry = createFile('deferred/clip.mp4', 'deferred');
       await store.indexFile({
