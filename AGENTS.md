@@ -116,6 +116,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - Prefer small pure helpers for logic that needs tests.
 - Keep UI dense and utilitarian. This is a working desktop tool, not a marketing page.
 - Preserve cross-platform paths, especially Windows file URL behavior and native file operations.
+- User-facing keyboard shortcuts are catalogued in `src/hotkeys/shortcutCatalog.js`. When adding or changing a shortcut, update its handler and focused tests in the same change; shortcut help must render from the catalog rather than duplicating a second hard-coded list.
 - Do not commit generated outputs, build artifacts, coverage, local databases, or caches.
 
 ## Git Workflow

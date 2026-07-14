@@ -61,4 +61,81 @@ describe('useHotkeys', () => {
     expect(onSetReviewState).not.toHaveBeenCalled();
     input.remove();
   });
+
+  test('bracket keys navigate sibling folders', () => {
+    const onPreviousFolder = vi.fn();
+    const onNextFolder = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        onPreviousFolder,
+        onNextFolder,
+      })
+    );
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '[' }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ']' }));
+
+    expect(onPreviousFolder).toHaveBeenCalledOnce();
+    expect(onNextFolder).toHaveBeenCalledOnce();
+  });
+
+  test('does not navigate folders while typing or with modifiers', () => {
+    const onPreviousFolder = vi.fn();
+    const onNextFolder = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        onPreviousFolder,
+        onNextFolder,
+      })
+    );
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '[', bubbles: true }));
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ']', ctrlKey: true })
+    );
+
+    expect(onPreviousFolder).not.toHaveBeenCalled();
+    expect(onNextFolder).not.toHaveBeenCalled();
+    input.remove();
+  });
+
+  test('? opens shortcut help and disabled suspends global bindings', () => {
+    const onOpenHelp = vi.fn();
+    const { rerender } = renderHook(
+      ({ enabled }) => useHotkeys(run, getSelection, { onOpenHelp, enabled }),
+      { initialProps: { enabled: true } }
+    );
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    expect(onOpenHelp).toHaveBeenCalledOnce();
+
+    rerender({ enabled: false });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
+    expect(onOpenHelp).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test('plain +/- zoom the grid without intercepting modified keys', () => {
+    const getZoomIndex = vi.fn(() => 1);
+    const setZoomIndexSafe = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        getZoomIndex,
+        setZoomIndexSafe,
+        minZoomIndex: 0,
+        maxZoomIndex: 4,
+      })
+    );
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '=', ctrlKey: true })
+    );
+    expect(setZoomIndexSafe).not.toHaveBeenCalled();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '=' }));
+    expect(setZoomIndexSafe).toHaveBeenCalledWith(2);
+  });
 });

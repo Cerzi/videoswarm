@@ -114,6 +114,45 @@ body {
   cursor: not-allowed;
 }
 
+.hotkey-help-button {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 50%;
+  font-family: inherit;
+  font-weight: 750;
+}
+
+.folder-refresh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #b8c0c5;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.folder-refresh-status__spinner {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: folder-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes folder-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folder-refresh-status__spinner {
+    animation: none;
+  }
+}
+
 .donate-button {
   display: inline-flex;
   align-items: center;

@@ -59,6 +59,9 @@ const {
   createDirectoryScanProgressReporter,
   createPeriodicEventLoopYielder,
 } = require("./main/directory-scan-progress");
+const {
+  createCachedLibraryResponse,
+} = require("./main/cached-library-snapshot");
 
 const DEFAULT_DONATION_URL = "https://ko-fi.com/videoswarm";
 
@@ -2076,6 +2079,31 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
     return false;
   }
 });
+
+// Return a serializable last-known grid before the authoritative filesystem
+// refresh. SQLite owns this cache; no inactive media elements or renderer trees
+// are retained in the main process.
+ipcMain.handle(
+  "read-directory-cache",
+  async (_event, folderPath, recursive = false, requestedScanId = null) => {
+    const metadataContext = captureMetadataContext();
+    const normalizedRoot = path.resolve(folderPath);
+    assertMetadataContextActive(metadataContext);
+    const snapshot = metadataContext.metadataStore.getCachedLibrarySnapshot(
+      normalizedRoot,
+      {
+        recursive: Boolean(recursive),
+        assertActive: () => assertMetadataContextActive(metadataContext),
+      }
+    );
+    assertMetadataContextActive(metadataContext);
+    return createCachedLibraryResponse(
+      snapshot,
+      normalizedRoot,
+      requestedScanId
+    );
+  }
+);
 
 // Read directory and return video files with metadata
 ipcMain.handle(

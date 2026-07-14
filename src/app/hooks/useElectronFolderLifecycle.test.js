@@ -103,6 +103,7 @@ describe("useElectronFolderLifecycle", () => {
           tags: [],
         },
       ]),
+      readDirectoryCache: vi.fn().mockResolvedValue(null),
       stopFolderWatch: vi.fn().mockResolvedValue(),
       startFolderWatch: vi.fn().mockResolvedValue({ success: true }),
       cancelDirectoryScan: vi.fn().mockResolvedValue({
@@ -363,6 +364,179 @@ describe("useElectronFolderLifecycle", () => {
     expect(refreshTagList).toHaveBeenCalled();
     expect(addRecentFolder).toHaveBeenCalledWith("/videos");
     expect(result.current.isLoadingFolder).toBe(false);
+  });
+
+  it("shows an indexed folder immediately while its filesystem refresh continues", async () => {
+    let resolveRefresh;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, recursive, scanId) => ({
+        cached: true,
+        refreshing: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [
+          { relativePath: "", present: true, presentCount: 1 },
+        ],
+        files: [
+          {
+            id: "/large/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            fullPath: "/large/cached.mp4",
+            tags: ["cached"],
+          },
+        ],
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/large");
+    });
+
+    await waitFor(() =>
+      expect(result.current.videos.map((video) => video.name)).toEqual([
+        "cached.mp4",
+      ])
+    );
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+    expect(window.electronAPI.readDirectoryCache).toHaveBeenCalledWith(
+      "/large",
+      true,
+      scanId
+    );
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(result.current.isRefreshingFolder).toBe(true);
+    expect(result.current.libraryRoot).toMatchObject({
+      rootPath: "/large",
+      refreshState: "refreshing",
+    });
+    expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveRefresh({
+        scanId,
+        root: { rootPath: "/large", refreshState: "idle" },
+        directories: [
+          { relativePath: "", present: true, presentCount: 1 },
+        ],
+        files: [
+          {
+            id: "/large/current.mp4",
+            name: "current.mp4",
+            basename: "current.mp4",
+            fullPath: "/large/current.mp4",
+            tags: [],
+          },
+        ],
+      });
+      await loadPromise;
+    });
+
+    expect(result.current.videos.map((video) => video.name)).toEqual([
+      "current.mp4",
+    ]);
+    expect(result.current.isRefreshingFolder).toBe(false);
+    expect(result.current.libraryRoot.refreshState).toBe("idle");
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+      "/large",
+      true
+    );
+  });
+
+  it("ignores a stale cache generation and keeps the normal loading flow", async () => {
+    window.electronAPI.readDirectoryCache.mockResolvedValueOnce({
+      cached: true,
+      scanId: "older-scan",
+      files: [{ id: "stale", name: "stale", basename: "stale", tags: [] }],
+    });
+    const { result } = renderDefaultLifecycle();
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+
+    expect(result.current.videos.map((video) => video.name)).toEqual(["file1"]);
+    expect(result.current.isRefreshingFolder).toBe(false);
+  });
+
+  it("does not start an authoritative scan after a superseded cache read rejects", async () => {
+    let rejectFirstCache;
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    window.electronAPI.readDirectoryCache
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstCache = reject;
+          })
+      )
+      .mockResolvedValueOnce(null);
+    const { result } = renderDefaultLifecycle();
+
+    let firstLoad;
+    act(() => {
+      firstLoad = result.current.handleElectronFolderSelection("/older");
+    });
+    await waitFor(() => expect(rejectFirstCache).toEqual(expect.any(Function)));
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/newer");
+    });
+    await act(async () => {
+      rejectFirstCache(new Error("older cache failed"));
+      await firstLoad;
+    });
+
+    expect(window.electronAPI.readDirectory).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.readDirectory.mock.calls[0][0]).toBe("/newer");
+    consoleWarn.mockRestore();
+  });
+
+  it("keeps an indexed preview usable when background validation fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: [
+          {
+            id: "/large/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            tags: [],
+          },
+        ],
+      })
+    );
+    window.electronAPI.readDirectory.mockRejectedValueOnce(
+      new Error("temporary filesystem error")
+    );
+    const { result } = renderDefaultLifecycle();
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/large");
+    });
+
+    expect(result.current.videos.map((video) => video.name)).toEqual([
+      "cached.mp4",
+    ]);
+    expect(result.current.libraryRoot.refreshState).toBe("error");
+    expect(result.current.isLoadingFolder).toBe(false);
+    expect(result.current.isRefreshingFolder).toBe(false);
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "error",
+      error: "temporary filesystem error",
+    });
+    consoleError.mockRestore();
   });
 
   it("keeps an empty indexed folder open with its directory tree", async () => {

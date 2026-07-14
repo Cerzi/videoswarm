@@ -145,6 +145,8 @@ export default function HeaderBar({
   onProxyPlaybackToggle,
   proxyPlaybackAvailable = true,
   workSuspended = false,
+  isRefreshingFolder = false,
+  onHotkeyHelp,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -201,6 +203,13 @@ export default function HeaderBar({
 
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
+        )}
+
+        {isRefreshingFolder && (
+          <span className="folder-refresh-status" role="status">
+            <span className="folder-refresh-status__spinner" aria-hidden="true" />
+            Refreshing index
+          </span>
         )}
       </div>
 
@@ -353,6 +362,16 @@ export default function HeaderBar({
               )}
             </button>
           </div>
+
+          <button
+            type="button"
+            className="toggle-button hotkey-help-button"
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+            onClick={() => onHotkeyHelp?.()}
+          >
+            <span aria-hidden="true">?</span>
+          </button>
 
           <SupportLink
             className="donate-button"

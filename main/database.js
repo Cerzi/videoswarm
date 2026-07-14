@@ -707,6 +707,37 @@ function createMetadataStore(db) {
     WHERE fi.root_id = ?
     ORDER BY fi.relative_path COLLATE NOCASE;
   `);
+  // Folder revisits must not rebuild renderer records with one metadata query
+  // per file. These two statements hydrate the complete serializable snapshot
+  // in a pair of bounded SQLite reads, regardless of collection size.
+  const cachedFileInstancesForRoot = db.prepare(`
+    SELECT fi.*,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM file_instances fi
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE fi.root_id = ?
+      AND fi.is_present != 0
+      AND (? != 0 OR instr(fi.relative_path, '/') = 0)
+    ORDER BY fi.relative_path COLLATE NOCASE;
+  `);
+  const cachedFileTagsForRoot = db.prepare(`
+    SELECT DISTINCT fi.fingerprint, t.name
+    FROM file_instances fi
+    INNER JOIN file_tags ft ON ft.fingerprint = fi.fingerprint
+    INNER JOIN tags t ON t.id = ft.tag_id
+    WHERE fi.root_id = ?
+      AND fi.is_present != 0
+      AND (? != 0 OR instr(fi.relative_path, '/') = 0)
+    ORDER BY fi.fingerprint, t.name COLLATE NOCASE;
+  `);
   const fileInstancesByAbsolutePath = db.prepare(`
     SELECT * FROM file_instances WHERE absolute_path = ?;
   `);
@@ -1425,6 +1456,63 @@ function createMetadataStore(db) {
       .map(mapFileInstanceRow);
   }
 
+  function getCachedLibrarySnapshot(rootPath, options = {}) {
+    assertOperationActive(options.assertActive);
+    const row = rootByPath.get(normalizeRootPath(rootPath));
+    if (!row) return null;
+
+    const recursive = options.recursive !== false;
+    const recursiveFlag = recursive ? 1 : 0;
+    const tagsByFingerprint = new Map();
+    cachedFileTagsForRoot.all(row.id, recursiveFlag).forEach((tagRow) => {
+      const tags = tagsByFingerprint.get(tagRow.fingerprint) || [];
+      tags.push(tagRow.name);
+      tagsByFingerprint.set(tagRow.fingerprint, tags);
+    });
+    assertOperationActive(options.assertActive);
+
+    const records = cachedFileInstancesForRoot
+      .all(row.id, recursiveFlag)
+      .map((instance) => {
+        const width = Number(instance.content_width || 0);
+        const height = Number(instance.content_height || 0);
+        const dimensions = width > 0 && height > 0
+          ? { width, height, aspectRatio: width / height }
+          : null;
+        return {
+          instanceId: Number(instance.id),
+          relativePath: instance.relative_path,
+          absolutePath: instance.absolute_path,
+          size: Number(instance.size || 0),
+          mtimeMs: Number(instance.mtime_ms || 0),
+          createdMs: Number(
+            instance.content_created_ms || instance.mtime_ms || 0
+          ),
+          fingerprint: instance.fingerprint || null,
+          tags: tagsByFingerprint.get(instance.fingerprint) || [],
+          rating: instance.rating_value !== null &&
+            instance.rating_value !== undefined &&
+            Number.isFinite(Number(instance.rating_value))
+            ? Number(instance.rating_value)
+            : null,
+          reviewState: REVIEW_STATES.has(instance.review_state)
+            ? instance.review_state
+            : 'unreviewed',
+          dimensions,
+        };
+      });
+    assertOperationActive(options.assertActive);
+
+    return {
+      root: mapLibraryRootSummary(row),
+      directories: directoriesForRoot
+        .all(row.id)
+        .filter((directory) => Boolean(directory.is_present))
+        .map(mapDirectoryRow),
+      records,
+    };
+  }
+
   function getFileInstanceById(instanceId) {
     const id = Number(instanceId);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -2115,6 +2203,7 @@ function createMetadataStore(db) {
     setLibraryRootPinned,
     getDirectorySummaries,
     getLibraryTree,
+    getCachedLibrarySnapshot,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,

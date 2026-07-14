@@ -301,6 +301,69 @@ if (!database || databaseLoadError) {
       });
     });
 
+    it('hydrates present renderer records from SQLite without filesystem reads', async () => {
+      const direct = createFile('direct.mp4', 'direct');
+      const nested = createFile('batch/nested.mp4', 'nested');
+      const removed = createFile('batch/removed.mp4', 'removed');
+      const indexed = await store.indexFiles({
+        rootPath,
+        entries: [
+          { ...direct, dimensions: { width: 512, height: 288 } },
+          { ...nested, dimensions: { width: 720, height: 1280 } },
+          removed,
+        ],
+      });
+      store.assignTags([indexed[0].fingerprint], ['favorite', 'wan']);
+      store.setRating([indexed[0].fingerprint], 5);
+      store.setReviewState([indexed[1].fingerprint], 'pick');
+      store.reconcileLibraryRoot(rootPath, [direct.filePath, nested.filePath], {
+        recursive: true,
+        scannedDirectories: [rootPath, path.join(rootPath, 'batch')],
+        completeCoverage: true,
+      });
+
+      resetDatabase();
+      initMetadataStore({ getPath: () => tempDir }, tempDir);
+      store = getMetadataStore();
+
+      const recursiveSnapshot = store.getCachedLibrarySnapshot(rootPath, {
+        recursive: true,
+      });
+      expect(recursiveSnapshot.root).toMatchObject({
+        rootPath,
+        presentCount: 2,
+      });
+      expect(recursiveSnapshot.records).toEqual([
+        expect.objectContaining({
+          absolutePath: nested.filePath,
+          relativePath: 'batch/nested.mp4',
+          rating: null,
+          reviewState: 'pick',
+          dimensions: { width: 720, height: 1280, aspectRatio: 0.5625 },
+        }),
+        expect.objectContaining({
+          absolutePath: direct.filePath,
+          relativePath: 'direct.mp4',
+          tags: ['favorite', 'wan'],
+          rating: 5,
+          reviewState: 'reviewed',
+          dimensions: { width: 512, height: 288, aspectRatio: 512 / 288 },
+        }),
+      ]);
+      expect(
+        recursiveSnapshot.records.some(
+          (record) => record.absolutePath === removed.filePath
+        )
+      ).toBe(false);
+
+      const directSnapshot = store.getCachedLibrarySnapshot(rootPath, {
+        recursive: false,
+      });
+      expect(directSnapshot.records.map((record) => record.relativePath)).toEqual([
+        'direct.mp4',
+      ]);
+    });
+
     it('lists root summaries and toggles pin state without deleting catalog data', async () => {
       const entry = createFile('batch/clip.mp4', 'clip');
       await store.indexFiles({ rootPath, entries: [entry] });

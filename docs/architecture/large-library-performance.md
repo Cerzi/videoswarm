@@ -127,7 +127,7 @@ the initial scan.
 
 #### Folder revisit acceleration
 
-Status: **Unimplemented**
+Status: **Partially Implemented** (2026-07-14)
 
 A previously indexed root should be able to hydrate a last-known collection
 directly from its profile-local SQLite `file_instances` and content metadata,
@@ -155,6 +155,18 @@ Acceptance criteria:
   has tested byte and root-count limits.
 - Folder-switch profiling demonstrates a meaningful first-grid improvement
   before an in-memory tier is enabled.
+
+The SQLite hydration path is now **Implemented**: an indexed root is read with
+two bulk profile-owned queries, mapped to the normal serializable renderer
+record shape, and displayed only when its request/scan generation still owns
+the folder open. Missing instances are excluded, direct-only opens exclude
+nested records, no inactive media/DOM state is retained, and the ordinary
+filesystem scan continues as the authoritative background refresh. Cache read
+failure falls back to the normal scan, while refresh failure leaves an already
+hydrated grid usable. The lifecycle exposes `isRefreshingFolder`, and the
+navbar renders a compact, reduced-motion-safe “Refreshing index” status until
+validation finishes. A measured real-hardware first-grid A/B budget remains
+**Unimplemented**.
 
 ### 2. Persistent content and file-instance index
 
@@ -508,7 +520,7 @@ Acceptance criteria:
 | Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
 | Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
 | Incremental enumeration batches | **Unimplemented** | The scan protocol still returns one final array after enumeration and enrichment. |
-| SQLite-backed folder revisit hydration | **Unimplemented** | Reuse the existing persistent instance/content index as a stale-while-revalidate first grid; do not retain inactive media resources or add an unbounded record cache. |
+| SQLite-backed folder revisit hydration | **Partially Implemented** | Bulk, profile/scan-owned SQLite hydration now provides a stale-while-revalidate first grid with a visible refresh status and without retaining inactive media resources. A real-hardware first-grid A/B budget remains. |
 | Watch-before-scan reconciliation | **Unimplemented** | Requires buffered watcher generations. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Virtualized masonry | **Implemented** | Complete logical geometry, viewport-plus-overscan mounting, ID-based reachability/selection, logical anchoring, and 5,000-item bounds landed in `157ecf3` and `331a360`. |
@@ -589,7 +601,7 @@ claiming incremental delivery.
 The following adjacent work remains **Unimplemented**:
 
 - Enumeration batches and record patches are not streamed to the renderer;
-  the first grid still waits for the final scan result.
+  a first-time uncached grid still waits for the final scan result.
 - The watcher does not start before enumeration or reconcile a buffered event
   generation with the initial result.
 - Enrichment does not yet use a bounded worker pool that prioritizes the first
@@ -623,10 +635,9 @@ The following adjacent work remains **Unimplemented**:
 
 The following adjacent work remains **Unimplemented**:
 
-- SQLite-backed stale-while-revalidate grid hydration remains part of the
-  incremental scan work. Section 7 now consumes the catalog for navigation,
-  counts, pins, and empty directories, but does not retain inactive media
-  records as a renderer cache.
+- A real-hardware first-grid A/B budget must still quantify the implemented
+  SQLite stale-while-revalidate hydration. The hydration and Section 7 catalog
+  navigation retain no inactive media/DOM resources as a renderer cache.
 - Watch-before-scan buffering and renderer-side incremental batches remain
   part of Section 1.
 - Fingerprint format `v1` includes creation time. Ordinary byte-identical
@@ -929,12 +940,21 @@ The following measurement work remains **Unimplemented** in Section 8:
     Bin. Keep those actions visible with a clear unavailable state, group Copy,
     Review, and Rating into submenus, and clamp/scroll root and nested menus on
     every viewport edge.
+13. **Implemented** — Restore `all-descendants` scope whenever navigation
+    returns to the library root, so selecting a child and then its parent does
+    not silently narrow the root to direct files. A renderer regression covers
+    the full child-to-root transition.
+14. **Implemented** — Add `[` and `]` sibling-folder shortcuts, title hints on
+    the matching-folder controls, and a navbar `?` button/shortcut opening an
+    accessible, focus-managed shortcut guide. Review, selection, grid,
+    application, and fullscreen bindings render from one declarative catalog;
+    contributor guidance requires handlers, help, and tests to stay aligned.
 
 The following work remains **Unimplemented** after this slice:
 
-- Section 1 incremental scan delivery and stale-while-revalidate record
-  hydration remain unimplemented, so first open still waits for the complete
-  scan result.
+- Section 1 incremental scan delivery remains unimplemented, so a first-time
+  uncached open still waits for the complete scan result. Indexed revisits now
+  hydrate from SQLite while that authoritative scan runs in the background.
 - Electron smoke, Linux soak, and performance-budget automation remain in
   Section 8.
 - Full-width interleaved masonry group headers remain optional follow-up work;
