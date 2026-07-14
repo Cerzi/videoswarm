@@ -50,6 +50,7 @@ pids/
 *.pid
 *.seed
 *.pid.lock
+videoswarm-bootstrap.json
 
 # Coverage directory used by tools like istanbul
 coverage/
