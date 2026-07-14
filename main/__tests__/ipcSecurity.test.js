@@ -63,6 +63,17 @@ function trustedFixture(frameUrl = "file:///opt/videoswarm/dist-react/index.html
 }
 
 describe("IPC sender trust", () => {
+  it("keeps unsupported response-only directives out of the meta CSP", () => {
+    const html = fs.readFileSync(path.resolve(process.cwd(), "index.html"), "utf8");
+    const content = html.match(
+      /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/
+    )?.[1];
+
+    expect(content).toBeTruthy();
+    expect(content).toContain("frame-src 'none'");
+    expect(content).not.toContain("frame-ancestors");
+  });
+
   it("accepts only the live main frame and returns immutable context", () => {
     const { validator, event, sender } = trustedFixture();
     const context = validator(event);
