@@ -1,0 +1,546 @@
+# Persistent Continue Review Sessions
+
+Status: **Approved design; implementation unimplemented**
+Last updated: 2026-07-14
+
+## Summary
+
+Video Swarm should remember a lightweight review cursor for each indexed root
+inside the active profile. A user can leave a large collection, restart the
+application, and continue from the next Unreviewed clip in the same folder
+scope and visual order without retaining videos, renderer state, or decoded
+media in memory.
+
+This is a checkpoint, not a second review database. Review state, ratings, and
+tags remain content-keyed metadata. The checkpoint stores only where and how a
+review pass was being viewed. One checkpoint is retained per root, with at
+most 128 checkpoints per profile.
+
+Every code and test item described below is **Unimplemented**. This document
+is the decision-complete implementation contract.
+
+## Goals
+
+1. Resume a review pass across root switches, profile switches, and app
+   restarts.
+2. Reuse the existing SQLite-first folder hydration so Continue Review does
+   not delay the cached first grid until a filesystem refresh finishes.
+3. Restore a bounded, validated folder scope, filter, and sort definition.
+4. Resolve stale or duplicate anchors without skipping remaining Unreviewed
+   content.
+5. Make remaining work and the Start/Continue action visible in the library
+   sidebar and review toolbar.
+6. Keep all persistence profile-owned, bounded, and independent of media and
+   DOM lifecycle.
+
+## Non-goals
+
+- Checkpoints do not duplicate review status, ratings, tags, thumbnails, or
+  generation metadata.
+- They do not store video records, selected-ID arrays, scroll offsets, DOM
+  nodes, media elements, playback position, or decoded resources.
+- They do not add an in-memory folder cache or bypass authoritative refresh.
+- They do not create multiple named review passes for one root in v1.
+- They do not change the existing rating/review invariant: assigning a rating
+  implies Reviewed, and resetting to Unreviewed clears the rating but not tags.
+- They do not implement Accepted-file export, search indexing, comparison, or
+  new Linux playback scheduling.
+
+## Persisted model
+
+### SQLite schema
+
+Add the following table through the existing additive profile-database
+migration in `main/database.js`:
+
+```sql
+CREATE TABLE IF NOT EXISTS review_checkpoints (
+  root_id INTEGER PRIMARY KEY,
+  directory_relative_path TEXT NOT NULL DEFAULT '',
+  scope_mode TEXT NOT NULL CHECK (
+    scope_mode IN ('all-descendants', 'current-folder', 'current-subtree')
+  ),
+  view_json TEXT NOT NULL CHECK (
+    length(CAST(view_json AS BLOB)) <= 8192
+  ),
+  anchor_instance_id INTEGER,
+  anchor_fingerprint TEXT,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (root_id) REFERENCES library_roots(id) ON DELETE CASCADE,
+  FOREIGN KEY (anchor_instance_id) REFERENCES file_instances(id)
+    ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_checkpoints_updated
+  ON review_checkpoints(updated_at DESC, root_id DESC);
+```
+
+The root foreign key makes the checkpoint profile-local and gives it the same
+canonical root identity as the durable library catalog. The fingerprint is
+deliberately not a foreign key: it remains useful as a stale-anchor fallback
+if the original file instance disappears. `updated_at` is assigned by the main
+process; renderer timestamps are never accepted.
+
+An insert for a 129th root runs in the same transaction as the upsert and
+deletes the oldest rows ordered by `updated_at ASC, root_id ASC`, excluding the
+row just written, until 128 remain. Updating an existing root never evicts a
+different row unless the database was already over the bound.
+
+### Checkpoint wire shape
+
+The full renderer-facing value is:
+
+```js
+{
+  rootPath: string,
+  directory: string,
+  scope: "all-descendants" | "current-folder" | "current-subtree",
+  view: {
+    version: 1,
+    filters: {
+      includeTags: string[],
+      excludeTags: string[],
+      minRating: null | 1 | 2 | 3 | 4 | 5,
+      exactRating: null | 0 | 1 | 2 | 3 | 4 | 5,
+      reviewFilter: "any" | "unreviewed" | "reviewed" | "pick" | "reject"
+    },
+    sort: {
+      key: "name" | "created" | "random",
+      dir: "asc" | "desc",
+      groupByFolders: boolean,
+      randomSeed: null | integer
+    }
+  },
+  anchorInstanceId: null | positiveSafeInteger,
+  anchorFingerprint: null | string,
+  updatedAt: integer
+}
+```
+
+For a random sort, `randomSeed` is required to be an integer; `null` is valid
+only for name/created sorts. The definition intentionally matches the
+allowlisted portions of saved views.
+It excludes transient UI state such as scroll, selection, sidebar expansion,
+zoom, render limit, playback mode, and open dialogs. A random sort always
+persists its already-generated seed so the next visual order is reproducible.
+
+### Validation and normalization
+
+The main process is the authoritative validator, even when the renderer has
+already normalized a draft:
+
+- Resolve `rootPath` with the existing catalog path rules and require a
+  matching `library_roots` row.
+- Normalize `directory` to root-relative `/` separators, reject NULs,
+  absolute/escaping paths, and values over the IPC path limit. Saving requires
+  a present indexed directory. `all-descendants` always stores directory `""`.
+- Accept only the three existing `FolderScope` values.
+- Require `view.version === 1`; apply the same tag, rating, review-filter, sort,
+  direction, grouping, and 8 KiB bounds as saved views. Exact rating wins over
+  minimum rating. Unknown keys are discarded.
+- Limit each include/exclude tag list to 100 unique, trimmed values of at most
+  80 characters, using deterministic case-insensitive ordering.
+- Require and clamp a random seed to a signed safe integer when the sort is
+  random. Store `null` when the sort is not random.
+- Accept a null anchor or a positive safe instance ID and/or a non-empty
+  fingerprint of at most 512 characters. When an instance is supplied, it
+  must currently belong to the requested root; when both identifiers are
+  supplied, its current fingerprint must match. An ID-only draft is enriched
+  with that instance's current fingerprint before storage, so exact-instance
+  resume never trusts an identity without its content check.
+- Serialize only the normalized object and enforce the byte bound again after
+  serialization.
+
+Malformed rows read from an older or externally modified database are skipped
+and logged once per app run; they must not prevent the profile from opening.
+They are not silently deleted, so a newer schema is not destroyed by an older
+application. A later valid save for that root replaces the row.
+
+## Electron boundary
+
+Expose a narrow bridge at `window.electronAPI.review.sessions`:
+
+| Renderer call | IPC channel | Success payload |
+| --- | --- | --- |
+| `list()` | `review-sessions:list` | `{ sessions: ReviewCheckpointSummary[] }` |
+| `get(rootPath)` | `review-sessions:get` | `{ checkpoint: ReviewCheckpoint \| null }` |
+| `save(checkpointDraft)` | `review-sessions:save` | `{ checkpoint: ReviewCheckpoint }` |
+| `clear(rootPath)` | `review-sessions:clear` | `{ deleted: boolean }` |
+
+The same nested bridge exposes `onFlushRequested(callback)` and
+`acknowledgeFlush(requestId)` for the bounded lifecycle handshake. The callback
+receives only a frozen `{ requestId }` payload. The main process creates an
+unpredictable, one-use request ID, accepts an acknowledgement only from the
+live owning `WebContents`, and invalidates the ID after acknowledgement or
+750 ms. The acknowledgement carries no checkpoint payload; persistence still
+uses the validated `save()` operation above.
+
+`ReviewCheckpointSummary` contains only `rootPath`, `directory`, `scope`, and
+`updatedAt`. It omits `view` and anchor fields, keeping the profile-start list
+small. The sidebar already receives root-wide `presentCount` and
+`reviewedCount` from the catalog and derives `remainingUnreviewed` as
+`max(0, presentCount - reviewedCount)`.
+
+All four persistence handlers use `runMetadataContextOperation`, the active
+profile generation, and the current metadata store. Save/get/clear require a
+database-known root; they never grant filesystem authority. Opening a root
+still passes through `library:authorize-root`. A profile transition, store
+disposal, renderer-owner destruction, or shutdown invalidates any in-flight
+result before it can update the renderer.
+
+Errors use the existing structured `{ success: false, code, error, profileId,
+generation }` envelope. Expected invalidation is ignored after the renderer
+has changed profile/root; validation and disk errors are shown as a non-modal
+toast and leave the previous checkpoint intact.
+
+## Session lifecycle
+
+### Starting
+
+A checkpoint is created in either of these ways:
+
+1. **Automatic start:** the first successful Accept, Reviewed, Reject, or
+   non-null rating assignment in an indexed active root saves the current
+   scope/view and affected cursor. Clearing a rating, resetting to Unreviewed,
+   undo, and failed mutations do not create a new session.
+2. **Explicit start:** **Start review here** captures the active directory,
+   scope, validated view, and primary selection (when it belongs to the scope),
+   then resolves and focuses the next candidate. From an inactive pinned-root
+   row, **Start review** first opens the root at All descendants, lets existing
+   renderer settings/in-process folder state settle, and saves that resulting
+   validated view.
+
+One root has one checkpoint. Starting in another folder/view for a root that
+already has a checkpoint uses the explicit label **Move saved review position
+here…** and requires confirmation. It overwrites only the checkpoint; review
+metadata is unaffected.
+
+For a multi-item mutation, the anchor is the last successfully affected
+instance in the pre-mutation visual order. For a context action, it is the
+invoked instance. If no matching instance is available, save the affected
+fingerprint with a null instance ID.
+
+### Saving
+
+While a root has a checkpoint:
+
+- Successful review/rating changes and successful undo save immediately after
+  the metadata result is applied. Undo or Reset to Unreviewed anchors the now
+  Unreviewed item so resume returns to it rather than skipping it.
+- Changes to selection, directory, folder scope, filters, grouping, or sort
+  coalesce through one 400 ms trailing debounce. Scroll and playback changes
+  never schedule a save.
+- Before an in-profile root or directory ownership change, flush the latest
+  valid checkpoint once. After a directory/scope transition, save the new
+  location once it exists in the active catalog.
+- Keep at most one save in flight. If state changes during that save, retain
+  only the newest draft and issue one trailing save; do not build an unbounded
+  promise queue.
+- Cancel timers and ignore late responses on root/profile epoch changes and
+  unmount. A profile switch never writes the old draft into the new profile.
+
+A checkpoint is **engaged** in the renderer only after Start, Continue, a
+qualifying automatic start, or opening a location that already matches the
+saved root/directory/scope. Passive navigation to a different location in the
+same root must not overwrite a checkpoint; it keeps the explicit **Continue
+saved** and **Move saved review position here…** choices. Programmatic resume
+also baselines the save signature after restoring state, so applying the saved
+view or falling back from a missing directory does not immediately rewrite the
+checkpoint.
+
+The renderer owns only the current plain-data draft. It does not retain prior
+video arrays or card references to support persistence.
+
+### Clearing and completion
+
+**Forget saved position…** removes the checkpoint after a confirmation that
+review decisions, ratings, and tags will remain. It does not change the open
+grid or the renderer-only folder view cache. A later forward review action can
+start a new checkpoint.
+
+Completion never deletes a checkpoint. A completed row continues to describe
+the scope/view, and newly indexed Unreviewed files make the root actionable
+again automatically. Completion is announced only after an authoritative
+refresh establishes that no candidate remains in the saved work set.
+
+## Resume algorithm
+
+Continue Review is an explicit user action and follows this sequence:
+
+1. Load the checkpoint and authorize/open its root. Checkpoint lookup may run
+   beside authorization, but it must not wait for a filesystem scan.
+2. Apply directory, scope, filters, grouping, sort, and random seed before
+   resolving the cached collection. Use existing SQLite stale-while-revalidate
+   hydration and render the bounded cached first grid normally. Candidate
+   resolution waits for the post-paint full-cache hydration readiness signal
+   (or authoritative completion); it never treats the first 128-row preview as
+   the complete saved work set.
+3. Build the candidate order from the already sorted/filtered navigation scope;
+   do not create another media collection. A candidate must be present and
+   have exact review state `unreviewed`.
+4. Resolve the anchor by exact instance ID only when its current fingerprint
+   still matches the saved fingerprint. Otherwise use the first in-order
+   instance with the saved fingerprint. If neither exists, treat the cursor as
+   before index zero.
+5. If the resolved anchor itself is still Unreviewed, select it first. This
+   prevents a debounced navigation save or Undo from skipping the clip the user
+   was on. Otherwise search strictly after it to the end.
+6. If no candidate is found, wrap once and search from index zero up to the
+   anchor. If there is no anchor, search from index zero without a second pass.
+7. Select exactly one instance, centre it through the existing selection/focus
+   path, and announce the restored location. Do not wrap repeatedly.
+8. When authoritative refresh completes, repeat reconciliation against the
+   fresh collection. Keep the current candidate when it remains present,
+   visible, and Unreviewed. Otherwise resolve again from the persisted anchor.
+   Only the authoritative pass may announce Review complete.
+
+Review state is fingerprint-keyed, so classifying one duplicate normally makes
+all instances with that fingerprint ineligible. The cursor remains
+instance-first for spatial continuity; the fingerprint fallback handles a
+moved/deleted instance. Duplicate instances are traversed in visual order but
+never cause the same reviewed content to be selected again.
+
+If the saved filters yield no Unreviewed candidate but the root-wide catalog
+still reports Unreviewed files, show **Review complete for this saved view** and
+offer **Review all Unreviewed**, which starts a root/all-descendants checkpoint
+with default filters while preserving the current deterministic name/created
+sort and grouping. A random sort is replaced with name ascending unless its
+saved seed is retained explicitly. Do not silently discard the user's saved
+filters.
+
+When `reviewFilter: "unreviewed"` removes a now-reviewed anchor from the
+filtered visual order, the anchor is intentionally treated as missing and the
+one-wrap search starts at the beginning. This sacrifices spatial
+after-anchor continuity but cannot reselect already reviewed content, and it
+keeps candidate resolution on the one existing filtered order.
+
+## User experience
+
+### Library sidebar
+
+Each pinned-root row adds a compact instance count and action:
+
+- `N unreviewed` while the root-wide aggregate is authoritative.
+- `N unreviewed · Updating…` while a scan/refresh is active.
+- **Start review** when no checkpoint exists and work remains.
+- **Continue review** when a checkpoint exists and work remains.
+- **Review complete** when the authoritative root count is zero; the retained
+  checkpoint becomes Continue Review again if new files appear.
+
+Counts are file instances, not unique fingerprints, and the tooltip states
+that reviewing duplicate content may reduce the count by more than one. The
+existing folder-tree `reviewed/total` badges remain; v1 does not add a separate
+checkpoint per folder.
+
+### Review toolbar
+
+Add one dense session group to the existing review toolbar:
+
+- With no checkpoint: **Start review here**.
+- With a matching root/directory/scope checkpoint: a **Session active** status
+  and last-saved time, with **Forget saved position…** in its menu.
+- With a checkpoint elsewhere in the same root: **Continue saved** plus **Move
+  saved review position here…**.
+- During resume: **Restoring saved review…**, followed by the candidate name or
+  a completion message.
+
+The group must not turn the toolbar into a second dashboard. On narrow windows
+it follows the toolbar's existing horizontal-overflow behavior.
+
+### Feedback and focus
+
+- Cached results are labelled **Checking for newer files…** until refresh is
+  authoritative; never present a cached empty queue as complete.
+- A missing saved directory falls back to its nearest present ancestor with
+  the same Current folder/subtree scope and announces the change. If no
+  ancestor other than root remains, use root. All descendants always uses the
+  root directory.
+- A missing/unmounted anchor is normal and uses the fallback algorithm without
+  an error dialog.
+- An explicit Start/Continue action moves focus to the selected video card once
+  mounted. Passive catalog refresh and profile restoration never steal focus.
+- If the candidate is outside the user's current render cap, keep the logical
+  candidate selected and show **Show review target**. That explicit action
+  raises the cap to the smallest available step containing the candidate,
+  centres it, and reports the change; the app must not claim restoration or
+  completion while the selected target remains unreachable.
+- Scan cancellation/error retains the checkpoint and says that completion
+  could not yet be verified.
+
+## Ownership and edge cases
+
+- **Profile change:** cancel renderer timers/requests, clear session summaries,
+  increment the profile epoch, and load the new profile's bounded list. Before
+  the main process marks profile reconfiguration in progress or invalidates the
+  old store, it runs the same owner-scoped 750 ms flush barrier used for window
+  close. Renderer-originated and native-menu profile switches share this path.
+  Never reuse an anchor from the prior profile.
+- **Root switch:** flush the old root's latest draft, release its renderer/media
+  resources through existing lifecycle code, and do not auto-resume the new
+  root without an explicit Start/Continue action.
+- **Unpinning:** does not delete a checkpoint. Removing a root from the catalog
+  in a future API cascades its checkpoint.
+- **Nonrecursive index:** root-level Current folder may resume after its scan.
+  Current subtree/All descendants completion remains unavailable until
+  recursive authoritative coverage exists. Keep the checkpoint and show an
+  explicit **Index subfolders to continue** action; never toggle recursion or
+  claim completion from partial rows without that user action.
+- **Directory disappears:** use the nearest present ancestor rule and save the
+  fallback only after the user performs another review/navigation action.
+- **File replaced in place:** an instance/fingerprint mismatch rejects the
+  exact-instance anchor; the old fingerprint fallback is tried, then the scan
+  begins at the start.
+- **Filters changed:** changes made during an active session become the saved
+  work set after debounce. A later Continue restores the persisted definition,
+  not unrelated filters from the root being left.
+- **New files:** authoritative refresh includes them in current visual order.
+  The one-wrap search ensures newly inserted items before the anchor are not
+  permanently skipped.
+- **Mutation failure:** do not advance or save a new anchor. Preserve the last
+  successful checkpoint.
+- **Window close and shutdown:** before destroying an owning BrowserWindow,
+  starting profile reconfiguration, or invalidating the profile/store for
+  native shutdown, the main process sends one renderer flush request and waits
+  for its acknowledgement or a 750 ms timeout. The close event is held during
+  this barrier on every platform; on macOS the window may then close without
+  quitting the app. The renderer cancels its debounce, submits at most the
+  current in-flight save plus one newest trailing draft, and acknowledges in
+  `finally`. Native shutdown/profile transition then continues even on timeout.
+  Forced termination may lose only the most recent debounced navigation, not
+  review metadata already committed.
+
+## Performance and resource constraints
+
+- The database retains at most 128 rows and at most 8 KiB of view JSON per row.
+- `list()` reads at most 128 summaries and excludes view JSON/anchors; `get()`
+  reads one row; `save()` and eviction are one SQLite transaction.
+- Prepare checkpoint statements once per metadata store. Do not query per video
+  to populate sidebar actions; merge summaries with existing root aggregates.
+- Candidate resolution is one linear pass over the already materialized visual
+  order, with bounded `Map`/`Set` indexes for that active collection only. Avoid
+  repeated sorting, per-card effects, or O(n squared) searches.
+- The bounded first-grid cache is never used as evidence of completion. One
+  scan-owned, generation-checked full-cache follow-up may populate the active
+  plain-record map after first paint; it is discarded on supersession and does
+  not retain an inactive root.
+- The 400 ms coalescer allows at most one active and one trailing write. No
+  interval polling is added.
+- Checkpoint loading must not delay request-to-cached-first-grid on a warm root
+  by more than 25 ms at the p95 in the 6,000-clip harness, excluding filesystem
+  refresh time.
+- Switching away must leave no additional media elements, React card trees,
+  decoder slots, thumbnails, or unbounded video arrays alive because of a
+  checkpoint.
+
+## Accessibility
+
+- Start/Continue buttons include the root or scope name and remaining count in
+  their accessible name; visible text stays compact.
+- Session state, provisional refresh, restored candidate, fallback directory,
+  and completion use a polite live region. Errors use the existing assertive
+  toast behavior.
+- Do not communicate active/completed state by color alone. Preserve visible
+  focus rings and a minimum 32 px desktop hit target.
+- The confirmation for **Forget saved position** returns focus to its invoking
+  control and explicitly states that review decisions remain.
+- Continue's programmatic card focus occurs only after the explicit action and
+  after the card mounts; reduced-motion users receive no smooth scroll or
+  entrance animation.
+- Any future shortcut must be added to `src/hotkeys/shortcutCatalog.js`; v1 adds
+  no new shortcut.
+
+## Verification plan
+
+All verification below is **Unimplemented**.
+
+### Database and IPC
+
+- Additive schema creation on new and existing profile databases.
+- Upsert/get/list/clear behavior, deterministic 129th-row eviction, root
+  cascade, malformed JSON tolerance, and the 8 KiB definition bound.
+- Root/directory containment, scope/view allowlists, anchor ownership and
+  instance/fingerprint mismatch rejection.
+- Profile isolation across two databases and generation invalidation during
+  save/get.
+- Owner-scoped flush acknowledgement, wrong/late token rejection, the 750 ms
+  timeout, and flush-before-window-close/profile-invalidation/shutdown ordering.
+- Preload static-contract tests for all four invoke operations plus the flush
+  listener/acknowledgement channels and payload shapes.
+
+### Renderer logic
+
+- Automatic and explicit start, 400 ms coalescing, single-flight/trailing save,
+  ownership engagement, shutdown flush/timeout, cancellation, failure, Undo,
+  and clear behavior.
+- Exact anchor, missing instance, fingerprint fallback, replaced file, anchor
+  still Unreviewed, after-anchor, one-wrap, no-candidate, and no-anchor cases.
+- Duplicate fingerprints and multi-selection anchor selection.
+- Folder scope, filters, name/created/random ordering, stable random seed,
+  changed filters, missing-directory fallback, and recursive-coverage guards.
+- Cached provisional selection followed by authoritative keep, replacement, or
+  completion without duplicate focus/announcement.
+- Render-capped candidates remain logically selected, expose Show review
+  target, and are not announced as restored until they can mount.
+
+### UX, integration, and performance
+
+- Sidebar root counts and Start/Continue/complete states, toolbar states,
+  overwrite/forget confirmations, accessible names, focus return, live-region
+  messages, and reduced motion.
+- Electron smoke: review a clip, close the app, reopen the same profile,
+  Continue, and verify the next Unreviewed instance; repeat after a profile
+  switch and with a stale removed anchor.
+- Confirm a completed checkpoint becomes actionable after a new file is
+  indexed.
+- Extend the 1,000/6,000-clip harness to verify cached first grid precedes
+  authoritative refresh, checkpoint overhead meets the 25 ms p95 bound, and
+  inactive roots retain no checkpoint-induced renderer/media resources.
+- Run focused tests, `npm test -- --run`, Electron database tests, and
+  `npm run vite:build` before marking any implementation row complete.
+
+## Rollout and migration
+
+The rollout is additive and enabled by default after its tests pass. Existing
+profiles start with zero checkpoints; do not infer or backfill a persistent
+cursor from the renderer-only `FolderViewStateCache`. Profile copy/data-location
+migration naturally carries the table because it already moves the complete
+profile database.
+
+`view.version` provides future definition migration. Readers skip unknown
+versions; writers always emit v1. Rolling back to a build without this feature
+leaves an unused table and does not affect content metadata or the library
+catalog.
+
+## Implementation status
+
+| Slice | Status |
+| --- | --- |
+| SQLite schema, validation, bound, and store methods | **Unimplemented** |
+| Main-process handlers and preload bridge | **Unimplemented** |
+| Renderer session persistence and resume resolver | **Unimplemented** |
+| Sidebar and review-toolbar UX | **Unimplemented** |
+| Accessibility, focused tests, Electron smoke, and performance gate | **Unimplemented** |
+
+No slice may be marked Implemented until its focused tests and the shared
+completion gate pass.
+
+## Subsequent product order
+
+After Continue Review is verified and committed, product work proceeds in this
+order:
+
+1. **Export Accepted:** copy-first export with destination selection,
+   relative-tree preservation, optional recognized sidecars, manifest,
+   collision preflight, bounded progress/cancellation, and partial-failure
+   reporting. Destructive Move and metadata transfer remain deferred.
+2. **Generation-aware search:** bounded background indexing of prompt, model,
+   seed, sampler, source, and run metadata for filters, grouping, and smart
+   views.
+3. **Comparison workspace:** synchronized playback for two to four clips with
+   metadata differences and review controls.
+4. **Linux Motion Sweep:** only after playback baselines; rotate a bounded
+   full-speed cohort while leaving All Motion behavior unchanged.
+
+Fingerprint v2, automatic decoder derating, masonry refinements, interleaved
+headers, and any in-memory folder cache remain evidence-gated architecture
+research rather than implied dependencies of this feature.
