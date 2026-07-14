@@ -83,9 +83,13 @@ describe('useHotkeys', () => {
   });
 
   test.each([
+    ['a', 'pick'],
     ['p', 'pick'],
+    ['s', 'reviewed'],
     ['r', 'reviewed'],
+    ['d', 'reject'],
     ['x', 'reject'],
+    ['f', 'unreviewed'],
     ['u', 'unreviewed'],
   ])('%s applies the %s review state to the selection', (key, state) => {
     const onSetReviewState = vi.fn();
@@ -96,17 +100,75 @@ describe('useHotkeys', () => {
     expect(onSetReviewState).toHaveBeenCalledWith(state, new Set(['x']));
   });
 
+  test.each([
+    ['1', 1],
+    ['3', 3],
+    ['5', 5],
+    ['0', null],
+  ])('%s applies rating %s to the selection', (key, rating) => {
+    const onSetRating = vi.fn();
+    renderHook(() => useHotkeys(run, getSelection, { onSetRating }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key }));
+
+    expect(onSetRating).toHaveBeenCalledWith(rating, new Set(['x']));
+  });
+
+  test('Z undoes the last workflow action even when selection is empty', () => {
+    const onUndoReview = vi.fn();
+    getSelection.mockReturnValue(new Set());
+    renderHook(() => useHotkeys(run, getSelection, { onUndoReview }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z' }));
+
+    expect(onUndoReview).toHaveBeenCalledOnce();
+  });
+
   test('does not apply review shortcuts while typing or using modifiers', () => {
     const onSetReviewState = vi.fn();
-    renderHook(() => useHotkeys(run, getSelection, { onSetReviewState }));
+    const onSetRating = vi.fn();
+    const onUndoReview = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        onSetReviewState,
+        onSetRating,
+        onUndoReview,
+      })
+    );
     const input = document.createElement('input');
     document.body.appendChild(input);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }));
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'r', ctrlKey: true })
     );
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '4', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '0', altKey: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', shiftKey: true }));
     expect(onSetReviewState).not.toHaveBeenCalled();
+    expect(onSetRating).not.toHaveBeenCalled();
+    expect(onUndoReview).not.toHaveBeenCalled();
     input.remove();
+  });
+
+  test('ignores held-key repeats for review, rating, and undo actions', () => {
+    const onSetReviewState = vi.fn();
+    const onSetRating = vi.fn();
+    const onUndoReview = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        onSetReviewState,
+        onSetRating,
+        onUndoReview,
+      })
+    );
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', repeat: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '4', repeat: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', repeat: true }));
+
+    expect(onSetReviewState).not.toHaveBeenCalled();
+    expect(onSetRating).not.toHaveBeenCalled();
+    expect(onUndoReview).not.toHaveBeenCalled();
   });
 
   test('bracket keys navigate sibling folders', () => {

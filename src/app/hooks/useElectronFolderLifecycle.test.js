@@ -46,6 +46,7 @@ describe("useElectronFolderLifecycle", () => {
         setRandomSeed: vi.fn(),
         setPlaybackMode: vi.fn(),
         setProxyPlaybackEnabled: vi.fn(),
+        setReviewAutoAdvance: vi.fn(),
         setZoomLevelFromSettings: vi.fn(),
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -96,6 +97,7 @@ describe("useElectronFolderLifecycle", () => {
         randomSeed: 42,
         playbackMode: "static-hover",
         proxyPlaybackEnabled: true,
+        reviewAutoAdvance: true,
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
       readDirectory: vi.fn().mockResolvedValue([
@@ -220,6 +222,7 @@ describe("useElectronFolderLifecycle", () => {
     const setRandomSeed = vi.fn();
     const setPlaybackMode = vi.fn();
     const setProxyPlaybackEnabled = vi.fn();
+    const setReviewAutoAdvance = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
     const { result } = renderHook(() =>
@@ -237,6 +240,7 @@ describe("useElectronFolderLifecycle", () => {
         setRandomSeed,
         setPlaybackMode,
         setProxyPlaybackEnabled,
+        setReviewAutoAdvance,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -257,6 +261,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(setRandomSeed).toHaveBeenCalledWith(42);
     expect(setPlaybackMode).toHaveBeenCalledWith("static-hover");
     expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
+    expect(setReviewAutoAdvance).toHaveBeenCalledWith(true);
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
   });
 
@@ -276,6 +281,18 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setPlaybackMode).toHaveBeenCalledWith("balanced");
     expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("treats only a literal true auto-advance setting as enabled", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      reviewAutoAdvance: "true",
+    });
+    const setReviewAutoAdvance = vi.fn();
+
+    const { result } = renderDefaultLifecycle({ setReviewAutoAdvance });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setReviewAutoAdvance).toHaveBeenCalledWith(false);
   });
 
   it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {

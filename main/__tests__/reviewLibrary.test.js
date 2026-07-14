@@ -60,6 +60,7 @@ maybeDescribe('review state and saved library views', () => {
     });
     const fingerprint = indexed[0].fingerprint;
     expect(indexed[1].fingerprint).toBe(fingerprint);
+    store.assignTags([fingerprint], ['wan', 'favorite']);
 
     expect(store.setRating([fingerprint], 4)[fingerprint].reviewState).toBe('reviewed');
     expect(store.getLibraryRoot(rootPath).reviewedCount).toBe(2);
@@ -72,20 +73,26 @@ maybeDescribe('review state and saved library views', () => {
     });
 
     store.setReviewState([fingerprint], 'unreviewed');
+    expect(store.getMetadataForFingerprints([fingerprint])[fingerprint]).toMatchObject({
+      rating: null,
+      reviewState: 'unreviewed',
+      tags: ['favorite', 'wan'],
+    });
     store.setRating([fingerprint], 3);
-    expect(store.getLibraryRoot(rootPath).reviewedCount).toBe(0);
+    expect(store.getLibraryRoot(rootPath).reviewedCount).toBe(2);
 
     database.resetDatabase();
     database.initMetadataStore({ getPath: () => tempDir }, tempDir);
     store = database.getMetadataStore();
     expect(store.getMetadataForFingerprints([fingerprint])[fingerprint]).toMatchObject({
       rating: 3,
-      reviewState: 'unreviewed',
+      reviewState: 'reviewed',
     });
     expect(store.getFileInstances(rootPath).every(
-      (instance) => instance.reviewState === 'unreviewed' && !instance.reviewed
+      (instance) => instance.reviewState === 'reviewed' && instance.reviewed
     )).toBe(true);
 
+    store.setReviewState([fingerprint], 'unreviewed');
     store.setRating([fingerprint], null);
     expect(store.getMetadataForFingerprints([fingerprint])[fingerprint]).toMatchObject({
       rating: null,
@@ -100,6 +107,77 @@ maybeDescribe('review state and saved library views', () => {
     );
     expect(store.getMetadataForFingerprints([indexed.fingerprint])[indexed.fingerprint]
       .reviewState).toBe('unreviewed');
+  });
+
+  it('keeps rating-derived review completion after rating is cleared', async () => {
+    const indexed = await store.indexFile({
+      rootPath,
+      ...createFile('rated.mp4', 'rated'),
+    });
+
+    expect(store.setRating([indexed.fingerprint], 4)[indexed.fingerprint])
+      .toMatchObject({ rating: 4, reviewState: 'reviewed' });
+    expect(store.setRating([indexed.fingerprint], null)[indexed.fingerprint])
+      .toMatchObject({ rating: null, reviewState: 'reviewed' });
+    expect(store.getLibraryRoot(rootPath).reviewedCount).toBe(1);
+  });
+
+  it('restores review status and rating atomically without changing tags', async () => {
+    const first = await store.indexFile({
+      rootPath,
+      ...createFile('first.mp4', 'first'),
+    });
+    const second = await store.indexFile({
+      rootPath,
+      ...createFile('second.mp4', 'second'),
+    });
+    store.assignTags([first.fingerprint], ['keep-me']);
+    store.setReviewState([first.fingerprint], 'reject');
+    store.setRating([first.fingerprint], 5);
+    store.setReviewState([second.fingerprint], 'pick');
+
+    const updates = store.restoreReviewMetadata([
+      {
+        fingerprint: first.fingerprint,
+        reviewState: 'reviewed',
+        rating: 3,
+      },
+      {
+        fingerprint: second.fingerprint,
+        reviewState: 'unreviewed',
+        rating: null,
+      },
+    ]);
+    expect(updates[first.fingerprint]).toMatchObject({
+      reviewState: 'reviewed',
+      rating: 3,
+      tags: ['keep-me'],
+    });
+    expect(updates[second.fingerprint]).toMatchObject({
+      reviewState: 'unreviewed',
+      rating: null,
+    });
+    expect(store.getLibraryRoot(rootPath).reviewedCount).toBe(1);
+
+    expect(() => store.restoreReviewMetadata([
+      {
+        fingerprint: first.fingerprint,
+        reviewState: 'pick',
+        rating: 4,
+      },
+      {
+        fingerprint: second.fingerprint,
+        reviewState: 'unreviewed',
+        rating: 4,
+      },
+    ])).toThrow(/cannot retain a rating/i);
+    expect(store.getMetadataForFingerprints([
+      first.fingerprint,
+      second.fingerprint,
+    ])).toMatchObject({
+      [first.fingerprint]: { reviewState: 'reviewed', rating: 3 },
+      [second.fingerprint]: { reviewState: 'unreviewed', rating: null },
+    });
   });
 
   it('updates reviewed aggregates only along affected instance ancestors', async () => {
@@ -270,7 +348,7 @@ maybeDescribe('review state and saved library views', () => {
 });
 
 maybeDescribe('review-state legacy migration', () => {
-  it('backfills ratings once while preserving a later explicit unreviewed state', () => {
+  it('reconciles rated content to reviewed and lets reset clear its rating', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'videoswarm-review-migrate-'));
     const dbPath = path.join(tempDir, 'videoswarm-meta.db');
     const legacy = new BetterSqlite(dbPath);
@@ -298,7 +376,28 @@ maybeDescribe('review-state legacy migration', () => {
       expect(store.getMetadataForFingerprints(['legacy']).legacy.reviewState).toBe(
         'reviewed'
       );
+      database.resetDatabase();
+
+      // Reproduce the contradictory state allowed by the previous release:
+      // an explicit Unreviewed row masking a durable rating.
+      const previous = new BetterSqlite(dbPath);
+      previous.prepare(`
+        UPDATE content_review SET state = 'unreviewed'
+        WHERE fingerprint = 'legacy';
+      `).run();
+      previous.close();
+
+      database.initMetadataStore({ getPath: () => tempDir }, tempDir);
+      store = database.getMetadataStore();
+      expect(store.getMetadataForFingerprints(['legacy']).legacy).toMatchObject({
+        rating: 4,
+        reviewState: 'reviewed',
+      });
       store.setReviewState(['legacy'], 'unreviewed');
+      expect(store.getMetadataForFingerprints(['legacy']).legacy).toMatchObject({
+        rating: null,
+        reviewState: 'unreviewed',
+      });
       database.resetDatabase();
       database.initMetadataStore({ getPath: () => tempDir }, tempDir);
       store = database.getMetadataStore();

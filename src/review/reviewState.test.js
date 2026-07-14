@@ -31,7 +31,9 @@ describe("reviewState", () => {
   });
 
   it("provides compact user-facing labels", () => {
-    expect(reviewStateLabel(REVIEW_STATES.PICK)).toBe("Pick");
+    expect(reviewStateLabel(REVIEW_STATES.PICK)).toBe("Accept");
+    expect(reviewStateLabel(REVIEW_STATES.REVIEWED)).toBe("Reviewed");
+    expect(reviewStateLabel(REVIEW_STATES.REJECT)).toBe("Reject");
     expect(reviewStateLabel("invalid")).toBe("Unreviewed");
   });
 });

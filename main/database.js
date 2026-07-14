@@ -4,6 +4,16 @@ const Database = require('better-sqlite3');
 const { BoundedAsyncCache } = require('./bounded-async-cache');
 const { computeFingerprint } = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
+const {
+  REVIEW_MANIFEST_MAX_QUERY_BYTES,
+  REVIEW_MANIFEST_MAX_RECORDS,
+  REVIEW_MANIFEST_MAX_TAG_BYTES,
+  REVIEW_MANIFEST_MAX_TAG_ROWS,
+  ReviewManifestError,
+  assertPersistedCoverage,
+  normalizeManifestDirectory,
+  normalizeManifestScope,
+} = require('./review-manifest');
 const profileManager = require('./profile-manager');
 
 let dbInstance = null;
@@ -513,13 +523,72 @@ function initDatabase(app, profilePath) {
       FROM files;
     `).run(now, now);
 
-    // Preserve the historical meaning of a rating as evidence that an item
-    // was reviewed. Explicit rows always win on subsequent launches, including
-    // an explicit `unreviewed` state.
+    // A rating is durable evidence that review occurred. Older builds allowed
+    // an explicit `unreviewed` row to mask a rating, which made folder totals
+    // and the broad Reviewed filter contradict the rating UI. Reconcile those
+    // rows once and repair the persisted aggregates in the same transaction.
     db.prepare(`
       INSERT OR IGNORE INTO content_review (fingerprint, state, updated_at)
       SELECT fingerprint, 'reviewed', updated_at FROM ratings;
     `).run();
+    const promotedRatedRows = db.prepare(`
+      UPDATE content_review
+      SET state = 'reviewed',
+          updated_at = MAX(
+            updated_at,
+            COALESCE(
+              (SELECT ratings.updated_at
+               FROM ratings
+               WHERE ratings.fingerprint = content_review.fingerprint),
+              updated_at
+            )
+          )
+      WHERE state = 'unreviewed'
+        AND EXISTS (
+          SELECT 1 FROM ratings
+          WHERE ratings.fingerprint = content_review.fingerprint
+        );
+    `).run();
+    if (promotedRatedRows.changes > 0) {
+      db.prepare(`
+        UPDATE directories
+        SET direct_reviewed_count = (
+              SELECT COUNT(*)
+              FROM file_instances fi
+              LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+              LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+              WHERE fi.directory_id = directories.id
+                AND fi.is_present != 0
+                AND COALESCE(
+                  cr.state,
+                  CASE WHEN r.fingerprint IS NULL
+                    THEN 'unreviewed' ELSE 'reviewed' END
+                ) != 'unreviewed'
+            ),
+            reviewed_count = (
+              SELECT COUNT(*)
+              FROM file_instances fi
+              LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+              LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+              WHERE fi.root_id = directories.root_id
+                AND fi.is_present != 0
+                AND (
+                  directories.relative_path = ''
+                  OR substr(
+                    fi.relative_path,
+                    1,
+                    length(directories.relative_path) + 1
+                  ) = directories.relative_path || '/'
+                )
+                AND COALESCE(
+                  cr.state,
+                  CASE WHEN r.fingerprint IS NULL
+                    THEN 'unreviewed' ELSE 'reviewed' END
+                ) != 'unreviewed'
+            ),
+            updated_at = ?;
+      `).run(now);
+    }
 
     // A process can exit while a root is being scanned. On the next launch,
     // expose that state as interrupted rather than leaving the catalog looking
@@ -739,6 +808,60 @@ function createMetadataStore(db) {
       AND (? != 0 OR instr(fi.relative_path, '/') = 0)
     ORDER BY fi.fingerprint, t.name COLLATE NOCASE;
   `);
+  const reviewManifestScopePredicates = Object.freeze({
+    'all-descendants': '1 = 1',
+    'current-folder': 'd.relative_path = @directory',
+    'current-subtree': `(
+      @directory = ''
+      OR d.relative_path = @directory
+      OR substr(d.relative_path, 1, length(@directory) + 1) = @directory || '/'
+    )`,
+  });
+  const reviewManifestRecordQueries = Object.fromEntries(
+    Object.entries(reviewManifestScopePredicates).map(([scope, predicate]) => [
+      scope,
+      db.prepare(`
+        SELECT fi.id, fi.relative_path, fi.size, fi.mtime_ms, fi.fingerprint,
+          mc.created_ms AS content_created_ms,
+          mc.width AS content_width,
+          mc.height AS content_height,
+          r.value AS rating_value,
+          COALESCE(cr.state,
+            CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+          ) AS review_state
+        FROM file_instances fi
+        INNER JOIN directories d ON d.id = fi.directory_id
+        LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+        LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+        LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+        WHERE fi.root_id = @root_id
+          AND fi.is_present != 0
+          AND d.is_present != 0
+          AND ${predicate}
+        ORDER BY fi.relative_path COLLATE BINARY, fi.id
+        LIMIT @limit;
+      `),
+    ])
+  );
+  const reviewManifestTagQueries = Object.fromEntries(
+    Object.entries(reviewManifestScopePredicates).map(([scope, predicate]) => [
+      scope,
+      db.prepare(`
+        SELECT DISTINCT fi.fingerprint AS fingerprint, t.name AS name
+        FROM file_instances fi
+        INNER JOIN directories d ON d.id = fi.directory_id
+        INNER JOIN file_tags ft ON ft.fingerprint = fi.fingerprint
+        INNER JOIN tags t ON t.id = ft.tag_id
+        WHERE fi.root_id = @root_id
+          AND fi.is_present != 0
+          AND d.is_present != 0
+          AND fi.fingerprint IS NOT NULL
+          AND ${predicate}
+        ORDER BY fi.fingerprint COLLATE BINARY, t.name COLLATE BINARY
+        LIMIT @limit;
+      `),
+    ])
+  );
   const fileInstancesByAbsolutePath = db.prepare(`
     SELECT * FROM file_instances WHERE absolute_path = ?;
   `);
@@ -826,10 +949,6 @@ function createMetadataStore(db) {
 
   const getReviewState = db.prepare(`
     SELECT state FROM content_review WHERE fingerprint = ?;
-  `);
-  const insertReviewStateIfMissing = db.prepare(`
-    INSERT OR IGNORE INTO content_review (fingerprint, state, updated_at)
-    VALUES (?, ?, ?);
   `);
   const setReviewStateStmt = db.prepare(`
     INSERT INTO content_review (fingerprint, state, updated_at)
@@ -1514,6 +1633,199 @@ function createMetadataStore(db) {
     };
   }
 
+  function normalizeManifestReadLimit(value, hardLimit, label) {
+    const candidate = value === undefined ? hardLimit : Number(value);
+    if (
+      !Number.isSafeInteger(candidate) ||
+      candidate < 1 ||
+      candidate > hardLimit
+    ) {
+      throw new RangeError(`${label} must be between 1 and ${hardLimit}`);
+    }
+    return candidate;
+  }
+
+  /**
+   * Read only the indexed rows needed for a review-manifest scope. The SQL
+   * LIMIT and streaming iterators keep hostile or unexpectedly large catalogs
+   * bounded before renderer-independent JavaScript objects are assembled.
+   */
+  function getReviewManifestSnapshot(rootPath, options = {}) {
+    assertOperationActive(options.assertActive);
+    const normalizedRoot = normalizeRootPath(rootPath);
+    const row = rootByPath.get(normalizedRoot);
+    if (!row) {
+      throw new ReviewManifestError(
+        `Library root has not been indexed: ${normalizedRoot}`,
+        'REVIEW_MANIFEST_ROOT_MISSING'
+      );
+    }
+
+    const scope = normalizeManifestScope(options.scope);
+    const directory = scope === 'all-descendants'
+      ? ''
+      : normalizeManifestDirectory(options.directory ?? '');
+    const root = mapRootRow(row);
+    assertPersistedCoverage(root, directory, scope);
+
+    if (scope !== 'all-descendants') {
+      const directoryRow = directoryByPath.get(row.id, directory);
+      if (!directoryRow || !Boolean(directoryRow.is_present)) {
+        throw new ReviewManifestError(
+          'The selected review-manifest directory is not present in the completed index.',
+          'REVIEW_MANIFEST_DIRECTORY_NOT_INDEXED'
+        );
+      }
+    }
+
+    const maxRecords = normalizeManifestReadLimit(
+      options.maxRecords,
+      REVIEW_MANIFEST_MAX_RECORDS,
+      'Review manifest record limit'
+    );
+    const maxTagRows = normalizeManifestReadLimit(
+      options.maxTagRows,
+      REVIEW_MANIFEST_MAX_TAG_ROWS,
+      'Review manifest tag-row limit'
+    );
+    const maxTagBytes = normalizeManifestReadLimit(
+      options.maxTagBytes,
+      REVIEW_MANIFEST_MAX_TAG_BYTES,
+      'Review manifest tag-byte limit'
+    );
+    const maxQueryBytes = normalizeManifestReadLimit(
+      options.maxQueryBytes,
+      REVIEW_MANIFEST_MAX_QUERY_BYTES,
+      'Review manifest query-byte limit'
+    );
+    const queryParameters = {
+      root_id: row.id,
+      directory,
+      limit: maxRecords + 1,
+    };
+    const records = [];
+    const instanceCountsByFingerprint = new Map();
+    let queryBytes = 0;
+    let recordCount = 0;
+
+    for (const instance of reviewManifestRecordQueries[scope].iterate(
+      queryParameters
+    )) {
+      recordCount += 1;
+      if (recordCount > maxRecords) {
+        throw new ReviewManifestError(
+          `Review manifests are limited to ${maxRecords.toLocaleString()} files`,
+          'REVIEW_MANIFEST_TOO_MANY_RECORDS'
+        );
+      }
+      if ((recordCount & 255) === 0) {
+        assertOperationActive(options.assertActive);
+      }
+
+      const width = Number(instance.content_width || 0);
+      const height = Number(instance.content_height || 0);
+      const fingerprint = instance.fingerprint || null;
+      const record = {
+        instanceId: Number(instance.id),
+        relativePath: instance.relative_path,
+        fingerprint,
+        reviewState: REVIEW_STATES.has(instance.review_state)
+          ? instance.review_state
+          : 'unreviewed',
+        rating: instance.rating_value !== null &&
+          instance.rating_value !== undefined &&
+          Number.isFinite(Number(instance.rating_value))
+            ? Number(instance.rating_value)
+            : null,
+        tags: [],
+        size: Number(instance.size || 0),
+        mtimeMs: Number(instance.mtime_ms || 0),
+        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
+        dimensions: width > 0 && height > 0
+          ? { width, height, aspectRatio: width / height }
+          : null,
+      };
+      queryBytes += Buffer.byteLength(JSON.stringify(record), 'utf8');
+      if (queryBytes > maxQueryBytes) {
+        throw new ReviewManifestError(
+          'Review manifest record data exceeds the bounded query budget.',
+          'REVIEW_MANIFEST_QUERY_TOO_LARGE'
+        );
+      }
+      records.push(record);
+      if (fingerprint) {
+        instanceCountsByFingerprint.set(
+          fingerprint,
+          (instanceCountsByFingerprint.get(fingerprint) || 0) + 1
+        );
+      }
+    }
+    assertOperationActive(options.assertActive);
+
+    if (records.length === 0 || instanceCountsByFingerprint.size === 0) {
+      return { root, directory, scope, records };
+    }
+
+    const tagsByFingerprint = new Map();
+    let fetchedTagRows = 0;
+    let expandedTagRows = 0;
+    let expandedTagBytes = 0;
+    const tagParameters = {
+      root_id: row.id,
+      directory,
+      limit: maxTagRows + 1,
+    };
+    for (const tagRow of reviewManifestTagQueries[scope].iterate(tagParameters)) {
+      fetchedTagRows += 1;
+      if (fetchedTagRows > maxTagRows) {
+        throw new ReviewManifestError(
+          `Review manifests are limited to ${maxTagRows.toLocaleString()} tag assignments`,
+          'REVIEW_MANIFEST_TOO_MANY_TAGS'
+        );
+      }
+      if ((fetchedTagRows & 255) === 0) {
+        assertOperationActive(options.assertActive);
+      }
+
+      const fingerprint = String(tagRow.fingerprint || '');
+      const multiplicity = instanceCountsByFingerprint.get(fingerprint) || 0;
+      if (multiplicity === 0) continue;
+      const tag = String(tagRow.name || '');
+      expandedTagRows += multiplicity;
+      expandedTagBytes += Buffer.byteLength(tag, 'utf8') * multiplicity;
+      queryBytes += (
+        Buffer.byteLength(JSON.stringify(tag), 'utf8') + 1
+      ) * multiplicity;
+      if (expandedTagRows > maxTagRows) {
+        throw new ReviewManifestError(
+          `Review manifests are limited to ${maxTagRows.toLocaleString()} expanded tag assignments`,
+          'REVIEW_MANIFEST_TOO_MANY_TAGS'
+        );
+      }
+      if (expandedTagBytes > maxTagBytes) {
+        throw new ReviewManifestError(
+          'Review manifest tags exceed the bounded UTF-8 byte budget.',
+          'REVIEW_MANIFEST_TAGS_TOO_LARGE'
+        );
+      }
+      if (queryBytes > maxQueryBytes) {
+        throw new ReviewManifestError(
+          'Review manifest record data exceeds the bounded query budget.',
+          'REVIEW_MANIFEST_QUERY_TOO_LARGE'
+        );
+      }
+      const tags = tagsByFingerprint.get(fingerprint) || [];
+      tags.push(tag);
+      tagsByFingerprint.set(fingerprint, tags);
+    }
+    assertOperationActive(options.assertActive);
+
+    records.forEach((record) => {
+      record.tags = tagsByFingerprint.get(record.fingerprint) || [];
+    });
+    return { root, directory, scope, records };
+  }
+
   function getFileInstanceById(instanceId) {
     const id = Number(instanceId);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -1763,6 +2075,51 @@ function createMetadataStore(db) {
       return mapFileInstanceRow(updated);
     });
     return { markedMissing, instances };
+  }
+
+  function markFilesMissing(filePaths, { assertActive } = {}) {
+    assertOperationActive(assertActive);
+    if (!Array.isArray(filePaths)) {
+      throw new TypeError('File paths must be an array');
+    }
+    const normalizedPaths = [...new Set(filePaths.map((filePath) => {
+      if (typeof filePath !== 'string' || !filePath.trim()) {
+        throw new TypeError('Every missing file path must be a non-empty string');
+      }
+      return path.resolve(filePath);
+    }))];
+    const rowsById = new Map();
+    normalizedPaths.forEach((absolutePath, index) => {
+      fileInstancesByAbsolutePath.all(absolutePath).forEach((row) => {
+        if (Boolean(row.is_present)) rowsById.set(Number(row.id), row);
+      });
+      if ((index & 255) === 255) assertOperationActive(assertActive);
+    });
+    assertOperationActive(assertActive);
+
+    const rows = [...rowsById.values()];
+    const affectedRootIds = new Set();
+    const now = Date.now();
+    let markedMissing = 0;
+    db.transaction(() => {
+      rows.forEach((row) => {
+        const changed = markInstanceMissingById.run(now, row.id).changes;
+        markedMissing += changed;
+        if (changed > 0) affectedRootIds.add(Number(row.root_id));
+      });
+    })();
+
+    // Aggregate each root once even when a native action affected many files
+    // or overlapping indexed roots.
+    affectedRootIds.forEach((rootId) => refreshDirectoryCountsByRootId(rootId));
+    const instances = rows.map((row) => mapFileInstanceRow(
+      fileInstanceByRelativePath.get(row.root_id, row.relative_path)
+    ));
+    return {
+      markedMissing,
+      affectedRootCount: affectedRootIds.size,
+      instances,
+    };
   }
 
   function refreshDirectoryCounts(rootPath) {
@@ -2185,9 +2542,13 @@ function createMetadataStore(db) {
         } else {
           const safeRating = Math.max(0, Math.min(5, Math.round(Number(rating))));
           setRatingStmt.run(fingerprint, safeRating, now);
-          // Rating an item historically meant it had been reviewed. Preserve
-          // that behavior only for content without an explicit review row.
-          insertReviewStateIfMissing.run(fingerprint, 'reviewed', now);
+          const currentReviewState = getReviewState.get(fingerprint)?.state;
+          // Rating and review are separate fields, but a rating proves that
+          // review occurred. Preserve explicit Accept/Reject decisions and
+          // promote only missing or Unreviewed state.
+          if (!currentReviewState || currentReviewState === 'unreviewed') {
+            setReviewStateStmt.run(fingerprint, 'reviewed', now);
+          }
         }
         const isReviewed = isFingerprintReviewed(fingerprint);
         addReviewedCountDeltasForFingerprint(
@@ -2214,10 +2575,75 @@ function createMetadataStore(db) {
     db.transaction(() => {
       uniqueFingerprints.forEach((fingerprint) => {
         const wasReviewed = isFingerprintReviewed(fingerprint);
+        if (reviewState === 'unreviewed') {
+          // Tags are intentionally untouched. A retained rating would make
+          // the requested Unreviewed state contradictory, so reset both parts
+          // of review progress together.
+          deleteRatingStmt.run(fingerprint);
+        }
         setReviewStateStmt.run(fingerprint, reviewState, now);
+        const isReviewed = isFingerprintReviewed(fingerprint);
         addReviewedCountDeltasForFingerprint(
           fingerprint,
-          Number(reviewState !== 'unreviewed') - Number(wasReviewed),
+          Number(isReviewed) - Number(wasReviewed),
+          reviewedCountDeltas
+        );
+        updates[fingerprint] = mapMetadataRow(fingerprint);
+      });
+      applyReviewedCountDeltas(reviewedCountDeltas, now);
+    })();
+    return updates;
+  }
+
+  function restoreReviewMetadata(snapshots, { assertActive } = {}) {
+    assertOperationActive(assertActive);
+    if (!Array.isArray(snapshots)) {
+      throw new TypeError('Review metadata snapshots must be an array');
+    }
+    const normalizedByFingerprint = new Map();
+    snapshots.forEach((snapshot) => {
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+        throw new TypeError('Every review metadata snapshot must be an object');
+      }
+      const fingerprint = typeof snapshot.fingerprint === 'string'
+        ? snapshot.fingerprint.trim()
+        : '';
+      if (!fingerprint) {
+        throw new TypeError('Every review metadata snapshot requires a fingerprint');
+      }
+      const reviewState = normalizeReviewState(snapshot.reviewState);
+      let rating = null;
+      if (snapshot.rating !== null && snapshot.rating !== undefined) {
+        rating = Number(snapshot.rating);
+        if (!Number.isInteger(rating) || rating < 0 || rating > 5) {
+          throw new TypeError(`Unsupported rating: ${snapshot.rating}`);
+        }
+      }
+      if (reviewState === 'unreviewed' && rating !== null) {
+        throw new TypeError('Unreviewed metadata cannot retain a rating');
+      }
+      normalizedByFingerprint.set(fingerprint, {
+        fingerprint,
+        reviewState,
+        rating,
+      });
+    });
+    const normalized = [...normalizedByFingerprint.values()];
+    assertOperationActive(assertActive);
+
+    const updates = {};
+    const reviewedCountDeltas = new Map();
+    const now = Date.now();
+    db.transaction(() => {
+      normalized.forEach(({ fingerprint, reviewState, rating }) => {
+        const wasReviewed = isFingerprintReviewed(fingerprint);
+        if (rating === null) deleteRatingStmt.run(fingerprint);
+        else setRatingStmt.run(fingerprint, rating, now);
+        setReviewStateStmt.run(fingerprint, reviewState, now);
+        const isReviewed = isFingerprintReviewed(fingerprint);
+        addReviewedCountDeltasForFingerprint(
+          fingerprint,
+          Number(isReviewed) - Number(wasReviewed),
           reviewedCountDeltas
         );
         updates[fingerprint] = mapMetadataRow(fingerprint);
@@ -2236,6 +2662,7 @@ function createMetadataStore(db) {
     getReusableFingerprint,
     reconcileLibraryRoot,
     markFileMissing,
+    markFilesMissing,
     getLibraryRoot,
     getLibraryRoots,
     listLibraryRoots,
@@ -2243,6 +2670,7 @@ function createMetadataStore(db) {
     getDirectorySummaries,
     getLibraryTree,
     getCachedLibrarySnapshot,
+    getReviewManifestSnapshot,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,
@@ -2259,6 +2687,7 @@ function createMetadataStore(db) {
     removeTag,
     setRating,
     setReviewState,
+    restoreReviewMetadata,
     getDimensions,
     setDimensions,
     clearFingerprintCache,

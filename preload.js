@@ -320,6 +320,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("metadata:set-rating", fingerprints, rating),
     setReviewState: async (fingerprints, reviewState) =>
       ipcRenderer.invoke("metadata:set-review-state", fingerprints, reviewState),
+    restoreReview: async (snapshots) =>
+      ipcRenderer.invoke("metadata:restore-review", snapshots),
     get: async (fingerprints) =>
       ipcRenderer.invoke("metadata:get", fingerprints),
     getGeneration: async (instanceId, requestToken) => {
@@ -359,6 +361,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("library:update-saved-view", { id, ...changes }),
     deleteSavedView: async (id) =>
       ipcRenderer.invoke("library:delete-saved-view", { id }),
+  },
+
+  review: {
+    exportManifest: async (payload = {}) =>
+      ipcRenderer.invoke("review:export-manifest", {
+        rootPath: payload?.rootPath,
+        directory: payload?.directory ?? "",
+        scope: payload?.scope,
+      }),
   },
 
   recent: {

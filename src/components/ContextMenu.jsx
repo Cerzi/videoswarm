@@ -194,7 +194,7 @@ const ContextMenu = ({
         children: [
           {
             id: 'metadata-review-pick',
-            label: '✓ Mark as pick',
+            label: '✓ Mark as accepted',
             action: 'metadata:review:pick',
           },
           {
@@ -209,7 +209,7 @@ const ContextMenu = ({
           },
           {
             id: 'metadata-review-unreviewed',
-            label: '○ Mark unreviewed',
+            label: '○ Reset to unreviewed (clears rating)',
             action: 'metadata:review:unreviewed',
           },
         ],

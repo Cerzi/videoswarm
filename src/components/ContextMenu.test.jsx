@@ -84,10 +84,12 @@ describe('ContextMenu', () => {
     expect(screen.getByRole('menuitem', { name: /Clear rating/i })).toBeInTheDocument();
 
     openSubmenu(/Review status.*3 selected/i);
-    expect(screen.getByRole('menuitem', { name: /Mark as pick/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Mark as accepted/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Mark reviewed/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Mark as reject/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Mark unreviewed/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /Reset to unreviewed \(clears rating\)/i })
+    ).toBeInTheDocument();
   });
 
   test('clicking a submenu item calls onAction and onClose', () => {
@@ -126,7 +128,7 @@ describe('ContextMenu', () => {
     );
 
     openSubmenu(/Review status/i);
-    fireEvent.click(screen.getByRole('menuitem', { name: /Mark as pick/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Mark as accepted/i }));
     expect(onAction).toHaveBeenCalledWith('metadata:review:pick');
   });
 

@@ -2,46 +2,105 @@ const freezeShortcut = (shortcut) =>
   Object.freeze({
     ...shortcut,
     keys: Object.freeze([...shortcut.keys]),
+    ...(shortcut.bindings
+      ? { bindings: Object.freeze([...shortcut.bindings]) }
+      : {}),
   });
 
 export const REVIEW_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "review-pick",
-    keys: ["P"],
-    label: "Mark as Pick",
+    keys: ["A", "P"],
+    keyJoiner: "or",
+    label: "Mark as Accept",
     detail: "Applies to every selected clip.",
     state: "pick",
   }),
   freezeShortcut({
     id: "review-reviewed",
-    keys: ["R"],
+    keys: ["S", "R"],
+    keyJoiner: "or",
     label: "Mark as Reviewed",
     detail: "Applies to every selected clip.",
     state: "reviewed",
   }),
   freezeShortcut({
     id: "review-reject",
-    keys: ["X"],
+    keys: ["D", "X"],
+    keyJoiner: "or",
     label: "Mark as Reject",
     detail: "Applies to every selected clip.",
     state: "reject",
   }),
   freezeShortcut({
     id: "review-unreviewed",
-    keys: ["U"],
+    keys: ["F", "U"],
+    keyJoiner: "or",
     label: "Reset to Unreviewed",
-    detail: "Applies to every selected clip.",
+    detail: "Also clears ratings; tags are kept.",
     state: "unreviewed",
+  }),
+  freezeShortcut({
+    id: "review-rating",
+    keys: ["1–5"],
+    bindings: ["1", "2", "3", "4", "5"],
+    label: "Set star rating",
+    detail: "A rating also counts the clip as reviewed.",
+    action: "rating",
+  }),
+  freezeShortcut({
+    id: "review-clear-rating",
+    keys: ["0"],
+    label: "Clear star rating",
+    detail: "Keeps the current review state.",
+    action: "clear-rating",
+  }),
+  freezeShortcut({
+    id: "review-undo",
+    keys: ["Z"],
+    label: "Undo last review change",
+    detail: "Restores both review state and rating.",
+    action: "undo",
   }),
 ]);
 
 export const REVIEW_STATE_BY_KEY = Object.freeze(
   Object.fromEntries(
-    REVIEW_SHORTCUTS.map((shortcut) => [
-      shortcut.keys[0].toLowerCase(),
+    REVIEW_SHORTCUTS.flatMap((shortcut) =>
+      shortcut.state
+        ? shortcut.keys.map((key) => [key.toLowerCase(), shortcut.state])
+        : []
+    )
+  )
+);
+
+export const REVIEW_PRIMARY_KEY_BY_STATE = Object.freeze(
+  Object.fromEntries(
+    REVIEW_SHORTCUTS.filter((shortcut) => shortcut.state).map((shortcut) => [
       shortcut.state,
+      shortcut.keys[0],
     ])
   )
+);
+
+export const REVIEW_RATING_BY_KEY = Object.freeze(
+  Object.fromEntries(
+    REVIEW_SHORTCUTS.filter((shortcut) => shortcut.action === "rating").flatMap(
+      (shortcut) => shortcut.bindings.map((key) => [key, Number(key)])
+    )
+  )
+);
+
+export const REVIEW_CLEAR_RATING_KEYS = Object.freeze(
+  REVIEW_SHORTCUTS.filter((shortcut) => shortcut.action === "clear-rating")
+    .flatMap((shortcut) => shortcut.keys)
+    .map((key) => key.toLowerCase())
+);
+
+export const REVIEW_UNDO_KEYS = Object.freeze(
+  REVIEW_SHORTCUTS.filter((shortcut) => shortcut.action === "undo")
+    .flatMap((shortcut) => shortcut.keys)
+    .map((key) => key.toLowerCase())
 );
 
 export const FOLDER_DIRECTION_BY_KEY = Object.freeze({

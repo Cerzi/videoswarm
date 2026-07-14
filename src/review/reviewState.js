@@ -45,7 +45,7 @@ export const matchesReviewFilter = (state, filter) => {
 export const reviewStateLabel = (value) => {
   switch (normalizeReviewState(value)) {
     case REVIEW_STATES.PICK:
-      return "Pick";
+      return "Accept";
     case REVIEW_STATES.REJECT:
       return "Reject";
     case REVIEW_STATES.REVIEWED:

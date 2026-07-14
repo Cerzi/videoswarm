@@ -430,7 +430,7 @@ Linux soak harness; it is not inferred from deterministic unit tests.
 
 ### 7. Folder and lightweight library UX
 
-Status: **Implemented** (2026-07-13)
+Status: **Implemented** (2026-07-14)
 
 The app supports both a flattened swarm and explicit navigation:
 
@@ -442,9 +442,20 @@ The app supports both a flattened swarm and explicit navigation:
 - Per-folder restoration of scroll, selection, sort, and filters.
 - Pinned library roots backed by the persistent instance index.
 
-Generative-video review adds pick/reject/reviewed state, saved smart views, and
+Generative-video review presents the persisted `pick` state as **Accept**, with
+Reject, neutral Reviewed, and Unreviewed states, saved smart views, and
 optional sidecar/workflow parsing for prompt, seed, model, sampler, source
-image, and generation run. The flattened swarm remains the default workflow.
+image, and generation run. Ratings remain independent metadata while implying
+that review occurred. Resetting to Unreviewed clears the rating but never tags.
+The flattened swarm remains the default workflow.
+
+The completed high-throughput workflow adds stable scope progress, one-handed
+A/S/D/F primary shortcuts, compatibility aliases, numeric ratings, opt-in
+auto-advance, one-step undo, and an explicit Process Results dialog. Result
+processing can move a bounded set of local rejects through the native trash
+path or export a deterministic JSON manifest without absolute native paths.
+The full contract is specified in
+[`review-workflow.md`](review-workflow.md).
 
 The implementation keeps this library deliberately lightweight. Pinned roots,
 saved views, directory rows, and metadata remain profile-local references to
@@ -490,6 +501,13 @@ Acceptance criteria:
 - Selection details remain spatially connected to the active clip without
   changing grid geometry, and close/deselect/context-target behavior cannot
   leave displayed and mutated metadata targets out of sync.
+- A rating promotes Unreviewed content to Reviewed, an Unreviewed reset clears
+  its rating without changing tags, and Accept/Reject decisions survive rating
+  changes.
+- Toolbar, shortcut, context-menu, and floating-inspector review/rating actions
+  share one serialized workflow and its bounded undo history.
+- Result processing ignores active filters, requires an authoritative scan,
+  bounds native trash work, and exports no absolute source or record paths.
 
 ### 8. Observability, testing, and CI
 
@@ -657,7 +675,8 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Asynchronous thumbnail IPC and persistence | **Implemented** | Thumbnail reads/writes use asynchronous IPC, bounded read/write lanes, byte/pixel-aware memory and disk LRUs, atomic files, and coalesced bounded index persistence. |
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
 | Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
-| Review state and generation sidecars | **Implemented** | Content-keyed Pick/Reviewed/Reject/Unreviewed states, batch controls/shortcuts/filters, reviewed directory aggregates, and bounded instance-keyed sidecar extraction are implemented. |
+| Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, inspector, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and manifest export without absolute native paths are implemented; see [`review-workflow.md`](review-workflow.md). |
+| Generation sidecars | **Implemented** | Bounded, instance-keyed extraction of prompt, seed, model, sampler, source-image, and generation-run fields remains on demand and profile-owned. |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
 | Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
 | Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
@@ -1099,10 +1118,14 @@ universal limits.
    capped at 500 IDs, remain valid while filters hide their cards, profile
    switches clear the cache, and no DOM/media/blob ownership enters the cache.
 7. **Implemented** — Add content-keyed `unreviewed`, `reviewed`, `pick`, and
-   `reject` state. Existing ratings backfill reviewed state without
-   overwriting later explicit choices; clearing a rating does not clear review
-   state. Batch panel controls, card badges, filters, context actions, and
-   P/R/X/U shortcuts support high-throughput review.
+   `reject` state while presenting `pick` as **Accept** in the UI. Ratings
+   promote Unreviewed content to neutral Reviewed without overwriting an
+   existing Accept/Reject choice; clearing a rating preserves review state,
+   while resetting to Unreviewed clears the rating and leaves tags untouched.
+   Toolbar, context-menu, and floating-inspector mutations share the serialized,
+   32-input-bounded workflow. A/S/D/F primary shortcuts, P/R/X/U compatibility
+   aliases, 1-5 ratings, 0 clear-rating, and Z undo render from the shared
+   shortcut catalog.
 8. **Implemented** — Add validated, profile-local smart-view CRUD. Version 1
    stores allowlisted tag/rating/review filters, sort direction/key, grouping,
    random seed, and scope; names, count, and UTF-8 definition size are bounded.
@@ -1147,6 +1170,13 @@ universal limits.
     movement, one-shot focus requests, narrow-sheet behavior, and the shared
     `I` shortcut are covered without retaining cards or changing virtual-grid
     geometry. See `floating-selection-inspector.md` for the detailed contract.
+16. **Implemented** — Add the scope-stable review toolbar, profile-local opt-in
+    auto-advance, one-step ownership-bound undo, and authoritative Process
+    Results dialog. Local rejected instances reuse the hardened native trash
+    path with a 2,000-file bound; manifest export is deterministic, atomic,
+    limited to 20,000 records and 32 MiB, and deliberately excludes absolute
+    native paths. See [`review-workflow.md`](review-workflow.md) for the full
+    implementation and verification record.
 
 The following work remains **Unimplemented** after this slice:
 
@@ -1184,6 +1214,11 @@ complete by the performance, security, or batching changes above:
   masonry remain an optional UX enhancement. The implemented folder tree and
   group strip already provide navigation and visible grouping without changing
   layout geometry.
+- **Expanded review-result actions:** copy/move of accepted files, collision
+  and cross-device recovery, sidecar policy, and streaming result jobs above
+  the current 2,000-local-reject safety bound remain deferred. The implemented
+  workflow requires users to narrow the active folder scope for larger trash
+  sets; see [`review-workflow.md`](review-workflow.md).
 - **Cross-platform packaged validation:** Linux production smoke now exercises
   the security boundary and custom media ranges. Windows and macOS packaged
   runs should be added when runners are available, particularly for custom

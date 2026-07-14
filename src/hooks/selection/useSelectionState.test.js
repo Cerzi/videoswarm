@@ -47,6 +47,25 @@ describe('useSelectionState', () => {
     act(() => result.current.clear());
     expect(result.current.selected.size).toBe(0);
   });
+
+  test('selectExactly never toggles an already-selected id off', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.selectExactly('a'));
+    act(() => result.current.selectExactly('a'));
+    expect(result.current.selected).toEqual(new Set(['a']));
+    expect(result.current.anchorId).toBe('a');
+  });
+
+  test('setSelectedIds restores a batch with a usable anchor', () => {
+    const { result } = renderHook(() => useSelectionState());
+    act(() => result.current.setSelectedIds(['b', 'c']));
+    expect(result.current.selected).toEqual(new Set(['b', 'c']));
+    expect(result.current.anchorId).toBe('b');
+
+    act(() => result.current.setSelectedIds(new Set()));
+    expect(result.current.selected.size).toBe(0);
+    expect(result.current.anchorId).toBe(null);
+  });
 });
 
 const ids = ['a', 'b', 'c', 'd', 'e'];

@@ -141,6 +141,34 @@ describe("atomic settings persistence", () => {
     expect(fs.readdirSync(base)).toEqual(["settings.json"]);
   });
 
+  it("revalidates ownership immediately before atomic publication", async () => {
+    const base = temporaryDirectory();
+    const destination = path.join(base, "settings.json");
+    fs.writeFileSync(destination, "old");
+    const guardedFs = {
+      ...fs.promises,
+      rename: vi.fn(fs.promises.rename.bind(fs.promises)),
+    };
+    const invalidated = Object.assign(new Error("owner changed"), {
+      code: "PROFILE_OPERATION_INVALIDATED",
+    });
+    const assertActive = vi.fn(() => {
+      throw invalidated;
+    });
+
+    await expect(
+      writeFileAtomically(destination, "new", {
+        fsApi: guardedFs,
+        sequence: 3,
+        assertActive,
+      })
+    ).rejects.toMatchObject({ code: "PROFILE_OPERATION_INVALIDATED" });
+    expect(assertActive).toHaveBeenCalledOnce();
+    expect(guardedFs.rename).not.toHaveBeenCalled();
+    expect(fs.readFileSync(destination, "utf8")).toBe("old");
+    expect(fs.readdirSync(base)).toEqual(["settings.json"]);
+  });
+
   it("rejects oversized or cyclic settings before any write", () => {
     expect(() => serializeSettings({ value: "x".repeat(100) }, 32)).toThrow(
       expect.objectContaining({ code: "SETTINGS_TOO_LARGE" })
