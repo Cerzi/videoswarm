@@ -55,7 +55,8 @@
     "test:electron-abi": "node scripts/run-electron-vitest.cjs run main/__tests__/databaseProfiles.test.js main/__tests__/metadataTags.test.js main/__tests__/libraryIndex.test.js main/__tests__/reviewLibrary.test.js",
     "test:coverage": "node scripts/run-electron-vitest.cjs run --coverage",
     "test:electron-smoke": "playwright test --config=playwright.electron.config.cjs",
-    "profile:linux": "node scripts/performance/linux-soak.cjs"
+    "profile:linux": "node scripts/performance/linux-soak.cjs",
+    "profile:folder-revisit": "node scripts/performance/folder-revisit.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

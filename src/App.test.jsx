@@ -105,11 +105,14 @@ const electronLifecycleReturn = {
   directorySummaries: [],
   isLoadingFolder: false,
   isRefreshingFolder: false,
+  activeScanId: null,
   loadingStatus: null,
   loadingStage: "",
   loadingProgress: 0,
   settingsLoaded: true,
   cancelFolderLoad: vi.fn(),
+  prioritizeActiveDirectoryScan: vi.fn(),
+  promoteCachedPreview: vi.fn(),
   handleElectronFolderSelection: vi.fn(),
   reloadCurrentRoot: vi.fn(),
   handleFolderSelect: vi.fn(),
@@ -591,6 +594,45 @@ describe("App hook composition", () => {
 
     result.unmount();
     expect(setThumbSuspendedMock).toHaveBeenCalledWith(true);
+  });
+
+  test("promotes a progressive cached collection after the first grid commits", async () => {
+    const video = { id: "cached-video", name: "cached.mp4" };
+    const promoteCachedPreview = vi.fn();
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [video],
+      activeRootPath: "/large",
+      libraryRoot: { rootPath: "/large", recursive: true },
+      activeScanId: "scan-cached",
+      isRefreshingFolder: true,
+      promoteCachedPreview,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [video],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [video],
+      displayVideos: [video],
+      orderedIds: [video.id],
+      orderForRange: [video.id],
+      activationIds: [video.id],
+      centerPriorityIds: [video.id],
+      activationIdSet: new Set([video.id]),
+      virtualItems: [
+        { id: video.id, item: video, style: {}, column: 0, top: 0 },
+      ],
+      totalHeight: 100,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(promoteCachedPreview).toHaveBeenCalledWith("scan-cached")
+    );
   });
 
   test("authorizes a catalog root on demand before opening it", async () => {

@@ -1,6 +1,6 @@
 # Large Library, Playback, and Reliability Architecture
 
-Status: Active design specification  
+Status: Core architecture implemented; deferred research tracked below
 Last updated: 2026-07-14
 
 ## Purpose
@@ -140,8 +140,7 @@ have focused regressions.
 
 #### Folder revisit acceleration
 
-Status: **Unimplemented** (SQLite hydration implemented; hardware acceptance
-remains, 2026-07-14)
+Status: **Implemented** (2026-07-14)
 
 A previously indexed root should be able to hydrate a last-known collection
 directly from its profile-local SQLite `file_instances` and content metadata,
@@ -179,8 +178,56 @@ filesystem scan continues as the authoritative background refresh. Cache read
 failure falls back to the normal scan, while refresh failure leaves an already
 hydrated grid usable. The lifecycle exposes `isRefreshingFolder`, and the
 navbar renders a compact, reduced-motion-safe “Refreshing index” status until
-validation finishes. A measured real-hardware first-grid A/B budget remains
-**Unimplemented**.
+validation finishes.
+
+The real-hardware acceptance gate is also **Implemented**. The local Linux
+harness runs five cold, same-process warm, and post-restart trials for both
+1,000- and 6,000-clip roots. It records request-to-first-grid and authoritative
+refresh completion separately, requires identical final counts and relative
+path digests, checks virtual-card/media bounds, switches to a sentinel root to
+detect retained inactive resources, and rejects same-process heap or
+working-set growth beyond explicit budgets. The measured record and exact
+reproduction command are kept below under “Folder-revisit hardware record.”
+
+##### Folder-revisit hardware record
+
+Recorded 2026-07-14 on Linux 6.17, an Intel Core i9-13900K host with 32
+logical CPUs and 128 GB RAM. The inputs were stable nested roots containing
+exactly 1,000 and 6,000 playable short-video hard links. Each cell is the
+median of five trials on the same landed code. “Warm” revisits in one Electron
+process; “restart” reads the same profile-local SQLite index from a new
+Electron process.
+
+| Root | Cold first grid | Warm first grid | Warm speedup | Restart first grid | Restart speedup | Cold / warm / restart refresh |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 clips | 198.7 ms | 14.6 ms | 13.61× | 38.3 ms | 5.19× | 314.7 / 150.8 / 224.3 ms |
+| 6,000 clips | 215.4 ms | 14.7 ms | 14.65× | 53.3 ms | 4.04× | 1,354.8 / 731.6 / 1,104.3 ms |
+
+All 30 measured opens produced the exact on-disk count and one stable sorted
+relative-path digest for their root. Cached first grids contained no more than
+128 serializable records; the complete SQLite snapshot hydrated only after
+the first usable grid commit and remained subordinate to watcher/scan deltas.
+The active virtual surface peaked at 18 cards, 18 masonry slots, and 18 media
+elements. After switching to the one-clip sentinel, every trial reported zero
+cards, slots, and media elements belonging to the inactive root. The
+same-process warm cleanup delta was +0.18 MB heap / +130 MB working set for the
+1,000 root and +3.43 MB / +124 MB for the 6,000 root, below the harness's 64 MB
+heap and 256 MB working-set budgets. The collection lifecycle retains only its
+active scan-owned record map; the existing bounded 128-root view-state LRU is
+serializable and owns no React tree, media element, thumbnail, or decoded
+resource. These results do not justify an in-memory media cache.
+
+The two exact commands used for the recorded reports were:
+
+```text
+npm run profile:folder-revisit -- --folder-1000 /tmp/videoswarm-revisit-smoke-1000 --trials 5 --output /tmp/videoswarm-revisit-1000-5-final.json
+npm run profile:folder-revisit -- --folder-6000 /tmp/videoswarm-revisit-smoke-6000 --trials 5 --output /tmp/videoswarm-revisit-6000-5-final-coherent.json
+```
+
+The JSON reports remain machine-local `/tmp` evidence and are not repository
+artifacts. The reusable runner and deterministic budget evaluator live under
+`scripts/performance/`; `npm run profile:folder-revisit -- --help` documents
+portable input paths and optional scenarios.
 
 ### 2. Persistent content and file-instance index
 
@@ -658,7 +705,7 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Live scan telemetry | **Implemented** | Scan-ID-scoped, throttled phase events expose real discovery, indexing, reconciliation, enrichment, warning, path, reuse, and timing data. Main-process loops yield regularly so feedback and cancellation stay responsive; landed in `e1d5504`. |
 | Informative loading dialog and Escape cancellation | **Implemented** | The accessible dialog shows honest determinate/indeterminate state, phase activity, live counters, paths, elapsed/heartbeat feedback, whole-app working-set memory, persistent errors, and one Cancel/Escape path; landed in `062e23a` and `e1d5504`. |
 | Incremental enumeration batches | **Implemented** | Opt-in scan protocol version 1 streams bounded cheap-record batches and rich patches into a scan-owned renderer ID map, while legacy callers retain the final-array response. |
-| SQLite-backed folder revisit hydration | **Unimplemented** | The bulk, profile/scan-owned SQLite groundwork provides a stale-while-revalidate first grid with a visible refresh status and without retaining inactive media resources. Streamed enumeration preserves an indexed opaque source until its replacement enrichment arrives, but the real-hardware first-grid A/B acceptance budget remains. |
+| SQLite-backed folder revisit hydration | **Implemented** | Bulk, profile/scan-owned SQLite hydration provides a stale-while-revalidate first grid with a visible refresh status and no retained inactive media resources. A five-trial Linux harness now enforces identical authoritative collections, bounded resources, and at least a 2× warm/restart median first-grid speedup over cold opening for 1,000- and 6,000-clip roots. |
 | Watch-before-scan reconciliation | **Implemented** | A bounded watcher generation captures the pre-ready baseline, coalesces initialization changes, seeds polling fallback, reconciles overflow, and drains atomically before live delivery. |
 | Persistent content/file-instance schema and lifecycle | **Implemented** | Profile-local roots, pin state, empty directories, distinct instances, restart fingerprint reuse, safe reconciliation, and watcher missing-state updates landed in `ef923ed`, `842e0a2`, and `4eaf2e4`. |
 | Coalesced watcher directory aggregates | **Implemented** | Watcher and polling mutations defer full directory-count recomputation into a profile/generation-owned 150 ms debounce with a one-second maximum wait, 128-root bound, serialized refresh lane, bounded retries, and explicit flushes before cached-grid/tree correctness reads, profile changes, watcher stop, and shutdown. A 1,000-event burst regression requires one refresh. |
@@ -849,9 +896,6 @@ harnesses are now **Implemented** in Sections 1 and 8.
 
 The following adjacent work remains **Unimplemented**:
 
-- A real-hardware first-grid A/B budget must still quantify the implemented
-  SQLite stale-while-revalidate hydration. The hydration and Section 7 catalog
-  navigation retain no inactive media/DOM resources as a renderer cache.
 - Fingerprint format `v1` includes creation time. Ordinary byte-identical
   copies are safely represented as distinct instances but may occupy distinct
   content rows; a versioned content-digest migration is deferred.
@@ -1006,15 +1050,13 @@ hardware baselines are not portable CI thresholds.
     Section 7 review metadata does not force avoidable software compositing
     across many simultaneously playing cards on Linux.
 
-The earlier Section 5 slice was verified with focused playback, telemetry,
-scheduling, preload, card, and application suites plus the complete host suite,
-production Vite build, Electron-ABI native suite, and unpacked Linux package.
-Those results predate the exact-lease and advisory-telemetry correction above.
-The follow-up adds focused ownership and no-recursive-decay regressions; its
-current full-suite/build/package results belong in the commit handoff rather
-than being inferred from the earlier run. The base implementation is recorded
-in commit `af73872`; the playback-fidelity fixes are part of this follow-up
-implementation.
+Section 5 and its playback-fidelity follow-ups are verified by focused policy,
+telemetry, scheduling, preload, card, and application regressions as well as
+the repository's full host, production-build, Electron-ABI, and package gates.
+The exact-lease and no-recursive-decay cases are part of that regression
+surface rather than pending handoff work. The base implementation is recorded
+in commit `af73872`; later commits restore the explicit All Motion contract and
+correct stale pause ownership.
 
 Hardware-specific Linux decode verification remains environment-dependent;
 Section 8 now provides the soak and baseline-threshold tooling, while Section 5
@@ -1187,17 +1229,12 @@ The following work remains **Unimplemented** after this slice:
 Section 1 incremental delivery and Section 8 Electron smoke/Linux profiling
 automation are now implemented.
 
-## Outstanding work and validation risks
+## Deferred research and validation risks
 
-The primary architecture in Sections 1-9 is implemented, with the explicitly
-unfinished/optional items below deliberately left open rather than being implied
-complete by the performance, security, or batching changes above:
-
-- **Folder-revisit hardware budget:** SQLite stale-while-revalidate hydration
-  is implemented, but a repeatable real-machine 1,000/6,000-clip A/B result for
-  request-to-first-grid is still required before the folder-revisit
-  deliverable can be marked **Implemented**. No in-memory
-  media cache should be added without that evidence.
+The core large-library architecture in Sections 1-9 is closed and implemented.
+The items below are deliberately deferred research or platform-validation
+work, not unfinished parent deliverables. They should be reopened only when
+their stated evidence exists:
 - **Versioned content identity:** fingerprint `v1` includes creation time, so
   byte-identical copies may occupy distinct content rows. A creation-time-free
   content digest needs an explicit schema/data migration and compatibility

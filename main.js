@@ -3202,7 +3202,13 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
 // are retained in the main process.
 ipcMain.handle(
   "read-directory-cache",
-  async (event, folderPath, recursive = false, requestedScanId = null) => {
+  async (
+    event,
+    folderPath,
+    recursive = false,
+    requestedScanId = null,
+    cacheOptions = undefined
+  ) => {
     const authorizedRoot = await assertRendererPath(
       event,
       folderPath,
@@ -3216,6 +3222,15 @@ ipcMain.handle(
         maxChars: 256,
       });
     }
+    assertPlainObject(cacheOptions || {}, "cache options");
+    const requestedLimit = cacheOptions?.limit;
+    const limit = requestedLimit === undefined
+      ? undefined
+      : assertInteger(Number(requestedLimit), {
+          name: "cache preview limit",
+          min: 1,
+          max: 128,
+        });
     const metadataContext = captureMetadataContext();
     const normalizedRoot = authorizedRoot.path;
     await flushDirectoryAggregates(normalizedRoot);
@@ -3224,6 +3239,7 @@ ipcMain.handle(
       normalizedRoot,
       {
         recursive: Boolean(recursive),
+        limit,
         assertActive: () => assertMetadataContextActive(metadataContext),
       }
     );
@@ -3834,7 +3850,7 @@ const reviewManifestExportCoordinator =
       assertRendererPath({ sender: owner }, rootPath, "directory"),
     getRoot: ({ context, rootPath }) =>
       context.metadataStore.getLibraryRoot(rootPath),
-    showSaveDialog: async ({ owner, root, defaultName }) => {
+    showSaveDialog: async ({ owner, defaultName }) => {
       const win = BrowserWindow.fromWebContents(owner);
       if (!win || win.isDestroyed() || owner.isDestroyed?.()) {
         throw new ProfileOperationInvalidatedError();

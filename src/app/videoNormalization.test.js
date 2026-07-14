@@ -27,4 +27,23 @@ describe("normalizeVideoFromMain", () => {
     expect(result.tags).toEqual([]);
     expect(result.reviewState).toBe("unreviewed");
   });
+
+  it("expands compact native cache identity fields", () => {
+    const result = normalizeVideoFromMain({
+      id: "/library/clip.mp4",
+      name: "clip.mp4",
+      isElectronFile: true,
+      dimensions: { width: 640, height: 360 },
+    });
+
+    expect(result).toMatchObject({
+      fullPath: "/library/clip.mp4",
+      basename: "clip.mp4",
+      fingerprint: null,
+      tags: [],
+      rating: null,
+      reviewState: "unreviewed",
+      aspectRatio: 640 / 360,
+    });
+  });
 });

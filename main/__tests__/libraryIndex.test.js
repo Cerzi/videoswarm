@@ -382,6 +382,17 @@ if (!database || databaseLoadError) {
           (record) => record.absolutePath === removed.filePath
         )
       ).toBe(false);
+      expect(recursiveSnapshot.totalRecordCount).toBe(2);
+
+      const boundedSnapshot = store.getCachedLibrarySnapshot(rootPath, {
+        recursive: true,
+        limit: 1,
+      });
+      expect(boundedSnapshot.records).toHaveLength(1);
+      expect(boundedSnapshot.records[0].relativePath).toBe(
+        recursiveSnapshot.records[0].relativePath
+      );
+      expect(boundedSnapshot.totalRecordCount).toBe(2);
 
       const directSnapshot = store.getCachedLibrarySnapshot(rootPath, {
         recursive: false,

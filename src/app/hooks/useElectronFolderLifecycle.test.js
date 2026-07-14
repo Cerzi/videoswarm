@@ -1,5 +1,8 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useElectronFolderLifecycle } from "./useElectronFolderLifecycle";
+import {
+  CACHED_FIRST_GRID_LIMIT,
+  useElectronFolderLifecycle,
+} from "./useElectronFolderLifecycle";
 import { inferRenderLimitStepFromLegacy } from "../../utils/renderLimit";
 
 function createSetStateMock() {
@@ -204,6 +207,7 @@ describe("useElectronFolderLifecycle", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     delete window.electronAPI;
     onFileAddedHandler = undefined;
     onFileRemovedHandler = undefined;
@@ -442,7 +446,8 @@ describe("useElectronFolderLifecycle", () => {
     expect(window.electronAPI.readDirectoryCache).toHaveBeenCalledWith(
       "/large",
       true,
-      scanId
+      scanId,
+      { limit: CACHED_FIRST_GRID_LIMIT }
     );
     expect(result.current.isLoadingFolder).toBe(false);
     expect(result.current.isRefreshingFolder).toBe(true);
@@ -486,6 +491,798 @@ describe("useElectronFolderLifecycle", () => {
       true,
       expect.objectContaining({ bufferInitialEvents: true })
     );
+  });
+
+  it("marks a small cached collection complete only after its first grid commits", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 13));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let resolveRefresh;
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        totalRecordCount: 1,
+        files: [
+          {
+            id: "/small/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            fullPath: "/small/cached.mp4",
+            tags: [],
+          },
+        ],
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/small");
+    });
+    await waitFor(() => expect(result.current.videos).toHaveLength(1));
+
+    const scanId = result.current.activeScanId;
+    expect(result.current.cachedHydration).toMatchObject({
+      scanId,
+      phase: "preview",
+      recordCount: 1,
+      totalRecordCount: 1,
+    });
+    expect(result.current.cachedHydrationComplete).toBe(false);
+    expect(window.electronAPI.readDirectoryCache).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      expect(result.current.promoteCachedPreview(scanId)).toBe(true);
+    });
+    expect(result.current.cachedHydration).toMatchObject({
+      scanId,
+      phase: "complete",
+      recordCount: 1,
+      totalRecordCount: 1,
+    });
+    expect(result.current.cachedHydrationComplete).toBe(true);
+    expect(result.current.promoteCachedPreview(scanId)).toBe(false);
+    expect(window.electronAPI.readDirectoryCache).toHaveBeenCalledTimes(1);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(13);
+
+    await act(async () => {
+      resolveRefresh({
+        scanId,
+        root: { rootPath: "/small", refreshState: "idle" },
+        directories: [],
+        files: [
+          {
+            id: "/small/cached.mp4",
+            name: "cached.mp4",
+            basename: "cached.mp4",
+            fullPath: "/small/cached.mp4",
+            tags: [],
+          },
+        ],
+      });
+      await loadPromise;
+    });
+  });
+
+  it("promotes a bounded cached first grid to the complete active collection", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 11));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let resolveWatcher;
+    let resolveRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 2 },
+      (_, index) => ({
+        id: `/large/clip-${index}.mp4`,
+        fullPath: `/large/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: cachedFiles,
+      })
+    );
+    window.electronAPI.startFolderWatch.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveWatcher = resolve;
+      })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/large");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+    const scanId = result.current.activeScanId;
+
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            ...cachedFiles[0],
+            name: "updated-before-promotion.mp4",
+            basename: "updated-before-promotion.mp4",
+          },
+          {
+            id: "/large/discovered-before-promotion.mp4",
+            fullPath: "/large/discovered-before-promotion.mp4",
+            name: "discovered-before-promotion.mp4",
+            basename: "discovered-before-promotion.mp4",
+            tags: [],
+          },
+        ],
+      });
+    });
+    expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT);
+
+    act(() => {
+      expect(result.current.promoteCachedPreview(scanId)).toBe(true);
+    });
+    expect(result.current.videos).toHaveLength(cachedFiles.length + 1);
+    expect(
+      result.current.videos.find((video) => video.id === cachedFiles[0].id)?.name
+    ).toBe("updated-before-promotion.mp4");
+    expect(
+      result.current.videos.some(
+        (video) => video.id === "/large/discovered-before-promotion.mp4"
+      )
+    ).toBe(true);
+    expect(result.current.promoteCachedPreview(scanId)).toBe(false);
+
+    await act(async () => {
+      resolveWatcher({ success: true });
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledOnce()
+    );
+    await act(async () => {
+      resolveRefresh({
+        scanId,
+        files: cachedFiles,
+        root: { rootPath: "/large", refreshState: "idle" },
+        directories: [],
+      });
+      await loadPromise;
+    });
+    expect(result.current.videos).toHaveLength(cachedFiles.length);
+  });
+
+  it("promotes the complete indexed collection when the user cancels refresh", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 17));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let resolveRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 2 },
+      (_, index) => ({
+        id: `/large/clip-${index}.mp4`,
+        fullPath: `/large/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: cachedFiles,
+      })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/large");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+
+    act(() => {
+      result.current.cancelFolderLoad();
+    });
+    expect(result.current.videos).toHaveLength(cachedFiles.length);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(17);
+
+    await act(async () => {
+      resolveRefresh({ cancelled: true });
+      await loadPromise;
+    });
+    expect(result.current.videos).toHaveLength(cachedFiles.length);
+  });
+
+  it("hydrates the full cache after first paint without overwriting scan changes", async () => {
+    let resolveFullCache;
+    let resolveRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 2 },
+      (_, index) => ({
+        id: `/bounded/clip-${index}.mp4`,
+        fullPath: `/bounded/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementation(
+      async (folderPath, _recursive, scanId, options) => {
+        if (options?.limit) {
+          return {
+            cached: true,
+            scanId,
+            root: { rootPath: folderPath, refreshState: "refreshing" },
+            directories: [],
+            totalRecordCount: cachedFiles.length,
+            files: cachedFiles.slice(0, CACHED_FIRST_GRID_LIMIT),
+          };
+        }
+        return new Promise((resolve) => {
+          resolveFullCache = () =>
+            resolve({
+              cached: true,
+              scanId,
+              root: { rootPath: folderPath, refreshState: "refreshing" },
+              directories: [],
+              totalRecordCount: cachedFiles.length,
+              files: cachedFiles,
+            });
+        });
+      }
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/bounded");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+    expect(result.current.cachedHydration).toMatchObject({
+      phase: "preview",
+      recordCount: CACHED_FIRST_GRID_LIMIT,
+      totalRecordCount: cachedFiles.length,
+    });
+    const scanId = result.current.activeScanId;
+
+    act(() => {
+      expect(result.current.promoteCachedPreview(scanId)).toBe(true);
+    });
+    await waitFor(() => expect(resolveFullCache).toEqual(expect.any(Function)));
+    expect(result.current.cachedHydration.phase).toBe("hydrating");
+
+    act(() => {
+      directoryScanRecordsHandler?.({
+        scanId,
+        sequence: 1,
+        kind: "enumeration",
+        records: [
+          {
+            ...cachedFiles[0],
+            name: "authoritative-name.mp4",
+            basename: "authoritative-name.mp4",
+          },
+          {
+            id: "/bounded/new.mp4",
+            fullPath: "/bounded/new.mp4",
+            name: "new.mp4",
+            basename: "new.mp4",
+            tags: [],
+          },
+        ],
+      });
+      onFileRemovedHandler?.(cachedFiles[1].id, { scanId });
+    });
+
+    await act(async () => {
+      resolveFullCache();
+    });
+    await waitFor(() => expect(result.current.cachedHydrationComplete).toBe(true));
+    expect(result.current.cachedHydration.phase).toBe("complete");
+    expect(result.current.videos).toHaveLength(cachedFiles.length);
+    expect(result.current.videos.some((video) => video.id === cachedFiles[1].id))
+      .toBe(false);
+    expect(
+      result.current.videos.find((video) => video.id === cachedFiles[0].id)?.name
+    ).toBe("authoritative-name.mp4");
+    expect(result.current.videos.some((video) => video.id === "/bounded/new.mp4"))
+      .toBe(true);
+    expect(window.electronAPI.readDirectoryCache.mock.calls[1]).toEqual([
+      "/bounded",
+      true,
+      scanId,
+    ]);
+
+    act(() => result.current.cancelFolderLoad());
+    await act(async () => {
+      resolveRefresh({ cancelled: true });
+      await loadPromise;
+    });
+  });
+
+  it("restores the complete cache when authoritative refresh fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 1 },
+      (_, index) => ({
+        id: `/failed/clip-${index}.mp4`,
+        fullPath: `/failed/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementation(
+      async (folderPath, _recursive, scanId, options) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        totalRecordCount: cachedFiles.length,
+        files: options?.limit
+          ? cachedFiles.slice(0, CACHED_FIRST_GRID_LIMIT)
+          : cachedFiles,
+      })
+    );
+    window.electronAPI.readDirectory.mockRejectedValueOnce(
+      new Error("temporary filesystem error")
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/failed");
+    });
+
+    expect(result.current.videos).toHaveLength(cachedFiles.length);
+    expect(result.current.cachedHydrationComplete).toBe(true);
+    expect(result.current.cachedHydration.phase).toBe("complete");
+    expect(result.current.libraryRoot.refreshState).toBe("error");
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "error",
+      partialPreview: false,
+      error: "temporary filesystem error",
+    });
+    expect(result.current.loadingStatus.message).toContain("indexed snapshot");
+    consoleError.mockRestore();
+  });
+
+  it("finishes full cache hydration after explicit cancellation", async () => {
+    let resolveFullCache;
+    let resolveRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 1 },
+      (_, index) => ({
+        id: `/cancelled/clip-${index}.mp4`,
+        fullPath: `/cancelled/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementation(
+      async (folderPath, _recursive, scanId, options) => {
+        if (options?.limit) {
+          return {
+            cached: true,
+            scanId,
+            root: { rootPath: folderPath, refreshState: "refreshing" },
+            directories: [],
+            totalRecordCount: cachedFiles.length,
+            files: cachedFiles.slice(0, CACHED_FIRST_GRID_LIMIT),
+          };
+        }
+        return new Promise((resolve) => {
+          resolveFullCache = () =>
+            resolve({
+              cached: true,
+              scanId,
+              totalRecordCount: cachedFiles.length,
+              files: cachedFiles,
+            });
+        });
+      }
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/cancelled");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+    const scanId = result.current.activeScanId;
+
+    act(() => result.current.cancelFolderLoad());
+    await waitFor(() => expect(resolveFullCache).toEqual(expect.any(Function)));
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "cancelled",
+      partialPreview: true,
+    });
+    act(() => {
+      onFileRemovedHandler?.(cachedFiles[0].id, { scanId });
+    });
+
+    await act(async () => {
+      resolveFullCache();
+    });
+    await waitFor(() => expect(result.current.cachedHydrationComplete).toBe(true));
+    expect(result.current.videos).toHaveLength(cachedFiles.length - 1);
+    expect(result.current.videos.some((video) => video.id === cachedFiles[0].id))
+      .toBe(false);
+    expect(result.current.loadingStatus).toMatchObject({
+      phase: "cancelled",
+      partialPreview: false,
+    });
+    expect(result.current.loadingStatus.message).toContain("complete indexed");
+
+    await act(async () => {
+      resolveRefresh({ cancelled: true });
+      await loadPromise;
+    });
+  });
+
+  it("ignores a full cache response after the root is superseded", async () => {
+    let resolveOlderFullCache;
+    let resolveOlderRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 1 },
+      (_, index) => ({
+        id: `/older/clip-${index}.mp4`,
+        fullPath: `/older/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementation(
+      async (folderPath, _recursive, scanId, options) => {
+        if (folderPath !== "/older") return null;
+        if (options?.limit) {
+          return {
+            cached: true,
+            scanId,
+            root: { rootPath: folderPath, refreshState: "refreshing" },
+            directories: [],
+            totalRecordCount: cachedFiles.length,
+            files: cachedFiles.slice(0, CACHED_FIRST_GRID_LIMIT),
+          };
+        }
+        return new Promise((resolve) => {
+          resolveOlderFullCache = () =>
+            resolve({
+              cached: true,
+              scanId,
+              totalRecordCount: cachedFiles.length,
+              files: cachedFiles,
+            });
+        });
+      }
+    );
+    window.electronAPI.readDirectory.mockImplementation((folderPath) => {
+      if (folderPath === "/older") {
+        return new Promise((resolve) => {
+          resolveOlderRefresh = resolve;
+        });
+      }
+      return Promise.resolve([
+        {
+          id: "/newer/current.mp4",
+          fullPath: "/newer/current.mp4",
+          name: "current.mp4",
+          basename: "current.mp4",
+          tags: [],
+        },
+      ]);
+    });
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let olderLoad;
+    act(() => {
+      olderLoad = result.current.handleElectronFolderSelection("/older");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+    const olderScanId = result.current.activeScanId;
+    act(() => result.current.promoteCachedPreview(olderScanId));
+    await waitFor(() =>
+      expect(resolveOlderFullCache).toEqual(expect.any(Function))
+    );
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/newer");
+    });
+    expect(result.current.videos.map((video) => video.id)).toEqual([
+      "/newer/current.mp4",
+    ]);
+    expect(result.current.cachedHydration).toMatchObject({
+      phase: "authoritative",
+      recordCount: 1,
+    });
+
+    await act(async () => {
+      resolveOlderFullCache();
+      await Promise.resolve();
+    });
+    expect(result.current.videos.map((video) => video.id)).toEqual([
+      "/newer/current.mp4",
+    ]);
+
+    await act(async () => {
+      resolveOlderRefresh({ cancelled: true });
+      await olderLoad;
+    });
+  });
+
+  it("falls back to promoting the cache when no grid milestone can fire", async () => {
+    const scheduledFrames = [];
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback) => {
+        scheduledFrames.push(callback);
+        return scheduledFrames.length;
+      })
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let resolveRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 1 },
+      (_, index) => ({
+        id: `/filtered/clip-${index}.mp4`,
+        fullPath: `/filtered/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      async (folderPath, _recursive, scanId) => ({
+        cached: true,
+        scanId,
+        root: { rootPath: folderPath, refreshState: "refreshing" },
+        directories: [],
+        files: cachedFiles,
+      })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/filtered");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+
+    act(() => scheduledFrames.shift()?.());
+    expect(scheduledFrames).toHaveLength(1);
+    act(() => scheduledFrames.shift()?.());
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(cachedFiles.length)
+    );
+
+    act(() => result.current.cancelFolderLoad());
+    await act(async () => {
+      resolveRefresh({ cancelled: true });
+      await loadPromise;
+    });
+  });
+
+  it("cancels an outgoing cached promotion without resurrecting its root", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 23));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let resolveOlderRefresh;
+    const cachedFiles = Array.from(
+      { length: CACHED_FIRST_GRID_LIMIT + 2 },
+      (_, index) => ({
+        id: `/older/clip-${index}.mp4`,
+        fullPath: `/older/clip-${index}.mp4`,
+        name: `clip-${index}.mp4`,
+        basename: `clip-${index}.mp4`,
+        tags: [],
+      })
+    );
+    window.electronAPI.readDirectoryCache.mockImplementation(
+      async (folderPath, _recursive, scanId) =>
+        folderPath === "/older"
+          ? {
+              cached: true,
+              scanId,
+              root: { rootPath: folderPath, refreshState: "refreshing" },
+              directories: [],
+              files: cachedFiles,
+            }
+          : null
+    );
+    window.electronAPI.readDirectory.mockImplementation((folderPath) => {
+      if (folderPath === "/older") {
+        return new Promise((resolve) => {
+          resolveOlderRefresh = resolve;
+        });
+      }
+      return Promise.resolve([
+        {
+          id: "/newer/current.mp4",
+          fullPath: "/newer/current.mp4",
+          name: "current.mp4",
+          basename: "current.mp4",
+          tags: [],
+        },
+      ]);
+    });
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let olderLoad;
+    act(() => {
+      olderLoad = result.current.handleElectronFolderSelection("/older");
+    });
+    await waitFor(() =>
+      expect(result.current.videos).toHaveLength(CACHED_FIRST_GRID_LIMIT)
+    );
+    const olderScanId = result.current.activeScanId;
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/newer");
+    });
+    expect(result.current.videos.map((video) => video.id)).toEqual([
+      "/newer/current.mp4",
+    ]);
+    expect(result.current.promoteCachedPreview(olderScanId)).toBe(false);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(23);
+
+    await act(async () => {
+      resolveOlderRefresh({ cancelled: true });
+      await olderLoad;
+    });
+    expect(result.current.videos.map((video) => video.id)).toEqual([
+      "/newer/current.mp4",
+    ]);
+  });
+
+  it("hydrates cache before watcher startup but attaches the watcher before scanning", async () => {
+    let resolveCache;
+    let resolveWatcher;
+    let resolveRefresh;
+    window.electronAPI.readDirectoryCache.mockImplementationOnce(
+      (folderPath, _recursive, scanId) =>
+        new Promise((resolve) => {
+          resolveCache = () =>
+            resolve({
+              cached: true,
+              scanId,
+              root: { rootPath: folderPath, refreshState: "refreshing" },
+              directories: [],
+              files: [
+                {
+                  id: `${folderPath}/cached.mp4`,
+                  fullPath: `${folderPath}/cached.mp4`,
+                  name: "cached.mp4",
+                  basename: "cached.mp4",
+                  tags: [],
+                },
+              ],
+            });
+        })
+    );
+    window.electronAPI.startFolderWatch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWatcher = resolve;
+        })
+    );
+    window.electronAPI.readDirectory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+    const { result } = renderDefaultLifecycle({ recursiveMode: true });
+
+    let loadPromise;
+    act(() => {
+      loadPromise = result.current.handleElectronFolderSelection("/large");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectoryCache).toHaveBeenCalledOnce()
+    );
+    expect(window.electronAPI.startFolderWatch).not.toHaveBeenCalled();
+    expect(window.electronAPI.readDirectory).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCache();
+    });
+    await waitFor(() =>
+      expect(result.current.videos.map((video) => video.name)).toEqual([
+        "cached.mp4",
+      ])
+    );
+    expect(window.electronAPI.startFolderWatch).toHaveBeenCalledOnce();
+    expect(window.electronAPI.readDirectory).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveWatcher({ success: true });
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.readDirectory).toHaveBeenCalledOnce()
+    );
+    expect(
+      window.electronAPI.readDirectoryCache.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      window.electronAPI.startFolderWatch.mock.invocationCallOrder[0]
+    );
+    expect(
+      window.electronAPI.startFolderWatch.mock.invocationCallOrder[0]
+    ).toBeLessThan(window.electronAPI.readDirectory.mock.invocationCallOrder[0]);
+
+    const scanId = window.electronAPI.readDirectory.mock.calls[0][2];
+    await act(async () => {
+      resolveRefresh({
+        scanId,
+        files: [
+          {
+            id: "/large/current.mp4",
+            fullPath: "/large/current.mp4",
+            name: "current.mp4",
+            basename: "current.mp4",
+            tags: [],
+          },
+        ],
+        root: { rootPath: "/large", refreshState: "idle" },
+        directories: [],
+      });
+      await loadPromise;
+    });
+    expect(result.current.videos.map((video) => video.name)).toEqual([
+      "current.mp4",
+    ]);
   });
 
   it("preserves an indexed media source when enumeration has not enriched it yet", async () => {
@@ -877,7 +1674,50 @@ describe("useElectronFolderLifecycle", () => {
 
     expect(window.electronAPI.readDirectory).toHaveBeenCalledTimes(1);
     expect(window.electronAPI.readDirectory.mock.calls[0][0]).toBe("/newer");
+    expect(
+      window.electronAPI.startFolderWatch.mock.calls.map(([folderPath]) => folderPath)
+    ).toEqual(["/newer"]);
     consoleWarn.mockRestore();
+  });
+
+  it("does not scan a superseded folder when its watcher startup resolves late", async () => {
+    let resolveOlderWatcher;
+    window.electronAPI.startFolderWatch.mockImplementation((folderPath) => {
+      if (folderPath === "/older") {
+        return new Promise((resolve) => {
+          resolveOlderWatcher = resolve;
+        });
+      }
+      return Promise.resolve({ success: true });
+    });
+    const { result } = renderDefaultLifecycle();
+
+    let olderLoad;
+    act(() => {
+      olderLoad = result.current.handleElectronFolderSelection("/older");
+    });
+    await waitFor(() =>
+      expect(window.electronAPI.startFolderWatch).toHaveBeenCalledWith(
+        "/older",
+        false,
+        expect.objectContaining({ bufferInitialEvents: true })
+      )
+    );
+
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/newer");
+    });
+    await act(async () => {
+      resolveOlderWatcher({ success: true });
+      await olderLoad;
+    });
+
+    expect(
+      window.electronAPI.readDirectory.mock.calls.map(([folderPath]) => folderPath)
+    ).toEqual(["/newer"]);
+    expect(result.current.videos.map((video) => video.name)).toEqual(["file1"]);
+    expect(addRecentFolder).toHaveBeenCalledTimes(1);
+    expect(addRecentFolder).toHaveBeenCalledWith("/newer");
   });
 
   it("keeps an indexed preview usable when background validation fails", async () => {

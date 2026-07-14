@@ -19,6 +19,62 @@ import {
 
 const __DEV__ = import.meta.env.MODE !== "production";
 let directoryScanSequence = 0;
+export const CACHED_FIRST_GRID_LIMIT = 128;
+
+const emptyCachedHydration = () => ({
+  scanId: null,
+  phase: "idle",
+  recordCount: 0,
+  totalRecordCount: 0,
+});
+
+const clearCachedPreviewPromotion = (scan) => {
+  if (!scan) return;
+  scan.cancelCachedPreviewFallback?.();
+  scan.cancelCachedPreviewFallback = null;
+  scan.promoteCachedPreview = null;
+  scan.cachedPreviewPending = false;
+};
+
+const scheduleCachedPreviewFallback = (promote) => {
+  let firstFrameId = null;
+  let secondFrameId = null;
+  let timeoutId = null;
+  let cancelled = false;
+
+  const run = () => {
+    timeoutId = null;
+    if (!cancelled) promote();
+  };
+  const afterSecondFrame = () => {
+    secondFrameId = null;
+    if (cancelled) return;
+    // This is recovery for filtered/failed observability, not the normal
+    // promotion path. Leave ample time for App's committed-grid frame to own
+    // the first-paint measurement deterministically.
+    timeoutId = setTimeout(run, 250);
+  };
+
+  if (typeof requestAnimationFrame === "function") {
+    firstFrameId = requestAnimationFrame(() => {
+      firstFrameId = null;
+      if (cancelled) return;
+      secondFrameId = requestAnimationFrame(afterSecondFrame);
+    });
+  } else {
+    // Tests and non-visual runtimes may not expose animation frames. The
+    // authoritative scan still owns completion, but do not leave a cached
+    // collection permanently provisional if that scan stalls.
+    timeoutId = setTimeout(run, 300);
+  }
+
+  return () => {
+    cancelled = true;
+    if (firstFrameId !== null) cancelAnimationFrame(firstFrameId);
+    if (secondFrameId !== null) cancelAnimationFrame(secondFrameId);
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  };
+};
 
 const preserveEnumeratedMetadata = (existing, incoming) => {
   if (!existing) return normalizeVideoFromMain(incoming);
@@ -114,8 +170,13 @@ export function useElectronFolderLifecycle({
   const [loadingStatus, setLoadingStatus] = useState(
     EMPTY_SCAN_LOADING_STATUS
   );
+  const [cachedHydration, setCachedHydration] = useState(
+    emptyCachedHydration
+  );
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const activeFolderScanRef = useRef(null);
+  const retainedFolderScanRef = useRef(null);
+  const collectionOwnerScanIdRef = useRef(null);
   const mountedRef = useRef(true);
   const {
     clear: clearSelection,
@@ -193,7 +254,23 @@ export function useElectronFolderLifecycle({
       return false;
     }
 
+    // User cancellation leaves the already indexed folder usable and permits
+    // an in-flight full cache hydration to finish. Superseding roots and
+    // unmount/profile teardown pass false and must never resurrect the
+    // outgoing collection.
+    if (updateLoadingState) {
+      scan.retainCacheAfterStop = true;
+      retainedFolderScanRef.current = scan;
+      scan.promoteCachedPreview?.();
+      scan.ensureFullCacheHydration?.();
+    } else if (collectionOwnerScanIdRef.current === scan.id) {
+      collectionOwnerScanIdRef.current = null;
+      if (retainedFolderScanRef.current === scan) {
+        retainedFolderScanRef.current = null;
+      }
+    }
     scan.cancelled = true;
+    clearCachedPreviewPromotion(scan);
     settleRecordSequenceWaiters(scan, true);
     activeFolderScanRef.current = null;
     recordFolderOpenMilestone(
@@ -208,16 +285,34 @@ export function useElectronFolderLifecycle({
     } catch {}
 
     if (updateLoadingState && mountedRef.current) {
+      const restoringFullCache =
+        scan.boundedCachedPreview && !scan.fullCacheHydrationComplete;
       setLoadingStatus((previous) => ({
         ...previous,
         phase: "cancelled",
-        message: "Scan cancelled",
+        message: restoringFullCache
+          ? "Scan cancelled — restoring the complete indexed snapshot"
+          : "Scan cancelled",
+        partialPreview: restoringFullCache,
         updatedAt: Date.now(),
       }));
+      if (restoringFullCache) {
+        setLibraryRoot((previous) =>
+          previous ? { ...previous, refreshState: "cancelled" } : previous
+        );
+      }
       setIsLoadingFolder(false);
       setIsRefreshingFolder(false);
     }
     return true;
+  }, []);
+
+  const promoteCachedPreview = useCallback((scanId) => {
+    const scan = activeFolderScanRef.current;
+    if (!scan || scan.cancelled || scan.id !== scanId) {
+      return false;
+    }
+    return scan.promoteCachedPreview?.() === true;
   }, []);
 
   const cancelFolderLoad = useCallback(() => {
@@ -229,6 +324,8 @@ export function useElectronFolderLifecycle({
     return () => {
       mountedRef.current = false;
       cancelActiveFolderScan(false);
+      retainedFolderScanRef.current = null;
+      collectionOwnerScanIdRef.current = null;
     };
   }, [cancelActiveFolderScan]);
 
@@ -298,6 +395,7 @@ export function useElectronFolderLifecycle({
         let changed = false;
         for (const incoming of payload.records) {
           if (!incoming?.id) continue;
+          if (scan.authoritativeRemovedIds.has(incoming.id)) continue;
           const existing = scan.recordsById.get(incoming.id);
           const next = isEnumeration
             ? preserveEnumeratedMetadata(existing, incoming)
@@ -321,7 +419,9 @@ export function useElectronFolderLifecycle({
         }
         scan.incrementalPreviewApplied = true;
         settleRecordSequenceWaiters(scan);
-        setVideos(snapshotRecordMap(scan));
+        if (!scan.cachedPreviewPending) {
+          setVideos(snapshotRecordMap(scan));
+        }
         setIsLoadingFolder(false);
         setIsRefreshingFolder(true);
       }
@@ -339,6 +439,14 @@ export function useElectronFolderLifecycle({
           ? options.recursive
           : recursiveMode;
 
+      const retainedScan = retainedFolderScanRef.current;
+      if (retainedScan) {
+        retainedScan.retainCacheAfterStop = false;
+        retainedFolderScanRef.current = null;
+        if (collectionOwnerScanIdRef.current === retainedScan.id) {
+          collectionOwnerScanIdRef.current = null;
+        }
+      }
       cancelActiveFolderScan(false);
       const scan = {
         id: `directory-scan-${Date.now()}-${++directoryScanSequence}`,
@@ -347,12 +455,31 @@ export function useElectronFolderLifecycle({
         lastRecordSequence: -1,
         recordsById: new Map(),
         authoritativeIds: new Set(),
+        authoritativeRemovedIds: new Set(),
         incrementalPreviewApplied: false,
         lastPrioritySignature: "",
         recordSequenceWaiters: [],
+        cachedPreviewPending: false,
+        cachedFirstGridCommitted: false,
+        promoteCachedPreview: null,
+        cancelCachedPreviewFallback: null,
+        boundedCachedPreview: false,
+        cachedTotalRecordCount: 0,
+        fullCacheHydrationPromise: null,
+        fullCacheHydrationComplete: false,
+        ensureFullCacheHydration: null,
+        retainCacheAfterStop: false,
+        authoritativeComplete: false,
       };
       activeFolderScanRef.current = scan;
+      collectionOwnerScanIdRef.current = scan.id;
       setActiveScanId(scan.id);
+      setCachedHydration({
+        scanId: scan.id,
+        phase: "idle",
+        recordCount: 0,
+        totalRecordCount: 0,
+      });
       beginFolderOpenMeasurement({
         scanId: scan.id,
         rootPath: folderPath,
@@ -390,6 +517,240 @@ export function useElectronFolderLifecycle({
         setVideos([]);
         resetDerivedVideoState();
 
+        // Read only a bounded SQLite preview before watcher startup. It is
+        // explicitly stale-while-revalidate: the watcher attaches before the
+        // authoritative scan, and that stream expands the scan-owned map. Once
+        // App confirms the first grid has painted, a second generation-owned
+        // read may hydrate the complete cached order for review-session resume
+        // without delaying first paint.
+        if (typeof api.readDirectoryCache === "function") {
+          try {
+            const cachedResult = await api.readDirectoryCache(
+              folderPath,
+              scanRecursive,
+              scan.id,
+              { limit: CACHED_FIRST_GRID_LIMIT }
+            );
+            if (!isCurrentScan()) return;
+            if (
+              cachedResult?.cached === true &&
+              cachedResult.scanId === scan.id &&
+              Array.isArray(cachedResult.files)
+            ) {
+              const cachedFiles = cachedResult.files.map((file) =>
+                normalizeVideoFromMain(file)
+              );
+              scan.recordsById = new Map(
+                cachedFiles.map((file) => [file.id, file])
+              );
+              const firstGridFiles = cachedFiles.slice(
+                0,
+                CACHED_FIRST_GRID_LIMIT
+              );
+              const totalCachedRecordCount = Math.max(
+                cachedFiles.length,
+                Number(cachedResult.totalRecordCount || 0)
+              );
+              scan.cachedTotalRecordCount = totalCachedRecordCount;
+              scan.boundedCachedPreview =
+                totalCachedRecordCount > cachedFiles.length;
+              if (scan.boundedCachedPreview) {
+                const ownsCollection = () =>
+                  mountedRef.current &&
+                  collectionOwnerScanIdRef.current === scan.id &&
+                  !scan.authoritativeComplete &&
+                  (
+                    (!scan.cancelled && activeFolderScanRef.current === scan) ||
+                    (scan.cancelled && scan.retainCacheAfterStop)
+                  );
+                scan.ensureFullCacheHydration = () => {
+                  if (scan.fullCacheHydrationPromise) {
+                    return scan.fullCacheHydrationPromise;
+                  }
+                  if (!ownsCollection()) return Promise.resolve(false);
+                  scan.cancelCachedPreviewFallback?.();
+                  scan.cancelCachedPreviewFallback = null;
+
+                  setCachedHydration({
+                    scanId: scan.id,
+                    phase: "hydrating",
+                    recordCount: scan.recordsById.size,
+                    totalRecordCount: scan.cachedTotalRecordCount,
+                  });
+                  scan.fullCacheHydrationPromise = (async () => {
+                    try {
+                      const fullResult = await api.readDirectoryCache(
+                        folderPath,
+                        scanRecursive,
+                        scan.id
+                      );
+                      if (
+                        !ownsCollection() ||
+                        fullResult?.cached !== true ||
+                        fullResult.scanId !== scan.id ||
+                        !Array.isArray(fullResult.files)
+                      ) {
+                        return false;
+                      }
+
+                      const fullCachedFiles = fullResult.files.map((file) =>
+                        normalizeVideoFromMain(file)
+                      );
+                      for (const file of fullCachedFiles) {
+                        if (
+                          scan.authoritativeRemovedIds.has(file.id) ||
+                          scan.authoritativeIds.has(file.id)
+                        ) {
+                          continue;
+                        }
+                        scan.recordsById.set(file.id, file);
+                      }
+                      if (!ownsCollection()) return false;
+
+                      scan.fullCacheHydrationComplete = true;
+                      scan.cachedTotalRecordCount = Math.max(
+                        fullCachedFiles.length,
+                        Number(fullResult.totalRecordCount || 0)
+                      );
+                      setVideos(snapshotRecordMap(scan));
+                      setCachedHydration({
+                        scanId: scan.id,
+                        phase: "complete",
+                        recordCount: scan.recordsById.size,
+                        totalRecordCount: scan.cachedTotalRecordCount,
+                      });
+                      if (scan.cancelled && scan.retainCacheAfterStop) {
+                        setLoadingStatus((previous) =>
+                          previous.scanId === scan.id
+                            ? {
+                                ...previous,
+                                message:
+                                  "Scan cancelled — showing the complete indexed snapshot",
+                                partialPreview: false,
+                                updatedAt: Date.now(),
+                              }
+                            : previous
+                        );
+                      }
+                      return true;
+                    } catch (fullCacheError) {
+                      if (ownsCollection()) {
+                        console.warn(
+                          "Failed to hydrate complete indexed snapshot:",
+                          fullCacheError
+                        );
+                        setCachedHydration({
+                          scanId: scan.id,
+                          phase: "partial",
+                          recordCount: scan.recordsById.size,
+                          totalRecordCount: scan.cachedTotalRecordCount,
+                        });
+                        if (scan.cancelled && scan.retainCacheAfterStop) {
+                          setLoadingStatus((previous) =>
+                            previous.scanId === scan.id
+                              ? {
+                                  ...previous,
+                                  message:
+                                    "Scan cancelled — showing a partial indexed preview",
+                                  partialPreview: true,
+                                  updatedAt: Date.now(),
+                                }
+                              : previous
+                          );
+                        }
+                      }
+                      return false;
+                    } finally {
+                      if (
+                        retainedFolderScanRef.current === scan &&
+                        (scan.cancelled ||
+                          scan.fullCacheHydrationComplete ||
+                          collectionOwnerScanIdRef.current !== scan.id)
+                      ) {
+                        retainedFolderScanRef.current = null;
+                      }
+                    }
+                  })();
+                  return scan.fullCacheHydrationPromise;
+                };
+              }
+              scan.cachedPreviewPending =
+                cachedFiles.length > firstGridFiles.length;
+              scan.promoteCachedPreview = () => {
+                if (!isCurrentScan() || scan.cachedFirstGridCommitted) {
+                  return false;
+                }
+                scan.cachedFirstGridCommitted = true;
+                scan.cancelCachedPreviewFallback?.();
+                scan.cancelCachedPreviewFallback = null;
+                if (scan.cachedPreviewPending) {
+                  scan.cachedPreviewPending = false;
+                  setVideos(snapshotRecordMap(scan));
+                }
+                if (scan.boundedCachedPreview) {
+                  scan.ensureFullCacheHydration?.();
+                  return true;
+                }
+                setCachedHydration({
+                  scanId: scan.id,
+                  phase: "complete",
+                  recordCount: scan.recordsById.size,
+                  totalRecordCount: scan.cachedTotalRecordCount,
+                });
+                return true;
+              };
+              if (cachedFiles.length > 0) {
+                scan.cancelCachedPreviewFallback =
+                  scheduleCachedPreviewFallback(scan.promoteCachedPreview);
+              }
+              setVideos(firstGridFiles);
+              setCachedHydration({
+                scanId: scan.id,
+                phase: "preview",
+                recordCount: cachedFiles.length,
+                totalRecordCount: totalCachedRecordCount,
+              });
+              setActiveRootPath(cachedResult.root?.rootPath || folderPath);
+              setLibraryRoot(
+                cachedResult.root || {
+                  rootPath: folderPath,
+                  refreshState: "refreshing",
+                }
+              );
+              setDirectorySummaries(
+                Array.isArray(cachedResult.directories)
+                  ? cachedResult.directories
+                  : []
+              );
+              setLoadingStatus((previous) => ({
+                ...previous,
+                phase: "refreshing",
+                message: "Showing indexed videos while checking the folder",
+                videosDiscovered: totalCachedRecordCount,
+                prepared: cachedFiles.length,
+                updatedAt: Date.now(),
+              }));
+              cachedPreviewApplied = true;
+              recordFolderOpenMilestone(
+                scan.id,
+                FOLDER_OPEN_MILESTONES.CACHED_PREVIEW,
+                {
+                  recordCount: totalCachedRecordCount,
+                  firstGridRecordCount: firstGridFiles.length,
+                  previewSource: "sqlite",
+                }
+              );
+              setIsLoadingFolder(false);
+              setIsRefreshingFolder(true);
+            }
+          } catch (cacheError) {
+            // The filesystem scan remains authoritative. A missing, old, or
+            // temporarily unreadable cache must never prevent a normal open.
+            console.warn("Failed to hydrate indexed folder preview:", cacheError);
+          }
+        }
+        if (!isCurrentScan()) return;
+
         if (typeof api.startFolderWatch === "function") {
           try {
             const watchResult = await api.startFolderWatch(
@@ -414,66 +775,6 @@ export function useElectronFolderLifecycle({
         }
         if (!isCurrentScan()) return;
 
-        if (typeof api.readDirectoryCache === "function") {
-          try {
-            const cachedResult = await api.readDirectoryCache(
-              folderPath,
-              scanRecursive,
-              scan.id
-            );
-            if (!isCurrentScan()) return;
-            if (
-              cachedResult?.cached === true &&
-              cachedResult.scanId === scan.id &&
-              Array.isArray(cachedResult.files)
-            ) {
-              const cachedFiles = cachedResult.files.map((file) =>
-                normalizeVideoFromMain(file)
-              );
-              scan.recordsById = new Map(
-                cachedFiles.map((file) => [file.id, file])
-              );
-              setVideos(cachedFiles);
-              setActiveRootPath(cachedResult.root?.rootPath || folderPath);
-              setLibraryRoot(
-                cachedResult.root || {
-                  rootPath: folderPath,
-                  refreshState: "refreshing",
-                }
-              );
-              setDirectorySummaries(
-                Array.isArray(cachedResult.directories)
-                  ? cachedResult.directories
-                  : []
-              );
-              setLoadingStatus((previous) => ({
-                ...previous,
-                phase: "refreshing",
-                message: "Showing indexed videos while checking the folder",
-                videosDiscovered: cachedFiles.length,
-                prepared: cachedFiles.length,
-                updatedAt: Date.now(),
-              }));
-              cachedPreviewApplied = true;
-              recordFolderOpenMilestone(
-                scan.id,
-                FOLDER_OPEN_MILESTONES.CACHED_PREVIEW,
-                {
-                  recordCount: cachedFiles.length,
-                  previewSource: "sqlite",
-                }
-              );
-              setIsLoadingFolder(false);
-              setIsRefreshingFolder(true);
-            }
-          } catch (cacheError) {
-            // The filesystem scan remains authoritative. A missing, old, or
-            // temporarily unreadable cache must never prevent a normal open.
-            console.warn("Failed to hydrate indexed folder preview:", cacheError);
-          }
-        }
-        if (!isCurrentScan()) return;
-
         setLoadingStatus((previous) => ({
           ...previous,
           phase: "enumerating",
@@ -492,6 +793,12 @@ export function useElectronFolderLifecycle({
         if (!isCurrentScan()) return;
 
         if (result?.cancelled) {
+          scan.retainCacheAfterStop = true;
+          await scan.ensureFullCacheHydration?.();
+          if (!isCurrentScan()) return;
+          scan.promoteCachedPreview?.();
+          scan.cancelled = true;
+          clearCachedPreviewPromotion(scan);
           settleRecordSequenceWaiters(scan, true);
           activeFolderScanRef.current = null;
           recordFolderOpenMilestone(
@@ -502,7 +809,11 @@ export function useElectronFolderLifecycle({
           setLoadingStatus((previous) => ({
             ...previous,
             phase: "cancelled",
-            message: "Scan cancelled",
+            message: scan.fullCacheHydrationComplete
+              ? "Scan cancelled — showing the complete indexed snapshot"
+              : "Scan cancelled — showing a partial indexed preview",
+            partialPreview:
+              scan.boundedCachedPreview && !scan.fullCacheHydrationComplete,
             updatedAt: Date.now(),
           }));
           setIsLoadingFolder(false);
@@ -535,7 +846,11 @@ export function useElectronFolderLifecycle({
           }
           normalizedFiles = snapshotRecordMap(scan);
         } else {
-          normalizedFiles = files.map((file) => normalizeVideoFromMain(file));
+          normalizedFiles = files
+            .map((file) => normalizeVideoFromMain(file))
+            .filter(
+              (file) => !scan.authoritativeRemovedIds.has(file?.id)
+            );
           scan.recordsById = new Map(
             normalizedFiles.map((file) => [file.id, file])
           );
@@ -543,7 +858,8 @@ export function useElectronFolderLifecycle({
         }
         const completedFileCount = streamed
           ? Number(result?.fileCount) || normalizedFiles.length
-          : normalizedFiles.length;
+            : normalizedFiles.length;
+        scan.authoritativeComplete = true;
         recordFolderOpenMilestone(
           scan.id,
           FOLDER_OPEN_MILESTONES.ENRICHMENT_COMPLETE,
@@ -572,7 +888,14 @@ export function useElectronFolderLifecycle({
           updatedAt: Date.now(),
         }));
 
+        clearCachedPreviewPromotion(scan);
         setVideos(normalizedFiles);
+        setCachedHydration({
+          scanId: scan.id,
+          phase: "authoritative",
+          recordCount: normalizedFiles.length,
+          totalRecordCount: completedFileCount,
+        });
         setActiveRootPath(nextRoot.rootPath || folderPath);
         setLibraryRoot(nextRoot);
         setDirectorySummaries(nextDirectories);
@@ -622,6 +945,14 @@ export function useElectronFolderLifecycle({
       } catch (error) {
         if (!isCurrentScan()) return;
         console.error("Error reading directory:", error);
+        // A failed authoritative refresh should leave the complete indexed
+        // snapshot usable when SQLite still owns one. This read happens only
+        // after the bounded first grid has already painted (or on failure).
+        scan.retainCacheAfterStop = true;
+        await scan.ensureFullCacheHydration?.();
+        if (!isCurrentScan()) return;
+        scan.promoteCachedPreview?.();
+        clearCachedPreviewPromotion(scan);
         settleRecordSequenceWaiters(scan, true);
         activeFolderScanRef.current = null;
         recordFolderOpenMilestone(
@@ -635,7 +966,11 @@ export function useElectronFolderLifecycle({
         setLoadingStatus((previous) => ({
           ...previous,
           phase: "error",
-          message: "Couldn’t open this collection",
+          message: scan.fullCacheHydrationComplete
+            ? "Couldn’t refresh this collection — showing its indexed snapshot"
+            : "Couldn’t open this collection",
+          partialPreview:
+            scan.boundedCachedPreview && !scan.fullCacheHydrationComplete,
           error: error?.message || "The folder could not be read.",
           updatedAt: Date.now(),
         }));
@@ -678,7 +1013,9 @@ export function useElectronFolderLifecycle({
 
   const handleWebFileSelection = useCallback(
     (event) => {
-      cancelActiveFolderScan(true);
+      cancelActiveFolderScan(false);
+      retainedFolderScanRef.current = null;
+      collectionOwnerScanIdRef.current = null;
       const files = Array.from(event.target.files || []).filter((f) => {
         const isVideoType = f.type.startsWith("video/");
         const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
@@ -706,6 +1043,7 @@ export function useElectronFolderLifecycle({
       setActiveRootPath(null);
       setLibraryRoot(null);
       setDirectorySummaries([]);
+      setCachedHydration(emptyCachedHydration());
       resetDerivedVideoState();
     },
     [cancelActiveFolderScan, resetDerivedVideoState]
@@ -804,7 +1142,9 @@ export function useElectronFolderLifecycle({
     if (!profilesApi?.onChanged) return undefined;
 
     const unsubscribe = profilesApi.onChanged?.((payload) => {
-      cancelActiveFolderScan(true);
+      cancelActiveFolderScan(false);
+      retainedFolderScanRef.current = null;
+      collectionOwnerScanIdRef.current = null;
       try {
         const stopPromise = window.electronAPI?.stopFolderWatch?.();
         if (stopPromise?.catch) {
@@ -816,6 +1156,7 @@ export function useElectronFolderLifecycle({
       setActiveRootPath(null);
       setLibraryRoot(null);
       setDirectorySummaries([]);
+      setCachedHydration(emptyCachedHydration());
       resetDerivedVideoState();
       setSettingsLoaded(false);
       loadSettingsFromMain(payload?.settings);
@@ -836,8 +1177,17 @@ export function useElectronFolderLifecycle({
     if (!api) return undefined;
 
     const resolveWatcherScan = (watch) => {
-      const scan = activeFolderScanRef.current;
-      if (!scan || scan.cancelled) return null;
+      let scan = activeFolderScanRef.current;
+      if (!scan) {
+        const retained = retainedFolderScanRef.current;
+        if (
+          retained?.retainCacheAfterStop &&
+          collectionOwnerScanIdRef.current === retained.id
+        ) {
+          scan = retained;
+        }
+      }
+      if (!scan || (scan.cancelled && !scan.retainCacheAfterStop)) return null;
       if (watch?.scanId && watch.scanId !== scan.id) return false;
       return scan;
     };
@@ -847,12 +1197,15 @@ export function useElectronFolderLifecycle({
       const scan = resolveWatcherScan(watch);
       if (scan === false) return;
       if (scan) {
+        scan.authoritativeRemovedIds.delete(normalized.id);
         scan.recordsById.set(
           normalized.id,
           mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
         );
         scan.authoritativeIds.add(normalized.id);
-        setVideos(snapshotRecordMap(scan));
+        if (!scan.cachedPreviewPending) {
+          setVideos(snapshotRecordMap(scan));
+        }
       } else {
         setVideos((prev) => {
           const existingIndex = prev.findIndex((v) => v.id === normalized.id);
@@ -880,7 +1233,10 @@ export function useElectronFolderLifecycle({
       if (scan) {
         scan.recordsById.delete(filePath);
         scan.authoritativeIds.delete(filePath);
-        setVideos(snapshotRecordMap(scan));
+        scan.authoritativeRemovedIds.add(filePath);
+        if (!scan.cachedPreviewPending) {
+          setVideos(snapshotRecordMap(scan));
+        }
       } else {
         setVideos((prev) => prev.filter((v) => v.id !== filePath));
       }
@@ -921,12 +1277,15 @@ export function useElectronFolderLifecycle({
       const scan = resolveWatcherScan(watch);
       if (scan === false) return;
       if (scan) {
+        scan.authoritativeRemovedIds.delete(normalized.id);
         scan.recordsById.set(
           normalized.id,
           mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
         );
         scan.authoritativeIds.add(normalized.id);
-        setVideos(snapshotRecordMap(scan));
+        if (!scan.cachedPreviewPending) {
+          setVideos(snapshotRecordMap(scan));
+        }
       } else {
         setVideos((prev) =>
           prev.map((v) => (v.id === normalized.id ? normalized : v))
@@ -992,11 +1351,16 @@ export function useElectronFolderLifecycle({
     isRefreshingFolder,
     activeScanId,
     loadingStatus,
+    cachedHydration,
+    cachedHydrationComplete:
+      cachedHydration.phase === "complete" ||
+      cachedHydration.phase === "authoritative",
     loadingStage: loadingStatus.message,
     loadingProgress: getLoadingProgressPercent(loadingStatus),
     settingsLoaded,
     cancelFolderLoad,
     prioritizeActiveDirectoryScan,
+    promoteCachedPreview,
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,
