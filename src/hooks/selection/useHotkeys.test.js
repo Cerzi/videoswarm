@@ -35,6 +35,53 @@ describe('useHotkeys', () => {
     expect(run).toHaveBeenCalledWith(ActionIds.MOVE_TO_TRASH, new Set(['x']));
   });
 
+  test('plain I opens selection details only when clips are selected', () => {
+    const onOpenDetails = vi.fn();
+    renderHook(() => useHotkeys(run, getSelection, { onOpenDetails }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'i' }));
+    expect(onOpenDetails).toHaveBeenCalledOnce();
+
+    getSelection.mockReturnValue(new Set());
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'i' }));
+    expect(onOpenDetails).toHaveBeenCalledOnce();
+  });
+
+  test('does not open selection details with modifiers or in guarded targets', () => {
+    const onOpenDetails = vi.fn();
+    const { rerender } = renderHook(
+      ({ enabled }) =>
+        useHotkeys(run, getSelection, { onOpenDetails, enabled }),
+      { initialProps: { enabled: true } }
+    );
+
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'i', [modifier]: true })
+      );
+    }
+
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+
+    const exempt = document.createElement('div');
+    exempt.dataset.hotkeyExempt = '';
+    const exemptChild = document.createElement('button');
+    exempt.appendChild(exemptChild);
+    document.body.appendChild(exempt);
+    exemptChild.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'i', bubbles: true })
+    );
+
+    rerender({ enabled: false });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'i' }));
+
+    expect(onOpenDetails).not.toHaveBeenCalled();
+    input.remove();
+    exempt.remove();
+  });
+
   test.each([
     ['p', 'pick'],
     ['r', 'reviewed'],

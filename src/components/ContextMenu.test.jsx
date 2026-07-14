@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ContextMenu from './ContextMenu';
 
 const getById = (id) => ({
@@ -71,7 +71,7 @@ describe('ContextMenu', () => {
     expect(screen.getByRole('menuitem', { name: /Show in Explorer.*this item/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Properties.*this item/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Move to Recycle Bin.*3 selected/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Add or manage tags/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Open details/i })).toBeInTheDocument();
 
     openSubmenu(/Copy$/i);
     expect(screen.getByRole('menuitem', { name: /Copy Path.*3 selected/i })).toBeInTheDocument();
@@ -184,6 +184,115 @@ describe('ContextMenu', () => {
 
     const copyMenu = openSubmenu(/Copy$/i);
     expect(copyMenu).toHaveStyle({ left: '8px' });
+  });
+
+  test('reports the final root geometry on the pointer side without duplicate reports', async () => {
+    const onPlacementChange = vi.fn();
+    const props = {
+      visible: true,
+      position: { x: 40, y: 50 },
+      contextId: 'a',
+      selectionCount: 1,
+      getById,
+      electronAPI,
+      onClose: vi.fn(),
+      onAction: vi.fn(),
+      onPlacementChange,
+    };
+    const { rerender } = render(<ContextMenu {...props} />);
+
+    await waitFor(() => expect(onPlacementChange).toHaveBeenCalledTimes(1));
+    expect(onPlacementChange).toHaveBeenLastCalledWith({
+      contextId: 'a',
+      side: 'right',
+      rect: expect.objectContaining({
+        x: 40,
+        y: 50,
+        left: 40,
+        top: 50,
+        right: 320,
+        width: 280,
+      }),
+    });
+
+    rerender(<ContextMenu {...props} position={{ x: 40, y: 50 }} />);
+    expect(onPlacementChange).toHaveBeenCalledTimes(1);
+  });
+
+  test('reports a right-edge-clamped menu on the left of the raw request', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 400,
+    });
+    const onPlacementChange = vi.fn();
+
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 490, y: 390 }}
+        contextId="edge"
+        selectionCount={1}
+        getById={getById}
+        electronAPI={electronAPI}
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+        onPlacementChange={onPlacementChange}
+      />
+    );
+
+    await waitFor(() => expect(onPlacementChange).toHaveBeenCalledTimes(1));
+    expect(onPlacementChange).toHaveBeenCalledWith({
+      contextId: 'edge',
+      side: 'left',
+      rect: expect.objectContaining({
+        x: 212,
+        y: 40,
+        left: 212,
+        top: 40,
+        right: 492,
+        width: 280,
+      }),
+    });
+  });
+
+  test('waits for a changed request to reach its final clamped position before reporting', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 400,
+    });
+    const onPlacementChange = vi.fn();
+    const sharedProps = {
+      visible: true,
+      contextId: 'a',
+      selectionCount: 1,
+      getById,
+      electronAPI,
+      onClose: vi.fn(),
+      onAction: vi.fn(),
+      onPlacementChange,
+    };
+    const { rerender } = render(
+      <ContextMenu {...sharedProps} position={{ x: 490, y: 390 }} />
+    );
+    await waitFor(() => expect(onPlacementChange).toHaveBeenCalledTimes(1));
+    onPlacementChange.mockClear();
+
+    rerender(<ContextMenu {...sharedProps} position={{ x: 20, y: 20 }} />);
+
+    await waitFor(() => expect(onPlacementChange).toHaveBeenCalledTimes(1));
+    expect(onPlacementChange).toHaveBeenCalledWith({
+      contextId: 'a',
+      side: 'right',
+      rect: expect.objectContaining({ left: 20, top: 20, right: 300 }),
+    });
   });
 
   test('scrolling a constrained menu does not dismiss it', () => {

@@ -35,7 +35,6 @@ import useActionDispatch from "./hooks/actions/useActionDispatch";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
-import { shouldAutoOpenMetadataPanel } from "./utils/metadataPanelState";
 
 import { SortKey } from "./sorting/sorting.js";
 import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
@@ -83,13 +82,6 @@ import {
 } from "./library/folderModel";
 import { FolderViewStateCache, makeFolderViewKey } from "./library/folderViewState";
 import { REVIEW_FILTERS } from "./review/reviewState";
-
-const clampNumber = (value, min, max) =>
-  Math.max(min, Math.min(max, value));
-
-const MIN_METADATA_DOCK_HEIGHT = 200;
-const MAX_METADATA_DOCK_HEIGHT = 520;
-const DEFAULT_METADATA_DOCK_HEIGHT = 280;
 
 const expandFolderAncestors = (previous, relativePath) => {
   const next = new Set(previous instanceof Set ? previous : [""]);
@@ -179,13 +171,20 @@ function App() {
 
   const [availableTags, setAvailableTags] = useState([]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
-  const [metadataPanelDismissed, setMetadataPanelDismissed] = useState(false);
+  const [metadataDismissedSelectionKey, setMetadataDismissedSelectionKey] =
+    useState(null);
   const [metadataFocusToken, setMetadataFocusToken] = useState(0);
-  const [metadataDockHeight, setMetadataDockHeight] = useState(
-    DEFAULT_METADATA_DOCK_HEIGHT
+  const [metadataPlacementRequest, setMetadataPlacementRequest] = useState(
+    () => ({
+      revision: 0,
+      anchorId: null,
+      avoidRect: null,
+      reason: "initial",
+    })
   );
   const scrollContainerRef = useRef(null);
   const gridRef = useRef(null);
+  const galleryRef = useRef(null);
   const [scrollContainerElement, setScrollContainerElement] = useState(null);
   const [gridElement, setGridElement] = useState(null);
   const attachScrollContainer = useCallback((element) => {
@@ -199,7 +198,7 @@ function App() {
     setGridElement((previous) => (previous === element ? previous : element));
   }, []);
   const contentRegionRef = useRef(null);
-  const metadataPanelRef = useRef(null);
+  const lastContextMenuPlacementRef = useRef(null);
   const filtersButtonRef = useRef(null);
   const filtersPopoverRef = useRef(null);
   const refreshTagListRef = useRef(() => {});
@@ -715,20 +714,6 @@ function App() {
     []
   );
 
-  const sidebarAnchorOptions = useMemo(
-    () => ({
-      capture: "fresh",
-      settleFrames: anchorDefaults.settleFrames,
-      stabilizeFrames: anchorDefaults.stabilizeFrames,
-      maxWaitMs: anchorDefaults.maxWaitMs,
-    }),
-    [
-      anchorDefaults.maxWaitMs,
-      anchorDefaults.settleFrames,
-      anchorDefaults.stabilizeFrames,
-    ]
-  );
-
   const zoomAnchorOptions = useMemo(
     () =>
       feature.stableViewFixes
@@ -768,124 +753,6 @@ function App() {
         : (value) => setZoomLevel(clampZoomIndex(value));
   }, [applyZoomFromSettings]);
 
-  const waitForTransitionEnd = useCallback(
-    (element, properties = ["width"], timeoutMs = anchorDefaults.maxWaitMs) => {
-      if (!feature.stableViewFixes) return Promise.resolve();
-      if (!element || typeof window === "undefined") return Promise.resolve();
-
-      let computed;
-      try {
-        computed = window.getComputedStyle(element);
-      } catch (error) {
-        console.debug("[stable-anchor] Failed to read computed style", error);
-        return Promise.resolve();
-      }
-
-      const parseTime = (value) => {
-        if (!value) return 0;
-        const trimmed = String(value).trim();
-        if (!trimmed) return 0;
-        if (trimmed.endsWith("ms")) return parseFloat(trimmed);
-        if (trimmed.endsWith("s")) return parseFloat(trimmed) * 1000;
-        const parsed = parseFloat(trimmed);
-        return Number.isFinite(parsed) ? parsed * 1000 : 0;
-      };
-
-      const durations = (computed?.transitionDuration || "")
-        .split(",")
-        .map(parseTime);
-      const delays = (computed?.transitionDelay || "")
-        .split(",")
-        .map(parseTime);
-      const hasDuration = durations.some((duration, index) => {
-        const delay = delays[index] ?? delays[delays.length - 1] ?? 0;
-        return duration + delay > 0;
-      });
-      if (!hasDuration) {
-        return Promise.resolve();
-      }
-
-      const propertySet = Array.isArray(properties) && properties.length > 0
-        ? new Set(properties.filter(Boolean))
-        : null;
-
-      return new Promise((resolve) => {
-        if (!element) {
-          resolve();
-          return;
-        }
-
-        let resolved = false;
-        let timer = null;
-
-        function cleanup() {
-          if (!element) return;
-          element.removeEventListener("transitionend", onTransitionDone);
-          element.removeEventListener("transitioncancel", onTransitionDone);
-          if (timer != null) {
-            window.clearTimeout(timer);
-          }
-        }
-
-        function finalize() {
-          if (resolved) return;
-          resolved = true;
-          cleanup();
-          resolve();
-        }
-
-        function onTransitionDone(event) {
-          if (propertySet && propertySet.size && !propertySet.has(event.propertyName)) {
-            return;
-          }
-          if (propertySet && propertySet.size) {
-            propertySet.delete(event.propertyName);
-            if (propertySet.size > 0) {
-              return;
-            }
-          }
-          finalize();
-        }
-
-        element.addEventListener("transitionend", onTransitionDone);
-        element.addEventListener("transitioncancel", onTransitionDone);
-        timer = window.setTimeout(finalize, timeoutMs ?? anchorDefaults.maxWaitMs);
-      });
-    },
-    [anchorDefaults.maxWaitMs]
-  );
-
-  const runSidebarTransition = useCallback(
-    (triggerType, applyState) =>
-      withLayoutHold(() =>
-        runWithStableAnchor(
-          triggerType,
-          () => {
-            const promise = waitForTransitionEnd(
-              metadataPanelRef.current,
-              ["transform"],
-              anchorDefaults.maxWaitMs
-            );
-            if (typeof applyState === "function") {
-              applyState();
-            }
-            scheduleLayout?.();
-            return promise;
-          },
-          sidebarAnchorOptions
-        )
-      ),
-    [
-      anchorDefaults.maxWaitMs,
-      metadataPanelRef,
-      runWithStableAnchor,
-      scheduleLayout,
-      sidebarAnchorOptions,
-      waitForTransitionEnd,
-      withLayoutHold,
-    ]
-  );
-
   const focusSelection = useCallback(() => {
     const selectedSet = selection.selected;
     if (!(selectedSet instanceof Set) || selectedSet.size === 0) {
@@ -923,6 +790,65 @@ function App() {
       .map((id) => allVideosById.get(id))
       .filter(Boolean);
   }, [allVideosById, selection.selected]);
+
+  const metadataSelectionKey = useMemo(
+    () => JSON.stringify(Array.from(selection.selected, String).sort()),
+    [selection.selected]
+  );
+  const metadataAnchorId = useMemo(() => {
+    if (
+      selection.anchorId != null &&
+      selection.selected.has(selection.anchorId)
+    ) {
+      return selection.anchorId;
+    }
+
+    const firstVisibleSelected = orderedVideos.find((video) =>
+      selection.selected.has(video.id)
+    );
+    return (
+      firstVisibleSelected?.id ??
+      selection.selected.values().next().value ??
+      null
+    );
+  }, [orderedVideos, selection.anchorId, selection.selected]);
+
+  const resolveMetadataAnchorRect = useCallback(
+    (videoId) => {
+      const cards = gridRef.current?.querySelectorAll?.(
+        ".video-item[data-video-id]"
+      );
+      if (!cards) return null;
+      const cardsById = new Map();
+      for (const card of cards) {
+        if (card.dataset?.videoId != null) {
+          cardsById.set(card.dataset.videoId, card);
+        }
+      }
+      const requestedCard =
+        videoId == null ? null : cardsById.get(String(videoId));
+      if (requestedCard) {
+        return requestedCard.getBoundingClientRect?.() || null;
+      }
+      for (const video of orderedVideos) {
+        if (!selection.selected.has(video.id)) continue;
+        const mountedCard = cardsById.get(String(video.id));
+        if (mountedCard) {
+          return mountedCard.getBoundingClientRect?.() || null;
+        }
+      }
+      return null;
+    },
+    [orderedVideos, selection.selected]
+  );
+  const resolveMetadataBoundsRect = useCallback(
+    () => galleryRef.current?.getBoundingClientRect?.() || null,
+    []
+  );
+  const resolveMetadataContainerRect = useCallback(
+    () => contentRegionRef.current?.getBoundingClientRect?.() || null,
+    []
+  );
 
   const selectedGenerationInstanceId =
     selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
@@ -990,26 +916,36 @@ function App() {
     []
   );
 
+  const previousMetadataSelectionKeyRef = useRef("");
   useEffect(() => {
+    const previousKey = previousMetadataSelectionKeyRef.current;
+
+    if (selection.size === 0) {
+      previousMetadataSelectionKeyRef.current = "";
+      setMetadataPanelOpen(false);
+      setMetadataDismissedSelectionKey(null);
+      return;
+    }
+
     if (
-      !metadataPanelDismissed &&
-      shouldAutoOpenMetadataPanel(selection.size, isMetadataPanelOpen)
+      metadataSelectionKey !== previousKey &&
+      metadataDismissedSelectionKey !== metadataSelectionKey
     ) {
-      runSidebarTransition("sidebar:auto-open", () => {
-        setMetadataPanelOpen(true);
-        setMetadataPanelDismissed(false);
-        setMetadataFocusToken((token) => token + 1);
-      });
+      previousMetadataSelectionKeyRef.current = metadataSelectionKey;
+      setMetadataDismissedSelectionKey(null);
+      setMetadataPanelOpen(true);
+      setMetadataPlacementRequest((previous) => ({
+        revision: previous.revision + 1,
+        anchorId: metadataAnchorId,
+        avoidRect: null,
+        reason: "selection-change",
+      }));
     }
   }, [
-    isMetadataPanelOpen,
-    metadataPanelDismissed,
-    runSidebarTransition,
+    metadataAnchorId,
+    metadataDismissedSelectionKey,
+    metadataSelectionKey,
     selection.size,
-    setMetadataFocusToken,
-    setMetadataPanelDismissed,
-    setMetadataPanelOpen,
-    shouldAutoOpenMetadataPanel,
   ]);
 
   const sortStatus = useMemo(() => {
@@ -1071,38 +1007,61 @@ function App() {
     refreshTagList();
   }, [refreshTagList]);
 
-  const openMetadataPanel = useCallback(() => {
-    runSidebarTransition("sidebar:open", () => {
+  const closeMetadataPanel = useCallback(() => {
+    const activeElement =
+      typeof document !== "undefined" ? document.activeElement : null;
+    const restoreGalleryFocus = Boolean(
+      activeElement?.closest?.(".metadata-panel")
+    );
+    setMetadataPanelOpen(false);
+    setMetadataDismissedSelectionKey(metadataSelectionKey);
+    if (restoreGalleryFocus) {
+      const enqueue =
+        typeof queueMicrotask === "function"
+          ? queueMicrotask
+          : (callback) => Promise.resolve().then(callback);
+      enqueue(() =>
+        scrollContainerRef.current?.focus?.({ preventScroll: true })
+      );
+    }
+  }, [metadataSelectionKey]);
+
+  const openMetadataPanel = useCallback(
+    ({
+      focusInput = false,
+      anchorId = metadataAnchorId,
+      avoidRect = null,
+      reason = "explicit",
+    } = {}) => {
+      if (anchorId == null && selection.size === 0) return;
       setMetadataPanelOpen(true);
-      setMetadataPanelDismissed(false);
-      setMetadataFocusToken((token) => token + 1);
-    });
-  }, [
-    runSidebarTransition,
-    setMetadataFocusToken,
-    setMetadataPanelDismissed,
-    setMetadataPanelOpen,
-  ]);
-
-  const toggleMetadataPanel = useCallback(() => {
-    runSidebarTransition("sidebarToggle", () => {
-      setMetadataPanelOpen((open) => {
-        if (open) {
-          setMetadataPanelDismissed(true);
-          return false;
-        }
-
-        setMetadataPanelDismissed(false);
+      setMetadataDismissedSelectionKey(null);
+      setMetadataPlacementRequest((previous) => ({
+        revision: previous.revision + 1,
+        anchorId,
+        avoidRect,
+        reason,
+      }));
+      if (focusInput) {
         setMetadataFocusToken((token) => token + 1);
-        return true;
-      });
-    });
-  }, [
-    runSidebarTransition,
-    setMetadataFocusToken,
-    setMetadataPanelDismissed,
-    setMetadataPanelOpen,
-  ]);
+      }
+    },
+    [metadataAnchorId, selection.size]
+  );
+
+  const handleContextMenuPlacementChange = useCallback(
+    (placement) => {
+      lastContextMenuPlacementRef.current = placement || null;
+      if (!placement?.rect || !isMetadataPanelOpen) return;
+      setMetadataPlacementRequest((previous) => ({
+        revision: previous.revision + 1,
+        anchorId: metadataAnchorId,
+        avoidRect: placement.rect,
+        reason: "context-menu-placement",
+      }));
+    },
+    [isMetadataPanelOpen, metadataAnchorId]
+  );
 
   const captureLastFocusSelector = useCallback(() => {
     if (typeof document === "undefined") return null;
@@ -1282,7 +1241,30 @@ function App() {
     (actionId) => {
       if (!actionId) return;
       if (actionId === "metadata:open") {
-        openMetadataPanel();
+        const contextId = contextMenu.contextId;
+        const useContextTarget =
+          contextId != null &&
+          selection.size <= 1 &&
+          !selection.selected.has(contextId);
+        if (useContextTarget) {
+          previousMetadataSelectionKeyRef.current = JSON.stringify([
+            String(contextId),
+          ]);
+          selection.selectOnly(contextId);
+        }
+        const lastPlacement = lastContextMenuPlacementRef.current;
+        openMetadataPanel({
+          focusInput: true,
+          anchorId:
+            selection.size > 1
+              ? metadataAnchorId
+              : contextId ?? metadataAnchorId,
+          avoidRect:
+            lastPlacement?.contextId === contextId
+              ? lastPlacement.rect
+              : null,
+          reason: "context-menu-open-details",
+        });
         return;
       }
       if (actionId.startsWith("metadata:review:")) {
@@ -1315,11 +1297,14 @@ function App() {
     },
     [
       openMetadataPanel,
+      metadataAnchorId,
       contextMetadataFingerprints,
       handleSetRating,
       handleSetReviewState,
       handleApplyExistingTag,
       runAction,
+      selection.selectOnly,
+      selection.size,
       selection.selected,
       contextMenu.contextId,
     ]
@@ -1759,6 +1744,7 @@ function App() {
       !isLoadingFolder && siblingFolders.next
         ? () => handleNextFolder(siblingFolders.next)
         : null,
+    onOpenDetails: () => openMetadataPanel(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
   });
 
@@ -2026,6 +2012,7 @@ function App() {
   const handleCardContextMenu = useCallback(
     (e, video) => {
       if (!video?.id) return;
+      lastContextMenuPlacementRef.current = null;
       showOnItem(e, video.id);
     },
     [showOnItem]
@@ -2076,47 +2063,10 @@ function App() {
     videoCollection.performCleanup,
   ]);
 
-  const shouldRenderCollapsedHint = metadataPanelDismissed || selection.size > 0;
-
-  const contentRegionClassName = [
-    "content-region",
-    shouldRenderCollapsedHint ? "content-region--dock-hint" : "",
-    isMetadataPanelOpen ? "content-region--dock-open" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const contentRegionStyle = useMemo(
-    () => ({ "--metadata-dock-height": `${Math.round(metadataDockHeight)}px` }),
-    [metadataDockHeight]
-  );
   const masonryGridStyle = useMemo(
     () => ({ height: `${Math.max(0, masonryTotalHeight)}px` }),
     [masonryTotalHeight]
   );
-
-  const handleMetadataDockHeightChange = useCallback((nextHeight) => {
-    if (!Number.isFinite(nextHeight)) return;
-    const viewportHeight =
-      typeof window !== "undefined" && Number.isFinite(window.innerHeight)
-        ? window.innerHeight
-        : null;
-    const dynamicMax = viewportHeight
-      ? Math.max(
-          MIN_METADATA_DOCK_HEIGHT,
-          Math.min(MAX_METADATA_DOCK_HEIGHT, viewportHeight - 96)
-        )
-      : MAX_METADATA_DOCK_HEIGHT;
-
-    setMetadataDockHeight((prev) => {
-      const clamped = clampNumber(
-        nextHeight,
-        MIN_METADATA_DOCK_HEIGHT,
-        dynamicMax
-      );
-      return prev === clamped ? prev : clamped;
-    });
-  }, []);
 
   return (
     <div className="app" onContextMenu={handleBackgroundContextMenu}>
@@ -2386,11 +2336,7 @@ function App() {
               </div>
             </div>
           ) : (
-            <div
-              className={contentRegionClassName}
-              ref={contentRegionRef}
-              style={contentRegionStyle}
-            >
+            <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
                 {activeRootPath && isLibrarySidebarOpen && (
                   <LibrarySidebar
@@ -2411,7 +2357,7 @@ function App() {
                   />
                 )}
 
-                <div className="content-region__gallery">
+                <div className="content-region__gallery" ref={galleryRef}>
                   {activeRootPath &&
                     !isLibrarySidebarOpen &&
                     showFolderHeaders &&
@@ -2426,6 +2372,9 @@ function App() {
                   <div
                     className="content-region__viewport"
                     ref={attachScrollContainer}
+                    role="region"
+                    aria-label="Video gallery"
+                    tabIndex={-1}
                   >
                     {orderedVideos.length === 0 && !isLoadingFolder && (
                       <div className="collection-empty-state" role="status">
@@ -2512,10 +2461,17 @@ function App() {
                 </div>
               </div>
               <MetadataPanel
-                ref={metadataPanelRef}
                 isOpen={isMetadataPanelOpen}
-                onToggle={toggleMetadataPanel}
-                showCollapsedHint={shouldRenderCollapsedHint}
+                onClose={closeMetadataPanel}
+                selectionKey={metadataSelectionKey}
+                anchorId={metadataPlacementRequest.anchorId ?? metadataAnchorId}
+                resolveAnchorRect={resolveMetadataAnchorRect}
+                resolveBoundsRect={resolveMetadataBoundsRect}
+                resolveContainerRect={resolveMetadataContainerRect}
+                placementRequest={metadataPlacementRequest}
+                boundsVersion={`${isLibrarySidebarOpen}:${
+                  activeRootPath || "home"
+                }`}
                 selectionCount={selection.size}
                 selectedVideos={selectedVideos}
                 availableTags={availableTags}
@@ -2528,10 +2484,6 @@ function App() {
                 generationMetadataState={generationMetadataState}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
-                dockHeight={metadataDockHeight}
-                minDockHeight={MIN_METADATA_DOCK_HEIGHT}
-                maxDockHeight={MAX_METADATA_DOCK_HEIGHT}
-                onDockHeightChange={handleMetadataDockHeightChange}
               />
             </div>
           )}
@@ -2557,6 +2509,7 @@ function App() {
               electronAPI={window.electronAPI}
               onClose={hideContextMenu}
               onAction={handleContextAction}
+              onPlacementChange={handleContextMenuPlacementChange}
             />
           )}
         </>

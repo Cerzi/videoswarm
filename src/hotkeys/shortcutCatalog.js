@@ -114,6 +114,12 @@ const LIBRARY_SHORTCUTS = Object.freeze([
 
 const SELECTION_SHORTCUTS = Object.freeze([
   freezeShortcut({
+    id: "open-selection-details",
+    keys: ["I"],
+    label: "Open selection details",
+    detail: "Available when one or more clips are selected.",
+  }),
+  freezeShortcut({
     id: "open-selected",
     keys: ["Enter"],
     label: "Open selected clip",

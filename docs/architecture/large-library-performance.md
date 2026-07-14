@@ -454,6 +454,14 @@ disabled state when desktop integration is unavailable. Copy, review, and
 rating actions use compact submenus; root menus and submenus clamp to the
 viewport and scroll internally when space is constrained.
 
+Selection metadata now uses the renderer-local floating inspector specified in
+[`floating-selection-inspector.md`](floating-selection-inspector.md). It opens
+beside the primary selected card without changing masonry padding, moves to the
+side opposite a fitted context menu, supports bounded pointer and keyboard
+movement, updates with selection, and falls back to a compact bottom sheet in a
+narrow gallery. It does not retain virtualized cards or create another media
+element or Electron renderer.
+
 Acceptance criteria:
 
 - An empty folder remains an open root and displays its path.
@@ -465,6 +473,9 @@ Acceptance criteria:
   imports and exposes profile, metadata, filesystem, and settings bridges.
 - Every historical video context action remains reachable and the menu cannot
   extend irretrievably beyond the viewport.
+- Selection details remain spatially connected to the active clip without
+  changing grid geometry, and close/deselect/context-target behavior cannot
+  leave displayed and mutated metadata targets out of sync.
 
 ### 8. Observability, testing, and CI
 
@@ -538,6 +549,7 @@ Acceptance criteria:
 | Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
 | Review state and generation sidecars | **Implemented** | Content-keyed Pick/Reviewed/Reject/Unreviewed states, batch controls/shortcuts/filters, reviewed directory aggregates, and bounded instance-keyed sidecar extraction are implemented. |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
+| Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
 | Electron smoke and performance soak harnesses | **Unimplemented** | Existing tests are primarily unit-level. |
 | Electron-ABI SQLite test job | **Unimplemented** | Current suites can silently skip. |
 | Production Electron boundary hardening | **Unimplemented** | Requires custom media protocol and IPC validation. |
@@ -949,6 +961,12 @@ The following measurement work remains **Unimplemented** in Section 8:
     accessible, focus-managed shortcut guide. Review, selection, grid,
     application, and fullscreen bindings render from one declarative catalog;
     contributor guidance requires handlers, help, and tests to stay aligned.
+15. **Implemented** — Replace the bottom metadata dock with the renderer-local
+    floating selection inspector. Selection-scoped dismissal, deselect close,
+    fitted context-menu avoidance, target correction, bounded pointer/keyboard
+    movement, one-shot focus requests, narrow-sheet behavior, and the shared
+    `I` shortcut are covered without retaining cards or changing virtual-grid
+    geometry. See `floating-selection-inspector.md` for the detailed contract.
 
 The following work remains **Unimplemented** after this slice:
 
