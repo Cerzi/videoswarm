@@ -1,27 +1,14 @@
 const path = require("path");
 const { createMediaInstanceUrl } = require("./media-protocol");
 
-function formatFileSize(bytes) {
-  if (bytes === 0) return "0 Bytes";
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    sizes.length - 1,
-    Math.floor(Math.log(Math.max(1, bytes)) / Math.log(k))
-  );
-  return `${parseFloat((bytes / Math.pow(k, index)).toFixed(2))} ${sizes[index]}`;
-}
-
 function createCachedVideoFileObject(record, rootPath, options = {}) {
   if (!record?.absolutePath) return null;
   const filePath = path.resolve(record.absolutePath);
   const fileName = path.basename(filePath);
-  const extension = path.extname(fileName).toLowerCase();
   const size = Math.max(0, Number(record.size || 0));
   const modifiedMs = Math.max(0, Number(record.mtimeMs || 0));
   const createdMs = Math.max(0, Number(record.createdMs || modifiedMs));
   const dateModified = new Date(modifiedMs);
-  const dateCreated = new Date(createdMs);
   const width = Number(record.dimensions?.width || 0);
   const height = Number(record.dimensions?.height || 0);
   const dimensions = width > 0 && height > 0
@@ -35,7 +22,11 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
   if (dirname === ".") dirname = "";
 
   const instanceId = Number(record.instanceId) || null;
-  return {
+  // Display-only metadata is intentionally absent on cache hydration. All
+  // renderer consumers use the raw path, size, and timestamps below, and the
+  // authoritative scan restores enriched metadata. Avoiding per-record locale
+  // strings trims roughly 1 MiB from a 6k IPC payload.
+  const file = {
     id: filePath,
     instanceId,
     sourceUrl: instanceId
@@ -45,30 +36,23 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
         })
       : null,
     name: fileName,
-    fullPath: filePath,
     relativePath: path.relative(rootPath, filePath),
-    extension,
     size,
     dateModified,
-    dateCreated,
     isElectronFile: true,
-    basename: fileName,
     dirname,
     createdMs,
-    fingerprint: record.fingerprint || null,
-    tags: Array.isArray(record.tags) ? record.tags : [],
-    rating: Number.isFinite(record.rating) ? record.rating : null,
-    reviewState: record.reviewState || "unreviewed",
-    dimensions,
-    aspectRatio: dimensions?.aspectRatio ?? null,
-    metadata: {
-      folder: path.dirname(filePath),
-      baseName: path.basename(fileName, extension),
-      sizeFormatted: formatFileSize(size),
-      dateModifiedFormatted: dateModified.toLocaleDateString(),
-      dateCreatedFormatted: dateCreated.toLocaleDateString(),
-    },
   };
+  if (record.fingerprint) file.fingerprint = record.fingerprint;
+  if (Array.isArray(record.tags) && record.tags.length > 0) {
+    file.tags = record.tags;
+  }
+  if (Number.isFinite(record.rating)) file.rating = record.rating;
+  if (record.reviewState && record.reviewState !== "unreviewed") {
+    file.reviewState = record.reviewState;
+  }
+  if (dimensions) file.dimensions = dimensions;
+  return file;
 }
 
 function createCachedLibraryResponse(
@@ -81,12 +65,15 @@ function createCachedLibraryResponse(
   return {
     files: snapshot.records
       .map((record) => createCachedVideoFileObject(record, rootPath, options))
-      .filter(Boolean)
-      .sort((left, right) => left.name.localeCompare(right.name)),
+      .filter(Boolean),
     root: { ...snapshot.root, refreshState: "refreshing" },
     directories: Array.isArray(snapshot.directories)
       ? snapshot.directories
       : [],
+    totalRecordCount: Math.max(
+      snapshot.records.length,
+      Number(snapshot.totalRecordCount || 0)
+    ),
     scanId,
     cached: true,
     refreshing: true,

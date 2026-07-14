@@ -280,6 +280,21 @@ describe("MetadataPanel single-selection info", () => {
     expect(screen.queryByText("Filename")).not.toBeInTheDocument();
   });
 
+  it("formats the raw created timestamp used by cached folder previews", () => {
+    const createdDate = new Date("2024-06-07T08:09:10Z");
+    renderPanel({
+      selectedVideos: [
+        {
+          name: "cached-clip.mp4",
+          createdMs: createdDate.getTime(),
+          dimensions: { width: 512, height: 288 },
+        },
+      ],
+    });
+
+    expect(screen.getByText(formatExpectedDate(createdDate))).toBeInTheDocument();
+  });
+
   it("omits unavailable identifying details and hides them for a batch", () => {
     const { rerender } = renderPanel({
       selectedVideos: [{ metadata: {}, dimensions: { width: 0, height: 0 } }],

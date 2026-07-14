@@ -320,6 +320,7 @@ function App() {
     settingsLoaded,
     cancelFolderLoad,
     prioritizeActiveDirectoryScan,
+    promoteCachedPreview,
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,
@@ -790,6 +791,7 @@ function App() {
           empty: hasCompletedEmptyGrid,
         }
       );
+      promoteCachedPreview(activeScanId);
     };
     const frameId = requestAnimationFrame(reportCommittedGrid);
     return () => {
@@ -801,6 +803,7 @@ function App() {
     activeScanId,
     isLoadingFolder,
     isRefreshingFolder,
+    promoteCachedPreview,
     videos.length,
     virtualItems.length,
   ]);

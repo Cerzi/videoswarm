@@ -83,13 +83,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     );
   },
 
-  readDirectoryCache: async (folderPath, recursive = false, scanId = null) => {
-    return await ipcRenderer.invoke(
-      "read-directory-cache",
-      folderPath,
-      recursive,
-      scanId
-    );
+  readDirectoryCache: async (
+    folderPath,
+    recursive = false,
+    scanId = null,
+    options = undefined
+  ) => {
+    const args = ["read-directory-cache", folderPath, recursive, scanId];
+    if (options !== undefined) args.push(options);
+    return await ipcRenderer.invoke(...args);
   },
 
   cancelDirectoryScan: async (scanId) => {

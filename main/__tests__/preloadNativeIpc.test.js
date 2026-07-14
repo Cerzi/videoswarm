@@ -124,6 +124,15 @@ describe("preload native-work bridge", () => {
       "scan-7"
     );
     expect(ipcRenderer.sendSync).not.toHaveBeenCalled();
+
+    await api.readDirectoryCache("/large", true, "scan-8", { limit: 128 });
+    expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(
+      "read-directory-cache",
+      "/large",
+      true,
+      "scan-8",
+      { limit: 128 }
+    );
   });
 
   it("authorizes an indexed library root on demand", async () => {

@@ -778,8 +778,8 @@ function createMetadataStore(db) {
     ORDER BY fi.relative_path COLLATE NOCASE;
   `);
   // Folder revisits must not rebuild renderer records with one metadata query
-  // per file. These two statements hydrate the complete serializable snapshot
-  // in a pair of bounded SQLite reads, regardless of collection size.
+  // per file. These statements hydrate either the complete serializable
+  // snapshot or a bounded first-grid preview with a fixed number of reads.
   const cachedFileInstancesForRoot = db.prepare(`
     SELECT fi.*,
       mc.created_ms AS content_created_ms,
@@ -796,7 +796,8 @@ function createMetadataStore(db) {
     WHERE fi.root_id = ?
       AND fi.is_present != 0
       AND (? != 0 OR instr(fi.relative_path, '/') = 0)
-    ORDER BY fi.relative_path COLLATE NOCASE;
+    ORDER BY fi.relative_path COLLATE NOCASE
+    LIMIT ?;
   `);
   const cachedFileTagsForRoot = db.prepare(`
     SELECT DISTINCT fi.fingerprint, t.name
@@ -807,6 +808,28 @@ function createMetadataStore(db) {
       AND fi.is_present != 0
       AND (? != 0 OR instr(fi.relative_path, '/') = 0)
     ORDER BY fi.fingerprint, t.name COLLATE NOCASE;
+  `);
+  const cachedFileTagsForRootLimited = db.prepare(`
+    SELECT DISTINCT limited.fingerprint, t.name
+    FROM (
+      SELECT fingerprint, relative_path
+      FROM file_instances
+      WHERE root_id = ?
+        AND is_present != 0
+        AND (? != 0 OR instr(relative_path, '/') = 0)
+      ORDER BY relative_path COLLATE NOCASE
+      LIMIT ?
+    ) limited
+    INNER JOIN file_tags ft ON ft.fingerprint = limited.fingerprint
+    INNER JOIN tags t ON t.id = ft.tag_id
+    ORDER BY limited.fingerprint, t.name COLLATE NOCASE;
+  `);
+  const cachedFileCountForRoot = db.prepare(`
+    SELECT COUNT(*) AS record_count
+    FROM file_instances
+    WHERE root_id = ?
+      AND is_present != 0
+      AND (? != 0 OR instr(relative_path, '/') = 0);
   `);
   const reviewManifestScopePredicates = Object.freeze({
     'all-descendants': '1 = 1',
@@ -1583,8 +1606,25 @@ function createMetadataStore(db) {
 
     const recursive = options.recursive !== false;
     const recursiveFlag = recursive ? 1 : 0;
+    const requestedLimit = options.limit;
+    const recordLimit = requestedLimit === undefined || requestedLimit === null
+      ? null
+      : Number(requestedLimit);
+    if (
+      recordLimit !== null &&
+      (!Number.isSafeInteger(recordLimit) || recordLimit < 1 || recordLimit > 256)
+    ) {
+      throw new RangeError('Cached snapshot limit must be between 1 and 256');
+    }
     const tagsByFingerprint = new Map();
-    cachedFileTagsForRoot.all(row.id, recursiveFlag).forEach((tagRow) => {
+    const tagRows = recordLimit === null
+      ? cachedFileTagsForRoot.all(row.id, recursiveFlag)
+      : cachedFileTagsForRootLimited.all(
+          row.id,
+          recursiveFlag,
+          recordLimit
+        );
+    tagRows.forEach((tagRow) => {
       const tags = tagsByFingerprint.get(tagRow.fingerprint) || [];
       tags.push(tagRow.name);
       tagsByFingerprint.set(tagRow.fingerprint, tags);
@@ -1592,7 +1632,7 @@ function createMetadataStore(db) {
     assertOperationActive(options.assertActive);
 
     const records = cachedFileInstancesForRoot
-      .all(row.id, recursiveFlag)
+      .all(row.id, recursiveFlag, recordLimit ?? -1)
       .map((instance) => {
         const width = Number(instance.content_width || 0);
         const height = Number(instance.content_height || 0);
@@ -1630,6 +1670,11 @@ function createMetadataStore(db) {
         .filter((directory) => Boolean(directory.is_present))
         .map(mapDirectoryRow),
       records,
+      totalRecordCount: recordLimit === null
+        ? records.length
+        : Number(
+            cachedFileCountForRoot.get(row.id, recursiveFlag)?.record_count || 0
+          ),
     };
   }
 

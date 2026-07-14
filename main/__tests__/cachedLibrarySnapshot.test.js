@@ -8,7 +8,7 @@ const {
 } = require("../cached-library-snapshot");
 
 describe("cached library snapshot", () => {
-  it("maps serializable catalog rows into the normal renderer file shape", () => {
+  it("maps catalog rows into a compact renderer cache shape", () => {
     const rootPath = path.resolve("/library");
     const response = createCachedLibraryResponse(
       {
@@ -38,6 +38,7 @@ describe("cached library snapshot", () => {
       cached: true,
       refreshing: true,
       scanId: "scan-11",
+      totalRecordCount: 1,
       root: { rootPath, refreshState: "refreshing" },
       files: [
         {
@@ -49,11 +50,18 @@ describe("cached library snapshot", () => {
           tags: ["pick"],
           rating: 4,
           reviewState: "pick",
-          aspectRatio: 640 / 360,
-          metadata: { sizeFormatted: "2 KB" },
+          dimensions: {
+            width: 640,
+            height: 360,
+            aspectRatio: 640 / 360,
+          },
         },
       ],
     });
+    expect(response.files[0]).not.toHaveProperty("fullPath");
+    expect(response.files[0]).not.toHaveProperty("basename");
+    expect(response.files[0]).not.toHaveProperty("dateCreated");
+    expect(response.files[0]).not.toHaveProperty("aspectRatio");
     expect(response.files[0].sourceUrl).toBe(
       "videoswarm-media://instance/11?v=2048-2000&g=9"
     );
@@ -61,6 +69,61 @@ describe("cached library snapshot", () => {
 
   it("returns no preview for an unindexed root", () => {
     expect(createCachedLibraryResponse(null, "/missing", "scan-x")).toBeNull();
+  });
+
+  it("preserves the full indexed count on a bounded preview", () => {
+    const rootPath = path.resolve("/bounded-library");
+    const response = createCachedLibraryResponse(
+      {
+        root: { rootPath },
+        directories: [],
+        totalRecordCount: 6_000,
+        records: [
+          {
+            instanceId: 1,
+            absolutePath: path.join(rootPath, "clip.mp4"),
+            size: 1,
+            mtimeMs: 1,
+          },
+        ],
+      },
+      rootPath,
+      "scan-bounded"
+    );
+
+    expect(response.files).toHaveLength(1);
+    expect(response.totalRecordCount).toBe(6_000);
+  });
+
+  it("preserves indexed order because renderer view sorting owns presentation", () => {
+    const rootPath = path.resolve("/ordered-library");
+    const response = createCachedLibraryResponse(
+      {
+        root: { rootPath },
+        directories: [],
+        records: [
+          {
+            instanceId: 1,
+            absolutePath: path.join(rootPath, "z-last.mp4"),
+            size: 1,
+            mtimeMs: 1,
+          },
+          {
+            instanceId: 2,
+            absolutePath: path.join(rootPath, "a-first.mp4"),
+            size: 1,
+            mtimeMs: 1,
+          },
+        ],
+      },
+      rootPath,
+      "scan-order"
+    );
+
+    expect(response.files.map((file) => file.name)).toEqual([
+      "z-last.mp4",
+      "a-first.mp4",
+    ]);
   });
 
   it("preserves a 6,000-clip snapshot without imposing a renderer cache cap", () => {
@@ -97,7 +160,14 @@ describe("cached library snapshot", () => {
     expect(response.files[0]).toMatchObject({
       instanceId: 1,
       dirname: "run-0",
-      aspectRatio: 512 / 288,
+      dimensions: {
+        width: 512,
+        height: 288,
+        aspectRatio: 512 / 288,
+      },
     });
+    expect(response.files[0]).not.toHaveProperty("tags");
+    expect(response.files[0]).not.toHaveProperty("rating");
+    expect(response.files[0]).not.toHaveProperty("reviewState");
   });
 });

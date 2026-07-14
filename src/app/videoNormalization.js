@@ -2,6 +2,18 @@ import { normalizeReviewState } from "../review/reviewState";
 
 export const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
+  const fullPath =
+    typeof video.fullPath === "string" && video.fullPath
+      ? video.fullPath
+      : video.isElectronFile === true && typeof video.id === "string"
+        ? video.id
+        : null;
+  const basename =
+    typeof video.basename === "string" && video.basename
+      ? video.basename
+      : typeof video.name === "string"
+        ? video.name
+        : "";
   const fingerprint =
     typeof video.fingerprint === "string" && video.fingerprint.length > 0
       ? video.fingerprint
@@ -43,6 +55,8 @@ export const normalizeVideoFromMain = (video) => {
 
   return {
     ...video,
+    fullPath,
+    basename,
     fingerprint,
     rating,
     tags,
