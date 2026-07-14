@@ -2309,6 +2309,10 @@ function App() {
             zoomLevel={zoomLevel}
             getMinimumZoomLevel={getMinimumZoomLevel}
             sortStatus={sortStatus}
+            playbackDecision={playbackDecision}
+            playbackMode={playbackMode}
+            playbackTelemetry={playbackTelemetry}
+            workSuspensionReason={workSuspensionReason}
           />
 
           {/* Home state: pinned library roots and recent locations */}

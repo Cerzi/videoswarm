@@ -9,7 +9,6 @@ export const DEFAULT_PLAYBACK_MODE = PLAYBACK_MODES.BALANCED;
 
 const MODE_VALUES = new Set(Object.values(PLAYBACK_MODES));
 const DEFAULT_PIXEL_AREA = 1280 * 720;
-const CLEAN_WINDOWS_TO_RECOVER = 3;
 
 const finiteNumber = (value, fallback) => {
   if (value === null || value === undefined || value === "") return fallback;
@@ -36,7 +35,7 @@ export function normalizePlaybackMode(value) {
 }
 
 /**
- * Derive a conservative upper bound before runtime health feedback is applied.
+ * Derive a conservative upper bound for simultaneous original-video decoders.
  * The cap represents simultaneous original-video decoders, not loaded cards.
  */
 export function derivePlaybackSafetyCap({
@@ -185,15 +184,15 @@ export function nextPlaybackDecision(previous = null, input = {}) {
 
   const safetyCap = derivePlaybackSafetyCap({ ...input, mode, visibleCount });
   const modeChanged = prior.mode !== null && prior.mode !== mode;
-  let target = modeChanged
-    ? safetyCap
-    : prior.target > 0
-    ? Math.min(prior.target, safetyCap)
-    : safetyCap;
+  // Whole-application telemetry is useful diagnostics, but it cannot tell a
+  // decoder bottleneck from folder loading, masonry work, or a cold scroll.
+  // Keep it advisory until the signal is causal; structural capability inputs
+  // already provide the bounded Balanced/Adaptive targets.
+  const target = safetyCap;
 
   // Visibility, layout, and source-pixel updates can all arrive between two
-  // telemetry samples. Recalculate the structural cap for those updates, but
-  // do not repeatedly apply the same health window and collapse the budget.
+  // telemetry samples. Recalculate the structural cap immediately while
+  // retaining the most recent advisory health status.
   if (input.advanceHealth === false) {
     const resetHealth =
       modeChanged || prior.health === "suspended" || prior.health === "idle";
@@ -201,7 +200,7 @@ export function nextPlaybackDecision(previous = null, input = {}) {
       mode,
       target,
       safetyCap,
-      cleanWindows: resetHealth ? 0 : prior.cleanWindows,
+      cleanWindows: 0,
       health: resetHealth ? "unknown" : prior.health,
       reasons: resetHealth ? [] : prior.reasons,
     };
@@ -256,7 +255,6 @@ export function nextPlaybackDecision(previous = null, input = {}) {
   }
 
   if (severeReasons.length) {
-    target = Math.max(1, Math.min(target - 1, Math.floor(target * 0.6)));
     return {
       mode,
       target,
@@ -268,8 +266,6 @@ export function nextPlaybackDecision(previous = null, input = {}) {
   }
 
   if (moderateReasons.length) {
-    const reduction = Math.max(1, Math.ceil(target * 0.25));
-    target = Math.max(1, target - reduction);
     return {
       mode,
       target,
@@ -295,17 +291,11 @@ export function nextPlaybackDecision(previous = null, input = {}) {
     (!observedMetric(input.workingSetDeltaMB) || workingSetDeltaMB <= 32) &&
     (!observedMetric(input.availableMemoryMB) || availableFraction >= 0.15);
 
-  let cleanWindows = clean ? prior.cleanWindows + 1 : 0;
-  if (target < safetyCap && cleanWindows >= CLEAN_WINDOWS_TO_RECOVER) {
-    target = Math.min(safetyCap, target + 1);
-    cleanWindows = 0;
-  }
-
   return {
     mode,
     target,
     safetyCap,
-    cleanWindows,
+    cleanWindows: 0,
     health: clean ? "healthy" : "unknown",
     reasons: [],
   };

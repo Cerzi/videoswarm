@@ -961,7 +961,6 @@ body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   pointer-events: none;
-  backdrop-filter: blur(5px);
 }
 
 .video-item-review--pick {

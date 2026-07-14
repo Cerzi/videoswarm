@@ -1115,8 +1115,12 @@ async function createWindow() {
     title: `Video Swarm v${appVersion}`,
   });
   const createdWindow = mainWindow;
-  const playbackOwnerId = createdWindow.webContents.id;
-  registerNativeWorkOwner(createdWindow.webContents);
+  // BrowserWindow.webContents throws once the window has been destroyed. Keep
+  // the owner reference captured while the window is alive so late lifecycle
+  // callbacks (notably `closed`) can finish idempotent native-work cleanup.
+  const createdWebContents = createdWindow.webContents;
+  const playbackOwnerId = createdWebContents.id;
+  registerNativeWorkOwner(createdWebContents);
 
   disposeMainWindowActivity?.();
   disposeMainWindowActivity = attachWindowActivity(createdWindow, (activity) => {
@@ -1149,7 +1153,7 @@ async function createWindow() {
   }
 
   mainWindow.webContents.on("did-finish-load", () => {
-    activateNativeWorkOwner(createdWindow.webContents);
+    activateNativeWorkOwner(createdWebContents);
     console.log("Page loaded, sending settings immediately");
     mainWindow.setTitle(`Video Swarm v${appVersion}`);
     mainWindow.webContents.send("settings-loaded", currentSettings);
@@ -1175,7 +1179,7 @@ async function createWindow() {
 
   // Enhanced crash detection
   mainWindow.webContents.on("render-process-gone", (event, details) => {
-    invalidateNativeWorkOwner(createdWindow.webContents);
+    invalidateNativeWorkOwner(createdWebContents);
     console.error("🔥 RENDERER PROCESS CRASHED:");
     console.error("  Reason:", details.reason);
     console.error("  Exit code:", details.exitCode);
@@ -1211,7 +1215,7 @@ async function createWindow() {
   mainWindow.on("moved", saveWindowBounds);
   mainWindow.on("resized", saveWindowBounds);
   createdWindow.once("closed", () => {
-    disposeNativeWorkOwner(createdWindow.webContents);
+    disposeNativeWorkOwner(createdWebContents);
     disposeMainWindowActivity?.();
     disposeMainWindowActivity = null;
     if (mainWindow === createdWindow) mainWindow = null;
