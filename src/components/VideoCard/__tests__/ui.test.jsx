@@ -80,6 +80,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   global.requestAnimationFrame = prevRAF;
   global.cancelAnimationFrame = prevCAF;
   vi.restoreAllMocks();
@@ -142,6 +143,69 @@ beforeEach(() => {
 });
 
 describe("VideoCard", () => {
+  it("selects on the first click without waiting for the double-click window", () => {
+    vi.useFakeTimers();
+    const onSelect = vi.fn();
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "review-now", name: "review-now.mp4" }}
+        onSelect={onSelect}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    const card = rendered.container.querySelector(".video-item");
+
+    fireEvent.click(card);
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(
+      "review-now",
+      false,
+      false,
+      false
+    );
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(onSelect).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("uses a second click only to dispatch fullscreen activation", () => {
+    vi.useFakeTimers();
+    const onSelect = vi.fn();
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "review-double", name: "review-double.mp4" }}
+        onSelect={onSelect}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    const card = rendered.container.querySelector(".video-item");
+
+    fireEvent.click(card);
+    fireEvent.click(card);
+
+    expect(onSelect).toHaveBeenNthCalledWith(
+      1,
+      "review-double",
+      false,
+      false,
+      false
+    );
+    expect(onSelect).toHaveBeenNthCalledWith(
+      2,
+      "review-double",
+      false,
+      false,
+      true
+    );
+    act(() => vi.runOnlyPendingTimers());
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
   it("is programmatically focusable without joining the sequential tab order", () => {
     const video = {
       id: "focus-target",

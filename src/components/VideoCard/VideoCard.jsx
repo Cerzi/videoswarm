@@ -1352,7 +1352,7 @@ const VideoCard = memo(function VideoCard({
     };
   }, [cancelLoadAttempt, cancelThumbnailCapture]);
 
-  // UI handlers (unchanged)
+  // UI handlers
   const handleClick = useCallback((e) => {
     e.stopPropagation();
     if (clickTimeoutRef.current) {
@@ -1361,8 +1361,12 @@ const VideoCard = memo(function VideoCard({
       onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, true);
       return;
     }
+
+    // Selection must be visible to the next keyboard event. The previous
+    // implementation deferred this call for the full double-click window,
+    // which let review hotkeys act on the preceding clip for 300 ms.
+    onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
     clickTimeoutRef.current = setTimeout(() => {
-      onSelect?.(videoId, e.ctrlKey || e.metaKey, e.shiftKey, false);
       clickTimeoutRef.current = null;
     }, 300);
   }, [onSelect, videoId]);
