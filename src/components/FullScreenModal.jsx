@@ -1,420 +1,923 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { FULLSCREEN_SHORTCUTS } from '../hotkeys/shortcutCatalog';
-import { getOpaqueMediaSource, getWebMediaSource } from '../utils/mediaSource';
+import React, {
+  forwardRef,
+  useCallback,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { FULLSCREEN_PLAYER_SHORTCUTS } from "../hotkeys/shortcutCatalog";
+import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
+import "./FullScreenModal.css";
+
+const LOAD_TIMEOUT_MS = 15_000;
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+  "video[controls]",
+].join(",");
 
 let fullscreenOwnerSequence = 0;
+let webObjectSequence = 0;
+const webObjectIds = new WeakMap();
 
-const detachFullscreenMedia = (element) => {
-  if (!element) return;
-  try { element.pause(); } catch {}
-  try { element.removeAttribute('src'); } catch {}
-  try { element.removeAttribute('data-file-path'); } catch {}
-  try { element.srcObject = null; } catch {}
-  try { element.load(); } catch {}
+const objectIdentity = (value) => {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return "";
+  }
+  let identity = webObjectIds.get(value);
+  if (!identity) {
+    identity = `web-object:${++webObjectSequence}`;
+    webObjectIds.set(value, identity);
+  }
+  return identity;
 };
 
-const FullScreenModal = ({ 
-  video, 
-  onClose, 
-  onNavigate, 
-  showFilenames,
-  mediaScheduler = null,
-  workSuspended = false,
-}) => {
-  const modalRef = useRef(null);
-  const fallbackRef = useRef(null);
+const cleanIdentityPart = (value) =>
+  value == null ? "" : String(value).replaceAll("\u0000", "");
+
+/**
+ * Playback identity deliberately excludes tags, rating, review state, and
+ * generation-sidecar presentation data. Replacing a record after a metadata
+ * mutation therefore does not restart the modal-owned player.
+ */
+export const getFullscreenMediaIdentity = (
+  video,
+  collectionOwnerKey = "default"
+) => {
+  if (!video) return "";
+  const opaqueSource = getOpaqueMediaSource(video) || "";
+  const webSource = video.isElectronFile ? "" : getWebMediaSource(video) || "";
+  const fileIdentity = objectIdentity(video.file);
+  return [
+    cleanIdentityPart(collectionOwnerKey),
+    video.isElectronFile ? "native" : "web",
+    cleanIdentityPart(video.instanceId),
+    cleanIdentityPart(video.id),
+    cleanIdentityPart(video.fullPath),
+    cleanIdentityPart(video.relativePath),
+    cleanIdentityPart(video.selectionOrdinal),
+    cleanIdentityPart(video.size ?? video.file?.size),
+    cleanIdentityPart(video.dateModified ?? video.lastModified ?? video.file?.lastModified),
+    cleanIdentityPart(opaqueSource || webSource),
+    fileIdentity,
+  ].join("\u0000");
+};
+
+export const detachFullscreenMedia = (element) => {
+  if (!element) return false;
+  try {
+    element.muted = true;
+  } catch {}
+  try {
+    element.pause();
+  } catch {}
+  try {
+    element.srcObject = null;
+  } catch {}
+  try {
+    element.removeAttribute("src");
+  } catch {}
+  try {
+    element.removeAttribute("data-file-path");
+  } catch {}
+  try {
+    element.removeAttribute("data-media-identity");
+  } catch {}
+  try {
+    element.load();
+  } catch {}
+  return true;
+};
+
+const isEditableTarget = (target) => {
+  if (!target || typeof target !== "object") return false;
+  const tagName = String(target.tagName || "").toUpperCase();
+  return Boolean(
+    target.isContentEditable ||
+      tagName === "INPUT" ||
+      tagName === "TEXTAREA" ||
+      tagName === "SELECT" ||
+      target.closest?.("[data-hotkey-exempt]")
+  );
+};
+
+const getFocusableElements = (dialog) =>
+  Array.from(dialog?.querySelectorAll?.(FOCUSABLE_SELECTOR) || []).filter(
+    (element) =>
+      !element.hasAttribute?.("disabled") &&
+      element.getAttribute?.("aria-hidden") !== "true"
+  );
+
+const renderSlot = (slot, context) =>
+  typeof slot === "function" ? slot(context) : slot;
+
+const safeCloseDialog = (dialog) => {
+  if (!dialog) return;
+  try {
+    if (dialog.open && typeof dialog.close === "function") {
+      dialog.close();
+      return;
+    }
+  } catch {}
+  try {
+    dialog.removeAttribute("open");
+  } catch {}
+};
+
+const safeShowModal = (dialog) => {
+  if (!dialog) return;
+  try {
+    if (!dialog.open && typeof dialog.showModal === "function") {
+      dialog.showModal();
+      return;
+    }
+  } catch {}
+  try {
+    dialog.setAttribute("open", "");
+  } catch {}
+};
+
+const resolveSource = (video) => {
+  if (!video) return { src: "", ownedBlobUrl: null };
+  if (video.isElectronFile) {
+    return { src: getOpaqueMediaSource(video) || "", ownedBlobUrl: null };
+  }
+  if (typeof video.blobUrl === "string" && video.blobUrl) {
+    return { src: video.blobUrl, ownedBlobUrl: null };
+  }
+  if (video.file) {
+    const ownedBlobUrl = URL.createObjectURL(video.file);
+    return { src: ownedBlobUrl, ownedBlobUrl };
+  }
+  return { src: getWebMediaSource(video) || "", ownedBlobUrl: null };
+};
+
+const FullScreenModal = forwardRef(function FullScreenModal(
+  {
+    video,
+    onClose,
+    onNavigate,
+    showFilenames,
+    mediaScheduler = null,
+    workSuspended = false,
+    collectionOwnerKey = "default",
+    canNavigatePrevious = true,
+    canNavigateNext = true,
+    onBoundary,
+    onPlaybackFeedback,
+    onRetry,
+    onToggleDetails,
+    onOpenHelp,
+    onShortcut,
+    detailsOpen,
+    transientOpen = false,
+    onDismissTransient,
+    inertTargetRef = null,
+    appRootId = "root",
+    resolveReturnFocus,
+    returnFocusRef = null,
+    fallbackFocusRef = null,
+    dialogLabel = "Fullscreen review",
+    dialogDescription =
+      "Review one video at a time. Use the arrow keys to move and Escape to close.",
+    positionLabel = null,
+    progressContent = null,
+    headerContent = null,
+    actionsContent = null,
+    reviewRail = null,
+    detailsDock = null,
+    statusContent = null,
+    className = "",
+  },
+  forwardedRef
+) {
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const mediaRef = useRef(null);
+  const activeReleaseRef = useRef(null);
+  const previousFocusRef = useRef(null);
+  const previousOwnerRef = useRef(collectionOwnerKey);
   const schedulerOwnerIdRef = useRef(null);
   if (!schedulerOwnerIdRef.current) {
     schedulerOwnerIdRef.current = `fullscreen:${++fullscreenOwnerSequence}`;
   }
+
+  const callbackRef = useRef({});
+  callbackRef.current = {
+    onBoundary,
+    onClose,
+    onDismissTransient,
+    onNavigate,
+    onOpenHelp,
+    onPlaybackFeedback,
+    onRetry,
+    onShortcut,
+    onToggleDetails,
+    resolveReturnFocus,
+    returnFocusRef,
+    fallbackFocusRef,
+  };
+
+  const videoRef = useRef(video);
+  videoRef.current = video;
+  const workSuspendedRef = useRef(Boolean(workSuspended));
+  workSuspendedRef.current = Boolean(workSuspended);
+  const mutedPreferenceRef = useRef(true);
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState("");
   const [videoLoaded, setVideoLoaded] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [retryRevision, setRetryRevision] = useState(0);
 
-  // Fullscreen owns its media element. Grid cards can virtualize independently.
-  useEffect(() => {
-    if (!video || workSuspended) {
+  const reactId = useId().replaceAll(":", "");
+  const titleId = `fullscreen-review-title-${reactId}`;
+  const descriptionId = `fullscreen-review-description-${reactId}`;
+  const liveId = `fullscreen-review-live-${reactId}`;
+
+  const mediaIdentity = useMemo(
+    () => getFullscreenMediaIdentity(video, collectionOwnerKey),
+    [
+      collectionOwnerKey,
+      video?.dateModified,
+      video?.file,
+      video?.fullPath,
+      video?.id,
+      video?.instanceId,
+      video?.isElectronFile,
+      video?.lastModified,
+      video?.relativePath,
+      video?.selectionOrdinal,
+      video?.size,
+      video?.sourceUrl,
+      video?.blobUrl,
+    ]
+  );
+
+  const resetSessionAudio = useCallback(() => {
+    mutedPreferenceRef.current = true;
+    const element = mediaRef.current;
+    if (element) {
+      try {
+        element.muted = true;
+      } catch {}
+    }
+    setIsMuted(true);
+  }, []);
+
+  const releaseActiveSource = useCallback(
+    ({ resetAudio = false } = {}) => {
+      const release = activeReleaseRef.current;
+      const released = typeof release === "function" ? release() : false;
+      if (resetAudio) resetSessionAudio();
+      return released;
+    },
+    [resetSessionAudio]
+  );
+
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      releaseNow({ resetAudio = true } = {}) {
+        return releaseActiveSource({ resetAudio });
+      },
+    }),
+    [releaseActiveSource]
+  );
+
+  const publishPlaybackFeedback = useCallback((message, errorValue = null) => {
+    setNotice(message);
+    callbackRef.current.onPlaybackFeedback?.({
+      message,
+      error: errorValue,
+      video: videoRef.current,
+    });
+  }, []);
+
+  const attemptPlay = useCallback(
+    async (element = mediaRef.current, release = activeReleaseRef.current) => {
+      if (!element || workSuspendedRef.current || typeof element.play !== "function") {
+        return false;
+      }
+      try {
+        await element.play();
+        return true;
+      } catch (playError) {
+        if (activeReleaseRef.current !== release) return false;
+        const message =
+          playError?.name === "NotAllowedError"
+            ? "Autoplay was blocked. Use the player controls to start playback."
+            : "Playback did not start. Use the player controls to retry.";
+        publishPlaybackFeedback(message, playError);
+        return false;
+      }
+    },
+    [publishPlaybackFeedback]
+  );
+
+  const toggleAudio = useCallback(() => {
+    const nextMuted = !mutedPreferenceRef.current;
+    mutedPreferenceRef.current = nextMuted;
+    const element = mediaRef.current;
+    if (element) {
+      try {
+        element.muted = nextMuted;
+      } catch {}
+    }
+    setIsMuted(nextMuted);
+    setNotice(nextMuted ? "Audio muted" : "Audio on");
+  }, []);
+
+  const retryPlayback = useCallback(() => {
+    releaseActiveSource({ resetAudio: false });
+    setError(null);
+    setNotice("Retrying playback");
+    setIsLoading(true);
+    setVideoLoaded(false);
+    setRetryRevision((revision) => revision + 1);
+    callbackRef.current.onRetry?.(videoRef.current);
+  }, [releaseActiveSource]);
+
+  const requestClose = useCallback(
+    (reason = "close") => {
+      releaseActiveSource({ resetAudio: true });
+      safeCloseDialog(dialogRef.current);
+      callbackRef.current.onClose?.(reason);
+    },
+    [releaseActiveSource]
+  );
+
+  const requestNavigate = useCallback(
+    (direction) => {
+      const allowed =
+        direction === "next" ? canNavigateNext !== false : canNavigatePrevious !== false;
+      if (!allowed) {
+        const message = direction === "next" ? "End of current view" : "Start of current view";
+        setNotice(message);
+        callbackRef.current.onBoundary?.(direction, message);
+        return false;
+      }
+      // App owns the atomic peek -> releaseNow(false) -> controller transition.
+      // Delegating without detaching prevents a stale boundary callback from
+      // leaving this stable media identity blank.
+      return callbackRef.current.onNavigate?.(direction) !== false;
+    },
+    [canNavigateNext, canNavigatePrevious]
+  );
+
+  // Owner replacement is a session boundary even if a caller accidentally
+  // reuses the same record ID and keeps this component mounted.
+  useLayoutEffect(() => {
+    if (Object.is(previousOwnerRef.current, collectionOwnerKey)) return;
+    previousOwnerRef.current = collectionOwnerKey;
+    releaseActiveSource({ resetAudio: true });
+  }, [collectionOwnerKey, releaseActiveSource]);
+
+  // Fullscreen owns this media element and its exact external decoder lease.
+  // A layout effect makes cleanup precede paint/grid resumption on identity and
+  // work-suspension transitions; the imperative ref handles event boundaries.
+  useLayoutEffect(() => {
+    const element = mediaRef.current;
+    if (!videoRef.current || !element || workSuspended) {
       if (workSuspended) {
+        releaseActiveSource({ resetAudio: true });
         setIsLoading(false);
         setVideoLoaded(false);
+        setNotice("Playback paused while the app is inactive");
       }
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    setVideoLoaded(false);
-
-    const el = fallbackRef.current;
-    if (!el) return;
-    let ownedBlobUrl = null;
-    let released = false;
-    let loadTimeoutId = null;
-    const decoderLease = mediaScheduler?.reserveExternalDecoder?.(
-      schedulerOwnerIdRef.current
-    ) || null;
-
-    const releaseResources = () => {
-      if (released) return;
-      released = true;
-      if (loadTimeoutId) clearTimeout(loadTimeoutId);
-      loadTimeoutId = null;
-      detachFullscreenMedia(el);
-      if (ownedBlobUrl) {
-        URL.revokeObjectURL(ownedBlobUrl);
-        ownedBlobUrl = null;
-      }
-      if (decoderLease) mediaScheduler?.releaseDecoder?.(decoderLease);
-    };
-
-    if (mediaScheduler?.reserveExternalDecoder && !decoderLease) {
-      setIsLoading(false);
-      setError('Fullscreen playback capacity is busy');
       return undefined;
     }
 
-    const onCanPlay = () => {
-      if (released) return;
+    let source;
+    try {
+      source = resolveSource(videoRef.current);
+    } catch (sourceError) {
       setIsLoading(false);
-      setVideoLoaded(true);
-      if (loadTimeoutId) clearTimeout(loadTimeoutId);
+      setVideoLoaded(false);
+      setError(sourceError?.message || "No valid video source");
+      return undefined;
+    }
+
+    if (!source.src) {
+      setIsLoading(false);
+      setVideoLoaded(false);
+      setError("No valid video source");
+      return undefined;
+    }
+
+    const decoderLease =
+      mediaScheduler?.reserveExternalDecoder?.(schedulerOwnerIdRef.current) || null;
+    if (mediaScheduler?.reserveExternalDecoder && !decoderLease) {
+      if (source.ownedBlobUrl) {
+        try {
+          URL.revokeObjectURL(source.ownedBlobUrl);
+        } catch {}
+      }
+      setIsLoading(false);
+      setVideoLoaded(false);
+      setError("Fullscreen playback capacity is busy");
+      return undefined;
+    }
+
+    let released = false;
+    let ownedBlobUrl = source.ownedBlobUrl;
+    let loadTimeoutId = null;
+
+    const release = () => {
+      if (released) return false;
+      released = true;
+      if (activeReleaseRef.current === release) activeReleaseRef.current = null;
+      if (loadTimeoutId !== null) clearTimeout(loadTimeoutId);
       loadTimeoutId = null;
-      el.play?.()?.catch?.((playError) => {
-        if (playError?.name !== 'NotAllowedError') {
-          onError({ target: { error: playError } });
-        }
-      });
+      element.removeEventListener("canplay", handlePlayable);
+      element.removeEventListener("loadeddata", handlePlayable);
+      element.removeEventListener("error", handleMediaError);
+      detachFullscreenMedia(element);
+      if (ownedBlobUrl) {
+        try {
+          URL.revokeObjectURL(ownedBlobUrl);
+        } catch {}
+        ownedBlobUrl = null;
+      }
+      if (decoderLease) mediaScheduler?.releaseDecoder?.(decoderLease);
+      return true;
     };
-    const onError = (e) => {
+
+    const settleReady = () => {
       if (released) return;
+      if (loadTimeoutId !== null) clearTimeout(loadTimeoutId);
+      loadTimeoutId = null;
       setIsLoading(false);
-      setError(e?.target?.error?.message || 'Failed to load video');
-      releaseResources();
+      setError(null);
+      setVideoLoaded(true);
+      setNotice("");
+      void attemptPlay(element, release);
     };
 
-    el.addEventListener('canplay', onCanPlay);
-    el.addEventListener('error', onError);
+    function handlePlayable() {
+      settleReady();
+    }
 
-    let nextSrc = getOpaqueMediaSource(video) || '';
-    if (video.isElectronFile && video.fullPath) {
-      el.dataset.filePath = video.fullPath;
+    function handleMediaError(event) {
+      if (released) return;
+      const mediaError = event?.target?.error;
+      setIsLoading(false);
+      setVideoLoaded(false);
+      setError(mediaError?.message || "Failed to load video");
+      release();
+    }
+
+    activeReleaseRef.current = release;
+    setIsLoading(true);
+    setError(null);
+    setNotice("");
+    setVideoLoaded(false);
+
+    element.addEventListener("canplay", handlePlayable);
+    element.addEventListener("loadeddata", handlePlayable);
+    element.addEventListener("error", handleMediaError);
+    element.preload = "auto";
+    element.crossOrigin = "anonymous";
+    element.loop = true;
+    element.playsInline = true;
+    element.muted = mutedPreferenceRef.current;
+    setIsMuted(mutedPreferenceRef.current);
+    element.dataset.mediaIdentity = mediaIdentity;
+    if (videoRef.current.isElectronFile && videoRef.current.fullPath) {
+      element.dataset.filePath = videoRef.current.fullPath;
     } else {
-      el.removeAttribute('data-file-path');
-    }
-    if (!video.isElectronFile) {
-      if (video.blobUrl) {
-        nextSrc = video.blobUrl;
-      } else if (video.file) {
-        ownedBlobUrl = URL.createObjectURL(video.file);
-        nextSrc = ownedBlobUrl;
-      } else {
-        nextSrc = getWebMediaSource(video) || '';
-      }
+      element.removeAttribute("data-file-path");
     }
 
-    if (!nextSrc) {
-      setIsLoading(false);
-      setError('No valid video source');
-      releaseResources();
-    } else if (el.src !== nextSrc) {
-      el.preload = 'auto';
-      el.crossOrigin = 'anonymous';
-      el.src = nextSrc;
+    try {
+      const currentSource = element.currentSrc || element.getAttribute("src") || element.src;
+      if (currentSource !== source.src) element.src = source.src;
+      element.load();
+    } catch (loadError) {
+      handleMediaError({ target: { error: loadError } });
+      return release;
+    }
+
+    const readyThreshold =
+      (typeof HTMLMediaElement !== "undefined" &&
+        Number(HTMLMediaElement.HAVE_CURRENT_DATA)) ||
+      2;
+    if (element.readyState >= readyThreshold) {
+      settleReady();
+    } else {
       loadTimeoutId = setTimeout(() => {
-        onError({ target: { error: new Error('Timed out loading video') } });
-      }, 15000);
+        handleMediaError({
+          target: { error: new Error("Timed out loading video") },
+        });
+      }, LOAD_TIMEOUT_MS);
+    }
+
+    return release;
+  }, [
+    attemptPlay,
+    mediaIdentity,
+    mediaScheduler,
+    releaseActiveSource,
+    retryRevision,
+    workSuspended,
+  ]);
+
+  // Native modal lifecycle, inert background, exact body style restoration,
+  // and focus return are independent of source navigation.
+  useLayoutEffect(() => {
+    if (!video || typeof document === "undefined") return undefined;
+    const dialog = dialogRef.current;
+    if (!dialog) return undefined;
+
+    previousFocusRef.current = document.activeElement;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const inertTarget = inertTargetRef?.current || document.getElementById(appRootId);
+    const mayInert = inertTarget && !inertTarget.contains?.(dialog);
+    const hadInertAttribute = Boolean(mayInert && inertTarget.hasAttribute("inert"));
+    const previousInertValue = mayInert ? inertTarget.inert : undefined;
+    if (mayInert) {
+      try {
+        inertTarget.inert = true;
+        inertTarget.setAttribute("inert", "");
+      } catch {}
+    }
+
+    safeShowModal(dialog);
+    const focusTarget = closeButtonRef.current || dialog;
+    try {
+      focusTarget.focus({ preventScroll: true });
+    } catch {
+      try {
+        focusTarget.focus();
+      } catch {}
     }
 
     return () => {
-      el.removeEventListener('canplay', onCanPlay);
-      el.removeEventListener('error', onError);
-      releaseResources();
-    };
-  }, [mediaScheduler, video, workSuspended]);
+      releaseActiveSource({ resetAudio: true });
+      safeCloseDialog(dialog);
+      document.body.style.overflow = previousBodyOverflow;
+      if (mayInert) {
+        try {
+          inertTarget.inert = previousInertValue;
+          if (!hadInertAttribute) inertTarget.removeAttribute("inert");
+        } catch {}
+      }
 
-  // Handle keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      switch (e.key) {
-        case 'Escape':
-          onClose();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          onNavigate('prev');
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          onNavigate('next');
-          break;
-        case ' ':
-          e.preventDefault();
-          if (workSuspended) break;
-          {
-            const el = fallbackRef.current;
-            if (el) el.paused ? el.play() : el.pause();
-          }
-          break;
-        default:
-          break;
+      const callbacks = callbackRef.current;
+      const resolved = callbacks.resolveReturnFocus?.();
+      const returnTarget =
+        resolved ||
+        callbacks.returnFocusRef?.current ||
+        (previousFocusRef.current?.isConnected ? previousFocusRef.current : null) ||
+        callbacks.fallbackFocusRef?.current ||
+        document.querySelector?.('[role="region"][aria-label="Video gallery"]');
+      if (returnTarget?.isConnected !== false && typeof returnTarget?.focus === "function") {
+        try {
+          returnTarget.focus({ preventScroll: true });
+        } catch {
+          try {
+            returnTarget.focus();
+          } catch {}
+        }
+      }
+    };
+  }, [appRootId, inertTargetRef, releaseActiveSource, video ? true : false]);
+
+  const handleEscape = useCallback(() => {
+    if (transientOpen && typeof callbackRef.current.onDismissTransient === "function") {
+      callbackRef.current.onDismissTransient();
+      return;
+    }
+    requestClose("escape");
+  }, [requestClose, transientOpen]);
+
+  useLayoutEffect(() => {
+    if (!video || typeof document === "undefined") return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        handleEscape();
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const dialog = dialogRef.current;
+        const focusable = getFocusableElements(dialog);
+        if (!focusable.length) {
+          event.preventDefault();
+          dialog?.focus?.();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || !dialog?.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !dialog?.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+
+      if (isEditableTarget(event.target) || event.repeat) return;
+      const key = String(event.key || "").toLowerCase();
+
+      if (key === "arrowleft" || key === "q") {
+        event.preventDefault();
+        event.stopPropagation();
+        requestNavigate("prev");
+        return;
+      }
+      if (key === "arrowright" || key === "e") {
+        event.preventDefault();
+        event.stopPropagation();
+        requestNavigate("next");
+        return;
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (workSuspendedRef.current) return;
+        const element = mediaRef.current;
+        if (!element) return;
+        if (element.paused) void attemptPlay(element, activeReleaseRef.current);
+        else element.pause();
+        return;
+      }
+      if (key === "m") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleAudio();
+        return;
+      }
+      if (key === "i" && callbackRef.current.onToggleDetails) {
+        event.preventDefault();
+        event.stopPropagation();
+        callbackRef.current.onToggleDetails();
+        return;
+      }
+      if (event.key === "?" && callbackRef.current.onOpenHelp) {
+        event.preventDefault();
+        event.stopPropagation();
+        callbackRef.current.onOpenHelp();
+        return;
+      }
+
+      const handled = callbackRef.current.onShortcut?.({
+        event,
+        key,
+        video: videoRef.current,
+      });
+      if (handled === true) {
+        event.preventDefault();
+        event.stopPropagation();
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigate, workSuspended]);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [attemptPlay, handleEscape, requestNavigate, toggleAudio, video ? true : false]);
 
-  // Handle click outside to close
-  const handleBackdropClick = useCallback((e) => {
-    if (e.target === modalRef.current) {
-      onClose();
-    }
-  }, [onClose]);
+  const handleBackdropClick = useCallback(
+    (event) => {
+      if (event.target === dialogRef.current) requestClose("backdrop");
+    },
+    [requestClose]
+  );
 
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
+  const handleNativeCancel = useCallback(
+    (event) => {
+      event.preventDefault();
+      handleEscape();
+    },
+    [handleEscape]
+  );
+
+  const setMediaElement = useCallback((element) => {
+    mediaRef.current = element;
+    if (element) element.muted = true;
   }, []);
 
-  if (!video) return null;
+  if (!video || typeof document === "undefined") return null;
 
-  return (
-    <>
-      {/* CSS animation moved to separate style element */}
-      <style>{`
-        @keyframes modalSpinner {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        .modal-spinner {
-          animation: modalSpinner 1s linear infinite;
-        }
-      `}</style>
-      
-      <div
-        ref={modalRef}
-        className="fullscreen-modal"
-        onClick={handleBackdropClick}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.95)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10000,
-          backdropFilter: 'blur(4px)'
-        }}
-      >
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          style={{
-            position: 'absolute',
-            top: '20px',
-            right: '20px',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '50px',
-            height: '50px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Close (Esc)"
-        >
-          ×
-        </button>
+  const slotContext = {
+    video,
+    isLoading,
+    error,
+    notice,
+    videoLoaded,
+    isMuted,
+    toggleAudio,
+    retryPlayback,
+    requestClose,
+    requestNavigate,
+  };
+  const renderedHeader = renderSlot(headerContent, slotContext);
+  const renderedActions = renderSlot(actionsContent, slotContext);
+  const renderedReviewRail = renderSlot(reviewRail, slotContext);
+  const renderedDetailsDock = renderSlot(detailsDock, slotContext);
+  const showDetails = detailsOpen ?? Boolean(renderedDetailsDock);
+  const workspaceClassName = [
+    "fullscreen-review__workspace",
+    renderedReviewRail ? "fullscreen-review__workspace--with-review" : "",
+    showDetails && renderedDetailsDock
+      ? "fullscreen-review__workspace--with-details"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
-        {/* Navigation buttons */}
-        <button
-          onClick={() => onNavigate('prev')}
-          style={{
-            position: 'absolute',
-            left: '20px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '60px',
-            height: '60px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Previous (←)"
-        >
-          ←
-        </button>
+  return createPortal(
+    <dialog
+      ref={dialogRef}
+      className={["fullscreen-modal", "fullscreen-review", className]
+        .filter(Boolean)
+        .join(" ")}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      aria-modal="true"
+      role="dialog"
+      onClick={handleBackdropClick}
+      onCancel={handleNativeCancel}
+      tabIndex={-1}
+    >
+      <div className="fullscreen-review__surface">
+        <p id={descriptionId} className="fullscreen-review__sr-only">
+          {dialogDescription}
+        </p>
 
-        <button
-          onClick={() => onNavigate('next')}
-          style={{
-            position: 'absolute',
-            right: '20px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '60px',
-            height: '60px',
-            color: 'white',
-            fontSize: '24px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.9)'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(0, 0, 0, 0.7)'}
-          title="Next (→)"
-        >
-          →
-        </button>
-
-        {/* Body */}
-        <div
-          style={{
-            maxWidth: '90vw',
-            maxHeight: '90vh',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          {/* Loading/Error states */}
-          {isLoading && (
-            <div style={{
-              color: 'white',
-              fontSize: '18px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              marginBottom: '20px'
-            }}>
-              <div 
-                className="modal-spinner"
-                style={{
-                  width: '20px',
-                  height: '20px',
-                  border: '2px solid #ffffff33',
-                  borderTop: '2px solid white',
-                  borderRadius: '50%'
-                }}
-              />
-              Loading video...
-            </div>
-          )}
-
-          {error && (
-            <div style={{
-              color: '#ff6b6b',
-              fontSize: '18px',
-              textAlign: 'center',
-              marginBottom: '20px',
-              padding: '20px',
-              background: 'rgba(255, 107, 107, 0.1)',
-              borderRadius: '8px',
-              border: '1px solid rgba(255, 107, 107, 0.3)'
-            }}>
-              <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
-              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Error Loading Video</div>
-              <div style={{ opacity: 0.8 }}>{error}</div>
-            </div>
-          )}
-
-          {/* Modal-owned media remains safe when grid cards virtualize away. */}
-          <video
-            ref={fallbackRef}
-            muted
-            loop
-            controls
-            playsInline
-            style={{
-              display: 'block',
-              width: 'auto',
-              height: '90vh',
-              maxWidth: '90vw',
-              maxHeight: '90vh',
-              objectFit: 'contain',
-              borderRadius: '8px',
-              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-
-          {/* Video info */}
-          {showFilenames && videoLoaded && (
-            <div style={{
-              marginTop: '20px',
-              padding: '15px 25px',
-              background: 'rgba(0, 0, 0, 0.8)',
-              borderRadius: '25px',
-              color: 'white',
-              fontSize: '16px',
-              textAlign: 'center',
-              maxWidth: '80vw',
-              wordBreak: 'break-word'
-            }}>
-              {video.name}
-            </div>
-          )}
-
-          {/* Keyboard shortcuts help */}
-          <div style={{
-            position: 'absolute',
-            bottom: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(0, 0, 0, 0.7)',
-            padding: '10px 20px',
-            borderRadius: '20px',
-            color: 'rgba(255, 255, 255, 0.8)',
-            fontSize: '14px',
-            textAlign: 'center'
-          }}>
-            {FULLSCREEN_SHORTCUTS.map((shortcut, index) => (
-              <span
-                key={shortcut.id}
-                style={{
-                  marginRight:
-                    index < FULLSCREEN_SHORTCUTS.length - 1 ? '20px' : 0,
-                }}
+        <header className="fullscreen-review__header">
+          <div className="fullscreen-review__identity">
+            <h2 id={titleId} className="fullscreen-review__title">
+              {dialogLabel}
+            </h2>
+            {renderedHeader || (
+              <div className="fullscreen-review__record-line">
+                {showFilenames ? video.relativePath || video.name : "Current clip"}
+              </div>
+            )}
+          </div>
+          <div className="fullscreen-review__header-status">
+            {positionLabel ? (
+              <span className="fullscreen-review__position">{positionLabel}</span>
+            ) : null}
+            {progressContent}
+          </div>
+          <div className="fullscreen-review__header-actions">
+            <button
+              type="button"
+              className="fullscreen-review__button"
+              onClick={toggleAudio}
+              aria-pressed={!isMuted}
+              aria-label={isMuted ? "Turn audio on" : "Mute audio"}
+              title="Toggle audio (M)"
+            >
+              {isMuted ? "Muted" : "Audio on"}
+            </button>
+            {onToggleDetails || renderedDetailsDock ? (
+              <button
+                type="button"
+                className="fullscreen-review__button"
+                onClick={() => callbackRef.current.onToggleDetails?.()}
+                aria-pressed={Boolean(showDetails)}
+                aria-label={showDetails ? "Hide details" : "Show details"}
+                title="Toggle details (I)"
               >
-                {shortcut.keys.join(' / ')} {shortcut.label}
+                Details
+              </button>
+            ) : null}
+            {renderedActions}
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="fullscreen-review__button fullscreen-review__button--close"
+              onClick={() => requestClose("button")}
+              aria-label="Close fullscreen review"
+              title="Close (Esc)"
+            >
+              ×
+            </button>
+          </div>
+        </header>
+
+        <div className={workspaceClassName}>
+          {renderedReviewRail ? (
+            <aside
+              className="fullscreen-review__review-rail"
+              aria-label="Review controls"
+            >
+              {renderedReviewRail}
+            </aside>
+          ) : null}
+
+          <main className="fullscreen-review__stage">
+            <button
+              type="button"
+              className="fullscreen-review__nav fullscreen-review__nav--previous"
+              onClick={() => requestNavigate("prev")}
+              disabled={canNavigatePrevious === false}
+              aria-label="Previous clip"
+              title="Previous (Left arrow or Q)"
+            >
+              ←
+            </button>
+
+            <div className="fullscreen-review__media-wrap">
+              {isLoading ? (
+                <div className="fullscreen-review__loading" role="status">
+                  <span className="fullscreen-review__spinner" aria-hidden="true" />
+                  Loading video…
+                </div>
+              ) : null}
+
+              {error ? (
+                <div className="fullscreen-review__error" role="alert">
+                  <strong>Couldn’t play this clip</strong>
+                  <span>{error}</span>
+                  <button
+                    type="button"
+                    className="fullscreen-review__button"
+                    onClick={retryPlayback}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null}
+
+              <video
+                ref={setMediaElement}
+                className="fullscreen-review__video"
+                loop
+                controls
+                playsInline
+                onClick={(event) => event.stopPropagation()}
+              />
+
+              {showFilenames && videoLoaded ? (
+                <div className="fullscreen-review__filename">{video.name}</div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              className="fullscreen-review__nav fullscreen-review__nav--next"
+              onClick={() => requestNavigate("next")}
+              disabled={canNavigateNext === false}
+              aria-label="Next clip"
+              title="Next (Right arrow or E)"
+            >
+              →
+            </button>
+          </main>
+
+          {showDetails && renderedDetailsDock ? (
+            <aside
+              className="fullscreen-review__details"
+              aria-label="Clip details"
+              data-hotkey-exempt
+            >
+              {renderedDetailsDock}
+            </aside>
+          ) : null}
+        </div>
+
+        <footer className="fullscreen-review__footer">
+          <div className="fullscreen-review__shortcuts" aria-hidden="true">
+            {FULLSCREEN_PLAYER_SHORTCUTS.map((shortcut) => (
+              <span key={shortcut.id}>
+                {shortcut.keys.join(" / ")} {shortcut.label}
               </span>
             ))}
           </div>
-        </div>
+          <div
+            id={liveId}
+            className="fullscreen-review__live"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {statusContent || notice}
+          </div>
+        </footer>
       </div>
-    </>
+    </dialog>,
+    document.body
   );
-};
+});
 
 export default FullScreenModal;

@@ -108,28 +108,185 @@ export const FOLDER_DIRECTION_BY_KEY = Object.freeze({
   "]": "next",
 });
 
-export const FULLSCREEN_SHORTCUTS = Object.freeze([
+export const FULLSCREEN_COMMANDS = Object.freeze({
+  PREVIOUS: "previous",
+  NEXT: "next",
+  PLAYBACK: "playback",
+  MUTE: "mute",
+  DETAILS: "details",
+  REVIEW_STATE: "review-state",
+  RATING: "rating",
+  CLEAR_RATING: "clear-rating",
+  UNDO: "undo",
+  HELP: "help",
+  CLOSE: "close",
+});
+
+export const FULLSCREEN_NAVIGATION_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "fullscreen-previous",
-    keys: ["←"],
+    keys: ["←", "Q"],
+    bindings: ["ArrowLeft", "q"],
+    keyJoiner: "or",
     label: "Previous clip",
+    command: FULLSCREEN_COMMANDS.PREVIOUS,
   }),
   freezeShortcut({
     id: "fullscreen-next",
-    keys: ["→"],
+    keys: ["→", "E"],
+    bindings: ["ArrowRight", "e"],
+    keyJoiner: "or",
     label: "Next clip",
+    command: FULLSCREEN_COMMANDS.NEXT,
   }),
   freezeShortcut({
     id: "fullscreen-playback",
     keys: ["Space"],
+    bindings: [" "],
     label: "Play or pause",
+    command: FULLSCREEN_COMMANDS.PLAYBACK,
+  }),
+  freezeShortcut({
+    id: "fullscreen-mute",
+    keys: ["M"],
+    label: "Mute or enable audio",
+    command: FULLSCREEN_COMMANDS.MUTE,
+  }),
+  freezeShortcut({
+    id: "fullscreen-details",
+    keys: ["I"],
+    label: "Toggle clip details",
+    command: FULLSCREEN_COMMANDS.DETAILS,
+  }),
+]);
+
+export const FULLSCREEN_UTILITY_SHORTCUTS = Object.freeze([
+  freezeShortcut({
+    id: "fullscreen-help",
+    keys: ["?"],
+    label: "Show fullscreen shortcuts",
+    command: FULLSCREEN_COMMANDS.HELP,
   }),
   freezeShortcut({
     id: "fullscreen-close",
     keys: ["Esc"],
+    bindings: ["Escape"],
     label: "Close fullscreen",
+    command: FULLSCREEN_COMMANDS.CLOSE,
   }),
 ]);
+
+export const FULLSCREEN_PLAYER_SHORTCUTS = Object.freeze([
+  ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...FULLSCREEN_UTILITY_SHORTCUTS,
+]);
+
+// Complete loupe help/dispatch catalog. Review entries are shared by identity
+// with the grid workflow so aliases and rating semantics cannot drift.
+export const FULLSCREEN_SHORTCUTS = Object.freeze([
+  ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...REVIEW_SHORTCUTS,
+  ...FULLSCREEN_UTILITY_SHORTCUTS,
+]);
+
+export const FULLSCREEN_SHORTCUT_HELP_SECTIONS = Object.freeze([
+  Object.freeze({
+    id: "fullscreen-navigation",
+    title: "Playback and navigation",
+    shortcuts: FULLSCREEN_NAVIGATION_SHORTCUTS,
+  }),
+  Object.freeze({
+    id: "fullscreen-review",
+    title: "Review current clip",
+    shortcuts: REVIEW_SHORTCUTS,
+  }),
+  Object.freeze({
+    id: "fullscreen-utility",
+    title: "Fullscreen",
+    shortcuts: FULLSCREEN_UTILITY_SHORTCUTS,
+  }),
+]);
+
+const normalizeFullscreenKey = (input) => {
+  const key = typeof input === "string" ? input : input?.key;
+  if (key === "Spacebar") return " ";
+  if (typeof key !== "string" || !key) return null;
+  return key.length === 1 ? key.toLowerCase() : key;
+};
+
+const freezeFullscreenBinding = (shortcut, command, extra = {}) =>
+  Object.freeze({
+    shortcutId: shortcut.id,
+    command,
+    ...extra,
+  });
+
+const fullscreenBindings = [];
+
+for (const shortcut of [
+  ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...FULLSCREEN_UTILITY_SHORTCUTS,
+]) {
+  const bindings = shortcut.bindings || shortcut.keys;
+  for (const binding of bindings) {
+    const normalized = normalizeFullscreenKey(binding);
+    if (!normalized) continue;
+    fullscreenBindings.push([
+      normalized,
+      freezeFullscreenBinding(shortcut, shortcut.command),
+    ]);
+  }
+}
+
+for (const shortcut of REVIEW_SHORTCUTS) {
+  if (shortcut.state) {
+    for (const binding of shortcut.keys) {
+      fullscreenBindings.push([
+        normalizeFullscreenKey(binding),
+        freezeFullscreenBinding(shortcut, FULLSCREEN_COMMANDS.REVIEW_STATE, {
+          value: shortcut.state,
+        }),
+      ]);
+    }
+    continue;
+  }
+
+  if (shortcut.action === "rating") {
+    for (const binding of shortcut.bindings) {
+      fullscreenBindings.push([
+        normalizeFullscreenKey(binding),
+        freezeFullscreenBinding(shortcut, FULLSCREEN_COMMANDS.RATING, {
+          value: Number(binding),
+        }),
+      ]);
+    }
+  } else if (shortcut.action === "clear-rating") {
+    for (const binding of shortcut.keys) {
+      fullscreenBindings.push([
+        normalizeFullscreenKey(binding),
+        freezeFullscreenBinding(shortcut, FULLSCREEN_COMMANDS.CLEAR_RATING, {
+          value: null,
+        }),
+      ]);
+    }
+  } else if (shortcut.action === "undo") {
+    for (const binding of shortcut.keys) {
+      fullscreenBindings.push([
+        normalizeFullscreenKey(binding),
+        freezeFullscreenBinding(shortcut, FULLSCREEN_COMMANDS.UNDO),
+      ]);
+    }
+  }
+}
+
+export const FULLSCREEN_SHORTCUT_BY_KEY = Object.freeze(
+  Object.fromEntries(fullscreenBindings)
+);
+
+export const resolveFullscreenShortcut = (keyOrEvent) => {
+  const key = normalizeFullscreenKey(keyOrEvent);
+  return key ? FULLSCREEN_SHORTCUT_BY_KEY[key] || null : null;
+};
 
 const APPLICATION_SHORTCUTS = Object.freeze([
   freezeShortcut({
@@ -250,7 +407,7 @@ export const HOTKEY_SECTIONS = Object.freeze([
   Object.freeze({
     id: "fullscreen",
     title: "Fullscreen player",
-    description: "These keys apply while the player is open.",
-    shortcuts: FULLSCREEN_SHORTCUTS,
+    description: "Review keys above also apply to the current fullscreen clip.",
+    shortcuts: FULLSCREEN_PLAYER_SHORTCUTS,
   }),
 ]);
