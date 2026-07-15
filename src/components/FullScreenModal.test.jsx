@@ -366,7 +366,9 @@ describe("FullScreenModal media ownership", () => {
       />
     );
     const element = document.body.querySelector("video");
-    element.muted = false;
+    act(() => {
+      element.muted = false;
+    });
 
     fireEvent.click(
       screen.getByRole("button", { name: "Close fullscreen review" })
@@ -469,6 +471,71 @@ describe("FullScreenModal media ownership", () => {
 
     act(() => playerRef.current.releaseNow());
     expect(document.body.querySelector("video").muted).toBe(true);
+  });
+
+  it("keeps native player mute controls and the session audio button in sync", () => {
+    const playerRef = createRef();
+    const common = {
+      ref: playerRef,
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+    };
+    const first = {
+      id: "native-audio-first",
+      name: "first.mp4",
+      blobUrl: "blob:native-audio-first",
+    };
+    const rendered = render(<FullScreenModal {...common} video={first} />);
+    const element = document.body.querySelector("video");
+
+    act(() => {
+      element.muted = false;
+      fireEvent.volumeChange(element);
+    });
+    expect(
+      screen.getByRole("button", { name: "Mute audio" })
+    ).toHaveTextContent("Audio on");
+
+    act(() => playerRef.current.releaseNow({ resetAudio: false }));
+    fireEvent.volumeChange(element);
+    rendered.rerender(
+      <FullScreenModal
+        {...common}
+        video={{
+          id: "native-audio-second",
+          name: "second.mp4",
+          blobUrl: "blob:native-audio-second",
+        }}
+      />
+    );
+
+    // Navigation reuses the one modal-owned media element and preserves the
+    // native control's session choice, even if teardown's volume event arrives
+    // after the replacement source is attached.
+    expect(element.muted).toBe(false);
+    fireEvent.volumeChange(element);
+    expect(screen.getByRole("button", { name: "Mute audio" })).toBeVisible();
+
+    act(() => {
+      element.muted = true;
+      fireEvent.volumeChange(element);
+    });
+    expect(
+      screen.getByRole("button", { name: "Turn audio on" })
+    ).toHaveTextContent("Muted");
+
+    act(() => playerRef.current.releaseNow({ resetAudio: false }));
+    rendered.rerender(
+      <FullScreenModal
+        {...common}
+        video={{
+          id: "native-audio-third",
+          name: "third.mp4",
+          blobUrl: "blob:native-audio-third",
+        }}
+      />
+    );
+    expect(element.muted).toBe(true);
   });
 
   it("does not restart media for metadata-only record replacement", () => {

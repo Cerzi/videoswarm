@@ -25,6 +25,7 @@ describe("cached library snapshot", () => {
             tags: ["pick"],
             rating: 4,
             reviewState: "pick",
+            hasAudio: true,
             dimensions: { width: 640, height: 360 },
           },
         ],
@@ -50,6 +51,7 @@ describe("cached library snapshot", () => {
           tags: ["pick"],
           rating: 4,
           reviewState: "pick",
+          hasAudio: true,
           dimensions: {
             width: 640,
             height: 360,

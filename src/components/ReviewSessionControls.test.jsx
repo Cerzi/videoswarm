@@ -67,19 +67,46 @@ describe("ReviewSessionControls", () => {
       />
     );
 
-    fireEvent.click(
-      screen.getByText("•••", { selector: "summary" })
-    );
+    const options = screen.getByRole("button", {
+      name: "Review session options",
+    });
+    fireEvent.click(options);
     const forget = screen.getByRole("menuitem", {
       name: "Forget saved position…",
     });
+    expect(forget).toHaveFocus();
     fireEvent.click(forget);
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
       "Review decisions, ratings, and tags will remain unchanged"
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(forget).toHaveFocus());
+    await waitFor(() => expect(options).toHaveFocus());
     expect(onForget).not.toHaveBeenCalled();
+  });
+
+  it("renders its overflow menu outside the clipped review toolbar", () => {
+    render(
+      <div data-testid="clipped" style={{ overflow: "hidden", height: 1 }}>
+        <ReviewSessionControls
+          session={{ mode: "active" }}
+          onForget={vi.fn()}
+        />
+      </div>
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review session options" })
+    );
+    const menu = screen.getByRole("menu", { name: "Review session options" });
+    expect(menu.parentElement).toBe(document.body);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(
+      screen.queryByRole("menu", { name: "Review session options" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Review session options" })
+    ).toHaveFocus();
   });
 
   it("offers bounded recovery actions for filtered, capped, and partial-index states", () => {

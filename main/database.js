@@ -610,7 +610,8 @@ function initDatabase(app, profilePath) {
       created_ms INTEGER,
       updated_at INTEGER NOT NULL,
       width INTEGER,
-      height INTEGER
+      height INTEGER,
+      has_audio INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -655,6 +656,9 @@ function initDatabase(app, profilePath) {
     if (!legacyFileColumns.has('height')) {
       db.exec('ALTER TABLE files ADD COLUMN height INTEGER;');
     }
+    if (!legacyFileColumns.has('has_audio')) {
+      db.exec('ALTER TABLE files ADD COLUMN has_audio INTEGER;');
+    }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS library_roots (
@@ -676,6 +680,7 @@ function initDatabase(app, profilePath) {
         created_ms INTEGER,
         width INTEGER,
         height INTEGER,
+        has_audio INTEGER,
         thumbnail_identity TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -833,6 +838,16 @@ function initDatabase(app, profilePath) {
       CREATE INDEX IF NOT EXISTS idx_review_checkpoints_updated
         ON review_checkpoints(updated_at DESC, root_id DESC);
     `);
+
+    const mediaContentColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(media_content);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!mediaContentColumns.has('has_audio')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN has_audio INTEGER;');
+    }
 
     const libraryRootColumns = new Set(
       db
@@ -1098,31 +1113,48 @@ function createMetadataStore(db) {
       if (!/duplicate column/i.test(error?.message || '')) throw error;
     }
   }
+  if (!columns.has('has_audio')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN has_audio INTEGER;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
 
   const fileUpsert = db.prepare(`
-    INSERT INTO files (fingerprint, last_known_path, size, created_ms, updated_at, width, height)
-    VALUES (@fingerprint, @last_known_path, @size, @created_ms, @updated_at, @width, @height)
+    INSERT INTO files (
+      fingerprint, last_known_path, size, created_ms, updated_at, width, height,
+      has_audio
+    )
+    VALUES (
+      @fingerprint, @last_known_path, @size, @created_ms, @updated_at, @width,
+      @height, @has_audio
+    )
     ON CONFLICT(fingerprint) DO UPDATE SET
       last_known_path=excluded.last_known_path,
       size=excluded.size,
       created_ms=excluded.created_ms,
       updated_at=excluded.updated_at,
       width=COALESCE(excluded.width, files.width),
-      height=COALESCE(excluded.height, files.height);
+      height=COALESCE(excluded.height, files.height),
+      has_audio=COALESCE(excluded.has_audio, files.has_audio);
   `);
 
   const mediaContentUpsert = db.prepare(`
     INSERT INTO media_content (
-      fingerprint, size, created_ms, width, height, created_at, updated_at
+      fingerprint, size, created_ms, width, height, has_audio, created_at,
+      updated_at
     )
     VALUES (
-      @fingerprint, @size, @created_ms, @width, @height, @created_at, @updated_at
+      @fingerprint, @size, @created_ms, @width, @height, @has_audio,
+      @created_at, @updated_at
     )
     ON CONFLICT(fingerprint) DO UPDATE SET
       size=excluded.size,
       created_ms=COALESCE(media_content.created_ms, excluded.created_ms),
       width=COALESCE(excluded.width, media_content.width),
       height=COALESCE(excluded.height, media_content.height),
+      has_audio=COALESCE(excluded.has_audio, media_content.has_audio),
       updated_at=excluded.updated_at;
   `);
   const mediaContentByFingerprint = db.prepare(`
@@ -1254,6 +1286,7 @@ function createMetadataStore(db) {
       mc.created_ms AS content_created_ms,
       mc.width AS content_width,
       mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1393,14 +1426,18 @@ function createMetadataStore(db) {
   `);
 
   const fileSelect = db.prepare(
-    'SELECT width, height FROM files WHERE fingerprint = ?;'
+    'SELECT width, height, has_audio FROM files WHERE fingerprint = ?;'
   );
 
   const setDimensionsStmt = db.prepare(
-    'UPDATE files SET width = ?, height = ? WHERE fingerprint = ?;'
+    `UPDATE files
+     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio)
+     WHERE fingerprint = ?;`
   );
   const setContentDimensionsStmt = db.prepare(
-    'UPDATE media_content SET width = ?, height = ?, updated_at = ? WHERE fingerprint = ?;'
+    `UPDATE media_content
+     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio), updated_at = ?
+     WHERE fingerprint = ?;`
   );
 
   const tagsForFingerprint = db.prepare(`
@@ -2081,6 +2118,18 @@ function createMetadataStore(db) {
     return Math.round(num);
   }
 
+  function normalizeHasAudio(value) {
+    if (value === true || value === 1) return 1;
+    if (value === false || value === 0) return 0;
+    return null;
+  }
+
+  function mapHasAudio(value) {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return null;
+  }
+
   function writeFileRecord(
     fingerprint,
     filePath,
@@ -2100,6 +2149,7 @@ function createMetadataStore(db) {
       updated_at: now,
       width: normalizeDimension(dimensions?.width),
       height: normalizeDimension(dimensions?.height),
+      has_audio: normalizeHasAudio(dimensions?.hasAudio),
     });
     mediaContentUpsert.run({
       fingerprint,
@@ -2107,6 +2157,7 @@ function createMetadataStore(db) {
       created_ms: createdMs,
       width: normalizeDimension(dimensions?.width),
       height: normalizeDimension(dimensions?.height),
+      has_audio: normalizeHasAudio(dimensions?.hasAudio),
       created_at: now,
       updated_at: now,
     });
@@ -2468,6 +2519,7 @@ function createMetadataStore(db) {
             ? instance.review_state
             : 'unreviewed',
           dimensions,
+          hasAudio: mapHasAudio(instance.content_has_audio),
         };
       });
     assertOperationActive(options.assertActive);
@@ -3250,6 +3302,7 @@ function createMetadataStore(db) {
       rating: ratingRow ? ratingRow.value : null,
       reviewState: reviewRow?.state || (ratingRow ? 'reviewed' : 'unreviewed'),
       dimensions,
+      hasAudio: mapHasAudio(dimRow?.has_audio),
     };
   }
 
@@ -3402,6 +3455,7 @@ function createMetadataStore(db) {
         rating: null,
         reviewState: 'unreviewed',
         dimensions: null,
+        hasAudio: null,
       }),
       fingerprintReused: entry.fingerprintReused,
       instance: mapFileInstanceRow(instanceRows[index]),
@@ -3459,7 +3513,7 @@ function createMetadataStore(db) {
       const chunk = uniqueFingerprints.slice(offset, offset + chunkSize);
       const placeholders = chunk.map(() => '?').join(', ');
       const metadataRows = db.prepare(`
-        SELECT f.fingerprint, f.width, f.height, r.value AS rating,
+        SELECT f.fingerprint, f.width, f.height, f.has_audio, r.value AS rating,
           COALESCE(cr.state,
             CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
           ) AS review_state
@@ -3481,6 +3535,7 @@ function createMetadataStore(db) {
           dimensions: width > 0 && height > 0
             ? { width, height, aspectRatio: width / height }
             : null,
+          hasAudio: mapHasAudio(row.has_audio),
         };
       });
 
@@ -3513,14 +3568,27 @@ function createMetadataStore(db) {
     return null;
   }
 
+  function getHasAudio(fingerprint) {
+    if (!fingerprint) return null;
+    const row = fileSelect.get(fingerprint);
+    return mapHasAudio(row?.has_audio);
+  }
+
   function setDimensions(fingerprint, dimensions) {
     if (!fingerprint) return;
     const width = normalizeDimension(dimensions?.width);
     const height = normalizeDimension(dimensions?.height);
     if (!width || !height) return;
+    const hasAudio = normalizeHasAudio(dimensions?.hasAudio);
     db.transaction(() => {
-      setDimensionsStmt.run(width, height, fingerprint);
-      setContentDimensionsStmt.run(width, height, Date.now(), fingerprint);
+      setDimensionsStmt.run(width, height, hasAudio, fingerprint);
+      setContentDimensionsStmt.run(
+        width,
+        height,
+        hasAudio,
+        Date.now(),
+        fingerprint
+      );
     })();
   }
 
@@ -3789,6 +3857,7 @@ function createMetadataStore(db) {
     setReviewState,
     restoreReviewMetadata,
     getDimensions,
+    getHasAudio,
     setDimensions,
     clearFingerprintCache,
     dispose,

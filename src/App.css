@@ -972,6 +972,26 @@ body {
   color: #ffd43b;
 }
 
+.video-item-audio {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+.video-item-audio.with-filename {
+  bottom: 48px;
+}
+
 .video-item-review {
   position: absolute;
   top: 8px;

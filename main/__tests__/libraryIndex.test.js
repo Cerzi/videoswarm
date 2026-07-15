@@ -335,8 +335,14 @@ if (!database || databaseLoadError) {
       const indexed = await store.indexFiles({
         rootPath,
         entries: [
-          { ...direct, dimensions: { width: 512, height: 288 } },
-          { ...nested, dimensions: { width: 720, height: 1280 } },
+          {
+            ...direct,
+            dimensions: { width: 512, height: 288, hasAudio: true },
+          },
+          {
+            ...nested,
+            dimensions: { width: 720, height: 1280, hasAudio: false },
+          },
           removed,
         ],
       });
@@ -366,6 +372,7 @@ if (!database || databaseLoadError) {
           relativePath: 'batch/nested.mp4',
           rating: null,
           reviewState: 'pick',
+          hasAudio: false,
           dimensions: { width: 720, height: 1280, aspectRatio: 0.5625 },
         }),
         expect.objectContaining({
@@ -374,6 +381,7 @@ if (!database || databaseLoadError) {
           tags: ['favorite', 'wan'],
           rating: 5,
           reviewState: 'reviewed',
+          hasAudio: true,
           dimensions: { width: 512, height: 288, aspectRatio: 512 / 288 },
         }),
       ]);

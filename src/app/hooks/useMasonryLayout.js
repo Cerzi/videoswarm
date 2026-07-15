@@ -18,8 +18,7 @@ import {
   groupAndSort,
   buildRandomOrderMap,
 } from "../../sorting/sorting.js";
-import { clampZoomIndex } from "../../zoom/utils.js";
-import { ZOOM_TILE_WIDTHS } from "../../zoom/config";
+import { getTileWidthForZoomLevel } from "../../zoom/utils.js";
 
 const IO_ROOT_MARGIN = "100% 0px 100% 0px";
 const IO_THRESHOLDS = Object.freeze([0, 0.15]);
@@ -351,8 +350,7 @@ export function useMasonryLayout({
     }
   }, [signatureState]);
 
-  const targetTileWidth =
-    ZOOM_TILE_WIDTHS[clampZoomIndex(zoomLevel)] ?? ZOOM_TILE_WIDTHS[1] ?? 200;
+  const targetTileWidth = getTileWidthForZoomLevel(zoomLevel);
   const containerWidth = Math.max(
     1,
     viewportSize.width ||
@@ -487,7 +485,7 @@ export function useMasonryLayout({
   );
 
   const nearPx = useMemo(() => {
-    const mediumWidth = ZOOM_TILE_WIDTHS[1] ?? ZOOM_TILE_WIDTHS[0] ?? 200;
+    const mediumWidth = getTileWidthForZoomLevel(1);
     const scale = Math.max(
       0.45,
       Math.min(1.6, Math.max(80, layout.columnWidth) / mediumWidth)

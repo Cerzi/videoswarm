@@ -2,8 +2,11 @@ import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
 import SupportLink from "./SupportLink";
 import { supportContent } from "../config/supportContent";
-import { ZOOM_MAX_INDEX } from "../zoom/config.js";
-import { clampZoomIndex } from "../zoom/utils.js";
+import { ZOOM_LEVEL_STEP, ZOOM_MAX_INDEX } from "../zoom/config.js";
+import {
+  clampZoomIndex,
+  getTileWidthForZoomLevel,
+} from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
 import PlaybackModeControl from "./PlaybackModeControl";
 
@@ -277,10 +280,12 @@ export default function HeaderBar({
               min={minZoomIndex}
               max={ZOOM_MAX_INDEX}
               value={zoomLevel}
-              step="1"
+              step={ZOOM_LEVEL_STEP}
+              aria-label="Grid zoom"
+              aria-valuetext={`${getTileWidthForZoomLevel(zoomLevel)}px cards`}
               onChange={(e) =>
                 handleZoomChangeSafe(
-                  clampZoomIndex(parseInt(e.target.value, 10))
+                  clampZoomIndex(Number.parseFloat(e.target.value))
                 )
               }
               disabled={isLoadingFolder}

@@ -75,7 +75,7 @@
 }
 
 .review-session__actions > button,
-.review-session__options summary,
+.review-session__options-trigger,
 .review-session__menu button,
 .review-session__confirmation button {
   min-height: 2rem;
@@ -94,7 +94,7 @@
 }
 
 .review-session__actions > button:hover:not(:disabled),
-.review-session__options summary:hover,
+.review-session__options-trigger:hover:not(:disabled),
 .review-session__menu button:hover:not(:disabled),
 .review-session__confirmation button:hover:not(:disabled) {
   border-color: rgba(81, 207, 102, 0.48);
@@ -111,24 +111,17 @@
   position: relative;
 }
 
-.review-session__options summary {
+.review-session__options-trigger {
   min-width: 2rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  list-style: none;
   user-select: none;
 }
 
-.review-session__options summary::-webkit-details-marker {
-  display: none;
-}
-
 .review-session__menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 0.25rem);
-  right: 0;
+  position: fixed;
+  z-index: 1100;
   min-width: 11.5rem;
   padding: 0.25rem;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -205,7 +198,8 @@
 }
 
 .review-session button:focus-visible,
-.review-session summary:focus-visible {
+.review-session__options-trigger:focus-visible,
+.review-session__menu button:focus-visible {
   outline: 2px solid rgba(81, 207, 102, 0.8);
   outline-offset: 2px;
 }

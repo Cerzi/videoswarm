@@ -798,6 +798,22 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     if (element) element.muted = true;
   }, []);
 
+  const handleVolumeChange = useCallback((event) => {
+    if (closeRequestedRef.current || !activeReleaseRef.current) return;
+    const element = event.currentTarget;
+
+    // Native player controls are an equal source of truth while a fullscreen
+    // source is active. Teardown clears activeReleaseRef before synchronously
+    // muting, so its delayed volume event cannot overwrite the preference. A
+    // replacement source restores the preference before any later event reads
+    // the reused element's current value.
+    const nextMuted = Boolean(element.muted);
+    const didChange = mutedPreferenceRef.current !== nextMuted;
+    mutedPreferenceRef.current = nextMuted;
+    setIsMuted(nextMuted);
+    if (didChange) setNotice(nextMuted ? "Audio muted" : "Audio on");
+  }, []);
+
   if (!video || typeof document === "undefined") return null;
 
   const slotContext = {
@@ -957,6 +973,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
                 onPause={() => {
                   playbackIntentRef.current = false;
                 }}
+                onVolumeChange={handleVolumeChange}
               />
 
               {showFilenames && videoLoaded ? (

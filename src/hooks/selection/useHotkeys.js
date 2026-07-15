@@ -9,6 +9,7 @@ import {
   REVIEW_STATE_BY_KEY,
   REVIEW_UNDO_KEYS,
 } from "../../hotkeys/shortcutCatalog";
+import { ZOOM_LEVEL_STEP } from "../../zoom/config";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
 
@@ -18,6 +19,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     setZoomIndexSafe,
     minZoomIndex = 0,
     maxZoomIndex = 4,
+    zoomStep = ZOOM_LEVEL_STEP,
     wheelStepUnits = 120,   // 120 ≈ one "notch" after normalization
     maxStepsPerFrame = 3,   // safety: avoid huge jumps per frame
     onSetReviewState,
@@ -161,10 +163,14 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       ) {
         if (e.key === "+" || e.key === "=") {
           e.preventDefault();
-          setZoomIndexSafe(clampIndex(getZoomIndex() + 1, minZoomIndex, maxZoomIndex));
+          setZoomIndexSafe(
+            clampIndex(getZoomIndex() + zoomStep, minZoomIndex, maxZoomIndex)
+          );
         } else if (e.key === "-") {
           e.preventDefault();
-          setZoomIndexSafe(clampIndex(getZoomIndex() - 1, minZoomIndex, maxZoomIndex));
+          setZoomIndexSafe(
+            clampIndex(getZoomIndex() - zoomStep, minZoomIndex, maxZoomIndex)
+          );
         }
       }
     };
@@ -178,6 +184,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     setZoomIndexSafe,
     minZoomIndex,
     maxZoomIndex,
+    zoomStep,
     onSetReviewState,
     onSetRating,
     onUndoReview,
@@ -224,7 +231,11 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         // apply one-step moves repeatedly; this guarantees we never skip an index
         const iterations = Math.abs(steps);
         for (let i = 0; i < iterations; i++) {
-          const next = clampIndex(current + (sign < 0 ? -1 : +1), minZoomIndex, maxZoomIndex);
+          const next = clampIndex(
+            current + (sign < 0 ? -zoomStep : zoomStep),
+            minZoomIndex,
+            maxZoomIndex
+          );
           if (next === current) break; // hit a bound
           setZoomIndexSafe(next);
           current = next;
@@ -254,5 +265,5 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       accumRef.current = 0;
       lastDirRef.current = 0;
     };
-  }, [enabled, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, wheelStepUnits, maxStepsPerFrame]);
+  }, [enabled, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, zoomStep, wheelStepUnits, maxStepsPerFrame]);
 }

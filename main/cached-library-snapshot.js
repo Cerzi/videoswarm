@@ -51,6 +51,9 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
   if (record.reviewState && record.reviewState !== "unreviewed") {
     file.reviewState = record.reviewState;
   }
+  if (typeof record.hasAudio === "boolean") {
+    file.hasAudio = record.hasAudio;
+  }
   if (dimensions) file.dimensions = dimensions;
   return file;
 }

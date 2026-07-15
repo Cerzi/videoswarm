@@ -245,6 +245,6 @@ describe('useHotkeys', () => {
     expect(setZoomIndexSafe).not.toHaveBeenCalled();
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '=' }));
-    expect(setZoomIndexSafe).toHaveBeenCalledWith(2);
+    expect(setZoomIndexSafe).toHaveBeenCalledWith(1.5);
   });
 });
