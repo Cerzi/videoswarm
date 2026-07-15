@@ -166,6 +166,79 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("exposes bounded nested review-session persistence operations", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    const view = {
+      version: 1,
+      filters: { reviewFilter: "unreviewed" },
+      sort: { key: "name", dir: "asc", groupByFolders: true },
+    };
+
+    await api.review.sessions.list();
+    await api.review.sessions.get("/library/root");
+    await api.review.sessions.save({
+      rootPath: "/library/root",
+      directory: "batch/one",
+      scope: "current-folder",
+      view,
+      anchorInstanceId: 42,
+      anchorFingerprint: "fingerprint",
+      ignored: [{ video: true }],
+      updatedAt: 1,
+    });
+    await api.review.sessions.clear("/library/root");
+
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(1, "review-sessions:list");
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      "review-sessions:get",
+      { rootPath: "/library/root" }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      "review-sessions:save",
+      {
+        rootPath: "/library/root",
+        directory: "batch/one",
+        scope: "current-folder",
+        view,
+        anchorInstanceId: 42,
+        anchorFingerprint: "fingerprint",
+      }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      4,
+      "review-sessions:clear",
+      { rootPath: "/library/root" }
+    );
+  });
+
+  it("forwards a frozen lifecycle flush token and acknowledges without draft data", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const callback = vi.fn();
+    const dispose = api.review.sessions.onFlushRequested(callback);
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "review-sessions:flush-requested"
+    )[1];
+
+    handler({}, { requestId: "one-use-token", draft: { forbidden: true } });
+    const payload = callback.mock.calls[0][0];
+    expect(payload).toEqual({ requestId: "one-use-token" });
+    expect(Object.isFrozen(payload)).toBe(true);
+    expect(api.review.sessions.acknowledgeFlush(payload.requestId)).toBe(true);
+    expect(ipcRenderer.send).toHaveBeenCalledWith(
+      "review-sessions:flush-ack",
+      { requestId: "one-use-token" }
+    );
+    expect(api.review.sessions.acknowledgeFlush("")).toBe(false);
+
+    dispose();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "review-sessions:flush-requested",
+      handler
+    );
+  });
+
   it("exposes disposable streamed scan records and viewport priorities", () => {
     const { api, ipcRenderer } = loadPreload();
     const callback = vi.fn();

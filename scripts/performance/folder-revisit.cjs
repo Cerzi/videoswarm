@@ -13,6 +13,9 @@ const {
 const {
   evaluateFolderRevisitReport,
 } = require("./folder-revisit-budget.cjs");
+const {
+  createReviewCheckpointReadMeasurement,
+} = require("./folder-revisit-checkpoint-metrics.cjs");
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4",
@@ -34,6 +37,23 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 ]);
 const FOLDER_PERFORMANCE_EVENT = "videoswarm:folder-performance";
 const MAX_CAPTURED_MAIN_OUTPUT = 256 * 1024;
+const REVIEW_CHECKPOINT_READ_P95_LIMIT_MS = 25;
+const BENCHMARK_REVIEW_VIEW = Object.freeze({
+  version: 1,
+  filters: Object.freeze({
+    includeTags: Object.freeze([]),
+    excludeTags: Object.freeze([]),
+    minRating: null,
+    exactRating: null,
+    reviewFilter: "unreviewed",
+  }),
+  sort: Object.freeze({
+    key: "name",
+    dir: "asc",
+    groupByFolders: true,
+    randomSeed: null,
+  }),
+});
 
 function readArguments(argv) {
   const result = {};
@@ -74,7 +94,9 @@ Options:
   --keep-profile-data        Retain temporary benchmark profiles
 
 Each supplied folder is treated as a minimum-size class. The final application
-count must still exactly match the supported video count found on disk.`);
+count must still exactly match the supported video count found on disk.
+Reports default to the operating-system temporary directory; keep measured
+hardware output outside the repository.`);
 }
 
 function positiveInteger(value, fallback, name) {
@@ -251,6 +273,15 @@ async function sampleRendererResources(page, inactiveRootPath = null, forceGc = 
         memory = await window.appMem?.get?.();
       } catch {}
       const heapBytes = Number(performance.memory?.usedJSHeapSize);
+      const inactiveCards = cards.filter((element) =>
+        belongsToInactiveRoot(element.dataset.videoId)
+      );
+      const inactiveSlots = slots.filter((element) =>
+        belongsToInactiveRoot(element.dataset.masonryId)
+      );
+      const inactiveMedia = media.filter((element) =>
+        belongsToInactiveRoot(element.dataset.filePath)
+      );
 
       return {
         collectionCount: Number(collectionMatch?.[1]),
@@ -259,14 +290,17 @@ async function sampleRendererResources(page, inactiveRootPath = null, forceGc = 
         mediaElements: media.length,
         loadedMediaElements: media.filter((element) => element.readyState >= 2).length,
         playingMediaElements: media.filter((element) => !element.paused).length,
-        inactiveRootCards: cards.filter((element) =>
-          belongsToInactiveRoot(element.dataset.videoId)
+        inactiveRootCards: inactiveCards.length,
+        inactiveRootSelectedCards: inactiveCards.filter((element) =>
+          element.classList.contains("selected")
         ).length,
-        inactiveRootMasonrySlots: slots.filter((element) =>
-          belongsToInactiveRoot(element.dataset.masonryId)
+        inactiveRootMasonrySlots: inactiveSlots.length,
+        inactiveRootMediaElements: inactiveMedia.length,
+        inactiveRootLoadedMediaElements: inactiveMedia.filter(
+          (element) => element.readyState >= 2
         ).length,
-        inactiveRootMediaElements: media.filter((element) =>
-          belongsToInactiveRoot(element.dataset.filePath)
+        inactiveRootPlayingMediaElements: inactiveMedia.filter(
+          (element) => !element.paused
         ).length,
         heapUsedMB: Number.isFinite(heapBytes) ? heapBytes / 1024 / 1024 : null,
         workingSetMB: Number(memory?.totals?.wsMB) || null,
@@ -274,6 +308,62 @@ async function sampleRendererResources(page, inactiveRootPath = null, forceGc = 
     },
     { inactiveRoot: inactiveRootPath, shouldCollectGarbage: forceGc }
   );
+}
+
+async function saveBenchmarkReviewCheckpoint(page, rootPath) {
+  const result = await page.evaluate(
+    async ({ folderPath, view }) => {
+      const api = window.electronAPI?.review?.sessions;
+      if (typeof api?.save !== "function") {
+        throw new Error("Continue Review checkpoint bridge is unavailable");
+      }
+      return api.save({
+        rootPath: folderPath,
+        directory: "",
+        scope: "all-descendants",
+        view,
+        anchorInstanceId: null,
+        anchorFingerprint: null,
+      });
+    },
+    { folderPath: rootPath, view: BENCHMARK_REVIEW_VIEW }
+  );
+  if (result?.success === false || result?.checkpoint?.rootPath !== rootPath) {
+    throw new Error(
+      result?.error || `Could not seed review checkpoint for ${rootPath}`
+    );
+  }
+}
+
+async function measureReviewCheckpointRead(page, rootPath) {
+  const rawMeasurement = await page.evaluate(async (expectedRoot) => {
+    const api = window.electronAPI?.review?.sessions;
+    if (typeof api?.list !== "function" || typeof api?.get !== "function") {
+      throw new Error("Continue Review checkpoint bridge is unavailable");
+    }
+
+    const startedAt = performance.now();
+    const listResult = await api.list();
+    const listedAt = performance.now();
+    const getResult = await api.get(expectedRoot);
+    const completedAt = performance.now();
+    const sessions = Array.isArray(listResult?.sessions)
+      ? listResult.sessions
+      : [];
+    return {
+      rootPath: expectedRoot,
+      startedAt,
+      listedAt,
+      completedAt,
+      listSuccess: listResult?.success === true,
+      listError: listResult?.error || null,
+      sessionRootPaths: sessions.map((session) => session?.rootPath),
+      getSuccess: getResult?.success === true,
+      getError: getResult?.error || null,
+      checkpointRootPath: getResult?.checkpoint?.rootPath || null,
+    };
+  }, rootPath);
+  return createReviewCheckpointReadMeasurement(rawMeasurement);
 }
 
 async function readAuthoritativeCollectionIdentity(page, rootPath, recursive) {
@@ -338,6 +428,22 @@ async function openFolder(page, electronApp, folderPath, expectedCount, options)
 }
 
 async function runMeasuredTrial(context, dataset, options, metadata) {
+  const {
+    verifyReviewCheckpoint = false,
+    ...trialMetadata
+  } = metadata;
+  let reviewCheckpoint = null;
+  if (verifyReviewCheckpoint) {
+    reviewCheckpoint = await measureReviewCheckpointRead(
+      context.page,
+      dataset.rootPath
+    );
+    reviewCheckpoint.inactiveResources = await sampleRendererResources(
+      context.page,
+      dataset.rootPath,
+      false
+    );
+  }
   const measured = await openFolder(
     context.page,
     context.electronApp,
@@ -351,6 +457,7 @@ async function runMeasuredTrial(context, dataset, options, metadata) {
     options.recursive
   );
   const activeResources = await sampleRendererResources(context.page);
+  await saveBenchmarkReviewCheckpoint(context.page, dataset.rootPath);
   await openFolder(
     context.page,
     context.electronApp,
@@ -364,12 +471,13 @@ async function runMeasuredTrial(context, dataset, options, metadata) {
     true
   );
   return {
-    ...metadata,
+    ...trialMetadata,
     processRunId: context.benchmarkProcessRunId,
     processId: context.electronApp.process().pid,
     ...measured,
     finalCollectionCount: activeResources.collectionCount,
     authoritativeCollection,
+    reviewCheckpoint,
     activeResources,
     cleanupResources,
   };
@@ -477,7 +585,10 @@ async function runWarmTrials(dataset, options, persistReport) {
       console.log(`[${dataset.key}] warm ${index + 1}/${options.trials}`);
       try {
         dataset.scenarios.warm.push(
-          await runMeasuredTrial(context, dataset, options, metadata)
+          await runMeasuredTrial(context, dataset, options, {
+            ...metadata,
+            verifyReviewCheckpoint: true,
+          })
         );
       } catch (error) {
         dataset.scenarios.warm.push(errorTrial(metadata, error));
@@ -539,7 +650,10 @@ async function runRestartTrials(dataset, options, persistReport) {
         `${dataset.key}:restart:${index + 1}`
       );
       dataset.scenarios.restart.push(
-        await runMeasuredTrial(context, dataset, options, metadata)
+        await runMeasuredTrial(context, dataset, options, {
+          ...metadata,
+          verifyReviewCheckpoint: true,
+        })
       );
     } catch (error) {
       dataset.scenarios.restart.push(errorTrial(metadata, error));
@@ -589,7 +703,10 @@ async function main() {
   const outputPath = path.resolve(
     String(
       args.output ||
-        `performance-results/folder-revisit-${capturedAt.replaceAll(":", "-")}.json`
+        path.join(
+          os.tmpdir(),
+          `videoswarm-folder-revisit-${capturedAt.replaceAll(":", "-")}.json`
+        )
     )
   );
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -629,7 +746,7 @@ async function main() {
   });
 
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt,
     completedAt: null,
     environment: {
@@ -646,6 +763,8 @@ async function main() {
       settleMs,
       scenario,
       minimumCachedFirstGridSpeedup: 2,
+      maximumReviewCheckpointReadP95Ms:
+        REVIEW_CHECKPOINT_READ_P95_LIMIT_MS,
     },
     datasets,
     evaluation: null,

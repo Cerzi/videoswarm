@@ -87,6 +87,75 @@ describe("LibrarySidebar", () => {
     expect(onTogglePin).toHaveBeenCalledWith("/new/root", true);
   });
 
+  it("shows bounded review counts and Start/Continue actions for pinned roots", () => {
+    const onStartRootReview = vi.fn();
+    const onContinueRootReview = vi.fn();
+    render(
+      <LibrarySidebar
+        pinnedRoots={pinnedRoots}
+        rootReviewStateByPath={{
+          "/models/wan/outputs": {
+            action: "start",
+            remainingUnreviewed: 1250,
+            isUpdating: true,
+          },
+          "/models/hunyuan/outputs": {
+            action: "continue",
+            remainingUnreviewed: 42,
+          },
+        }}
+        onStartRootReview={onStartRootReview}
+        onContinueRootReview={onContinueRootReview}
+      />
+    );
+
+    const count = screen.getByText("1,250 unreviewed", { exact: false });
+    expect(count).toHaveTextContent("Updating…");
+    expect(count).toHaveAttribute(
+      "title",
+      expect.stringContaining("Reviewing duplicate content may reduce the count")
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Start review Wan outputs, 1,250 unreviewed",
+      })
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Continue review Hunyuan outputs, 42 unreviewed",
+      })
+    );
+    expect(onStartRootReview).toHaveBeenCalledWith(
+      "/models/wan/outputs",
+      pinnedRoots[0]
+    );
+    expect(onContinueRootReview).toHaveBeenCalledWith(
+      "/models/hunyuan/outputs",
+      pinnedRoots[1]
+    );
+  });
+
+  it("shows authoritative completion without an inert review button", () => {
+    render(
+      <LibrarySidebar
+        pinnedRoots={[pinnedRoots[0]]}
+        rootReviewStateByPath={{
+          "/models/wan/outputs": {
+            action: "complete",
+            remainingUnreviewed: 0,
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByText("0 unreviewed")).toBeVisible();
+    expect(
+      screen.getByRole("status", { name: "Wan outputs: Review complete" })
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: /review Wan outputs/i })).toBeNull();
+  });
+
   it("mounts only expanded branches and forwards controlled expansion", () => {
     const onToggleExpanded = vi.fn();
     const props = {

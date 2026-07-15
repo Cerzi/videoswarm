@@ -120,9 +120,10 @@ describe("IPC sender trust", () => {
       removeListener: vi.fn((channel) => eventHandlers.delete(channel)),
     };
     const { validator, event } = trustedFixture();
+    const trustedValidator = vi.fn(validator);
     const registrar = createTrustedIpcRegistrar({
       ipcMain,
-      assertTrustedSender: validator,
+      assertTrustedSender: trustedValidator,
     });
     const invokeListener = vi.fn(async (_event, value) => value * 2);
     const eventListener = vi.fn();
@@ -141,6 +142,16 @@ describe("IPC sender trust", () => {
     ).rejects.toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
     await eventHandlers.get("secure:event")(event, "ok");
     expect(eventListener).toHaveBeenCalledWith(event, "ok");
+    const invokeTrustContext = trustedValidator.mock.calls.find(
+      ([, context]) => context?.channel === "secure:invoke"
+    )?.[1];
+    const eventTrustContext = trustedValidator.mock.calls.find(
+      ([, context]) => context?.channel === "secure:event"
+    )?.[1];
+    expect(invokeTrustContext).toEqual({ channel: "secure:invoke" });
+    expect(eventTrustContext).toEqual({ channel: "secure:event" });
+    expect(Object.isFrozen(invokeTrustContext)).toBe(true);
+    expect(Object.isFrozen(eventTrustContext)).toBe(true);
 
     registrar.dispose();
     expect(ipcMain.removeHandler).toHaveBeenCalledWith("secure:invoke");

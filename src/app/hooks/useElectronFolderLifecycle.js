@@ -1126,7 +1126,7 @@ export function useElectronFolderLifecycle({
 
   useEffect(() => {
     const cleanup = window.electronAPI?.onFolderSelected?.(async (folderPath) => {
-      beforeExternalFolderSelection?.(folderPath);
+      await beforeExternalFolderSelection?.(folderPath);
       await handleElectronFolderSelection(folderPath);
     });
 

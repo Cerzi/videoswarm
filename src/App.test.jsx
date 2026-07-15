@@ -120,6 +120,81 @@ const electronLifecycleReturn = {
 };
 const useElectronLifecycleMock = vi.fn(() => electronLifecycleReturn);
 
+const createDeferredPromise = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+};
+
+const flushPromiseTurns = async (count = 12) => {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+};
+
+const reviewSessionView = (filterOverrides = {}) => ({
+  version: 1,
+  filters: {
+    includeTags: [],
+    excludeTags: [],
+    minRating: null,
+    exactRating: null,
+    reviewFilter: "any",
+    ...filterOverrides,
+  },
+  sort: {
+    key: "name",
+    dir: "asc",
+    groupByFolders: true,
+    randomSeed: null,
+  },
+});
+
+const reviewCheckpoint = (rootPath, overrides = {}) => ({
+  rootPath,
+  directory: "",
+  scope: "all-descendants",
+  view: reviewSessionView(),
+  anchorInstanceId: null,
+  anchorFingerprint: null,
+  updatedAt: 1234,
+  ...overrides,
+});
+
+const installReviewSessionsApi = ({
+  checkpoint = null,
+  save = vi.fn(async (draft) => ({
+    checkpoint: { ...draft, updatedAt: 1234 },
+  })),
+  clear = vi.fn().mockResolvedValue({ deleted: true }),
+} = {}) => {
+  const summaries = checkpoint
+    ? [{
+        rootPath: checkpoint.rootPath,
+        directory: checkpoint.directory,
+        scope: checkpoint.scope,
+        updatedAt: checkpoint.updatedAt,
+      }]
+    : [];
+  const sessions = {
+    list: vi.fn().mockResolvedValue({ sessions: summaries }),
+    get: vi.fn().mockResolvedValue({ checkpoint }),
+    save,
+    clear,
+    onFlushRequested: vi.fn(() => vi.fn()),
+    acknowledgeFlush: vi.fn(),
+  };
+  window.electronAPI = {
+    ...window.electronAPI,
+    review: { sessions },
+  };
+  return sessions;
+};
+
 const filterStateReturn = {
   filters: {
     includeTags: [],
@@ -234,10 +309,15 @@ const loadingOverlaySpy = vi.fn();
 const metadataPanelSpy = vi.fn();
 const contextMenuSpy = vi.fn();
 const setLibraryRootPinnedMock = vi.fn();
+const refreshLibraryRootsMock = vi.fn();
+const refreshLibraryTreeMock = vi.fn();
 const useLibraryCatalogMock = vi.fn((args = {}) => ({
+  roots: [],
   pinnedRoots: [],
   currentRoot: args.scannedRoot ?? null,
   directories: args.scannedDirectories ?? [],
+  refreshRoots: refreshLibraryRootsMock,
+  refreshTree: refreshLibraryTreeMock,
   setPinned: setLibraryRootPinnedMock,
 }));
 const savedViewsReturn = {
@@ -468,13 +548,17 @@ vi.mock("./App.css", () => ({}), { virtual: true });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
   useElectronLifecycleMock.mockImplementation(() => electronLifecycleReturn);
   useFilterStateMock.mockImplementation(() => filterStateReturn);
   useLibraryCatalogMock.mockImplementation((args = {}) => ({
+    roots: [],
     pinnedRoots: [],
     currentRoot: args.scannedRoot ?? null,
     directories: args.scannedDirectories ?? [],
+    refreshRoots: refreshLibraryRootsMock,
+    refreshTree: refreshLibraryTreeMock,
     setPinned: setLibraryRootPinnedMock,
   }));
   useSavedViewsMock.mockImplementation(() => savedViewsReturn);
@@ -937,12 +1021,11 @@ describe("App hook composition", () => {
     expect(
       screen.getByRole("navigation", { name: "Current folder path" })
     ).toHaveTextContent("empty-run");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "No videos in this collection"
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "/models/wan/empty-run"
-    );
+    const emptyStatus = screen
+      .getByText("No videos in this collection")
+      .closest('[role="status"]');
+    expect(emptyStatus).toHaveTextContent("No videos in this collection");
+    expect(emptyStatus).toHaveTextContent("/models/wan/empty-run");
   });
 
   test("keeps floating details selection-scoped without stealing passive focus", async () => {
@@ -1178,6 +1261,770 @@ describe("App hook composition", () => {
     ]);
   });
 
+  test("starts a persistent review session after the first positive review action", async () => {
+    const activeVideo = {
+      id: "video-session-a",
+      instanceId: 41,
+      name: "a.mp4",
+      basename: "a.mp4",
+      fingerprint: "fingerprint-session-a",
+      reviewState: "unreviewed",
+      rating: null,
+    };
+    selectionMock.selected = new Set([activeVideo.id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = activeVideo.id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [activeVideo],
+      activeRootPath: "/session-root",
+      libraryRoot: {
+        rootPath: "/session-root",
+        recursive: true,
+        refreshState: "idle",
+      },
+      directorySummaries: [{ relativePath: "", presentCount: 1 }],
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [activeVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [activeVideo],
+      displayVideos: [activeVideo],
+      orderedIds: [activeVideo.id],
+      orderForRange: [activeVideo.id],
+    });
+    const save = vi.fn(async (nextDraft) => ({
+      checkpoint: { ...nextDraft, updatedAt: 1234 },
+    }));
+    window.electronAPI = {
+      review: {
+        sessions: {
+          list: vi.fn().mockResolvedValue({ sessions: [] }),
+          get: vi.fn().mockResolvedValue({ checkpoint: null }),
+          save,
+          clear: vi.fn().mockResolvedValue({ deleted: true }),
+          onFlushRequested: vi.fn(() => vi.fn()),
+          acknowledgeFlush: vi.fn(),
+        },
+      },
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
+    await act(async () => panelProps.onSetReviewState("pick"));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootPath: "/session-root",
+        directory: "",
+        scope: "all-descendants",
+        anchorInstanceId: 41,
+        anchorFingerprint: "fingerprint-session-a",
+      })
+    );
+    expect(refreshLibraryRootsMock).toHaveBeenCalled();
+    expect(refreshLibraryTreeMock).toHaveBeenCalledWith("/session-root");
+  });
+
+  test("keeps passive same-root navigation separate from an explicit session move", async () => {
+    const videos = [
+      {
+        id: "root-video",
+        instanceId: 1,
+        name: "root.mp4",
+        dirname: "",
+        fingerprint: "fingerprint-root",
+        reviewState: "reviewed",
+      },
+      {
+        id: "run-b-video",
+        instanceId: 2,
+        name: "run-b.mp4",
+        dirname: "run-b",
+        fingerprint: "fingerprint-run-b",
+        reviewState: "unreviewed",
+      },
+    ];
+    selectionMock.selected = new Set(["run-b-video"]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = "run-b-video";
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", recursive: true },
+      directorySummaries: [
+        { relativePath: "", name: "outputs" },
+        { relativePath: "run-b", name: "run-b" },
+      ],
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const sessions = installReviewSessionsApi({
+      checkpoint: reviewCheckpoint("/outputs"),
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+    );
+    sessions.save.mockClear();
+    fireEvent.click(screen.getByTitle("run-b"));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+        "current-folder"
+      )
+    );
+    expect(screen.getAllByText("Review saved elsewhere")[0]).toBeVisible();
+
+    const panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
+    await act(async () => panelProps.onSetReviewState("pick"));
+    expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+      "pick",
+      ["fingerprint-run-b"]
+    );
+    expect(sessions.save).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: /Move saved review position here/,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Move position" }));
+    await waitFor(() => expect(sessions.save).toHaveBeenCalledOnce());
+    expect(sessions.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootPath: "/outputs",
+        directory: "run-b",
+        scope: "current-folder",
+      })
+    );
+  });
+
+  test("drains an in-flight checkpoint before a web directory switch", async () => {
+    const activeVideo = {
+      id: "web-switch-video",
+      instanceId: 11,
+      name: "web.mp4",
+      fingerprint: "fingerprint-web",
+      reviewState: "unreviewed",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [activeVideo],
+      activeRootPath: "/before-web-switch",
+      libraryRoot: { rootPath: "/before-web-switch", recursive: true },
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [activeVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [activeVideo],
+      displayVideos: [activeVideo],
+      orderedIds: [activeVideo.id],
+      orderForRange: [activeVideo.id],
+    });
+    const pendingSave = createDeferredPromise();
+    const save = vi.fn(() => pendingSave.promise);
+    installReviewSessionsApi({ save });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: /Start review here/,
+    }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    electronLifecycleReturn.handleWebFileSelection.mockClear();
+
+    let switchPromise;
+    act(() => {
+      switchPromise = headerBarSpy.mock.calls.at(-1)?.[0]
+        .handleWebFileSelection({ target: { files: ["next-root"] } });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(electronLifecycleReturn.handleWebFileSelection).not.toHaveBeenCalled();
+
+    await act(async () => {
+      const draft = save.mock.calls[0][0];
+      pendingSave.resolve({ checkpoint: { ...draft, updatedAt: 2345 } });
+      await switchPromise;
+    });
+    expect(electronLifecycleReturn.handleWebFileSelection).toHaveBeenCalledWith({
+      target: { files: ["next-root"] },
+    });
+  });
+
+  test("drains the child cursor before disabling recursive ownership", async () => {
+    const childVideo = {
+      id: "recursive-child-video",
+      instanceId: 15,
+      name: "child.mp4",
+      dirname: "run-a",
+      fingerprint: "fingerprint-recursive-child",
+      reviewState: "unreviewed",
+    };
+    const reloadCurrentRoot = vi.fn().mockResolvedValue(true);
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [childVideo],
+      activeRootPath: "/recursive-root",
+      libraryRoot: { rootPath: "/recursive-root", recursive: true },
+      directorySummaries: [
+        { relativePath: "", name: "recursive-root" },
+        { relativePath: "run-a", name: "run-a" },
+      ],
+      loadingStatus: { phase: "complete" },
+      reloadCurrentRoot,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [childVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [childVideo],
+      displayVideos: [childVideo],
+      orderedIds: [childVideo.id],
+      orderForRange: [childVideo.id],
+    });
+    const pendingSave = createDeferredPromise();
+    const save = vi.fn(() => pendingSave.promise);
+    installReviewSessionsApi({ save });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle("run-a"));
+    await waitFor(() => expect(reloadCurrentRoot).toHaveBeenCalledWith(true));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+        "current-folder"
+      )
+    );
+    reloadCurrentRoot.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start review here/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(reloadCurrentRoot).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+      "current-folder"
+    );
+
+    await act(async () => {
+      const draft = save.mock.calls[0][0];
+      pendingSave.resolve({ checkpoint: { ...draft, updatedAt: 3456 } });
+      await pendingSave.promise;
+      await flushPromiseTurns();
+    });
+    await waitFor(() => expect(reloadCurrentRoot).toHaveBeenCalledWith(false));
+    expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+      "all-descendants"
+    );
+  });
+
+  test("opens and settles an inactive root before saving its Start-review view", async () => {
+    const targetRoot = {
+      id: 7,
+      rootPath: "/target-root",
+      label: "Target outputs",
+      pinned: true,
+      presentCount: 9,
+      reviewedCount: 2,
+    };
+    const opening = createDeferredPromise();
+    const handleElectronFolderSelection = vi.fn(() => opening.promise);
+    let lifecycleState = {
+      ...electronLifecycleReturn,
+      videos: [],
+      activeRootPath: null,
+      libraryRoot: null,
+      handleElectronFolderSelection,
+    };
+    useElectronLifecycleMock.mockImplementation(() => lifecycleState);
+    let targetFilters = filterStateReturn.filters;
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filters: targetFilters,
+      filteredVideos: [],
+    }));
+    useLibraryCatalogMock.mockImplementation(({ activeRootPath } = {}) => ({
+      roots: [targetRoot],
+      pinnedRoots: [targetRoot],
+      currentRoot: activeRootPath ? targetRoot : null,
+      directories: [],
+      refreshRoots: refreshLibraryRootsMock,
+      refreshTree: refreshLibraryTreeMock,
+      setPinned: setLibraryRootPinnedMock,
+    }));
+    const sessions = installReviewSessionsApi();
+    window.electronAPI.library = {
+      authorizeRoot: vi.fn().mockResolvedValue({
+        success: true,
+        rootPath: targetRoot.rootPath,
+      }),
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Start review Target outputs, 7 unreviewed",
+    }));
+    await waitFor(() =>
+      expect(handleElectronFolderSelection).toHaveBeenCalledWith("/target-root")
+    );
+    expect(sessions.save).not.toHaveBeenCalled();
+
+    targetFilters = reviewSessionView({ includeTags: ["target-only"] }).filters;
+    lifecycleState = {
+      ...lifecycleState,
+      activeRootPath: "/target-root",
+      libraryRoot: { ...targetRoot, recursive: true },
+      loadingStatus: { phase: "complete" },
+    };
+    rendered.rerender(<App />);
+    await act(async () => {
+      opening.resolve(true);
+      await opening.promise;
+    });
+
+    await waitFor(() => expect(sessions.save).toHaveBeenCalledOnce());
+    expect(sessions.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootPath: "/target-root",
+        directory: "",
+        scope: "all-descendants",
+        view: expect.objectContaining({
+          filters: expect.objectContaining({ includeTags: ["target-only"] }),
+        }),
+      })
+    );
+  });
+
+  test("does not layout-save a null anchor while Continue is still resolving", async () => {
+    const reviewedVideo = {
+      id: "resume-anchor-video",
+      instanceId: 91,
+      name: "anchor.mp4",
+      fingerprint: "fingerprint-anchor",
+      reviewState: "reviewed",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [reviewedVideo],
+      activeRootPath: "/guarded-resume",
+      activeScanId: "guarded-scan",
+      cachedHydration: { scanId: "guarded-scan" },
+      cachedHydrationComplete: true,
+      isRefreshingFolder: true,
+      libraryRoot: { rootPath: "/guarded-resume", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "guarded-resume" }],
+      loadingStatus: { phase: "indexing" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [reviewedVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [],
+      displayVideos: [],
+      orderedIds: [],
+      orderForRange: [],
+    });
+    const sessions = installReviewSessionsApi({
+      checkpoint: reviewCheckpoint("/guarded-resume", {
+        directory: "",
+        scope: "current-folder",
+        anchorInstanceId: reviewedVideo.instanceId,
+        anchorFingerprint: reviewedVideo.fingerprint,
+      }),
+    });
+    window.electronAPI.library = {
+      authorizeRoot: vi.fn().mockResolvedValue({
+        success: true,
+        rootPath: "/guarded-resume",
+      }),
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const continueButton = await screen.findByRole("button", {
+      name: /Continue saved review/,
+    });
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(continueButton);
+      await flushPromiseTurns();
+    });
+    expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
+      "current-folder"
+    );
+    expect(window.electronAPI.library.authorizeRoot).toHaveBeenCalled();
+    expect(sessions.save).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(sessions.save).not.toHaveBeenCalled();
+    expect(selectionMock.selectExactly).not.toHaveBeenCalled();
+  });
+
+  test("keeps Start unresolved when checkpoint persistence fails", async () => {
+    const activeVideo = {
+      id: "failed-start-video",
+      instanceId: 101,
+      name: "failed-start.mp4",
+      fingerprint: "fingerprint-failed-start",
+      reviewState: "unreviewed",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [activeVideo],
+      activeRootPath: "/failed-start",
+      libraryRoot: { rootPath: "/failed-start", recursive: true },
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [activeVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [activeVideo],
+      displayVideos: [activeVideo],
+      orderedIds: [activeVideo.id],
+      orderForRange: [activeVideo.id],
+    });
+    const save = vi.fn().mockResolvedValue({
+      success: false,
+      error: "Checkpoint disk is unavailable",
+    });
+    const sessions = installReviewSessionsApi({ save });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const startButton = await screen.findByRole("button", {
+      name: /Start review here/,
+    });
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(startButton);
+      await flushPromiseTurns();
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Checkpoint disk is unavailable"
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(sessions.get).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Start review here/ })).toBeVisible();
+    expect(selectionMock.selectExactly).not.toHaveBeenCalled();
+    expect(screen.queryByText("Restoring saved review…")).toBeNull();
+  });
+
+  test("keeps the old cursor when an explicit Move fails", async () => {
+    const videos = [
+      {
+        id: "old-cursor-video",
+        instanceId: 111,
+        name: "old.mp4",
+        dirname: "",
+        fingerprint: "fingerprint-old",
+        reviewState: "reviewed",
+      },
+      {
+        id: "move-target-video",
+        instanceId: 112,
+        name: "target.mp4",
+        dirname: "run-b",
+        fingerprint: "fingerprint-target",
+        reviewState: "unreviewed",
+      },
+    ];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/failed-move",
+      libraryRoot: { rootPath: "/failed-move", recursive: true },
+      directorySummaries: [
+        { relativePath: "", name: "failed-move" },
+        { relativePath: "run-b", name: "run-b" },
+      ],
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const save = vi.fn().mockResolvedValue({
+      success: false,
+      error: "Checkpoint disk is unavailable",
+    });
+    const sessions = installReviewSessionsApi({
+      checkpoint: reviewCheckpoint("/failed-move", {
+        anchorInstanceId: videos[0].instanceId,
+        anchorFingerprint: videos[0].fingerprint,
+      }),
+      save,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+    );
+    fireEvent.click(screen.getByTitle("run-b"));
+    await waitFor(() =>
+      expect(screen.getAllByText("Review saved elsewhere").length).toBeGreaterThan(0)
+    );
+    const getCallCount = sessions.get.mock.calls.length;
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", {
+      name: /Move saved review position here/,
+    }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Move position" }));
+      await flushPromiseTurns();
+    });
+    expect(save).toHaveBeenCalledOnce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(sessions.get).toHaveBeenCalledTimes(getCallCount);
+    expect(screen.getAllByText("Review saved elsewhere")[0]).toBeVisible();
+    expect(selectionMock.selectExactly).not.toHaveBeenCalled();
+    expect(screen.queryByText("Restoring saved review…")).toBeNull();
+  });
+
+  test("keeps a session intact when Forget reports that nothing was deleted", async () => {
+    const activeVideo = {
+      id: "reviewed-video",
+      name: "reviewed.mp4",
+      fingerprint: "fingerprint-reviewed",
+      reviewState: "reviewed",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [activeVideo],
+      activeRootPath: "/forget-root",
+      libraryRoot: { rootPath: "/forget-root", recursive: true },
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [activeVideo],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [activeVideo],
+      displayVideos: [activeVideo],
+      orderedIds: [activeVideo.id],
+      orderForRange: [activeVideo.id],
+    });
+    const clear = vi.fn().mockResolvedValue({ deleted: false });
+    installReviewSessionsApi({
+      checkpoint: reviewCheckpoint("/forget-root"),
+      clear,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+    );
+    fireEvent.click(screen.getByText("•••", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: "Forget saved position…",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Forget position" }));
+    await waitFor(() => expect(clear).toHaveBeenCalledWith("/forget-root"));
+
+    expect(screen.getAllByText("Session active")[0]).toBeVisible();
+    expect(document.body).not.toHaveTextContent("Forgot the saved review position");
+  });
+
+  test("reactivates completed sessions without stealing focus on passive discovery", async () => {
+    const reviewedVideo = {
+      id: "reviewed-run-a",
+      instanceId: 21,
+      name: "reviewed.mp4",
+      dirname: "",
+      fingerprint: "fingerprint-reviewed-a",
+      reviewState: "reviewed",
+    };
+    const excludedVideo = {
+      id: "unreviewed-run-b",
+      instanceId: 22,
+      name: "excluded.mp4",
+      dirname: "run-b",
+      fingerprint: "fingerprint-excluded-b",
+      reviewState: "unreviewed",
+    };
+    const visibleVideo = {
+      id: "unreviewed-run-a",
+      instanceId: 23,
+      name: "visible.mp4",
+      dirname: "",
+      fingerprint: "fingerprint-visible-a",
+      reviewState: "unreviewed",
+    };
+    let lifecycleVideos = [reviewedVideo];
+    let catalogRoot = {
+      rootPath: "/resume-root",
+      label: "Resume root",
+      pinned: true,
+      presentCount: 1,
+      reviewedCount: 1,
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: lifecycleVideos,
+      activeRootPath: "/resume-root",
+      activeScanId: "resume-scan",
+      libraryRoot: { ...catalogRoot, recursive: true },
+      directorySummaries: [
+        { relativePath: "", name: "Resume root" },
+        { relativePath: "run-a", name: "run-a" },
+        { relativePath: "run-b", name: "run-b" },
+      ],
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: lifecycleVideos,
+    }));
+    useLibraryCatalogMock.mockImplementation(() => ({
+      roots: [catalogRoot],
+      pinnedRoots: [catalogRoot],
+      currentRoot: catalogRoot,
+      directories: [
+        { relativePath: "", name: "Resume root" },
+        { relativePath: "run-a", name: "run-a" },
+        { relativePath: "run-b", name: "run-b" },
+      ],
+      refreshRoots: refreshLibraryRootsMock,
+      refreshTree: refreshLibraryTreeMock,
+      setPinned: setLibraryRootPinnedMock,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [reviewedVideo],
+      displayVideos: [reviewedVideo],
+      orderedIds: [reviewedVideo.id],
+      orderForRange: [reviewedVideo.id],
+    });
+    installReviewSessionsApi({
+      checkpoint: reviewCheckpoint("/resume-root", {
+        directory: "",
+        scope: "current-folder",
+      }),
+    });
+    window.electronAPI.library = {
+      authorizeRoot: vi.fn().mockResolvedValue({
+        success: true,
+        rootPath: "/resume-root",
+      }),
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: /Continue saved review/,
+    }));
+    await screen.findByText("Review complete");
+    const stableFocusTarget = screen.getByRole("button", {
+      name: "Keyboard shortcuts",
+    });
+    stableFocusTarget.focus();
+    expect(stableFocusTarget).toHaveFocus();
+    selectionMock.selectExactly.mockClear();
+    masonryReturn.scrollToId.mockClear();
+
+    lifecycleVideos = [reviewedVideo, excludedVideo];
+    catalogRoot = { ...catalogRoot, presentCount: 2, reviewedCount: 1 };
+    Object.assign(masonryReturn, {
+      orderedVideos: [reviewedVideo],
+      displayVideos: [reviewedVideo],
+      orderedIds: [reviewedVideo.id],
+      orderForRange: [reviewedVideo.id],
+    });
+    rendered.rerender(<App />);
+    await screen.findByText("Review complete for this saved view");
+    expect(screen.getByRole("button", {
+      name: "Review all Unreviewed",
+    })).toBeVisible();
+    expect(selectionMock.selectExactly).not.toHaveBeenCalled();
+    expect(masonryReturn.scrollToId).not.toHaveBeenCalled();
+    expect(stableFocusTarget).toHaveFocus();
+
+    lifecycleVideos = [reviewedVideo, excludedVideo, visibleVideo];
+    catalogRoot = { ...catalogRoot, presentCount: 3, reviewedCount: 1 };
+    Object.assign(masonryReturn, {
+      orderedVideos: [reviewedVideo, visibleVideo],
+      displayVideos: [reviewedVideo, visibleVideo],
+      orderedIds: [reviewedVideo.id, visibleVideo.id],
+      orderForRange: [reviewedVideo.id, visibleVideo.id],
+    });
+    rendered.rerender(<App />);
+    await screen.findByText("New Unreviewed clips");
+    expect(selectionMock.selectExactly).not.toHaveBeenCalled();
+    expect(masonryReturn.scrollToId).not.toHaveBeenCalled();
+    expect(stableFocusTarget).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: /^Continue review —/,
+    }));
+    await waitFor(() =>
+      expect(selectionMock.selectExactly).toHaveBeenCalledWith(visibleVideo.id)
+    );
+  });
+
   test("invalidates review undo when the active profile changes", async () => {
     const activeVideo = {
       id: "video-a",
@@ -1204,11 +2051,11 @@ describe("App hook composition", () => {
       orderedIds: [activeVideo.id],
       orderForRange: [activeVideo.id],
     });
-    let profileChanged;
+    const profileChanged = [];
     window.electronAPI = {
       profiles: {
         onChanged: vi.fn((callback) => {
-          profileChanged = callback;
+          profileChanged.push(callback);
           return vi.fn();
         }),
       },
@@ -1223,7 +2070,11 @@ describe("App hook composition", () => {
     metadataActionsReturn.handleSetReviewState.mockClear();
     metadataActionsReturn.handleRestoreReviewMetadata.mockClear();
 
-    act(() => profileChanged({ profileName: "other-profile" }));
+    act(() => {
+      profileChanged.forEach((callback) =>
+        callback({ profileName: "other-profile" })
+      );
+    });
     const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
     await act(async () => hotkeyOptions.onUndoReview());
 

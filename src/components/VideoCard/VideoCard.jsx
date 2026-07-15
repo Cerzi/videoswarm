@@ -1495,6 +1495,7 @@ const VideoCard = memo(function VideoCard({
       onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
+      tabIndex={-1}
       draggable={canStartNativeDrag}
       data-filename={video.name}
       data-video-id={videoId}

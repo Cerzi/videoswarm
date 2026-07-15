@@ -372,6 +372,40 @@ contextBridge.exposeInMainWorld("electronAPI", {
         directory: payload?.directory ?? "",
         scope: payload?.scope,
       }),
+    sessions: {
+      list: async () => ipcRenderer.invoke("review-sessions:list"),
+      get: async (rootPath) =>
+        ipcRenderer.invoke("review-sessions:get", { rootPath }),
+      save: async (draft = {}) =>
+        ipcRenderer.invoke("review-sessions:save", {
+          rootPath: draft?.rootPath,
+          directory: draft?.directory ?? "",
+          scope: draft?.scope,
+          view: draft?.view,
+          anchorInstanceId: draft?.anchorInstanceId ?? null,
+          anchorFingerprint: draft?.anchorFingerprint ?? null,
+        }),
+      clear: async (rootPath) =>
+        ipcRenderer.invoke("review-sessions:clear", { rootPath }),
+      onFlushRequested: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload = {}) => {
+          const requestId = typeof payload?.requestId === "string"
+            ? payload.requestId
+            : "";
+          if (!requestId) return;
+          callback(Object.freeze({ requestId }));
+        };
+        ipcRenderer.on("review-sessions:flush-requested", handler);
+        return () =>
+          ipcRenderer.removeListener("review-sessions:flush-requested", handler);
+      },
+      acknowledgeFlush: (requestId) => {
+        if (typeof requestId !== "string" || !requestId) return false;
+        ipcRenderer.send("review-sessions:flush-ack", { requestId });
+        return true;
+      },
+    },
   },
 
   recent: {

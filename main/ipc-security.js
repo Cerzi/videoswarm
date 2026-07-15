@@ -128,8 +128,9 @@ function createTrustedIpcRegistrar({ ipcMain, assertTrustedSender, logger = cons
       throw new Error(`IPC handler '${channel}' is already registered`);
     }
 
+    const trustContext = Object.freeze({ channel });
     const wrapped = async (event, ...args) => {
-      const context = assertTrustedSender(event);
+      const context = assertTrustedSender(event, trustContext);
       if (options.maxPayloadBytes !== null) {
         assertPayloadSize(
           args,
@@ -157,9 +158,10 @@ function createTrustedIpcRegistrar({ ipcMain, assertTrustedSender, logger = cons
       throw new TypeError(`IPC listener for '${channel}' must be a function`);
     }
 
+    const trustContext = Object.freeze({ channel });
     const wrapped = async (event, ...args) => {
       try {
-        const context = assertTrustedSender(event);
+        const context = assertTrustedSender(event, trustContext);
         if (options.maxPayloadBytes !== null) {
           assertPayloadSize(
             args,

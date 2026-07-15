@@ -142,6 +142,29 @@ beforeEach(() => {
 });
 
 describe("VideoCard", () => {
+  it("is programmatically focusable without joining the sequential tab order", () => {
+    const video = {
+      id: "focus-target",
+      name: "focus-target.mp4",
+      fullPath: "/clips/focus-target.mp4",
+      size: 100,
+      dateModified: 1,
+      isElectronFile: true,
+    };
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    const card = rendered.container.querySelector(".video-item");
+
+    expect(card).toHaveAttribute("tabindex", "-1");
+    card.focus();
+    expect(card).toHaveFocus();
+  });
+
   it("defers drag-thumbnail work until hover or drag intent", async () => {
     const requestCapture = vi
       .spyOn(thumbService, "requestCapture")

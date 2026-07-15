@@ -183,9 +183,14 @@ describe("useElectronFolderLifecycle", () => {
     );
   });
 
-  it("captures the outgoing view before a native menu folder selection", async () => {
+  it("flushes and captures the outgoing view before a native menu folder selection", async () => {
     let nativeFolderSelected;
-    const beforeExternalFolderSelection = vi.fn();
+    let releasePreOpen;
+    const beforeExternalFolderSelection = vi.fn(
+      () => new Promise((resolve) => {
+        releasePreOpen = resolve;
+      })
+    );
     window.electronAPI.onFolderSelected.mockImplementation((callback) => {
       nativeFolderSelected = callback;
       return vi.fn();
@@ -193,13 +198,20 @@ describe("useElectronFolderLifecycle", () => {
     renderDefaultLifecycle({ beforeExternalFolderSelection });
     await waitFor(() => expect(typeof nativeFolderSelected).toBe("function"));
 
-    await act(async () => {
-      await nativeFolderSelected("/opened-from-menu");
+    let selectionPromise;
+    act(() => {
+      selectionPromise = nativeFolderSelected("/opened-from-menu");
     });
 
     expect(beforeExternalFolderSelection).toHaveBeenCalledWith(
       "/opened-from-menu"
     );
+    expect(window.electronAPI.readDirectory).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releasePreOpen();
+      await selectionPromise;
+    });
     expect(beforeExternalFolderSelection.mock.invocationCallOrder[0]).toBeLessThan(
       window.electronAPI.readDirectory.mock.invocationCallOrder[0]
     );

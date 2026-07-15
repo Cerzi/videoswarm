@@ -1027,6 +1027,10 @@ body {
 
 .video-item.selected { border-color: #007acc; }
 .video-item.error { border-color: #ff4444; }
+.video-item:focus-visible {
+  outline: 3px solid rgba(81, 207, 102, 0.9);
+  outline-offset: 3px;
+}
 
 .video-container {
   width: 100%;

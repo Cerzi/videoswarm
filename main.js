@@ -110,6 +110,10 @@ const {
 const {
   normalizeReviewRestoreSnapshots,
 } = require("./main/review-metadata-restore");
+const {
+  REVIEW_SESSION_FLUSH_ACK_CHANNEL,
+  createReviewSessionFlushCoordinator,
+} = require("./main/review-session-flush");
 
 // Custom schemes must be declared before Electron finishes app readiness.
 registerMediaScheme(protocol);
@@ -273,9 +277,51 @@ let nativeShutdownPromise = null;
 let nativeShutdownComplete = false;
 let profileReconfigurationPending = 0;
 let profileReconfigurationInProgress = false;
+let reviewSessionFlushBarrierDepth = 0;
 const pendingProfilePromptCancellations = new Set();
 const dataLocationPathGrants = new Map();
 const DATA_LOCATION_GRANT_TTL_MS = 5 * 60 * 1000;
+
+function isLiveMainWindowOwner(owner) {
+  return Boolean(
+    owner &&
+    mainWindow &&
+    !mainWindow.isDestroyed?.() &&
+    mainWindow.webContents === owner &&
+    !owner.isDestroyed?.()
+  );
+}
+
+const reviewSessionFlushCoordinator =
+  createReviewSessionFlushCoordinator({
+    sendRequest: (owner, channel, payload) => owner.send(channel, payload),
+    isOwnerActive: isLiveMainWindowOwner,
+  });
+
+async function runReviewSessionFlushBarrier(
+  owner = mainWindow && !mainWindow.isDestroyed?.()
+    ? mainWindow.webContents
+    : null
+) {
+  if (!isLiveMainWindowOwner(owner) || profileReconfigurationInProgress) {
+    return Object.freeze({
+      requested: false,
+      acknowledged: false,
+      reason: profileReconfigurationInProgress
+        ? "profile-reconfiguration-in-progress"
+        : "owner-unavailable",
+    });
+  }
+  reviewSessionFlushBarrierDepth += 1;
+  try {
+    return await reviewSessionFlushCoordinator.request(owner);
+  } finally {
+    reviewSessionFlushBarrierDepth = Math.max(
+      0,
+      reviewSessionFlushBarrierDepth - 1
+    );
+  }
+}
 
 app.on("second-instance", () => {
   if (!ownsSingleInstanceLock) return;
@@ -371,10 +417,28 @@ const validateTrustedSender = createIpcTrustValidator({
   allowedFrameUrls: () => [PACKAGED_RENDERER_URL],
   allowedOrigins: getTrustedDevOrigins,
 });
-const assertTrustedSender = (event) => {
-  if (nativeShutdownPreparing || nativeShutdownRequested) {
+const reviewSessionFlushInboundChannels = new Set([
+  "review-sessions:save",
+  REVIEW_SESSION_FLUSH_ACK_CHANNEL,
+]);
+const assertTrustedSender = (event, trustContext = {}) => {
+  const trusted = validateTrustedSender(event);
+  const flushIpcAllowed =
+    reviewSessionFlushInboundChannels.has(trustContext?.channel) &&
+    reviewSessionFlushCoordinator.isPendingOwner(event.sender);
+  if (nativeShutdownRequested) {
     const error = new Error("Application shutdown is in progress");
     error.code = "APPLICATION_SHUTDOWN_REQUESTED";
+    throw error;
+  }
+  if (
+    (nativeShutdownPreparing || reviewSessionFlushBarrierDepth > 0) &&
+    !flushIpcAllowed
+  ) {
+    const error = new Error("Application lifecycle flush is in progress");
+    error.code = nativeShutdownPreparing
+      ? "APPLICATION_SHUTDOWN_REQUESTED"
+      : "PROFILE_RECONFIGURATION_IN_PROGRESS";
     throw error;
   }
   if (profileReconfigurationInProgress) {
@@ -382,7 +446,7 @@ const assertTrustedSender = (event) => {
     error.code = "PROFILE_RECONFIGURATION_IN_PROGRESS";
     throw error;
   }
-  return validateTrustedSender(event);
+  return trusted;
 };
 const trustedIpc = createTrustedIpcRegistrar({
   ipcMain: rawIpcMain,
@@ -820,6 +884,7 @@ function registerNativeWorkOwner(sender) {
 
 function invalidateNativeWorkOwner(sender) {
   if (!sender) return false;
+  reviewSessionFlushCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
@@ -843,6 +908,7 @@ function activateNativeWorkOwner(sender) {
 
 function disposeNativeWorkOwner(sender) {
   if (!sender) return false;
+  reviewSessionFlushCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
@@ -1736,6 +1802,11 @@ async function reconfigureForProfile(profileId, { broadcast = true } = {}) {
     throw new Error(`Profile '${requestedProfileId || profileId}' does not exist`);
   }
 
+  await runReviewSessionFlushBarrier();
+  if (nativeShutdownPreparing || nativeShutdownRequested) {
+    throw new ApplicationShutdownRequestedError();
+  }
+
   return runSerializedProfileOperation(() =>
     performProfileReconfiguration(requestedProfileId, broadcast)
   );
@@ -1784,6 +1855,10 @@ async function deleteProfileWithTransition(profileId, { broadcast = true } = {})
     typeof profileId === "string" ? profileId.trim() : "";
   if (!requestedProfileId) {
     throw new Error("Profile id must be provided");
+  }
+
+  if (requestedProfileId === getActiveProfileId()) {
+    await runReviewSessionFlushBarrier();
   }
 
   return runSerializedProfileOperation(async () => {
@@ -2030,6 +2105,23 @@ async function createWindow() {
   };
   createdWindow.on("moved", saveCreatedWindowBounds);
   createdWindow.on("resized", saveCreatedWindowBounds);
+  let closeApprovedAfterReviewFlush = false;
+  let closeReviewFlushPromise = null;
+  const holdCloseForReviewSessionFlush = (event) => {
+    if (closeApprovedAfterReviewFlush || nativeShutdownComplete) return;
+    event.preventDefault();
+    if (nativeShutdownPreparing || nativeShutdownRequested) return;
+    if (closeReviewFlushPromise) return;
+    closeReviewFlushPromise = runReviewSessionFlushBarrier(createdWebContents)
+      .catch((error) => {
+        console.warn("[review-sessions] Window-close flush failed", error);
+      })
+      .finally(() => {
+        closeApprovedAfterReviewFlush = true;
+        if (!createdWindow.isDestroyed()) createdWindow.close();
+      });
+  };
+  createdWindow.on("close", holdCloseForReviewSessionFlush);
   createdWindow.once("closed", () => {
     const closingWatcherRoot =
       activeWatcherContext?.ownerWebContentsId === createdWebContents.id
@@ -2052,6 +2144,7 @@ async function createWindow() {
       "will-redirect",
       preventUntrustedNavigation
     );
+    createdWindow.removeListener("close", holdCloseForReviewSessionFlush);
     if (disposeMainWindowActivity === createdWindowActivityDisposer) {
       createdWindowActivityDisposer?.();
       disposeMainWindowActivity = null;
@@ -3804,6 +3897,16 @@ function normalizeLibraryIpcRootPath(payload) {
   return path.resolve(candidate.trim());
 }
 
+function normalizeReviewSessionIpcRootPath(payload) {
+  const candidate = typeof payload === "string" ? payload : payload?.rootPath;
+  return path.resolve(assertString(candidate, {
+    name: "review session root path",
+    minChars: 1,
+    maxChars: IPC_LIMITS.maxPathChars,
+    trim: true,
+  }));
+}
+
 function runMetadataContextOperation(
   operation,
   defaultErrorCode = "PROFILE_OPERATION_ERROR"
@@ -3961,6 +4064,74 @@ ipcMain.handle("review:export-manifest", async (event, payload = {}) => {
     scope,
   });
 });
+
+ipcMain.handle("review-sessions:list", async () =>
+  runMetadataContextOperation((metadataStore, context) => ({
+    sessions: metadataStore.listReviewCheckpoints({
+      assertActive: () => assertMetadataContextActive(context),
+    }),
+  }), "REVIEW_SESSION_LIST_ERROR")
+);
+
+ipcMain.handle("review-sessions:get", async (_event, payload = {}) =>
+  runMetadataContextOperation((metadataStore, context) => {
+    assertPlainObject(payload, "review session request");
+    const rootPath = normalizeReviewSessionIpcRootPath(payload);
+    return {
+      checkpoint: metadataStore.getReviewCheckpoint(rootPath, {
+        assertActive: () => assertMetadataContextActive(context),
+      }),
+    };
+  }, "REVIEW_SESSION_GET_ERROR")
+);
+
+ipcMain.handle(
+  "review-sessions:save",
+  async (_event, payload = {}) =>
+    runMetadataContextOperation((metadataStore, context) => {
+      assertPlainObject(payload, "review session draft");
+      const rootPath = normalizeReviewSessionIpcRootPath(payload);
+      return {
+        checkpoint: metadataStore.saveReviewCheckpoint(
+          { ...payload, rootPath },
+          { assertActive: () => assertMetadataContextActive(context) }
+        ),
+      };
+    }, "REVIEW_SESSION_SAVE_ERROR"),
+  { maxPayloadBytes: 384 * 1024 }
+);
+
+ipcMain.handle("review-sessions:clear", async (_event, payload = {}) =>
+  runMetadataContextOperation((metadataStore, context) => {
+    assertPlainObject(payload, "review session clear request");
+    const rootPath = normalizeReviewSessionIpcRootPath(payload);
+    return {
+      deleted: metadataStore.clearReviewCheckpoint(rootPath, {
+        assertActive: () => assertMetadataContextActive(context),
+      }),
+    };
+  }, "REVIEW_SESSION_CLEAR_ERROR")
+);
+
+ipcMain.on(
+  REVIEW_SESSION_FLUSH_ACK_CHANNEL,
+  (event, payload = {}) => {
+    assertPlainObject(payload, "review session flush acknowledgement");
+    if (
+      Object.keys(payload).length !== 1 ||
+      !Object.prototype.hasOwnProperty.call(payload, "requestId")
+    ) {
+      throw new TypeError("Review session flush acknowledgement is invalid");
+    }
+    const requestId = assertString(payload.requestId, {
+      name: "review session flush request id",
+      minChars: 1,
+      maxChars: 256,
+    });
+    reviewSessionFlushCoordinator.acknowledge(event.sender, requestId);
+  },
+  { maxPayloadBytes: 4096 }
+);
 
 ipcMain.handle("library:set-pinned", async (_event, payload = {}) =>
   runLibraryCatalogOperation((metadataStore) => {
@@ -4512,6 +4683,10 @@ async function settleShutdownTasks(phase, tasks) {
 }
 
 async function performNativeShutdown() {
+  // The renderer owns only the latest debounced plain-data checkpoint draft.
+  // Give it one bounded opportunity to persist through the still-current
+  // profile/store before any native owner or generation is invalidated.
+  await runReviewSessionFlushBarrier();
   // Mark scans interrupted while their old profile generation is still valid,
   // then stop every filesystem producer before the durable flush boundary.
   trashAdmissionOpen = false;
@@ -4566,6 +4741,7 @@ async function performNativeShutdown() {
   });
   mediaProtocolService.dispose();
   trashConfirmationStore.dispose();
+  reviewSessionFlushCoordinator.close();
   dataLocationPathGrants.clear();
   pathAuthority.dispose();
   trustedIpc.dispose();
