@@ -57,4 +57,34 @@ describe('profile-owned synchronous operations', () => {
       error: 'Profile configuration is changing',
     });
   });
+
+  it('discards a synchronous result invalidated immediately after the store call', () => {
+    let active = true;
+    const invalidated = Object.assign(new Error('Generation changed'), {
+      code: 'DIRECTORY_SCAN_CANCELLED',
+    });
+
+    const result = runProfileOwnedOperation({
+      captureContext: () => ({
+        profileId: 'profile-a',
+        generation: 7,
+        metadataStore: { value: 42 },
+      }),
+      assertContextActive: () => {
+        if (!active) throw invalidated;
+      },
+      operation: (store) => {
+        active = false;
+        return { value: store.value };
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      profileId: 'profile-a',
+      generation: 7,
+      code: 'DIRECTORY_SCAN_CANCELLED',
+    });
+    expect(result).not.toHaveProperty('value');
+  });
 });

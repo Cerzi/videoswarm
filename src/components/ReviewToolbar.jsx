@@ -1,6 +1,7 @@
 import React from "react";
 import { REVIEW_PRIMARY_KEY_BY_STATE } from "../hotkeys/shortcutCatalog";
 import { REVIEW_STATES } from "../review/reviewState";
+import ReviewSessionControls from "./ReviewSessionControls";
 import "./ReviewToolbar.css";
 
 const formatCount = (value) =>
@@ -21,13 +22,21 @@ export default function ReviewToolbar({
   isBusy = false,
   canProcessResults = true,
   processResultsReason = "",
+  session = null,
   onSetReviewState,
   onAutoAdvanceChange,
   onUndo,
   onProcessResults,
+  onStartSession,
+  onContinueSession,
+  onMoveSession,
+  onForgetSession,
+  onReviewAllUnreviewed,
+  onShowReviewTarget,
+  onIndexSubfolders,
 }) {
   const total = Math.max(0, Number(progress.total) || 0);
-  if (total === 0) return null;
+  if (total === 0 && !session) return null;
 
   const reviewedTotal = Math.min(
     total,
@@ -39,35 +48,51 @@ export default function ReviewToolbar({
   return (
     <section className="review-toolbar" aria-label="Review workflow">
       <div className="review-toolbar__scroller">
-        <div
-          className="review-toolbar__progress"
-          role="progressbar"
-          aria-label="Review progress"
-          aria-valuemin={0}
-          aria-valuemax={total}
-          aria-valuenow={reviewedTotal}
-          aria-valuetext={`${formatCount(reviewedTotal)} of ${formatCount(total)} reviewed`}
-        >
-          <span className="review-toolbar__progress-copy" aria-live="polite">
-            <span>Reviewed</span>
-            <strong>{formatCount(reviewedTotal)}</strong>
-            <span className="review-toolbar__progress-total">/ {formatCount(total)}</span>
-          </span>
-          <span className="review-toolbar__progress-track" aria-hidden="true">
-            <span style={{ width: `${percentage}%` }} />
-          </span>
-        </div>
+        {session ? (
+          <ReviewSessionControls
+            session={session}
+            disabled={isBusy || Boolean(session.disabled)}
+            onStart={onStartSession}
+            onContinue={onContinueSession}
+            onMove={onMoveSession}
+            onForget={onForgetSession}
+            onReviewAllUnreviewed={onReviewAllUnreviewed}
+            onShowTarget={onShowReviewTarget}
+            onIndexSubfolders={onIndexSubfolders}
+          />
+        ) : null}
 
-        <div className="review-toolbar__counts" aria-label="Review result counts">
+        {total > 0 ? (
+          <div
+            className="review-toolbar__progress"
+            role="progressbar"
+            aria-label="Review progress"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={reviewedTotal}
+            aria-valuetext={`${formatCount(reviewedTotal)} of ${formatCount(total)} reviewed`}
+          >
+            <span className="review-toolbar__progress-copy" aria-live="polite">
+              <span>Reviewed</span>
+              <strong>{formatCount(reviewedTotal)}</strong>
+              <span className="review-toolbar__progress-total">/ {formatCount(total)}</span>
+            </span>
+            <span className="review-toolbar__progress-track" aria-hidden="true">
+              <span style={{ width: `${percentage}%` }} />
+            </span>
+          </div>
+        ) : null}
+
+        {total > 0 ? <div className="review-toolbar__counts" aria-label="Review result counts">
           <span className="review-toolbar__count review-toolbar__count--accept">
             Accept <strong>{formatCount(progress.accept)}</strong>
           </span>
           <span className="review-toolbar__count review-toolbar__count--reject">
             Reject <strong>{formatCount(progress.reject)}</strong>
           </span>
-        </div>
+        </div> : null}
 
-        <div className="review-toolbar__actions" role="group" aria-label="Classify selection">
+        {total > 0 ? <div className="review-toolbar__actions" role="group" aria-label="Classify selection">
           {REVIEW_ACTIONS.map(({ state, label, icon }) => {
             const key = REVIEW_PRIMARY_KEY_BY_STATE[state];
             const resetHint = state === REVIEW_STATES.UNREVIEWED
@@ -88,9 +113,9 @@ export default function ReviewToolbar({
               </button>
             );
           })}
-        </div>
+        </div> : null}
 
-        <label className="review-toolbar__advance">
+        {total > 0 ? <label className="review-toolbar__advance">
           <input
             type="checkbox"
             checked={autoAdvance}
@@ -98,9 +123,9 @@ export default function ReviewToolbar({
             onChange={(event) => onAutoAdvanceChange?.(event.target.checked)}
           />
           <span>Advance after marking</span>
-        </label>
+        </label> : null}
 
-        <button
+        {total > 0 ? <button
           type="button"
           className="review-toolbar__utility"
           disabled={isBusy || !canUndo}
@@ -108,9 +133,9 @@ export default function ReviewToolbar({
           title="Undo the last review or rating change (Z)"
         >
           Undo <kbd>Z</kbd>
-        </button>
+        </button> : null}
 
-        <button
+        {total > 0 ? <button
           type="button"
           className="review-toolbar__process"
           disabled={isBusy || !canProcessResults}
@@ -122,7 +147,7 @@ export default function ReviewToolbar({
           }
         >
           Process results
-        </button>
+        </button> : null}
       </div>
     </section>
   );

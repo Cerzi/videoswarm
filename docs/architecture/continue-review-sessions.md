@@ -1,23 +1,25 @@
 # Persistent Continue Review Sessions
 
-Status: **Approved design; implementation unimplemented**
-Last updated: 2026-07-14
+Status: **Implemented and verified** (2026-07-15)
+Last updated: 2026-07-15
 
 ## Summary
 
-Video Swarm should remember a lightweight review cursor for each indexed root
+Video Swarm remembers a lightweight review cursor for each indexed root
 inside the active profile. A user can leave a large collection, restart the
 application, and continue from the next Unreviewed clip in the same folder
-scope and visual order without retaining videos, renderer state, or decoded
-media in memory.
+scope and visual order without retaining video collections, DOM/media
+elements, thumbnails, or decoded playback state in memory. The renderer keeps
+only the bounded checkpoint summaries and current plain-data draft needed for
+the workflow.
 
 This is a checkpoint, not a second review database. Review state, ratings, and
 tags remain content-keyed metadata. The checkpoint stores only where and how a
 review pass was being viewed. One checkpoint is retained per root, with at
 most 128 checkpoints per profile.
 
-Every code and test item described below is **Unimplemented**. This document
-is the decision-complete implementation contract.
+The implementation and its shared verification gate are complete. This
+document is now the architecture, behavior, and verification record for v1.
 
 ## Goals
 
@@ -227,12 +229,14 @@ While a root has a checkpoint:
 - Successful review/rating changes and successful undo save immediately after
   the metadata result is applied. Undo or Reset to Unreviewed anchors the now
   Unreviewed item so resume returns to it rather than skipping it.
-- Changes to selection, directory, folder scope, filters, grouping, or sort
-  coalesce through one 400 ms trailing debounce. Scroll and playback changes
-  never schedule a save.
-- Before an in-profile root or directory ownership change, flush the latest
-  valid checkpoint once. After a directory/scope transition, save the new
-  location once it exists in the active catalog.
+- While the saved root/directory/scope remains engaged, changes to selection,
+  filters, grouping, or sort coalesce through one 400 ms trailing debounce.
+  Scroll and playback changes never schedule a save.
+- Explicit root, folder, and scope navigation flushes the engaged old
+  location's latest valid draft before leaving it. The newly opened location
+  remains passive and does not replace the saved position until an explicit
+  **Start review here**, **Move saved review position here…**, or **Continue
+  saved** action engages a location again.
 - Keep at most one save in flight. If state changes during that save, retain
   only the newest draft and issue one trailing save; do not build an unbounded
   promise queue.
@@ -248,8 +252,9 @@ also baselines the save signature after restoring state, so applying the saved
 view or falling back from a missing directory does not immediately rewrite the
 checkpoint.
 
-The renderer owns only the current plain-data draft. It does not retain prior
-video arrays or card references to support persistence.
+The renderer owns only the bounded checkpoint summaries and current plain-data
+draft. It does not retain prior video arrays or card references to support
+persistence.
 
 ### Clearing and completion
 
@@ -425,20 +430,64 @@ it follows the toolbar's existing horizontal-overflow behavior.
   not retain an inactive root.
 - The 400 ms coalescer allows at most one active and one trailing write. No
   interval polling is added.
-- Checkpoint loading must not delay request-to-cached-first-grid on a warm root
-  by more than 25 ms at the p95 in the 6,000-clip harness, excluding filesystem
-  refresh time.
+- The bounded renderer-bridge/IPC/SQLite checkpoint read performed after app
+  launch and before a warm-root request must stay below 25 ms at the p95 in the
+  6,000-clip harness, excluding filesystem refresh time.
 - Switching away must leave no additional media elements, React card trees,
   decoder slots, thumbnails, or unbounded video arrays alive because of a
   checkpoint.
+
+### Implementation benchmark
+
+The implementation worktree passed the five-trial hardware gate on
+2026-07-15 BST. The host ran Linux 6.17.0-35-generic on an Intel i9-13900K
+with 32 logical CPUs and 128,570 MiB RAM. The recursive 1,000- and 6,000-clip
+fixtures were measured cold, warm in one process, and after restart:
+
+| Root | Scenario | First grid median | Authoritative refresh median | First-grid speedup | Checkpoint list + get p95 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1,000 | Cold | 229.3 ms | 332.1 ms | baseline | — |
+| 1,000 | Warm | 25.0 ms | 144.7 ms | 9.17× | 2.9 ms |
+| 1,000 | Restart | 69.1 ms | 236.5 ms | 3.32× | 2.3 ms |
+| 6,000 | Cold | 220.5 ms | 1,330.2 ms | baseline | — |
+| 6,000 | Warm | 19.8 ms | 875.8 ms | 11.14× | 0.8 ms |
+| 6,000 | Restart | 71.0 ms | 936.9 ms | 3.11× | 1.8 ms |
+
+All 20 cached trials produced the bounded 128-record first grid before the
+authoritative refresh, and all 30 openings finished with the exact disk count
+and stable relative-path digest for their root. Every checkpoint pre-open and
+post-switch sample reported zero inactive-root cards, masonry slots,
+selections, media elements, loaded media, and playing media. Active maxima
+were 18 cards/slots, 16 media elements, and 9 playing elements. Same-process
+cleanup growth also remained inside the existing 64 MiB heap and 256 MiB
+working-set budgets.
+
+The exact command used was:
+
+```sh
+npm run profile:folder-revisit -- \
+  --folder-1000 /tmp/videoswarm-revisit-smoke-1000 \
+  --folder-6000 /tmp/videoswarm-revisit-smoke-6000 \
+  --trials 5 \
+  --output /tmp/videoswarm-continue-review-revisit.json
+```
+
+The checkpoint figure is the controlled sequential renderer-bridge/IPC/SQLite
+`list()` plus `get()` read after app launch. It does not measure preload
+startup, total Continue-button-to-selection latency, or a worst-case
+128-summary population. The hardware sampler observes DOM cards, masonry
+slots, and media readiness/playback; focused bounded-resource tests cover queue
+shape and plain-data retention that the sampler cannot see. The raw report
+remains outside the repository because benchmark outputs are generated
+artifacts.
 
 ## Accessibility
 
 - Start/Continue buttons include the root or scope name and remaining count in
   their accessible name; visible text stays compact.
 - Session state, provisional refresh, restored candidate, fallback directory,
-  and completion use a polite live region. Errors use the existing assertive
-  toast behavior.
+  and completion use a polite live region. Error toasts expose an assertive
+  `alert`; informational toasts expose a polite `status`.
 - Do not communicate active/completed state by color alone. Preserve visible
   focus rings and a minimum 32 px desktop hit target.
 - The confirmation for **Forget saved position** returns focus to its invoking
@@ -449,54 +498,90 @@ it follows the toolbar's existing horizontal-overflow behavior.
 - Any future shortcut must be added to `src/hotkeys/shortcutCatalog.js`; v1 adds
   no new shortcut.
 
-## Verification plan
+## Verification record
 
-All verification below is **Unimplemented**.
+The shared verification gate completed on 2026-07-15. Coverage is layered:
+pure resolver tests exercised ordering and stale-anchor cases, renderer tests
+exercised ownership and UI orchestration, Electron-ABI tests exercised real
+SQLite, and the production Electron smoke exercised close/restart/resume. This
+record does not imply that every resolver branch or restored-view permutation
+has a dedicated App-level or Electron scenario; supplementary test-depth gaps
+are called out below.
 
 ### Database and IPC
 
-- Additive schema creation on new and existing profile databases.
-- Upsert/get/list/clear behavior, deterministic 129th-row eviction, root
-  cascade, malformed JSON tolerance, and the 8 KiB definition bound.
-- Root/directory containment, scope/view allowlists, anchor ownership and
-  instance/fingerprint mismatch rejection.
-- Profile isolation across two databases and generation invalidation during
-  save/get.
-- Owner-scoped flush acknowledgement, wrong/late token rejection, the 750 ms
-  timeout, and flush-before-window-close/profile-invalidation/shutdown ordering.
-- Preload static-contract tests for all four invoke operations plus the flush
-  listener/acknowledgement channels and payload shapes.
+- Tests verified additive schema creation on new and existing profile
+  databases.
+- Tests covered upsert/get/list/clear behavior, deterministic 129th-row
+  eviction, root cascade, malformed JSON tolerance, and the 8 KiB definition
+  bound.
+- Validation tests covered root/directory containment, scope/view allowlists,
+  anchor ownership, and instance/fingerprint mismatch rejection.
+- Real-database tests verified profile isolation across two databases and
+  generation invalidation during save/get.
+- Coordinator tests verified owner-scoped flush acknowledgement, wrong/late
+  token rejection, the 750 ms timeout, and flush-before-window-close,
+  profile-invalidation, and shutdown ordering.
+- Preload static-contract tests covered all four invoke operations plus the
+  flush listener/acknowledgement channels and payload shapes.
 
 ### Renderer logic
 
-- Automatic and explicit start, 400 ms coalescing, single-flight/trailing save,
-  ownership engagement, shutdown flush/timeout, cancellation, failure, Undo,
-  and clear behavior.
-- Exact anchor, missing instance, fingerprint fallback, replaced file, anchor
-  still Unreviewed, after-anchor, one-wrap, no-candidate, and no-anchor cases.
-- Duplicate fingerprints and multi-selection anchor selection.
-- Folder scope, filters, name/created/random ordering, stable random seed,
-  changed filters, missing-directory fallback, and recursive-coverage guards.
-- Cached provisional selection followed by authoritative keep, replacement, or
-  completion without duplicate focus/announcement.
-- Render-capped candidates remain logically selected, expose Show review
-  target, and are not announced as restored until they can mount.
+- Hook and App tests covered automatic and explicit start, 400 ms coalescing,
+  single-flight/trailing save, ownership engagement, shutdown flush/timeout,
+  cancellation, failure, Undo, and clear behavior.
+- Pure resolver tests covered exact anchors, missing instances, fingerprint
+  fallback, replaced files, still-Unreviewed anchors, after-anchor search,
+  one-wrap search, no-candidate, and no-anchor cases.
+- Resolver and workflow tests covered duplicate fingerprints and
+  multi-selection anchor selection.
+- Validation and resolver tests covered folder scope, filters,
+  name/created/random ordering, stable random seeds, changed filters,
+  missing-directory fallback, and recursive-coverage guards. Dedicated
+  App-level Continue tests do not yet drive every non-default restored
+  scope/filter/sort combination.
+- Layered cached-hydration tests established the bounded first-grid and
+  authoritative-refresh gates, while the production smoke covered one cached
+  restart/resume path. Dedicated App-level scenarios do not yet force every
+  authoritative keep, replacement, completion, or duplicate
+  focus/announcement permutation.
+- Pure render-step and component tests covered the render-cap calculation and
+  **Show review target** state. A dedicated App-level scenario for the complete
+  mount/focus sequence remains supplementary regression-test depth.
 
 ### UX, integration, and performance
 
-- Sidebar root counts and Start/Continue/complete states, toolbar states,
-  overwrite/forget confirmations, accessible names, focus return, live-region
-  messages, and reduced motion.
-- Electron smoke: review a clip, close the app, reopen the same profile,
-  Continue, and verify the next Unreviewed instance; repeat after a profile
-  switch and with a stale removed anchor.
-- Confirm a completed checkpoint becomes actionable after a new file is
-  indexed.
-- Extend the 1,000/6,000-clip harness to verify cached first grid precedes
-  authoritative refresh, checkpoint overhead meets the 25 ms p95 bound, and
-  inactive roots retain no checkpoint-induced renderer/media resources.
-- Run focused tests, `npm test -- --run`, Electron database tests, and
-  `npm run vite:build` before marking any implementation row complete.
+- Component and App tests covered sidebar root counts and
+  Start/Continue/complete states, toolbar states, overwrite/forget
+  confirmations, accessible labels, and status messages.
+- The Electron smoke reviewed a clip, left its newest cursor inside the
+  debounce, closed the app, reopened the same profile, continued, and verified
+  that the cursor was flushed and restored from the cached first grid.
+- Profile isolation and epoch invalidation were covered across two real SQLite
+  databases and the renderer session hook. Resolver, ownership, and cascade
+  tests covered stale/replaced anchors and removed roots. Separate
+  profile-switch and removed-anchor Electron variants remain future smoke
+  depth; they are not open or unimplemented v1 behavior.
+- An App test confirmed that a completed checkpoint becomes actionable after a
+  new file is indexed.
+- The 1,000/6,000-clip harness verified that the cached first grid preceded
+  authoritative refresh, checkpoint overhead met the 25 ms p95 bound, and
+  inactive roots retained no checkpoint-induced renderer/media resources.
+- The focused suites, full Vitest suite, Electron database suites, and
+  `npm run vite:build` were run before the implementation rows were marked
+  complete.
+
+### Verification results
+
+| Gate | Result |
+| --- | --- |
+| Focused Continue Review renderer/native/performance tests | **Passed** — 231 tests |
+| Full Vitest suite | **Passed** — 889 passed, 18 Electron-ABI SQLite cases skipped in the Node run and exercised separately under Electron |
+| Electron-ABI SQLite suite | **Passed** — 43 tests |
+| Production Electron smoke | **Passed** — baseline lifecycle plus review/close/restart/resume |
+| 1,000/6,000 five-trial hardware gate | **Passed** — see Implementation benchmark |
+| Renderer production build | **Passed** — 123 modules transformed |
+| ESLint, Node syntax checks, and `git diff --check` | **Passed** |
 
 ## Rollout and migration
 
@@ -515,19 +600,20 @@ catalog.
 
 | Slice | Status |
 | --- | --- |
-| SQLite schema, validation, bound, and store methods | **Unimplemented** |
-| Main-process handlers and preload bridge | **Unimplemented** |
-| Renderer session persistence and resume resolver | **Unimplemented** |
-| Sidebar and review-toolbar UX | **Unimplemented** |
-| Accessibility, focused tests, Electron smoke, and performance gate | **Unimplemented** |
+| SQLite schema, validation, bound, and store methods | **Implemented** (2026-07-15) |
+| Main-process handlers and preload bridge | **Implemented** (2026-07-15) |
+| Renderer session persistence and resume resolver | **Implemented** (2026-07-15) |
+| Sidebar and review-toolbar UX | **Implemented** (2026-07-15) |
+| Accessibility, focused tests, Electron smoke, and performance gate | **Implemented** (2026-07-15) |
 
-No slice may be marked Implemented until its focused tests and the shared
-completion gate pass.
+All slices passed their applicable focused or layered tests and the shared
+completion gate before being marked Implemented. The additional App-level and
+Electron permutations identified above are future regression-test depth, not
+unimplemented v1 behavior.
 
 ## Subsequent product order
 
-After Continue Review is verified and committed, product work proceeds in this
-order:
+With Continue Review verified, subsequent product work proceeds in this order:
 
 1. **Export Accepted:** copy-first export with destination selection,
    relative-tree preservation, optional recognized sidecars, manifest,

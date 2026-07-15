@@ -4,6 +4,7 @@ import budget from "./folder-revisit-budget.cjs";
 const {
   evaluateFolderRevisitReport,
   median,
+  percentile,
   summarizeDataset,
 } = budget;
 
@@ -16,6 +17,7 @@ function trial({
   workingSetMB = 500,
   activeResources = {},
   cleanupResources = {},
+  reviewCheckpoint = {},
 } = {}) {
   return {
     timings: {
@@ -47,8 +49,11 @@ function trial({
     cleanupResources: {
       collectionCount: 1,
       inactiveRootCards: 0,
+      inactiveRootSelectedCards: 0,
       inactiveRootMasonrySlots: 0,
       inactiveRootMediaElements: 0,
+      inactiveRootLoadedMediaElements: 0,
+      inactiveRootPlayingMediaElements: 0,
       mountedCards: 1,
       masonrySlots: 1,
       mediaElements: 1,
@@ -56,6 +61,28 @@ function trial({
       workingSetMB,
       ...cleanupResources,
     },
+    reviewCheckpoint: cached
+      ? {
+          verified: true,
+          summaryCount: 1,
+          summaryObserved: true,
+          checkpointObserved: true,
+          readTimings: {
+            listMs: 2,
+            getMs: 2,
+            totalMs: 4,
+          },
+          inactiveResources: {
+            inactiveRootCards: 0,
+            inactiveRootSelectedCards: 0,
+            inactiveRootMasonrySlots: 0,
+            inactiveRootMediaElements: 0,
+            inactiveRootLoadedMediaElements: 0,
+            inactiveRootPlayingMediaElements: 0,
+          },
+          ...reviewCheckpoint,
+        }
+      : null,
   };
 }
 
@@ -71,15 +98,15 @@ function scenario(values, options = {}) {
   );
 }
 
-function passingDataset() {
+function passingDataset(count = 1000) {
   const dataset = {
-    label: "1000 clips",
-    declaredCount: 1000,
-    diskFileCount: 1000,
+    label: `${count} clips`,
+    declaredCount: count,
+    diskFileCount: count,
     scenarios: {
-      cold: scenario([220, 200, 240, 210, 230]),
-      warm: scenario([80, 90, 85, 75, 82], { cached: true }),
-      restart: scenario([95, 100, 90, 92, 94], { cached: true }),
+      cold: scenario([220, 200, 240, 210, 230], { count }),
+      warm: scenario([80, 90, 85, 75, 82], { cached: true, count }),
+      restart: scenario([95, 100, 90, 92, 94], { cached: true, count }),
     },
   };
   dataset.scenarios.cold.forEach((entry, index) => {
@@ -100,6 +127,8 @@ describe("folder revisit benchmark evaluation", () => {
     expect(median([8, 2, 4, 6])).toBe(5);
     expect(median([null, undefined, 6])).toBe(6);
     expect(median([])).toBeNull();
+    expect(percentile([9, 1, 5, 3, 7], 0.95)).toBe(9);
+    expect(percentile([9, 1, 5, 3, 7], 0.5)).toBe(5);
   });
 
   it("summarizes cached speedup and refresh completion independently", () => {
@@ -108,6 +137,12 @@ describe("folder revisit benchmark evaluation", () => {
     expect(summary.scenarios.warm.refreshCompleteMedianMs).toBe(328);
     expect(summary.scenarios.warm.cachedPreviewMedianMs).toBe(42);
     expect(summary.scenarios.warm.cachedPreviewToGridMedianMs).toBe(40);
+    expect(summary.scenarios.warm.reviewCheckpointRead).toMatchObject({
+      verifiedTrials: 5,
+      listP95Ms: 2,
+      getP95Ms: 2,
+      totalP95Ms: 4,
+    });
     expect(summary.firstGridSpeedup.warm).toBeCloseTo(220 / 82);
     expect(summary.firstGridSpeedup.restart).toBeCloseTo(220 / 94);
   });
@@ -234,6 +269,7 @@ describe("folder revisit benchmark evaluation", () => {
   it("rejects retained inactive resources and same-process memory growth", () => {
     const dataset = passingDataset();
     dataset.scenarios.warm[2].cleanupResources.inactiveRootCards = 1;
+    dataset.scenarios.warm[1].cleanupResources.inactiveRootLoadedMediaElements = 1;
     dataset.scenarios.warm[3].activeResources.mediaElements = 300;
     dataset.scenarios.warm[4].cleanupResources.heapUsedMB = 200;
     dataset.scenarios.warm[4].cleanupResources.workingSetMB = 900;
@@ -242,10 +278,74 @@ describe("folder revisit benchmark evaluation", () => {
     expect(metrics).toEqual(
       expect.arrayContaining([
         "trials[2].cleanupResources.inactiveRootCards",
+        "trials[1].cleanupResources.inactiveRootLoadedMediaElements",
         "trials[3].activeResources.mediaElements",
         "cleanupHeapGrowthMB",
         "cleanupWorkingSetGrowthMB",
       ])
+    );
+  });
+
+  it("requires cached preview, first grid, and authoritative refresh ordering", () => {
+    const dataset = passingDataset();
+    dataset.scenarios.warm[0].timings.refreshCompleteMs =
+      dataset.scenarios.warm[0].timings.firstGridMs;
+    dataset.scenarios.restart[0].timings.cachedPreviewMs =
+      dataset.scenarios.restart[0].timings.firstGridMs + 1;
+
+    const metrics = evaluateFolderRevisitReport({ datasets: [dataset] })
+      .failures.map((failure) => failure.metric);
+    expect(metrics).toEqual(
+      expect.arrayContaining([
+        "trials[0].timings.cachedFirstGridBeforeRefresh",
+        "trials[0].timings.cachedPreviewBeforeFirstGrid",
+      ])
+    );
+  });
+
+  it("requires checkpoint evidence without retaining inactive UI or decoders", () => {
+    const dataset = passingDataset();
+    dataset.scenarios.warm[0].reviewCheckpoint = null;
+    dataset.scenarios.warm[2].reviewCheckpoint.summaryCount = 129;
+    dataset.scenarios.restart[1].reviewCheckpoint.inactiveResources
+      .inactiveRootLoadedMediaElements = 1;
+
+    const metrics = evaluateFolderRevisitReport({ datasets: [dataset] })
+      .failures.map((failure) => failure.metric);
+    expect(metrics).toEqual(
+      expect.arrayContaining([
+        "trials[0].reviewCheckpoint.evidence",
+        "trials[0].reviewCheckpoint.readTimings.totalMs",
+        "trials[2].reviewCheckpoint.summaryCount",
+        "trials[1].reviewCheckpoint.inactiveResources.inactiveRootLoadedMediaElements",
+      ])
+    );
+  });
+
+  it("enforces a 25 ms checkpoint list/get p95 for the 6,000-clip class", () => {
+    const dataset = passingDataset(6000);
+    [8, 11, 14, 19, 25].forEach((totalMs, index) => {
+      dataset.scenarios.warm[index].reviewCheckpoint.readTimings.totalMs =
+        totalMs;
+      dataset.scenarios.restart[index].reviewCheckpoint.readTimings.totalMs =
+        totalMs;
+    });
+    let evaluation = evaluateFolderRevisitReport({ datasets: [dataset] });
+    expect(evaluation.passed).toBe(true);
+    expect(
+      evaluation.summary.datasets[0].scenarios.warm.reviewCheckpointRead
+        .totalP95Ms
+    ).toBe(25);
+
+    dataset.scenarios.warm[4].reviewCheckpoint.readTimings.totalMs = 25.01;
+    evaluation = evaluateFolderRevisitReport({ datasets: [dataset] });
+    expect(evaluation.failures).toContainEqual(
+      expect.objectContaining({
+        scenario: "warm",
+        metric: "reviewCheckpointRead.totalP95Ms",
+        actual: 25.01,
+        limit: 25,
+      })
     );
   });
 });

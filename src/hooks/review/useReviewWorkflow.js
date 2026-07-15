@@ -80,6 +80,47 @@ const makeFingerprintMap = (videos) => {
   return byFingerprint;
 };
 
+const asPositiveSafeInteger = (value) => {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+};
+
+const plainMutationAnchor = (video, fallbackFingerprint = null) => ({
+  id: video?.id ?? null,
+  instanceId: asPositiveSafeInteger(video?.instanceId),
+  fingerprint: typeof video?.fingerprint === "string" && video.fingerprint
+    ? video.fingerprint
+    : fallbackFingerprint,
+});
+
+const resolveMutationAnchor = ({
+  anchorId,
+  fingerprints,
+  orderedVideoIds,
+  videosById,
+}) => {
+  const targetSet = new Set(fingerprints);
+  if (anchorId != null) {
+    const explicit = videosById.get(anchorId);
+    if (explicit?.fingerprint && targetSet.has(explicit.fingerprint)) {
+      return plainMutationAnchor(explicit);
+    }
+  }
+
+  const order = Array.isArray(orderedVideoIds) ? orderedVideoIds : [];
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const candidate = videosById.get(order[index]);
+    if (candidate?.fingerprint && targetSet.has(candidate.fingerprint)) {
+      return plainMutationAnchor(candidate);
+    }
+  }
+
+  const fallbackFingerprint = fingerprints.at(-1) || null;
+  return fallbackFingerprint
+    ? plainMutationAnchor(null, fallbackFingerprint)
+    : null;
+};
+
 const hasOwn = (value, key) =>
   Object.prototype.hasOwnProperty.call(value || {}, key);
 
@@ -104,6 +145,7 @@ export default function useReviewWorkflow({
   restoreReviewMetadata,
   autoAdvance = false,
   notify,
+  onMutationCommitted,
 } = {}) {
   const [isBusy, setIsBusy] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
@@ -131,6 +173,7 @@ export default function useReviewWorkflow({
     restoreReviewMetadata,
     autoAdvance,
     notify,
+    onMutationCommitted,
   };
 
   useEffect(() => {
@@ -277,12 +320,26 @@ export default function useReviewWorkflow({
     }
   }, []);
 
+  const emitMutationCommitted = useCallback((payload) => {
+    const callback = inputRef.current.onMutationCommitted;
+    if (typeof callback !== "function") return;
+    try {
+      const response = callback(payload);
+      response?.catch?.((error) => {
+        console.error("Failed to persist committed review navigation:", error);
+      });
+    } catch (error) {
+      console.error("Failed to persist committed review navigation:", error);
+    }
+  }, []);
+
   const runMutation = useCallback(async ({
     kind,
     value,
     mayAdvance,
     targetFingerprints = null,
     allowAdvance = true,
+    anchorId = null,
   }) => {
     const current = inputRef.current;
     const videosById = makeVideoMap(current.scopeVideos);
@@ -318,6 +375,12 @@ export default function useReviewWorkflow({
     const operationOwnership = current.ownershipKey;
     const originalOrder = current.orderedVideoIds;
     const originalSelection = new Set(selection);
+    const mutationAnchor = resolveMutationAnchor({
+      anchorId,
+      fingerprints,
+      orderedVideoIds: originalOrder,
+      videosById,
+    });
     let advance = null;
 
     if (
@@ -379,8 +442,21 @@ export default function useReviewWorkflow({
       ownershipKey: operationOwnership,
       selectionIds: Array.from(originalSelection),
       snapshots,
+      anchor: mutationAnchor,
     };
     if (mountedRef.current) setCanUndo(true);
+
+    emitMutationCommitted({
+      kind,
+      value,
+      allowCreateSession:
+        kind === "rating"
+          ? value !== null
+          : value !== REVIEW_STATES.UNREVIEWED,
+      ownershipKey: operationOwnership,
+      anchor: mutationAnchor,
+      fingerprints: [...fingerprints],
+    });
 
     if (!advance || !setsEqual(asIdSet(latest.selectedIds), originalSelection)) {
       return true;
@@ -403,7 +479,7 @@ export default function useReviewWorkflow({
     if (mountedRef.current) setEndCheckVersion((version) => version + 1);
     latest.notify?.("Reached the end of the review queue", "info");
     return true;
-  }, [recordMetadataOverlay]);
+  }, [emitMutationCommitted, recordMetadataOverlay]);
 
   const applyReviewState = useCallback((value, options = {}) => {
     const requestedOwnership = inputRef.current.ownershipKey;
@@ -422,6 +498,7 @@ export default function useReviewWorkflow({
           ? options.fingerprints
           : null,
         allowAdvance: options.allowAdvance !== false,
+        anchorId: options.anchorId ?? null,
       });
     });
   }, [enqueue, runMutation]);
@@ -446,6 +523,7 @@ export default function useReviewWorkflow({
           ? options.fingerprints
           : null,
         allowAdvance: options.allowAdvance !== false,
+        anchorId: options.anchorId ?? null,
       });
     });
   }, [enqueue, runMutation]);
@@ -489,13 +567,21 @@ export default function useReviewWorkflow({
       const restoredSelection = new Set(restorableIds);
       inputRef.current.selectedIds = restoredSelection;
       inputRef.current.setSelectedIds?.(restoredSelection);
+      emitMutationCommitted({
+        kind: "undo",
+        value: null,
+        allowCreateSession: false,
+        ownershipKey: history.ownershipKey,
+        anchor: history.anchor,
+        fingerprints: history.snapshots.map((snapshot) => snapshot.fingerprint),
+      });
       historyRef.current = null;
       pendingEndRef.current = null;
       if (mountedRef.current) setCanUndo(false);
       inputRef.current.notify?.("Undid last review change", "success");
       return true;
     });
-  }, [enqueue, recordRestoredMetadataOverlay]);
+  }, [emitMutationCommitted, enqueue, recordRestoredMetadataOverlay]);
 
   return {
     progress,

@@ -9,6 +9,11 @@ const DEFAULT_LIMITS = Object.freeze({
   maxInactiveRootCards: 0,
   maxInactiveRootMasonrySlots: 0,
   maxInactiveRootMediaElements: 0,
+  maxInactiveRootLoadedMediaElements: 0,
+  maxInactiveRootPlayingMediaElements: 0,
+  maxInactiveRootSelectedCards: 0,
+  maxReviewCheckpointSummaries: 128,
+  maxReviewCheckpointReadP95Ms: 25,
   maxCleanupHeapGrowthMB: 64,
   maxCleanupWorkingSetGrowthMB: 256,
 });
@@ -33,6 +38,16 @@ function median(values = []) {
   const middle = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 1) return sorted[middle];
   return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function percentile(values = [], ratio = 0.95) {
+  const sorted = finiteValues(values).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(sorted.length * ratio) - 1)
+  );
+  return sorted[index];
 }
 
 function maximum(values = []) {
@@ -77,6 +92,26 @@ function summarizeScenario(trials = []) {
           : null;
       })
     ),
+    reviewCheckpointRead: {
+      verifiedTrials: normalized.filter(
+        (trial) => trial?.reviewCheckpoint?.verified === true
+      ).length,
+      listP95Ms: percentile(
+        normalized.map(
+          (trial) => trial?.reviewCheckpoint?.readTimings?.listMs
+        )
+      ),
+      getP95Ms: percentile(
+        normalized.map(
+          (trial) => trial?.reviewCheckpoint?.readTimings?.getMs
+        )
+      ),
+      totalP95Ms: percentile(
+        normalized.map(
+          (trial) => trial?.reviewCheckpoint?.readTimings?.totalMs
+        )
+      ),
+    },
     wallDurationMedianMs: median(
       normalized.map((trial) => trial?.wallDurationMs)
     ),
@@ -227,6 +262,39 @@ function evaluateFolderRevisitReport(report = {}, options = {}) {
           );
         }
 
+        if (scenario !== "cold") {
+          const cachedPreviewMs = numericMetric(
+            trial?.timings?.cachedPreviewMs
+          );
+          if (
+            !Number.isFinite(cachedPreviewMs) ||
+            cachedPreviewMs > firstGridMs
+          ) {
+            addFailure(
+              dataset,
+              scenario,
+              `trials[${trialIndex}].timings.cachedPreviewBeforeFirstGrid`,
+              { cachedPreviewMs, firstGridMs },
+              "cachedPreviewMs <= firstGridMs",
+              "valid"
+            );
+          }
+          if (
+            !Number.isFinite(firstGridMs) ||
+            !Number.isFinite(refreshCompleteMs) ||
+            firstGridMs >= refreshCompleteMs
+          ) {
+            addFailure(
+              dataset,
+              scenario,
+              `trials[${trialIndex}].timings.cachedFirstGridBeforeRefresh`,
+              { firstGridMs, refreshCompleteMs },
+              "firstGridMs < refreshCompleteMs",
+              "valid"
+            );
+          }
+        }
+
         const milestoneCount = Number(trial?.milestoneRecordCount);
         if (milestoneCount !== diskFileCount) {
           addFailure(
@@ -338,6 +406,107 @@ function evaluateFolderRevisitReport(report = {}, options = {}) {
               smallCollection ? "===" : "1 <= actual <= limit"
             );
           }
+          const reviewCheckpoint = trial?.reviewCheckpoint || {};
+          if (
+            reviewCheckpoint.verified !== true ||
+            reviewCheckpoint.summaryObserved !== true ||
+            reviewCheckpoint.checkpointObserved !== true
+          ) {
+            addFailure(
+              dataset,
+              scenario,
+              `trials[${trialIndex}].reviewCheckpoint.evidence`,
+              {
+                verified: reviewCheckpoint.verified === true,
+                summaryObserved:
+                  reviewCheckpoint.summaryObserved === true,
+                checkpointObserved:
+                  reviewCheckpoint.checkpointObserved === true,
+              },
+              true,
+              "==="
+            );
+          }
+
+          const summaryCount = numericMetric(reviewCheckpoint.summaryCount);
+          if (
+            !Number.isFinite(summaryCount) ||
+            summaryCount < 1 ||
+            summaryCount > limits.maxReviewCheckpointSummaries
+          ) {
+            addFailure(
+              dataset,
+              scenario,
+              `trials[${trialIndex}].reviewCheckpoint.summaryCount`,
+              summaryCount,
+              limits.maxReviewCheckpointSummaries,
+              "1 <= actual <= limit"
+            );
+          }
+
+          for (const metric of ["listMs", "getMs", "totalMs"]) {
+            const actual = numericMetric(
+              reviewCheckpoint?.readTimings?.[metric]
+            );
+            if (!Number.isFinite(actual) || actual < 0) {
+              addFailure(
+                dataset,
+                scenario,
+                `trials[${trialIndex}].reviewCheckpoint.readTimings.${metric}`,
+                actual,
+                0,
+                ">="
+              );
+            }
+          }
+
+          const checkpointResources =
+            reviewCheckpoint.inactiveResources || {};
+          const checkpointResourceChecks = [
+            [
+              "inactiveRootCards",
+              checkpointResources.inactiveRootCards,
+              limits.maxInactiveRootCards,
+            ],
+            [
+              "inactiveRootMasonrySlots",
+              checkpointResources.inactiveRootMasonrySlots,
+              limits.maxInactiveRootMasonrySlots,
+            ],
+            [
+              "inactiveRootMediaElements",
+              checkpointResources.inactiveRootMediaElements,
+              limits.maxInactiveRootMediaElements,
+            ],
+            [
+              "inactiveRootLoadedMediaElements",
+              checkpointResources.inactiveRootLoadedMediaElements,
+              limits.maxInactiveRootLoadedMediaElements,
+            ],
+            [
+              "inactiveRootPlayingMediaElements",
+              checkpointResources.inactiveRootPlayingMediaElements,
+              limits.maxInactiveRootPlayingMediaElements,
+            ],
+            [
+              "inactiveRootSelectedCards",
+              checkpointResources.inactiveRootSelectedCards,
+              limits.maxInactiveRootSelectedCards,
+            ],
+          ];
+          for (const [metric, value, limit] of checkpointResourceChecks) {
+            const actual = numericMetric(value);
+            if (!Number.isFinite(actual) || actual > limit) {
+              addFailure(
+                dataset,
+                scenario,
+                `trials[${trialIndex}].reviewCheckpoint.inactiveResources.${metric}`,
+                actual,
+                limit,
+                "<="
+              );
+            }
+          }
         }
 
         const active = trial?.activeResources || {};
@@ -381,6 +550,21 @@ function evaluateFolderRevisitReport(report = {}, options = {}) {
             "inactiveRootMasonrySlots",
             cleanup.inactiveRootMasonrySlots,
             limits.maxInactiveRootMasonrySlots,
+          ],
+          [
+            "inactiveRootLoadedMediaElements",
+            cleanup.inactiveRootLoadedMediaElements,
+            limits.maxInactiveRootLoadedMediaElements,
+          ],
+          [
+            "inactiveRootPlayingMediaElements",
+            cleanup.inactiveRootPlayingMediaElements,
+            limits.maxInactiveRootPlayingMediaElements,
+          ],
+          [
+            "inactiveRootSelectedCards",
+            cleanup.inactiveRootSelectedCards,
+            limits.maxInactiveRootSelectedCards,
           ],
           ["mountedCards", cleanup.mountedCards, limits.maxMountedCards],
           ["masonrySlots", cleanup.masonrySlots, limits.maxMasonrySlots],
@@ -447,6 +631,24 @@ function evaluateFolderRevisitReport(report = {}, options = {}) {
           ">="
         );
       }
+
+      if (expectedCount >= 6000) {
+        const checkpointP95 =
+          summary.scenarios[scenario].reviewCheckpointRead.totalP95Ms;
+        if (
+          !Number.isFinite(checkpointP95) ||
+          checkpointP95 > limits.maxReviewCheckpointReadP95Ms
+        ) {
+          addFailure(
+            dataset,
+            scenario,
+            "reviewCheckpointRead.totalP95Ms",
+            checkpointP95,
+            limits.maxReviewCheckpointReadP95Ms,
+            "<="
+          );
+        }
+      }
     }
 
     const warmSummary = summary.scenarios.warm;
@@ -489,6 +691,7 @@ module.exports = {
   endpointGrowth,
   evaluateFolderRevisitReport,
   median,
+  percentile,
   summarizeDataset,
   summarizeScenario,
 };

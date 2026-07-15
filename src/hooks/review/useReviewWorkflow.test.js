@@ -15,6 +15,16 @@ const video = (id, fingerprint, reviewState = "unreviewed", rating = null) => ({
 
 const successful = { success: true };
 
+const deferredPromise = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+};
+
 const makeProps = (overrides = {}) => ({
   scopeVideos: [video("a", "fp-a"), video("b", "fp-b")],
   orderedVideoIds: ["a", "b"],
@@ -422,5 +432,185 @@ describe("useReviewWorkflow", () => {
     await waitFor(() =>
       expect(props.setSelectedIds).toHaveBeenCalledWith(new Set())
     );
+  });
+
+  it.each([
+    ["review", "pick", true],
+    ["review", "reviewed", true],
+    ["review", "reject", true],
+    ["review", "unreviewed", false],
+    ["rating", 4, true],
+    ["rating", null, false],
+  ])(
+    "emits plain committed %s metadata for %s with the correct session-start guard",
+    async (kind, value, allowCreateSession) => {
+      const onMutationCommitted = vi.fn();
+      const props = makeProps({
+        scopeVideos: [
+          { ...video("a", "fp-a"), instanceId: 11 },
+          { ...video("b", "fp-b"), instanceId: 12 },
+        ],
+        selectedIds: new Set(["a"]),
+        onMutationCommitted,
+      });
+      const { result } = renderHook(() => useReviewWorkflow(props));
+
+      await act(async () => {
+        if (kind === "review") {
+          await result.current.applyReviewState(value);
+        } else {
+          await result.current.applyRating(value);
+        }
+      });
+
+      expect(onMutationCommitted).toHaveBeenCalledWith({
+        kind,
+        value,
+        allowCreateSession,
+        ownershipKey: props.ownershipKey,
+        anchor: { id: "a", instanceId: 11, fingerprint: "fp-a" },
+        fingerprints: ["fp-a"],
+      });
+      expect(onMutationCommitted.mock.calls[0][0].anchor).not.toHaveProperty(
+        "tags"
+      );
+    }
+  );
+
+  it("uses an explicit context instance as the committed anchor", async () => {
+    const onMutationCommitted = vi.fn();
+    const props = makeProps({
+      scopeVideos: [
+        { ...video("a", "fp-a"), instanceId: 11 },
+        { ...video("b", "fp-b"), instanceId: 12 },
+      ],
+      selectedIds: new Set(["a"]),
+      onMutationCommitted,
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+
+    await act(async () => {
+      await result.current.applyReviewState("reject", {
+        fingerprints: ["fp-b"],
+        allowAdvance: false,
+        anchorId: "b",
+      });
+    });
+
+    expect(onMutationCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchor: { id: "b", instanceId: 12, fingerprint: "fp-b" },
+        fingerprints: ["fp-b"],
+      })
+    );
+  });
+
+  it("anchors a multi-item mutation to the last affected visual instance", async () => {
+    const onMutationCommitted = vi.fn();
+    const props = makeProps({
+      scopeVideos: [
+        { ...video("a", "fp-a"), instanceId: 11 },
+        { ...video("b", "fp-b"), instanceId: 12 },
+      ],
+      orderedVideoIds: ["b", "a"],
+      selectedIds: new Set(["a", "b"]),
+      onMutationCommitted,
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+
+    await act(async () => {
+      await result.current.applyRating(5);
+    });
+
+    expect(onMutationCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchor: { id: "a", instanceId: 11, fingerprint: "fp-a" },
+        fingerprints: ["fp-a", "fp-b"],
+      })
+    );
+  });
+
+  it("falls back to a plain fingerprint anchor when no instance is available", async () => {
+    const onMutationCommitted = vi.fn();
+    const props = makeProps({
+      orderedVideoIds: ["a"],
+      onMutationCommitted,
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+
+    await act(async () => {
+      await result.current.applyReviewState("pick", {
+        fingerprints: ["fp-b"],
+        anchorId: "not-present",
+      });
+    });
+
+    expect(onMutationCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchor: { id: null, instanceId: null, fingerprint: "fp-b" },
+      })
+    );
+  });
+
+  it("does not emit a committed mutation after failure or ownership loss", async () => {
+    const onFailure = vi.fn();
+    const failedProps = makeProps({
+      setReviewState: vi.fn().mockResolvedValue({ success: false }),
+      onMutationCommitted: onFailure,
+    });
+    const failedHook = renderHook(() => useReviewWorkflow(failedProps));
+    await act(async () => {
+      await failedHook.result.current.applyReviewState("pick");
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    failedHook.unmount();
+
+    const write = deferredPromise();
+    const onOwnershipLoss = vi.fn();
+    let props = makeProps({
+      setReviewState: vi.fn(() => write.promise),
+      onMutationCommitted: onOwnershipLoss,
+    });
+    const { result, rerender } = renderHook(() => useReviewWorkflow(props));
+    let action;
+    act(() => {
+      action = result.current.applyReviewState("pick");
+    });
+    await waitFor(() => expect(props.setReviewState).toHaveBeenCalledOnce());
+    props = { ...props, ownershipKey: "new-owner" };
+    rerender();
+    await act(async () => {
+      write.resolve(successful);
+      await action;
+    });
+    expect(onOwnershipLoss).not.toHaveBeenCalled();
+  });
+
+  it("emits undo only after atomic restore succeeds and keeps the original anchor", async () => {
+    const onMutationCommitted = vi.fn();
+    const props = makeProps({
+      scopeVideos: [{ ...video("a", "fp-a"), instanceId: 44 }],
+      orderedVideoIds: ["a"],
+      selectedIds: new Set(["a"]),
+      onMutationCommitted,
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+
+    await act(async () => {
+      await result.current.applyReviewState("reject");
+    });
+    onMutationCommitted.mockClear();
+    await act(async () => {
+      await result.current.undo();
+    });
+
+    expect(onMutationCommitted).toHaveBeenCalledWith({
+      kind: "undo",
+      value: null,
+      allowCreateSession: false,
+      ownershipKey: props.ownershipKey,
+      anchor: { id: "a", instanceId: 44, fingerprint: "fp-a" },
+      fingerprints: ["fp-a"],
+    });
   });
 });

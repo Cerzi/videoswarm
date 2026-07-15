@@ -5,7 +5,7 @@ const { _electron: electron } = require("@playwright/test");
 
 const projectRoot = path.resolve(__dirname, "../../..");
 
-async function launchProductionApp({ extraArgs = [], extraEnv = {} } = {}) {
+function createProductionAppWorkspace() {
   const tempRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "videoswarm-electron-test-")
   );
@@ -25,6 +25,35 @@ async function launchProductionApp({ extraArgs = [], extraEnv = {} } = {}) {
       main: path.join(projectRoot, "main.js"),
     })
   );
+
+  let cleaned = false;
+  return {
+    tempRoot,
+    homeDir,
+    configDir,
+    cacheDir,
+    appShellDir,
+    cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+async function launchProductionApp({
+  extraArgs = [],
+  extraEnv = {},
+  workspace = null,
+} = {}) {
+  const appWorkspace = workspace || createProductionAppWorkspace();
+  const {
+    tempRoot,
+    homeDir,
+    configDir,
+    cacheDir,
+    appShellDir,
+  } = appWorkspace;
 
   const env = {
     ...process.env,
@@ -62,8 +91,9 @@ async function launchProductionApp({ extraArgs = [], extraEnv = {} } = {}) {
     page,
     projectRoot,
     tempRoot,
+    workspace: appWorkspace,
     cleanupFiles() {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
+      appWorkspace.cleanup();
     },
   };
 }
@@ -79,6 +109,7 @@ async function chooseFolderThroughNativeDialog(electronApp, page, folderPath) {
 }
 
 module.exports = {
+  createProductionAppWorkspace,
   launchProductionApp,
   chooseFolderThroughNativeDialog,
 };

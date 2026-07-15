@@ -9,6 +9,95 @@ const rootPathOf = (root) => root?.rootPath || root?.path || "";
 const rootLabelOf = (root) =>
   root?.label || root?.name || rootPathOf(root).split(/[\\/]/).filter(Boolean).at(-1) || "Root";
 
+const rootReviewStateOf = (states, rootPath) => {
+  if (!rootPath || !states) return null;
+  if (states instanceof Map) return states.get(rootPath) ?? null;
+  return states[rootPath] ?? null;
+};
+
+const remainingLabel = (remaining) =>
+  remaining === null
+    ? "Review count unavailable"
+    : `${remaining.toLocaleString()} unreviewed`;
+
+const RootReviewSummary = memo(function RootReviewSummary({
+  root,
+  state,
+  disabled,
+  onStartRootReview,
+  onContinueRootReview,
+}) {
+  if (!state) return null;
+
+  const rootPath = rootPathOf(root);
+  const rootLabel = rootLabelOf(root);
+  const parsedRemaining = Number(state.remainingUnreviewed);
+  const remaining = state.remainingUnreviewed === null ||
+    state.remainingUnreviewed === undefined ||
+    !Number.isFinite(parsedRemaining)
+    ? null
+    : Math.max(0, Math.floor(parsedRemaining));
+  const action = ["start", "continue", "complete"].includes(state.action)
+    ? state.action
+    : null;
+  const actionDisabled = disabled || Boolean(state.disabled);
+  const actionLabel = action === "continue" ? "Continue review" : "Start review";
+  const accessibleCount = remaining === null
+    ? "review count unavailable"
+    : `${remaining.toLocaleString()} unreviewed`;
+  const countTooltip =
+    "Counts are file instances. Reviewing duplicate content may reduce the count by more than one.";
+
+  const invokeAction = () => {
+    if (action === "continue") onContinueRootReview?.(rootPath, root);
+    if (action === "start") onStartRootReview?.(rootPath, root);
+  };
+
+  return (
+    <div
+      className="library-root-list__review"
+      aria-busy={state.isUpdating || undefined}
+    >
+      <span
+        className="library-root-list__unreviewed"
+        title={countTooltip}
+      >
+        {remainingLabel(remaining)}
+        {state.isUpdating ? (
+          <span className="library-root-list__updating"> · Updating…</span>
+        ) : null}
+      </span>
+      {action === "complete" ? (
+        <span
+          className="library-root-list__review-complete"
+          role="status"
+          aria-label={`${rootLabel}: Review complete${
+            state.isUpdating ? "; updating" : ""
+          }`}
+        >
+          Review complete
+        </span>
+      ) : action ? (
+        <button
+          type="button"
+          className="library-root-list__review-action"
+          disabled={
+            actionDisabled ||
+            (action === "start"
+              ? typeof onStartRootReview !== "function"
+              : typeof onContinueRootReview !== "function")
+          }
+          onClick={invokeAction}
+          aria-label={`${actionLabel} ${rootLabel}, ${accessibleCount}`}
+          title={`${actionLabel} in ${rootLabel} (${accessibleCount})`}
+        >
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+});
+
 const FolderTreeRow = memo(function FolderTreeRow({
   node,
   depth,
@@ -120,6 +209,9 @@ function LibrarySidebar({
   currentRoot = null,
   onOpenRoot,
   onTogglePin,
+  rootReviewStateByPath = null,
+  onStartRootReview,
+  onContinueRootReview,
   savedViews = [],
   onApplySavedView,
   onSaveCurrentView,
@@ -179,22 +271,35 @@ function LibrarySidebar({
             {pinnedRoots.map((root) => {
               const rootPath = rootPathOf(root);
               const current = currentRootPath && rootPath === currentRootPath;
+              const rootReviewState = rootReviewStateOf(
+                rootReviewStateByPath,
+                rootPath
+              );
               return (
                 <li
                   key={root?.id ?? rootPath}
                   className={`library-root-list__item ${current ? "is-current" : ""}`}
                 >
-                  <button
-                    type="button"
-                    className="library-root-list__open"
-                    onClick={() => onOpenRoot?.(rootPath, root)}
-                    aria-current={current ? "location" : undefined}
-                    title={rootPath}
-                    disabled={disabled}
-                  >
-                    <span className="library-root-list__name">{rootLabelOf(root)}</span>
-                    <span className="library-root-list__path">{rootPath}</span>
-                  </button>
+                  <div className="library-root-list__content">
+                    <button
+                      type="button"
+                      className="library-root-list__open"
+                      onClick={() => onOpenRoot?.(rootPath, root)}
+                      aria-current={current ? "location" : undefined}
+                      title={rootPath}
+                      disabled={disabled}
+                    >
+                      <span className="library-root-list__name">{rootLabelOf(root)}</span>
+                      <span className="library-root-list__path">{rootPath}</span>
+                    </button>
+                    <RootReviewSummary
+                      root={root}
+                      state={rootReviewState}
+                      disabled={disabled}
+                      onStartRootReview={onStartRootReview}
+                      onContinueRootReview={onContinueRootReview}
+                    />
+                  </div>
                   <button
                     type="button"
                     className="library-root-list__pin"

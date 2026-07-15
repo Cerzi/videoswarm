@@ -84,4 +84,19 @@ describe("ReviewToolbar", () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("keeps the review-session action available before a scope has progress", () => {
+    const onStartSession = vi.fn();
+    render(
+      <ReviewToolbar
+        progress={{ total: 0 }}
+        session={{ mode: "none" }}
+        onStartSession={onStartSession}
+      />
+    );
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start review here" }));
+    expect(onStartSession).toHaveBeenCalledOnce();
+  });
 });

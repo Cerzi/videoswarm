@@ -2,6 +2,7 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useRef,
   useMemo,
@@ -39,6 +40,7 @@ import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 import useReviewWorkflow from "./hooks/review/useReviewWorkflow";
+import useReviewSessions from "./hooks/review/useReviewSessions";
 
 import { SortKey } from "./sorting/sorting.js";
 import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
@@ -89,7 +91,70 @@ import {
   normalizeRelativePath,
 } from "./library/folderModel";
 import { FolderViewStateCache, makeFolderViewKey } from "./library/folderViewState";
-import { REVIEW_FILTERS } from "./review/reviewState";
+import {
+  REVIEW_FILTERS,
+  REVIEW_STATES,
+  normalizeReviewState,
+} from "./review/reviewState";
+import {
+  buildReviewCheckpointDraft,
+  checkpointLocationMatches,
+  createReviewCheckpointSignature,
+  findRenderLimitStepForIndex,
+  normalizeReviewCheckpoint,
+  requiresRecursiveReviewCoverage,
+  resolveContinueReviewCandidate,
+  resolveReviewCheckpointLocation,
+} from "./review/continueReview";
+
+const createIdleReviewResume = (token = 0) => ({
+  token,
+  phase: "idle",
+  intent: null,
+  rootPath: null,
+  scanId: null,
+  checkpoint: null,
+  candidateId: null,
+  candidateName: null,
+  candidateIndex: -1,
+  fallbackDirectory: null,
+  message: "",
+  explicitFocus: false,
+});
+
+const formatSessionSavedAt = (value) => {
+  const date = new Date(Number(value));
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const formatCheckpointScopeLabel = (checkpoint, rootLabel) => {
+  const directory = checkpoint?.directory || rootLabel || "Library root";
+  if (checkpoint?.scope === FolderScope.CURRENT_FOLDER) {
+    return `Current folder: ${directory}`;
+  }
+  if (checkpoint?.scope === FolderScope.CURRENT_SUBTREE) {
+    return `Current subtree: ${directory}`;
+  }
+  return `All descendants of ${rootLabel || "the library root"}`;
+};
+
+const getKnownRemainingUnreviewed = (root) => {
+  if (root?.presentCount == null || root?.reviewedCount == null) return null;
+  const present = Number(root.presentCount);
+  const reviewed = Number(root.reviewedCount);
+  if (!Number.isFinite(present) || !Number.isFinite(reviewed)) return null;
+  return Math.max(0, Math.floor(present - reviewed));
+};
+
+const waitForReviewViewSettlement = () =>
+  new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== "function") {
+      setTimeout(resolve, 0);
+      return;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
 
 const expandFolderAncestors = (previous, relativePath) => {
   const next = new Set(previous instanceof Set ? previous : [""]);
@@ -127,6 +192,15 @@ function App() {
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
   const [reviewProfileEpoch, setReviewProfileEpoch] = useState(0);
+  const [reviewResume, setReviewResume] = useState(() =>
+    createIdleReviewResume()
+  );
+  const reviewResumeRef = useRef(reviewResume);
+  const reviewResumeTokenRef = useRef(0);
+  const libraryOpenRequestRef = useRef(0);
+  const reviewFocusFramesRef = useRef([]);
+  const activeRootPathRef = useRef(null);
+  const reviewViewStateRef = useRef(null);
   const [folderLocation, setFolderLocation] = useState({
     rootPath: null,
     directory: "",
@@ -142,7 +216,7 @@ function App() {
   const restoreScrollFrameRef = useRef([]);
   const beforeExternalFolderSelectionRef = useRef(null);
   const handleBeforeExternalFolderSelection = useCallback(() => {
-    beforeExternalFolderSelectionRef.current?.();
+    return beforeExternalFolderSelectionRef.current?.();
   }, []);
 
   // Video collection state
@@ -314,6 +388,8 @@ function App() {
     isLoadingFolder,
     isRefreshingFolder,
     activeScanId,
+    cachedHydration,
+    cachedHydrationComplete,
     loadingStatus,
     loadingStage,
     loadingProgress,
@@ -354,9 +430,12 @@ function App() {
   });
 
   const {
+    roots: catalogRoots,
     pinnedRoots,
     currentRoot: catalogCurrentRoot,
     directories: catalogDirectories,
+    refreshRoots: refreshLibraryRoots,
+    refreshTree: refreshLibraryTree,
     setPinned: setLibraryRootPinned,
   } = useLibraryCatalog({
     activeRootPath,
@@ -377,6 +456,11 @@ function App() {
     folderLocation.rootPath === activeRootPath
       ? folderLocation.scope
       : FolderScope.ALL_DESCENDANTS;
+  activeRootPathRef.current = activeRootPath;
+
+  useEffect(() => {
+    reviewResumeRef.current = reviewResume;
+  }, [reviewResume]);
 
   useEffect(() => {
     setProcessResultsOpen(false);
@@ -399,6 +483,13 @@ function App() {
     filtersButtonRef,
     filtersPopoverRef,
   });
+  reviewViewStateRef.current = {
+    filters,
+    sortKey,
+    sortDir,
+    groupByFolders,
+    randomSeed,
+  };
 
   const rootDisplayName = useMemo(() => {
     const fromCatalog = catalogCurrentRoot?.name || catalogCurrentRoot?.label;
@@ -536,8 +627,6 @@ function App() {
     sortDir,
     sortKey,
   ]);
-  beforeExternalFolderSelectionRef.current = captureFolderViewState;
-
   useEffect(() => {
     if (typeof cancelAnimationFrame === "function") {
       restoreScrollFrameRef.current.forEach((frame) => cancelAnimationFrame(frame));
@@ -644,6 +733,9 @@ function App() {
     if (
       !activeRootPath ||
       isLoadingFolder ||
+      ["restoring", "waiting-cache", "waiting-target", "provisional"].includes(
+        reviewResume.phase
+      ) ||
       folderLocation.rootPath !== activeRootPath ||
       !currentDirectory ||
       !folderTree ||
@@ -669,12 +761,22 @@ function App() {
     folderLocation.rootPath,
     folderTree,
     isLoadingFolder,
+    reviewResume.phase,
   ]);
 
   useEffect(() => {
     const subscribe = window.electronAPI?.profiles?.onChanged;
     if (!subscribe) return undefined;
     return subscribe(() => {
+      reviewResumeTokenRef.current += 1;
+      libraryOpenRequestRef.current += 1;
+      if (typeof cancelAnimationFrame === "function") {
+        reviewFocusFramesRef.current.forEach((frame) =>
+          cancelAnimationFrame(frame)
+        );
+      }
+      reviewFocusFramesRef.current = [];
+      setReviewResume(createIdleReviewResume(reviewResumeTokenRef.current));
       folderViewStateRef.current.clear();
       restoredFolderViewKeyRef.current = null;
       setExpandedFolderPaths(new Set([""]));
@@ -1077,6 +1179,9 @@ function App() {
       box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
       animation: slideInFromRight 0.2s ease-out;
     `;
+    el.setAttribute("role", type === "error" ? "alert" : "status");
+    el.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
+    el.setAttribute("aria-atomic", "true");
     el.textContent = `${icons[type] || icons.info} ${message}`;
     document.body.appendChild(el);
     setTimeout(() => {
@@ -1099,6 +1204,60 @@ function App() {
     notify,
   });
 
+  const reviewSessions = useReviewSessions({
+    activeRootPath,
+    activeDirectory: currentDirectory,
+    activeScope: folderScope,
+    notify,
+  });
+
+  const buildActiveReviewCheckpoint = useCallback(
+    ({ anchor, rootPath = activeRootPath, directory = currentDirectory,
+      scope = folderScope, view = null } = {}) => {
+      if (!rootPath) return null;
+      const selectedAnchor =
+        anchor === undefined
+          ? metadataAnchorId == null
+            ? null
+            : allVideosById.get(metadataAnchorId)
+          : anchor;
+      return buildReviewCheckpointDraft({
+        rootPath,
+        directory,
+        scope,
+        view: view || {
+          version: 1,
+          filters,
+          sort: {
+            key: sortKey,
+            dir: sortDir,
+            groupByFolders,
+            randomSeed:
+              sortKey === SortKey.RANDOM ? randomSeed ?? 0 : null,
+          },
+        },
+        anchor: selectedAnchor
+          ? {
+              instanceId: selectedAnchor.instanceId,
+              fingerprint: selectedAnchor.fingerprint,
+            }
+          : null,
+      });
+    },
+    [
+      activeRootPath,
+      allVideosById,
+      currentDirectory,
+      filters,
+      folderScope,
+      groupByFolders,
+      metadataAnchorId,
+      randomSeed,
+      sortDir,
+      sortKey,
+    ]
+  );
+
   const reviewOwnershipKey = useMemo(
     () => JSON.stringify([
       reviewProfileEpoch,
@@ -1107,6 +1266,42 @@ function App() {
       folderScope,
     ]),
     [activeRootPath, currentDirectory, folderScope, reviewProfileEpoch]
+  );
+  const handleReviewMutationCommitted = useCallback(
+    async (event) => {
+      if (!event || event.ownershipKey !== reviewOwnershipKey) return;
+      const hasExistingCheckpoint = reviewSessions.hasCheckpoint(activeRootPath);
+      if (hasExistingCheckpoint && !reviewSessions.isEngaged) {
+        refreshLibraryRoots();
+        if (activeRootPath) refreshLibraryTree(activeRootPath);
+        return;
+      }
+      const anchor = event.anchor || null;
+      const draft = buildActiveReviewCheckpoint({ anchor });
+      if (!draft) return;
+      try {
+        await reviewSessions.saveNow(draft, {
+          allowCreate: event.allowCreateSession === true,
+          engage: event.allowCreateSession === true,
+          signature: createReviewCheckpointSignature(draft),
+        });
+      } catch (error) {
+        console.warn("Review metadata was saved, but its session cursor was not:", error);
+      } finally {
+        refreshLibraryRoots();
+        if (activeRootPath) refreshLibraryTree(activeRootPath);
+      }
+    },
+    [
+      activeRootPath,
+      buildActiveReviewCheckpoint,
+      refreshLibraryRoots,
+      refreshLibraryTree,
+      reviewOwnershipKey,
+      reviewSessions.hasCheckpoint,
+      reviewSessions.isEngaged,
+      reviewSessions.saveNow,
+    ]
   );
   const reviewWorkflow = useReviewWorkflow({
     scopeVideos: reviewScopeVideos,
@@ -1121,7 +1316,115 @@ function App() {
     restoreReviewMetadata: handleRestoreReviewMetadata,
     autoAdvance: reviewAutoAdvance,
     notify,
+    onMutationCommitted: handleReviewMutationCommitted,
   });
+
+  useLayoutEffect(() => {
+    if (
+      !reviewSessions.isEngaged ||
+      !activeRootPath ||
+      reviewSessions.saving ||
+      !["idle", "active"].includes(reviewResume.phase)
+    ) {
+      return;
+    }
+    const draft = buildActiveReviewCheckpoint();
+    if (!draft) return;
+    reviewSessions.schedule(draft, {
+      signature: createReviewCheckpointSignature(draft),
+    });
+  }, [
+    activeRootPath,
+    buildActiveReviewCheckpoint,
+    reviewResume.phase,
+    reviewSessions.isEngaged,
+    reviewSessions.saving,
+    reviewSessions.schedule,
+  ]);
+
+  const cancelReviewFocus = useCallback(() => {
+    if (typeof cancelAnimationFrame === "function") {
+      reviewFocusFramesRef.current.forEach((frame) =>
+        cancelAnimationFrame(frame)
+      );
+    }
+    reviewFocusFramesRef.current = [];
+  }, []);
+
+  const cancelReviewResume = useCallback(() => {
+    reviewResumeTokenRef.current += 1;
+    cancelReviewFocus();
+    setReviewResume(createIdleReviewResume(reviewResumeTokenRef.current));
+  }, [cancelReviewFocus]);
+
+  beforeExternalFolderSelectionRef.current = async () => {
+    libraryOpenRequestRef.current += 1;
+    await reviewSessions.flush();
+    cancelReviewResume();
+    captureFolderViewState();
+  };
+
+  const handleWebDirectorySelection = useCallback(
+    async (event) => {
+      const files = event?.target?.files;
+      libraryOpenRequestRef.current += 1;
+      await reviewSessions.flush();
+      cancelReviewResume();
+      captureFolderViewState();
+      return handleWebFileSelection({ target: { files } });
+    },
+    [
+      cancelReviewResume,
+      captureFolderViewState,
+      handleWebFileSelection,
+      reviewSessions.flush,
+    ]
+  );
+
+  const focusReviewTarget = useCallback(
+    (videoId, token, onMounted, onMissing) => {
+      if (videoId == null || typeof requestAnimationFrame !== "function") {
+        return false;
+      }
+      cancelReviewFocus();
+      scrollToId(videoId, { align: "center" });
+      let attemptsRemaining = 60;
+      const attempt = () => {
+        reviewFocusFramesRef.current = [];
+        if (reviewResumeTokenRef.current !== token) return;
+        const cards = gridRef.current?.querySelectorAll?.(
+          ".video-item[data-video-id]"
+        );
+        const card = Array.from(cards || []).find(
+          (entry) => entry.dataset?.videoId === String(videoId)
+        );
+        if (card) {
+          card.focus?.({ preventScroll: true });
+          onMounted?.();
+          return;
+        }
+        attemptsRemaining -= 1;
+        if (attemptsRemaining <= 0) {
+          onMissing?.();
+          return;
+        }
+        const frame = requestAnimationFrame(attempt);
+        reviewFocusFramesRef.current = [frame];
+      };
+      const frame = requestAnimationFrame(attempt);
+      reviewFocusFramesRef.current = [frame];
+      return true;
+    },
+    [cancelReviewFocus, scrollToId]
+  );
+
+  useEffect(
+    () => () => {
+      reviewResumeTokenRef.current += 1;
+      cancelReviewFocus();
+    },
+    [cancelReviewFocus]
+  );
 
   refreshTagListRef.current = refreshTagList;
 
@@ -1427,6 +1730,7 @@ function App() {
           reviewWorkflow.applyReviewState(reviewState, {
             fingerprints: contextMetadataFingerprints,
             allowAdvance: false,
+            anchorId: contextMenu.contextId,
           });
         }
         return;
@@ -1437,6 +1741,7 @@ function App() {
           reviewWorkflow.applyRating(null, {
             fingerprints: contextMetadataFingerprints,
             allowAdvance: false,
+            anchorId: contextMenu.contextId,
           });
         } else {
           const value = parseInt(actionId.replace("metadata:rate:", ""), 10);
@@ -1444,6 +1749,7 @@ function App() {
             reviewWorkflow.applyRating(value, {
               fingerprints: contextMetadataFingerprints,
               allowAdvance: false,
+              anchorId: contextMenu.contextId,
             });
           }
         }
@@ -1770,6 +2076,7 @@ function App() {
   const handleRecursiveChange = useCallback(async (nextValue) => {
     const next = Boolean(nextValue);
     if (next === recursiveMode) return;
+    await reviewSessions.flush();
     captureFolderViewState();
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
@@ -1801,6 +2108,7 @@ function App() {
     recursiveMode,
     reloadCurrentRoot,
     renderLimitStep,
+    reviewSessions.flush,
     showFilenames,
     zoomLevel,
   ]);
@@ -1812,6 +2120,8 @@ function App() {
   const handleFolderNavigate = useCallback(
     async (relativePath) => {
       if (!activeRootPath) return;
+      await reviewSessions.flush();
+      cancelReviewResume();
       captureFolderViewState();
       const directory = normalizeRelativePath(relativePath);
       const nextScope =
@@ -1841,16 +2151,20 @@ function App() {
     },
     [
       activeRootPath,
+      cancelReviewResume,
       captureFolderViewState,
       folderScope,
       handleRecursiveChange,
       recursiveMode,
+      reviewSessions.flush,
     ]
   );
 
   const handleFolderScopeChange = useCallback(
-    (nextScope) => {
+    async (nextScope) => {
       if (!activeRootPath) return;
+      await reviewSessions.flush();
+      cancelReviewResume();
       captureFolderViewState();
       const normalizedScope = Object.values(FolderScope).includes(nextScope)
         ? nextScope
@@ -1867,7 +2181,13 @@ function App() {
         scope: normalizedScope,
       });
     },
-    [activeRootPath, captureFolderViewState, currentDirectory]
+    [
+      activeRootPath,
+      cancelReviewResume,
+      captureFolderViewState,
+      currentDirectory,
+      reviewSessions.flush,
+    ]
   );
 
   const handleFolderExpandedToggle = useCallback((path, expanded) => {
@@ -1924,9 +2244,14 @@ function App() {
   const handleOpenLibraryRoot = useCallback(
     async (rootPath) => {
       if (!rootPath) return;
+      const requestId = ++libraryOpenRequestRef.current;
       try {
+        await reviewSessions.flush();
+        if (requestId !== libraryOpenRequestRef.current) return;
+        cancelReviewResume();
         const authorization =
           await window.electronAPI?.library?.authorizeRoot?.(rootPath);
+        if (requestId !== libraryOpenRequestRef.current) return;
         if (authorization?.success === false) {
           throw new Error(
             authorization.error || "Could not authorize library root"
@@ -1946,11 +2271,18 @@ function App() {
         restoredFolderViewKeyRef.current = null;
         await handleElectronFolderSelection(authorizedRootPath);
       } catch (error) {
+        if (requestId !== libraryOpenRequestRef.current) return;
         console.error("Failed to open library root:", error);
         notify("Could not open that library root", "error");
       }
     },
-    [captureFolderViewState, handleElectronFolderSelection, notify]
+    [
+      cancelReviewResume,
+      captureFolderViewState,
+      handleElectronFolderSelection,
+      notify,
+      reviewSessions.flush,
+    ]
   );
 
   const handleToggleLibraryPin = useCallback(
@@ -2065,10 +2397,17 @@ function App() {
   );
 
   const handleChooseFolder = useCallback(async () => {
+    await reviewSessions.flush();
+    cancelReviewResume();
     captureFolderViewState();
     restoredFolderViewKeyRef.current = null;
     await handleFolderSelect();
-  }, [captureFolderViewState, handleFolderSelect]);
+  }, [
+    cancelReviewResume,
+    captureFolderViewState,
+    handleFolderSelect,
+    reviewSessions.flush,
+  ]);
 
   const toggleFilenames = useCallback(() => {
     const next = !showFilenames;
@@ -2164,6 +2503,808 @@ function App() {
     });
   }, [sortKey, sortDir, groupByFolders]);
 
+  const applyReviewCheckpointView = useCallback(
+    (checkpoint) => {
+      const normalized = normalizeReviewCheckpoint(checkpoint);
+      if (!normalized.rootPath) return null;
+      const { view } = normalized;
+      const snapshot = {
+        scrollTop: 0,
+        selectedIds: [],
+        sortKey: view.sort.key,
+        sortDir: view.sort.dir,
+        groupByFolders: view.sort.groupByFolders,
+        randomSeed: view.sort.randomSeed,
+        filters: view.filters,
+      };
+      folderViewStateRef.current.set(
+        normalized.rootPath,
+        normalized.directory,
+        normalized.scope,
+        snapshot
+      );
+      restoredFolderViewKeyRef.current = null;
+      setFolderLocation({
+        rootPath: normalized.rootPath,
+        directory: normalized.directory,
+        scope: normalized.scope,
+      });
+      setExpandedFolderPaths((previous) =>
+        expandFolderAncestors(previous, normalized.directory)
+      );
+      setSortKey(view.sort.key);
+      setSortDir(view.sort.dir);
+      setGroupByFolders(view.sort.groupByFolders);
+      setRandomSeed(view.sort.randomSeed);
+      updateFilters(view.filters);
+      selection.clear();
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      return normalized;
+    },
+    [selection.clear, updateFilters]
+  );
+
+  const beginContinueReview = useCallback(
+    async (requestedRootPath) => {
+      if (!requestedRootPath) return null;
+      const openRequestId = ++libraryOpenRequestRef.current;
+      const token = ++reviewResumeTokenRef.current;
+      cancelReviewFocus();
+      setReviewResume({
+        ...createIdleReviewResume(token),
+        phase: "restoring",
+        intent: "continue",
+        rootPath: requestedRootPath,
+        explicitFocus: true,
+        message: "Loading the saved review position…",
+      });
+
+      try {
+        await reviewSessions.flush();
+        const [loaded, authorization] = await Promise.all([
+          reviewSessions.load(requestedRootPath),
+          window.electronAPI?.library?.authorizeRoot?.(requestedRootPath),
+        ]);
+        if (
+          token !== reviewResumeTokenRef.current ||
+          openRequestId !== libraryOpenRequestRef.current
+        ) {
+          return null;
+        }
+        if (authorization?.success === false) {
+          throw new Error(
+            authorization.error || "Could not authorize the saved library root"
+          );
+        }
+        const checkpoint = normalizeReviewCheckpoint(
+          loaded?.checkpoint || loaded || {}
+        );
+        if (!checkpoint.rootPath) {
+          throw new Error("This review position is no longer available");
+        }
+        const authorizedRootPath =
+          authorization?.rootPath || checkpoint.rootPath || requestedRootPath;
+        const normalizedCheckpoint = {
+          ...checkpoint,
+          rootPath: authorizedRootPath,
+        };
+        applyReviewCheckpointView(normalizedCheckpoint);
+        reviewSessions.engage(
+          authorizedRootPath,
+          normalizedCheckpoint
+        );
+        setReviewResume({
+          ...createIdleReviewResume(token),
+          phase: "waiting-cache",
+          intent: "continue",
+          rootPath: authorizedRootPath,
+          scanId:
+            activeRootPath === authorizedRootPath ? activeScanId : null,
+          checkpoint: normalizedCheckpoint,
+          explicitFocus: true,
+          message: "Restoring the saved review…",
+        });
+
+        if (activeRootPath !== authorizedRootPath) {
+          const openPromise = handleElectronFolderSelection(authorizedRootPath);
+          openPromise?.catch?.((error) => {
+            if (token !== reviewResumeTokenRef.current) return;
+            console.error("Failed to resume saved review:", error);
+          });
+        }
+        return normalizedCheckpoint;
+      } catch (error) {
+        if (token !== reviewResumeTokenRef.current) return null;
+        console.error("Failed to continue review:", error);
+        setReviewResume((previous) => ({
+          ...previous,
+          phase: "unverified",
+          message:
+            error?.message || "The saved review position could not be restored",
+        }));
+        notify(
+          error?.message || "The saved review position could not be restored",
+          "error"
+        );
+        return null;
+      }
+    },
+    [
+      activeRootPath,
+      activeScanId,
+      applyReviewCheckpointView,
+      cancelReviewFocus,
+      handleElectronFolderSelection,
+      notify,
+      reviewSessions.engage,
+      reviewSessions.flush,
+      reviewSessions.load,
+    ]
+  );
+
+  const beginResolutionForCheckpoint = useCallback(
+    (checkpoint, intent = "start") => {
+      const normalized = normalizeReviewCheckpoint(checkpoint);
+      if (!normalized.rootPath) return false;
+      const token = ++reviewResumeTokenRef.current;
+      cancelReviewFocus();
+      reviewSessions.engage(
+        normalized.rootPath,
+        normalized
+      );
+      setReviewResume({
+        ...createIdleReviewResume(token),
+        phase: "waiting-cache",
+        intent,
+        rootPath: normalized.rootPath,
+        scanId: activeScanId,
+        checkpoint: normalized,
+        explicitFocus: true,
+        message: "Finding the next Unreviewed clip…",
+      });
+      return true;
+    },
+    [activeScanId, cancelReviewFocus, reviewSessions.engage]
+  );
+
+  const saveAndResolveReviewCheckpoint = useCallback(
+    async (draft, intent = "start") => {
+      if (!draft?.rootPath) return null;
+      try {
+        const saved = await reviewSessions.saveNow(draft, {
+          allowCreate: true,
+          engage: false,
+          signature: createReviewCheckpointSignature(draft),
+        });
+        if (!saved) return null;
+        const checkpoint = normalizeReviewCheckpoint(
+          saved?.checkpoint || saved
+        );
+        if (!checkpoint.rootPath) {
+          throw new Error("The review position could not be saved");
+        }
+        beginResolutionForCheckpoint(checkpoint, intent);
+        refreshLibraryRoots();
+        if (activeRootPath) refreshLibraryTree(activeRootPath);
+        return checkpoint;
+      } catch (error) {
+        console.error("Failed to save review position:", error);
+        notify(error?.message || "The review position could not be saved", "error");
+        return null;
+      }
+    },
+    [
+      activeRootPath,
+      beginResolutionForCheckpoint,
+      notify,
+      refreshLibraryRoots,
+      refreshLibraryTree,
+      reviewSessions.saveNow,
+    ]
+  );
+
+  const handleStartReviewSession = useCallback(() => {
+    const draft = buildActiveReviewCheckpoint();
+    return saveAndResolveReviewCheckpoint(draft, "start");
+  }, [buildActiveReviewCheckpoint, saveAndResolveReviewCheckpoint]);
+
+  const handleMoveReviewSession = useCallback(() => {
+    const draft = buildActiveReviewCheckpoint();
+    return saveAndResolveReviewCheckpoint(draft, "move");
+  }, [buildActiveReviewCheckpoint, saveAndResolveReviewCheckpoint]);
+
+  const handleStartRootReview = useCallback(
+    async (rootPath) => {
+      if (!rootPath) return null;
+      const requestId = ++libraryOpenRequestRef.current;
+      try {
+        await reviewSessions.flush();
+        if (requestId !== libraryOpenRequestRef.current) return null;
+        cancelReviewResume();
+        const authorization =
+          await window.electronAPI?.library?.authorizeRoot?.(rootPath);
+        if (requestId !== libraryOpenRequestRef.current) return null;
+        if (authorization?.success === false) {
+          throw new Error(
+            authorization.error || "Could not authorize library root"
+          );
+        }
+        const authorizedRootPath = authorization?.rootPath || rootPath;
+        captureFolderViewState();
+        folderViewStateRef.current.setLocation(
+          authorizedRootPath,
+          "",
+          FolderScope.ALL_DESCENDANTS
+        );
+        restoredFolderViewKeyRef.current = null;
+        setFolderLocation({
+          rootPath: authorizedRootPath,
+          directory: "",
+          scope: FolderScope.ALL_DESCENDANTS,
+        });
+        setExpandedFolderPaths((previous) =>
+          expandFolderAncestors(previous, "")
+        );
+
+        if (activeRootPathRef.current !== authorizedRootPath) {
+          await handleElectronFolderSelection(authorizedRootPath);
+        }
+        await waitForReviewViewSettlement();
+        if (
+          requestId !== libraryOpenRequestRef.current ||
+          activeRootPathRef.current !== authorizedRootPath
+        ) {
+          return null;
+        }
+
+        const settled = reviewViewStateRef.current || {};
+        const draft = buildReviewCheckpointDraft({
+          rootPath: authorizedRootPath,
+          directory: "",
+          scope: FolderScope.ALL_DESCENDANTS,
+          view: {
+            version: 1,
+            filters: settled.filters,
+            sort: {
+              key: settled.sortKey,
+              dir: settled.sortDir,
+              groupByFolders: settled.groupByFolders,
+              randomSeed:
+                settled.sortKey === SortKey.RANDOM
+                  ? settled.randomSeed ?? 0
+                  : null,
+            },
+          },
+          anchor: null,
+        });
+        return saveAndResolveReviewCheckpoint(draft, "start");
+      } catch (error) {
+        if (requestId !== libraryOpenRequestRef.current) return null;
+        console.error("Failed to start root review:", error);
+        notify(error?.message || "Could not start review for that root", "error");
+        return null;
+      }
+    },
+    [
+      cancelReviewResume,
+      captureFolderViewState,
+      handleElectronFolderSelection,
+      notify,
+      reviewSessions.flush,
+      saveAndResolveReviewCheckpoint,
+    ]
+  );
+
+  const handleForgetReviewSession = useCallback(async () => {
+    const rootPath = activeRootPath || reviewSessions.checkpointRootPath;
+    if (!rootPath) return;
+    try {
+      const deleted = await reviewSessions.clear(rootPath);
+      if (!deleted) return;
+      cancelReviewResume();
+      refreshLibraryRoots();
+      notify("Forgot the saved review position", "success");
+    } catch (error) {
+      notify(error?.message || "Could not forget the review position", "error");
+    }
+  }, [
+    activeRootPath,
+    cancelReviewResume,
+    notify,
+    refreshLibraryRoots,
+    reviewSessions.checkpointRootPath,
+    reviewSessions.clear,
+  ]);
+
+  const handleReviewAllUnreviewed = useCallback(() => {
+    if (!activeRootPath) return null;
+    const deterministicSortKey =
+      sortKey === SortKey.RANDOM ? SortKey.NAME : sortKey;
+    const draft = buildActiveReviewCheckpoint({
+      anchor: null,
+      rootPath: activeRootPath,
+      directory: "",
+      scope: FolderScope.ALL_DESCENDANTS,
+      view: {
+        version: 1,
+        filters: {
+          includeTags: [],
+          excludeTags: [],
+          minRating: null,
+          exactRating: null,
+          reviewFilter: REVIEW_FILTERS.ANY,
+        },
+        sort: {
+          key: deterministicSortKey,
+          dir: deterministicSortKey === SortKey.NAME && sortKey === SortKey.RANDOM
+            ? "asc"
+            : sortDir,
+          groupByFolders,
+          randomSeed: null,
+        },
+      },
+    });
+    const checkpoint = normalizeReviewCheckpoint(draft);
+    applyReviewCheckpointView(checkpoint);
+    return saveAndResolveReviewCheckpoint(checkpoint, "review-all");
+  }, [
+    activeRootPath,
+    applyReviewCheckpointView,
+    buildActiveReviewCheckpoint,
+    groupByFolders,
+    saveAndResolveReviewCheckpoint,
+    sortDir,
+    sortKey,
+  ]);
+
+  const handleShowReviewTarget = useCallback(() => {
+    const { candidateId, candidateIndex, token } = reviewResumeRef.current;
+    if (candidateId == null || candidateIndex < 0) return;
+    const nextStep = findRenderLimitStepForIndex(
+      candidateIndex,
+      orderedVideos.length
+    );
+    handleRenderLimitStepChange(nextStep);
+    setReviewResume((previous) => ({
+      ...previous,
+      phase: "waiting-target",
+      message: "Showing the saved review target…",
+    }));
+    scrollToId(candidateId, { align: "center" });
+    reviewResumeTokenRef.current = token;
+  }, [handleRenderLimitStepChange, orderedVideos.length, scrollToId]);
+
+  const handleIndexSubfoldersForReview = useCallback(async () => {
+    const checkpoint = reviewResumeRef.current.checkpoint;
+    if (!checkpoint) return;
+    setReviewResume((previous) => ({
+      ...previous,
+      phase: "restoring",
+      message: "Indexing subfolders before continuing…",
+    }));
+    try {
+      await handleRecursiveChange(true);
+      const token = reviewResumeTokenRef.current;
+      setReviewResume((previous) => ({
+        ...previous,
+        token,
+        phase: "waiting-cache",
+        scanId: null,
+        message: "Finding the next Unreviewed clip…",
+      }));
+    } catch (error) {
+      setReviewResume((previous) => ({
+        ...previous,
+        phase: "unverified",
+        message: error?.message || "Subfolder indexing did not complete",
+      }));
+    }
+  }, [handleRecursiveChange]);
+
+  useEffect(() => {
+    const state = reviewResumeRef.current;
+    if (
+      !["waiting-cache", "provisional"].includes(state.phase) ||
+      !state.checkpoint ||
+      !state.rootPath ||
+      activeRootPath !== state.rootPath
+    ) {
+      return;
+    }
+
+    const refreshFailed = ["cancelled", "error"].includes(
+      loadingStatus?.phase
+    );
+    const authoritative = Boolean(
+      !isLoadingFolder &&
+        !isRefreshingFolder &&
+        loadingStatus?.phase === "complete"
+    );
+    const cacheReady = Boolean(
+      cachedHydrationComplete &&
+        activeScanId &&
+        cachedHydration?.scanId === activeScanId
+    );
+    if (!cacheReady && !authoritative && !refreshFailed) return;
+    if (state.phase === "provisional" && !authoritative && !refreshFailed) {
+      return;
+    }
+
+    if (requiresRecursiveReviewCoverage(state.checkpoint, recursiveMode)) {
+      setReviewResume((previous) =>
+        previous.token === state.token
+          ? {
+              ...previous,
+              phase: "index-required",
+              scanId: activeScanId,
+              message:
+                "Index subfolders before continuing this saved review scope.",
+            }
+          : previous
+      );
+      return;
+    }
+
+    const resolvedLocation = resolveReviewCheckpointLocation(
+      state.checkpoint,
+      catalogDirectories
+    );
+    if (
+      folderLocation.rootPath !== resolvedLocation.rootPath ||
+      currentDirectory !== resolvedLocation.directory ||
+      folderScope !== resolvedLocation.scope
+    ) {
+      const applied = applyReviewCheckpointView({
+        ...state.checkpoint,
+        directory: resolvedLocation.directory,
+        scope: resolvedLocation.scope,
+      });
+      if (applied) {
+        reviewSessions.engage(
+          applied.rootPath,
+          applied
+        );
+      }
+      setReviewResume((previous) =>
+        previous.token === state.token
+          ? {
+              ...previous,
+              phase: "waiting-cache",
+              scanId: activeScanId,
+              fallbackDirectory: resolvedLocation.didFallback
+                ? resolvedLocation.directory
+                : null,
+              message: resolvedLocation.didFallback
+                ? `The saved folder is missing; using ${
+                    resolvedLocation.directory || "the library root"
+                  }.`
+                : previous.message,
+            }
+          : previous
+      );
+      return;
+    }
+
+    let candidate = null;
+    if (state.phase === "provisional" && authoritative && state.candidateId) {
+      const candidateIndex = orderedVideos.findIndex(
+        (video) => video.id === state.candidateId
+      );
+      const video = candidateIndex >= 0 ? orderedVideos[candidateIndex] : null;
+      if (
+        video &&
+        video.present !== false &&
+        normalizeReviewState(video.reviewState) === REVIEW_STATES.UNREVIEWED
+      ) {
+        candidate = {
+          candidateId: video.id,
+          candidateInstanceId: video.instanceId ?? null,
+          candidateFingerprint: video.fingerprint ?? null,
+          candidateName: video.basename || video.name || "Unreviewed clip",
+          candidateIndex,
+          wrapped: state.wrapped === true,
+          reason: "authoritative-keep",
+        };
+      }
+    }
+    candidate ||= resolveContinueReviewCandidate(
+      orderedVideos,
+      state.checkpoint
+    );
+
+    if (!candidate?.candidateId) {
+      if (!authoritative) {
+        setReviewResume((previous) =>
+          previous.token === state.token
+            ? {
+                ...previous,
+                phase: refreshFailed ? "unverified" : "provisional",
+                scanId: activeScanId,
+                candidateId: null,
+                candidateName: null,
+                candidateIndex: -1,
+                message: refreshFailed
+                  ? "The folder refresh did not finish, so completion could not be verified."
+                  : "Checking the refreshed folder for Unreviewed clips…",
+              }
+            : previous
+        );
+        return;
+      }
+
+      const root =
+        (catalogRoots || []).find((entry) => entry?.rootPath === activeRootPath) ||
+        catalogCurrentRoot ||
+        libraryRoot;
+      const remaining = Math.max(
+        0,
+        Number(root?.presentCount || 0) - Number(root?.reviewedCount || 0)
+      );
+      setReviewResume((previous) =>
+        previous.token === state.token
+          ? {
+              ...previous,
+              phase: remaining > 0 ? "complete-view" : "complete",
+              scanId: activeScanId,
+              candidateId: null,
+              candidateName: null,
+              candidateIndex: -1,
+              message:
+                remaining > 0
+                  ? "Review complete for this saved view."
+                  : "Review complete.",
+            }
+          : previous
+      );
+      return;
+    }
+
+    const candidateBaseline = buildReviewCheckpointDraft({
+      ...state.checkpoint,
+      directory: resolvedLocation.directory,
+      scope: resolvedLocation.scope,
+      anchor: {
+        instanceId: candidate.candidateInstanceId,
+        fingerprint: candidate.candidateFingerprint,
+      },
+    });
+    reviewSessions.engage(
+      state.rootPath,
+      candidateBaseline
+    );
+    selection.selectExactly(candidate.candidateId);
+
+    const isInsideRenderCap = displayVideos.some(
+      (video) => video.id === candidate.candidateId
+    );
+    const fallbackMessage = state.fallbackDirectory !== null
+      ? ` Saved folder missing; using ${state.fallbackDirectory || "the library root"}.`
+      : "";
+    if (!isInsideRenderCap) {
+      setReviewResume((previous) =>
+        previous.token === state.token
+          ? {
+              ...previous,
+              phase: "waiting-target",
+              scanId: activeScanId,
+              candidateId: candidate.candidateId,
+              candidateName: candidate.candidateName,
+              candidateIndex: candidate.candidateIndex,
+              wrapped: candidate.wrapped,
+              message: `Saved target ${candidate.candidateName} is outside the current render limit.${fallbackMessage}`,
+            }
+          : previous
+      );
+      return;
+    }
+
+    if (
+      state.phase === "provisional" &&
+      authoritative &&
+      state.candidateId === candidate.candidateId
+    ) {
+      setReviewResume((previous) =>
+        previous.token === state.token
+          ? {
+              ...previous,
+              phase: "active",
+              scanId: activeScanId,
+              message: `Review restored at ${candidate.candidateName}.${fallbackMessage}`,
+            }
+          : previous
+      );
+      return;
+    }
+
+    setReviewResume((previous) =>
+      previous.token === state.token
+        ? {
+            ...previous,
+            phase: "restoring",
+            scanId: activeScanId,
+            candidateId: candidate.candidateId,
+            candidateName: candidate.candidateName,
+            candidateIndex: candidate.candidateIndex,
+            wrapped: candidate.wrapped,
+            message: `Focusing ${candidate.candidateName}…`,
+          }
+        : previous
+    );
+    focusReviewTarget(
+      candidate.candidateId,
+      state.token,
+      () => {
+        if (reviewResumeTokenRef.current !== state.token) return;
+        setReviewResume((previous) =>
+          previous.token === state.token &&
+          previous.candidateId === candidate.candidateId
+            ? {
+                ...previous,
+                phase: authoritative
+                  ? "active"
+                  : refreshFailed
+                    ? "unverified"
+                    : "provisional",
+                message: authoritative
+                  ? `Review restored at ${candidate.candidateName}.${fallbackMessage}`
+                  : refreshFailed
+                    ? `Review target ${candidate.candidateName} restored, but the folder refresh did not finish.`
+                    : `Review target ${candidate.candidateName} restored from the index.${fallbackMessage}`,
+              }
+            : previous
+        );
+      },
+      () => {
+        if (reviewResumeTokenRef.current !== state.token) return;
+        setReviewResume((previous) =>
+          previous.token === state.token &&
+          previous.candidateId === candidate.candidateId
+            ? {
+                ...previous,
+                phase: "waiting-target",
+                message: `The saved target ${candidate.candidateName} is not mounted yet.`,
+              }
+            : previous
+        );
+      }
+    );
+  }, [
+    activeRootPath,
+    activeScanId,
+    applyReviewCheckpointView,
+    cachedHydration,
+    cachedHydrationComplete,
+    catalogCurrentRoot,
+    catalogDirectories,
+    catalogRoots,
+    currentDirectory,
+    displayVideos,
+    focusReviewTarget,
+    folderLocation.rootPath,
+    folderScope,
+    isLoadingFolder,
+    isRefreshingFolder,
+    libraryRoot,
+    loadingStatus?.phase,
+    orderedVideos,
+    recursiveMode,
+    reviewResume.candidateId,
+    reviewResume.checkpoint,
+    reviewResume.phase,
+    reviewResume.rootPath,
+    reviewResume.token,
+    reviewSessions.engage,
+    selection.selectExactly,
+  ]);
+
+  useEffect(() => {
+    const state = reviewResumeRef.current;
+    if (
+      !["complete", "complete-view"].includes(state.phase) ||
+      !state.checkpoint ||
+      state.rootPath !== activeRootPath ||
+      isLoadingFolder ||
+      isRefreshingFolder ||
+      loadingStatus?.phase !== "complete"
+    ) {
+      return;
+    }
+    const hasNewCandidate = orderedVideos.some(
+      (video) =>
+        video?.present !== false &&
+        normalizeReviewState(video?.reviewState) === REVIEW_STATES.UNREVIEWED
+    );
+    const root =
+      (catalogRoots || []).find((entry) => entry?.rootPath === activeRootPath) ||
+      catalogCurrentRoot ||
+      libraryRoot;
+    const remaining = getKnownRemainingUnreviewed(root);
+    if (
+      !hasNewCandidate &&
+      (!(remaining > 0) || state.phase === "complete-view")
+    ) {
+      return;
+    }
+    setReviewResume((previous) =>
+      previous.token === state.token &&
+      ["complete", "complete-view"].includes(previous.phase)
+        ? {
+            ...previous,
+            phase: hasNewCandidate ? "available" : "complete-view",
+            message: hasNewCandidate
+              ? "New Unreviewed clips found. Continue when you are ready."
+              : "New Unreviewed clips are outside this saved view.",
+          }
+        : previous
+    );
+  }, [
+    activeRootPath,
+    catalogCurrentRoot,
+    catalogRoots,
+    isLoadingFolder,
+    isRefreshingFolder,
+    libraryRoot,
+    loadingStatus?.phase,
+    orderedVideos,
+    reviewResume.phase,
+    reviewResume.rootPath,
+    reviewResume.token,
+  ]);
+
+  useEffect(() => {
+    const state = reviewResumeRef.current;
+    if (state.phase !== "waiting-target" || state.candidateId == null) return;
+    if (!displayVideos.some((video) => video.id === state.candidateId)) return;
+    setReviewResume((previous) => ({
+      ...previous,
+      phase: "restoring",
+      message: `Focusing ${previous.candidateName || "the review target"}…`,
+    }));
+    focusReviewTarget(
+      state.candidateId,
+      state.token,
+      () => {
+        if (reviewResumeTokenRef.current !== state.token) return;
+        const authoritative =
+          !isLoadingFolder &&
+          !isRefreshingFolder &&
+          loadingStatus?.phase === "complete";
+        setReviewResume((previous) =>
+          previous.token === state.token
+            ? {
+                ...previous,
+                phase: authoritative ? "active" : "provisional",
+                message: `Review restored at ${
+                  previous.candidateName || "the saved target"
+                }.`,
+              }
+            : previous
+        );
+      },
+      () => {
+        if (reviewResumeTokenRef.current !== state.token) return;
+        setReviewResume((previous) =>
+          previous.token === state.token
+            ? {
+                ...previous,
+                phase: "waiting-target",
+                message: "The review target is still outside the mounted grid.",
+              }
+            : previous
+        );
+      }
+    );
+  }, [
+    displayVideos,
+    focusReviewTarget,
+    isLoadingFolder,
+    isRefreshingFolder,
+    loadingStatus?.phase,
+    reviewResume.candidateId,
+    reviewResume.phase,
+    reviewResume.token,
+  ]);
+
   const videoSelectStateRef = useRef(null);
   videoSelectStateRef.current = {
     getById,
@@ -2178,6 +3319,21 @@ function App() {
     (videoId, isCtrlClick, isShiftClick, isDoubleClick) => {
       const current = videoSelectStateRef.current;
       const video = current?.getById?.(videoId);
+      if (
+        ["restoring", "waiting-cache", "waiting-target", "provisional"].includes(
+          reviewResumeRef.current.phase
+        )
+      ) {
+        cancelReviewResume();
+      }
+      if (!isDoubleClick && video && reviewSessions.isEngaged) {
+        const draft = buildActiveReviewCheckpoint({ anchor: video });
+        if (draft) {
+          reviewSessions.schedule(draft, {
+            signature: createReviewCheckpointSignature(draft),
+          });
+        }
+      }
       if (isDoubleClick && video) {
         setFullScreenPinnedId(video.id);
         collectionCallbacksRef.current?.openFullScreen?.(video);
@@ -2197,7 +3353,12 @@ function App() {
         current?.selectOnly?.(videoId);
       }
     },
-    []
+    [
+      buildActiveReviewCheckpoint,
+      cancelReviewResume,
+      reviewSessions.isEngaged,
+      reviewSessions.schedule,
+    ]
   );
 
   // Right-click on a card: open the item context menu without altering selection
@@ -2260,6 +3421,164 @@ function App() {
     videoCollection.performCleanup,
   ]);
 
+  useEffect(() => {
+    const checkpoint = reviewSessions.checkpoint;
+    if (
+      !checkpoint ||
+      reviewSessions.isEngaged ||
+      reviewResume.phase !== "idle" ||
+      !checkpointLocationMatches(checkpoint, {
+        rootPath: activeRootPath,
+        directory: currentDirectory,
+        scope: folderScope,
+      })
+    ) {
+      return;
+    }
+    const baseline = buildActiveReviewCheckpoint();
+    reviewSessions.engage(
+      activeRootPath,
+      baseline || checkpoint
+    );
+  }, [
+    activeRootPath,
+    buildActiveReviewCheckpoint,
+    currentDirectory,
+    folderScope,
+    reviewResume.phase,
+    reviewSessions.checkpoint,
+    reviewSessions.engage,
+    reviewSessions.isEngaged,
+  ]);
+
+  const rootReviewStateByPath = useMemo(() => {
+    const result = {};
+    for (const root of pinnedRoots) {
+      const rootPath = root?.rootPath;
+      if (!rootPath) continue;
+      const remainingUnreviewed = getKnownRemainingUnreviewed(root);
+      const isUpdating = Boolean(
+        (rootPath === activeRootPath &&
+          (isLoadingFolder || isRefreshingFolder)) ||
+          (root?.refreshState && root.refreshState !== "idle")
+      );
+      const hasCheckpoint = reviewSessions.hasCheckpoint(rootPath);
+      let action = hasCheckpoint ? "continue" : "start";
+      if (remainingUnreviewed === 0 && !isUpdating) action = "complete";
+      result[rootPath] = {
+        action,
+        remainingUnreviewed,
+        isUpdating,
+        disabled: reviewSessions.saving,
+      };
+    }
+    return result;
+  }, [
+    activeRootPath,
+    isLoadingFolder,
+    isRefreshingFolder,
+    pinnedRoots,
+    reviewSessions.hasCheckpoint,
+    reviewSessions.saving,
+    reviewSessions.summaryByRoot,
+  ]);
+
+  const reviewSessionModel = useMemo(() => {
+    const checkpoint =
+      reviewResume.rootPath === activeRootPath && reviewResume.checkpoint
+        ? reviewResume.checkpoint
+        : reviewSessions.checkpoint;
+    const hasCheckpoint = Boolean(
+      activeRootPath &&
+        (checkpoint?.rootPath === activeRootPath ||
+          reviewSessions.hasCheckpoint(activeRootPath))
+    );
+    let mode = "none";
+    if (reviewResume.rootPath === activeRootPath) {
+      if (
+        ["restoring", "waiting-cache", "waiting-target", "provisional"].includes(
+          reviewResume.phase
+        )
+      ) {
+        mode = "restoring";
+      } else if (reviewResume.phase === "complete") {
+        mode = "complete";
+      } else if (reviewResume.phase === "complete-view") {
+        mode = "complete-view";
+      } else if (reviewResume.phase === "available") {
+        mode = "available";
+      } else if (reviewResume.phase === "index-required") {
+        mode = "index-required";
+      } else if (hasCheckpoint) {
+        mode = "active";
+      }
+    } else if (hasCheckpoint && checkpoint) {
+      mode = checkpointLocationMatches(checkpoint, {
+        rootPath: activeRootPath,
+        directory: currentDirectory,
+        scope: folderScope,
+      })
+        ? "active"
+        : "elsewhere";
+    }
+
+    const directoryLabel = checkpoint?.directory
+      ? checkpoint.directory
+      : "Library root";
+    const savedAt = formatSessionSavedAt(checkpoint?.updatedAt);
+    const catalogRoot =
+      (catalogRoots || []).find((entry) => entry?.rootPath === activeRootPath) ||
+      catalogCurrentRoot ||
+      libraryRoot;
+    const rootRemaining = getKnownRemainingUnreviewed(catalogRoot);
+    return {
+      mode,
+      savedAtLabel: savedAt ? `Saved ${savedAt}` : "",
+      message: reviewResume.rootPath === activeRootPath
+        ? reviewResume.message
+        : "",
+      candidateName: reviewResume.rootPath === activeRootPath
+        ? reviewResume.candidateName
+        : "",
+      locationLabel: directoryLabel,
+      startActionContext: `${reviewScopeLabel}, ${Math.max(
+        0,
+        Number(reviewWorkflow.progress.unreviewed) || 0
+      ).toLocaleString()} unreviewed`,
+      savedActionContext: `${formatCheckpointScopeLabel(
+        checkpoint,
+        rootDisplayName
+      )}${
+        rootRemaining === null
+          ? ""
+          : `, ${rootRemaining.toLocaleString()} unreviewed in the root`
+      }`,
+      showTarget:
+        reviewResume.rootPath === activeRootPath &&
+        reviewResume.phase === "waiting-target",
+      checkingForFiles: Boolean(
+        hasCheckpoint &&
+          (isRefreshingFolder || reviewResume.phase === "provisional")
+      ),
+      disabled: reviewSessions.saving,
+    };
+  }, [
+    activeRootPath,
+    catalogCurrentRoot,
+    catalogRoots,
+    currentDirectory,
+    folderScope,
+    isRefreshingFolder,
+    libraryRoot,
+    reviewResume,
+    reviewScopeLabel,
+    reviewWorkflow.progress.unreviewed,
+    rootDisplayName,
+    reviewSessions.checkpoint,
+    reviewSessions.hasCheckpoint,
+    reviewSessions.saving,
+  ]);
+
   const masonryGridStyle = useMemo(
     () => ({ height: `${Math.max(0, masonryTotalHeight)}px` }),
     [masonryTotalHeight]
@@ -2301,7 +3620,7 @@ function App() {
           <HeaderBar
             isLoadingFolder={isLoadingFolder}
             handleFolderSelect={handleChooseFolder}
-            handleWebFileSelection={handleWebFileSelection}
+            handleWebFileSelection={handleWebDirectorySelection}
             recursiveMode={recursiveMode}
             toggleRecursive={toggleRecursive}
             showFilenames={showFilenames}
@@ -2372,10 +3691,18 @@ function App() {
               isBusy={reviewWorkflow.isBusy}
               canProcessResults={reviewProcessingReady}
               processResultsReason={reviewProcessingReason}
+              session={reviewSessionModel}
               onSetReviewState={reviewWorkflow.applyReviewState}
               onAutoAdvanceChange={handleReviewAutoAdvanceChange}
               onUndo={reviewWorkflow.undo}
               onProcessResults={() => setProcessResultsOpen(true)}
+              onStartSession={handleStartReviewSession}
+              onContinueSession={() => beginContinueReview(activeRootPath)}
+              onMoveSession={handleMoveReviewSession}
+              onForgetSession={handleForgetReviewSession}
+              onReviewAllUnreviewed={handleReviewAllUnreviewed}
+              onShowReviewTarget={handleShowReviewTarget}
+              onIndexSubfolders={handleIndexSubfoldersForReview}
             />
           )}
 
@@ -2528,6 +3855,9 @@ function App() {
                   currentRoot={null}
                   onOpenRoot={handleOpenLibraryRoot}
                   onTogglePin={handleToggleLibraryPin}
+                  rootReviewStateByPath={rootReviewStateByPath}
+                  onStartRootReview={handleStartRootReview}
+                  onContinueRootReview={beginContinueReview}
                   savedViews={savedViews}
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
@@ -2573,6 +3903,9 @@ function App() {
                     currentRoot={catalogCurrentRoot || libraryRoot}
                     onOpenRoot={handleOpenLibraryRoot}
                     onTogglePin={handleToggleLibraryPin}
+                    rootReviewStateByPath={rootReviewStateByPath}
+                    onStartRootReview={handleStartRootReview}
+                    onContinueRootReview={beginContinueReview}
                     savedViews={savedViews}
                     onApplySavedView={handleApplySavedView}
                     onSaveCurrentView={handleSaveCurrentView}

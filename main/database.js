@@ -14,6 +14,19 @@ const {
   normalizeManifestDirectory,
   normalizeManifestScope,
 } = require('./review-manifest');
+const {
+  REVIEW_VIEW_DEFINITION_BYTE_LIMIT,
+  normalizeReviewViewDefinition,
+} = require('./review-view-definition');
+const {
+  REVIEW_CHECKPOINT_LIMIT,
+  ReviewCheckpointError,
+  normalizeCheckpointAnchorId,
+  normalizeCheckpointDirectory,
+  normalizeCheckpointFingerprint,
+  normalizeCheckpointScope,
+  normalizeCheckpointView,
+} = require('./review-checkpoint');
 const profileManager = require('./profile-manager');
 
 let dbInstance = null;
@@ -23,14 +36,12 @@ let currentProfilePath = null;
 const DB_FILE_NAME = 'videoswarm-meta.db';
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
 const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
-const REVIEW_FILTERS = new Set(['any', ...REVIEW_STATES]);
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
-const SAVED_VIEW_DEFINITION_BYTE_LIMIT = 8192;
-const SAVED_VIEW_VERSION = 1;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;
+let didWarnMalformedReviewCheckpoint = false;
 
 function normalizeReviewState(value) {
   const state = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -41,86 +52,10 @@ function normalizeReviewState(value) {
 }
 
 function normalizeSavedViewDefinition(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new TypeError('Saved view definition must be an object');
-  }
-  if (Number(input.version) !== SAVED_VIEW_VERSION) {
-    throw new TypeError(`Saved view version must be ${SAVED_VIEW_VERSION}`);
-  }
-
-  const filtersInput = input.filters && typeof input.filters === 'object'
-    ? input.filters
-    : {};
-  const normalizeTags = (values) => Array.from(new Set(
-    (Array.isArray(values) ? values : [])
-      .map((value) => String(value ?? '').trim())
-      .filter(Boolean)
-      .slice(0, 100)
-      .map((value) => value.slice(0, 80))
-  )).sort((left, right) => left.localeCompare(right));
-  const normalizeRating = (value, { minimum = 0 } = {}) => {
-    if (value === null || value === undefined || value === '') return null;
-    const number = Number(value);
-    if (!Number.isFinite(number)) return null;
-    return Math.max(minimum, Math.min(5, Math.round(number)));
-  };
-  const reviewFilterCandidate = typeof filtersInput.reviewFilter === 'string'
-    ? filtersInput.reviewFilter.trim().toLowerCase()
-    : 'any';
-  const reviewFilter = REVIEW_FILTERS.has(reviewFilterCandidate)
-    ? reviewFilterCandidate
-    : 'any';
-
-  const sortInput = input.sort && typeof input.sort === 'object' ? input.sort : {};
-  const sortKey = ['name', 'created', 'random'].includes(sortInput.key)
-    ? sortInput.key
-    : 'name';
-  const sortDir = sortInput.dir === 'desc' ? 'desc' : 'asc';
-  const randomSeed = sortInput.randomSeed !== null &&
-    sortInput.randomSeed !== undefined &&
-    Number.isFinite(Number(sortInput.randomSeed))
-      ? Math.trunc(Number(sortInput.randomSeed))
-      : null;
-
-  const scopeInput = input.scope && typeof input.scope === 'object'
-    ? input.scope.mode
-    : input.scopeMode;
-  const scopeMode = [
-    'all-descendants',
-    'current-folder',
-    'current-subtree',
-  ].includes(scopeInput)
-    ? scopeInput
-    : 'all-descendants';
-
-  const normalized = {
-    version: SAVED_VIEW_VERSION,
-    filters: {
-      includeTags: normalizeTags(filtersInput.includeTags),
-      excludeTags: normalizeTags(filtersInput.excludeTags),
-      minRating: normalizeRating(filtersInput.minRating, { minimum: 1 }),
-      exactRating: normalizeRating(filtersInput.exactRating),
-      reviewFilter,
-    },
-    sort: {
-      key: sortKey,
-      dir: sortDir,
-      groupByFolders: sortInput.groupByFolders !== false,
-      randomSeed,
-    },
-    scope: { mode: scopeMode },
-  };
-
-  if (normalized.filters.exactRating !== null) {
-    normalized.filters.minRating = null;
-  }
-  const serialized = JSON.stringify(normalized);
-  if (Buffer.byteLength(serialized, 'utf8') > SAVED_VIEW_DEFINITION_BYTE_LIMIT) {
-    throw new RangeError(
-      `Saved view definition exceeds ${SAVED_VIEW_DEFINITION_BYTE_LIMIT} bytes`
-    );
-  }
-  return normalized;
+  return normalizeReviewViewDefinition(input, {
+    includeScope: true,
+    preserveInactiveRandomSeed: true,
+  });
 }
 
 function isSqliteCorruptionError(error) {
@@ -450,6 +385,23 @@ function initDatabase(app, profilePath) {
         updated_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS review_checkpoints (
+        root_id INTEGER PRIMARY KEY,
+        directory_relative_path TEXT NOT NULL DEFAULT '',
+        scope_mode TEXT NOT NULL CHECK (
+          scope_mode IN ('all-descendants', 'current-folder', 'current-subtree')
+        ),
+        view_json TEXT NOT NULL CHECK (
+          length(CAST(view_json AS BLOB)) <= 8192
+        ),
+        anchor_instance_id INTEGER,
+        anchor_fingerprint TEXT,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (root_id) REFERENCES library_roots(id) ON DELETE CASCADE,
+        FOREIGN KEY (anchor_instance_id) REFERENCES file_instances(id)
+          ON DELETE SET NULL
+      );
+
       CREATE TABLE IF NOT EXISTS instance_generation_metadata (
         instance_id INTEGER PRIMARY KEY,
         sidecar_path TEXT NOT NULL,
@@ -482,6 +434,8 @@ function initDatabase(app, profilePath) {
         ON content_review(state);
       CREATE INDEX IF NOT EXISTS idx_saved_views_updated
         ON saved_views(updated_at DESC, name COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS idx_review_checkpoints_updated
+        ON review_checkpoints(updated_at DESC, root_id DESC);
     `);
 
     const libraryRootColumns = new Set(
@@ -997,6 +951,125 @@ function createMetadataStore(db) {
   `);
   const savedViewDelete = db.prepare(`DELETE FROM saved_views WHERE id = ?;`);
 
+  const reviewCheckpointCount = db.prepare(`
+    SELECT COUNT(*) AS count FROM review_checkpoints;
+  `);
+  const reviewCheckpointByRootId = db.prepare(`
+    SELECT
+      cp.*,
+      lr.root_path
+    FROM review_checkpoints cp
+    INNER JOIN library_roots lr ON lr.id = cp.root_id
+    WHERE cp.root_id = ?;
+  `);
+  const reviewCheckpointSummaries = db.prepare(`
+    SELECT
+      cp.root_id,
+      lr.root_path,
+      cp.directory_relative_path,
+      cp.scope_mode,
+      cp.anchor_instance_id,
+      cp.anchor_fingerprint,
+      cp.updated_at
+    FROM (
+      SELECT
+        root_id,
+        directory_relative_path,
+        scope_mode,
+        view_json,
+        anchor_instance_id,
+        anchor_fingerprint,
+        updated_at
+      FROM review_checkpoints
+      ORDER BY updated_at DESC, root_id DESC
+      LIMIT ${REVIEW_CHECKPOINT_LIMIT}
+    ) cp
+    INNER JOIN library_roots lr ON lr.id = cp.root_id
+    WHERE CASE
+      WHEN json_valid(cp.view_json)
+      THEN
+        json_type(cp.view_json) = 'object' AND
+        json_type(cp.view_json, '$.version') = 'integer' AND
+        json_extract(cp.view_json, '$.version') = 1 AND
+        (
+          COALESCE(json_extract(cp.view_json, '$.sort.key'), 'name') != 'random' OR
+          json_type(cp.view_json, '$.sort.randomSeed') IN ('integer', 'real')
+        )
+      ELSE 0
+    END
+    ORDER BY cp.updated_at DESC, cp.root_id DESC
+    LIMIT ${REVIEW_CHECKPOINT_LIMIT};
+  `);
+  const malformedReviewCheckpointSummary = db.prepare(`
+    SELECT cp.root_id
+    FROM (
+      SELECT root_id, view_json
+      FROM review_checkpoints
+      ORDER BY updated_at DESC, root_id DESC
+      LIMIT ${REVIEW_CHECKPOINT_LIMIT}
+    ) cp
+    WHERE NOT CASE
+      WHEN json_valid(cp.view_json)
+      THEN
+        json_type(cp.view_json) = 'object' AND
+        json_type(cp.view_json, '$.version') = 'integer' AND
+        json_extract(cp.view_json, '$.version') = 1 AND
+        (
+          COALESCE(json_extract(cp.view_json, '$.sort.key'), 'name') != 'random' OR
+          json_type(cp.view_json, '$.sort.randomSeed') IN ('integer', 'real')
+        )
+      ELSE 0
+    END
+    LIMIT 1;
+  `);
+  const reviewCheckpointUpsert = db.prepare(`
+    INSERT INTO review_checkpoints (
+      root_id,
+      directory_relative_path,
+      scope_mode,
+      view_json,
+      anchor_instance_id,
+      anchor_fingerprint,
+      updated_at
+    ) VALUES (
+      @root_id,
+      @directory_relative_path,
+      @scope_mode,
+      @view_json,
+      @anchor_instance_id,
+      @anchor_fingerprint,
+      @updated_at
+    )
+    ON CONFLICT(root_id) DO UPDATE SET
+      directory_relative_path=excluded.directory_relative_path,
+      scope_mode=excluded.scope_mode,
+      view_json=excluded.view_json,
+      anchor_instance_id=excluded.anchor_instance_id,
+      anchor_fingerprint=excluded.anchor_fingerprint,
+      updated_at=excluded.updated_at;
+  `);
+  const reviewCheckpointEvictOldest = db.prepare(`
+    DELETE FROM review_checkpoints
+    WHERE root_id IN (
+      SELECT root_id
+      FROM review_checkpoints
+      WHERE root_id != ?
+      ORDER BY updated_at ASC, root_id ASC
+      LIMIT ?
+    );
+  `);
+  const reviewCheckpointDelete = db.prepare(`
+    DELETE FROM review_checkpoints WHERE root_id = ?;
+  `);
+  const reviewCheckpointSaveTransaction = db.transaction((record) => {
+    reviewCheckpointUpsert.run(record);
+    const count = Number(reviewCheckpointCount.get()?.count || 0);
+    const overflow = Math.max(0, count - REVIEW_CHECKPOINT_LIMIT);
+    if (overflow > 0) {
+      reviewCheckpointEvictOldest.run(record.root_id, overflow);
+    }
+  });
+
   const generationMetadataByInstance = db.prepare(`
     SELECT * FROM instance_generation_metadata WHERE instance_id = ?;
   `);
@@ -1234,6 +1307,69 @@ function createMetadataStore(db) {
         updatedAt: Number(row.updated_at || 0),
       };
     } catch {
+      return null;
+    }
+  }
+
+  function warnMalformedReviewCheckpoint(error, row = null) {
+    if (didWarnMalformedReviewCheckpoint) return;
+    didWarnMalformedReviewCheckpoint = true;
+    console.warn('[database] Skipping malformed review checkpoint', {
+      rootId: Number(row?.root_id) || null,
+      message: error?.message || String(error),
+    });
+  }
+
+  function normalizeCheckpointUpdatedAt(value) {
+    const updatedAt = Number(value);
+    if (!Number.isSafeInteger(updatedAt) || updatedAt < 0) {
+      throw new ReviewCheckpointError(
+        'Review checkpoint timestamp is invalid',
+        'INVALID_REVIEW_CHECKPOINT_ROW'
+      );
+    }
+    return updatedAt;
+  }
+
+  function mapReviewCheckpointSummary(row) {
+    if (!row) return null;
+    try {
+      const rootPath = normalizeRootPath(row.root_path);
+      // Anchors are deliberately omitted from the summary wire shape, but
+      // still validate them here so an externally modified malformed row
+      // cannot advertise a Continue action that get() will later reject.
+      normalizeCheckpointAnchorId(row.anchor_instance_id);
+      normalizeCheckpointFingerprint(row.anchor_fingerprint);
+      return {
+        rootPath,
+        directory: normalizeCheckpointDirectory(row.directory_relative_path),
+        scope: normalizeCheckpointScope(row.scope_mode),
+        updatedAt: normalizeCheckpointUpdatedAt(row.updated_at),
+      };
+    } catch (error) {
+      warnMalformedReviewCheckpoint(error, row);
+      return null;
+    }
+  }
+
+  function mapReviewCheckpointRow(row) {
+    if (!row) return null;
+    try {
+      const summary = mapReviewCheckpointSummary(row);
+      if (!summary) return null;
+      const { normalized: view } = normalizeCheckpointView(
+        JSON.parse(row.view_json)
+      );
+      return {
+        ...summary,
+        view,
+        anchorInstanceId: normalizeCheckpointAnchorId(row.anchor_instance_id),
+        anchorFingerprint: normalizeCheckpointFingerprint(
+          row.anchor_fingerprint
+        ),
+      };
+    } catch (error) {
+      warnMalformedReviewCheckpoint(error, row);
       return null;
     }
   }
@@ -1956,7 +2092,7 @@ function createMetadataStore(db) {
       throw new RangeError(`Saved view limit of ${SAVED_VIEW_LIMIT} reached`);
     }
     const serialized = JSON.stringify(safeDefinition);
-    if (Buffer.byteLength(serialized, 'utf8') > SAVED_VIEW_DEFINITION_BYTE_LIMIT) {
+    if (Buffer.byteLength(serialized, 'utf8') > REVIEW_VIEW_DEFINITION_BYTE_LIMIT) {
       throw new RangeError('Saved view definition is too large');
     }
     const now = Date.now();
@@ -1983,6 +2119,135 @@ function createMetadataStore(db) {
   function deleteSavedView(savedViewId) {
     const id = normalizeSavedViewId(savedViewId);
     return savedViewDelete.run(id).changes > 0;
+  }
+
+  function requireReviewCheckpointRoot(rootPath) {
+    const normalizedRoot = normalizeRootPath(rootPath);
+    const root = rootByPath.get(normalizedRoot);
+    if (!root) {
+      throw new ReviewCheckpointError(
+        `Library root has not been indexed: ${normalizedRoot}`,
+        'REVIEW_CHECKPOINT_ROOT_NOT_FOUND'
+      );
+    }
+    return root;
+  }
+
+  function listReviewCheckpoints(options = {}) {
+    assertOperationActive(options.assertActive);
+    const malformed = malformedReviewCheckpointSummary.get();
+    if (malformed) {
+      warnMalformedReviewCheckpoint(
+        new ReviewCheckpointError(
+          'Checkpoint JSON is malformed or uses an unsupported version',
+          'INVALID_REVIEW_CHECKPOINT_ROW'
+        ),
+        malformed
+      );
+    }
+    const checkpoints = reviewCheckpointSummaries
+      .all()
+      .map(mapReviewCheckpointSummary)
+      .filter(Boolean);
+    assertOperationActive(options.assertActive);
+    return checkpoints;
+  }
+
+  function getReviewCheckpoint(rootPath, options = {}) {
+    assertOperationActive(options.assertActive);
+    const root = requireReviewCheckpointRoot(rootPath);
+    const checkpoint = mapReviewCheckpointRow(
+      reviewCheckpointByRootId.get(root.id)
+    );
+    assertOperationActive(options.assertActive);
+    return checkpoint;
+  }
+
+  function saveReviewCheckpoint(draft, options = {}) {
+    assertOperationActive(options.assertActive);
+    if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+      throw new ReviewCheckpointError(
+        'Review checkpoint draft must be an object',
+        'INVALID_REVIEW_CHECKPOINT'
+      );
+    }
+    const root = requireReviewCheckpointRoot(draft.rootPath);
+    const scope = normalizeCheckpointScope(draft.scope);
+    const directory = scope === 'all-descendants'
+      ? ''
+      : normalizeCheckpointDirectory(draft.directory ?? '');
+    const directoryRow = directoryByPath.get(root.id, directory);
+    if (!directoryRow || !Boolean(directoryRow.is_present)) {
+      throw new ReviewCheckpointError(
+        'Review checkpoint directory is not present in the library index',
+        'REVIEW_CHECKPOINT_DIRECTORY_NOT_FOUND'
+      );
+    }
+    const { serialized: viewJson } = normalizeCheckpointView(draft.view);
+    const anchorInstanceId = normalizeCheckpointAnchorId(
+      draft.anchorInstanceId
+    );
+    let anchorFingerprint = normalizeCheckpointFingerprint(
+      draft.anchorFingerprint
+    );
+    if (anchorInstanceId !== null) {
+      const instance = fileInstanceById.get(anchorInstanceId);
+      if (!instance || Number(instance.root_id) !== Number(root.id)) {
+        throw new ReviewCheckpointError(
+          'Review checkpoint anchor does not belong to the requested root',
+          'REVIEW_CHECKPOINT_ANCHOR_NOT_FOUND'
+        );
+      }
+      const instanceFingerprint = normalizeCheckpointFingerprint(
+        instance.fingerprint
+      );
+      if (!instanceFingerprint) {
+        throw new ReviewCheckpointError(
+          'Review checkpoint anchor has no indexed fingerprint',
+          'REVIEW_CHECKPOINT_ANCHOR_NOT_FOUND'
+        );
+      }
+      if (
+        anchorFingerprint !== null &&
+        anchorFingerprint !== instanceFingerprint
+      ) {
+        throw new ReviewCheckpointError(
+          'Review checkpoint anchor fingerprint does not match its instance',
+          'REVIEW_CHECKPOINT_ANCHOR_MISMATCH'
+        );
+      }
+      anchorFingerprint = instanceFingerprint;
+    }
+
+    const updatedAt = Date.now();
+    reviewCheckpointSaveTransaction({
+      root_id: root.id,
+      directory_relative_path: directory,
+      scope_mode: scope,
+      view_json: viewJson,
+      anchor_instance_id: anchorInstanceId,
+      anchor_fingerprint: anchorFingerprint,
+      updated_at: updatedAt,
+    });
+    assertOperationActive(options.assertActive);
+    const checkpoint = mapReviewCheckpointRow(
+      reviewCheckpointByRootId.get(root.id)
+    );
+    if (!checkpoint) {
+      throw new ReviewCheckpointError(
+        'Saved review checkpoint could not be read back',
+        'REVIEW_CHECKPOINT_WRITE_FAILED'
+      );
+    }
+    return checkpoint;
+  }
+
+  function clearReviewCheckpoint(rootPath, options = {}) {
+    assertOperationActive(options.assertActive);
+    const root = requireReviewCheckpointRoot(rootPath);
+    const deleted = reviewCheckpointDelete.run(root.id).changes > 0;
+    assertOperationActive(options.assertActive);
+    return deleted;
   }
 
   function normalizeCatalogPathSet(rootPath, values, { directories = false } = {}) {
@@ -2725,6 +2990,10 @@ function createMetadataStore(db) {
     createSavedView,
     updateSavedView,
     deleteSavedView,
+    listReviewCheckpoints,
+    getReviewCheckpoint,
+    saveReviewCheckpoint,
+    clearReviewCheckpoint,
     refreshDirectoryCounts,
     getMetadataForFingerprints,
     listTags,
