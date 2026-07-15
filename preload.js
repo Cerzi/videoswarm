@@ -326,12 +326,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("metadata:restore-review", snapshots),
     get: async (fingerprints) =>
       ipcRenderer.invoke("metadata:get", fingerprints),
-    getGeneration: async (instanceId, requestToken) => {
+    getGeneration: async (instanceId, requestToken, options = {}) => {
       return ipcRenderer.invoke("metadata:get-generation", {
         instanceId,
         ...(requestToken === undefined || requestToken === null || requestToken === ""
           ? {}
           : { requestToken }),
+        ...(options?.force === true ? { force: true } : {}),
       });
     },
     cancelGeneration: async (requestToken) =>

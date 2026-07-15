@@ -260,6 +260,261 @@ maybeDescribe('review state and saved library views', () => {
     );
   });
 
+  it('stores bounded embedded provenance without retaining arbitrary workflow objects', async () => {
+    const clip = createFile('embedded/clip.mp4', 'embedded metadata clip');
+    const indexed = await store.indexFile({ rootPath, ...clip });
+    const pollutedRecord = JSON.parse(`{
+      "__proto__": {"polluted": true},
+      "constructor": "blocked",
+      "prototype": "blocked",
+      "container": "mp4",
+      "nestedWorkflow": {"nodes": {"1": {"inputs": {"text": "raw"}}}}
+    }`);
+    const longFragments = Array.from({ length: 40 }, (_, index) => ({
+      text: `${index}-${'😀'.repeat(3000)}`,
+      role: index % 2 ? 'negative' : 'positive',
+      nodeId: String(index),
+      composition: 'concat',
+      confidence: index === 0 ? 1 : 0.5,
+      classType: 'CLIPTextEncode',
+      field: 'text',
+      resolved: true,
+    }));
+
+    const metadata = store.setGenerationMetadata(indexed.instance.id, {
+      sourceKind: 'embedded',
+      sourceFormat: 'mp4-comment',
+      sourceLabel: 'clip.mp4 · comment',
+      parserVersion: 2,
+      provenance: pollutedRecord,
+      positivePrompt: 'a city at dusk',
+      negativePrompt: 'blur, artifacts',
+      promptFragments: longFragments,
+      seed: '90071992547409931234',
+      models: ['wan2.2.safetensors'],
+      assets: {
+        checkpoints: ['wan2.2.safetensors'],
+        vaes: ['wan_vae.safetensors'],
+        textEncoders: ['umt5_xxl.safetensors'],
+      },
+      samplers: ['euler'],
+      loras: [
+        {
+          name: 'detail.safetensors',
+          strengthModel: null,
+          strengthClip: '',
+          appliedTo: ['model', 'clip'],
+        },
+        {
+          name: 'motion.safetensors',
+          strengthModel: 0.8,
+          strengthClip: 0.4,
+          appliedTo: 'model',
+        },
+      ],
+      samplingParameters: {
+        steps: 30,
+        cfg: 4.5,
+        denoise: 0.85,
+        scheduler: 'normal',
+        nestedGraph: { shouldNotPersist: true },
+      },
+      samplerStages: Array.from({ length: 40 }, (_, index) => ({
+        nodeId: String(index),
+        sampler: 'euler',
+        steps: index + 1,
+      })),
+      sourceInputs: [
+        { name: 'start.png', kind: 'image', nodeId: '90' },
+        { name: 'motion.mp4', kind: 'video', nodeId: '91' },
+      ],
+      diagnostics: [
+        pollutedRecord,
+        { code: 'UNKNOWN_NODE', message: 'Custom prompt node was unresolved' },
+      ],
+      extractionStatus: 'partial',
+      quality: 'partial',
+    });
+
+    expect({}.polluted).toBeUndefined();
+    expect(metadata).toMatchObject({
+      sourceKind: 'embedded',
+      sourceFormat: 'mp4-comment',
+      sourceLabel: 'clip.mp4 · comment',
+      sidecarPath: '',
+      prompt: 'a city at dusk',
+      positivePrompt: 'a city at dusk',
+      negativePrompt: 'blur, artifacts',
+      seed: '90071992547409931234',
+      status: 'partial',
+      extractionStatus: 'partial',
+      quality: 'partial',
+      confidence: 'partial',
+      sampling: {
+        steps: 30,
+        cfg: 4.5,
+        denoise: 0.85,
+        scheduler: 'normal',
+      },
+      vaes: ['wan_vae.safetensors'],
+      textEncoders: ['umt5_xxl.safetensors'],
+      sourceInputs: [
+        { name: 'start.png', kind: 'image' },
+        { name: 'motion.mp4', kind: 'video' },
+      ],
+    });
+    expect(metadata.mediaSize).toBe(clip.stats.size);
+    expect(metadata.mediaMtimeMs).toBe(clip.stats.mtimeMs);
+    expect(metadata.provenance).toEqual({ container: 'mp4' });
+    expect(metadata.promptFragments.length).toBeGreaterThan(0);
+    expect(metadata.promptFragments.length).toBeLessThanOrEqual(32);
+    expect(metadata.promptFragments[0]).toMatchObject({
+      composition: 'concat',
+      confidence: 1,
+      classType: 'CLIPTextEncode',
+      field: 'text',
+    });
+    expect(Buffer.byteLength(JSON.stringify(metadata.promptFragments), 'utf8'))
+      .toBeLessThanOrEqual(32 * 1024);
+    expect(metadata.loras[0]).toEqual({
+      name: 'detail.safetensors',
+      appliedTo: ['model', 'clip'],
+    });
+    expect(metadata.loras[1]).toMatchObject({
+      strengthModel: 0.8,
+      strengthClip: 0.4,
+      appliedTo: 'model',
+    });
+    expect(metadata.assets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'checkpoint', name: 'wan2.2.safetensors' }),
+      expect.objectContaining({ type: 'vae', name: 'wan_vae.safetensors' }),
+      expect.objectContaining({
+        type: 'text-encoder',
+        name: 'umt5_xxl.safetensors',
+      }),
+    ]));
+    expect(metadata.samplerStages).toHaveLength(32);
+    expect(metadata.diagnostics[0]).toEqual({ container: 'mp4' });
+    expect(() => store.setGenerationMetadata(indexed.instance.id, {
+      sourceKind: 'combined',
+      sidecarPath: `${clip.filePath}.json`,
+    })).toThrow(/unsupported generation source kind/i);
+    expect({}.polluted).toBeUndefined();
+  });
+
+  it('retains cached generation fields on ordinary refresh and clears them on media change', async () => {
+    const clip = createFile('cache/clip.mp4', 'first media identity');
+    const [indexed] = await store.indexFiles({ rootPath, entries: [clip] });
+    store.setGenerationMetadata(indexed.instance.id, {
+      sourceKind: 'embedded',
+      parserVersion: 2,
+      prompt: 'first prompt',
+    });
+
+    await store.indexFiles({ rootPath, entries: [clip] });
+    expect(store.getGenerationMetadata(indexed.instance.id)?.prompt).toBe(
+      'first prompt'
+    );
+
+    fs.writeFileSync(clip.filePath, 'a changed and longer media identity');
+    await store.indexFiles({
+      rootPath,
+      entries: [{ filePath: clip.filePath, stats: fs.statSync(clip.filePath) }],
+    });
+    expect(store.getGenerationMetadata(indexed.instance.id)).toBeNull();
+  });
+
+  it('additively migrates and preserves legacy sidecar generation rows', async () => {
+    const clip = createFile('legacy/clip.mp4', 'legacy generation row');
+    const indexed = await store.indexFile({ rootPath, ...clip });
+    store.setGenerationMetadata(indexed.instance.id, {
+      sidecarPath: `${clip.filePath}.json`,
+      sidecarSize: 42,
+      sidecarMtimeMs: 123,
+      parserVersion: 1,
+      prompt: 'legacy prompt',
+      models: ['legacy-model'],
+    });
+
+    database.resetDatabase();
+    const dbPath = path.join(tempDir, 'videoswarm-meta.db');
+    const legacy = new BetterSqlite(dbPath);
+    legacy.pragma('foreign_keys = OFF');
+    legacy.exec(`
+      ALTER TABLE instance_generation_metadata
+        RENAME TO instance_generation_metadata_extended;
+      CREATE TABLE instance_generation_metadata (
+        instance_id INTEGER PRIMARY KEY,
+        sidecar_path TEXT NOT NULL,
+        sidecar_size INTEGER NOT NULL,
+        sidecar_mtime_ms REAL NOT NULL,
+        parser_version INTEGER NOT NULL,
+        prompt TEXT,
+        seed TEXT,
+        models_json TEXT NOT NULL DEFAULT '[]',
+        samplers_json TEXT NOT NULL DEFAULT '[]',
+        source_images_json TEXT NOT NULL DEFAULT '[]',
+        generation_run TEXT,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
+      );
+      INSERT INTO instance_generation_metadata (
+        instance_id, sidecar_path, sidecar_size, sidecar_mtime_ms,
+        parser_version, prompt, seed, models_json, samplers_json,
+        source_images_json, generation_run, updated_at
+      )
+      SELECT
+        instance_id, sidecar_path, sidecar_size, sidecar_mtime_ms,
+        parser_version, prompt, seed, models_json, samplers_json,
+        source_images_json, generation_run, updated_at
+      FROM instance_generation_metadata_extended;
+      DROP TABLE instance_generation_metadata_extended;
+    `);
+    legacy.close();
+
+    database.initMetadataStore({ getPath: () => tempDir }, tempDir);
+    store = database.getMetadataStore();
+    expect(store.getGenerationMetadata(indexed.instance.id)).toMatchObject({
+      sourceKind: 'sidecar',
+      sourceFormat: null,
+      mediaSize: 0,
+      mediaMtimeMs: 0,
+      prompt: 'legacy prompt',
+      models: ['legacy-model'],
+      status: 'found',
+      quality: 'partial',
+      provenance: {},
+      promptFragments: [],
+      loras: [],
+      assets: [],
+      samplerStages: [],
+      diagnostics: [],
+    });
+
+    database.resetDatabase();
+    const migrated = new BetterSqlite(dbPath, { readonly: true });
+    const columns = migrated
+      .prepare('PRAGMA table_info(instance_generation_metadata)')
+      .all()
+      .map((column) => column.name);
+    migrated.close();
+    expect(columns).toEqual(expect.arrayContaining([
+      'source_kind',
+      'media_size',
+      'provenance_json',
+      'negative_prompt',
+      'prompt_fragments_json',
+      'loras_json',
+      'assets_json',
+      'sampling_json',
+      'sampler_stages_json',
+      'source_inputs_json',
+      'diagnostics_json',
+      'extraction_status',
+      'quality',
+    ]));
+  });
+
   const definition = (overrides = {}) => ({
     version: 1,
     filters: {

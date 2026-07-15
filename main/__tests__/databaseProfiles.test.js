@@ -83,6 +83,40 @@ if (!hasNativeDriver || databaseLoadError) {
       expect(dbAPath).not.toBe(dbBPath);
     });
 
+    it("keeps normalized generation metadata isolated per profile", async () => {
+      resetDatabase();
+      const rootPath = path.join(baseDir, "shared-generation-library");
+      const filePath = path.join(rootPath, "clip.mp4");
+      fs.mkdirSync(rootPath, { recursive: true });
+      fs.writeFileSync(filePath, "shared media bytes");
+      const stats = fs.statSync(filePath);
+
+      initMetadataStore(mockApp, profileA);
+      let store = getMetadataStore();
+      const profileARecord = await store.indexFile({ rootPath, filePath, stats });
+      store.setGenerationMetadata(profileARecord.instance.id, {
+        sourceKind: "embedded",
+        parserVersion: 2,
+        prompt: "profile A prompt",
+      });
+
+      initMetadataStore(mockApp, profileB);
+      store = getMetadataStore();
+      const profileBRecord = await store.indexFile({ rootPath, filePath, stats });
+      expect(store.getGenerationMetadata(profileBRecord.instance.id)).toBeNull();
+      store.setGenerationMetadata(profileBRecord.instance.id, {
+        sourceKind: "embedded",
+        parserVersion: 2,
+        prompt: "profile B prompt",
+      });
+
+      initMetadataStore(mockApp, profileA);
+      store = getMetadataStore();
+      expect(store.getGenerationMetadata(profileARecord.instance.id)?.prompt).toBe(
+        "profile A prompt"
+      );
+    });
+
     it("deduplicates bounded fingerprint work and disposes it on profile changes", async () => {
       resetDatabase();
       initMetadataStore(mockApp, profileA);

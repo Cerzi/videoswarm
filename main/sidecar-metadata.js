@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PARSER_VERSION = 1;
+const PARSER_VERSION = 2;
 const DEFAULT_LIMITS = Object.freeze({
   concurrency: 2,
   maxPending: 64,
@@ -258,7 +258,6 @@ function parseSidecarText(text, options = {}) {
     ['positiveprompt', 5],
     ['prompttext', 5],
     ['prompt', 4],
-    ['text', 1],
   ]);
   const seedKeys = new Set(['seed', 'noiseseed', 'samplerseed']);
   const modelKeys = new Set([
@@ -579,6 +578,7 @@ module.exports = {
   SidecarMetadataError,
   getSidecarCandidatePaths,
   findSidecarCandidate,
+  openSidecarCandidate,
   inspectJsonShape,
   parseSidecarText,
   readFileHandleBounded,

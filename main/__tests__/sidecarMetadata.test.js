@@ -72,6 +72,17 @@ describe('sidecar metadata parsing', () => {
     expect(result).not.toHaveProperty('nodes');
   });
 
+  it('does not guess that an arbitrary nested text field is the prompt', () => {
+    const result = parseSidecarText(JSON.stringify({
+      workflow: {
+        nodes: [
+          { type: 'Note', inputs: { text: 'documentation, not a prompt' } },
+        ],
+      },
+    }));
+    expect(result.prompt).toBeNull();
+  });
+
   it('rejects malformed, oversized, too-deep, and high-node JSON', () => {
     expect(() => parseSidecarText('{')).toThrowError(
       expect.objectContaining({ code: 'SIDECAR_INVALID_JSON' })

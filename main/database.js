@@ -41,7 +41,363 @@ const SAVED_VIEW_NAME_LIMIT = 80;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;
+const GENERATION_METADATA_LIMITS = Object.freeze({
+  sourceFormatBytes: 128,
+  sourceLabelBytes: 512,
+  promptBytes: 32 * 1024,
+  promptFragmentBytes: 8 * 1024,
+  scalarBytes: 2048,
+  compactKeyBytes: 96,
+  listEntries: 32,
+  compactRecordKeys: 24,
+  jsonBytes: 32 * 1024,
+});
+const GENERATION_SOURCE_KINDS = new Set([
+  'embedded',
+  'sidecar',
+  'unknown',
+]);
+const GENERATION_EXTRACTION_STATUSES = new Set([
+  'found',
+  'partial',
+  'unrecognized',
+  'none',
+  'unsupported',
+]);
+const GENERATION_QUALITIES = new Set(['exact', 'partial', 'unknown']);
 let didWarnMalformedReviewCheckpoint = false;
+
+function clampGenerationText(value, maxBytes) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const byteLimit = Math.max(0, Math.floor(Number(maxBytes) || 0));
+  if (Buffer.byteLength(text, 'utf8') <= byteLimit) return text;
+  let clipped = Buffer.from(text, 'utf8')
+    .subarray(0, byteLimit)
+    .toString('utf8');
+  // A byte slice may end in the middle of a UTF-8 sequence. Node represents
+  // that incomplete sequence with U+FFFD, which can itself exceed the byte
+  // budget. Remove only replacement characters introduced at the cut edge.
+  while (
+    clipped.endsWith('\uFFFD') ||
+    Buffer.byteLength(clipped, 'utf8') > byteLimit
+  ) {
+    clipped = clipped.slice(0, -1);
+  }
+  return clipped.trim() || null;
+}
+
+function normalizeGenerationEnum(value, allowed, fallback, label, strict = true) {
+  const normalized = typeof value === 'string'
+    ? value.trim().toLowerCase()
+    : '';
+  if (!normalized) return fallback;
+  if (allowed.has(normalized)) return normalized;
+  if (strict) throw new TypeError(`Unsupported generation ${label}: ${value}`);
+  return fallback;
+}
+
+function normalizeGenerationList(values) {
+  const source = Array.isArray(values) ? values : [];
+  const seen = new Set();
+  const result = [];
+  for (const value of source) {
+    const normalized = clampGenerationText(
+      value,
+      GENERATION_METADATA_LIMITS.scalarBytes
+    );
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+  }
+  return result;
+}
+
+function normalizeCompactScalar(value) {
+  if (typeof value === 'string') {
+    return clampGenerationText(value, GENERATION_METADATA_LIMITS.scalarBytes);
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  return null;
+}
+
+function normalizeGenerationNumber(value, fallback = 0, { integer = false } = {}) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return fallback;
+  if (!integer) return number;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.round(number));
+}
+
+function fitCompactJson(value, fallback) {
+  const maxBytes = GENERATION_METADATA_LIMITS.jsonBytes;
+  let candidate = value;
+  let serialized = JSON.stringify(candidate);
+  if (Buffer.byteLength(serialized, 'utf8') <= maxBytes) return candidate;
+
+  if (Array.isArray(candidate)) {
+    candidate = [...candidate];
+    while (candidate.length) {
+      candidate.pop();
+      serialized = JSON.stringify(candidate);
+      if (Buffer.byteLength(serialized, 'utf8') <= maxBytes) return candidate;
+    }
+    return [];
+  }
+
+  if (candidate && typeof candidate === 'object') {
+    const entries = Object.entries(candidate);
+    while (entries.length) {
+      entries.pop();
+      candidate = Object.fromEntries(entries);
+      serialized = JSON.stringify(candidate);
+      if (Buffer.byteLength(serialized, 'utf8') <= maxBytes) return candidate;
+    }
+  }
+  return fallback;
+}
+
+function normalizeCompactRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result = Object.create(null);
+  const forbiddenKeys = new Set(['__proto__', 'constructor', 'prototype']);
+  const entries = Object.entries(value).slice(
+    0,
+    GENERATION_METADATA_LIMITS.compactRecordKeys
+  );
+  for (const [rawKey, rawValue] of entries) {
+    const key = clampGenerationText(
+      rawKey,
+      GENERATION_METADATA_LIMITS.compactKeyBytes
+    );
+    if (
+      !key ||
+      forbiddenKeys.has(key) ||
+      Object.prototype.hasOwnProperty.call(result, key)
+    ) {
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      const list = rawValue
+        .slice(0, GENERATION_METADATA_LIMITS.listEntries)
+        .map(normalizeCompactScalar)
+        .filter((entry) => entry !== null);
+      if (list.length) result[key] = list;
+      continue;
+    }
+    const scalar = normalizeCompactScalar(rawValue);
+    if (scalar !== null) result[key] = scalar;
+  }
+  return fitCompactJson(Object.fromEntries(Object.entries(result)), {});
+}
+
+function normalizePromptFragments(values) {
+  if (!Array.isArray(values)) return [];
+  const fragments = [];
+  for (const value of values) {
+    if (fragments.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    if (typeof value === 'string' || typeof value === 'number') {
+      const text = clampGenerationText(
+        value,
+        GENERATION_METADATA_LIMITS.promptFragmentBytes
+      );
+      if (text) fragments.push({ text });
+      continue;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const text = clampGenerationText(
+      value.text ?? value.value,
+      GENERATION_METADATA_LIMITS.promptFragmentBytes
+    );
+    if (!text) continue;
+    const fragment = { text };
+    const role = clampGenerationText(value.role, 32);
+    const nodeId = clampGenerationText(value.nodeId, 256);
+    const operation = clampGenerationText(value.operation, 128);
+    const composition = clampGenerationText(value.composition, 128);
+    const classType = clampGenerationText(value.classType, 256);
+    const field = clampGenerationText(value.field, 128);
+    if (role) fragment.role = role;
+    if (nodeId) fragment.nodeId = nodeId;
+    if (operation) fragment.operation = operation;
+    if (composition) fragment.composition = composition;
+    if (classType) fragment.classType = classType;
+    if (field) fragment.field = field;
+    const confidence = normalizeCompactScalar(value.confidence);
+    if (confidence !== null) fragment.confidence = confidence;
+    if (typeof value.resolved === 'boolean') fragment.resolved = value.resolved;
+    fragments.push(fragment);
+  }
+  return fitCompactJson(fragments, []);
+}
+
+function normalizeLoras(values) {
+  if (!Array.isArray(values)) return [];
+  const result = [];
+  const seen = new Set();
+  for (const value of values) {
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    const source = typeof value === 'string' ? { name: value } : value;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const name = clampGenerationText(
+      source.name ?? source.loraName,
+      GENERATION_METADATA_LIMITS.scalarBytes
+    );
+    if (!name) continue;
+    const nodeId = clampGenerationText(source.nodeId, 256);
+    const identity = `${name}\u0000${nodeId || ''}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const entry = { name };
+    const normalizeStrength = (input) => {
+      if (input === null || input === undefined || input === '') return null;
+      const number = Number(input);
+      return Number.isFinite(number) ? number : null;
+    };
+    const strengthModel = normalizeStrength(
+      source.strengthModel ?? source.modelStrength
+    );
+    const strengthClip = normalizeStrength(
+      source.strengthClip ?? source.clipStrength
+    );
+    if (strengthModel !== null) entry.strengthModel = strengthModel;
+    if (strengthClip !== null) entry.strengthClip = strengthClip;
+    if (nodeId) entry.nodeId = nodeId;
+    const sourceLabel = clampGenerationText(source.source, 128);
+    if (sourceLabel) entry.source = sourceLabel;
+    if (Array.isArray(source.appliedTo)) {
+      const appliedTo = normalizeGenerationList(source.appliedTo);
+      if (appliedTo.length) entry.appliedTo = appliedTo;
+    } else {
+      const appliedTo = clampGenerationText(source.appliedTo, 256);
+      if (appliedTo) entry.appliedTo = appliedTo;
+    }
+    result.push(entry);
+  }
+  return fitCompactJson(result, []);
+}
+
+function normalizeAssets(values) {
+  const sourceValues = [];
+  if (Array.isArray(values)) {
+    sourceValues.push(...values);
+  } else if (values && typeof values === 'object') {
+    const groups = [
+      ['models', 'model', 'model'],
+      ['checkpoints', 'model', 'checkpoint'],
+      ['unets', 'model', 'unet'],
+      ['vaes', 'vae', 'vae'],
+      ['textEncoders', 'text-encoder', 'text-encoder'],
+    ];
+    for (const [key, category, fallbackType] of groups) {
+      const entries = Array.isArray(values[key]) ? values[key] : [];
+      entries.forEach((entry) => {
+        sourceValues.push(
+          entry && typeof entry === 'object'
+            ? {
+                ...entry,
+                category,
+                type: entry.type ?? entry.kind ?? fallbackType,
+              }
+            : { type: fallbackType, category, name: entry }
+        );
+      });
+    }
+  }
+
+  const result = [];
+  const seen = new Set();
+  for (const value of sourceValues) {
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    const source = typeof value === 'string' ? { name: value } : value;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const name = clampGenerationText(
+      source.name ?? source.filename,
+      GENERATION_METADATA_LIMITS.scalarBytes
+    );
+    if (!name) continue;
+    const type = clampGenerationText(source.type ?? source.kind ?? 'other', 64);
+    const nodeId = clampGenerationText(source.nodeId, 256);
+    const identity = `${type || 'other'}\u0000${name}\u0000${nodeId || ''}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const entry = { type: type || 'other', name };
+    const category = clampGenerationText(source.category, 64);
+    if (category) entry.category = category;
+    if (nodeId) entry.nodeId = nodeId;
+    const role = clampGenerationText(source.role, 128);
+    if (role) entry.role = role;
+    result.push(entry);
+  }
+  return fitCompactJson(result, []);
+}
+
+function normalizeSourceInputs(values, fallbackNames = []) {
+  const source = Array.isArray(values) && values.length
+    ? values
+    : fallbackNames;
+  const result = [];
+  const seen = new Set();
+  for (const value of Array.isArray(source) ? source : []) {
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    const input = typeof value === 'string' ? { name: value } : value;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) continue;
+    const name = clampGenerationText(
+      input.name ?? input.filename,
+      GENERATION_METADATA_LIMITS.scalarBytes
+    );
+    if (!name) continue;
+    const kind = clampGenerationText(input.kind ?? input.type ?? 'source', 64) ||
+      'source';
+    const identity = `${kind}\u0000${name}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    result.push({ name, kind });
+  }
+  return fitCompactJson(result, []);
+}
+
+function normalizeCompactRecordList(values) {
+  if (!Array.isArray(values)) return [];
+  const result = [];
+  for (const value of values) {
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    const record = normalizeCompactRecord(value);
+    if (Object.keys(record).length) result.push(record);
+  }
+  return fitCompactJson(result, []);
+}
+
+function normalizeDiagnostics(values) {
+  if (!Array.isArray(values)) return [];
+  const result = [];
+  for (const value of values) {
+    if (result.length >= GENERATION_METADATA_LIMITS.listEntries) break;
+    if (typeof value === 'string') {
+      const message = clampGenerationText(
+        value,
+        GENERATION_METADATA_LIMITS.scalarBytes
+      );
+      if (message) result.push({ message });
+      continue;
+    }
+    const record = normalizeCompactRecord(value);
+    if (Object.keys(record).length) result.push(record);
+  }
+  return fitCompactJson(result, []);
+}
+
+function parseGenerationJson(value, fallback) {
+  try {
+    const parsed = JSON.parse(value ?? JSON.stringify(fallback));
+    return parsed;
+  } catch {
+    return fallback;
+  }
+}
 
 function normalizeReviewState(value) {
   const state = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -408,12 +764,52 @@ function initDatabase(app, profilePath) {
         sidecar_size INTEGER NOT NULL,
         sidecar_mtime_ms REAL NOT NULL,
         parser_version INTEGER NOT NULL,
+        source_kind TEXT NOT NULL DEFAULT 'sidecar' CHECK (
+          source_kind IN ('embedded', 'sidecar', 'unknown')
+        ),
+        source_format TEXT,
+        source_label TEXT,
+        media_size INTEGER NOT NULL DEFAULT 0,
+        media_mtime_ms REAL NOT NULL DEFAULT 0,
+        provenance_json TEXT NOT NULL DEFAULT '{}' CHECK (
+          length(CAST(provenance_json AS BLOB)) <= 32768
+        ),
         prompt TEXT,
+        negative_prompt TEXT,
+        prompt_fragments_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(prompt_fragments_json AS BLOB)) <= 32768
+        ),
         seed TEXT,
         models_json TEXT NOT NULL DEFAULT '[]',
+        assets_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(assets_json AS BLOB)) <= 32768
+        ),
         samplers_json TEXT NOT NULL DEFAULT '[]',
+        loras_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(loras_json AS BLOB)) <= 32768
+        ),
+        sampling_json TEXT NOT NULL DEFAULT '{}' CHECK (
+          length(CAST(sampling_json AS BLOB)) <= 32768
+        ),
+        sampler_stages_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(sampler_stages_json AS BLOB)) <= 32768
+        ),
         source_images_json TEXT NOT NULL DEFAULT '[]',
+        source_inputs_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(source_inputs_json AS BLOB)) <= 32768
+        ),
         generation_run TEXT,
+        diagnostics_json TEXT NOT NULL DEFAULT '[]' CHECK (
+          length(CAST(diagnostics_json AS BLOB)) <= 32768
+        ),
+        extraction_status TEXT NOT NULL DEFAULT 'found' CHECK (
+          extraction_status IN (
+            'found', 'partial', 'unrecognized', 'none', 'unsupported'
+          )
+        ),
+        quality TEXT NOT NULL DEFAULT 'partial' CHECK (
+          quality IN ('exact', 'partial', 'unknown')
+        ),
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
       );
@@ -467,6 +863,125 @@ function initDatabase(app, profilePath) {
     if (!directoryColumns.has('missing_since')) {
       db.exec('ALTER TABLE directories ADD COLUMN missing_since INTEGER;');
     }
+
+    // Generation metadata began as a sidecar-only cache. Keep those columns
+    // intact for existing profiles and callers, while extending each row with
+    // compact source/provenance fields that can also describe metadata read
+    // from the media container itself. Defaults intentionally describe legacy
+    // rows as partial sidecar results; a zero media signature forces one
+    // signature-aware refresh before newer extractors reuse them.
+    const generationMetadataColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(instance_generation_metadata);')
+        .all()
+        .map((row) => row.name)
+    );
+    const generationColumnMigrations = [
+      [
+        'source_kind',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'sidecar' CHECK (
+           source_kind IN ('embedded', 'sidecar', 'unknown')
+         );`,
+      ],
+      [
+        'source_format',
+        'ALTER TABLE instance_generation_metadata ADD COLUMN source_format TEXT;',
+      ],
+      [
+        'source_label',
+        'ALTER TABLE instance_generation_metadata ADD COLUMN source_label TEXT;',
+      ],
+      [
+        'media_size',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN media_size INTEGER NOT NULL DEFAULT 0;`,
+      ],
+      [
+        'media_mtime_ms',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN media_mtime_ms REAL NOT NULL DEFAULT 0;`,
+      ],
+      [
+        'provenance_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}' CHECK (
+           length(CAST(provenance_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'negative_prompt',
+        'ALTER TABLE instance_generation_metadata ADD COLUMN negative_prompt TEXT;',
+      ],
+      [
+        'prompt_fragments_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN prompt_fragments_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(prompt_fragments_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'loras_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN loras_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(loras_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'assets_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN assets_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(assets_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'sampling_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN sampling_json TEXT NOT NULL DEFAULT '{}' CHECK (
+           length(CAST(sampling_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'sampler_stages_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN sampler_stages_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(sampler_stages_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'source_inputs_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN source_inputs_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(source_inputs_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'diagnostics_json',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '[]' CHECK (
+           length(CAST(diagnostics_json AS BLOB)) <= 32768
+         );`,
+      ],
+      [
+        'extraction_status',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'found' CHECK (
+           extraction_status IN (
+             'found', 'partial', 'unrecognized', 'none', 'unsupported'
+           )
+         );`,
+      ],
+      [
+        'quality',
+        `ALTER TABLE instance_generation_metadata
+         ADD COLUMN quality TEXT NOT NULL DEFAULT 'partial' CHECK (
+           quality IN ('exact', 'partial', 'unknown')
+         );`,
+      ],
+    ];
+    generationColumnMigrations.forEach(([column, statement]) => {
+      if (!generationMetadataColumns.has(column)) db.exec(statement);
+    });
 
     const now = Date.now();
     db.prepare(`
@@ -1076,24 +1591,50 @@ function createMetadataStore(db) {
   const generationMetadataUpsert = db.prepare(`
     INSERT INTO instance_generation_metadata (
       instance_id, sidecar_path, sidecar_size, sidecar_mtime_ms,
-      parser_version, prompt, seed, models_json, samplers_json,
-      source_images_json, generation_run, updated_at
+      parser_version, source_kind, source_format, source_label,
+      media_size, media_mtime_ms, provenance_json,
+      prompt, negative_prompt, prompt_fragments_json, seed,
+      models_json, assets_json, samplers_json, loras_json, sampling_json,
+      sampler_stages_json,
+      source_images_json, source_inputs_json, generation_run, diagnostics_json,
+      extraction_status, quality, updated_at
     ) VALUES (
       @instance_id, @sidecar_path, @sidecar_size, @sidecar_mtime_ms,
-      @parser_version, @prompt, @seed, @models_json, @samplers_json,
-      @source_images_json, @generation_run, @updated_at
+      @parser_version, @source_kind, @source_format, @source_label,
+      @media_size, @media_mtime_ms, @provenance_json,
+      @prompt, @negative_prompt, @prompt_fragments_json, @seed,
+      @models_json, @assets_json, @samplers_json, @loras_json, @sampling_json,
+      @sampler_stages_json,
+      @source_images_json, @source_inputs_json, @generation_run, @diagnostics_json,
+      @extraction_status, @quality, @updated_at
     )
     ON CONFLICT(instance_id) DO UPDATE SET
       sidecar_path=excluded.sidecar_path,
       sidecar_size=excluded.sidecar_size,
       sidecar_mtime_ms=excluded.sidecar_mtime_ms,
       parser_version=excluded.parser_version,
+      source_kind=excluded.source_kind,
+      source_format=excluded.source_format,
+      source_label=excluded.source_label,
+      media_size=excluded.media_size,
+      media_mtime_ms=excluded.media_mtime_ms,
+      provenance_json=excluded.provenance_json,
       prompt=excluded.prompt,
+      negative_prompt=excluded.negative_prompt,
+      prompt_fragments_json=excluded.prompt_fragments_json,
       seed=excluded.seed,
       models_json=excluded.models_json,
+      assets_json=excluded.assets_json,
       samplers_json=excluded.samplers_json,
+      loras_json=excluded.loras_json,
+      sampling_json=excluded.sampling_json,
+      sampler_stages_json=excluded.sampler_stages_json,
       source_images_json=excluded.source_images_json,
+      source_inputs_json=excluded.source_inputs_json,
       generation_run=excluded.generation_run,
+      diagnostics_json=excluded.diagnostics_json,
+      extraction_status=excluded.extraction_status,
+      quality=excluded.quality,
       updated_at=excluded.updated_at;
   `);
   const generationMetadataDelete = db.prepare(`
@@ -1244,35 +1785,149 @@ function createMetadataStore(db) {
     };
   }
 
-  function parseJsonArray(value) {
-    try {
-      const parsed = JSON.parse(value || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
   function mapGenerationMetadataRow(row) {
     if (!row) return null;
-    const models = parseJsonArray(row.models_json);
-    const samplers = parseJsonArray(row.samplers_json);
-    const sourceImages = parseJsonArray(row.source_images_json);
+    const sourceKind = normalizeGenerationEnum(
+      row.source_kind,
+      GENERATION_SOURCE_KINDS,
+      'sidecar',
+      'source kind',
+      false
+    );
+    const extractionStatus = normalizeGenerationEnum(
+      row.extraction_status,
+      GENERATION_EXTRACTION_STATUSES,
+      'found',
+      'extraction status',
+      false
+    );
+    const quality = normalizeGenerationEnum(
+      row.quality,
+      GENERATION_QUALITIES,
+      'partial',
+      'quality',
+      false
+    );
+    const models = normalizeGenerationList(
+      parseGenerationJson(row.models_json, [])
+    );
+    const samplers = normalizeGenerationList(
+      parseGenerationJson(row.samplers_json, [])
+    );
+    const sourceImages = normalizeGenerationList(
+      parseGenerationJson(row.source_images_json, [])
+    );
+    const sourceInputs = normalizeSourceInputs(
+      parseGenerationJson(row.source_inputs_json, []),
+      sourceImages
+    );
+    const provenance = normalizeCompactRecord(
+      parseGenerationJson(row.provenance_json, {})
+    );
+    const promptFragments = normalizePromptFragments(
+      parseGenerationJson(row.prompt_fragments_json, [])
+    );
+    const loras = normalizeLoras(parseGenerationJson(row.loras_json, []));
+    const assets = normalizeAssets(parseGenerationJson(row.assets_json, []));
+    const sampling = normalizeCompactRecord(
+      parseGenerationJson(row.sampling_json, {})
+    );
+    const samplerStages = normalizeCompactRecordList(
+      parseGenerationJson(row.sampler_stages_json, [])
+    );
+    const diagnostics = normalizeDiagnostics(
+      parseGenerationJson(row.diagnostics_json, [])
+    );
+    const prompt = clampGenerationText(
+      row.prompt,
+      GENERATION_METADATA_LIMITS.promptBytes
+    );
+    const negativePrompt = clampGenerationText(
+      row.negative_prompt,
+      GENERATION_METADATA_LIMITS.promptBytes
+    );
+    const sidecarPath = typeof row.sidecar_path === 'string'
+      ? row.sidecar_path
+      : '';
+    const sidecarSize = normalizeGenerationNumber(row.sidecar_size, 0, {
+      integer: true,
+    });
+    const sidecarMtimeMs = normalizeGenerationNumber(row.sidecar_mtime_ms);
+    const mediaSize = normalizeGenerationNumber(row.media_size, 0, {
+      integer: true,
+    });
+    const mediaMtimeMs = normalizeGenerationNumber(row.media_mtime_ms);
+    const sourceUsesSidecar = sourceKind === 'sidecar';
     return {
       instanceId: Number(row.instance_id),
-      sidecarPath: row.sidecar_path,
-      sidecarSize: Number(row.sidecar_size || 0),
-      sidecarMtimeMs: Number(row.sidecar_mtime_ms || 0),
+      // These legacy fields remain internal cache-validation compatibility
+      // surfaces. Main-process wire DTOs may omit the absolute path.
+      sidecarPath,
+      sidecarSize,
+      sidecarMtimeMs,
       parserVersion: Number(row.parser_version || 0),
-      prompt: row.prompt ?? null,
-      seed: row.seed ?? null,
+      sourceKind,
+      sourceFormat: clampGenerationText(
+        row.source_format,
+        GENERATION_METADATA_LIMITS.sourceFormatBytes
+      ),
+      sourceLabel: clampGenerationText(
+        row.source_label,
+        GENERATION_METADATA_LIMITS.sourceLabelBytes
+      ),
+      sourcePath: sourceUsesSidecar && sidecarPath ? sidecarPath : null,
+      sourceSize: sourceUsesSidecar ? sidecarSize : mediaSize,
+      sourceMtimeMs: sourceUsesSidecar ? sidecarMtimeMs : mediaMtimeMs,
+      mediaSize,
+      mediaMtimeMs,
+      provenance,
+      prompt,
+      positivePrompt: prompt,
+      negativePrompt,
+      promptFragments,
+      seed: clampGenerationText(
+        row.seed,
+        GENERATION_METADATA_LIMITS.scalarBytes
+      ),
       model: models[0] ?? null,
       models,
+      assets,
+      vaes: assets
+        .filter((asset) =>
+          asset.category?.toLowerCase() === 'vae' ||
+          asset.type.toLowerCase() === 'vae'
+        )
+        .map((asset) => asset.name),
+      textEncoders: assets
+        .filter((asset) =>
+          asset.category?.toLowerCase() === 'text-encoder' ||
+          ['text-encoder', 'textencoder', 'clip'].includes(
+            asset.type.toLowerCase()
+          )
+        )
+        .map((asset) => asset.name),
       sampler: samplers[0] ?? null,
       samplers,
+      loras,
+      sampling,
+      samplingParameters: sampling,
+      samplerStages,
+      scheduler: sampling.scheduler ?? null,
+      steps: sampling.steps ?? null,
+      cfg: sampling.cfg ?? null,
+      denoise: sampling.denoise ?? null,
       sourceImage: sourceImages[0] ?? null,
       sourceImages,
-      generationRun: row.generation_run ?? null,
+      sourceInputs,
+      generationRun: clampGenerationText(
+        row.generation_run,
+        GENERATION_METADATA_LIMITS.scalarBytes
+      ),
+      diagnostics,
+      extractionStatus,
+      status: extractionStatus,
+      quality,
+      confidence: quality,
       updatedAt: Number(row.updated_at || 0),
     };
   }
@@ -1636,17 +2291,35 @@ function createMetadataStore(db) {
       directoryRelativePath,
       now
     );
+    const existingInstance = fileInstanceByRelativePath.get(
+      rootRow.id,
+      entry.relativePath
+    );
+    const nextSize = normalizeStatSize(entry.stats);
+    const nextMtimeMs = normalizeStatMtime(entry.stats);
+    const nextFingerprint = entry.fingerprint || null;
+    const mediaIdentityChanged = Boolean(
+      existingInstance &&
+      (
+        Number(existingInstance.size) !== nextSize ||
+        Number(existingInstance.mtime_ms) !== nextMtimeMs ||
+        (existingInstance.fingerprint || null) !== nextFingerprint
+      )
+    );
     fileInstanceUpsert.run({
       root_id: rootRow.id,
       directory_id: directoryRow.id,
       relative_path: entry.relativePath,
       absolute_path: entry.filePath,
-      size: normalizeStatSize(entry.stats),
-      mtime_ms: normalizeStatMtime(entry.stats),
-      fingerprint: entry.fingerprint,
+      size: nextSize,
+      mtime_ms: nextMtimeMs,
+      fingerprint: nextFingerprint,
       first_seen_at: now,
       last_seen_at: now,
     });
+    if (mediaIdentityChanged) {
+      generationMetadataDelete.run(existingInstance.id);
+    }
     return fileInstanceByRelativePath.get(rootRow.id, entry.relativePath);
   }
 
@@ -2034,28 +2707,113 @@ function createMetadataStore(db) {
   function setGenerationMetadata(instanceId, metadata = {}) {
     const instance = getFileInstanceById(instanceId);
     if (!instance) throw new Error(`File instance does not exist: ${instanceId}`);
-    const clampText = (value, limit) => {
-      if (value === null || value === undefined) return null;
-      const text = String(value).trim();
-      return text ? text.slice(0, limit) : null;
-    };
-    const clampList = (values) => Array.from(new Set(
-      (Array.isArray(values) ? values : [])
-        .map((value) => clampText(value, 1024))
-        .filter(Boolean)
-        .slice(0, 32)
-    ));
-    const sidecarPath = typeof metadata.sidecarPath === 'string'
-      ? path.resolve(metadata.sidecarPath)
+    const sourceKind = normalizeGenerationEnum(
+      metadata.sourceKind,
+      GENERATION_SOURCE_KINDS,
+      'sidecar',
+      'source kind'
+    );
+    const rawSidecarPath = typeof metadata.sidecarPath === 'string'
+      ? metadata.sidecarPath.trim()
       : '';
-    if (!sidecarPath) throw new TypeError('Sidecar path is required');
-    const sidecarSize = Math.max(0, Math.round(Number(metadata.sidecarSize) || 0));
-    const sidecarMtimeMs = Math.max(0, Number(metadata.sidecarMtimeMs) || 0);
-    const parserVersion = Math.max(1, Math.round(Number(metadata.parserVersion) || 1));
-    const models = clampList(metadata.models || [metadata.model]);
-    const samplers = clampList(metadata.samplers || [metadata.sampler]);
-    const sourceImages = clampList(
-      metadata.sourceImages || [metadata.sourceImage]
+    const sidecarPath = rawSidecarPath ? path.resolve(rawSidecarPath) : '';
+    if (
+      sourceKind === 'sidecar' &&
+      !sidecarPath
+    ) {
+      throw new TypeError('Sidecar path is required');
+    }
+    const sidecarSize = normalizeGenerationNumber(metadata.sidecarSize, 0, {
+      integer: true,
+    });
+    const sidecarMtimeMs = normalizeGenerationNumber(metadata.sidecarMtimeMs);
+    const parserVersionInput = Number(metadata.parserVersion);
+    const parserVersion = Number.isFinite(parserVersionInput)
+      ? Math.max(1, Math.round(parserVersionInput))
+      : 1;
+    const mediaSize = normalizeGenerationNumber(
+      metadata.mediaSize,
+      normalizeGenerationNumber(instance.size, 0, { integer: true }),
+      { integer: true }
+    );
+    const mediaMtimeMs = normalizeGenerationNumber(
+      metadata.mediaMtimeMs,
+      normalizeGenerationNumber(instance.mtimeMs)
+    );
+    const models = normalizeGenerationList(metadata.models || [metadata.model]);
+    const samplers = normalizeGenerationList(
+      metadata.samplers || [metadata.sampler]
+    );
+    const sourceInputs = normalizeSourceInputs(metadata.sourceInputs);
+    const sourceImages = normalizeGenerationList([
+      ...(Array.isArray(metadata.sourceImages)
+        ? metadata.sourceImages
+        : [metadata.sourceImage]),
+      ...sourceInputs.map((entry) => entry.name),
+    ]);
+    const persistedSourceInputs = sourceInputs.length
+      ? sourceInputs
+      : normalizeSourceInputs([], sourceImages);
+    const provenance = normalizeCompactRecord(metadata.provenance);
+    const promptFragments = normalizePromptFragments(metadata.promptFragments);
+    const loras = normalizeLoras(metadata.loras || [metadata.lora]);
+    const explicitAssets = normalizeAssets(metadata.assets);
+    const assetInputs = [
+      ...explicitAssets,
+      ...normalizeGenerationList(metadata.vaes || [metadata.vae])
+        .map((name) => ({ type: 'vae', name })),
+      ...normalizeGenerationList(
+        metadata.textEncoders || [metadata.textEncoder]
+      ).map((name) => ({ type: 'text-encoder', name })),
+    ];
+    if (!explicitAssets.some((asset) =>
+      asset.category?.toLowerCase() === 'model' ||
+      ['model', 'checkpoint', 'unet', 'diffusion-model'].includes(
+        asset.type.toLowerCase()
+      )
+    )) {
+      assetInputs.push(...models.map((name) => ({ type: 'model', name })));
+    }
+    const assets = normalizeAssets(assetInputs);
+    const legacySampling = {
+      steps: metadata.steps,
+      cfg: metadata.cfg,
+      denoise: metadata.denoise,
+      scheduler: metadata.scheduler,
+      sampler: metadata.sampler,
+    };
+    const sampling = normalizeCompactRecord(
+      metadata.samplingParameters ||
+      metadata.sampling ||
+      metadata.parameters ||
+      legacySampling
+    );
+    const samplerStages = normalizeCompactRecordList(metadata.samplerStages);
+    const diagnostics = normalizeDiagnostics(
+      metadata.diagnostics || metadata.warnings
+    );
+    const extractionStatus = normalizeGenerationEnum(
+      metadata.extractionStatus ?? metadata.status,
+      GENERATION_EXTRACTION_STATUSES,
+      'found',
+      'extraction status'
+    );
+    const quality = normalizeGenerationEnum(
+      metadata.quality ?? metadata.confidence,
+      GENERATION_QUALITIES,
+      'partial',
+      'quality'
+    );
+    const sourceFormat = clampGenerationText(
+      metadata.sourceFormat ?? (sourceKind === 'sidecar' ? 'json' : null),
+      GENERATION_METADATA_LIMITS.sourceFormatBytes
+    );
+    const defaultSourceLabel = sourceKind === 'sidecar'
+      ? path.basename(sidecarPath)
+      : path.basename(instance.absolutePath || instance.relativePath || '');
+    const sourceLabel = clampGenerationText(
+      metadata.sourceLabel ?? defaultSourceLabel,
+      GENERATION_METADATA_LIMITS.sourceLabelBytes
     );
     generationMetadataUpsert.run({
       instance_id: instance.id,
@@ -2063,12 +2821,40 @@ function createMetadataStore(db) {
       sidecar_size: sidecarSize,
       sidecar_mtime_ms: sidecarMtimeMs,
       parser_version: parserVersion,
-      prompt: clampText(metadata.prompt, 16384),
-      seed: clampText(metadata.seed, 1024),
+      source_kind: sourceKind,
+      source_format: sourceFormat,
+      source_label: sourceLabel,
+      media_size: mediaSize,
+      media_mtime_ms: mediaMtimeMs,
+      provenance_json: JSON.stringify(provenance),
+      prompt: clampGenerationText(
+        metadata.positivePrompt ?? metadata.prompt,
+        GENERATION_METADATA_LIMITS.promptBytes
+      ),
+      negative_prompt: clampGenerationText(
+        metadata.negativePrompt,
+        GENERATION_METADATA_LIMITS.promptBytes
+      ),
+      prompt_fragments_json: JSON.stringify(promptFragments),
+      seed: clampGenerationText(
+        metadata.seed,
+        GENERATION_METADATA_LIMITS.scalarBytes
+      ),
       models_json: JSON.stringify(models),
+      assets_json: JSON.stringify(assets),
       samplers_json: JSON.stringify(samplers),
+      loras_json: JSON.stringify(loras),
+      sampling_json: JSON.stringify(sampling),
+      sampler_stages_json: JSON.stringify(samplerStages),
       source_images_json: JSON.stringify(sourceImages),
-      generation_run: clampText(metadata.generationRun, 1024),
+      source_inputs_json: JSON.stringify(persistedSourceInputs),
+      generation_run: clampGenerationText(
+        metadata.generationRun,
+        GENERATION_METADATA_LIMITS.scalarBytes
+      ),
+      diagnostics_json: JSON.stringify(diagnostics),
+      extraction_status: extractionStatus,
+      quality,
       updated_at: Date.now(),
     });
     return getGenerationMetadata(instance.id);
@@ -3046,6 +3832,7 @@ function resetDatabase() {
 module.exports = {
   FINGERPRINT_CACHE_MAX_ENTRIES,
   FINGERPRINT_CACHE_MAX_IN_FLIGHT,
+  GENERATION_METADATA_LIMITS,
   initMetadataStore,
   getMetadataStore,
   resetDatabase,
