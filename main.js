@@ -43,13 +43,15 @@ const {
   createNativeOwnerLifecycle,
 } = require("./main/native-owner-lifecycle");
 const nativeOwnerLifecycle = createNativeOwnerLifecycle();
-const { createSidecarMetadataService } = require("./main/sidecar-metadata");
+const {
+  createGenerationMetadataService,
+} = require("./main/generation-metadata-service");
 const { runProfileOwnedOperation } = require("./main/profile-owned-operation");
 const {
   normalizeGenerationRequestToken,
   createGenerationRequestIdentity,
 } = require("./main/generation-request");
-const sidecarMetadataService = createSidecarMetadataService();
+const generationMetadataService = createGenerationMetadataService();
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
@@ -889,6 +891,7 @@ function invalidateNativeWorkOwner(sender) {
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
+  generationMetadataService.cancelRenderer(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   return true;
@@ -913,6 +916,7 @@ function disposeNativeWorkOwner(sender) {
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
+  generationMetadataService.cancelRenderer(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   pathAuthority.revokeOwner(ownerId);
@@ -1737,7 +1741,9 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
     console.warn("[profile] Failed to stop watcher before profile flush", error);
   }
   invalidateWatcherContext();
-  sidecarMetadataService.cancelAll();
+  await generationMetadataService.cancelAllAndDrain(
+    "Profile changed during generation metadata parsing"
+  );
   lastFrameCaptureService.cancelAll("Profile changed during frame capture");
   mediaProtocolService.cancelActiveStreams();
   await Promise.all([
@@ -4308,6 +4314,7 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
   }
   let context = null;
   let requestToken = null;
+  let force = false;
   const instanceId = Number(
     typeof payload === "number" ? payload : payload?.instanceId
   );
@@ -4323,6 +4330,14 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
     requestToken = normalizeGenerationRequestToken(
       typeof payload === "object" ? payload?.requestToken : null
     );
+    if (typeof payload === "object" && payload?.force !== undefined) {
+      try {
+        force = assertBoolean(payload.force, "generation metadata force");
+      } catch (error) {
+        error.code = "INVALID_GENERATION_FORCE";
+        throw error;
+      }
+    }
   } catch (error) {
     return {
       success: false,
@@ -4350,13 +4365,15 @@ ipcMain.handle("metadata:get-generation", async (event, payload = {}) => {
       webContentsId: event.sender.id,
       requestToken,
     });
-    const handleDestroyed = () => sidecarMetadataService.cancelOwner(ownerId);
+    const handleDestroyed = () => generationMetadataService.cancelOwner(ownerId);
     event.sender.once("destroyed", handleDestroyed);
     try {
-      const result = await sidecarMetadataService.getMetadata({
+      const result = await generationMetadataService.getMetadata({
         instanceId,
         ownerId,
         scopeId,
+        rendererId: event.sender.id,
+        force,
         metadataStore: context.metadataStore,
         assertActive: () => assertMetadataContextActive(context),
         authorizePath: async (candidatePath) => {
@@ -4415,7 +4432,7 @@ ipcMain.handle("metadata:cancel-generation", async (event, payload = {}) => {
     });
     return {
       requestToken,
-      cancelled: sidecarMetadataService.cancelOwner(ownerId),
+      cancelled: generationMetadataService.cancelOwner(ownerId),
     };
   }, "GENERATION_METADATA_ERROR");
 });
@@ -4708,10 +4725,13 @@ async function performNativeShutdown() {
     console.warn("[shutdown] Failed to stop watcher before flush", error);
   });
   invalidateWatcherContext();
-  sidecarMetadataService.cancelAll();
+  const generationMetadataDrain = generationMetadataService.cancelAllAndDrain(
+    "Application shutdown requested"
+  );
   lastFrameCaptureService.cancelAll("Application shutdown requested");
   mediaProtocolService.cancelActiveStreams();
   const flushFailures = await settleShutdownTasks("flush", {
+    generationMetadata: () => generationMetadataDrain,
     directoryAggregates: () => flushDirectoryAggregates(),
     settings: () => settingsWriter.flush(),
   });
@@ -4728,7 +4748,6 @@ async function performNativeShutdown() {
   metadataProfileGeneration += 1;
   disposeMainWindowActivity?.();
   disposeMainWindowActivity = null;
-  sidecarMetadataService.shutdown();
   if (mainWindow && !mainWindow.isDestroyed()) {
     invalidateNativeWorkOwner(mainWindow.webContents);
   }
@@ -4737,6 +4756,7 @@ async function performNativeShutdown() {
   await pendingProfileReconfiguration.catch(() => {});
   await settleShutdownTasks("dispose", {
     folderWatcher: () => folderWatcher.dispose(),
+    generationMetadata: () => generationMetadataService.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),
     proxyManager: () => proxyManager.shutdown(),
     thumbnailCache: () => thumbnailCache.shutdown(),

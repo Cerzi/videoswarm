@@ -78,6 +78,7 @@ describe("preload native-work bridge", () => {
 
     await api.metadata.getGeneration(42, "renderer-request-1");
     await api.metadata.getGeneration(43);
+    await api.metadata.getGeneration(44, "renderer-request-2", { force: true });
     await api.metadata.cancelGeneration("renderer-request-1");
 
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
@@ -92,6 +93,11 @@ describe("preload native-work bridge", () => {
     );
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
       3,
+      "metadata:get-generation",
+      { instanceId: 44, requestToken: "renderer-request-2", force: true }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      4,
       "metadata:cancel-generation",
       { requestToken: "renderer-request-1" }
     );
