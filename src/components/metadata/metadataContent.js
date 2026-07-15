@@ -1,4 +1,5 @@
 export const MAX_METADATA_SUGGESTION_TAGS = 15;
+export const MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS = 100;
 
 const asFiniteNumber = (value) => {
   const number = Number(value);

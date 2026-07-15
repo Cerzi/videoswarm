@@ -36,7 +36,12 @@ describe("FullscreenReviewPanels", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /accept/i }));
+    expect(screen.getByRole("button", { name: "Accept (A)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reviewed (S)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reject (D)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unreviewed (F)" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept (A)" }));
     fireEvent.click(screen.getByRole("button", { name: "Rate 4 stars" }));
     fireEvent.click(screen.getByRole("button", { name: /undo/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /advance after marking/i }));
@@ -98,5 +103,28 @@ describe("FullscreenReviewPanels", () => {
     expect(screen.getByText("Wan2.2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /candidate/i }));
     expect(onRemoveTag).toHaveBeenCalledWith("candidate");
+  });
+
+  it("offers a larger bounded popular-tag set in the details dock", () => {
+    const availableTags = Array.from({ length: 120 }, (_, index) => ({
+      name: `tag-${String(index).padStart(3, "0")}`,
+      usageCount: 120 - index,
+    }));
+    const { container } = render(
+      <FullscreenDetailsDock
+        video={video}
+        availableTags={availableTags}
+        onAddTags={vi.fn()}
+        onRemoveTag={vi.fn()}
+        onApplyTag={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Popular tags (up to 100)")).toBeTruthy();
+    expect(container.querySelectorAll(".metadata-panel__suggestion")).toHaveLength(
+      100
+    );
+    expect(screen.getByText("#tag-000")).toBeTruthy();
+    expect(screen.queryByText("#tag-100")).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ const {
 } = require("./helpers/launchApp.cjs");
 const {
   createVideoFolder,
+  writePortraitVideo,
   writeVideo,
 } = require("./helpers/videoFixture.cjs");
 
@@ -120,6 +121,7 @@ test("fullscreen review releases media and preserves review context across navig
   const context = await launchProductionApp();
   const { electronApp, page, tempRoot } = context;
   const rootA = createVideoFolder(tempRoot, 3, "fullscreen-owner-a");
+  writePortraitVideo(path.join(rootA, "portrait-9x16.mp4"));
   const rootB = path.join(tempRoot, "fullscreen-owner-b");
   fs.mkdirSync(rootB, { recursive: true });
   writeVideo(path.join(rootB, "owner-b-0000.mp4"), 100);
@@ -133,9 +135,85 @@ test("fullscreen review releases media and preserves review context across navig
   try {
     await expect(page.locator(".app").getByText("Welcome to Video Swarm")).toBeVisible();
     await chooseFolderThroughNativeDialog(electronApp, page, rootA);
-    await waitForVideoTotal(page, 3);
+    await waitForVideoTotal(page, 4);
+
+    const portraitFullscreen = await openFullscreen(page, "portrait-9x16.mp4");
+    await expect
+      .poll(() =>
+        portraitFullscreen.modal
+          .locator(".fullscreen-review__video")
+          .evaluate((video) => ({
+            width: video.videoWidth,
+            height: video.videoHeight,
+          }))
+      )
+      .toEqual({ width: 90, height: 160 });
+    const portraitGeometry = await portraitFullscreen.modal.evaluate((modal) => {
+      const wrapper = modal.querySelector(".fullscreen-review__media-wrap");
+      const video = modal.querySelector(".fullscreen-review__video");
+      if (!(wrapper instanceof HTMLElement) || !(video instanceof HTMLVideoElement)) {
+        throw new Error("Fullscreen portrait media geometry was unavailable");
+      }
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const videoRect = video.getBoundingClientRect();
+      return {
+        objectFit: getComputedStyle(video).objectFit,
+        wrapper: {
+          left: wrapperRect.left,
+          top: wrapperRect.top,
+          right: wrapperRect.right,
+          bottom: wrapperRect.bottom,
+          clientHeight: wrapper.clientHeight,
+          scrollHeight: wrapper.scrollHeight,
+        },
+        video: {
+          left: videoRect.left,
+          top: videoRect.top,
+          right: videoRect.right,
+          bottom: videoRect.bottom,
+        },
+      };
+    });
+    expect(portraitGeometry.objectFit).toBe("contain");
+    expect(portraitGeometry.video.left).toBeGreaterThanOrEqual(
+      portraitGeometry.wrapper.left - 1
+    );
+    expect(portraitGeometry.video.top).toBeGreaterThanOrEqual(
+      portraitGeometry.wrapper.top - 1
+    );
+    expect(portraitGeometry.video.right).toBeLessThanOrEqual(
+      portraitGeometry.wrapper.right + 1
+    );
+    expect(portraitGeometry.video.bottom).toBeLessThanOrEqual(
+      portraitGeometry.wrapper.bottom + 1
+    );
+    expect(portraitGeometry.wrapper.scrollHeight).toBeLessThanOrEqual(
+      portraitGeometry.wrapper.clientHeight + 1
+    );
+    await portraitFullscreen.modal
+      .getByRole("button", { name: "Close fullscreen review" })
+      .click();
+    await expect(portraitFullscreen.modal).toHaveCount(0);
 
     const { modal } = await openFullscreen(page, "clip-0000.mp4");
+    const playbackVideo = modal.locator(".fullscreen-review__video");
+    await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
+      false
+    );
+    await playbackVideo.focus();
+    await page.keyboard.press("Space");
+    await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
+      true
+    );
+    await playbackVideo.evaluate((video) => {
+      video.dispatchEvent(new Event("canplay"));
+    });
+    await page.waitForTimeout(200);
+    expect(await playbackVideo.evaluate((video) => video.paused)).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
+      false
+    );
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(840, 820);
     });
@@ -218,7 +296,7 @@ test("fullscreen review releases media and preserves review context across navig
       "clip-0001.mp4"
     );
     await expect(modal.locator(".fullscreen-review__position")).toHaveText(
-      "2 of 3"
+      "2 of 4"
     );
     await expect(page.locator(".video-item.selected")).toHaveAttribute(
       "data-filename",
