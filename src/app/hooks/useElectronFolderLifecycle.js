@@ -16,6 +16,7 @@ import {
   beginFolderOpenMeasurement,
   recordFolderOpenMilestone,
 } from "../performance/folderOpenMetrics";
+import { createWebVideoRecord } from "../webFileIdentity";
 
 const __DEV__ = import.meta.env.MODE !== "production";
 let directoryScanSequence = 0;
@@ -149,6 +150,7 @@ export function useElectronFolderLifecycle({
   setPlaybackMode,
   setProxyPlaybackEnabled,
   setReviewAutoAdvance,
+  setFullscreenDetailsOpen,
   setZoomLevelFromSettings,
   setVisibleVideos,
   setLoadedVideos,
@@ -159,6 +161,7 @@ export function useElectronFolderLifecycle({
   refreshTagList,
   addRecentFolder,
   beforeExternalFolderSelection,
+  beforeFileRemoved,
 }) {
   const [videos, setVideos] = useState([]);
   const [activeRootPath, setActiveRootPath] = useState(null);
@@ -194,6 +197,7 @@ export function useElectronFolderLifecycle({
     setPlaybackMode,
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
+    setFullscreenDetailsOpen,
     setZoomLevelFromSettings,
   });
 
@@ -209,6 +213,7 @@ export function useElectronFolderLifecycle({
       setPlaybackMode,
       setProxyPlaybackEnabled,
       setReviewAutoAdvance,
+      setFullscreenDetailsOpen,
       setZoomLevelFromSettings,
     };
   }, [
@@ -222,6 +227,7 @@ export function useElectronFolderLifecycle({
     setPlaybackMode,
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
+    setFullscreenDetailsOpen,
     setZoomLevelFromSettings,
   ]);
 
@@ -1016,27 +1022,18 @@ export function useElectronFolderLifecycle({
       cancelActiveFolderScan(false);
       retainedFolderScanRef.current = null;
       collectionOwnerScanIdRef.current = null;
-      const files = Array.from(event.target.files || []).filter((f) => {
-        const isVideoType = f.type.startsWith("video/");
-        const hasExt = /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(
-          f.name
-        );
-        return isVideoType || hasExt;
-      });
+      const files = Array.from(event.target.files || [])
+        .map((file, selectionOrdinal) => ({ file, selectionOrdinal }))
+        .filter(({ file }) => {
+          const isVideoType = file.type.startsWith("video/");
+          const hasExt =
+            /\.(mp4|mov|avi|mkv|webm|m4v|flv|wmv|3gp|ogv)$/i.test(file.name);
+          return isVideoType || hasExt;
+        });
 
-      const list = files.map((f) => ({
-        id: f.name + f.size,
-        name: f.name,
-        file: f,
-        loaded: false,
-        isElectronFile: false,
-        basename: f.name,
-        dirname: "",
-        createdMs: f.lastModified || 0,
-        fingerprint: null,
-        tags: [],
-        rating: null,
-      }));
+      const list = files.map(({ file, selectionOrdinal }) =>
+        createWebVideoRecord(file, selectionOrdinal)
+      );
 
       setVideos(list);
       setActiveScanId(null);
@@ -1062,6 +1059,7 @@ export function useElectronFolderLifecycle({
       setPlaybackMode: applyPlaybackMode,
       setProxyPlaybackEnabled: applyProxyPlaybackEnabled,
       setReviewAutoAdvance: applyReviewAutoAdvance,
+      setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
 
@@ -1094,6 +1092,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.reviewAutoAdvance !== undefined) {
       applyReviewAutoAdvance?.(settings.reviewAutoAdvance === true);
+    }
+    if (settings.fullscreenDetailsOpen !== undefined) {
+      applyFullscreenDetailsOpen?.(settings.fullscreenDetailsOpen === true);
     }
   }, []);
 
@@ -1230,6 +1231,7 @@ export function useElectronFolderLifecycle({
     const handleFileRemoved = (filePath, watch) => {
       const scan = resolveWatcherScan(watch);
       if (scan === false) return;
+      beforeFileRemoved?.(filePath);
       if (scan) {
         scan.recordsById.delete(filePath);
         scan.authoritativeIds.delete(filePath);
@@ -1312,6 +1314,7 @@ export function useElectronFolderLifecycle({
     };
   }, [
     refreshTagList,
+    beforeFileRemoved,
     removeSelection,
     setActualPlaying,
     setLoadedVideos,

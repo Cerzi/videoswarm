@@ -66,4 +66,22 @@ describe('useActionDispatch (target resolution policy)', () => {
 
     execSpy.mockRestore();
   });
+
+  test('runs a captured fullscreen record without resolving the current selection', async () => {
+    const getById = vi.fn();
+    const deps = { electronAPI: {}, notify: vi.fn() };
+    const { result } = renderHook(() => useActionDispatch(deps, getById));
+    const execSpy = vi
+      .spyOn(actionRegistry, ActionIds.COPY_PATH)
+      .mockResolvedValue();
+    const captured = { id: 'fullscreen', name: 'fullscreen.mp4' };
+
+    await act(async () => {
+      await result.current.runActionForVideos(ActionIds.COPY_PATH, [captured]);
+    });
+
+    expect(execSpy).toHaveBeenCalledWith([captured], deps);
+    expect(getById).not.toHaveBeenCalled();
+    execSpy.mockRestore();
+  });
 });

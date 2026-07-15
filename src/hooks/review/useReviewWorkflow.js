@@ -340,6 +340,7 @@ export default function useReviewWorkflow({
     targetFingerprints = null,
     allowAdvance = true,
     anchorId = null,
+    completionGuard = null,
   }) => {
     const current = inputRef.current;
     const videosById = makeVideoMap(current.scopeVideos);
@@ -420,7 +421,9 @@ export default function useReviewWorkflow({
 
     let result;
     try {
-      result = await mutate(value, fingerprints);
+      result = typeof completionGuard === "function"
+        ? await mutate(value, fingerprints, { completionGuard })
+        : await mutate(value, fingerprints);
     } catch (error) {
       console.error(`Failed to apply ${kind} workflow mutation:`, error);
       return false;
@@ -429,6 +432,29 @@ export default function useReviewWorkflow({
 
     const latest = inputRef.current;
     if (!Object.is(latest.ownershipKey, operationOwnership)) return true;
+
+    // The native mutation is authoritative once it succeeds. Persist its
+    // checkpoint even if the initiating fullscreen session has since moved;
+    // the session guard below still suppresses history, overlays, selection,
+    // and auto-advance side effects for that stale surface.
+    emitMutationCommitted({
+      kind,
+      value,
+      allowCreateSession:
+        kind === "rating"
+          ? value !== null
+          : value !== REVIEW_STATES.UNREVIEWED,
+      ownershipKey: operationOwnership,
+      anchor: mutationAnchor,
+      fingerprints: [...fingerprints],
+    });
+
+    if (
+      typeof completionGuard === "function" &&
+      completionGuard() !== true
+    ) {
+      return true;
+    }
 
     recordMetadataOverlay({
       kind,
@@ -445,18 +471,6 @@ export default function useReviewWorkflow({
       anchor: mutationAnchor,
     };
     if (mountedRef.current) setCanUndo(true);
-
-    emitMutationCommitted({
-      kind,
-      value,
-      allowCreateSession:
-        kind === "rating"
-          ? value !== null
-          : value !== REVIEW_STATES.UNREVIEWED,
-      ownershipKey: operationOwnership,
-      anchor: mutationAnchor,
-      fingerprints: [...fingerprints],
-    });
 
     if (!advance || !setsEqual(asIdSet(latest.selectedIds), originalSelection)) {
       return true;
@@ -499,6 +513,10 @@ export default function useReviewWorkflow({
           : null,
         allowAdvance: options.allowAdvance !== false,
         anchorId: options.anchorId ?? null,
+        completionGuard:
+          typeof options.completionGuard === "function"
+            ? options.completionGuard
+            : null,
       });
     });
   }, [enqueue, runMutation]);
@@ -524,6 +542,10 @@ export default function useReviewWorkflow({
           : null,
         allowAdvance: options.allowAdvance !== false,
         anchorId: options.anchorId ?? null,
+        completionGuard:
+          typeof options.completionGuard === "function"
+            ? options.completionGuard
+            : null,
       });
     });
   }, [enqueue, runMutation]);

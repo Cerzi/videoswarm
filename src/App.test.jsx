@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, act, waitFor } from "@testing-library/react";
+import { ActionIds } from "./hooks/actions/actions";
 
 const selectionMock = {
   selected: new Set(),
@@ -87,13 +88,19 @@ const contextMenuReturn = {
 };
 const useContextMenuMock = vi.fn(() => contextMenuReturn);
 const useTrashIntegrationMock = vi.fn(() => ({}));
-const useActionDispatchMock = vi.fn(() => ({ runAction: vi.fn() }));
-const useFullScreenModalMock = vi.fn(() => ({
+const runActionMock = vi.fn();
+const runActionForVideosMock = vi.fn();
+const useActionDispatchMock = vi.fn(() => ({
+  runAction: runActionMock,
+  runActionForVideos: runActionForVideosMock,
+}));
+const createFullscreenControllerMock = () => ({
   fullScreenVideo: null,
   openFullScreen: vi.fn(),
   closeFullScreen: vi.fn(),
   navigateFullScreen: vi.fn(),
-}));
+});
+const useFullScreenModalMock = vi.fn(createFullscreenControllerMock);
 const useHotkeysMock = vi.fn();
 
 const electronVideos = [{ id: "video-1" }];
@@ -308,6 +315,8 @@ const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
 const metadataPanelSpy = vi.fn();
 const contextMenuSpy = vi.fn();
+const fullScreenModalSpy = vi.fn();
+const fullScreenReleaseNowSpy = vi.fn();
 const setLibraryRootPinnedMock = vi.fn();
 const refreshLibraryRootsMock = vi.fn();
 const refreshLibraryTreeMock = vi.fn();
@@ -351,10 +360,19 @@ vi.mock("./components/VideoCard/VideoCard", async () => {
     }),
   };
 });
-vi.mock("./components/FullScreenModal", () => ({
-  __esModule: true,
-  default: () => null,
-}));
+vi.mock("./components/FullScreenModal", async () => {
+  const ReactModule = await vi.importActual("react");
+  return {
+    __esModule: true,
+    default: ReactModule.default.forwardRef((props, ref) => {
+      ReactModule.useImperativeHandle(ref, () => ({
+        releaseNow: fullScreenReleaseNowSpy,
+      }));
+      fullScreenModalSpy(props);
+      return null;
+    }),
+  };
+});
 vi.mock("./components/ContextMenu", () => ({
   __esModule: true,
   default: (props) => {
@@ -551,6 +569,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
   useElectronLifecycleMock.mockImplementation(() => electronLifecycleReturn);
+  useFullScreenModalMock.mockImplementation(createFullscreenControllerMock);
   useFilterStateMock.mockImplementation(() => filterStateReturn);
   useLibraryCatalogMock.mockImplementation((args = {}) => ({
     roots: [],
@@ -654,9 +673,13 @@ describe("App hook composition", () => {
       centerPriorityIds: masonryReturn.centerPriorityIds,
       hoveredId: null,
     });
-    expect(electronArgs.resetMediaScheduler).toBe(
-      collectionArgs.mediaScheduler.reset
-    );
+    expect(typeof electronArgs.resetMediaScheduler).toBe("function");
+    expect(() => act(() => electronArgs.resetMediaScheduler())).not.toThrow();
+    expect(
+      useFullScreenModalMock.mock.results.some(
+        ({ value }) => value.closeFullScreen.mock.calls.length > 0
+      )
+    ).toBe(true);
 
     const trashArgs = useTrashIntegrationMock.mock.calls.at(-1)?.[0];
     expect(trashArgs).toMatchObject({
@@ -2276,6 +2299,546 @@ describe("App hook composition", () => {
       show: true,
       status: loadingStatus,
       memoryStatus,
+    });
+  });
+
+  test("wires fullscreen review to the full order with explicit clip targets", async () => {
+    const videos = [
+      {
+        id: "clip-1",
+        instanceId: 11,
+        fingerprint: "fp-1",
+        name: "one.mp4",
+        relativePath: "run/one.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "clip-2",
+        instanceId: 12,
+        fingerprint: "fp-2",
+        name: "two.mp4",
+        relativePath: "run/two.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+    ];
+    selectionMock.selected = new Set(["clip-2"]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = "clip-2";
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/collection",
+      libraryRoot: { rootPath: "/collection", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+      filteredVideoIds: new Set(videos.map((video) => video.id)),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: [videos[0]],
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const controller = {
+      isOpen: true,
+      currentVideo: videos[1],
+      fullScreenVideo: videos[1],
+      currentIndex: 1,
+      fullScreenIndex: 1,
+      currentViewIndex: 1,
+      fullScreenCount: 2,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: true,
+      hasNext: false,
+      capturedNextId: null,
+      collectionOwnerKey: "profile:/collection",
+      sessionToken: "fullscreen-session",
+      open: vi.fn(),
+      close: vi.fn(),
+      navigateFullScreen: vi.fn(),
+      peekNavigation: vi.fn(),
+      sourceRemoved: vi.fn(),
+    };
+    useFullScreenModalMock.mockReturnValue(controller);
+    metadataActionsReturn.handleSetReviewState.mockResolvedValue({
+      success: true,
+      updates: { "fp-2": { reviewState: "pick" } },
+    });
+    metadataActionsReturn.handleAddTags.mockResolvedValue({ success: true });
+    runActionForVideosMock.mockResolvedValue(true);
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    expect(useFullScreenModalMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      orderedVideos: videos,
+    });
+    const modalProps = fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    expect(modalProps).toMatchObject({
+      video: videos[1],
+      positionLabel: "2 of 2",
+      detailsOpen: true,
+      canNavigatePrevious: true,
+      canNavigateNext: false,
+    });
+
+    await act(async () => {
+      await modalProps.reviewRail.props.onSetReviewState("pick");
+    });
+    expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+      "pick",
+      ["fp-2"],
+      { completionGuard: expect.any(Function) }
+    );
+
+    await act(async () => {
+      await modalProps.detailsDock.props.onAddTags(["favorite"]);
+    });
+    expect(metadataActionsReturn.handleAddTags).toHaveBeenCalledWith(
+      ["favorite"],
+      ["fp-2"],
+      { completionGuard: expect.any(Function) }
+    );
+
+    const actions = modalProps.actionsContent({ retryPlayback: vi.fn() });
+    await act(async () => {
+      await actions.props.onSafeAction(ActionIds.COPY_PATH);
+    });
+    expect(runActionForVideosMock).toHaveBeenCalledWith(
+      ActionIds.COPY_PATH,
+      [videos[1]]
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    runActionForVideosMock.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    let failedAction;
+    await act(async () => {
+      failedAction = await actions.props.onSafeAction(ActionIds.COPY_PATH);
+    });
+    expect(failedAction).toBe(false);
+    const actionAlert = screen.getByText(/Clipboard unavailable/).closest("[role=alert]");
+    expect(actionAlert).toHaveTextContent("Clipboard unavailable");
+    actionAlert.remove();
+    consoleSpy.mockRestore();
+  });
+
+  test("persists the fullscreen dock preference and releases before ownership work", async () => {
+    const video = {
+      id: "clip-1",
+      instanceId: 11,
+      fingerprint: "fp-1",
+      name: "one.mp4",
+      reviewState: "unreviewed",
+      tags: [],
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [video],
+      activeRootPath: "/collection",
+      libraryRoot: { rootPath: "/collection", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [video],
+      filteredVideoIds: new Set([video.id]),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [video],
+      displayVideos: [video],
+      orderedIds: [video.id],
+      orderForRange: [video.id],
+    });
+    const close = vi.fn();
+    useFullScreenModalMock.mockReturnValue({
+      isOpen: true,
+      currentVideo: video,
+      fullScreenVideo: video,
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 1,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: false,
+      collectionOwnerKey: "profile:/collection",
+      sessionToken: "fullscreen-session",
+      close,
+    });
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
+    act(() => lifecycleArgs.setFullscreenDetailsOpen(false));
+    const modalProps = fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    expect(modalProps.detailsOpen).toBe(false);
+    expect(
+      useGenerationMetadataMock.mock.calls.some(
+        ([options]) => options.instanceId === 11 && options.enabled === false
+      )
+    ).toBe(true);
+
+    act(() => modalProps.onToggleDetails());
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      fullscreenDetailsOpen: true,
+    });
+
+    await act(async () => {
+      await lifecycleArgs.beforeExternalFolderSelection("/next");
+    });
+    expect(fullScreenReleaseNowSpy).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+    expect(fullScreenReleaseNowSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      close.mock.invocationCallOrder[0]
+    );
+  });
+
+  test("drops stale fullscreen mutation side effects after manual navigation", async () => {
+    const videos = [
+      {
+        id: "clip-stale-a",
+        instanceId: 31,
+        fingerprint: "fp-stale-a",
+        name: "a.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "clip-stale-b",
+        instanceId: 32,
+        fingerprint: "fp-stale-b",
+        name: "b.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+    ];
+    selectionMock.selected = new Set([videos[0].id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = videos[0].id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/stale-root",
+      libraryRoot: { rootPath: "/stale-root", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+      filteredVideoIds: new Set(videos.map((video) => video.id)),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const controller = {
+      currentVideo: videos[0],
+      fullScreenVideo: videos[0],
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 2,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: true,
+      collectionOwnerKey: "profile:/stale-root",
+      sessionToken: "stale-session",
+      close: vi.fn(),
+      navigateFullScreen: vi.fn(),
+      goToFullScreen: vi.fn(),
+      peekNavigation: vi.fn(),
+      sourceRemoved: vi.fn(),
+    };
+    useFullScreenModalMock.mockReturnValue(controller);
+    const pendingWrite = createDeferredPromise();
+    metadataActionsReturn.handleSetReviewState.mockImplementationOnce(
+      () => pendingWrite.promise
+    );
+    const sessions = installReviewSessionsApi();
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const initialModal = fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    let mutation;
+    act(() => {
+      mutation = initialModal.reviewRail.props.onSetReviewState("pick");
+    });
+    await waitFor(() =>
+      expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+        "pick",
+        ["fp-stale-a"],
+        { completionGuard: expect.any(Function) }
+      )
+    );
+
+    controller.currentVideo = videos[1];
+    controller.fullScreenVideo = videos[1];
+    await act(async () => {
+      pendingWrite.resolve({
+        success: true,
+        updates: { "fp-stale-a": { reviewState: "pick" } },
+      });
+      await mutation;
+    });
+
+    expect(controller.goToFullScreen).not.toHaveBeenCalled();
+    expect(controller.navigateFullScreen).not.toHaveBeenCalled();
+    expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props.canUndo).toBe(
+      false
+    );
+    await waitFor(() => expect(sessions.save).toHaveBeenCalledOnce());
+    expect(sessions.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootPath: "/stale-root",
+        anchorFingerprint: "fp-stale-a",
+      })
+    );
+  });
+
+  test("auto-advances past duplicate content and Undo returns to the affected clip", async () => {
+    const videos = [
+      {
+        id: "clip-original",
+        instanceId: 41,
+        fingerprint: "fp-shared",
+        name: "original.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "clip-duplicate",
+        instanceId: 42,
+        fingerprint: "fp-shared",
+        name: "duplicate.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "clip-successor",
+        instanceId: 43,
+        fingerprint: "fp-next",
+        name: "successor.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+    ];
+    selectionMock.selected = new Set([videos[0].id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = videos[0].id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/duplicate-root",
+      libraryRoot: { rootPath: "/duplicate-root", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+      filteredVideoIds: new Set(videos.map((video) => video.id)),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const controller = {
+      currentVideo: videos[0],
+      fullScreenVideo: videos[0],
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 3,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: true,
+      collectionOwnerKey: "profile:/duplicate-root",
+      sessionToken: "duplicate-session",
+      close: vi.fn(),
+      navigateFullScreen: vi.fn(),
+      peekNavigation: vi.fn(),
+      sourceRemoved: vi.fn(),
+      goToFullScreen: vi.fn((id) => {
+        const next = videos.find((video) => video.id === id) || null;
+        if (next) {
+          controller.currentVideo = next;
+          controller.fullScreenVideo = next;
+        }
+        return next;
+      }),
+    };
+    useFullScreenModalMock.mockReturnValue(controller);
+    metadataActionsReturn.handleSetReviewState.mockResolvedValue({
+      success: true,
+      updates: { "fp-shared": { reviewState: "pick" } },
+    });
+    metadataActionsReturn.handleRestoreReviewMetadata.mockResolvedValue({
+      success: true,
+      updates: { "fp-shared": { reviewState: "unreviewed", rating: null } },
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
+    act(() => lifecycleArgs.setReviewAutoAdvance(true));
+
+    await act(async () => {
+      await fullScreenModalSpy.mock.calls
+        .at(-1)?.[0]
+        .reviewRail.props.onSetReviewState("pick");
+    });
+    expect(controller.goToFullScreen).toHaveBeenCalledWith("clip-successor");
+    expect(controller.goToFullScreen).not.toHaveBeenCalledWith("clip-duplicate");
+    expect(selectionMock.selectExactly).toHaveBeenCalledWith("clip-successor");
+    expect(fullScreenReleaseNowSpy).toHaveBeenCalledWith({ resetAudio: false });
+
+    const advancedModal = fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    expect(advancedModal.reviewRail.props.canUndo).toBe(true);
+    await act(async () => {
+      await advancedModal.reviewRail.props.onUndo();
+    });
+    await waitFor(() =>
+      expect(controller.goToFullScreen).toHaveBeenCalledWith("clip-original")
+    );
+    expect(selectionMock.selectExactly).toHaveBeenCalledWith("clip-original");
+  });
+
+  test("releases the active player before a watched fullscreen source is removed", async () => {
+    const videos = [
+      {
+        id: "/watch/current.mp4",
+        fingerprint: "fp-watch-current",
+        name: "current.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "/watch/next.mp4",
+        fingerprint: "fp-watch-next",
+        name: "next.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+    ];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/watch",
+      libraryRoot: { rootPath: "/watch", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const sourceRemoved = vi.fn(() => videos[1]);
+    useFullScreenModalMock.mockReturnValue({
+      currentVideo: videos[0],
+      fullScreenVideo: videos[0],
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 2,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: true,
+      collectionOwnerKey: "profile:/watch",
+      sessionToken: "watch-session",
+      close: vi.fn(),
+      sourceRemoved,
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
+
+    act(() => lifecycleArgs.beforeFileRemoved(videos[0].id));
+
+    expect(fullScreenReleaseNowSpy).toHaveBeenCalledWith({ resetAudio: false });
+    expect(sourceRemoved).toHaveBeenCalledWith(videos[0].id);
+    expect(fullScreenReleaseNowSpy.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      sourceRemoved.mock.invocationCallOrder[0]
+    );
+    expect(selectionMock.selectExactly).toHaveBeenCalledWith(videos[1].id);
+  });
+
+  test("raises the render cap only to the first step that can restore a visited clip", async () => {
+    const videos = Array.from({ length: 6_000 }, (_, index) => ({
+      id: `render-cap-${index}`,
+      instanceId: index + 1,
+      fingerprint: `render-cap-fp-${index}`,
+      name: `clip-${index}.mp4`,
+      reviewState: "unreviewed",
+      tags: [],
+    }));
+    const current = videos[100];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/render-cap",
+      libraryRoot: { rootPath: "/render-cap", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+      filteredVideoIds: new Set(videos.map((video) => video.id)),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos.slice(0, 100),
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const close = vi.fn();
+    useFullScreenModalMock.mockReturnValue({
+      currentVideo: current,
+      fullScreenVideo: current,
+      currentIndex: 100,
+      currentViewIndex: 100,
+      fullScreenCount: videos.length,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: true,
+      hasNext: true,
+      collectionOwnerKey: "profile:/render-cap",
+      sessionToken: "render-cap-session",
+      close,
+    });
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
+    act(() => lifecycleArgs.setRenderLimitStep(0));
+
+    act(() => fullScreenModalSpy.mock.calls.at(-1)?.[0].onClose());
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith(
+      expect.objectContaining({ renderLimitStep: 1 })
+    );
+    expect(selectionMock.selectExactly).toHaveBeenCalledWith(current.id);
+    expect(masonryReturn.scrollToId).toHaveBeenCalledWith(current.id, {
+      align: "center",
     });
   });
 });
