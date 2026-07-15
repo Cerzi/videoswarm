@@ -47,6 +47,7 @@ const SAMPLER_TYPES = new Set([
   'KSamplerAdvanced',
   'SamplerCustom',
   'SamplerCustomAdvanced',
+  'WanVideoSampler',
 ]);
 
 const UNARY_CONDITIONING_INPUT = new Map([
@@ -65,9 +66,21 @@ const MODEL_PASSTHROUGH_INPUT = new Map([
   ['ModelSamplingSD3', 'model'],
   ['ModelSamplingAuraFlow', 'model'],
   ['ModelSamplingFlux', 'model'],
+  ['WanVideoSetBlockSwap', 'model'],
 ]);
 
-const DECODE_TYPES = new Set(['VAEDecode', 'VAEDecodeTiled']);
+const DECODE_TYPES = new Set(['VAEDecode', 'VAEDecodeTiled', 'WanVideoDecode']);
+
+const PROMPT_STRING_INPUT = new Map([
+  ['PrimitiveStringMultiline', 'value'],
+]);
+
+const SCALAR_NODE_INPUT = new Map([
+  ['INTConstant', 'value'],
+  ['Int', 'value'],
+  ['Float', 'value'],
+  ['Seed (rgthree)', 'seed'],
+]);
 
 class ComfyGenerationParserError extends Error {
   constructor(code, message) {
@@ -496,7 +509,7 @@ function createCollector({ nodes, asRef, reachable, limits }) {
   const loras = [];
   const sourceInputs = [];
   const assetKeys = new Set();
-  const loraByNode = new Map();
+  const loraByKey = new Map();
 
   const addDiagnostic = ({ code, message, node, role = null }) => {
     const key = `${code}:${node?.id || ''}:${role || ''}`;
@@ -525,9 +538,54 @@ function createCollector({ nodes, asRef, reachable, limits }) {
     bucket.push({ name: cleanName, kind, nodeId: node?.id || null, ...extra });
   };
 
-  const addPrompt = ({ role, text, node, field, composition }) => {
+  const addLora = ({
+    name,
+    node,
+    strengthModel = null,
+    strengthClip = null,
+    appliedTo = [],
+  }) => {
+    const cleanName = scalarString(name, limits.maxScalarLength);
+    if (!cleanName) return null;
+    const key = `${node?.id || ''}:${cleanName}`;
+    let lora = loraByKey.get(key);
+    if (!lora) {
+      if (loras.length >= limits.maxAssetsPerKind) return null;
+      lora = {
+        name: cleanName,
+        nodeId: node?.id || null,
+        strengthModel,
+        strengthClip,
+        appliedTo: [],
+      };
+      loraByKey.set(key, lora);
+      loras.push(lora);
+    }
+    appliedTo.forEach((semantic) => {
+      if (semantic && !lora.appliedTo.includes(semantic)) lora.appliedTo.push(semantic);
+    });
+    return lora;
+  };
+
+  const addPrompt = ({
+    role,
+    text,
+    node,
+    field,
+    composition,
+    confidence = 'exact',
+    truncated = false,
+  }) => {
     const cleanText = scalarString(text, limits.maxPromptLength);
     if (!cleanText || promptFragments.length >= limits.maxPromptFragments) return;
+    if (truncated || (typeof text === 'string' && text.trim().length > cleanText.length)) {
+      addDiagnostic({
+        code: 'PROMPT_FRAGMENT_TRUNCATED',
+        message: 'Prompt text was shortened to the configured display and cache limit',
+        node,
+        role,
+      });
+    }
     if (promptLength + cleanText.length > limits.maxPromptTotalLength) {
       addDiagnostic({
         code: 'PROMPT_TOTAL_LIMIT',
@@ -548,7 +606,60 @@ function createCollector({ nodes, asRef, reachable, limits }) {
       classType: node.classType,
       field,
       composition,
-      confidence: 'exact',
+      confidence,
+    });
+  };
+
+  const traceWanLoras = (ref, visited = new Set(), depth = 0) => {
+    if (!ref || depth > limits.maxTraversalDepth) return;
+    const visitKey = `${ref.nodeId}:${ref.slot}`;
+    if (visited.has(visitKey)) return;
+    visited.add(visitKey);
+    const node = nodes.get(ref.nodeId);
+    if (!node) return;
+
+    if (node.classType === 'WanVideoLoraSelect') {
+      traceWanLoras(asRef(node.inputs.prev_lora), visited, depth + 1);
+      const strength = scalar(node.inputs.strength, limits.maxScalarLength);
+      if (strength === null || Number(strength) !== 0) {
+        addLora({
+          name: node.inputs.lora,
+          node,
+          strengthModel: strength,
+          appliedTo: ['model'],
+        });
+      }
+      return;
+    }
+
+    if (node.classType === 'WanVideoLoraSelectMulti') {
+      traceWanLoras(asRef(node.inputs.prev_lora), visited, depth + 1);
+      Object.keys(node.inputs)
+        .map((key) => /^lora_(\d+)$/u.exec(key))
+        .filter(Boolean)
+        .sort((left, right) => Number(left[1]) - Number(right[1]))
+        .forEach((match) => {
+          const index = match[1];
+          const strength = scalar(
+            node.inputs[`strength_${index}`],
+            limits.maxScalarLength
+          );
+          if (strength !== null && Number(strength) === 0) return;
+          addLora({
+            name: node.inputs[`lora_${index}`],
+            node,
+            strengthModel: strength,
+            appliedTo: ['model'],
+          });
+        });
+      return;
+    }
+
+    addDiagnostic({
+      code: 'UNRESOLVED_LORA_NODE',
+      message: `Could not resolve WanVideo LoRA source through ${node.classType}`,
+      node,
+      role: 'model',
     });
   };
 
@@ -564,22 +675,25 @@ function createCollector({ nodes, asRef, reachable, limits }) {
       const upstreamKey = semantic === 'clip' ? 'clip' : 'model';
       const upstream = asRef(node.inputs[upstreamKey]);
       if (upstream) traceAsset(upstream, semantic, visited, depth + 1);
-      let lora = loraByNode.get(node.id);
-      if (!lora) {
-        const name = scalarString(node.inputs.lora_name, limits.maxScalarLength);
-        if (name && loras.length < limits.maxAssetsPerKind) {
-          lora = {
-            name,
-            nodeId: node.id,
-            strengthModel: scalar(node.inputs.strength_model, limits.maxScalarLength),
-            strengthClip: scalar(node.inputs.strength_clip, limits.maxScalarLength),
-            appliedTo: [],
-          };
-          loraByNode.set(node.id, lora);
-          loras.push(lora);
-        }
-      }
-      if (lora && !lora.appliedTo.includes(semantic)) lora.appliedTo.push(semantic);
+      addLora({
+        name: node.inputs.lora_name,
+        node,
+        strengthModel: scalar(node.inputs.strength_model, limits.maxScalarLength),
+        strengthClip: scalar(node.inputs.strength_clip, limits.maxScalarLength),
+        appliedTo: [semantic],
+      });
+      return;
+    }
+
+    if (semantic === 'model' && node.classType === 'WanVideoSetLoRAs') {
+      traceWanLoras(asRef(node.inputs.lora));
+      traceAsset(asRef(node.inputs.model), semantic, visited, depth + 1);
+      return;
+    }
+
+    if (semantic === 'model' && node.classType === 'WanVideoModelLoader') {
+      addAsset(models, 'diffusion-model', node.inputs.model, node);
+      traceWanLoras(asRef(node.inputs.lora));
       return;
     }
 
@@ -611,6 +725,10 @@ function createCollector({ nodes, asRef, reachable, limits }) {
       addAsset(vaes, 'vae', node.inputs.vae_name, node);
       return;
     }
+    if (semantic === 'vae' && node.classType === 'WanVideoVAELoader') {
+      addAsset(vaes, 'vae', node.inputs.model_name, node);
+      return;
+    }
     if (semantic === 'clip' && [
       'CLIPLoader',
       'DualCLIPLoader',
@@ -619,6 +737,10 @@ function createCollector({ nodes, asRef, reachable, limits }) {
     ].includes(node.classType)) {
       ['clip_name', 'clip_name1', 'clip_name2', 'clip_name3', 'clip_name4']
         .forEach((key) => addAsset(textEncoders, 'text-encoder', node.inputs[key], node));
+      return;
+    }
+    if (semantic === 'clip' && node.classType === 'LoadWanVideoT5TextEncoder') {
+      addAsset(textEncoders, 'text-encoder', node.inputs.model_name, node);
       return;
     }
 
@@ -650,6 +772,78 @@ function createCollector({ nodes, asRef, reachable, limits }) {
     });
   };
 
+  const resolvePromptString = (
+    value,
+    provenance,
+    state = {
+      path: new Set(),
+      memo: new Map(),
+      visits: 0,
+    },
+    depth = 0
+  ) => {
+    if (typeof value === 'string') {
+      return {
+        text: value,
+        truncated: value.trim().length > limits.maxPromptLength,
+        ...provenance,
+      };
+    }
+    const ref = asRef(value);
+    if (!ref || depth > limits.maxTraversalDepth) return null;
+    const visitKey = `${ref.nodeId}:${ref.slot}`;
+    if (state.path.has(visitKey)) return null;
+    if (state.memo.has(visitKey)) return state.memo.get(visitKey);
+    state.visits += 1;
+    if (state.visits > limits.maxTraversalVisits) return null;
+    const node = nodes.get(ref.nodeId);
+    if (!node) return null;
+    state.path.add(visitKey);
+
+    let result = null;
+    try {
+      const promptInput = PROMPT_STRING_INPUT.get(node.classType);
+      if (promptInput) {
+        result = resolvePromptString(
+          node.inputs[promptInput],
+          {
+            node,
+            field: promptInput,
+            composition: 'string-reference',
+            confidence: 'exact',
+          },
+          state,
+          depth + 1
+        );
+      }
+    } finally {
+      state.path.delete(visitKey);
+    }
+
+    state.memo.set(visitKey, result);
+    return result;
+  };
+
+  const collectPromptInput = ({ value, role, node, field, composition }) => {
+    const resolved = resolvePromptString(value, {
+      node,
+      field,
+      composition,
+      confidence: 'exact',
+    });
+    if (resolved) {
+      addPrompt({ role, ...resolved });
+      return;
+    }
+    if (!asRef(value)) return;
+    addDiagnostic({
+      code: 'UNRESOLVED_DYNAMIC_PROMPT',
+      message: `${field} is produced by a runtime node without a registered adapter`,
+      node,
+      role,
+    });
+  };
+
   const resolveConditioning = (
     ref,
     role,
@@ -674,34 +868,41 @@ function createCollector({ nodes, asRef, reachable, limits }) {
     if (!node) return;
 
     if (node.classType === 'CLIPTextEncode') {
-      if (asRef(node.inputs.text)) {
-        addDiagnostic({
-          code: 'UNRESOLVED_DYNAMIC_PROMPT',
-          message: 'Prompt text is produced by a runtime node that has no registered adapter',
-          node,
-          role,
-        });
-      } else {
-        addPrompt({ role, text: node.inputs.text, node, field: 'text', composition });
-      }
+      collectPromptInput({
+        value: node.inputs.text,
+        role,
+        node,
+        field: 'text',
+        composition,
+      });
       traceAsset(asRef(node.inputs.clip), 'clip');
       return;
     }
 
     if (node.classType === 'CLIPTextEncodeSDXL') {
       ['text_g', 'text_l'].forEach((field) => {
-        if (asRef(node.inputs[field])) {
-          addDiagnostic({
-            code: 'UNRESOLVED_DYNAMIC_PROMPT',
-            message: `${field} is produced by a runtime node without a registered adapter`,
-            node,
-            role,
-          });
-        } else {
-          addPrompt({ role, text: node.inputs[field], node, field, composition });
-        }
+        collectPromptInput({
+          value: node.inputs[field],
+          role,
+          node,
+          field,
+          composition,
+        });
       });
       traceAsset(asRef(node.inputs.clip), 'clip');
+      return;
+    }
+
+    if (node.classType === 'WanVideoTextEncode') {
+      const field = role === 'negative' ? 'negative_prompt' : 'positive_prompt';
+      collectPromptInput({
+        value: node.inputs[field],
+        role,
+        node,
+        field,
+        composition,
+      });
+      traceAsset(asRef(node.inputs.t5), 'clip');
       return;
     }
 
@@ -822,18 +1023,51 @@ function firstScalar(inputs, keys, maxLength) {
   return null;
 }
 
+function resolveKnownScalar(
+  value,
+  { nodes, asRef, limits },
+  visited = new Set(),
+  depth = 0
+) {
+  const direct = scalar(value, limits.maxScalarLength);
+  if (direct !== null) return direct;
+  const ref = asRef(value);
+  if (!ref || depth > limits.maxTraversalDepth) return null;
+  const visitKey = `${ref.nodeId}:${ref.slot}`;
+  if (visited.has(visitKey)) return null;
+  visited.add(visitKey);
+  const node = nodes.get(ref.nodeId);
+  const field = node ? SCALAR_NODE_INPUT.get(node.classType) : null;
+  if (!node || !field) return null;
+  return resolveKnownScalar(
+    node.inputs[field],
+    { nodes, asRef, limits },
+    visited,
+    depth + 1
+  );
+}
+
+function firstResolvedScalar(inputs, keys, context) {
+  for (const key of keys) {
+    const value = resolveKnownScalar(inputs[key], context);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
 function parseSamplerStage(node, { nodes, asRef, limits }) {
   const inputs = node.inputs;
+  const scalarContext = { nodes, asRef, limits };
   const stage = {
     nodeId: node.id,
     classType: node.classType,
     role: 'contributor',
     seed: scalarString(
-      firstScalar(inputs, ['seed', 'noise_seed'], limits.maxScalarLength),
+      firstResolvedScalar(inputs, ['seed', 'noise_seed'], scalarContext),
       limits.maxScalarLength
     ),
-    steps: firstScalar(inputs, ['steps'], limits.maxScalarLength),
-    cfg: firstScalar(inputs, ['cfg'], limits.maxScalarLength),
+    steps: firstResolvedScalar(inputs, ['steps'], scalarContext),
+    cfg: firstResolvedScalar(inputs, ['cfg'], scalarContext),
     sampler: scalarString(
       firstScalar(inputs, ['sampler_name'], limits.maxScalarLength),
       limits.maxScalarLength
@@ -842,13 +1076,19 @@ function parseSamplerStage(node, { nodes, asRef, limits }) {
       firstScalar(inputs, ['scheduler'], limits.maxScalarLength),
       limits.maxScalarLength
     ),
-    denoise: firstScalar(inputs, ['denoise'], limits.maxScalarLength),
-    startStep: firstScalar(inputs, ['start_at_step'], limits.maxScalarLength),
-    endStep: firstScalar(inputs, ['end_at_step'], limits.maxScalarLength),
+    denoise: firstResolvedScalar(inputs, ['denoise', 'denoise_strength'], scalarContext),
+    startStep: firstResolvedScalar(inputs, ['start_at_step', 'start_step'], scalarContext),
+    endStep: firstResolvedScalar(inputs, ['end_at_step', 'end_step'], scalarContext),
     modelRef: asRef(inputs.model),
     positiveRef: asRef(inputs.positive),
     negativeRef: asRef(inputs.negative),
   };
+
+  if (node.classType === 'WanVideoSampler') {
+    stage.sampler = node.classType;
+    stage.positiveRef ||= asRef(inputs.text_embeds);
+    stage.negativeRef ||= asRef(inputs.text_embeds);
+  }
 
   if (node.classType === 'SamplerCustom' || node.classType === 'SamplerCustomAdvanced') {
     const noiseNode = nodes.get(asRef(inputs.noise)?.nodeId);
@@ -987,14 +1227,16 @@ function parseComfyGenerationPayload(payload, options = {}) {
     });
   }
 
-  samplerStages.forEach((stage) => {
-    collector.resolveConditioning(stage.positiveRef, 'positive');
-    collector.resolveConditioning(stage.negativeRef, 'negative');
-    collector.traceAsset(stage.modelRef, 'model');
-    delete stage.modelRef;
-    delete stage.positiveRef;
-    delete stage.negativeRef;
-  });
+  [...samplerStages]
+    .sort((left, right) => Number(right.role === 'final') - Number(left.role === 'final'))
+    .forEach((stage) => {
+      collector.resolveConditioning(stage.positiveRef, 'positive');
+      collector.resolveConditioning(stage.negativeRef, 'negative');
+      collector.traceAsset(stage.modelRef, 'model');
+      delete stage.modelRef;
+      delete stage.positiveRef;
+      delete stage.negativeRef;
+    });
 
   Array.from(reachable.keys())
     .sort(naturalNodeCompare)
