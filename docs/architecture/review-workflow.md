@@ -153,7 +153,12 @@ draining remain mandatory. Successfully moved paths are marked missing in one
 bounded SQLite batch before the native result returns, while the watcher stays
 the eventual filesystem reconciliation path. Successful trashing does not
 erase content review metadata, which may still describe another indexed
-instance of the content.
+instance of the content. Electron exposes trash as a single-file native call,
+so confirmed batches use an eight-worker native pool on Linux (four elsewhere)
+rather than serializing the platform overhead for every file. Canonical
+authorization and identity checks use a separate 16-worker bounded pool;
+failed-item retry grants retain their original identity and profile ownership
+constraints.
 
 ### JSON manifest export
 

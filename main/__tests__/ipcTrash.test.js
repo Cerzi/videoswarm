@@ -4,6 +4,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const {
   createTrashConfirmationStore,
+  mapTrashWorkBounded,
   trashAuthorizedPaths,
 } = require("../ipc-trash");
 
@@ -18,11 +19,17 @@ function createClock(initial = 1_000) {
 }
 
 describe("authorized trash service", () => {
-  it("uses one sequential implementation and preserves partial results", async () => {
+  it("runs bounded native work concurrently and preserves ordered partial results", async () => {
     const order = [];
+    let active = 0;
+    let peakActive = 0;
     const shell = {
       trashItem: vi.fn(async (filePath) => {
         order.push(`trash:${filePath}`);
+        active += 1;
+        peakActive = Math.max(peakActive, active);
+        await Promise.resolve();
+        active -= 1;
         if (filePath === "/library/b.mp4") throw new Error("busy");
       }),
     };
@@ -36,6 +43,7 @@ describe("authorized trash service", () => {
       paths: ["/library/a.mp4", "/library/b.mp4", "/outside/c.mp4"],
       shell,
       authorizePath,
+      concurrency: 2,
       logger: { warn: vi.fn() },
     });
 
@@ -47,13 +55,73 @@ describe("authorized trash service", () => {
         { path: "/outside/c.mp4", error: "not authorized" },
       ],
     });
-    expect(order).toEqual([
-      "authorize:/library/a.mp4",
-      "trash:/library/a.mp4",
-      "authorize:/library/b.mp4",
-      "trash:/library/b.mp4",
-      "authorize:/outside/c.mp4",
-    ]);
+    expect(peakActive).toBe(2);
+    expect(order).toEqual(
+      expect.arrayContaining([
+        "authorize:/library/a.mp4",
+        "trash:/library/a.mp4",
+        "authorize:/library/b.mp4",
+        "trash:/library/b.mp4",
+        "authorize:/outside/c.mp4",
+      ])
+    );
+    expect(order.indexOf("authorize:/library/a.mp4")).toBeLessThan(
+      order.indexOf("trash:/library/a.mp4")
+    );
+    expect(order.indexOf("authorize:/library/b.mp4")).toBeLessThan(
+      order.indexOf("trash:/library/b.mp4")
+    );
+  });
+
+  it("drains active preflight work and stops admitting tasks after a failure", async () => {
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const visited = [];
+    const operation = mapTrashWorkBounded(
+      ["first", "fails", "must-not-start", "also-must-not-start"],
+      async (value) => {
+        visited.push(value);
+        if (value === "first") await firstGate;
+        if (value === "fails") throw new Error("preflight failed");
+        return value;
+      },
+      2
+    );
+    const settlement = vi.fn();
+    operation.then(settlement, settlement);
+
+    await vi.waitFor(() => expect(visited).toHaveLength(2));
+    await Promise.resolve();
+    expect(settlement).not.toHaveBeenCalled();
+    releaseFirst();
+
+    await expect(operation).rejects.toThrow("preflight failed");
+    expect(visited).toEqual(["first", "fails"]);
+    expect(settlement).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves one canonical file once when multiple requested paths are aliases", async () => {
+    const shell = { trashItem: vi.fn(async () => {}) };
+    const authorizePath = vi.fn(async () => ({
+      path: "/library/canonical.mp4",
+    }));
+
+    const result = await trashAuthorizedPaths({
+      paths: ["/library/canonical.mp4", "/library/alias.mp4"],
+      shell,
+      authorizePath,
+      concurrency: 2,
+    });
+
+    expect(shell.trashItem).toHaveBeenCalledTimes(1);
+    expect(shell.trashItem).toHaveBeenCalledWith("/library/canonical.mp4");
+    expect(result).toEqual({
+      success: true,
+      moved: ["/library/canonical.mp4", "/library/alias.mp4"],
+      failed: [],
+    });
   });
 
   it("rejects empty, oversized, and unbounded calls before touching the shell", async () => {
@@ -70,6 +138,14 @@ describe("authorized trash service", () => {
         authorizePath,
       })
     ).rejects.toThrow(/1-1/);
+    await expect(
+      trashAuthorizedPaths({
+        paths: ["/a"],
+        concurrency: 0,
+        shell,
+        authorizePath,
+      })
+    ).rejects.toThrow(/concurrency/i);
     expect(shell.trashItem).not.toHaveBeenCalled();
     expect(authorizePath).not.toHaveBeenCalled();
   });

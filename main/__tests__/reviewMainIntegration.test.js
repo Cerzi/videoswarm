@@ -61,6 +61,9 @@ describe("review main-process integration", () => {
     );
     expect(trash).toContain("const context = captureMetadataContext()");
     expect(trash).toContain("canonicalMovedPaths");
+    expect(trash).toContain("mapTrashWorkBounded(");
+    expect(trash).toContain("DEFAULT_TRASH_PREFLIGHT_CONCURRENCY");
+    expect(trash).toContain("canonicalTrashPaths");
     expect(trash).toContain("context.metadataStore.markFilesMissing(");
     expect(trash.indexOf("markFilesMissing(")).toBeLessThan(
       trash.indexOf("const retryPaths")

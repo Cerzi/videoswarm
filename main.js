@@ -94,11 +94,14 @@ const {
   createSettingsWriter,
   readSettingsFileBounded,
 } = require("./main/settings-writer");
+const { normalizeZoomLevel } = require("./main/zoom-settings");
 const {
   createDirectoryAggregateBatcher,
 } = require("./main/directory-aggregate-batcher");
 const {
+  DEFAULT_TRASH_PREFLIGHT_CONCURRENCY,
   createTrashConfirmationStore,
+  mapTrashWorkBounded,
   trashAuthorizedPaths,
 } = require("./main/ipc-trash");
 const {
@@ -1088,6 +1091,7 @@ function createEnumeratedVideoFileObject(filePath, baseFolderPath, stats) {
     reviewState: "unreviewed",
     dimensions: null,
     aspectRatio: null,
+    hasAudio: null,
     enrichmentState: "enumerated",
     metadata: {
       folder: path.dirname(filePath),
@@ -1145,6 +1149,7 @@ async function createVideoFileObject(
     let rating = null;
     let reviewState = "unreviewed";
     let dimensions = null;
+    let hasAudio = null;
     let instanceId = null;
 
     const isValidDimensions = (dims) =>
@@ -1179,6 +1184,9 @@ async function createVideoFileObject(
           ? "reviewed"
           : "unreviewed";
 
+      hasAudio =
+        typeof info?.hasAudio === "boolean" ? info.hasAudio : null;
+
       if (isValidDimensions(info?.dimensions)) {
         dimensions = info.dimensions;
       } else if (fingerprint) {
@@ -1186,16 +1194,25 @@ async function createVideoFileObject(
         if (isValidDimensions(storedDims)) {
           dimensions = storedDims;
         }
+        if (hasAudio === null) {
+          hasAudio = metadataStore.getHasAudio?.(fingerprint) ?? null;
+        }
       }
 
-      if (!isValidDimensions(dimensions)) {
+      if (!isValidDimensions(dimensions) || typeof hasAudio !== "boolean") {
         const computed = await getVideoDimensions(filePath, stats);
         assertActive?.();
         if (isValidDimensions(computed)) {
-          dimensions = computed;
+          if (!isValidDimensions(dimensions)) dimensions = computed;
+          if (typeof computed.hasAudio === "boolean") {
+            hasAudio = computed.hasAudio;
+          }
           if (fingerprint) {
             assertActive?.();
-            metadataStore.setDimensions(fingerprint, computed);
+            metadataStore.setDimensions(fingerprint, {
+              ...dimensions,
+              hasAudio,
+            });
           }
         }
       }
@@ -1231,6 +1248,7 @@ async function createVideoFileObject(
       tags,
       rating,
       reviewState,
+      hasAudio,
       enrichmentState: "ready",
       dimensions: dimensions
         ? {
@@ -1477,11 +1495,9 @@ function normaliseLoadedSettings(rawSettings) {
       source.fullscreenDetailsOpen === undefined
         ? defaultSettings.fullscreenDetailsOpen
         : source.fullscreenDetailsOpen === true,
-    zoomLevel: clampInteger(
+    zoomLevel: normalizeZoomLevel(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
-      defaultSettings.zoomLevel,
-      0,
-      4
+      defaultSettings.zoomLevel
     ),
     showFilenames:
       source.showFilenames === undefined
@@ -3226,13 +3242,24 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
     dedupe: true,
   });
   const context = captureProfileGenerationContext();
-  const canonicalPaths = [];
-  const bindings = {};
-  for (const requestedPath of requestedPaths) {
-    const authorized = await assertRendererPath(event, requestedPath, "file");
-    canonicalPaths.push(authorized.path);
-    bindings[authorized.path] = await readTrashFileIdentity(authorized.path);
-  }
+  const confirmedTargets = await mapTrashWorkBounded(
+    requestedPaths,
+    async (requestedPath) => {
+      const authorized = await assertRendererPath(event, requestedPath, "file");
+      return {
+        path: authorized.path,
+        identity: await readTrashFileIdentity(authorized.path),
+      };
+    },
+    DEFAULT_TRASH_PREFLIGHT_CONCURRENCY
+  );
+  const confirmedTargetByPath = new Map(
+    confirmedTargets.map((target) => [target.path, target])
+  );
+  const canonicalPaths = [...confirmedTargetByPath.keys()];
+  const bindings = Object.fromEntries(
+    [...confirmedTargetByPath.values()].map((target) => [target.path, target.identity])
+  );
   assertProfileGenerationContextActive(context);
 
   const requester = event.sender;
@@ -4470,10 +4497,18 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
   const requester = event.sender;
   const requesterId = requester.id;
   const canonicalByRequestedPath = new Map();
-  for (const requestedPath of paths) {
-    const authorized = await assertRendererPath(event, requestedPath, "file");
+  const authorizedTargets = await mapTrashWorkBounded(
+    paths,
+    async (requestedPath) => ({
+      requestedPath,
+      authorized: await assertRendererPath(event, requestedPath, "file"),
+    }),
+    DEFAULT_TRASH_PREFLIGHT_CONCURRENCY
+  );
+  authorizedTargets.forEach(({ requestedPath, authorized }) => {
     canonicalByRequestedPath.set(requestedPath, authorized.path);
-  }
+  });
+  const canonicalTrashPaths = [...new Set(canonicalByRequestedPath.values())];
   assertMetadataContextActive(context);
   const confirmed = trashConfirmationStore.consume({
     token,
@@ -4483,12 +4518,16 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
     paths: [...canonicalByRequestedPath.values()],
   });
   const operation = (async () => {
-    for (const canonicalPath of canonicalByRequestedPath.values()) {
-      const currentIdentity = await readTrashFileIdentity(canonicalPath);
-      if (currentIdentity !== confirmed.bindings[canonicalPath]) {
-        throw new Error("A trash target changed after confirmation");
-      }
-    }
+    await mapTrashWorkBounded(
+      canonicalTrashPaths,
+      async (canonicalPath) => {
+        const currentIdentity = await readTrashFileIdentity(canonicalPath);
+        if (currentIdentity !== confirmed.bindings[canonicalPath]) {
+          throw new Error("A trash target changed after confirmation");
+        }
+      },
+      DEFAULT_TRASH_PREFLIGHT_CONCURRENCY
+    );
     const result = await trashAuthorizedPaths({
       paths,
       shell,
@@ -4497,9 +4536,11 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
       }),
       logger: console,
     });
-    const canonicalMovedPaths = result.moved
-      .map((requestedPath) => canonicalByRequestedPath.get(requestedPath))
-      .filter(Boolean);
+    const canonicalMovedPaths = [...new Set(
+      result.moved
+        .map((requestedPath) => canonicalByRequestedPath.get(requestedPath))
+        .filter(Boolean)
+    )];
     if (canonicalMovedPaths.length > 0) {
       try {
         const catalogResult = context.metadataStore.markFilesMissing(
@@ -4517,23 +4558,40 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
         result.catalogError = error?.message || String(error);
       }
     }
+    const failedGroups = new Map();
+    result.failed.forEach((failure) => {
+      const canonicalPath = canonicalByRequestedPath.get(failure.path);
+      if (!canonicalPath) return;
+      const failures = failedGroups.get(canonicalPath) || [];
+      failures.push(failure);
+      failedGroups.set(canonicalPath, failures);
+    });
+    const retryCandidates = await mapTrashWorkBounded(
+      [...failedGroups.entries()],
+      async ([canonicalPath, failures]) => {
+        try {
+          const currentIdentity = await readTrashFileIdentity(canonicalPath);
+          if (currentIdentity !== confirmed.bindings[canonicalPath]) {
+            failures.forEach((failure) => {
+              failure.error = "File changed after trash confirmation";
+            });
+            return null;
+          }
+          return { canonicalPath, currentIdentity };
+        } catch {
+          // A missing path cannot be retried and needs no lingering capability.
+          return null;
+        }
+      },
+      DEFAULT_TRASH_PREFLIGHT_CONCURRENCY
+    );
     const retryPaths = [];
     const retryBindings = {};
-    for (const failure of result.failed) {
-      const canonicalPath = canonicalByRequestedPath.get(failure.path);
-      if (!canonicalPath) continue;
-      try {
-        const currentIdentity = await readTrashFileIdentity(canonicalPath);
-        if (currentIdentity !== confirmed.bindings[canonicalPath]) {
-          failure.error = "File changed after trash confirmation";
-          continue;
-        }
-        retryPaths.push(canonicalPath);
-        retryBindings[canonicalPath] = currentIdentity;
-      } catch {
-        // A missing path cannot be retried and needs no lingering capability.
-      }
-    }
+    retryCandidates.forEach((candidate) => {
+      if (!candidate) return;
+      retryPaths.push(candidate.canonicalPath);
+      retryBindings[candidate.canonicalPath] = candidate.currentIdentity;
+    });
     let retryContextActive = false;
     if (
       retryPaths.length > 0 &&

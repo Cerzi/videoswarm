@@ -87,12 +87,12 @@ describe("useZoomControls", () => {
     });
 
     act(() => {
-      result.current.applyZoomFromSettings(4);
+      result.current.applyZoomFromSettings(3.5);
     });
 
-    expect(result.current.zoomLevel).toBe(4);
+    expect(result.current.zoomLevel).toBe(3.5);
     expect(window.electronAPI.saveSettingsPartial).not.toHaveBeenCalled();
-    expect(setZoomClass).toHaveBeenLastCalledWith(4);
+    expect(setZoomClass).toHaveBeenLastCalledWith(3.5);
     expect(scheduleLayout).toHaveBeenCalled();
   });
 });

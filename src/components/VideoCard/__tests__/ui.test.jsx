@@ -143,6 +143,29 @@ beforeEach(() => {
 });
 
 describe("VideoCard", () => {
+  it("shows an unobtrusive badge only for confirmed audio streams", () => {
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "with-audio", name: "with-audio.mp4", hasAudio: true }}
+        canLoadMoreVideos={() => false}
+      />
+    );
+
+    expect(screen.getByRole("img", { name: "Contains audio" })).toBeVisible();
+
+    rendered.rerender(
+      <VideoCard
+        {...baseProps}
+        video={{ id: "without-audio", name: "without-audio.mp4", hasAudio: false }}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    expect(
+      screen.queryByRole("img", { name: "Contains audio" })
+    ).toBeNull();
+  });
+
   it("selects on the first click without waiting for the double-click window", () => {
     vi.useFakeTimers();
     const onSelect = vi.fn();

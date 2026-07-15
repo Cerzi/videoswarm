@@ -52,6 +52,8 @@ export const normalizeVideoFromMain = (video) => {
     if (Number.isFinite(candidate) && candidate > 0) return candidate;
     return sanitizedDimensions ? sanitizedDimensions.aspectRatio : null;
   })();
+  const hasAudio =
+    typeof video.hasAudio === "boolean" ? video.hasAudio : null;
 
   return {
     ...video,
@@ -63,5 +65,6 @@ export const normalizeVideoFromMain = (video) => {
     reviewState: normalizeReviewState(video.reviewState),
     dimensions: sanitizedDimensions,
     aspectRatio,
+    hasAudio,
   };
 };

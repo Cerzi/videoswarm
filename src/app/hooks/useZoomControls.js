@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useRef } from "react";
-import { clampZoomIndex, calculateSafeZoom } from "../../zoom/utils";
+import {
+  clampZoomIndex,
+  calculateSafeZoom,
+  getTileWidthForZoomLevel,
+} from "../../zoom/utils";
 
-const ZOOM_LABELS = ["Compact", "Cozy", "Comfy", "Roomy", "Immersive"];
+const ZOOM_LABELS = [
+  "Compact",
+  "Compact+",
+  "Cozy",
+  "Cozy+",
+  "Comfy",
+  "Comfy+",
+  "Roomy",
+  "Roomy+",
+  "Immersive",
+];
 
 export function getZoomLabelByIndex(index) {
   const clamped = clampZoomIndex(index);
-  return ZOOM_LABELS[clamped] ?? `Level ${clamped}`;
+  return (
+    ZOOM_LABELS[Math.round(clamped * 2)] ??
+    `${getTileWidthForZoomLevel(clamped)}px cards`
+  );
 }
 
 function defaultRunWithAnchor(_, updater) {

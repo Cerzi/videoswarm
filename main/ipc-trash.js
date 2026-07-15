@@ -4,7 +4,68 @@ const path = require("path");
 const DEFAULT_MAX_TRASH_ITEMS = 2_000;
 const DEFAULT_TRASH_CONFIRMATION_TTL_MS = 30_000;
 const DEFAULT_MAX_TRASH_CONFIRMATION_GRANTS = 64;
+// Electron exposes only a single-item trash primitive. A small worker pool
+// avoids paying the platform/portal startup latency serially for every clip,
+// while keeping native destructive work bounded.
+const DEFAULT_TRASH_OPERATION_CONCURRENCY = process.platform === "linux" ? 8 : 4;
+const DEFAULT_TRASH_PREFLIGHT_CONCURRENCY = 16;
+const MAX_TRASH_CONCURRENCY = 32;
 const TRASH_CONFIRMATION_TOKEN_BYTES = 32;
+
+function normalizeConcurrency(value, fallback) {
+  const concurrency = value === undefined ? fallback : value;
+  if (
+    !Number.isSafeInteger(concurrency) ||
+    concurrency < 1 ||
+    concurrency > MAX_TRASH_CONCURRENCY
+  ) {
+    throw new TypeError(
+      `Trash concurrency must be an integer between 1 and ${MAX_TRASH_CONCURRENCY}`
+    );
+  }
+  return concurrency;
+}
+
+/**
+ * Run bounded native/preflight work and retain input ordering. If a task
+ * throws, stop admitting new work, drain the already-active tasks, then throw.
+ * Draining matters at profile/shutdown ownership boundaries: no detached fs
+ * checks are left running after the caller observes a rejection.
+ */
+async function mapTrashWorkBounded(items, worker, concurrency) {
+  if (!Array.isArray(items)) throw new TypeError("Trash work must be an array");
+  if (typeof worker !== "function") {
+    throw new TypeError("A trash worker is required");
+  }
+  const workerCount = Math.min(
+    items.length,
+    normalizeConcurrency(concurrency, DEFAULT_TRASH_PREFLIGHT_CONCURRENCY)
+  );
+  if (workerCount === 0) return [];
+
+  const results = new Array(items.length);
+  let cursor = 0;
+  let failed = false;
+  let firstError = null;
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!failed) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      try {
+        results[index] = await worker(items[index], index);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          firstError = error;
+        }
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (failed) throw firstError;
+  return results;
+}
 
 class TrashConfirmationError extends Error {
   constructor(message, code = "TRASH_CONFIRMATION_ERROR") {
@@ -358,6 +419,7 @@ async function trashAuthorizedPaths({
   shell,
   authorizePath,
   maxItems = DEFAULT_MAX_TRASH_ITEMS,
+  concurrency = DEFAULT_TRASH_OPERATION_CONCURRENCY,
   logger = console,
 } = {}) {
   if (!Array.isArray(paths) || paths.length === 0 || paths.length > maxItems) {
@@ -369,30 +431,60 @@ async function trashAuthorizedPaths({
   if (typeof authorizePath !== "function") {
     throw new TypeError("A path authorizer is required");
   }
+  const operationConcurrency = normalizeConcurrency(
+    concurrency,
+    DEFAULT_TRASH_OPERATION_CONCURRENCY
+  );
 
-  const moved = [];
-  const failed = [];
+  const outcomes = new Array(paths.length);
+  const work = [];
   const seen = new Set();
-  for (const candidate of paths) {
+  // Multiple renderer paths can resolve to the same canonical file (for
+  // example through symlinks). Share that one destructive promise so aliases
+  // receive the same result without racing two native trash operations.
+  const nativeMoveByPath = new Map();
+  paths.forEach((candidate, index) => {
     if (typeof candidate !== "string" || !candidate.trim()) {
-      failed.push({ path: candidate ?? null, error: "Invalid path" });
-      continue;
+      outcomes[index] = {
+        type: "failed",
+        value: { path: candidate ?? null, error: "Invalid path" },
+      };
+      return;
     }
-    if (seen.has(candidate)) continue;
+    if (seen.has(candidate)) return;
     seen.add(candidate);
+    work.push({ candidate, index });
+  });
+
+  await mapTrashWorkBounded(work, async ({ candidate, index }) => {
     try {
       const authorized = await authorizePath(candidate);
       const filePath = typeof authorized === "string"
         ? authorized
         : authorized?.path;
       if (!filePath) throw new Error("Path is not authorized");
-      await shell.trashItem(filePath);
-      moved.push(candidate);
+      let nativeMove = nativeMoveByPath.get(filePath);
+      if (!nativeMove) {
+        nativeMove = Promise.resolve().then(() => shell.trashItem(filePath));
+        nativeMoveByPath.set(filePath, nativeMove);
+      }
+      await nativeMove;
+      outcomes[index] = { type: "moved", value: candidate };
     } catch (error) {
       const message = error?.message || String(error);
       logger?.warn?.("[trash] Failed to move item", { message });
-      failed.push({ path: candidate, error: message });
+      outcomes[index] = {
+        type: "failed",
+        value: { path: candidate, error: message },
+      };
     }
+  }, operationConcurrency);
+
+  const moved = [];
+  const failed = [];
+  for (const outcome of outcomes) {
+    if (outcome?.type === "moved") moved.push(outcome.value);
+    else if (outcome?.type === "failed") failed.push(outcome.value);
   }
 
   return {
@@ -406,7 +498,10 @@ module.exports = {
   DEFAULT_MAX_TRASH_ITEMS,
   DEFAULT_MAX_TRASH_CONFIRMATION_GRANTS,
   DEFAULT_TRASH_CONFIRMATION_TTL_MS,
+  DEFAULT_TRASH_OPERATION_CONCURRENCY,
+  DEFAULT_TRASH_PREFLIGHT_CONCURRENCY,
   TrashConfirmationError,
   createTrashConfirmationStore,
+  mapTrashWorkBounded,
   trashAuthorizedPaths,
 };

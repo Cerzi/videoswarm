@@ -1900,7 +1900,9 @@ describe("App hook composition", () => {
     await waitFor(() =>
       expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
     );
-    fireEvent.click(screen.getByText("•••", { selector: "summary" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review session options" })
+    );
     fireEvent.click(screen.getByRole("menuitem", {
       name: "Forget saved position…",
     }));

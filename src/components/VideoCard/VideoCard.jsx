@@ -17,6 +17,21 @@ import {
 
 const RECOVERY_TIMEOUT_MS = 4000;
 
+const AudioStreamIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path
+      fill="currentColor"
+      d="M4 9v6h4l5 4V5L8 9H4Zm12.4 3a4.4 4.4 0 0 0-2.1-3.75v7.5A4.4 4.4 0 0 0 16.4 12Zm-2.1-8v2.05a7 7 0 0 1 0 11.9V20a9 9 0 0 0 0-16Z"
+    />
+  </svg>
+);
+
 const waitForPlayableData = (
   element,
   timeoutMs = RECOVERY_TIMEOUT_MS,
@@ -241,6 +256,7 @@ const VideoCard = memo(function VideoCard({
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
   const reviewState = normalizeReviewState(video?.reviewState);
   const hasReviewBadge = reviewState !== REVIEW_STATES.UNREVIEWED;
+  const hasAudio = video?.hasAudio === true;
 
   const aspectRatioHint = (() => {
     const direct = Number(video?.aspectRatio);
@@ -1536,6 +1552,17 @@ const VideoCard = memo(function VideoCard({
               ★
             </span>
           ))}
+        </div>
+      )}
+
+      {hasAudio && (
+        <div
+          className={`video-item-audio ${showFilenames ? "with-filename" : ""}`}
+          role="img"
+          aria-label="Contains audio"
+          title="Contains audio"
+        >
+          <AudioStreamIcon />
         </div>
       )}
 

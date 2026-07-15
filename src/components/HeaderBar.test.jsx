@@ -91,6 +91,28 @@ describe("HeaderBar hover audio control", () => {
   });
 });
 
+describe("HeaderBar zoom control", () => {
+  it("offers intermediate zoom levels without changing historic endpoints", () => {
+    const handleZoomChangeSafe = vi.fn();
+    render(
+      <HeaderBar
+        {...baseProps}
+        zoomLevel={1}
+        handleZoomChangeSafe={handleZoomChangeSafe}
+      />
+    );
+
+    const zoom = screen.getByRole("slider", { name: "Grid zoom" });
+    expect(zoom).toHaveAttribute("min", "0");
+    expect(zoom).toHaveAttribute("max", "4");
+    expect(zoom).toHaveAttribute("step", "0.5");
+    expect(zoom).toHaveAttribute("aria-valuetext", "200px cards");
+
+    fireEvent.change(zoom, { target: { value: "1.5" } });
+    expect(handleZoomChangeSafe).toHaveBeenCalledWith(1.5);
+  });
+});
+
 describe("HeaderBar playback policy control", () => {
   it("renders adaptive mode, target, Linux caveat, and proxy opt-in", () => {
     render(<HeaderBar {...baseProps} />);

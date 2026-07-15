@@ -122,6 +122,24 @@ beforeEach(() => {
 });
 
 describe("useMasonryLayout virtual layout", () => {
+  it("uses an intermediate tile width for half-step zoom", () => {
+    const videos = makeVideos(100);
+    const rendered = renderLayout({
+      videos,
+      filteredVideos: videos,
+      zoomLevel: 1,
+    });
+    const integerColumns = rendered.result.current.viewportMetrics.columnCount;
+
+    act(() => {
+      rendered.rerender({ ...rendered.props, zoomLevel: 1.5 });
+      flushFrames();
+    });
+
+    expect(integerColumns).toBe(4);
+    expect(rendered.result.current.viewportMetrics.columnCount).toBe(3);
+  });
+
   it("keeps a real 5,000-item hook window bounded at top, middle, and bottom", () => {
     const videos = makeVideos(5000);
     const rendered = renderLayout({ videos, filteredVideos: videos });
