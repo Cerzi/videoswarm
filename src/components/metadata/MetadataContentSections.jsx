@@ -6,9 +6,11 @@ import React, {
 } from "react";
 import {
   MAX_METADATA_SUGGESTION_TAGS,
+  buildGenerationMetadataDiagnostics,
   buildGenerationMetadataFacts,
   buildMetadataInfoLineItems,
   deriveMetadataTagSummary,
+  formatGenerationLora,
   parseMetadataTagInput,
   selectMetadataTagCompletion,
   selectMetadataTagSuggestions,
@@ -52,49 +54,181 @@ export function MetadataGenerationSection({ state }) {
   if (!state) return null;
   const metadata = state.metadata || {};
   const facts = buildGenerationMetadataFacts(metadata);
+  const prompt = metadata.positivePrompt || metadata.prompt;
+  const negativePrompt = metadata.negativePrompt;
+  const promptFragments = (Array.isArray(metadata.promptFragments)
+    ? metadata.promptFragments
+    : [])
+    .map((entry) => {
+      const source = typeof entry === "string" ? { text: entry } : entry;
+      const text = String(source?.text || "").trim();
+      if (!text) return null;
+      const details = [];
+      const role = String(source?.role || "").trim().toLowerCase();
+      if (role) details.push(`${role.charAt(0).toUpperCase()}${role.slice(1)}`);
+      if (source?.classType) details.push(String(source.classType));
+      if (source?.nodeId !== null && source?.nodeId !== undefined) {
+        details.push(`node ${source.nodeId}`);
+      }
+      if (source?.composition && source.composition !== "direct") {
+        details.push(String(source.composition).replaceAll("-", " "));
+      }
+      if (source?.confidence && source.confidence !== "exact") {
+        details.push(String(source.confidence));
+      }
+      return { text, details: details.slice(0, 5) };
+    })
+    .filter(Boolean)
+    .slice(0, 32);
+  const loraEntries = Array.isArray(metadata.loras)
+    ? metadata.loras
+    : Array.isArray(metadata.assets?.loras)
+      ? metadata.assets.loras
+      : [];
+  const loras = loraEntries
+    .map(formatGenerationLora)
+    .filter(Boolean)
+    .slice(0, 64);
+  const diagnostics = buildGenerationMetadataDiagnostics(metadata, state);
+  const sourceKind = state.sourceKind || metadata.sourceKind || null;
+  const sourceLabel = state.sourceLabel || metadata.sourceLabel || null;
+  const quality = state.quality || metadata.quality || null;
+  const status = state.status || metadata.extractionStatus || (
+    state.found ? "found" : "none"
+  );
+  const qualityLabel = quality === "direct" || quality === "exact"
+    ? "Direct"
+    : quality === "derived"
+      ? "Graph-derived"
+      : quality === "partial" || metadata.partial
+        ? "Partial"
+        : null;
+  const sourceBadge = sourceKind === "embedded"
+    ? sourceLabel || "Embedded"
+    : sourceKind === "sidecar"
+      ? sourceLabel || "Sidecar fallback"
+      : sourceLabel;
+  const hasDisplayableMetadata = Boolean(
+    prompt ||
+    negativePrompt ||
+    promptFragments.length ||
+    loras.length ||
+    facts.length
+  );
 
   return (
     <section className="metadata-panel__section metadata-panel__generation">
       <div className="metadata-panel__section-header">
         <span>Generation</span>
         <div className="metadata-panel__generation-actions">
+          {sourceBadge ? (
+            <span className="metadata-panel__badge">{sourceBadge}</span>
+          ) : null}
+          {qualityLabel ? (
+            <span className="metadata-panel__badge">{qualityLabel}</span>
+          ) : null}
           {state.cached ? <span className="metadata-panel__badge">Cached</span> : null}
           <button
             type="button"
             onClick={() => state.onRefresh?.()}
             disabled={state.loading}
           >
-            Refresh
+            Re-read
           </button>
         </div>
       </div>
       {state.loading ? (
         <p className="metadata-panel__generation-status">
-          Looking for a matching sidecar…
+          Reading embedded generation metadata…
         </p>
       ) : state.error ? (
         <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
           {state.error}
         </p>
+      ) : status === "unrecognized" || (state.found && !hasDisplayableMetadata) ? (
+        <p className="metadata-panel__generation-status">
+          Generation metadata was found, but no supported fields could be resolved.
+        </p>
+      ) : !state.found && state.readerAvailable === false ? (
+        <p className="metadata-panel__generation-status">
+          Embedded metadata could not be checked on this system, and no adjacent JSON sidecar was found.
+        </p>
+      ) : !state.found && status === "unsupported" ? (
+        <p className="metadata-panel__generation-status">
+          This container's embedded metadata is not supported, and no adjacent JSON sidecar was found.
+        </p>
+      ) : !state.found && ["error", "timeout", "output-limit"].includes(
+        state.readerStatus
+      ) ? (
+        <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
+          Embedded metadata could not be read, and no usable adjacent sidecar was found. Re-read to retry.
+        </p>
       ) : !state.found ? (
         <p className="metadata-panel__generation-status">
-          No matching sidecar found for this clip.
+          No embedded generation metadata or adjacent JSON sidecar was found.
         </p>
       ) : (
-        <dl className="metadata-panel__generation-grid">
-          {metadata.prompt ? (
-            <div className="metadata-panel__generation-prompt">
-              <dt>Prompt</dt>
-              <dd title={metadata.prompt}>{metadata.prompt}</dd>
-            </div>
+        <>
+          {sourceKind === "sidecar" ? (
+            <p className="metadata-panel__generation-status">
+              Embedded metadata was not usable; showing the adjacent sidecar.
+            </p>
           ) : null}
-          {facts.map(({ label, value }) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd title={value}>{value}</dd>
-            </div>
-          ))}
-        </dl>
+          {diagnostics.length ? (
+            <ul className="metadata-panel__generation-diagnostics">
+              {diagnostics.map((message) => <li key={message}>{message}</li>)}
+            </ul>
+          ) : null}
+          <dl className="metadata-panel__generation-grid">
+            {prompt ? (
+              <div className="metadata-panel__generation-prompt">
+                <dt>Positive prompt</dt>
+                <dd>{prompt}</dd>
+              </div>
+            ) : null}
+            {negativePrompt ? (
+              <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative">
+                <dt>Negative prompt</dt>
+                <dd>{negativePrompt}</dd>
+              </div>
+            ) : null}
+            {promptFragments.length ? (
+              <div className="metadata-panel__generation-wide">
+                <dt>Prompt fragments</dt>
+                <dd>
+                  <ul>
+                    {promptFragments.map((fragment, index) => (
+                      <li key={`${index}:${fragment.text}`}>
+                        <span>{fragment.text}</span>
+                        {fragment.details.length ? (
+                          <small>{fragment.details.join(" · ")}</small>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ) : null}
+            {loras.length ? (
+              <div className="metadata-panel__generation-wide">
+                <dt>LoRAs</dt>
+                <dd>
+                  <ul>
+                    {loras.map((lora, index) => (
+                      <li key={`${index}:${lora}`}>{lora}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ) : null}
+            {facts.map(({ label, value }) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd title={value}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
     </section>
   );
