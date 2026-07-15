@@ -6,6 +6,9 @@ const {
   quoteUnsafeJsonIntegers,
   parseComfyGenerationPayload,
 } = require('../comfy-generation-parser');
+const {
+  createWanVideoWrapperGraph: wanVideoWrapperGraph,
+} = require('./fixtures/wanVideoWrapperGraph.cjs');
 
 function coreGraph({
   prefix = 'clip',
@@ -186,6 +189,152 @@ describe('ComfyUI generation graph parsing', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('traces the bounded WanVideoWrapper API graph embedded by real outputs', () => {
+    const result = parseComfyGenerationPayload({
+      prompt: JSON.stringify(wanVideoWrapperGraph()),
+      workflow: JSON.stringify({ nodes: [] }),
+    }, {
+      fileName: 'fixture-output_00001.mp4',
+      origin: { kind: 'embedded', carrier: 'isobmff' },
+    });
+
+    expect(result).toMatchObject({
+      origin: {
+        kind: 'embedded',
+        carrier: 'isobmff',
+        metadataKey: 'prompt',
+        graphFormat: 'api',
+        resolution: 'traced',
+      },
+      output: {
+        nodeId: '25',
+        classType: 'VHS_VideoCombine',
+        match: 'filename-prefix',
+      },
+      positivePrompt: 'fixture positive prompt',
+      negativePrompt: 'fixture negative prompt',
+      prompt: 'fixture positive prompt',
+      seed: '424242424242',
+      model: 'fixture-low.safetensors',
+      sampler: 'WanVideoSampler',
+      sourceImage: 'fixture-input.png',
+    });
+    expect(result.promptFragments).toEqual([
+      expect.objectContaining({
+        role: 'positive',
+        nodeId: '3',
+        field: 'value',
+        confidence: 'exact',
+      }),
+      expect.objectContaining({
+        role: 'negative',
+        nodeId: '2',
+        field: 'negative_prompt',
+        confidence: 'exact',
+      }),
+    ]);
+    expect(result.samplerStages).toEqual([
+      expect.objectContaining({
+        nodeId: '19',
+        role: 'contributor',
+        seed: '12345678901234567890',
+        steps: 11,
+        cfg: null,
+        sampler: 'WanVideoSampler',
+        scheduler: 'fixture-schedule',
+        denoise: 0.84,
+        startStep: 0,
+        endStep: 4,
+      }),
+      expect.objectContaining({
+        nodeId: '20',
+        role: 'final',
+        seed: '424242424242',
+        steps: 11,
+        cfg: 1.35,
+        denoise: 0.84,
+        startStep: 4,
+        endStep: -1,
+      }),
+    ]);
+    expect(result.assets.models.map(({ name }) => name)).toEqual([
+      'fixture-low.safetensors',
+      'fixture-high.safetensors',
+    ]);
+    expect(result.assets.vaes).toEqual([
+      expect.objectContaining({ name: 'fixture-vae.safetensors', nodeId: '21' }),
+    ]);
+    expect(result.assets.textEncoders).toEqual([
+      expect.objectContaining({ name: 'fixture-t5.safetensors', nodeId: '1' }),
+    ]);
+    expect(result.assets.loras).toEqual([
+      {
+        name: 'fixture-low-base.safetensors',
+        nodeId: '10',
+        strengthModel: 0.41,
+        strengthClip: null,
+        appliedTo: ['model'],
+      },
+      {
+        name: 'fixture-low-detail.safetensors',
+        nodeId: '11',
+        strengthModel: 0.63,
+        strengthClip: null,
+        appliedTo: ['model'],
+      },
+      {
+        name: 'fixture-high-base.safetensors',
+        nodeId: '5',
+        strengthModel: 0.37,
+        strengthClip: null,
+        appliedTo: ['model'],
+      },
+      {
+        name: 'fixture-high-detail.safetensors',
+        nodeId: '6',
+        strengthModel: 0.72,
+        strengthClip: null,
+        appliedTo: ['model'],
+      },
+      {
+        name: 'fixture-loader.safetensors',
+        nodeId: '29',
+        strengthModel: 0.54,
+        strengthClip: null,
+        appliedTo: ['model'],
+      },
+    ]);
+    expect(result.sourceInputs).toEqual([
+      { name: 'fixture-input.png', kind: 'image', nodeId: '17', classType: 'LoadImage' },
+    ]);
+    expect(result.diagnostics).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('disconnected sentinel');
+    expect(JSON.stringify(result)).not.toContain('fixture-disabled');
+    expect(JSON.stringify(result)).not.toContain('fixture-disconnected');
+  });
+
+  it('does not guess a Wan prompt from an unregistered runtime string node', () => {
+    const graph = wanVideoWrapperGraph();
+    graph[3] = {
+      class_type: 'UnknownPromptBuilder',
+      inputs: { value: 'tempting but not proven runtime text' },
+    };
+
+    const result = parseComfyGenerationPayload(graph, {
+      fileName: 'fixture-output_00001.mp4',
+    });
+
+    expect(result.positivePrompt).toBeNull();
+    expect(result.negativePrompt).toBe('fixture negative prompt');
+    expect(result.origin.resolution).toBe('partial');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'UNRESOLVED_DYNAMIC_PROMPT',
+      nodeId: '2',
+      role: 'positive',
+    }));
+    expect(JSON.stringify(result)).not.toContain('tempting but not proven');
+  });
+
   it('resolves the core SamplerCustom helper graph', () => {
     const graph = {
       1: {
@@ -320,6 +469,20 @@ describe('ComfyUI generation graph parsing', () => {
     }));
     expect(JSON.stringify(result)).not.toContain('tempting but not necessarily');
     expect(result.origin.resolution).toBe('partial');
+  });
+
+  it('marks an overlong prompt partial when clamping it to the prompt limit', () => {
+    const graph = coreGraph({ positive: 'x'.repeat(16_385) });
+
+    const result = parseComfyGenerationPayload(graph, { fileName: 'clip_1.mp4' });
+
+    expect(result.positivePrompt).toHaveLength(16_384);
+    expect(result.origin.resolution).toBe('partial');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'PROMPT_FRAGMENT_TRUNCATED',
+      nodeId: '3',
+      role: 'positive',
+    }));
   });
 
   it('selects one filename-owned output without merging another branch', () => {

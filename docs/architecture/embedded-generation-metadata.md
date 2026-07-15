@@ -1,7 +1,8 @@
 # Embedded Generation Metadata
 
-Status: **Initial embedded/API-graph slice implemented and verified; bounded
-follow-up work remains explicit below**
+Status: **Embedded API-graph extraction implemented and verified for core
+ComfyUI and the fixture-backed WanVideoWrapper slice; bounded follow-up work
+remains explicit below**
 Last updated: 2026-07-15
 
 ## Summary
@@ -201,7 +202,8 @@ prompt text, raw JSON, or native paths.
 The first parser caps graphs at 4,096 nodes, 16,384 edges, 32,768 traversal
 visits, 32 output candidates, 32 sampler stages, and 64 prompt fragments,
 assets, and diagnostics per category. Prompt text is capped at 16 KiB per
-fragment and 64 KiB total. These sit inside the outer 2 MiB, depth-32, and
+fragment and 64 KiB total. A clamped prompt receives an explicit diagnostic and
+the result becomes Partial. These sit inside the outer 2 MiB, depth-32, and
 10,000-JSON-node envelope limits.
 
 ### Acceptance
@@ -216,8 +218,9 @@ fragment and 64 KiB total. These sit inside the outer 2 MiB, depth-32, and
 
 ## 4. ComfyUI graph resolver
 
-Status: **Implemented for core ComfyUI API graphs** (2026-07-15). Visual-graph
-resolution and custom string adapters remain **Deferred pending fixtures**.
+Status: **Implemented for core ComfyUI API graphs and the fixture-backed
+WanVideoWrapper API slice** (2026-07-15). Visual-graph resolution and arbitrary
+custom-node interpretation remain **Deferred pending evidence**.
 
 ### Graph selection
 
@@ -265,12 +268,16 @@ not joined with guessed punctuation. The primary `prompt` is populated only by
 one direct value or one deterministic derived value. Candidate fragments are
 shown as **Prompt fragments** and the result is marked partial.
 
-The planned adapter registry is versioned and data-only. Each adapter declares class
-names, recognized inputs, deterministic ordering, output behavior, and tests.
+The adapter layer is parser-versioned and allowlisted. Each adapter declares
+class names, recognized inputs, deterministic ordering, output behavior, and
+tests.
 Unknown custom nodes pass through graph traversal only when their connected
 inputs can be followed safely; they do not gain invented execution semantics.
-No custom string-composition adapter ships in the initial slice, so unknown
-composition remains separate prompt fragments with partial confidence.
+The allowlist currently includes `PrimitiveStringMultiline.value`, which the
+supplied execution graph uses directly. Unknown composition remains unresolved
+and partial rather than being reconstructed heuristically. In particular, the
+supplied visual workflow's disconnected, empty composition nodes are not enough
+evidence to implement or attribute their runtime semantics.
 
 ### Models, LoRAs, and sampling fields
 
@@ -285,6 +292,14 @@ The first resolver recognizes core and common naming conventions for:
 - sampler and scheduler names;
 - steps, CFG/guidance, denoise, and related scalar sampling fields;
 - source image/video loader names and generation/run IDs.
+
+The fixture-backed WanVideoWrapper adapter recognizes `WanVideoSampler`,
+`WanVideoTextEncode`, its T5/model/VAE loaders, model/block-swap/LoRA
+passthrough nodes, single and multi LoRA selectors, `INTConstant`, and
+`Seed (rgthree)`. It records serial high/low sampler stages, resolves named
+scalar producers without evaluating arbitrary schedules, and excludes
+zero-strength LoRAs from the user-facing “used LoRAs” list. An unresolved CFG
+schedule remains unset instead of being reduced to a guessed scalar.
 
 LoRA display never infers strength from a filename. A missing strength is
 shown as unknown. Duplicate LoRA names on distinct graph nodes remain distinct
@@ -311,8 +326,9 @@ prompt. Generic sidecar fields can still be displayed, but are labelled
 - Unrelated notes and `text` widgets never become the primary prompt.
 - A model/LoRA from an unconnected branch is not attributed to the clip.
 - Direct CLIP text, large seeds, KSampler/SamplerCustom fields, checkpoint and
-  UNet loaders, LoRA chains, source media, duplicate nodes, cycles, unknown
-  custom nodes, and multiple outputs have focused fixtures.
+  UNet loaders, WanVideoSampler/TextEncode, active Wan LoRA chains, source
+  media, duplicate nodes, cycles, unknown custom nodes, and multiple outputs
+  have focused fixtures.
 - No resolver path exceeds the shared depth/node/value/string budgets.
 
 ## 5. Compact persistence and IPC
@@ -426,8 +442,9 @@ aborted ownership token prevents any later database publication.
 
 ## 8. Verification matrix
 
-Status: **Core gates verified** (2026-07-15). A packaged Electron smoke fixture
-and cross-platform reader verification remain **Unimplemented**.
+Status: **Core and WanVideoWrapper repository gates verified** (2026-07-15).
+A packaged Electron smoke fixture and cross-platform reader verification remain
+**Unimplemented**.
 
 ### Pure/native tests
 
@@ -474,8 +491,9 @@ and cross-platform reader verification remain **Unimplemented**.
    fixture in the production Electron smoke harness remains outstanding.
 6. **Deferred** — Decide and verify a packaged cross-platform embedded probe so
    Windows/Linux releases do not depend indefinitely on a system `ffprobe`.
-7. **Deferred** — Add versioned deterministic adapters for popular custom
-   prompt-concatenation nodes based on real fixtures and evidence.
+7. **Deferred** — Add deterministic custom composition adapters only from
+   connected execution graphs or authoritative node semantics. Disconnected
+   visual-canvas nodes are not sufficient evidence.
 8. **Deferred** — Feed compact normalized generation fields into the separate
    generation-aware search specification.
 
@@ -528,6 +546,39 @@ and cross-platform reader verification remain **Unimplemented**.
   completeness, prompt-fragment provenance display, and explicit compact-cache
   truncation diagnostics.
 
+### 2026-07-15 — WanVideoWrapper fixture correction
+
+- A supplied real Wan2.2 container dump proved that embedded metadata was
+  present and correctly discovered: its `prompt` tag held a bounded API graph,
+  while `workflow` held the separate visual canvas. The old parser selected
+  the correct VHS output but stopped with `SAMPLER_NOT_FOUND` because
+  `WanVideoSampler` was not registered. Prompt extraction is sampler-rooted,
+  so this one adapter gap also hid the otherwise exact prompt.
+- The executed path contains two serial `WanVideoSampler` stages pointing to
+  one `WanVideoTextEncode`. Its `positive_prompt` points directly to a
+  `PrimitiveStringMultiline.value`; its negative prompt is a direct scalar.
+  This is exact execution-graph evidence and does not require analyzing widget
+  positions or guessing which arbitrary string node is “the prompt.”
+- Added bounded adapters for the observed Wan sampler, text encoder, scalar,
+  model, block-swap, LoRA, T5, VAE, and decode nodes. Only non-zero LoRAs on
+  reachable model branches are reported. The final sampler's model is the
+  primary model; contributing-stage models remain listed.
+- Added a deterministic prompt adapter for the observed
+  `PrimitiveStringMultiline`, while retaining partial diagnostics for unknown
+  runtime string producers. Disconnected composition nodes in the visual canvas
+  are deliberately not interpreted. Visual-workflow inference remains deferred.
+- Parser cache version 3 invalidates older cached `SAMPLER_NOT_FOUND` results.
+  A reduced synthetic fixture preserves the real graph topology without
+  committing user prompts, paths, model names, sampling values, node IDs,
+  hashes, or the supplied dump.
+- Focused parser and coordinator verification passes 31 tests. The repaired
+  supplied payload resolves its prompts, sampler stages, generation assets,
+  active reachable LoRAs, and source image with no parser diagnostics.
+  Repository-wide verification passes 1,012 Vitest tests and 47
+  Electron-ABI SQLite tests, plus zero-warning ESLint, the Vite production
+  build, main/preload/module syntax checks, and `git diff --check`. The Vite
+  build retains its pre-existing CJS API and chunk-size notices.
+
 ### Remaining implementation work
 
 - Bundle or otherwise provision and verify an audited cross-platform metadata
@@ -537,9 +588,9 @@ and cross-platform reader verification remain **Unimplemented**.
 - Wire whole-window work suspension directly into pending generation probes.
 - Add visual-workflow interpretation and producer-neutral embedded fields only
   with bounded fixtures that prove their semantics.
-- Add versioned adapters for popular custom prompt-concatenation nodes only
-  after representative saved graphs are available; until then fragments stay
-  explicitly partial.
+- Add further versioned custom prompt/model/sampler adapters only after
+  representative API graphs establish their execution semantics; unknown
+  nodes stay explicitly partial.
 
 ## References
 

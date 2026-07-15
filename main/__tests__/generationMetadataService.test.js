@@ -12,6 +12,9 @@ const {
   hasSupportedFields,
   toWireMetadata,
 } = require("../generation-metadata-service");
+const {
+  createWanVideoWrapperGraph: wanVideoWrapperGraph,
+} = require("./fixtures/wanVideoWrapperGraph.cjs");
 
 function comfyGraph({ prefix = "clip", prompt = "a fox in snowfall" } = {}) {
   return {
@@ -192,6 +195,34 @@ describe("generation metadata coordinator", () => {
     });
   });
 
+  it("labels a deterministic graph-derived prompt without marking it partial", () => {
+    const input = buildPersistenceInput({
+      analysis: {
+        provider: "comfyui",
+        origin: { resolution: "traced" },
+        positivePrompt: "assembled prompt",
+        promptFragments: [{
+          role: "positive",
+          text: "assembled prompt",
+          confidence: "derived",
+        }],
+      },
+      sourceKind: "embedded",
+      sourceFormat: "mp4",
+      sourceLabel: "Embedded · Prompt",
+      signature: { size: 10, mtimeMs: 20 },
+      readerAvailable: true,
+      readerStatus: "found",
+      fallbackDiagnostics: [],
+      limits: { maxDiagnostics: 32 },
+    });
+
+    expect(input).toMatchObject({
+      extractionStatus: "found",
+      quality: "derived",
+    });
+  });
+
   it("prefers a traced embedded graph and never opens an adjacent sidecar", async () => {
     const sidecarPath = `${mediaPath}.json`;
     fs.writeFileSync(sidecarPath, JSON.stringify({ prompt: "stale sidecar" }));
@@ -244,6 +275,69 @@ describe("generation metadata coordinator", () => {
     });
     expect(JSON.stringify(result)).not.toContain(mediaPath);
     expect(JSON.stringify(result)).not.toContain(sidecarPath);
+  });
+
+  it("persists and returns embedded WanVideoWrapper prompt evidence", async () => {
+    const probe = createProbe({
+      probe: vi.fn(async () => probeResult({
+        payload: { prompt: JSON.stringify(wanVideoWrapperGraph()) },
+      })),
+    });
+    const store = createStore(mediaPath);
+    const result = await service({ probe }).getMetadata({
+      instanceId: 20,
+      ownerId: "wan-request",
+      scopeId: "profile-a",
+      metadataStore: store,
+    });
+
+    expect(result).toMatchObject({
+      found: true,
+      sourceKind: "embedded",
+      quality: "exact",
+      metadata: {
+        positivePrompt: "fixture positive prompt",
+        negativePrompt: "fixture negative prompt",
+        seed: "424242424242",
+        model: "fixture-low.safetensors",
+        sampler: "WanVideoSampler",
+        models: ["fixture-low.safetensors", "fixture-high.safetensors"],
+        vaes: ["fixture-vae.safetensors"],
+        textEncoders: ["fixture-t5.safetensors"],
+        promptFragments: [
+          expect.objectContaining({ role: "positive", nodeId: "3" }),
+          expect.objectContaining({ role: "negative", nodeId: "2" }),
+        ],
+        loras: [
+          expect.objectContaining({ name: "fixture-low-base.safetensors", strengthModel: 0.41 }),
+          expect.objectContaining({ name: "fixture-low-detail.safetensors", strengthModel: 0.63 }),
+          expect.objectContaining({ name: "fixture-high-base.safetensors", strengthModel: 0.37 }),
+          expect.objectContaining({ name: "fixture-high-detail.safetensors", strengthModel: 0.72 }),
+          expect.objectContaining({ name: "fixture-loader.safetensors", strengthModel: 0.54 }),
+        ],
+        samplingParameters: expect.objectContaining({
+          steps: 11,
+          cfg: 1.35,
+          denoise: 0.84,
+        }),
+        samplerStages: [
+          expect.objectContaining({ nodeId: "19", role: "contributor" }),
+          expect.objectContaining({ nodeId: "20", role: "final" }),
+        ],
+        sourceInputs: [{ name: "fixture-input.png", kind: "image" }],
+      },
+    });
+    expect(store.setGenerationMetadata.mock.calls[0][1]).toMatchObject({
+      parserVersion: GENERATION_METADATA_PARSER_VERSION,
+      positivePrompt: "fixture positive prompt",
+      samplerStages: [
+        expect.objectContaining({ nodeId: "19", classType: "WanVideoSampler" }),
+        expect.objectContaining({ nodeId: "20", classType: "WanVideoSampler" }),
+      ],
+      sourceInputs: [{ name: "fixture-input.png", kind: "image" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("fixture-disabled");
+    expect(JSON.stringify(result)).not.toContain("fixture-disconnected");
   });
 
   it("falls back to one exact sidecar when the embedded reader is unavailable", async () => {
@@ -617,6 +711,38 @@ describe("generation metadata coordinator", () => {
     });
     expect(result).toMatchObject({ cached: true, metadata: { prompt: "cached prompt" } });
     expect(probe.probe).not.toHaveBeenCalled();
+  });
+
+  it("re-probes metadata cached by an older parser version", async () => {
+    const stats = fs.statSync(mediaPath);
+    const store = createStore(mediaPath);
+    store.setStored(52, {
+      parserVersion: GENERATION_METADATA_PARSER_VERSION - 1,
+      sourceKind: "embedded",
+      sourceFormat: "mp4",
+      sourceLabel: "Embedded · Prompt",
+      mediaSize: stats.size,
+      mediaMtimeMs: stats.mtimeMs,
+      extractionStatus: "partial",
+      quality: "partial",
+      provenance: { readerAvailable: true, readerStatus: "found" },
+    });
+    const probe = createProbe({
+      probe: vi.fn(async () => probeResult({
+        payload: { prompt: JSON.stringify(wanVideoWrapperGraph()) },
+      })),
+    });
+
+    const result = await service({ probe }).getMetadata({
+      instanceId: 52,
+      metadataStore: store,
+    });
+
+    expect(result).toMatchObject({
+      cached: false,
+      metadata: { positivePrompt: "fixture positive prompt" },
+    });
+    expect(probe.probe).toHaveBeenCalledOnce();
   });
 
   it("retries embedded probing after a transient cached sidecar fallback", async () => {

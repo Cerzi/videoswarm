@@ -11,7 +11,7 @@ const {
   parseComfyGenerationPayload,
 } = require("./comfy-generation-parser");
 
-const GENERATION_METADATA_PARSER_VERSION = 2;
+const GENERATION_METADATA_PARSER_VERSION = 3;
 const GENERATION_METADATA_SERVICE_LIMITS = Object.freeze({
   concurrency: 2,
   maxPending: 64,
@@ -376,9 +376,13 @@ function persistenceWouldTruncate(analysis, fallbackDiagnostics = []) {
 function extractionQuality(analysis, generic = false, truncated = false) {
   if (generic || truncated) return { status: "partial", quality: "partial" };
   const exact = analysis?.origin?.resolution === "traced";
+  const derived = exact && (Array.isArray(analysis?.promptFragments)
+    ? analysis.promptFragments
+    : [])
+    .some((fragment) => fragment?.confidence === "derived");
   return {
     status: exact ? "found" : "partial",
-    quality: exact ? "exact" : "partial",
+    quality: derived ? "derived" : exact ? "exact" : "partial",
   };
 }
 
