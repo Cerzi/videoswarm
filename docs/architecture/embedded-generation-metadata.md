@@ -1,6 +1,7 @@
 # Embedded Generation Metadata
 
-Status: **In progress**
+Status: **Initial embedded/API-graph slice implemented and verified; bounded
+follow-up work remains explicit below**
 Last updated: 2026-07-15
 
 ## Summary
@@ -83,7 +84,9 @@ copy.
 
 ## 2. Source discovery and precedence
 
-Status: **Unimplemented**
+Status: **Implemented for bounded embedded API-graph discovery and exact
+sidecar fallback** (2026-07-15). Visual-workflow extraction remains
+**Unimplemented**.
 
 ### Order
 
@@ -96,9 +99,10 @@ For one requested indexed clip:
 4. Check the existing three exact adjacent sidecars only when embedded
    evidence is absent, visual-workflow-only, or otherwise cannot resolve a
    supported field.
-5. Select one coherent candidate in this order: embedded API graph, sidecar API
-   graph when embedded evidence is visual-only/unusable, embedded visual graph,
-   sidecar visual graph, then explicit generic fields. Embedded wins ties.
+5. Select one coherent candidate in this implemented order: embedded API
+   graph, sidecar API graph when embedded evidence is visual-only/unusable,
+   then explicit generic sidecar fields. Embedded wins ties. Embedded and
+   sidecar visual-graph interpretation remains a future resolver slice.
 6. If no source is usable, clear stale cached metadata and return a
    structured empty result.
 
@@ -110,10 +114,15 @@ fallback. Sources are never silently merged. This avoids presenting a stale
 sidecar's model beside an embedded graph's prompt after files have been renamed
 or copied. A future explicit comparison surface may show conflicts.
 
-An embedded envelope that is valid but contains only a visual workflow may
-produce a partial result. Sidecar fallback is still allowed when that embedded
-payload produces no supported fields at all; the response records that an
-embedded workflow was detected but was not resolvable.
+A structurally valid embedded API graph remains authoritative when its traced
+result is partial. Video Swarm shows that incompleteness rather than silently
+substituting a potentially stale sidecar. Sidecar fallback occurs only when
+embedded evidence is absent or produces no supported field.
+
+An embedded envelope that is valid but contains only a visual workflow does
+not currently invent a partial result. Sidecar fallback is allowed because the
+embedded payload produced no supported fields; the response records that
+embedded metadata was detected but was not resolvable.
 
 ### Initial container probe
 
@@ -134,14 +143,16 @@ not a fatal Generation-panel error: exact sidecar fallback still runs. The UI
 may explain that embedded probing is unavailable. A bundled cross-platform
 probe or small audited native container reader is a later portability slice;
 shipping an arbitrary executable or assuming system PATH is not part of this
-initial implementation.
+initial implementation. A normal request memoizes a missing executable for the
+process lifetime; explicit **Re-read** bypasses that memo so installing or
+repairing `ffprobe` can recover without restarting the app.
 
 ### Source signature
 
 The compact cache records:
 
 - source kind: `embedded` or `sidecar`;
-- source path and a display-safe source label;
+- an internal source path for sidecars only, plus a display-safe source label;
 - media/sidecar size and modification time;
 - embedded tag/container key when applicable;
 - parser version and extraction format;
@@ -162,7 +173,9 @@ only a source label such as **Embedded · Comment** or **Adjacent sidecar**.
 
 ## 3. Bounded payload normalization
 
-Status: **Unimplemented**
+Status: **Implemented for direct/stringified ComfyUI API graphs and VHS
+envelopes** (2026-07-15). Producer-neutral embedded objects and visual graphs
+remain **Unimplemented**.
 
 Container tags and sidecars feed one normalizer. It accepts these common shapes:
 
@@ -170,7 +183,9 @@ Container tags and sidecars feed one normalizer. It accepts these common shapes:
 - `{ "prompt": <API graph>, "workflow": <visual graph> }`;
 - a VHS comment containing that object as JSON;
 - legacy single- or double-stringified `prompt` and `workflow` members;
-- a producer-neutral object with explicit generation fields.
+- an exact sidecar with explicit producer-neutral generation fields through
+  the legacy bounded generic parser. Equivalent embedded generic objects are
+  not yet interpreted.
 
 Every decoded layer shares the existing byte, depth, and node budgets. Object
 shape inspection occurs before graph traversal. The normalizer rejects
@@ -201,7 +216,8 @@ fragment and 64 KiB total. These sit inside the outer 2 MiB, depth-32, and
 
 ## 4. ComfyUI graph resolver
 
-Status: **Unimplemented**
+Status: **Implemented for core ComfyUI API graphs** (2026-07-15). Visual-graph
+resolution and custom string adapters remain **Deferred pending fixtures**.
 
 ### Graph selection
 
@@ -249,10 +265,12 @@ not joined with guessed punctuation. The primary `prompt` is populated only by
 one direct value or one deterministic derived value. Candidate fragments are
 shown as **Prompt fragments** and the result is marked partial.
 
-The adapter registry is versioned and data-only. Each adapter declares class
+The planned adapter registry is versioned and data-only. Each adapter declares class
 names, recognized inputs, deterministic ordering, output behavior, and tests.
 Unknown custom nodes pass through graph traversal only when their connected
 inputs can be followed safely; they do not gain invented execution semantics.
+No custom string-composition adapter ships in the initial slice, so unknown
+composition remains separate prompt fragments with partial confidence.
 
 ### Models, LoRAs, and sampling fields
 
@@ -299,7 +317,7 @@ prompt. Generic sidecar fields can still be displayed, but are labelled
 
 ## 5. Compact persistence and IPC
 
-Status: **Unimplemented**
+Status: **Implemented and Electron-ABI verified** (2026-07-15)
 
 The profile-local `instance_generation_metadata` table evolves additively. Its
 legacy `sidecar_*` signature columns remain readable during migration, while
@@ -309,6 +327,10 @@ sampling facts, producer/format, confidence, partial state, and diagnostics.
 
 SQLite write normalization repeats all renderer-independent bounds. JSON
 columns store only compact arrays/objects and have explicit byte budgets.
+Structured source inputs retain their image/video kind. If extracted evidence
+exceeds the smaller compact-cache budget, persistence adds a truncation
+diagnostic and downgrades completeness to partial rather than silently keeping
+an exact badge.
 Changing profile ownership invalidates pending writes before publication.
 Deleting an instance continues to cascade its cached generation row.
 
@@ -332,7 +354,7 @@ capability without exposing native stderr.
 
 ## 6. Generation-panel experience
 
-Status: **Unimplemented**
+Status: **Implemented and renderer-verified** (2026-07-15)
 
 The floating inspector and fullscreen Details dock continue sharing one
 metadata content component. Copy becomes source-neutral and informative:
@@ -373,15 +395,18 @@ quietly added to this read-only pass.
 
 ## 7. Performance, lifecycle, and security
 
-Status: **Unimplemented**
+Status: **Implemented for lazy work, finite queues, renderer/profile ownership,
+and shutdown** (2026-07-15). Explicit minimize-suspension cancellation remains
+**Unimplemented**.
 
 - At most one container probe and two sidecar reads are active process-wide;
-  the coordinator itself has a finite queue and deduplicates by profile,
-  generation, instance, and parser version.
+  the coordinator itself has a finite queue, deduplicates equivalent work, and
+  applies a profile-instance generation guard so an older normal read cannot
+  overwrite or clear a newer explicit re-read.
 - The media file is never copied into memory. Probe stdout and every decoded
   JSON layer are byte-limited.
-- Profile changes, renderer destruction, work suspension, shutdown, and
-  request cancellation terminate child work and prevent SQLite publication.
+- Profile changes, renderer destruction, shutdown, and request cancellation
+  terminate child work and prevent SQLite publication.
 - Cache rows contain compact strings/arrays only; no media elements, blobs,
   buffers, graphs, React nodes, or child handles survive the request.
 - Spawn uses an argument array, `shell: false`, ignored stdin, hidden Windows
@@ -391,9 +416,18 @@ Status: **Unimplemented**
 - Prompts and workflow text are untrusted inert content. They are not sent to a
   model, evaluated, used as HTML, or written to logs.
 
+The renderer starts this work only while a Generation section is mounted and
+enabled, so closing the Details surface cancels its request. A dedicated hook
+from whole-window work suspension into this coordinator is still outstanding;
+that gap does not create eager folder-open work, but it prevents this bullet
+from being marked fully complete. Profile/shutdown coordination uses a bounded
+two-second drain: an unabortable filesystem call may outlive that wait, but its
+aborted ownership token prevents any later database publication.
+
 ## 8. Verification matrix
 
-Status: **Unimplemented**
+Status: **Core gates verified** (2026-07-15). A packaged Electron smoke fixture
+and cross-platform reader verification remain **Unimplemented**.
 
 ### Pure/native tests
 
@@ -427,16 +461,17 @@ Status: **Unimplemented**
 
 ## Implementation order
 
-1. **Unimplemented** — Add bounded payload normalizer and pure Comfy API graph
+1. **Implemented** — Add bounded payload normalizer and pure Comfy API graph
    resolver with representative core/VHS fixtures.
-2. **Unimplemented** — Add the bounded embedded container probe and coordinator,
+2. **Implemented** — Add the bounded embedded container probe and coordinator,
    retaining exact sidecar fallback and lifecycle ownership.
-3. **Unimplemented** — Migrate compact SQLite storage and return provenance via
+3. **Implemented** — Migrate compact SQLite storage and return provenance via
    existing IPC/preload operations.
-4. **Unimplemented** — Redesign the shared Generation content around source,
+4. **Implemented** — Redesign the shared Generation content around source,
    completeness, negative prompt, LoRAs, and partial diagnostics.
-5. **Unimplemented** — Complete focused/native/full verification and mark only
-   passing slices Implemented/Verified.
+5. **Partially implemented** — Focused, native, full Vitest, lint, build,
+   syntax, diff, and real-container command-line smoke gates pass. A generated
+   fixture in the production Electron smoke harness remains outstanding.
 6. **Deferred** — Decide and verify a packaged cross-platform embedded probe so
    Windows/Linux releases do not depend indefinitely on a system `ffprobe`.
 7. **Deferred** — Add versioned deterministic adapters for popular custom
@@ -462,6 +497,49 @@ Status: **Unimplemented**
 - Initial probing reuses the app's bounded native-process infrastructure and
   degrades gracefully when `ffprobe` is absent. A packaged portability answer
   stays explicitly Deferred until it is implemented and tested.
+
+### 2026-07-15 — Initial implementation
+
+- Added `main/embedded-metadata-probe.js`: one shell-free `ffprobe` lane with a
+  16-job pending bound, five-second timeout, 2 MiB/64 KiB output limits,
+  cancellation, shutdown, and deterministic missing-reader fallback.
+- Added `main/comfy-generation-parser.js`: a pure bounded API-graph resolver
+  for VHS/core output, sampler, conditioning, model, VAE, text encoder, LoRA,
+  and source branches. Unsafe JSON integers remain exact strings; unrelated
+  text and unknown string composition are never promoted to a prompt.
+- Replaced the old sidecar-only coordinator with a profile/renderer-owned
+  embedded-first service. It deduplicates work, keeps finite native queues,
+  validates media/source signatures, never merges sources, and publishes only
+  compact normalized fields.
+- Migrated profile SQLite storage additively while keeping legacy sidecar
+  columns readable. The IPC/preload contract remains instance-ID-only and now
+  supports a bounded active-instance re-read.
+- Redesigned the shared floating/fullscreen Generation section with source,
+  cache and completeness badges; positive/negative prompts; prompt fragments;
+  LoRAs; richer sampling/assets; capability fallback; and bounded diagnostics.
+- Verified 1,006 full-suite tests, 47 Electron-ABI SQLite tests, zero-warning
+  ESLint, the Vite production build, main/preload/module syntax checks, and
+  `git diff --check`. A generated MP4 carrying a VHS-style comment envelope
+  also completed the real system-`ffprobe` path and yielded its prompt,
+  negative prompt, exact seed, checkpoint, sampler, and steps.
+- The pre-commit adversarial pass fixed plain-text generic-sidecar fallthrough,
+  last-request-wins publication, bounded cancellation drains, force recovery
+  after a missing reader, source-input kind persistence, multi-fragment
+  completeness, prompt-fragment provenance display, and explicit compact-cache
+  truncation diagnostics.
+
+### Remaining implementation work
+
+- Bundle or otherwise provision and verify an audited cross-platform metadata
+  reader instead of relying indefinitely on a system `ffprobe`.
+- Add a generated embedded-metadata fixture to the production Electron smoke
+  harness, including cancellation during profile/root/window transitions.
+- Wire whole-window work suspension directly into pending generation probes.
+- Add visual-workflow interpretation and producer-neutral embedded fields only
+  with bounded fixtures that prove their semantics.
+- Add versioned adapters for popular custom prompt-concatenation nodes only
+  after representative saved graphs are available; until then fragments stay
+  explicitly partial.
 
 ## References
 

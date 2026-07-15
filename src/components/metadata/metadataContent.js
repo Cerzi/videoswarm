@@ -267,14 +267,160 @@ export const parseMetadataTagInput = (value) =>
     .filter(Boolean);
 
 export const buildGenerationMetadataFacts = (metadata = {}) => {
+  const sampling =
+    metadata?.samplingParameters || metadata?.sampling || metadata?.parameters || {};
+  const assets = metadata?.assets || {};
+  const assetNames = (group, acceptedTypes = []) => {
+    if (Array.isArray(assets?.[group])) {
+      return assets[group]
+        .map((entry) => (typeof entry === "string" ? entry : entry?.name))
+        .filter(Boolean);
+    }
+    if (!Array.isArray(assets)) return [];
+    return assets
+      .filter((entry) => acceptedTypes.includes(entry?.type || entry?.kind))
+      .map((entry) => entry?.name)
+      .filter(Boolean);
+  };
+  const samplerStages = Array.isArray(metadata?.samplerStages)
+    ? metadata.samplerStages
+    : [];
+  const finalStage = samplerStages.at(-1) || {};
+  const valueFrom = (...values) => values.find(
+    (value) => value !== null && value !== undefined && value !== ""
+  );
+  const joinValues = (...values) => {
+    const flattened = values.flatMap((value) =>
+      Array.isArray(value) ? value : value ? [value] : []
+    );
+    const unique = Array.from(new Set(flattened.map(String).filter(Boolean)));
+    return unique.length ? unique.join(", ") : null;
+  };
   const facts = [
-    ["Seed", metadata?.seed],
-    ["Model", metadata?.models?.join(", ") || metadata?.model],
-    ["Sampler", metadata?.samplers?.join(", ") || metadata?.sampler],
+    ["Seed", valueFrom(metadata?.seed, sampling?.seed, finalStage?.seed)],
+    [
+      "Model",
+      joinValues(
+        metadata?.models,
+        metadata?.model,
+        assetNames("models", ["model", "checkpoint", "unet", "diffusion-model"])
+      ),
+    ],
+    [
+      "VAE",
+      joinValues(metadata?.vaes, metadata?.vae, assetNames("vaes", ["vae"])),
+    ],
+    [
+      "Text encoder",
+      joinValues(
+        metadata?.textEncoders,
+        metadata?.textEncoder,
+        assetNames("textEncoders", ["text-encoder", "clip"])
+      ),
+    ],
+    [
+      "Sampler",
+      joinValues(
+        metadata?.samplers,
+        metadata?.sampler,
+        sampling?.sampler,
+        finalStage?.sampler
+      ),
+    ],
+    [
+      "Scheduler",
+      joinValues(
+        metadata?.schedulers,
+        metadata?.scheduler,
+        sampling?.scheduler,
+        finalStage?.scheduler
+      ),
+    ],
+    ["Steps", valueFrom(metadata?.steps, sampling?.steps, finalStage?.steps)],
+    ["CFG", valueFrom(metadata?.cfg, sampling?.cfg, finalStage?.cfg)],
+    [
+      "Denoise",
+      valueFrom(metadata?.denoise, sampling?.denoise, finalStage?.denoise),
+    ],
     ["Run", metadata?.generationRun],
-    ["Source", metadata?.sourceImages?.join(", ") || metadata?.sourceImage],
+    [
+      "Source",
+      joinValues(
+        metadata?.sourceImages,
+        metadata?.sourceImage,
+        metadata?.sourceInputs?.map?.((entry) => entry?.name)
+      ),
+    ],
   ];
   return facts
-    .filter(([, value]) => Boolean(value))
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
     .map(([label, value]) => ({ label, value: String(value) }));
+};
+
+const GENERATION_DIAGNOSTIC_COPY = Object.freeze({
+  WORKFLOW_ONLY:
+    "A visual workflow was found, but no execution graph was available.",
+  AMBIGUOUS_OUTPUT:
+    "Several output branches matched, so fields were not combined.",
+  MULTIPLE_OUTPUT_CANDIDATES:
+    "Several output branches matched, so fields were not combined.",
+  UNRESOLVED_CONDITIONING_NODE:
+    "A custom conditioning node prevented complete prompt reconstruction.",
+  UNRESOLVED_PROMPT_INPUT:
+    "A dynamic prompt input could not be evaluated safely.",
+  UNKNOWN_NODE_ON_PROMPT_PATH:
+    "A custom node on the prompt path could not be resolved safely.",
+  EMBEDDED_READER_UNAVAILABLE:
+    "The embedded metadata reader is unavailable; an adjacent sidecar was used.",
+});
+
+export const buildGenerationMetadataDiagnostics = (metadata = {}, state = {}) => {
+  const entries = [
+    ...(Array.isArray(state?.diagnostics) ? state.diagnostics : []),
+    ...(Array.isArray(metadata?.diagnostics) ? metadata.diagnostics : []),
+  ];
+  const messages = [];
+  const seen = new Set();
+  entries.slice(0, 64).forEach((entry) => {
+    const code = typeof entry === "string" ? entry : entry?.code;
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    const explicitMessage =
+      entry && typeof entry === "object" && typeof entry.message === "string"
+        ? entry.message.trim().slice(0, 240)
+        : "";
+    const message = GENERATION_DIAGNOSTIC_COPY[normalizedCode] || explicitMessage;
+    if (!message || seen.has(message)) return;
+    seen.add(message);
+    messages.push(message);
+  });
+  if (state?.readerAvailable === false) {
+    const message = GENERATION_DIAGNOSTIC_COPY.EMBEDDED_READER_UNAVAILABLE;
+    if (!seen.has(message)) messages.push(message);
+  }
+  return messages.slice(0, 8);
+};
+
+export const formatGenerationLora = (entry) => {
+  if (typeof entry === "string") return entry;
+  if (!entry || typeof entry !== "object") return null;
+  const name = String(entry.name || entry.loraName || "").trim();
+  if (!name) return null;
+  const strengths = [];
+  if (
+    entry.strengthModel !== null &&
+    entry.strengthModel !== undefined &&
+    entry.strengthModel !== "" &&
+    Number.isFinite(Number(entry.strengthModel))
+  ) {
+    strengths.push(`model ${Number(entry.strengthModel)}`);
+  }
+  if (
+    entry.strengthClip !== null &&
+    entry.strengthClip !== undefined &&
+    entry.strengthClip !== "" &&
+    Number.isFinite(Number(entry.strengthClip))
+  ) {
+    strengths.push(`CLIP ${Number(entry.strengthClip)}`);
+  }
+  return strengths.length ? `${name} (${strengths.join(", ")})` : name;
 };

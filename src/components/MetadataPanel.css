@@ -408,6 +408,8 @@ body.metadata-panel-drag-active {
 .metadata-panel__generation-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.32rem;
 }
 
@@ -425,6 +427,13 @@ body.metadata-panel-drag-active {
   margin: 0;
   color: rgba(255, 255, 255, 0.53);
   font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.metadata-panel__generation-status + .metadata-panel__generation-grid,
+.metadata-panel__generation-status + .metadata-panel__generation-diagnostics,
+.metadata-panel__generation-diagnostics + .metadata-panel__generation-grid {
+  margin-top: 0.5rem;
 }
 
 .metadata-panel__generation-status--error {
@@ -464,12 +473,53 @@ body.metadata-panel-drag-active {
 }
 
 .metadata-panel__generation-prompt dd {
-  display: -webkit-box;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   line-height: 1.35;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+}
+
+.metadata-panel__generation-prompt--negative dd {
+  color: rgba(255, 216, 216, 0.76);
+}
+
+.metadata-panel__generation-grid .metadata-panel__generation-wide {
+  grid-column: 1 / -1;
+}
+
+.metadata-panel__generation-wide dd {
+  overflow: visible;
+  white-space: normal;
+}
+
+.metadata-panel__generation-wide ul,
+.metadata-panel__generation-diagnostics {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0.2rem 0 0;
+  padding-left: 1rem;
+}
+
+.metadata-panel__generation-wide li,
+.metadata-panel__generation-diagnostics li {
+  overflow-wrap: anywhere;
+}
+
+.metadata-panel__generation-wide li > span,
+.metadata-panel__generation-wide li > small {
+  display: block;
+}
+
+.metadata-panel__generation-wide li > small {
+  margin-top: 0.08rem;
+  color: rgba(255, 255, 255, 0.43);
+  font-size: 0.58rem;
+  line-height: 1.3;
+}
+
+.metadata-panel__generation-diagnostics {
+  color: rgba(255, 222, 160, 0.76);
+  font-size: 0.63rem;
+  line-height: 1.35;
 }
 
 .metadata-panel__chips {

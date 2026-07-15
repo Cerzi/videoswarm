@@ -490,9 +490,10 @@ The app supports both a flattened swarm and explicit navigation:
 - Pinned library roots backed by the persistent instance index.
 
 Generative-video review presents the persisted `pick` state as **Accept**, with
-Reject, neutral Reviewed, and Unreviewed states, saved smart views, and
-optional sidecar/workflow parsing for prompt, seed, model, sampler, source
-image, and generation run. Ratings remain independent metadata while implying
+Reject, neutral Reviewed, and Unreviewed states, saved smart views, and lazy
+embedded-first generation metadata for prompt, seed, models, LoRAs, sampling,
+source media, and generation run. Exact adjacent sidecars remain a fallback.
+Ratings remain independent metadata while implying
 that review occurred. Resetting to Unreviewed clears the rating but never tags.
 The flattened swarm remains the default workflow.
 
@@ -511,12 +512,16 @@ view restoration is a 128-entry in-memory LRU containing only serializable
 scroll offsets, bounded ID selections, filters, and sort state. It never
 retains media elements, React nodes, blobs, or inactive video records.
 
-Sidecar metadata is parsed only when the details panel requests one indexed
-instance. Candidate lookup is exact and ordered (`video.ext.json`, then
-`stem.workflow.json`, then `stem.json`) rather than scanning or guessing across
-the directory. Parsing is bounded to 2 MiB, depth 32, 10,000 nodes, two active
-jobs, 64 queued jobs, and five seconds; only compact extracted fields are
-stored. Profile changes, renderer destruction, and shutdown cancel owned work.
+Generation metadata is parsed only when the details panel requests one indexed
+instance. A bounded, shell-free container-tag probe checks embedded ComfyUI/VHS
+API graphs first; exact ordered sidecars (`video.ext.json`, then
+`stem.workflow.json`, then `stem.json`) remain the fallback rather than a
+directory scan. Input, graph, process, queue, time, caching, and cancellation
+bounds are recorded in
+[`embedded-generation-metadata.md`](embedded-generation-metadata.md), along
+with the still-deferred packaged-reader and visual-workflow slices. Only compact
+extracted fields are stored. Profile changes, renderer destruction, and
+shutdown cancel and drain owned work.
 
 The sandboxed preload remains self-contained: it imports Electron only, while
 generation-request validation stays in the main-process IPC trust boundary. A
@@ -723,7 +728,7 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
 | Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
 | Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, inspector, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and manifest export without absolute native paths are implemented; see [`review-workflow.md`](review-workflow.md). |
-| Generation sidecars | **Implemented** | Bounded, instance-keyed extraction of prompt, seed, model, sampler, source-image, and generation-run fields remains on demand and profile-owned. |
+| Embedded generation metadata | **Initial slice implemented** | Bounded, instance-keyed embedded ComfyUI/VHS API-graph extraction is primary, with exact sidecar fallback, compact profile-local storage, provenance, LoRAs and richer sampling fields. Packaged cross-platform reader delivery, visual-graph interpretation, custom concat adapters, and Electron fixture smoke remain explicit follow-up work in [`embedded-generation-metadata.md`](embedded-generation-metadata.md). |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
 | Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
 | Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
@@ -1171,15 +1176,19 @@ universal limits.
 8. **Implemented** — Add validated, profile-local smart-view CRUD. Version 1
    stores allowlisted tag/rating/review filters, sort direction/key, grouping,
    random seed, and scope; names, count, and UTF-8 definition size are bounded.
-9. **Implemented** — Add on-demand, instance-ID-only sidecar extraction for
-   prompt, seed, model, sampler, source image, and generation run. Candidate
-   paths, input size, recursion depth, node count, field sizes, concurrency,
-   queue depth, time, caching, and cancellation all have explicit bounds.
-   Renderer requests are debounced and superseded requests are cancelled; raw
-   workflow JSON is not retained.
+9. **Implemented; expanded 2026-07-15** — Add on-demand,
+   instance-ID-only generation extraction. A bounded embedded ComfyUI/VHS API
+   graph now precedes the exact sidecar candidates and resolves positive and
+   negative prompts, models, LoRAs, sampler stages, source inputs, and
+   provenance without retaining raw workflow JSON. Input, graph, process,
+   queue, time, caching, profile ownership, and cancellation all have explicit
+   bounds. Packaged reader portability, visual graphs, custom prompt adapters,
+   minimize cancellation, and Electron fixture smoke remain tracked in
+   [`embedded-generation-metadata.md`](embedded-generation-metadata.md).
 10. **Implemented** — Add native and renderer regressions for directory
     reconciliation, pins, review/rating compatibility, reviewed counts, smart
-    view validation/profile isolation, sidecar safety/concurrency/cancellation,
+    view validation/profile isolation, generation-probe and sidecar
+    safety/concurrency/cancellation,
     empty roots, scopes, sibling navigation, bounded restoration, filters,
     panels, and application wiring.
 11. **Implemented** — Repair the Section 7 sandbox regression by removing the

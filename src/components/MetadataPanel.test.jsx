@@ -383,7 +383,7 @@ describe("MetadataPanel review state", () => {
 });
 
 describe("MetadataPanel generation metadata", () => {
-  it("shows bounded extracted sidecar fields for one clip", () => {
+  it("shows bounded extracted generation fields for one clip", () => {
     renderPanel({
       selectedVideos: [{ name: "one.mp4", instanceId: 7 }],
       generationMetadataState: {
@@ -407,13 +407,15 @@ describe("MetadataPanel generation metadata", () => {
     expect(screen.getByText("Cached")).toBeInTheDocument();
   });
 
-  it("reports a missing sidecar without guessing across the folder", () => {
+  it("reports missing embedded and adjacent metadata without guessing across the folder", () => {
     renderPanel({
       selectedVideos: [{ name: "one.mp4", instanceId: 7 }],
       generationMetadataState: { loading: false, found: false, metadata: null },
     });
     expect(
-      screen.getByText("No matching sidecar found for this clip.")
+      screen.getByText(
+        "No embedded generation metadata or adjacent JSON sidecar was found."
+      )
     ).toBeInTheDocument();
   });
 });

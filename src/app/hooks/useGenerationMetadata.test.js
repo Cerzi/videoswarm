@@ -114,4 +114,62 @@ describe("useGenerationMetadata", () => {
     expect(window.electronAPI.metadata.getGeneration).toHaveBeenCalledTimes(2);
     expect(window.electronAPI.metadata.getGeneration.mock.calls[1][0]).toBe(2);
   });
+
+  it("preserves source/provenance state and forces a real re-read", async () => {
+    const getGeneration = vi.fn().mockResolvedValue({
+      success: true,
+      found: true,
+      cached: true,
+      status: "found",
+      sourceKind: "embedded",
+      sourceLabel: "Embedded · Comment",
+      quality: "partial",
+      readerAvailable: true,
+      diagnostics: [{ code: "UNKNOWN_NODE_ON_PROMPT_PATH" }],
+      metadata: { prompt: "a moth" },
+    });
+    window.electronAPI = { metadata: { getGeneration } };
+
+    const { result } = renderHook(() =>
+      useGenerationMetadata({ instanceId: 9, enabled: true, debounceMs: 0 })
+    );
+    await waitFor(() => expect(result.current.metadata?.prompt).toBe("a moth"));
+    expect(result.current).toMatchObject({
+      status: "found",
+      sourceKind: "embedded",
+      sourceLabel: "Embedded · Comment",
+      quality: "partial",
+      readerAvailable: true,
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(getGeneration).toHaveBeenLastCalledWith(
+      9,
+      expect.any(String),
+      { force: true }
+    );
+  });
+
+  it("keeps the native error code for actionable failure states", async () => {
+    window.electronAPI = {
+      metadata: {
+        getGeneration: vi.fn().mockResolvedValue({
+          success: false,
+          code: "GENERATION_QUEUE_FULL",
+          error: "Generation metadata queue is full",
+        }),
+      },
+    };
+    const { result } = renderHook(() =>
+      useGenerationMetadata({ instanceId: 5, enabled: true, debounceMs: 0 })
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current).toMatchObject({
+      status: "error",
+      errorCode: "GENERATION_QUEUE_FULL",
+      error: "Generation metadata queue is full",
+    });
+  });
 });

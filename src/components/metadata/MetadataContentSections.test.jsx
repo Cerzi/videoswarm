@@ -30,15 +30,114 @@ describe("reusable metadata content sections", () => {
         state={{
           found: true,
           cached: true,
-          metadata: { prompt: "A fox", model: "wan2.2", seed: "9" },
+          sourceKind: "embedded",
+          quality: "direct",
+          metadata: {
+            prompt: "A fox",
+            negativePrompt: "blurry",
+            model: "wan2.2",
+            seed: "9",
+            loras: [
+              { name: "detail.safetensors", strengthModel: 0.8, strengthClip: 1 },
+            ],
+            sampling: { scheduler: "normal", steps: 20, cfg: 4.5 },
+          },
           onRefresh,
         }}
       />
     );
     expect(screen.getByText("A fox")).toBeInTheDocument();
+    expect(screen.getByText("blurry")).toBeInTheDocument();
     expect(screen.getByText("wan2.2")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByText("Embedded")).toBeInTheDocument();
+    expect(screen.getByText("Direct")).toBeInTheDocument();
+    expect(
+      screen.getByText("detail.safetensors (model 0.8, CLIP 1)")
+    ).toBeInTheDocument();
+    expect(screen.getByText("20")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Re-read" }));
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes unresolved embedded metadata from a true miss", () => {
+    const { rerender } = render(
+      <MetadataGenerationSection
+        state={{ found: true, status: "unrecognized", metadata: {} }}
+      />
+    );
+    expect(
+      screen.getByText(
+        "Generation metadata was found, but no supported fields could be resolved."
+      )
+    ).toBeInTheDocument();
+
+    rerender(
+      <MetadataGenerationSection
+        state={{ found: false, status: "none", metadata: null }}
+      />
+    );
+    expect(
+      screen.getByText(
+        "No embedded generation metadata or adjacent JSON sidecar was found."
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("does not claim embedded metadata was absent when the reader is unavailable", () => {
+    render(
+      <MetadataGenerationSection
+        state={{
+          found: false,
+          status: "none",
+          readerAvailable: false,
+          readerStatus: "unavailable",
+          metadata: null,
+        }}
+      />
+    );
+    expect(
+      screen.getByText(
+        "Embedded metadata could not be checked on this system, and no adjacent JSON sidecar was found."
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("explains a partial sidecar fallback without exposing native paths", () => {
+    render(
+      <MetadataGenerationSection
+        state={{
+          found: true,
+          sourceKind: "sidecar",
+          quality: "partial",
+          readerAvailable: false,
+          metadata: {
+            promptFragments: [{
+              text: "fragment one",
+              role: "positive",
+              classType: "CLIPTextEncode",
+              nodeId: "17",
+              composition: "conditioning-combine",
+              confidence: "candidate",
+            }],
+            diagnostics: [{ code: "UNKNOWN_NODE_ON_PROMPT_PATH" }],
+          },
+        }}
+      />
+    );
+    expect(screen.getByText("Sidecar fallback")).toBeInTheDocument();
+    expect(screen.getByText("Partial")).toBeInTheDocument();
+    expect(screen.getByText("fragment one")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Positive · CLIPTextEncode · node 17 · conditioning combine · candidate"
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The embedded metadata reader is unavailable; an adjacent sidecar was used."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/\/home\//)).not.toBeInTheDocument();
   });
 
   it("forwards its editor ref and keeps explicit tag targets", () => {
