@@ -188,8 +188,9 @@ component CSS. The backdrop is opaque/translucent without `backdrop-filter`.
 - Controls remain reachable at supported narrow sizes and reduced motion
   removes non-essential transition effects.
 - The media element has no selection border or browser-default orange focus
-  ring. Keyboard focus uses the deliberate blue fullscreen focus treatment;
-  the main grid uses a dedicated orange selection token instead.
+  ring. Because the modal owns one unambiguous active clip and its shortcuts
+  are global, focusing the native player also adds no outer focus box; the
+  main grid uses a dedicated orange selection token instead.
 
 ### Review rail
 
