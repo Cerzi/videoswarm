@@ -76,4 +76,25 @@ describe("reusable metadata content sections", () => {
     fireEvent.keyDown(inputRef.current, { key: "Enter" });
     expect(onAddTag).toHaveBeenCalledWith(["new", "second"]);
   });
+
+  it("keeps the ordinary inspector suggestion set capped at 15", () => {
+    const availableTags = Array.from({ length: 20 }, (_, index) => ({
+      name: `tag-${String(index).padStart(2, "0")}`,
+      usageCount: 20 - index,
+    }));
+    const { container } = render(
+      <MetadataTagsSection
+        selectedVideos={[{ tags: [] }]}
+        selectionCount={1}
+        availableTags={availableTags}
+      />
+    );
+
+    expect(screen.getByText("Popular tags (up to 15)")).toBeInTheDocument();
+    expect(container.querySelectorAll(".metadata-panel__suggestion")).toHaveLength(
+      15
+    );
+    expect(screen.getByText("#tag-00")).toBeInTheDocument();
+    expect(screen.queryByText("#tag-15")).not.toBeInTheDocument();
+  });
 });

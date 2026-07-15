@@ -123,6 +123,9 @@ describe("FullScreenModal media ownership", () => {
 
     fireEvent.keyDown(document, { key: "Q" });
     fireEvent.keyDown(document, { key: "e" });
+    // Fullscreen intends to autoplay. The first Space pauses that intent and
+    // the second resumes it, even while jsdom still reports `paused`.
+    fireEvent.keyDown(document, { key: "Spacebar" });
     fireEvent.keyDown(document, { key: "Spacebar" });
     fireEvent.keyDown(document, { key: "M" });
     fireEvent.keyDown(document, { key: "i" });
@@ -134,6 +137,81 @@ describe("FullScreenModal media ownership", () => {
     expect(element.muted).toBe(false);
     expect(onToggleDetails).toHaveBeenCalledOnce();
     expect(onOpenHelp).toHaveBeenCalledOnce();
+  });
+
+  it("settles readiness once and consumes each Space gesture as one toggle", async () => {
+    render(
+      <FullScreenModal
+        video={{ id: "space", name: "space.mp4", blobUrl: "blob:space" }}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+    const element = document.body.querySelector("video");
+    let paused = true;
+    Object.defineProperty(element, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+    pauseSpy.mockImplementation(() => {
+      paused = true;
+      fireEvent.pause(element);
+    });
+    playSpy.mockImplementation(() => {
+      paused = false;
+      fireEvent.play(element);
+      return Promise.resolve();
+    });
+
+    fireEvent.loadedData(element);
+    await waitFor(() => expect(playSpy).toHaveBeenCalledOnce());
+
+    const pauseEvent = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(pauseEvent);
+    expect(pauseEvent.defaultPrevented).toBe(true);
+    expect(paused).toBe(true);
+
+    // A second readiness event must not undo the explicit pause.
+    fireEvent.canPlay(element);
+    expect(playSpy).toHaveBeenCalledOnce();
+
+    const keyUp = new KeyboardEvent("keyup", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(keyUp);
+    expect(keyUp.defaultPrevented).toBe(true);
+
+    const closeButton = screen.getByRole("button", {
+      name: "Close fullscreen review",
+    });
+    const buttonSpace = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    closeButton.dispatchEvent(buttonSpace);
+    expect(buttonSpace.defaultPrevented).toBe(false);
+    expect(paused).toBe(true);
+
+    const repeated = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+      repeat: true,
+    });
+    element.dispatchEvent(repeated);
+    expect(repeated.defaultPrevented).toBe(true);
+    expect(playSpy).toHaveBeenCalledOnce();
+
+    fireEvent.keyDown(element, { key: " " });
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(2));
+    expect(paused).toBe(false);
   });
 
   it("revokes only the blob URL it creates", () => {
@@ -502,8 +580,11 @@ describe("FullScreenModal media ownership", () => {
         onNavigate={vi.fn()}
       />
     );
+    const element = document.body.querySelector("video");
+    fireEvent.loadedData(element);
+    await waitFor(() => expect(playSpy).toHaveBeenCalledOnce());
+    fireEvent.keyDown(document, { key: " " });
     playSpy.mockRejectedValueOnce(new Error("decoder rejected"));
-
     fireEvent.keyDown(document, { key: " " });
 
     await waitFor(() =>

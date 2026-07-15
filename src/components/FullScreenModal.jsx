@@ -113,6 +113,13 @@ const isEditableTarget = (target) => {
   );
 };
 
+const preservesNativeSpaceActivation = (target) =>
+  Boolean(
+    target?.closest?.(
+      "button, a[href], [role='button'], [role='menuitem'], [role='checkbox']"
+    )
+  );
+
 const getFocusableElements = (dialog) =>
   Array.from(dialog?.querySelectorAll?.(FOCUSABLE_SELECTOR) || []).filter(
     (element) =>
@@ -210,6 +217,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const closeRequestedRef = useRef(false);
   const previousFocusRef = useRef(null);
   const previousOwnerRef = useRef(collectionOwnerKey);
+  const playbackIntentRef = useRef(false);
   const schedulerOwnerIdRef = useRef(null);
   if (!schedulerOwnerIdRef.current) {
     schedulerOwnerIdRef.current = `fullscreen:${++fullscreenOwnerSequence}`;
@@ -313,11 +321,18 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       if (!element || workSuspendedRef.current || typeof element.play !== "function") {
         return false;
       }
+      playbackIntentRef.current = true;
       try {
         await element.play();
         return true;
       } catch (playError) {
-        if (activeReleaseRef.current !== release) return false;
+        if (
+          activeReleaseRef.current !== release ||
+          !playbackIntentRef.current
+        ) {
+          return false;
+        }
+        playbackIntentRef.current = false;
         const message =
           playError?.name === "NotAllowedError"
             ? "Autoplay was blocked. Use the player controls to start playback."
@@ -328,6 +343,24 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     },
     [publishPlaybackFeedback]
   );
+
+  const togglePlayback = useCallback(() => {
+    if (workSuspendedRef.current) return false;
+    const element = mediaRef.current;
+    if (!element) return false;
+
+    if (playbackIntentRef.current || !element.paused) {
+      playbackIntentRef.current = false;
+      try {
+        element.pause();
+      } catch {}
+      return true;
+    }
+
+    playbackIntentRef.current = true;
+    void attemptPlay(element, activeReleaseRef.current);
+    return true;
+  }, [attemptPlay]);
 
   const toggleAudio = useCallback(() => {
     const nextMuted = !mutedPreferenceRef.current;
@@ -443,6 +476,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     const release = () => {
       if (released) return false;
       released = true;
+      playbackIntentRef.current = false;
       if (activeReleaseRef.current === release) activeReleaseRef.current = null;
       if (loadTimeoutId !== null) clearTimeout(loadTimeoutId);
       loadTimeoutId = null;
@@ -460,15 +494,19 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       return true;
     };
 
+    let readySettled = false;
     const settleReady = () => {
-      if (released) return;
+      if (released || readySettled) return;
+      readySettled = true;
+      element.removeEventListener("canplay", handlePlayable);
+      element.removeEventListener("loadeddata", handlePlayable);
       if (loadTimeoutId !== null) clearTimeout(loadTimeoutId);
       loadTimeoutId = null;
       setIsLoading(false);
       setError(null);
       setVideoLoaded(true);
       setNotice("");
-      void attemptPlay(element, release);
+      if (playbackIntentRef.current) void attemptPlay(element, release);
     };
 
     function handlePlayable() {
@@ -489,6 +527,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     setError(null);
     setNotice("");
     setVideoLoaded(false);
+    playbackIntentRef.current = true;
 
     element.addEventListener("canplay", handlePlayable);
     element.addEventListener("loadeddata", handlePlayable);
@@ -651,7 +690,20 @@ const FullScreenModal = forwardRef(function FullScreenModal(
         return;
       }
 
-      if (isEditableTarget(event.target) || event.repeat) return;
+      if (isEditableTarget(event.target)) return;
+      if (
+        binding?.command === FULLSCREEN_COMMANDS.PLAYBACK &&
+        preservesNativeSpaceActivation(event.target)
+      ) {
+        return;
+      }
+      if (event.repeat) {
+        if (binding) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
       const key = String(event.key || "").toLowerCase();
 
       switch (binding?.command) {
@@ -668,11 +720,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
         case FULLSCREEN_COMMANDS.PLAYBACK: {
           event.preventDefault();
           event.stopPropagation();
-          if (workSuspendedRef.current) return;
-          const element = mediaRef.current;
-          if (!element) return;
-          if (element.paused) void attemptPlay(element, activeReleaseRef.current);
-          else element.pause();
+          togglePlayback();
           return;
         }
         case FULLSCREEN_COMMANDS.MUTE:
@@ -711,9 +759,24 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       }
     };
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [attemptPlay, handleEscape, requestNavigate, toggleAudio, video ? true : false]);
+    // Chromium's native video controls can also react to Space on keyup.
+    // Consume that half of the gesture so one press produces one toggle.
+    const handleKeyUp = (event) => {
+      if (isEditableTarget(event.target)) return;
+      const binding = resolveFullscreenShortcut(event);
+      if (binding?.command !== FULLSCREEN_COMMANDS.PLAYBACK) return;
+      if (preservesNativeSpaceActivation(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("keyup", handleKeyUp, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("keyup", handleKeyUp, true);
+    };
+  }, [handleEscape, requestNavigate, toggleAudio, togglePlayback, video ? true : false]);
 
   const handleBackdropClick = useCallback(
     (event) => {
@@ -888,6 +951,12 @@ const FullScreenModal = forwardRef(function FullScreenModal(
                 controls
                 playsInline
                 onClick={(event) => event.stopPropagation()}
+                onPlay={() => {
+                  playbackIntentRef.current = true;
+                }}
+                onPause={() => {
+                  playbackIntentRef.current = false;
+                }}
               />
 
               {showFilenames && videoLoaded ? (

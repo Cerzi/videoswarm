@@ -14,7 +14,10 @@ import {
   MetadataGenerationSection,
   MetadataTagsSection,
 } from "../metadata/MetadataContentSections";
-import { deriveSingleSelectionInfo } from "../metadata/metadataContent";
+import {
+  MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS,
+  deriveSingleSelectionInfo,
+} from "../metadata/metadataContent";
 import "./FullscreenReviewPanels.css";
 
 const RATINGS = [1, 2, 3, 4, 5];
@@ -89,20 +92,30 @@ export function FullscreenReviewRail({
         {busy ? <span role="status">Saving…</span> : null}
       </div>
       <div className="fullscreen-review-panel__review-grid">
-        {REVIEW_ACTIONS.map(({ state, label }) => (
-          <button
-            key={state}
-            type="button"
-            className={`fullscreen-review-panel__review-button fullscreen-review-panel__review-button--${state}`}
-            aria-pressed={reviewState === state}
-            disabled={disabled}
-            onClick={() => onSetReviewState?.(state)}
-            title={`${label} (${REVIEW_PRIMARY_KEY_BY_STATE[state]})`}
-          >
-            <span>{label}</span>
-            <kbd>{REVIEW_PRIMARY_KEY_BY_STATE[state]}</kbd>
-          </button>
-        ))}
+        {REVIEW_ACTIONS.map(({ state, label }) => {
+          const shortcut = REVIEW_PRIMARY_KEY_BY_STATE[state];
+          const actionLabel = `${label} (${shortcut})`;
+          return (
+            <button
+              key={state}
+              type="button"
+              className={`fullscreen-review-panel__review-button fullscreen-review-panel__review-button--${state}`}
+              aria-label={actionLabel}
+              aria-pressed={reviewState === state}
+              disabled={disabled}
+              onClick={() => onSetReviewState?.(state)}
+              title={actionLabel}
+            >
+              <span>{label}</span>
+              <span
+                className="fullscreen-review-panel__review-shortcut"
+                aria-hidden="true"
+              >
+                (<kbd>{shortcut}</kbd>)
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="fullscreen-review-panel__rating" aria-label="Rating">
@@ -320,6 +333,7 @@ export function FullscreenDetailsDock({
         selectedVideos={[video]}
         selectionCount={1}
         availableTags={availableTags}
+        suggestionLimit={MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS}
         resetKey={`${video.id}:${video.fingerprint || ""}`}
         onAddTag={onAddTags}
         onRemoveTag={onRemoveTag}

@@ -105,6 +105,7 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
     selectedVideos = [],
     selectionCount = selectedVideos.length,
     availableTags = [],
+    suggestionLimit = MAX_METADATA_SUGGESTION_TAGS,
     active = true,
     resetKey = null,
     onAddTag,
@@ -126,10 +127,10 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
             availableTags,
             sharedTags,
             query: inputValue,
-            limit: MAX_METADATA_SUGGESTION_TAGS,
+            limit: suggestionLimit,
           })
         : [],
-    [active, availableTags, inputValue, sharedTags]
+    [active, availableTags, inputValue, sharedTags, suggestionLimit]
   );
 
   useEffect(() => {
@@ -238,7 +239,7 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
           <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
             {inputValue.trim()
               ? "Matching tags"
-              : `Popular tags (top ${MAX_METADATA_SUGGESTION_TAGS})`}
+              : `Popular tags (up to ${suggestionLimit})`}
           </div>
           <div className="metadata-panel__suggestion-list">
             {suggestionTags.map((suggestion) => (

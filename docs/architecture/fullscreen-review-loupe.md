@@ -181,13 +181,22 @@ component CSS. The backdrop is opaque/translucent without `backdrop-filter`.
 ### Media stage
 
 - Contained looping video with native playback controls.
+- Portrait and landscape replaced-element sizing is explicitly allowed to
+  shrink inside the stage, so `object-fit: contain` always bounds the complete
+  frame to the available viewport instead of clipping intrinsic 9:16 height.
 - Loading and error states, Retry, and non-overlapping Previous/Next buttons.
 - Controls remain reachable at supported narrow sizes and reduced motion
   removes non-essential transition effects.
+- The media element has no selection border or browser-default orange focus
+  ring. Keyboard focus uses the deliberate blue fullscreen focus treatment;
+  the main grid uses a dedicated orange selection token instead.
 
 ### Review rail
 
 - Accept, Reviewed, Reject, and Unreviewed.
+- Each state uses the same semantic color as the rest of the app and renders
+  its primary shortcut in the visible label (`Accept (A)`, `Reviewed (S)`,
+  `Reject (D)`, and `Unreviewed (F)`).
 - Rating 1–5 and clear rating.
 - Undo.
 - **Advance after marking** toggle.
@@ -205,6 +214,13 @@ draggable inspector shell, placement, and behavior remain unchanged.
 Generation sidecar data is requested only while the Details dock is open. On
 narrow windows the dock becomes a bounded bottom sheet rather than overlapping
 the media controls.
+
+The compact grid inspector remains bounded to its top 15 tag suggestions.
+Fullscreen may render up to 100 ranked suggestions: on desktop that list
+expands into the dock's remaining height and scrolls only when it actually
+overflows; on narrow layouts the bounded bottom sheet owns the single
+scrollbar. The limit remains finite so profiles with very large tag
+vocabularies cannot create an unbounded React subtree.
 
 The Details dock defaults open for existing and new profiles. Its last state
 is saved as bounded profile setting `fullscreenDetailsOpen: boolean` through
@@ -248,6 +264,12 @@ catalog:
 Inputs, editable content, selects, and hotkey-exempt surfaces ignore these
 shortcuts. Review and navigation ignore key repeat. Escape first closes a
 transient actions menu or help surface, then closes fullscreen.
+
+Media readiness is settled once per source generation. A later `canplay`
+event cannot restart a clip that the user paused. Space is intercepted in the
+capture phase and its keyup/repeat halves are consumed for the media element,
+so a physical press performs exactly one toggle; ordinary buttons retain
+their native Space activation.
 
 On open, call `showModal()`, move focus inside, label and describe the dialog,
 and make application content outside it inert. Tab and Shift-Tab remain inside
@@ -305,6 +327,9 @@ Status: **Implemented; verification passed**
    persisted metadata.
 3. Exercise root/profile switching and repeated open/navigate/close with no
    stale source, decoder, renderer error, or destroyed-window error.
+4. Load a real 90×160 portrait fixture and prove its media box is contained
+   without stage overflow; pause with Space, dispatch a later readiness event,
+   prove it remains paused, then resume with the next Space press.
 
 ### Required gates
 
@@ -338,6 +363,10 @@ Any unavailable hardware-specific check must remain explicitly unverified.
   root and profile replacement, repeated-session ownership, review/rating/tag
   persistence, Undo, selection/focus return, and narrow-window panel/control
   non-overlap.
+- Follow-up fullscreen polish verification passed 31 focused tests, the full
+  115-file / 956-test Vitest suite (plus the repository's 18 intentional
+  native-ABI skips), lint, CommonJS smoke-fixture syntax checks, renderer
+  build, `git diff --check`, and the real Electron portrait/Space smoke.
 
 The Electron smoke exercises Chromium's software-decoded path. It does not
 claim Linux NVIDIA hardware decode support or measure fullscreen FPS; neither

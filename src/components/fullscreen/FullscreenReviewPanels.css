@@ -72,25 +72,53 @@
 }
 
 .fullscreen-review-panel__review-button {
+  --fullscreen-review-tone: #71777b;
+  --fullscreen-review-tone-rgb: 113, 119, 123;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0.45rem 0.55rem;
+  border-color: rgba(var(--fullscreen-review-tone-rgb), 0.42);
+  background: rgba(var(--fullscreen-review-tone-rgb), 0.1);
+}
+
+.fullscreen-review-panel__review-button--pick {
+  --fullscreen-review-tone: #51cf66;
+  --fullscreen-review-tone-rgb: 81, 207, 102;
+}
+
+.fullscreen-review-panel__review-button--reviewed {
+  --fullscreen-review-tone: #5da9e9;
+  --fullscreen-review-tone-rgb: 93, 169, 233;
+}
+
+.fullscreen-review-panel__review-button--reject {
+  --fullscreen-review-tone: #ff6b6b;
+  --fullscreen-review-tone-rgb: 255, 107, 107;
+}
+
+.fullscreen-review-panel__review-button--unreviewed {
+  --fullscreen-review-tone: #71777b;
+  --fullscreen-review-tone-rgb: 113, 119, 123;
+}
+
+.fullscreen-review-panel__review-button:not(:disabled):hover,
+.fullscreen-review-panel__review-button[aria-pressed="true"] {
+  border-color: var(--fullscreen-review-tone);
+  background: rgba(var(--fullscreen-review-tone-rgb), 0.24);
 }
 
 .fullscreen-review-panel__review-button[aria-pressed="true"] {
-  border-color: #64b5f6;
-  background: rgba(33, 150, 243, 0.2);
+  box-shadow: inset 3px 0 0 var(--fullscreen-review-tone);
 }
 
-.fullscreen-review-panel__review-button--pick[aria-pressed="true"] {
-  border-color: #64d69c;
-  background: rgba(49, 173, 111, 0.2);
+.fullscreen-review-panel__review-shortcut {
+  color: var(--fullscreen-review-tone);
+  font-weight: 650;
 }
 
-.fullscreen-review-panel__review-button--reject[aria-pressed="true"] {
-  border-color: #ff8179;
-  background: rgba(225, 70, 61, 0.2);
+.fullscreen-review-panel__review-shortcut kbd {
+  color: inherit;
 }
 
 .fullscreen-review-panel__review-button:disabled,
@@ -250,13 +278,62 @@
 }
 
 .fullscreen-review-panel__details-content {
-  overflow: auto;
+  flex: 1 1 auto;
+  height: 100%;
+  overflow: hidden;
   padding-right: 0.2rem;
+}
+
+.fullscreen-review__details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-review-panel__details-content > .metadata-panel__section {
+  flex: 0 0 auto;
+}
+
+.fullscreen-review-panel__details-content > .metadata-panel__section--suggestions {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.fullscreen-review-panel__details-content .metadata-panel__suggestion-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+  scrollbar-width: thin;
 }
 
 @media (max-width: 900px) {
   .fullscreen-review-panel__help-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* The narrow Details dock is a bounded bottom sheet. Let that sheet own
+     overflow instead of introducing a nested tag-list scrollbar. */
+  .fullscreen-review__details {
+    overflow-y: auto;
+  }
+
+  .fullscreen-review-panel__details-content {
+    flex: 0 0 auto;
+    height: auto;
+    overflow: visible;
+  }
+
+  .fullscreen-review-panel__details-content > .metadata-panel__section--suggestions,
+  .fullscreen-review-panel__details-content .metadata-panel__suggestion-list {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
   }
 }
 
