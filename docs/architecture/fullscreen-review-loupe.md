@@ -1,6 +1,6 @@
 # Fullscreen Review Loupe
 
-Status: **Specified; unimplemented**
+Status: **Implemented and verified**
 Last updated: 2026-07-15
 
 ## Summary
@@ -16,9 +16,9 @@ sole logical selection, review actions apply to that exact content identity,
 and closing returns focus to that clip in the grid. The surface is a native
 modal `dialog`; background content is inert and no backdrop blur is used.
 
-This document is the implementation contract and verification record. Every
-slice remains **Unimplemented** until its acceptance tests and applicable
-project gates pass.
+This document is the implementation contract and verification record. A slice
+is marked **Implemented** only after its acceptance tests and applicable
+project gates have passed.
 
 ## Goals
 
@@ -44,7 +44,7 @@ project gates pass.
 
 ## 1. Media and decoder ownership
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 The modal owns exactly one `<video>` and, while that video has a source,
 exactly one external decoder lease. It never adopts a grid media element. The
@@ -87,7 +87,7 @@ ownership loss resets the session audio preference to muted.
 
 ## 2. Collection ownership and controller
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 The controller accepts a `collectionOwnerKey` covering profile plus local-root
 or web-selection ownership, and the complete `orderedVideos` array. A same-ID
@@ -135,7 +135,7 @@ possible; otherwise it closes with feedback.
 
 ## 3. Explicit review and metadata targeting
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 Before each mutation, capture the exact fingerprint, instance anchor,
 successor ID, owner key, and session token. Review, rating, and tag APIs accept
@@ -166,7 +166,7 @@ checkpoint persistence.
 
 ## 4. Interface
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 Replace the inline overlay with a responsive native modal `<dialog>` and
 component CSS. The backdrop is opaque/translucent without `backdrop-filter`.
@@ -227,7 +227,7 @@ Trash is intentionally absent.
 
 ## 5. Keyboard and accessibility
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 The fullscreen shortcut set is catalogued only in
 `src/hotkeys/shortcutCatalog.js`, and the help surface renders from that
@@ -265,7 +265,7 @@ membership, and mutation results.
 
 ## 6. Interfaces and persistence
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 - Add `fullscreenDetailsOpen: true` to defaults and boolean normalization; use
   existing settings IPC only. No database migration or new channel is needed.
@@ -279,7 +279,7 @@ Status: **Unimplemented**
 
 ## 7. Verification plan
 
-Status: **Unimplemented**
+Status: **Implemented; verification passed**
 
 ### Unit and renderer integration
 
@@ -311,14 +311,37 @@ Status: **Unimplemented**
 - Focused Vitest suites.
 - Full `npm test -- --run`.
 - Electron/native SQLite suites and ABI check where applicable.
-- Available syntax/lint checks (the repository lint script remains a
-  placeholder unless replaced).
+- `npm run lint` and applicable CommonJS syntax checks.
 - `npm run vite:build`.
 - Electron smoke suites.
 - `git diff --check`.
 
 Only slices whose applicable checks pass may be changed to **Implemented**.
 Any unavailable hardware-specific check must remain explicitly unverified.
+
+### Verification record — 2026-07-15
+
+- Focused renderer and integration coverage passed: 194 tests across the
+  fullscreen player, controller, App wiring, review workflow, metadata
+  sections/actions, folder lifecycle, web identity, and shortcut catalog.
+- Full Vitest passed: 115 files and 951 tests, with the repository's 18
+  intentional native-ABI skips reported separately.
+- Electron-ABI SQLite coverage passed: 5 files and 43 tests.
+- `npm run lint`, CommonJS syntax checks for `main.js`, `preload.js`, and the
+  fullscreen Electron smoke, plus `git diff --check`, all passed.
+- `npm run vite:build` passed. The pre-existing Vite large-chunk advisory
+  remains informational and is not caused by a failed build.
+- The complete Electron smoke set passed: application lifecycle, Continue
+  Review restart/resume, and Fullscreen Review Loupe (3 tests total).
+- The focused fullscreen smoke retained old media nodes and verified immediate
+  mute, pause, source/source-object detachment, empty media pipeline state,
+  root and profile replacement, repeated-session ownership, review/rating/tag
+  persistence, Undo, selection/focus return, and narrow-window panel/control
+  non-overlap.
+
+The Electron smoke exercises Chromium's software-decoded path. It does not
+claim Linux NVIDIA hardware decode support or measure fullscreen FPS; neither
+is part of this feature's acceptance scope.
 
 ## Rollout and commits
 

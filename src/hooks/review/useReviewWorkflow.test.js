@@ -586,6 +586,49 @@ describe("useReviewWorkflow", () => {
     expect(onOwnershipLoss).not.toHaveBeenCalled();
   });
 
+  it("persists a successful explicit mutation but drops stale surface side effects", async () => {
+    const write = deferredPromise();
+    const onMutationCommitted = vi.fn();
+    const completionGuard = vi.fn(() => false);
+    const props = makeProps({
+      setReviewState: vi.fn(() => write.promise),
+      onMutationCommitted,
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+    let action;
+
+    act(() => {
+      action = result.current.applyReviewState("pick", {
+        fingerprints: ["fp-b"],
+        anchorId: "b",
+        completionGuard,
+      });
+    });
+    await waitFor(() => expect(props.setReviewState).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      write.resolve(successful);
+      expect(await action).toBe(true);
+    });
+
+    expect(props.setReviewState).toHaveBeenCalledWith("pick", ["fp-b"], {
+      completionGuard,
+    });
+    expect(completionGuard).toHaveBeenCalledOnce();
+    expect(onMutationCommitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "review",
+        value: "pick",
+        allowCreateSession: true,
+        ownershipKey: "profile-1/root-1/scope-1",
+        anchor: expect.objectContaining({ id: "b", fingerprint: "fp-b" }),
+        fingerprints: ["fp-b"],
+      })
+    );
+    expect(props.selectExactly).not.toHaveBeenCalled();
+    expect(result.current.canUndo).toBe(false);
+  });
+
   it("emits undo only after atomic restore succeeds and keeps the original anchor", async () => {
     const onMutationCommitted = vi.fn();
     const props = makeProps({

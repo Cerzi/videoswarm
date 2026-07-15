@@ -9,7 +9,11 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { FULLSCREEN_PLAYER_SHORTCUTS } from "../hotkeys/shortcutCatalog";
+import {
+  FULLSCREEN_COMMANDS,
+  FULLSCREEN_PLAYER_SHORTCUTS,
+  resolveFullscreenShortcut,
+} from "../hotkeys/shortcutCatalog";
 import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
 import "./FullScreenModal.css";
 
@@ -203,6 +207,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const closeButtonRef = useRef(null);
   const mediaRef = useRef(null);
   const activeReleaseRef = useRef(null);
+  const closeRequestedRef = useRef(false);
   const previousFocusRef = useRef(null);
   const previousOwnerRef = useRef(collectionOwnerKey);
   const schedulerOwnerIdRef = useRef(null);
@@ -349,9 +354,12 @@ const FullScreenModal = forwardRef(function FullScreenModal(
 
   const requestClose = useCallback(
     (reason = "close") => {
+      if (closeRequestedRef.current) return false;
+      closeRequestedRef.current = true;
       releaseActiveSource({ resetAudio: true });
       safeCloseDialog(dialogRef.current);
       callbackRef.current.onClose?.(reason);
+      return true;
     },
     [releaseActiveSource]
   );
@@ -499,8 +507,10 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     }
 
     try {
-      const currentSource = element.currentSrc || element.getAttribute("src") || element.src;
-      if (currentSource !== source.src) element.src = source.src;
+      // `currentSrc` may retain the detached source after removeAttribute +
+      // load(). Always restore the actual source attribute for a new logical
+      // identity, including two records that intentionally share one URL.
+      if (element.getAttribute("src") !== source.src) element.src = source.src;
       element.load();
     } catch (loadError) {
       handleMediaError({ target: { error: loadError } });
@@ -576,13 +586,18 @@ const FullScreenModal = forwardRef(function FullScreenModal(
 
       const callbacks = callbackRef.current;
       const resolved = callbacks.resolveReturnFocus?.();
-      const returnTarget =
-        resolved ||
-        callbacks.returnFocusRef?.current ||
-        (previousFocusRef.current?.isConnected ? previousFocusRef.current : null) ||
-        callbacks.fallbackFocusRef?.current ||
-        document.querySelector?.('[role="region"][aria-label="Video gallery"]');
-      if (returnTarget?.isConnected !== false && typeof returnTarget?.focus === "function") {
+      const returnTarget = [
+        resolved,
+        callbacks.returnFocusRef?.current,
+        callbacks.fallbackFocusRef?.current,
+        previousFocusRef.current,
+        document.querySelector?.('[role="region"][aria-label="Video gallery"]'),
+      ].find(
+        (candidate) =>
+          candidate?.isConnected !== false &&
+          typeof candidate?.focus === "function"
+      );
+      if (returnTarget) {
         try {
           returnTarget.focus({ preventScroll: true });
         } catch {
@@ -606,7 +621,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     if (!video || typeof document === "undefined") return undefined;
 
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
+      const binding = resolveFullscreenShortcut(event);
+
+      if (binding?.command === FULLSCREEN_COMMANDS.CLOSE) {
         event.preventDefault();
         event.stopPropagation();
         handleEscape();
@@ -637,45 +654,50 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       if (isEditableTarget(event.target) || event.repeat) return;
       const key = String(event.key || "").toLowerCase();
 
-      if (key === "arrowleft" || key === "q") {
-        event.preventDefault();
-        event.stopPropagation();
-        requestNavigate("prev");
-        return;
-      }
-      if (key === "arrowright" || key === "e") {
-        event.preventDefault();
-        event.stopPropagation();
-        requestNavigate("next");
-        return;
-      }
-      if (event.key === " ") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (workSuspendedRef.current) return;
-        const element = mediaRef.current;
-        if (!element) return;
-        if (element.paused) void attemptPlay(element, activeReleaseRef.current);
-        else element.pause();
-        return;
-      }
-      if (key === "m") {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleAudio();
-        return;
-      }
-      if (key === "i" && callbackRef.current.onToggleDetails) {
-        event.preventDefault();
-        event.stopPropagation();
-        callbackRef.current.onToggleDetails();
-        return;
-      }
-      if (event.key === "?" && callbackRef.current.onOpenHelp) {
-        event.preventDefault();
-        event.stopPropagation();
-        callbackRef.current.onOpenHelp();
-        return;
+      switch (binding?.command) {
+        case FULLSCREEN_COMMANDS.PREVIOUS:
+          event.preventDefault();
+          event.stopPropagation();
+          requestNavigate("prev");
+          return;
+        case FULLSCREEN_COMMANDS.NEXT:
+          event.preventDefault();
+          event.stopPropagation();
+          requestNavigate("next");
+          return;
+        case FULLSCREEN_COMMANDS.PLAYBACK: {
+          event.preventDefault();
+          event.stopPropagation();
+          if (workSuspendedRef.current) return;
+          const element = mediaRef.current;
+          if (!element) return;
+          if (element.paused) void attemptPlay(element, activeReleaseRef.current);
+          else element.pause();
+          return;
+        }
+        case FULLSCREEN_COMMANDS.MUTE:
+          event.preventDefault();
+          event.stopPropagation();
+          toggleAudio();
+          return;
+        case FULLSCREEN_COMMANDS.DETAILS:
+          if (callbackRef.current.onToggleDetails) {
+            event.preventDefault();
+            event.stopPropagation();
+            callbackRef.current.onToggleDetails();
+            return;
+          }
+          break;
+        case FULLSCREEN_COMMANDS.HELP:
+          if (callbackRef.current.onOpenHelp) {
+            event.preventDefault();
+            event.stopPropagation();
+            callbackRef.current.onOpenHelp();
+            return;
+          }
+          break;
+        default:
+          break;
       }
 
       const handled = callbackRef.current.onShortcut?.({

@@ -18,10 +18,19 @@ import {
   computeFloatingPanelPosition,
   isNarrowFloatingPanel,
 } from "../utils/floatingPanelPosition";
+import {
+  MetadataFileFactsSection,
+  MetadataGenerationSection,
+  MetadataTagsSection,
+} from "./metadata/MetadataContentSections";
+import {
+  deriveMetadataSelectionCount,
+  deriveMetadataSelectionKey,
+  deriveSingleSelectionInfo,
+} from "./metadata/metadataContent";
 import "./MetadataPanel.css";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
-const MAX_SUGGESTION_TAGS = 15;
 const PANEL_MARGIN = 12;
 const PANEL_GAP = 12;
 const NARROW_BREAKPOINT = 680;
@@ -122,7 +131,6 @@ const MetadataPanel = forwardRef((
   },
   ref
 ) => {
-  const [inputValue, setInputValue] = useState("");
   const [panelLayout, setPanelLayout] = useState({
     x: 0,
     y: 0,
@@ -307,30 +315,16 @@ const MetadataPanel = forwardRef((
     [anchorId, commitLayout, resolveGeometry]
   );
 
-  const derivedSelectionCount = useMemo(() => {
-    const numeric = Number(selectionCount);
-    if (Number.isFinite(numeric) && numeric > 0) {
-      return numeric;
-    }
-    return Array.isArray(selectedVideos) ? selectedVideos.length : 0;
-  }, [selectionCount, selectedVideos]);
+  const derivedSelectionCount = useMemo(
+    () => deriveMetadataSelectionCount(selectionCount, selectedVideos),
+    [selectionCount, selectedVideos]
+  );
 
   const hasSelection = derivedSelectionCount > 0;
-  const resolvedSelectionKey = useMemo(() => {
-    if (selectionKey != null) return String(selectionKey);
-    return selectedVideos
-      .map((video, index) =>
-        String(
-          video?.instanceId ??
-            video?.id ??
-            video?.fingerprint ??
-            video?.fullPath ??
-            video?.name ??
-            index
-        )
-      )
-      .join("|");
-  }, [selectedVideos, selectionKey]);
+  const resolvedSelectionKey = useMemo(
+    () => deriveMetadataSelectionKey(selectedVideos, selectionKey),
+    [selectedVideos, selectionKey]
+  );
   const placementRevision =
     placementRequest?.revision ?? placementRequest?.requestId ?? null;
 
@@ -653,48 +647,6 @@ const MetadataPanel = forwardRef((
     inputRef.current?.select();
   }, [focusToken, hasSelection, isOpen]);
 
-  useEffect(() => {
-    if (!isOpen || !hasSelection) {
-      setInputValue("");
-    }
-  }, [hasSelection, isOpen]);
-
-  useEffect(() => {
-    setInputValue("");
-  }, [resolvedSelectionKey]);
-
-  const tagCounts = useMemo(() => {
-    const counts = new Map();
-    selectedVideos.forEach((video) => {
-      (video?.tags || []).forEach((tag) => {
-        const key = (tag ?? "").toString().trim();
-        if (!key) return;
-        counts.set(key, (counts.get(key) || 0) + 1);
-      });
-    });
-    return counts;
-  }, [selectedVideos]);
-
-  const sharedTags = useMemo(() => {
-    if (!hasSelection) return [];
-    const tags = [];
-    tagCounts.forEach((count, tag) => {
-      if (count === derivedSelectionCount) tags.push(tag);
-    });
-    return tags.sort((a, b) => a.localeCompare(b));
-  }, [tagCounts, derivedSelectionCount, hasSelection]);
-
-  const partialTags = useMemo(() => {
-    if (!hasSelection) return [];
-    const tags = [];
-    tagCounts.forEach((count, tag) => {
-      if (count > 0 && count < derivedSelectionCount) {
-        tags.push({ tag, count });
-      }
-    });
-    return tags.sort((a, b) => a.tag.localeCompare(b.tag));
-  }, [tagCounts, derivedSelectionCount, hasSelection]);
-
   const ratingInfo = useMemo(() => {
     if (!selectedVideos.length) {
       return { value: null, mixed: false, hasAny: false };
@@ -731,216 +683,10 @@ const MetadataPanel = forwardRef((
     };
   }, [selectedVideos]);
 
-  const singleSelectionInfo = useMemo(() => {
-    if (derivedSelectionCount !== 1 || !selectedVideos.length) {
-      return null;
-    }
-
-    const video = selectedVideos[0];
-    if (!video) return null;
-
-    const parseToDate = (value) => {
-      if (!value) return null;
-      if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return value;
-      }
-      if (typeof value === "number") {
-        if (!Number.isFinite(value) || value <= 0) return null;
-        const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? null : date;
-      }
-      if (typeof value === "string" && value.trim()) {
-        const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? null : date;
-      }
-      return null;
-    };
-
-    const createdDate =
-      parseToDate(video?.metadata?.dateCreatedFormatted) ||
-      parseToDate(video?.createdMs) ||
-      parseToDate(video?.dateCreated) ||
-      parseToDate(video?.metadata?.dateCreated);
-
-    const formatDateTime = (date) => {
-      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-        return null;
-      }
-
-      try {
-        return new Intl.DateTimeFormat(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }).format(date);
-      } catch (err) {
-        const pad = (value) => String(value).padStart(2, "0");
-        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-          date.getDate()
-        )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-          date.getSeconds()
-        )}`;
-      }
-    };
-
-    let createdDisplay = formatDateTime(createdDate);
-    if (!createdDisplay && typeof video?.metadata?.dateCreatedFormatted === "string") {
-      createdDisplay = video.metadata.dateCreatedFormatted;
-    }
-
-    const deriveFilename = () => {
-      const fromMetadata = video?.metadata?.filename || video?.metadata?.fileName;
-      const primary =
-        video?.name ||
-        video?.filename ||
-        video?.fileName ||
-        fromMetadata;
-
-      if (primary) return primary;
-
-      const path = video?.fullPath || video?.path || video?.sourcePath;
-      if (typeof path === "string" && path.trim()) {
-        const segments = path.split(/[\\/]/).filter(Boolean);
-        if (segments.length) {
-          return segments[segments.length - 1];
-        }
-      }
-
-      return null;
-    };
-
-    const filename = deriveFilename();
-
-    const width = Number(video?.dimensions?.width);
-    const height = Number(video?.dimensions?.height);
-    const hasResolution =
-      Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
-    const resolution = hasResolution ? `${width}×${height}` : null;
-
-    if (!filename && !createdDisplay && !resolution) {
-      return null;
-    }
-
-    return {
-      filename,
-      created: createdDisplay,
-      resolution,
-    };
-  }, [derivedSelectionCount, selectedVideos]);
-
-  const infoLineItems = useMemo(() => {
-    if (!singleSelectionInfo) return [];
-    const items = [];
-    if (singleSelectionInfo.filename) {
-      items.push({
-        key: "filename",
-        label: singleSelectionInfo.filename,
-        title: singleSelectionInfo.filename,
-        className: "metadata-panel__info-item--filename",
-      });
-    }
-    if (singleSelectionInfo.resolution) {
-      items.push({ key: "resolution", label: singleSelectionInfo.resolution });
-    }
-    if (singleSelectionInfo.created) {
-      items.push({ key: "created", label: singleSelectionInfo.created });
-    }
-    return items;
-  }, [singleSelectionInfo]);
-
-  const sharedTagSet = useMemo(() => new Set(sharedTags), [sharedTags]);
-
-  const dedupedAvailableTags = useMemo(() => {
-    if (!Array.isArray(availableTags)) return [];
-
-    const deduped = new Map();
-
-    availableTags.forEach((entry) => {
-      const name = entry?.name?.trim();
-      if (!name) return;
-
-      const usageCount =
-        typeof entry.usageCount === "number" && Number.isFinite(entry.usageCount)
-          ? entry.usageCount
-          : 0;
-
-      const existing = deduped.get(name);
-      if (!existing || (existing.usageCount || 0) < usageCount) {
-        deduped.set(name, { name, usageCount });
-      }
-    });
-
-    return Array.from(deduped.values());
-  }, [availableTags]);
-
-  const suggestionTags = useMemo(() => {
-    if (!isOpen) return [];
-
-    const query = inputValue.trim().toLowerCase();
-
-    let list = dedupedAvailableTags.filter((entry) => !sharedTagSet.has(entry.name));
-
-    if (query) {
-      list = list.filter((item) => item.name.toLowerCase().includes(query));
-    }
-
-    list.sort((a, b) => {
-      const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
-      if (usageDiff !== 0) return usageDiff;
-      return a.name.localeCompare(b.name);
-    });
-
-    return list.slice(0, MAX_SUGGESTION_TAGS);
-  }, [dedupedAvailableTags, inputValue, sharedTagSet, isOpen]);
-
-  const hasSuggestionQuery = inputValue.trim().length > 0;
-
-  const handleTagSubmit = () => {
-    const tokens = inputValue
-      .split(",")
-      .map((token) => token.trim())
-      .filter(Boolean);
-    if (!tokens.length) return;
-    onAddTag?.(tokens);
-    setInputValue("");
-  };
-
-  const handleKeyDown = (event) => {
-    if (event.key === "Enter" || event.key === ",") {
-      event.preventDefault();
-      handleTagSubmit();
-      return;
-    }
-
-    if (event.key === "Tab") {
-      const rawTokens = inputValue.split(",");
-      const lastTokenRaw = rawTokens[rawTokens.length - 1] ?? "";
-      const query = lastTokenRaw.trim().toLowerCase();
-      if (!query) return;
-
-      const candidates = dedupedAvailableTags.filter((entry) =>
-        entry.name.toLowerCase().startsWith(query)
-      );
-
-      if (!candidates.length) return;
-
-      candidates.sort((a, b) => {
-        const usageDiff = (b.usageCount || 0) - (a.usageCount || 0);
-        if (usageDiff !== 0) return usageDiff;
-        return a.name.localeCompare(b.name);
-      });
-
-      const selected = candidates[0]?.name;
-      if (!selected) return;
-
-      event.preventDefault();
-      onAddTag?.([selected]);
-      setInputValue("");
-    }
-  };
+  const singleSelectionInfo = useMemo(
+    () => deriveSingleSelectionInfo(selectedVideos, derivedSelectionCount),
+    [derivedSelectionCount, selectedVideos]
+  );
 
   if (!isOpen || !hasSelection) return null;
 
@@ -1035,101 +781,11 @@ const MetadataPanel = forwardRef((
         </span>
         <div className="metadata-panel__content">
           <div className="metadata-panel__body">
-                {infoLineItems.length > 0 && (
-                  <section className="metadata-panel__section metadata-panel__info">
-                    <div className="metadata-panel__info-line" role="text">
-                      {infoLineItems.map((item, index) => (
-                        <span
-                          key={item.key || index}
-                          className={`metadata-panel__info-item${
-                            item.className ? ` ${item.className}` : ""
-                          }`}
-                          title={item.title}
-                        >
-                          {index > 0 && (
-                            <span
-                              aria-hidden="true"
-                              className="metadata-panel__info-separator"
-                            >
-                              •
-                            </span>
-                          )}
-                          <span>{item.label}</span>
-                        </span>
-                      ))}
-                    </div>
-                  </section>
-                )}
+                <MetadataFileFactsSection info={singleSelectionInfo} />
 
-                {derivedSelectionCount === 1 && generationMetadataState && (
-                  <section className="metadata-panel__section metadata-panel__generation">
-                    <div className="metadata-panel__section-header">
-                      <span>Generation</span>
-                      <div className="metadata-panel__generation-actions">
-                        {generationMetadataState.cached && (
-                          <span className="metadata-panel__badge">Cached</span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => generationMetadataState.onRefresh?.()}
-                          disabled={generationMetadataState.loading}
-                        >
-                          Refresh
-                        </button>
-                      </div>
-                    </div>
-                    {generationMetadataState.loading ? (
-                      <p className="metadata-panel__generation-status">
-                        Looking for a matching sidecar…
-                      </p>
-                    ) : generationMetadataState.error ? (
-                      <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
-                        {generationMetadataState.error}
-                      </p>
-                    ) : !generationMetadataState.found ? (
-                      <p className="metadata-panel__generation-status">
-                        No matching sidecar found for this clip.
-                      </p>
-                    ) : (
-                      <dl className="metadata-panel__generation-grid">
-                        {generationMetadataState.metadata?.prompt && (
-                          <div className="metadata-panel__generation-prompt">
-                            <dt>Prompt</dt>
-                            <dd title={generationMetadataState.metadata.prompt}>
-                              {generationMetadataState.metadata.prompt}
-                            </dd>
-                          </div>
-                        )}
-                        {[
-                          ["Seed", generationMetadataState.metadata?.seed],
-                          [
-                            "Model",
-                            generationMetadataState.metadata?.models?.join(", ") ||
-                              generationMetadataState.metadata?.model,
-                          ],
-                          [
-                            "Sampler",
-                            generationMetadataState.metadata?.samplers?.join(", ") ||
-                              generationMetadataState.metadata?.sampler,
-                          ],
-                          ["Run", generationMetadataState.metadata?.generationRun],
-                          [
-                            "Source",
-                            generationMetadataState.metadata?.sourceImages?.join(", ") ||
-                              generationMetadataState.metadata?.sourceImage,
-                          ],
-                        ].map(([label, value]) =>
-                          value ? (
-                            <div key={label}>
-                              <dt>{label}</dt>
-                              <dd title={String(value)}>{String(value)}</dd>
-                            </div>
-                          ) : null
-                        )}
-                      </dl>
-                    )}
-                  </section>
-                )}
+                {derivedSelectionCount === 1 ? (
+                  <MetadataGenerationSection state={generationMetadataState} />
+                ) : null}
 
                 <div className="metadata-panel__grid">
                   <section className="metadata-panel__section metadata-panel__section--rating">
@@ -1207,105 +863,17 @@ const MetadataPanel = forwardRef((
                     </div>
                   </section>
 
-                  <section className="metadata-panel__section metadata-panel__section--tags">
-                    <div className="metadata-panel__section-header">
-                      <span>Tags</span>
-                      <span className="metadata-panel__badge">
-                        {sharedTags.length ? `${sharedTags.length} applied` : "None"}
-                      </span>
-                    </div>
-                    <div className="metadata-panel__chips">
-                      {sharedTags.length === 0 ? (
-                        <span className="metadata-panel__hint">No shared tags yet.</span>
-                      ) : (
-                        sharedTags.map((tag) => (
-                          <button
-                            key={tag}
-                            type="button"
-                            className="metadata-panel__chip"
-                            onClick={() => onRemoveTag?.(tag)}
-                          >
-                            <span>#{tag}</span>
-                            <span aria-hidden="true">×</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-
-                    {partialTags.length > 0 && (
-                      <div className="metadata-panel__partial-group">
-                        <div className="metadata-panel__section-subtitle">
-                          Appears on some selected clips
-                        </div>
-                        <div className="metadata-panel__chips">
-                          {partialTags.map(({ tag, count }) => (
-                            <button
-                              key={tag}
-                              type="button"
-                              className="metadata-panel__chip metadata-panel__chip--ghost"
-                              onClick={() => onApplyTagToSelection?.(tag)}
-                              title={`Apply to all (${count}/${derivedSelectionCount})`}
-                            >
-                              <span>#{tag}</span>
-                              <span className="metadata-panel__chip-count">
-                                {count}/{derivedSelectionCount}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="metadata-panel__input-row">
-                      <input
-                        ref={inputRef}
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Add tag and press Enter"
-                        disabled={!hasSelection}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleTagSubmit}
-                        disabled={!hasSelection || !inputValue.trim()}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  </section>
-
-                  {suggestionTags.length > 0 && (
-                    <section
-                      className="metadata-panel__section metadata-panel__section--suggestions"
-                      aria-live="polite"
-                    >
-                      <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-                        {hasSuggestionQuery
-                          ? "Matching tags"
-                          : `Popular tags (top ${MAX_SUGGESTION_TAGS})`}
-                      </div>
-                      <div className="metadata-panel__suggestion-list">
-                        {suggestionTags.map((suggestion) => (
-                          <button
-                            key={suggestion.name}
-                            type="button"
-                            className="metadata-panel__suggestion"
-                            onClick={() => onApplyTagToSelection?.(suggestion.name)}
-                            title={`Apply #${suggestion.name} to selection`}
-                          >
-                            <span>#{suggestion.name}</span>
-                            {typeof suggestion.usageCount === "number" && (
-                              <span className="metadata-panel__suggestion-count">
-                                {suggestion.usageCount}
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  <MetadataTagsSection
+                    ref={inputRef}
+                    selectedVideos={selectedVideos}
+                    selectionCount={derivedSelectionCount}
+                    availableTags={availableTags}
+                    active={isOpen}
+                    resetKey={resolvedSelectionKey}
+                    onAddTag={onAddTag}
+                    onRemoveTag={onRemoveTag}
+                    onApplyTagToSelection={onApplyTagToSelection}
+                  />
                 </div>
               </div>
         </div>

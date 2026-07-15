@@ -24,6 +24,13 @@ import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
+import {
+  FullscreenDetailsDock,
+  FullscreenHeaderActions,
+  FullscreenHeaderContent,
+  FullscreenProgressContent,
+  FullscreenReviewRail,
+} from "./components/fullscreen/FullscreenReviewPanels";
 
 import { useFullScreenModal } from "./hooks/useFullScreenModal";
 import { useVideoCollection } from "./hooks/video-collection";
@@ -96,6 +103,10 @@ import {
   REVIEW_STATES,
   normalizeReviewState,
 } from "./review/reviewState";
+import {
+  FULLSCREEN_COMMANDS,
+  resolveFullscreenShortcut,
+} from "./hotkeys/shortcutCatalog";
 import {
   buildReviewCheckpointDraft,
   checkpointLocationMatches,
@@ -176,6 +187,7 @@ function App() {
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
+  const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
   const [hoveredVideoId, setHoveredVideoId] = useState(null);
   const hoveredVideoIdRef = useRef(null);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
@@ -184,14 +196,17 @@ function App() {
   const [sortDir, setSortDir] = useState("asc");
   const [groupByFolders, setGroupByFolders] = useState(true);
   const [randomSeed, setRandomSeed] = useState(null);
-  const [fullScreenPinnedId, setFullScreenPinnedId] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
+  const [fullscreenTransientSurface, setFullscreenTransientSurface] =
+    useState(null);
+  const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
   const [reviewProfileEpoch, setReviewProfileEpoch] = useState(0);
+  const [webCollectionEpoch, setWebCollectionEpoch] = useState(0);
   const [reviewResume, setReviewResume] = useState(() =>
     createIdleReviewResume()
   );
@@ -218,6 +233,10 @@ function App() {
   const handleBeforeExternalFolderSelection = useCallback(() => {
     return beforeExternalFolderSelectionRef.current?.();
   }, []);
+  const handleBeforeFileRemoved = useCallback((filePath) => {
+    if (!Object.is(fullScreenActiveIdRef.current, filePath)) return;
+    fullScreenSourceRemovedRef.current?.(filePath);
+  }, []);
 
   // Video collection state
   const [actualPlaying, setActualPlaying] = useState(new Set());
@@ -230,6 +249,27 @@ function App() {
   }
   const mediaScheduler = mediaSchedulerRef.current;
   const closeFullScreenRef = useRef(() => {});
+  const fullScreenPlayerRef = useRef(null);
+  const fullScreenActiveIdRef = useRef(null);
+  const fullScreenSourceRemovedRef = useRef(() => null);
+  const fullScreenControllerRef = useRef(null);
+  const fullScreenUndoTargetRef = useRef(null);
+  const fullOrderedVideosRef = useRef([]);
+  const fullScreenFocusFrameRef = useRef(null);
+  const cancelFullScreenFocus = useCallback(() => {
+    if (
+      fullScreenFocusFrameRef.current != null &&
+      typeof cancelAnimationFrame === "function"
+    ) {
+      cancelAnimationFrame(fullScreenFocusFrameRef.current);
+    }
+    fullScreenFocusFrameRef.current = null;
+  }, []);
+  useEffect(() => cancelFullScreenFocus, [cancelFullScreenFocus]);
+  const resetMediaSchedulerForCollection = useCallback(() => {
+    closeFullScreenRef.current?.();
+    mediaScheduler.reset();
+  }, [mediaScheduler]);
 
   const { isSuspended: workSuspended, reason: workSuspensionReason } =
     useWindowWorkSuspension();
@@ -416,17 +456,19 @@ function App() {
     setPlaybackMode,
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
+    setFullscreenDetailsOpen,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
     setVisibleVideos,
     setLoadedVideos,
     setLoadingVideos,
     setActualPlaying,
-    resetMediaScheduler: mediaScheduler.reset,
+    resetMediaScheduler: resetMediaSchedulerForCollection,
     resetThumbnailGeneration: thumbService.resetGeneration,
     refreshTagList: invokeRefreshTagList,
     addRecentFolder,
     beforeExternalFolderSelection: handleBeforeExternalFolderSelection,
+    beforeFileRemoved: handleBeforeFileRemoved,
   });
 
   const {
@@ -750,6 +792,7 @@ function App() {
       FolderScope.ALL_DESCENDANTS
     );
     restoredFolderViewKeyRef.current = null;
+    closeFullScreenRef.current?.();
     setFolderLocation({
       rootPath: activeRootPath,
       directory: "",
@@ -768,6 +811,7 @@ function App() {
     const subscribe = window.electronAPI?.profiles?.onChanged;
     if (!subscribe) return undefined;
     return subscribe(() => {
+      closeFullScreenRef.current?.();
       reviewResumeTokenRef.current += 1;
       libraryOpenRequestRef.current += 1;
       if (typeof cancelAnimationFrame === "function") {
@@ -793,11 +837,6 @@ function App() {
     () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
     [renderLimitValue]
   );
-  const pinnedLayoutIds = useMemo(
-    () => (fullScreenPinnedId ? [fullScreenPinnedId] : []),
-    [fullScreenPinnedId]
-  );
-
   const {
     orderedVideos,
     displayVideos,
@@ -829,8 +868,8 @@ function App() {
     scrollContainerElement,
     gridElement,
     renderLimit: renderLimitValue,
-    pinnedIds: pinnedLayoutIds,
   });
+  fullOrderedVideosRef.current = orderedVideos;
 
   const effectiveProgressiveCap = useMemo(() => {
     const layoutLimit =
@@ -1128,6 +1167,16 @@ function App() {
       return;
     }
 
+    // Fullscreen owns its own Details dock. Keep the floating grid inspector
+    // dismissed for the loupe's active selection so it cannot reappear over
+    // the card as soon as fullscreen closes.
+    if (fullScreenActiveIdRef.current != null) {
+      previousMetadataSelectionKeyRef.current = metadataSelectionKey;
+      setMetadataPanelOpen(false);
+      setMetadataDismissedSelectionKey(metadataSelectionKey);
+      return;
+    }
+
     if (
       metadataSelectionKey !== previousKey &&
       metadataDismissedSelectionKey !== metadataSelectionKey
@@ -1189,6 +1238,22 @@ function App() {
     }, 3000);
   }, []);
 
+  const reviewOwnershipKey = useMemo(
+    () => JSON.stringify([
+      reviewProfileEpoch,
+      activeRootPath ? `root:${activeRootPath}` : `web:${webCollectionEpoch}`,
+      currentDirectory,
+      folderScope,
+    ]),
+    [
+      activeRootPath,
+      currentDirectory,
+      folderScope,
+      reviewProfileEpoch,
+      webCollectionEpoch,
+    ]
+  );
+
   const {
     handleAddTags,
     handleRemoveTag,
@@ -1202,6 +1267,7 @@ function App() {
     setVideos,
     setAvailableTags,
     notify,
+    ownershipKey: reviewOwnershipKey,
   });
 
   const reviewSessions = useReviewSessions({
@@ -1258,15 +1324,7 @@ function App() {
     ]
   );
 
-  const reviewOwnershipKey = useMemo(
-    () => JSON.stringify([
-      reviewProfileEpoch,
-      activeRootPath || "",
-      currentDirectory,
-      folderScope,
-    ]),
-    [activeRootPath, currentDirectory, folderScope, reviewProfileEpoch]
-  );
+  const fullscreenCollectionOwnerKey = reviewOwnershipKey;
   const handleReviewMutationCommitted = useCallback(
     async (event) => {
       if (!event || event.ownershipKey !== reviewOwnershipKey) return;
@@ -1358,6 +1416,7 @@ function App() {
   }, [cancelReviewFocus]);
 
   beforeExternalFolderSelectionRef.current = async () => {
+    closeFullScreenRef.current?.();
     libraryOpenRequestRef.current += 1;
     await reviewSessions.flush();
     cancelReviewResume();
@@ -1367,6 +1426,8 @@ function App() {
   const handleWebDirectorySelection = useCallback(
     async (event) => {
       const files = event?.target?.files;
+      closeFullScreenRef.current?.();
+      setWebCollectionEpoch((epoch) => epoch + 1);
       libraryOpenRequestRef.current += 1;
       await reviewSessions.flush();
       cancelReviewResume();
@@ -1549,11 +1610,14 @@ function App() {
       setLoadedVideos((previous) => removeManyFromSet(previous, ids));
       setLoadingVideos((previous) => removeManyFromSet(previous, ids));
       setActualPlaying((previous) => removeManyFromSet(previous, ids));
-      if (fullScreenPinnedId && ids.has(fullScreenPinnedId)) {
-        closeFullScreenRef.current?.();
+      if (
+        fullScreenActiveIdRef.current != null &&
+        ids.has(fullScreenActiveIdRef.current)
+      ) {
+        fullScreenSourceRemovedRef.current?.(fullScreenActiveIdRef.current);
       }
     },
-    [fullScreenPinnedId, mediaScheduler]
+    [mediaScheduler]
   );
 
   const releaseManagedVideoHandlesForAsync = useCallback(
@@ -1660,7 +1724,7 @@ function App() {
     setLoadingIds: setLoadingVideos,
   });
 
-  const { runAction } = useActionDispatch(deps, getById);
+  const { runAction, runActionForVideos } = useActionDispatch(deps, getById);
 
   const handleTrashReviewRejects = useCallback(
     async (rejectVideos) => {
@@ -1779,14 +1843,175 @@ function App() {
     ]
   );
 
-  // fullscreen / context menu
-  const {
-    fullScreenVideo,
-    openFullScreen,
-    closeFullScreen,
-    navigateFullScreen,
-  } = useFullScreenModal(displayVideos);
-  closeFullScreenRef.current = closeFullScreen;
+  // Fullscreen is a bounded controller over the complete visual order. The
+  // modal owns its media element separately from the virtualized grid.
+  const fullscreenController = useFullScreenModal({
+    collectionOwnerKey: fullscreenCollectionOwnerKey,
+    orderedVideos,
+  });
+  const controllerVideo = fullscreenController.fullScreenVideo;
+  const fullScreenVideo = controllerVideo
+    ? allVideosById.get(controllerVideo.id) || controllerVideo
+    : null;
+  const fullscreenPositionLabel = fullscreenController.isCurrentInView
+    ? `${Math.max(1, fullscreenController.currentViewIndex + 1).toLocaleString()} of ${Math.max(
+        1,
+        fullscreenController.fullScreenCount
+      ).toLocaleString()}`
+    : `Outside view · ${Math.max(
+        0,
+        fullscreenController.fullScreenCount
+      ).toLocaleString()} clip${
+        fullscreenController.fullScreenCount === 1 ? "" : "s"
+      }`;
+  fullScreenControllerRef.current = fullscreenController;
+  fullScreenActiveIdRef.current = fullScreenVideo?.id ?? null;
+
+  const releaseFullScreenNow = useCallback((options) => {
+    fullScreenPlayerRef.current?.releaseNow?.(options);
+  }, []);
+
+  const closeFullScreenForOwnershipChange = useCallback(() => {
+    cancelFullScreenFocus();
+    releaseFullScreenNow();
+    const controller = fullScreenControllerRef.current;
+    (controller?.close || controller?.closeFullScreen)?.();
+    fullScreenUndoTargetRef.current = null;
+    setFullscreenCanUndo(false);
+    setFullscreenTransientSurface(null);
+  }, [cancelFullScreenFocus, releaseFullScreenNow]);
+  closeFullScreenRef.current = closeFullScreenForOwnershipChange;
+
+  const openFullScreen = useCallback(
+    (video) => {
+      if (!video?.id) return null;
+      cancelFullScreenFocus();
+      const controller = fullScreenControllerRef.current;
+      const opened = (controller?.open || controller?.openFullScreen)?.(video) || null;
+      if (!opened) return null;
+      const fullscreenSelectionKey = JSON.stringify([String(opened.id)]);
+      previousMetadataSelectionKeyRef.current = fullscreenSelectionKey;
+      setMetadataPanelOpen(false);
+      setMetadataDismissedSelectionKey(fullscreenSelectionKey);
+      fullScreenUndoTargetRef.current = null;
+      setFullscreenCanUndo(false);
+      setFullscreenTransientSurface(null);
+      selection.selectExactly(opened.id);
+      return opened;
+    },
+    [cancelFullScreenFocus, selection.selectExactly]
+  );
+
+  const scheduleEngagedFullscreenCheckpoint = useCallback(
+    (video) => {
+      if (!video || !reviewSessions.isEngaged) return;
+      const draft = buildActiveReviewCheckpoint({ anchor: video });
+      if (!draft) return;
+      reviewSessions.schedule(draft, {
+        signature: createReviewCheckpointSignature(draft),
+      });
+    },
+    [
+      buildActiveReviewCheckpoint,
+      reviewSessions.isEngaged,
+      reviewSessions.schedule,
+    ]
+  );
+
+  const navigateFullScreen = useCallback(
+    (direction, options) => {
+      const controller = fullScreenControllerRef.current;
+      const candidate = controller?.peekNavigation?.(direction, options);
+      if (!candidate) {
+        notify(
+          direction === "next"
+            ? "End of current view"
+            : "Start of current view",
+          "info"
+        );
+        return null;
+      }
+      setFullscreenTransientSurface(null);
+      releaseFullScreenNow({ resetAudio: false });
+      const next = controller?.navigateFullScreen?.(
+        direction,
+        options
+      );
+      if (!next) {
+        notify(
+          direction === "next"
+            ? "End of current view"
+            : "Start of current view",
+          "info"
+        );
+        return null;
+      }
+      selection.selectExactly(next.id);
+      scheduleEngagedFullscreenCheckpoint(next);
+      return next;
+    },
+    [
+      notify,
+      releaseFullScreenNow,
+      scheduleEngagedFullscreenCheckpoint,
+      selection.selectExactly,
+    ]
+  );
+
+  const handleFullScreenSourceRemoved = useCallback(
+    (videoId) => {
+      releaseFullScreenNow({ resetAudio: false });
+      const next = fullScreenControllerRef.current?.sourceRemoved?.(videoId);
+      if (Object.is(fullScreenUndoTargetRef.current?.id, videoId)) {
+        fullScreenUndoTargetRef.current = null;
+        setFullscreenCanUndo(false);
+      }
+      setFullscreenTransientSurface(null);
+      if (!next) {
+        notify("The fullscreen clip is no longer available", "warning");
+        return null;
+      }
+      selection.selectExactly(next.id);
+      scheduleEngagedFullscreenCheckpoint(next);
+      notify("The removed clip was closed; showing the next available clip", "info");
+      return next;
+    },
+    [
+      notify,
+      releaseFullScreenNow,
+      scheduleEngagedFullscreenCheckpoint,
+      selection.selectExactly,
+    ]
+  );
+  fullScreenSourceRemovedRef.current = handleFullScreenSourceRemoved;
+
+  useLayoutEffect(() => {
+    const activeId = fullScreenActiveIdRef.current;
+    const activeRecord = activeId == null ? null : allVideosById.get(activeId);
+    if (activeId == null || (activeRecord && activeRecord.present !== false)) return;
+    handleFullScreenSourceRemoved(activeId);
+  }, [allVideosById, handleFullScreenSourceRemoved]);
+
+  const fullscreenGenerationInstanceId = fullScreenVideo?.instanceId ?? null;
+  const fullscreenGenerationMetadata = useGenerationMetadata({
+    instanceId: fullscreenGenerationInstanceId,
+    enabled: Boolean(
+      fullScreenVideo &&
+        fullscreenDetailsOpen &&
+        fullscreenGenerationInstanceId &&
+        !workSuspended
+    ),
+  });
+  const fullscreenGenerationMetadataState = useMemo(
+    () =>
+      fullscreenGenerationInstanceId
+        ? {
+            ...fullscreenGenerationMetadata,
+            onRefresh: fullscreenGenerationMetadata.refresh,
+          }
+        : null,
+    [fullscreenGenerationInstanceId, fullscreenGenerationMetadata]
+  );
 
   const visibleAveragePixelArea = useMemo(() => {
     let total = 0;
@@ -1847,10 +2072,6 @@ function App() {
     centerPriorityIds,
     hoveredId: hoveredVideoId,
   });
-
-  useEffect(() => {
-    setFullScreenPinnedId(fullScreenVideo?.id ?? null);
-  }, [fullScreenVideo?.id]);
 
   const collectionCallbacksRef = useRef(null);
   collectionCallbacksRef.current = {
@@ -1947,10 +2168,6 @@ function App() {
   const handleHoverAudioEnd = useCallback((videoId) => {
     collectionCallbacksRef.current?.onCardHoverAudioEnd?.(videoId);
   }, []);
-  const handleCloseFullScreen = useCallback(() => {
-    closeFullScreen();
-  }, [closeFullScreen]);
-
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
     (actionId, currentSelection) =>
@@ -2076,6 +2293,7 @@ function App() {
   const handleRecursiveChange = useCallback(async (nextValue) => {
     const next = Boolean(nextValue);
     if (next === recursiveMode) return;
+    closeFullScreenRef.current?.();
     await reviewSessions.flush();
     captureFolderViewState();
     setRecursiveMode(next);
@@ -2120,6 +2338,7 @@ function App() {
   const handleFolderNavigate = useCallback(
     async (relativePath) => {
       if (!activeRootPath) return;
+      closeFullScreenRef.current?.();
       await reviewSessions.flush();
       cancelReviewResume();
       captureFolderViewState();
@@ -2163,6 +2382,7 @@ function App() {
   const handleFolderScopeChange = useCallback(
     async (nextScope) => {
       if (!activeRootPath) return;
+      closeFullScreenRef.current?.();
       await reviewSessions.flush();
       cancelReviewResume();
       captureFolderViewState();
@@ -2244,6 +2464,7 @@ function App() {
   const handleOpenLibraryRoot = useCallback(
     async (rootPath) => {
       if (!rootPath) return;
+      closeFullScreenRef.current?.();
       const requestId = ++libraryOpenRequestRef.current;
       try {
         await reviewSessions.flush();
@@ -2343,6 +2564,7 @@ function App() {
     (view) => {
       const definition = view?.definition;
       if (!definition || definition.version !== 1) return;
+      closeFullScreenRef.current?.();
       captureFolderViewState();
       updateFilters(definition.filters || {});
       setSortKey(definition.sort?.key || SortKey.NAME);
@@ -2397,6 +2619,7 @@ function App() {
   );
 
   const handleChooseFolder = useCallback(async () => {
+    closeFullScreenRef.current?.();
     await reviewSessions.flush();
     cancelReviewResume();
     captureFolderViewState();
@@ -2446,6 +2669,14 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({ reviewAutoAdvance: next });
   }, []);
 
+  const handleFullscreenDetailsOpenChange = useCallback((value) => {
+    const next = value === true;
+    setFullscreenDetailsOpen(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      fullscreenDetailsOpen: next,
+    });
+  }, []);
+
   const handleRenderLimitStepChange = useCallback(
     (step) => {
       const clamped = clampRenderLimitStep(step);
@@ -2458,6 +2689,362 @@ function App() {
       });
     },
     [recursiveMode, zoomLevel, showFilenames]
+  );
+
+  const handleCloseFullScreen = useCallback(() => {
+    cancelFullScreenFocus();
+    const controller = fullScreenControllerRef.current;
+    const current = controller?.currentVideo || null;
+    const currentIndex = controller?.currentViewIndex ?? -1;
+    const inCurrentView = controller?.isInCurrentView === true;
+    releaseFullScreenNow();
+    (controller?.close || controller?.closeFullScreen)?.();
+    fullScreenUndoTargetRef.current = null;
+    setFullscreenCanUndo(false);
+    setFullscreenTransientSurface(null);
+
+    if (!current?.id) {
+      scrollContainerRef.current?.focus?.();
+      return;
+    }
+
+    selection.selectExactly(current.id);
+    if (!inCurrentView || currentIndex < 0) {
+      notify(
+        "The reviewed clip no longer matches the current view; it remains selected",
+        "info"
+      );
+      scrollContainerRef.current?.focus?.();
+      return;
+    }
+
+    if (!displayVideos.some((video) => video.id === current.id)) {
+      const requiredStep = findRenderLimitStepForIndex(
+        currentIndex,
+        orderedVideos.length
+      );
+      if (requiredStep > renderLimitStep) {
+        handleRenderLimitStepChange(requiredStep);
+        notify(
+          "Expanded the grid just enough to return to the fullscreen clip",
+          "info"
+        );
+      }
+    }
+
+    scrollToId(current.id, { align: "center" });
+    let attempts = 36;
+    const focusWhenMounted = () => {
+      const cards = gridRef.current?.querySelectorAll?.(
+        ".video-item[data-video-id]"
+      );
+      const card = Array.from(cards || []).find(
+        (element) => element.dataset?.videoId === String(current.id)
+      );
+      if (card) {
+        fullScreenFocusFrameRef.current = null;
+        card.focus?.();
+        return;
+      }
+      attempts -= 1;
+      if (attempts > 0 && typeof requestAnimationFrame === "function") {
+        fullScreenFocusFrameRef.current = requestAnimationFrame(focusWhenMounted);
+      } else if (attempts <= 0) {
+        fullScreenFocusFrameRef.current = null;
+        scrollContainerRef.current?.focus?.();
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      fullScreenFocusFrameRef.current = requestAnimationFrame(focusWhenMounted);
+    } else {
+      scrollContainerRef.current?.focus?.();
+    }
+  }, [
+    cancelFullScreenFocus,
+    displayVideos,
+    handleRenderLimitStepChange,
+    notify,
+    orderedVideos.length,
+    releaseFullScreenNow,
+    renderLimitStep,
+    scrollToId,
+    selection.selectExactly,
+  ]);
+
+  const captureFullscreenTarget = useCallback(() => {
+    const controller = fullScreenControllerRef.current;
+    const current = controller?.currentVideo;
+    if (!current?.id) return null;
+    const video = allVideosById.get(current.id) || current;
+    const ordered = fullOrderedVideosRef.current;
+    const currentIndex = ordered.findIndex((candidate) =>
+      Object.is(candidate?.id, video.id)
+    );
+    const successor = currentIndex >= 0
+      ? ordered
+          .slice(currentIndex + 1)
+          .find(
+            (candidate) =>
+              candidate?.present !== false &&
+              !Object.is(candidate?.fingerprint, video.fingerprint)
+          )
+      : null;
+    return {
+      video,
+      id: video.id,
+      fingerprint: video.fingerprint || null,
+      instanceId: video.instanceId ?? null,
+      successorId: successor?.id ?? null,
+      ownerKey: controller.collectionOwnerKey,
+      sessionToken: controller.sessionToken,
+    };
+  }, [allVideosById]);
+
+  const isFullscreenTargetCurrent = useCallback((target) => {
+    const controller = fullScreenControllerRef.current;
+    return Boolean(
+      target &&
+        controller?.sessionToken === target.sessionToken &&
+        Object.is(controller?.collectionOwnerKey, target.ownerKey) &&
+        Object.is(controller?.currentVideo?.id, target.id)
+    );
+  }, []);
+
+  const advanceFullscreenAfterMutation = useCallback(
+    (target) => {
+      if (!isFullscreenTargetCurrent(target)) return null;
+      const successor = fullOrderedVideosRef.current.find((video) =>
+        Object.is(video?.id, target.successorId)
+      );
+      if (successor?.present !== false && successor?.id != null) {
+        setFullscreenTransientSurface(null);
+        releaseFullScreenNow({ resetAudio: false });
+        const next = fullScreenControllerRef.current?.goToFullScreen?.(
+          successor.id
+        );
+        if (next) {
+          selection.selectExactly(next.id);
+          scheduleEngagedFullscreenCheckpoint(next);
+          return next;
+        }
+      }
+      return navigateFullScreen("next", {
+        skipFingerprint: target.fingerprint,
+      });
+    },
+    [
+      isFullscreenTargetCurrent,
+      navigateFullScreen,
+      releaseFullScreenNow,
+      scheduleEngagedFullscreenCheckpoint,
+      selection.selectExactly,
+    ]
+  );
+
+  const handleFullscreenReviewState = useCallback(
+    async (reviewState) => {
+      const target = captureFullscreenTarget();
+      if (!target?.fingerprint) {
+        notify("This clip cannot be reviewed until it has a fingerprint", "warning");
+        return false;
+      }
+      const result = await reviewWorkflow.applyReviewState(reviewState, {
+        fingerprints: [target.fingerprint],
+        anchorId: target.id,
+        allowAdvance: false,
+        completionGuard: () => isFullscreenTargetCurrent(target),
+      });
+      if (!result) return false;
+      if (!isFullscreenTargetCurrent(target)) {
+        const current = fullScreenControllerRef.current?.currentVideo;
+        if (current) scheduleEngagedFullscreenCheckpoint(current);
+        return true;
+      }
+      fullScreenUndoTargetRef.current = target;
+      setFullscreenCanUndo(true);
+      if (
+        reviewAutoAdvance &&
+        normalizeReviewState(reviewState) !== REVIEW_STATES.UNREVIEWED
+      ) {
+        advanceFullscreenAfterMutation(target);
+      }
+      return true;
+    },
+    [
+      advanceFullscreenAfterMutation,
+      captureFullscreenTarget,
+      isFullscreenTargetCurrent,
+      notify,
+      reviewAutoAdvance,
+      reviewWorkflow.applyReviewState,
+      scheduleEngagedFullscreenCheckpoint,
+    ]
+  );
+
+  const handleFullscreenRating = useCallback(
+    async (rating) => {
+      const target = captureFullscreenTarget();
+      if (!target?.fingerprint) {
+        notify("This clip cannot be rated until it has a fingerprint", "warning");
+        return false;
+      }
+      const result = await reviewWorkflow.applyRating(rating, {
+        fingerprints: [target.fingerprint],
+        anchorId: target.id,
+        allowAdvance: false,
+        completionGuard: () => isFullscreenTargetCurrent(target),
+      });
+      if (!result) return false;
+      if (!isFullscreenTargetCurrent(target)) {
+        const current = fullScreenControllerRef.current?.currentVideo;
+        if (current) scheduleEngagedFullscreenCheckpoint(current);
+        return true;
+      }
+      fullScreenUndoTargetRef.current = target;
+      setFullscreenCanUndo(true);
+      if (reviewAutoAdvance && rating != null && Number(rating) > 0) {
+        advanceFullscreenAfterMutation(target);
+      }
+      return true;
+    },
+    [
+      advanceFullscreenAfterMutation,
+      captureFullscreenTarget,
+      isFullscreenTargetCurrent,
+      notify,
+      reviewAutoAdvance,
+      reviewWorkflow.applyRating,
+      scheduleEngagedFullscreenCheckpoint,
+    ]
+  );
+
+  const handleFullscreenUndo = useCallback(async () => {
+    const target = fullScreenUndoTargetRef.current;
+    const result = await reviewWorkflow.undo();
+    if (!result || !target) return result;
+    fullScreenUndoTargetRef.current = null;
+    setFullscreenCanUndo(false);
+
+    let attempts = 16;
+    const restoreAffectedClip = () => {
+      const controller = fullScreenControllerRef.current;
+      if (
+        controller?.sessionToken !== target.sessionToken ||
+        !Object.is(controller?.collectionOwnerKey, target.ownerKey)
+      ) {
+        return;
+      }
+      if (Object.is(controller.currentVideo?.id, target.id)) {
+        selection.selectExactly(target.id);
+        return;
+      }
+      const targetAvailable = fullOrderedVideosRef.current.some((video) =>
+        Object.is(video?.id, target.id)
+      );
+      if (!targetAvailable) {
+        attempts -= 1;
+        if (attempts > 0 && typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(restoreAffectedClip);
+        }
+        return;
+      }
+      releaseFullScreenNow({ resetAudio: false });
+      const restored = controller.goToFullScreen?.(target.id);
+      if (restored) {
+        selection.selectExactly(restored.id);
+        scheduleEngagedFullscreenCheckpoint(restored);
+        return;
+      }
+      attempts -= 1;
+      if (attempts > 0 && typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(restoreAffectedClip);
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(restoreAffectedClip);
+    } else {
+      restoreAffectedClip();
+    }
+    return true;
+  }, [
+    releaseFullScreenNow,
+    reviewWorkflow.undo,
+    scheduleEngagedFullscreenCheckpoint,
+    selection.selectExactly,
+  ]);
+
+  const handleFullscreenAddTags = useCallback(
+    (tagNames) => {
+      const target = captureFullscreenTarget();
+      if (!target?.fingerprint) return Promise.resolve(false);
+      return handleAddTags(tagNames, [target.fingerprint], {
+        completionGuard: () => isFullscreenTargetCurrent(target),
+      });
+    },
+    [captureFullscreenTarget, handleAddTags, isFullscreenTargetCurrent]
+  );
+  const handleFullscreenRemoveTag = useCallback(
+    (tagName) => {
+      const target = captureFullscreenTarget();
+      if (!target?.fingerprint) return Promise.resolve(false);
+      return handleRemoveTag(tagName, [target.fingerprint], {
+        completionGuard: () => isFullscreenTargetCurrent(target),
+      });
+    },
+    [captureFullscreenTarget, handleRemoveTag, isFullscreenTargetCurrent]
+  );
+  const handleFullscreenApplyTag = useCallback(
+    (tagName) => {
+      const target = captureFullscreenTarget();
+      if (!target?.fingerprint) return Promise.resolve(false);
+      return handleApplyExistingTag(tagName, [target.fingerprint], {
+        completionGuard: () => isFullscreenTargetCurrent(target),
+      });
+    },
+    [captureFullscreenTarget, handleApplyExistingTag, isFullscreenTargetCurrent]
+  );
+
+  const handleFullscreenSafeAction = useCallback(
+    async (actionId) => {
+      const target = captureFullscreenTarget();
+      if (!target?.video || typeof runActionForVideos !== "function") return false;
+      try {
+        return await runActionForVideos(actionId, [target.video]);
+      } catch (error) {
+        console.error("Fullscreen file action failed", error);
+        notify(error?.message || "Could not complete that file action", "error");
+        return false;
+      }
+    },
+    [captureFullscreenTarget, notify, runActionForVideos]
+  );
+
+  const handleFullscreenShortcut = useCallback(
+    ({ key }) => {
+      const binding = resolveFullscreenShortcut(key);
+      if (!binding) return false;
+      if (binding.command === FULLSCREEN_COMMANDS.REVIEW_STATE) {
+        void handleFullscreenReviewState(binding.value);
+        return true;
+      }
+      if (
+        binding.command === FULLSCREEN_COMMANDS.RATING ||
+        binding.command === FULLSCREEN_COMMANDS.CLEAR_RATING
+      ) {
+        void handleFullscreenRating(binding.value);
+        return true;
+      }
+      if (binding.command === FULLSCREEN_COMMANDS.UNDO) {
+        void handleFullscreenUndo();
+        return true;
+      }
+      return false;
+    },
+    [
+      handleFullscreenRating,
+      handleFullscreenReviewState,
+      handleFullscreenUndo,
+    ]
   );
 
   const handleSortChange = useCallback(
@@ -2505,6 +3092,7 @@ function App() {
 
   const applyReviewCheckpointView = useCallback(
     (checkpoint) => {
+      closeFullScreenRef.current?.();
       const normalized = normalizeReviewCheckpoint(checkpoint);
       if (!normalized.rootPath) return null;
       const { view } = normalized;
@@ -2547,6 +3135,7 @@ function App() {
   const beginContinueReview = useCallback(
     async (requestedRootPath) => {
       if (!requestedRootPath) return null;
+      closeFullScreenRef.current?.();
       const openRequestId = ++libraryOpenRequestRef.current;
       const token = ++reviewResumeTokenRef.current;
       cancelReviewFocus();
@@ -2716,6 +3305,7 @@ function App() {
   const handleStartRootReview = useCallback(
     async (rootPath) => {
       if (!rootPath) return null;
+      closeFullScreenRef.current?.();
       const requestId = ++libraryOpenRequestRef.current;
       try {
         await reviewSessions.flush();
@@ -3335,7 +3925,6 @@ function App() {
         }
       }
       if (isDoubleClick && video) {
-        setFullScreenPinnedId(video.id);
         collectionCallbacksRef.current?.openFullScreen?.(video);
         return;
       }
@@ -4047,12 +4636,69 @@ function App() {
 
           {fullScreenVideo && (
             <FullScreenModal
+              ref={fullScreenPlayerRef}
               video={fullScreenVideo}
               onClose={handleCloseFullScreen}
               onNavigate={navigateFullScreen}
               showFilenames={showFilenames}
               mediaScheduler={mediaScheduler}
               workSuspended={workSuspended}
+              collectionOwnerKey={fullscreenCollectionOwnerKey}
+              canNavigatePrevious={fullscreenController.hasPrevious}
+              canNavigateNext={fullscreenController.hasNext}
+              positionLabel={fullscreenPositionLabel}
+              dialogLabel={fullScreenVideo.name || "Fullscreen review"}
+              headerContent={
+                <FullscreenHeaderContent
+                  video={fullScreenVideo}
+                  isCurrentInView={fullscreenController.isCurrentInView}
+                />
+              }
+              progressContent={
+                <FullscreenProgressContent progress={reviewWorkflow.progress} />
+              }
+              actionsContent={({ retryPlayback }) => (
+                <FullscreenHeaderActions
+                  video={fullScreenVideo}
+                  surface={fullscreenTransientSurface}
+                  onSurfaceChange={setFullscreenTransientSurface}
+                  onSafeAction={handleFullscreenSafeAction}
+                  onRetry={retryPlayback}
+                />
+              )}
+              reviewRail={
+                <FullscreenReviewRail
+                  video={fullScreenVideo}
+                  busy={reviewWorkflow.isBusy}
+                  canUndo={fullscreenCanUndo && reviewWorkflow.canUndo}
+                  autoAdvance={reviewAutoAdvance}
+                  onSetReviewState={handleFullscreenReviewState}
+                  onSetRating={handleFullscreenRating}
+                  onUndo={handleFullscreenUndo}
+                  onAutoAdvanceChange={handleReviewAutoAdvanceChange}
+                />
+              }
+              detailsOpen={fullscreenDetailsOpen}
+              onToggleDetails={() =>
+                handleFullscreenDetailsOpenChange(!fullscreenDetailsOpen)
+              }
+              detailsDock={
+                <FullscreenDetailsDock
+                  video={fullScreenVideo}
+                  availableTags={availableTags}
+                  generationMetadataState={fullscreenGenerationMetadataState}
+                  onAddTags={handleFullscreenAddTags}
+                  onRemoveTag={handleFullscreenRemoveTag}
+                  onApplyTag={handleFullscreenApplyTag}
+                />
+              }
+              transientOpen={Boolean(fullscreenTransientSurface)}
+              onDismissTransient={() => setFullscreenTransientSurface(null)}
+              onOpenHelp={() => setFullscreenTransientSurface("help")}
+              onShortcut={handleFullscreenShortcut}
+              onBoundary={(_direction, message) => notify(message, "info")}
+              fallbackFocusRef={scrollContainerRef}
+              appRootId="root"
             />
           )}
 

@@ -50,6 +50,7 @@ describe("useElectronFolderLifecycle", () => {
         setPlaybackMode: vi.fn(),
         setProxyPlaybackEnabled: vi.fn(),
         setReviewAutoAdvance: vi.fn(),
+        setFullscreenDetailsOpen: vi.fn(),
         setZoomLevelFromSettings: vi.fn(),
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -101,6 +102,7 @@ describe("useElectronFolderLifecycle", () => {
         playbackMode: "static-hover",
         proxyPlaybackEnabled: true,
         reviewAutoAdvance: true,
+        fullscreenDetailsOpen: false,
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
       readDirectory: vi.fn().mockResolvedValue([
@@ -239,6 +241,7 @@ describe("useElectronFolderLifecycle", () => {
     const setPlaybackMode = vi.fn();
     const setProxyPlaybackEnabled = vi.fn();
     const setReviewAutoAdvance = vi.fn();
+    const setFullscreenDetailsOpen = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
     const { result } = renderHook(() =>
@@ -257,6 +260,7 @@ describe("useElectronFolderLifecycle", () => {
         setPlaybackMode,
         setProxyPlaybackEnabled,
         setReviewAutoAdvance,
+        setFullscreenDetailsOpen,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -278,6 +282,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(setPlaybackMode).toHaveBeenCalledWith("static-hover");
     expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
     expect(setReviewAutoAdvance).toHaveBeenCalledWith(true);
+    expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
   });
 
@@ -309,6 +314,18 @@ describe("useElectronFolderLifecycle", () => {
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setReviewAutoAdvance).toHaveBeenCalledWith(false);
+  });
+
+  it("defaults fullscreen details open unless a literal false is loaded", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      fullscreenDetailsOpen: "false",
+    });
+    const setFullscreenDetailsOpen = vi.fn();
+
+    const { result } = renderDefaultLifecycle({ setFullscreenDetailsOpen });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
   });
 
   it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {
@@ -2107,6 +2124,7 @@ describe("useElectronFolderLifecycle", () => {
   });
 
   it("propagates watcher events into local state", async () => {
+    const beforeFileRemoved = vi.fn();
     const { result, unmount } = renderHook(() =>
       useElectronFolderLifecycle({
         selection,
@@ -2127,6 +2145,7 @@ describe("useElectronFolderLifecycle", () => {
         setActualPlaying: setActualPlayingMock.setter,
         refreshTagList,
         addRecentFolder,
+        beforeFileRemoved,
       })
     );
 
@@ -2170,6 +2189,10 @@ describe("useElectronFolderLifecycle", () => {
     });
 
     expect(result.current.videos.map((v) => v.id)).toEqual(["file2"]);
+    expect(beforeFileRemoved).toHaveBeenCalledWith("file1");
+    expect(beforeFileRemoved.mock.invocationCallOrder[0]).toBeLessThan(
+      selection.setSelected.mock.invocationCallOrder.at(-1)
+    );
     expect(selection.setSelected).toHaveBeenCalled();
     expect(refreshTagList).toHaveBeenCalledTimes(3);
 

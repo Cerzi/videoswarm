@@ -251,6 +251,7 @@ const defaultSettings = {
   playbackMode: "balanced",
   proxyPlaybackEnabled: false,
   reviewAutoAdvance: false,
+  fullscreenDetailsOpen: true,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -1468,6 +1469,10 @@ function normaliseLoadedSettings(rawSettings) {
     playbackMode: normalizePlaybackMode(source.playbackMode),
     proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
     reviewAutoAdvance: source.reviewAutoAdvance === true,
+    fullscreenDetailsOpen:
+      source.fullscreenDetailsOpen === undefined
+        ? defaultSettings.fullscreenDetailsOpen
+        : source.fullscreenDetailsOpen === true,
     zoomLevel: clampInteger(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
       defaultSettings.zoomLevel,

@@ -3,6 +3,16 @@ import { useMetadataActions } from "./useMetadataActions";
 
 const noop = () => {};
 
+const deferredPromise = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("useMetadataActions", () => {
   afterEach(() => {
     delete window.electronAPI;
@@ -68,6 +78,177 @@ describe("useMetadataActions", () => {
     expect(setAvailableTags).toHaveBeenCalledWith(["tag"]);
     expect(notify).toHaveBeenCalled();
     expect(videos[0].tags).toEqual(["tag"]);
+  });
+
+  it("uses an explicit tag target instead of a later grid selection", async () => {
+    window.electronAPI = {
+      metadata: {
+        addTags: vi.fn().mockResolvedValue({ updates: {}, tags: ["keep"] }),
+        removeTag: vi.fn().mockResolvedValue({ updates: {}, tags: [] }),
+      },
+    };
+    const { result, rerender } = renderHook(
+      ({ selectedFingerprints }) =>
+        useMetadataActions({
+          selectedFingerprints,
+          setVideos: noop,
+          setAvailableTags: noop,
+          notify: noop,
+        }),
+      { initialProps: { selectedFingerprints: ["active-fullscreen"] } }
+    );
+    const captured = ["active-fullscreen"];
+
+    rerender({ selectedFingerprints: ["new-grid-selection"] });
+    await act(async () => {
+      await result.current.handleAddTags(["keep"], captured);
+      await result.current.handleRemoveTag("keep", captured);
+    });
+
+    expect(window.electronAPI.metadata.addTags).toHaveBeenCalledWith(
+      captured,
+      ["keep"]
+    );
+    expect(window.electronAPI.metadata.removeTag).toHaveBeenCalledWith(
+      captured,
+      "keep"
+    );
+  });
+
+  it("drops a delayed tag completion after its fullscreen session changes", async () => {
+    const write = deferredPromise();
+    let videos = [
+      { id: "1", fingerprint: "fp1", rating: null, tags: [], dimensions: null },
+    ];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const setAvailableTags = vi.fn();
+    const notify = vi.fn();
+    let sessionIsCurrent = true;
+    window.electronAPI = {
+      metadata: { addTags: vi.fn(() => write.promise) },
+    };
+    const { result } = renderHook(() =>
+      useMetadataActions({
+        selectedFingerprints: ["fp1"],
+        setVideos,
+        setAvailableTags,
+        notify,
+        ownershipKey: "owner-a",
+      })
+    );
+
+    let pending;
+    act(() => {
+      pending = result.current.handleAddTags(["late"], ["fp1"], {
+        completionGuard: () => sessionIsCurrent,
+      });
+    });
+    sessionIsCurrent = false;
+    let mutationResult;
+    await act(async () => {
+      write.resolve({
+        updates: { fp1: { tags: ["late"] } },
+        tags: ["late"],
+      });
+      mutationResult = await pending;
+    });
+
+    expect(mutationResult).toMatchObject({ success: true, stale: true });
+    expect(videos[0].tags).toEqual([]);
+    expect(setAvailableTags).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("drops every delayed metadata response after collection ownership changes", async () => {
+    const writes = {
+      add: deferredPromise(),
+      remove: deferredPromise(),
+      rating: deferredPromise(),
+      review: deferredPromise(),
+      restore: deferredPromise(),
+      list: deferredPromise(),
+    };
+    let videos = [
+      {
+        id: "1",
+        fingerprint: "fp1",
+        rating: null,
+        reviewState: "unreviewed",
+        tags: [],
+        dimensions: null,
+      },
+    ];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const setAvailableTags = vi.fn();
+    const notify = vi.fn();
+    window.electronAPI = {
+      metadata: {
+        addTags: vi.fn(() => writes.add.promise),
+        removeTag: vi.fn(() => writes.remove.promise),
+        setRating: vi.fn(() => writes.rating.promise),
+        setReviewState: vi.fn(() => writes.review.promise),
+        restoreReview: vi.fn(() => writes.restore.promise),
+        listTags: vi.fn(() => writes.list.promise),
+      },
+    };
+    const { result, rerender } = renderHook(
+      ({ ownershipKey }) =>
+        useMetadataActions({
+          selectedFingerprints: ["fp1"],
+          setVideos,
+          setAvailableTags,
+          notify,
+          ownershipKey,
+        }),
+      { initialProps: { ownershipKey: "owner-a" } }
+    );
+
+    let pending;
+    act(() => {
+      pending = [
+        result.current.handleAddTags(["late"], ["fp1"]),
+        result.current.handleRemoveTag("old", ["fp1"]),
+        result.current.handleSetRating(5, ["fp1"]),
+        result.current.handleSetReviewState("pick", ["fp1"]),
+        result.current.handleRestoreReviewMetadata([
+          { fingerprint: "fp1", reviewState: "reviewed", rating: 3 },
+        ]),
+        result.current.refreshTagList(),
+      ];
+    });
+    rerender({ ownershipKey: "owner-b" });
+
+    const update = {
+      updates: {
+        fp1: { reviewState: "pick", rating: 5, tags: ["late"] },
+      },
+      tags: ["late"],
+    };
+    let results;
+    await act(async () => {
+      writes.add.resolve(update);
+      writes.remove.resolve(update);
+      writes.rating.resolve(update);
+      writes.review.resolve(update);
+      writes.restore.resolve(update);
+      writes.list.resolve({ tags: ["late"] });
+      results = await Promise.all(pending);
+    });
+
+    for (const mutationResult of results.slice(0, 5)) {
+      expect(mutationResult).toMatchObject({ success: true, stale: true });
+    }
+    expect(videos[0]).toMatchObject({
+      reviewState: "unreviewed",
+      rating: null,
+      tags: [],
+    });
+    expect(setAvailableTags).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("sets normalized review state via electron API", async () => {

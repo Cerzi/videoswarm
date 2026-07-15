@@ -106,6 +106,36 @@ describe("FullScreenModal media ownership", () => {
     expect(playSpy).not.toHaveBeenCalled();
   });
 
+  it("dispatches player and utility commands through catalog bindings", () => {
+    const onNavigate = vi.fn();
+    const onToggleDetails = vi.fn();
+    const onOpenHelp = vi.fn();
+    render(
+      <FullScreenModal
+        video={{ id: "catalog", name: "catalog.mp4", blobUrl: "blob:catalog" }}
+        onClose={vi.fn()}
+        onNavigate={onNavigate}
+        onToggleDetails={onToggleDetails}
+        onOpenHelp={onOpenHelp}
+      />
+    );
+    const element = document.body.querySelector("video");
+
+    fireEvent.keyDown(document, { key: "Q" });
+    fireEvent.keyDown(document, { key: "e" });
+    fireEvent.keyDown(document, { key: "Spacebar" });
+    fireEvent.keyDown(document, { key: "M" });
+    fireEvent.keyDown(document, { key: "i" });
+    fireEvent.keyDown(document, { key: "?" });
+
+    expect(onNavigate).toHaveBeenNthCalledWith(1, "prev");
+    expect(onNavigate).toHaveBeenNthCalledWith(2, "next");
+    expect(playSpy).toHaveBeenCalledWith();
+    expect(element.muted).toBe(false);
+    expect(onToggleDetails).toHaveBeenCalledOnce();
+    expect(onOpenHelp).toHaveBeenCalledOnce();
+  });
+
   it("revokes only the blob URL it creates", () => {
     const createObjectURL = vi
       .spyOn(URL, "createObjectURL")
@@ -134,7 +164,7 @@ describe("FullScreenModal media ownership", () => {
     const revokeObjectURL = vi
       .spyOn(URL, "revokeObjectURL")
       .mockImplementation(() => {});
-    const rendered = render(
+    render(
       <FullScreenModal
         video={{ id: "broken", name: "broken.mp4", file: new Blob(["video"]) }}
         onClose={vi.fn()}
@@ -226,14 +256,18 @@ describe("FullScreenModal media ownership", () => {
     };
     const rendered = render(<FullScreenModal {...common} />);
     expect(scheduler.getSnapshot().externalDecoders).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Turn audio on" }));
+    expect(document.body.querySelector("video").muted).toBe(false);
 
     rendered.rerender(<FullScreenModal {...common} workSuspended />);
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
+    expect(document.body.querySelector("video").muted).toBe(true);
     fireEvent.keyDown(document, { key: " " });
     expect(playSpy).not.toHaveBeenCalled();
 
     rendered.rerender(<FullScreenModal {...common} workSuspended={false} />);
     expect(scheduler.getSnapshot().externalDecoders).toBe(1);
+    expect(document.body.querySelector("video").muted).toBe(true);
   });
 
   it("synchronously mutes, detaches, and releases before close completes", () => {
@@ -286,6 +320,11 @@ describe("FullScreenModal media ownership", () => {
     expect(onClose).toHaveBeenCalledWith("escape");
     expect(element.getAttribute("src")).toBeNull();
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
+    fireEvent(
+      screen.getByRole("dialog", { hidden: true }),
+      new Event("cancel", { bubbles: true, cancelable: true })
+    );
+    expect(onClose).toHaveBeenCalledOnce();
 
     rendered.unmount();
     render(
@@ -386,6 +425,34 @@ describe("FullScreenModal media ownership", () => {
 
     expect(loadSpy).toHaveBeenCalledTimes(loadCount);
     expect(pauseSpy).toHaveBeenCalledTimes(pauseCount);
+    expect(scheduler.getSnapshot().externalDecoders).toBe(1);
+  });
+
+  it("reattaches a shared source for a new logical record", () => {
+    const scheduler = createMediaSlotScheduler({ maxExternalDecoders: 1 });
+    const sharedSource = "blob:shared-source";
+    const rendered = render(
+      <FullScreenModal
+        video={{ id: "shared-a", name: "a.mp4", blobUrl: sharedSource }}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        mediaScheduler={scheduler}
+      />
+    );
+    const element = document.body.querySelector("video");
+    fireEvent.loadedData(element);
+
+    rendered.rerender(
+      <FullScreenModal
+        video={{ id: "shared-b", name: "b.mp4", blobUrl: sharedSource }}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        mediaScheduler={scheduler}
+      />
+    );
+
+    expect(element.getAttribute("src")).toBe(sharedSource);
+    expect(element.dataset.mediaIdentity).toContain("shared-b");
     expect(scheduler.getSnapshot().externalDecoders).toBe(1);
   });
 
@@ -509,6 +576,29 @@ describe("FullScreenModal media ownership", () => {
     background.remove();
     returnButton.remove();
     document.body.style.overflow = "";
+  });
+
+  it("prefers the supplied gallery fallback over the historical opener", () => {
+    const opener = document.createElement("button");
+    const gallery = document.createElement("section");
+    gallery.tabIndex = -1;
+    document.body.append(opener, gallery);
+    opener.focus();
+
+    const rendered = render(
+      <FullScreenModal
+        video={{ id: "focus-fallback", name: "focus.mp4", blobUrl: "blob:focus" }}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        fallbackFocusRef={{ current: gallery }}
+      />
+    );
+
+    rendered.unmount();
+
+    expect(document.activeElement).toBe(gallery);
+    opener.remove();
+    gallery.remove();
   });
 
   it("repeats identity transitions without leaking external decoder leases", () => {
