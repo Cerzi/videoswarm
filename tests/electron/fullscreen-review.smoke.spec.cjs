@@ -201,6 +201,26 @@ test("fullscreen review releases media and preserves review context across navig
       false
     );
     await playbackVideo.focus();
+    await expect
+      .poll(() =>
+        playbackVideo.evaluate((video) => {
+          const style = getComputedStyle(video);
+          return {
+            focused: document.activeElement === video,
+            borderTopWidth: style.borderTopWidth,
+            outlineStyle: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+            boxShadow: style.boxShadow,
+          };
+        })
+      )
+      .toEqual({
+        focused: true,
+        borderTopWidth: "0px",
+        outlineStyle: "none",
+        outlineWidth: "0px",
+        boxShadow: "none",
+      });
     await page.keyboard.press("Space");
     await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
       true

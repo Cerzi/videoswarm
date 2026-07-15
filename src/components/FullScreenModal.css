@@ -179,14 +179,16 @@
   max-width: 100%;
   max-height: 100%;
   border: 0;
-  outline: none;
+  outline: 0;
   object-fit: contain;
   background: #030507;
 }
 
+.fullscreen-review__video:focus,
 .fullscreen-review__video:focus-visible {
-  outline: 2px solid #6ea8fe;
-  outline-offset: -2px;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
 }
 
 .fullscreen-review__nav {
