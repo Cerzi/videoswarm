@@ -166,6 +166,15 @@
   font-size: 0.7rem;
   line-height: 1.45;
 }
+.review-results-action--copy {
+  grid-template-columns: minmax(0, 1fr);
+}
+.review-results-action__copy-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+}
 .review-results-action button,
 .review-results-dialog__footer button {
   min-height: 2.1rem;
@@ -185,6 +194,143 @@
 .review-results-action button:disabled,
 .review-results-dialog button:disabled { opacity: 0.43; cursor: not-allowed; }
 
+.review-results-copy-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  color: #d6dade;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.review-results-copy-option input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.05rem 0 0;
+  accent-color: var(--color-accent);
+}
+.review-results-copy-option small {
+  display: block;
+  margin-top: 0.15rem;
+  color: #8f969b;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.review-results-copy-plan,
+.review-results-copy-running,
+.review-results-copy-result {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.review-results-copy-plan__facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+.review-results-copy-plan__facts div {
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  background: rgba(0, 0, 0, 0.17);
+  border-radius: 7px;
+}
+.review-results-copy-plan__facts dt {
+  color: #858c91;
+  font-size: 0.61rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.review-results-copy-plan__facts dd {
+  overflow: hidden;
+  margin: 0.15rem 0 0;
+  color: #e5e8ea;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-results-copy-plan .review-results-dialog__notice {
+  margin-bottom: 0;
+}
+.review-results-copy-plan .review-results-dialog__notice strong {
+  display: block;
+}
+.review-results-copy-samples {
+  display: grid;
+  gap: 0.18rem;
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  color: #bcc2c6;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.66rem;
+  overflow-wrap: anywhere;
+}
+.review-results-copy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+.review-results-action .review-results-copy-actions__secondary {
+  color: #d7dbde;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.review-results-copy-running__status {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.45rem;
+  color: #e7e9eb;
+  font-size: 0.73rem;
+}
+.review-results-copy-running__status span {
+  min-width: 0;
+  overflow: hidden;
+  color: #92999e;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-results-dialog__progress--copy {
+  margin-bottom: 0.65rem;
+}
+.review-results-dialog__progress--copy span {
+  background: linear-gradient(90deg, #3b82f6, var(--color-accent));
+}
+.review-results-copy-running > button {
+  display: block;
+  margin-left: auto;
+}
+
+.review-results-copy-result {
+  padding: 0.75rem;
+  color: #c9f2d0;
+  background: rgba(81, 207, 102, 0.08);
+  border: 1px solid rgba(81, 207, 102, 0.22);
+  border-radius: 8px;
+}
+.review-results-copy-result--partial {
+  color: #f5ddae;
+  background: rgba(245, 159, 0, 0.08);
+  border-color: rgba(245, 159, 0, 0.25);
+}
+.review-results-copy-result > strong {
+  display: block;
+  font-size: 0.8rem;
+}
+.review-results-copy-result p {
+  color: inherit;
+}
+.review-results-copy-result > button {
+  display: block;
+  margin: 0.7rem 0 0 auto;
+}
+
 .review-results-dialog__footer {
   display: flex;
   align-items: center;
@@ -200,7 +346,11 @@
 @media (max-width: 600px) {
   .review-results-dialog__counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-results-action { grid-template-columns: 1fr; }
+  .review-results-action__copy-heading { grid-template-columns: 1fr; }
   .review-results-action button { width: 100%; }
+  .review-results-copy-plan__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-results-copy-actions { flex-direction: column-reverse; }
+  .review-results-copy-running__status { display: grid; gap: 0.2rem; }
   .review-results-dialog__footer span { display: none; }
   .review-results-dialog__footer { justify-content: flex-end; }
 }

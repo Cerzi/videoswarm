@@ -1,7 +1,7 @@
 # Review Workflow and Result Processing
 
 Status: Active design specification
-Last updated: 2026-07-14
+Last updated: 2026-07-19
 
 ## Summary
 
@@ -160,44 +160,70 @@ authorization and identity checks use a separate 16-worker bounded pool;
 failed-item retry grants retain their original identity and profile ownership
 constraints.
 
-### JSON manifest export
+### Copy Accepted
 
-Status: **Implemented** (2026-07-14)
+Status: **Implemented** (2026-07-19)
 
-The main process exports a deterministic, versioned audit manifest through a
-native save dialog and atomic file replacement. Renderer code never chooses an
-arbitrary output path.
+Copy Accepted turns the review result into a usable, non-destructive media
+collection. It operates on the same authoritative, unfiltered navigation scope
+shown by Process Results: the active indexed root, current directory, and
+direct-folder/current-subtree/all-descendants scope. An accepted file is a
+present file instance whose content-keyed review state is exactly `pick`.
+Ratings and neutral Reviewed state never make a file eligible. When duplicate
+instances of accepted content are present in scope, each concrete instance is
+planned and reported independently.
 
-Manifest v1 contains:
+The renderer submits only the root identity, relative directory, scope, and
+bounded options. The main process owns every native source and destination
+path, validates the active profile/window owner and completed index coverage,
+and obtains the destination through a native directory picker. Cancelling the
+picker performs no database materialization or filesystem work. Renderer
+records and renderer-supplied source or destination paths are never accepted
+as authority.
 
-- `format: "videoswarm-review-manifest"` and `version: 1`.
-- Export timestamp and active profile identity.
-- A safe source-root display name, recursive-coverage and refresh metadata,
-  plus the root-relative directory and selected scope.
-- Exact state, reviewed-total, instance, and unique-content counts.
-- Up to 20,000 sorted present instances with relative path, fingerprint,
-  review state, rating, tags, size, timestamps, and dimensions.
+The default copy preserves each media file's path relative to the library
+root beneath the chosen destination. An optional **Include adjacent JSON
+sidecars** choice is off by default. When enabled, the plan checks only the
+three already-recognized exact adjacent candidates for each accepted clip, in
+the established order:
 
-The absolute source-root path and per-record absolute paths are deliberately
-excluded so the audit is portable and does not disclose native paths. Raw
-sidecar/workflow JSON and lazily parsed generation metadata are also excluded.
-The native save dialog opens before any record query, so cancellation performs
-no library materialization. A single-flight coordinator then reads only the
-selected scope through bounded SQLite iterators: 20,000 records, 100,000 tag
-assignments, 8 MiB of tag text, and 24 MiB of live query data. Serialized output
-is limited to 32 MiB and the generated filename is bounded to 180 safe ASCII
-bytes. Profile changes and shutdown pause and drain export ownership;
-publication revalidates the owner immediately before atomic rename. The
-persisted recursive-coverage flag and completed-scan timestamps prevent stale
-or partially indexed descendants from entering a manifest.
+1. `video.ext.json`
+2. `stem.workflow.json`
+3. `stem.json`
+
+There is no directory scan or fuzzy sidecar matching. A sidecar reached by
+more than one media item is copied at most once.
+
+Copy Accepted never overwrites a destination file. Before copying, a bounded
+main-process planner validates source containment and identity, normalizes
+every relative destination, detects both existing-target and intra-plan
+collisions, and reports the files that will be skipped. The user confirms the
+preflight summary before the job begins. The copy operation uses exclusive
+destination creation as a second collision check so a file appearing after
+preflight is skipped rather than replaced.
+
+Planning and execution have explicit tested limits for accepted media,
+sidecar candidates, path and byte accounting, concurrent native copies,
+retained error detail, and IPC payload size. A main-owned job ID drives
+throttled progress containing planned, copied, skipped, failed, and byte
+counts. Cancellation stops admitting new copy work, waits for bounded in-flight
+operations, and returns a truthful partial result; files already copied remain
+valid. Per-file failures do not abort unrelated copies, and overflow beyond the
+bounded detailed failure list remains visible through aggregate counts.
+
+The source files, their review/rating/tag metadata, and the source library
+index are never changed. A successful copy does not automatically register the
+destination as a library or transfer profile metadata. Profile changes, owner
+destruction, source-root invalidation, application shutdown, and relaunch first
+cancel the job and then drain its bounded in-flight work. Stale progress and
+completion events are ignored by owner, profile generation, and job token.
 
 ## Deferred work
 
 Status: **Unimplemented**
 
-- Copy or move accepted media to a destination chosen by the user.
-- Collision policy, cross-device move recovery, relative-tree preservation,
-  bounded cancellation/progress, and optional sidecar handling.
+- Move accepted media. Cross-device move recovery and rollback need a separate
+  destructive-operation design after copy behavior has been proven.
 - Metadata transfer for copied content. Fingerprint v1 includes creation time,
   so a copied instance cannot yet be promised the same content identity.
 - Result sets above 2,000 rejects without narrowing folder scope. A future
@@ -219,15 +245,17 @@ Status: **Unimplemented**
 - Reject trashing is explicit, limited to local Electron-backed instances,
   bounded, identity-confirmed, and reports partial failures without touching
   sidecars.
-- Manifest export is authorized, deterministic, bounded, atomic, cancellable,
-  profile-isolated, excludes absolute native paths, and excludes stale
-  recursive rows.
+- Copy Accepted satisfies the contract above: authoritative `pick` instances
+  only, native path ownership,
+  relative-tree preservation, no overwrite, bounded preflight/job/progress,
+  cancellation, partial results, and no source or metadata mutation.
 
 ## Implementation and verification record
 
 ### 2026-07-14
 
-All non-deferred sections in this specification are **Implemented**.
+At this checkpoint, all sections except Copy Accepted and the explicitly
+deferred work were **Implemented**.
 
 - Profile database migration and metadata writes enforce the rating/review
   invariant, preserve Accept/Reject decisions during rating changes, clear the
@@ -242,15 +270,12 @@ All non-deferred sections in this specification are **Implemented**.
   restores every review/rating pair in one profile-owned SQLite transaction;
   renderer-controlled tags are never admitted to that operation.
 - Process Results summarizes the authoritative navigation scope, reuses the
-  native bounded trash path for local rejected instances, reconciles moved
-  instances with SQLite immediately, and exports a deterministic, scoped,
-  bounded, single-flight atomic manifest without absolute native paths.
+  native bounded trash path for local rejected instances, and reconciles moved
+  instances with SQLite immediately. Copy Accepted was not part of this
+  earlier checkpoint.
 - Focused automated coverage is provided by
   `src/App.test.jsx`,
   `main/__tests__/reviewLibrary.test.js`,
-  `main/__tests__/reviewManifest.test.js`,
-  `main/__tests__/reviewManifestDatabase.test.js`,
-  `main/__tests__/reviewManifestExportCoordinator.test.js`,
   `main/__tests__/reviewMetadataRestore.test.js`,
   `main/__tests__/reviewMainIntegration.test.js`,
   `main/__tests__/preloadNativeIpc.test.js`,
@@ -261,3 +286,45 @@ All non-deferred sections in this specification are **Implemented**.
   `src/hotkeys/shortcutCatalog.test.js`, and
   `src/hooks/selection/useHotkeys.test.js`. The normal completion gate also
   runs the full Vitest suite and Vite production build.
+
+### 2026-07-19
+
+Copy Accepted is **Implemented**.
+
+- The renderer sends only the active root, relative directory, folder scope,
+  and the optional sidecar flag. The main process reads present `pick`
+  instances from profile-local SQLite and never accepts renderer media/path
+  records as copy authority.
+- Planning is bounded to 20,000 accepted media instances, 16 MiB of aggregate
+  path material, eight expiring native plans, and 100 retained native issue
+  samples. Renderer disclosure is further reduced to six safe relative-path
+  samples.
+- The native directory picker is followed by a complete preflight. It rejects
+  destinations inside the source library, preserves root-relative paths,
+  deduplicates the three exact recognized sidecars, validates regular-file and
+  directory identities, reports missing sources and collisions, and returns
+  no absolute destination or source paths.
+- Execution uses a globally bounded two-worker pool and exclusive destination
+  creation. Every source is identity-checked immediately before and after its
+  copy; every concrete destination parent is revalidated before publication.
+  A destination-directory replacement cannot redirect work through a symlink,
+  and a source that changes mid-copy causes the exclusively owned destination
+  to be removed and reported rather than retained as a valid result.
+- Progress is throttled to 100 ms and keyed by the native plan. The dialog
+  distinguishes preflight, copy, cancellation, success, and partial/fatal
+  outcomes; it never overwrites, supports choosing another destination, and
+  keeps originals plus all review/rating/tag metadata unchanged.
+- Prepared and active work is owner/profile-generation bound. Root changes
+  cancel renderer-held plans; renderer destruction cancels owner work; profile
+  transitions and shutdown cancel and fully drain the native worker pool.
+- Focused coverage is provided by
+  `main/__tests__/reviewCopyAccepted.test.js`,
+  `main/__tests__/reviewExportScope.test.js`,
+  `main/__tests__/acceptedExportDatabase.test.js`,
+  `main/__tests__/reviewMainIntegration.test.js`,
+  `main/__tests__/preloadNativeIpc.test.js`,
+  `src/components/ProcessReviewResultsDialog.test.jsx`,
+  `src/review/reviewResults.test.js`, and `src/App.test.jsx`.
+- Completion verification passed 1,042 standard Vitest tests, 51 Electron-ABI
+  SQLite tests, ESLint, main/preload/native syntax checks, the Vite production
+  build, and `git diff --check` on 2026-07-19.

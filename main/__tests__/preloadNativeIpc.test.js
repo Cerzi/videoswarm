@@ -152,23 +152,54 @@ describe("preload native-work bridge", () => {
     );
   });
 
-  it("exports a review manifest by scope without accepting renderer records", async () => {
+  it("exposes bounded Accepted-copy planning, progress, start, and cancellation", async () => {
     const { api, ipcRenderer } = loadPreload();
+    const onProgress = vi.fn();
 
-    await api.review.exportManifest({
+    await api.review.copyAccepted.prepare({
       rootPath: "/library/root",
       directory: "batch/one",
       scope: "current-folder",
+      includeSidecars: true,
       clips: [{ absolutePath: "/private/clip.mp4" }],
     });
+    await api.review.copyAccepted.start("native-plan-1");
+    await api.review.copyAccepted.cancel("native-plan-1");
+    const unsubscribe = api.review.copyAccepted.onProgress(onProgress);
 
-    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
-      "review:export-manifest",
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      1,
+      "review:copy-accepted:prepare",
       {
         rootPath: "/library/root",
         directory: "batch/one",
         scope: "current-folder",
+        includeSidecars: true,
       }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      "review:copy-accepted:start",
+      { planId: "native-plan-1", collisionPolicy: "skip" }
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      "review:copy-accepted:cancel",
+      { planId: "native-plan-1" }
+    );
+
+    const progressHandler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "review:copy-accepted-progress"
+    )[1];
+    progressHandler({}, { planId: "native-plan-1", copiedMedia: 2 });
+    expect(onProgress).toHaveBeenCalledWith({
+      planId: "native-plan-1",
+      copiedMedia: 2,
+    });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "review:copy-accepted-progress",
+      progressHandler
     );
   });
 

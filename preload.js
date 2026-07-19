@@ -36,6 +36,12 @@ function normalizePlaybackSourceRequest(payload) {
   };
 }
 
+function normalizeAcceptedCopyPlanId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : "";
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -367,12 +373,31 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   review: {
-    exportManifest: async (payload = {}) =>
-      ipcRenderer.invoke("review:export-manifest", {
-        rootPath: payload?.rootPath,
-        directory: payload?.directory ?? "",
-        scope: payload?.scope,
-      }),
+    copyAccepted: {
+      prepare: async (payload = {}) =>
+        ipcRenderer.invoke("review:copy-accepted:prepare", {
+          rootPath: payload?.rootPath,
+          directory: payload?.directory ?? "",
+          scope: payload?.scope,
+          includeSidecars: payload?.includeSidecars === true,
+        }),
+      start: async (planId) =>
+        ipcRenderer.invoke("review:copy-accepted:start", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+          collisionPolicy: "skip",
+        }),
+      cancel: async (planId) =>
+        ipcRenderer.invoke("review:copy-accepted:cancel", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      onProgress: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on("review:copy-accepted-progress", handler);
+        return () =>
+          ipcRenderer.removeListener("review:copy-accepted-progress", handler);
+      },
+    },
     sessions: {
       list: async () => ipcRenderer.invoke("review-sessions:list"),
       get: async (rootPath) =>

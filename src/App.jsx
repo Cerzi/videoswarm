@@ -200,6 +200,7 @@ function App() {
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
+  const [acceptedCopyProgress, setAcceptedCopyProgress] = useState(null);
   const [fullscreenTransientSurface, setFullscreenTransientSurface] =
     useState(null);
   const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
@@ -506,7 +507,17 @@ function App() {
 
   useEffect(() => {
     setProcessResultsOpen(false);
+    setAcceptedCopyProgress(null);
   }, [activeRootPath]);
+
+  useEffect(() => {
+    const subscribe = window.electronAPI?.review?.copyAccepted?.onProgress;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((progress) => {
+      if (!progress || typeof progress !== "object") return;
+      setAcceptedCopyProgress(progress);
+    });
+  }, []);
 
   const {
     filters,
@@ -1737,26 +1748,87 @@ function App() {
     [deps]
   );
 
-  const handleExportReviewManifest = useCallback(async () => {
-    const exportManifest = window.electronAPI?.review?.exportManifest;
-    if (typeof exportManifest !== "function") {
-      throw new Error("Review manifest export is unavailable");
-    }
-    const result = await exportManifest({
-      rootPath: activeRootPath,
-      directory: currentDirectory,
-      scope: folderScope,
-    });
-    if (result?.success === false) {
-      throw new Error(result.error || "Review manifest export failed");
-    }
-    if (result?.cancelled) return result;
-    notify(
-      `Exported ${Number(result?.fileCount || 0).toLocaleString()} review record(s)`,
-      "success"
-    );
-    return result;
-  }, [activeRootPath, currentDirectory, folderScope, notify]);
+  const handlePrepareAcceptedCopy = useCallback(
+    async ({ includeSidecars = false } = {}) => {
+      const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
+      if (typeof prepare !== "function") {
+        throw new Error("Copy Accepted is unavailable");
+      }
+      setAcceptedCopyProgress(null);
+      const result = await prepare({
+        rootPath: activeRootPath,
+        directory: currentDirectory,
+        scope: folderScope,
+        includeSidecars,
+      });
+      if (result?.success === false) {
+        throw new Error(result.error || "Accepted-copy preflight failed");
+      }
+      return result;
+    },
+    [activeRootPath, currentDirectory, folderScope]
+  );
+
+  const handleStartAcceptedCopy = useCallback(
+    async (planId) => {
+      const start = window.electronAPI?.review?.copyAccepted?.start;
+      if (typeof start !== "function") {
+        throw new Error("Copy Accepted is unavailable");
+      }
+      setAcceptedCopyProgress(null);
+      const result = await start(planId);
+      const copiedMedia = Number(
+        result?.copiedCount ?? result?.copiedMedia ?? 0
+      );
+      const copiedSidecars = Number(
+        result?.sidecarCopiedCount ?? result?.copiedSidecars ?? 0
+      );
+      const skipped = Number(
+        result?.skippedCount ?? result?.skippedCollisions ?? 0
+      );
+      const failed = Number(result?.failedCount || 0);
+      const missing = Number(result?.missingCount || 0);
+      if (result?.cancelled) {
+        notify(
+          `Copy cancelled after ${copiedMedia.toLocaleString()} clip(s)`,
+          "info"
+        );
+      } else if (
+        result?.success &&
+        skipped === 0 &&
+        failed === 0 &&
+        missing === 0
+      ) {
+        notify(
+          `Copied ${copiedMedia.toLocaleString()} accepted clip(s)${
+            copiedSidecars > 0
+              ? ` and ${copiedSidecars.toLocaleString()} workflow JSON file(s)`
+              : ""
+          }`,
+          "success"
+        );
+      } else if (
+        copiedMedia > 0 ||
+        copiedSidecars > 0 ||
+        skipped > 0 ||
+        failed > 0 ||
+        missing > 0
+      ) {
+        notify(
+          `Copy finished with issues: ${copiedMedia.toLocaleString()} clip(s) copied, ${skipped.toLocaleString()} skipped, ${(failed + missing).toLocaleString()} unavailable or failed`,
+          "warning"
+        );
+      }
+      return result;
+    },
+    [notify]
+  );
+
+  const handleCancelAcceptedCopy = useCallback(async (planId) => {
+    const cancel = window.electronAPI?.review?.copyAccepted?.cancel;
+    if (typeof cancel !== "function") return { cancelled: false };
+    return cancel(planId);
+  }, []);
 
   const handleContextAction = useCallback(
     (actionId) => {
@@ -4320,7 +4392,10 @@ function App() {
             busy={reviewWorkflow.isBusy}
             onClose={() => setProcessResultsOpen(false)}
             onTrashRejects={handleTrashReviewRejects}
-            onExportManifest={handleExportReviewManifest}
+            onPrepareAcceptedCopy={handlePrepareAcceptedCopy}
+            onStartAcceptedCopy={handleStartAcceptedCopy}
+            onCancelAcceptedCopy={handleCancelAcceptedCopy}
+            acceptedCopyProgress={acceptedCopyProgress}
           />
           <DataLocationDialog
             open={isDataLocationOpen}

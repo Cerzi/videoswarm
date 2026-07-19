@@ -2181,6 +2181,165 @@ describe("App hook composition", () => {
     await waitFor(() => expect(processResults).toBeEnabled());
   });
 
+  test("plans Copy Accepted from the authoritative native scope without renderer records", async () => {
+    const acceptedVideo = {
+      id: "accepted-video",
+      name: "accepted.mp4",
+      dirname: "",
+      fingerprint: "fingerprint-accepted",
+      reviewState: "pick",
+      isElectronFile: true,
+      fullPath: "/outputs/accepted.mp4",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [acceptedVideo],
+      activeRootPath: "/outputs",
+      libraryRoot: {
+        rootPath: "/outputs",
+        name: "outputs",
+        recursive: true,
+        refreshState: "idle",
+      },
+      loadingStatus: { phase: "complete" },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [acceptedVideo],
+    }));
+    const prepare = vi.fn().mockResolvedValue({
+      success: true,
+      planId: "copy-plan-app-1",
+      destinationLabel: "Accepted",
+      mediaCount: 1,
+      sidecarCount: 0,
+      totalBytes: 16,
+      collisionCount: 0,
+      collisionSamples: [],
+      missingCount: 0,
+      failureCount: 0,
+      failureSamples: [],
+      totalFiles: 1,
+      copyableCount: 1,
+      canStart: true,
+    });
+    const start = vi.fn().mockResolvedValue({
+      success: true,
+      copiedCount: 1,
+      copiedMedia: 1,
+      failedCount: 0,
+    });
+    const cancel = vi.fn().mockResolvedValue({ cancelled: true });
+    const unsubscribe = vi.fn();
+    const onProgress = vi.fn(() => unsubscribe);
+    window.electronAPI = {
+      review: {
+        copyAccepted: { prepare, start, cancel, onProgress },
+      },
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const { unmount } = render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Process results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+
+    await waitFor(() => expect(prepare).toHaveBeenCalledWith({
+      rootPath: "/outputs",
+      directory: "",
+      scope: "all-descendants",
+      includeSidecars: false,
+    }));
+    expect(prepare.mock.calls[0][0]).not.toHaveProperty("videos");
+    expect(prepare.mock.calls[0][0]).not.toHaveProperty("records");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith("copy-plan-app-1"));
+    expect(await screen.findByText("Copy complete")).toBeInTheDocument();
+
+    unmount();
+    expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test("closes and cancels a prepared Copy Accepted plan when root ownership changes", async () => {
+    const acceptedVideo = {
+      id: "accepted-video",
+      name: "accepted.mp4",
+      dirname: "",
+      fingerprint: "fingerprint-accepted",
+      reviewState: "pick",
+    };
+    let lifecycle = {
+      ...electronLifecycleReturn,
+      videos: [acceptedVideo],
+      activeRootPath: "/outputs",
+      libraryRoot: {
+        rootPath: "/outputs",
+        name: "outputs",
+        recursive: true,
+        refreshState: "idle",
+      },
+      loadingStatus: { phase: "complete" },
+    };
+    useElectronLifecycleMock.mockImplementation(() => lifecycle);
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [acceptedVideo],
+    }));
+    const cancel = vi.fn().mockResolvedValue({ success: true, cancelled: true });
+    window.electronAPI = {
+      review: {
+        copyAccepted: {
+          prepare: vi.fn().mockResolvedValue({
+            success: true,
+            planId: "copy-plan-root-change",
+            destinationLabel: "Accepted",
+            mediaCount: 1,
+            sidecarCount: 0,
+            totalBytes: 16,
+            collisionCount: 0,
+            collisionSamples: [],
+            missingCount: 0,
+            failureCount: 0,
+            failureSamples: [],
+            totalFiles: 1,
+            copyableCount: 1,
+            canStart: true,
+          }),
+          start: vi.fn(),
+          cancel,
+          onProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Process results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+    await screen.findByRole("button", { name: "Copy 1 file" });
+
+    lifecycle = {
+      ...lifecycle,
+      activeRootPath: "/other",
+      libraryRoot: {
+        ...lifecycle.libraryRoot,
+        rootPath: "/other",
+        name: "other",
+      },
+    };
+    rendered.rerender(<App />);
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(
+      "copy-plan-root-change"
+    ));
+    expect(screen.queryByRole("dialog", { name: "Process review results" }))
+      .not.toBeInTheDocument();
+  });
+
   test("restores recursive scope when navigating from a child folder to the root", async () => {
     const videos = [
       { id: "root", name: "root.mp4", dirname: "", reviewState: "reviewed" },

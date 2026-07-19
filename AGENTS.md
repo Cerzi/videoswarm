@@ -46,14 +46,15 @@ Node.js `>=22.12.0` is required. Electron 43 requires this, and native modules m
   `npm run postinstall`
 - Run tests:
   `npm test -- --run`
-
-There is currently no real lint command; `npm run lint` only echoes a placeholder.
+- Run zero-warning lint:
+  `npm run lint`
 
 ## Verification Expectations
 
 Run focused tests for the area changed, then run the full suite before handing off when practical:
 
 - Full test suite: `npm test -- --run`
+- Zero-warning lint: `npm run lint`
 - Renderer build smoke test: `npm run vite:build`
 - Native/Electron dependency check after dependency changes: `npm run postinstall`
 - Package smoke test after packaging or Electron config changes: `npm run electron:pack` or `npm run electron:build`
@@ -85,7 +86,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - If adding or changing IPC, update all three surfaces together: the `ipcMain` handler in `main.js` or `main/`, the preload bridge in `preload.js`, and renderer call sites/tests.
 - Local Electron media must use generation-bound `videoswarm-media://` `sourceUrl` values resolved by the main-process protocol. Keep `fullPath` only for authorized native actions; do not construct renderer `file://` media URLs. Preserve Windows/UNC path behavior at the IPC/native-action boundary.
 - `VideoCard.jsx` manually creates, detaches, re-parents, and cleans up `<video>` elements. Be conservative there and keep tests close to any behavior changes.
-- Fullscreen playback can temporarily adopt an existing video node. Avoid changes that duplicate active media elements or leak file handles.
+- Fullscreen playback owns a separate modal media element and decoder lease; it never adopts a grid video node. Keep synchronous teardown and exact lease/source ownership covered when changing either playback surface.
 - Resource limits are centralized in `useVideoResourceManager`; changes here affect memory pressure, concurrent loading, and eviction behavior across large collections.
 - Metadata is keyed by file fingerprints and stored in profile-specific SQLite databases. Preserve profile isolation and migration behavior.
 - Profile settings use bounded, atomic JSON files through
@@ -99,7 +100,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - Main-process tests use temp directories and direct module calls where possible.
 - Renderer tests commonly mock `window.electronAPI`, IntersectionObserver-like behavior, and large child components.
 - Use Testing Library and `act(...)` for React state/timer updates. Prefer adding focused regression tests near the changed module.
-- The full suite currently includes skipped placeholder suites for some database metadata tests; do not remove skips unless implementing those tests.
+- The host-Node suite intentionally skips Electron-ABI SQLite cases when the Electron-built `better-sqlite3` binary cannot load under Node. These are gated native suites, not placeholders; exercise them separately with `npm run test:electron-abi`.
 
 ## Dependency And Native Module Notes
 

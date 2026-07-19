@@ -23,6 +23,7 @@ describe("summarizeReviewScope", () => {
       instanceCount: 5,
       uniqueCount: 4,
       pick: 1,
+      acceptedCount: 1,
       reviewed: 1,
       reject: 1,
       unreviewed: 2,
@@ -31,6 +32,7 @@ describe("summarizeReviewScope", () => {
       trashableRejectCount: 1,
       nonLocalRejectCount: 0,
       canTrashRejects: true,
+      canCopyAccepted: true,
     });
   });
 
@@ -93,6 +95,8 @@ describe("summarizeReviewScope", () => {
       reviewedTotal: 0,
       reject: 0,
       canTrashRejects: false,
+      acceptedCount: 0,
+      canCopyAccepted: false,
     });
   });
 });

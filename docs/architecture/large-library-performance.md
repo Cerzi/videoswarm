@@ -1,7 +1,7 @@
 # Large Library, Playback, and Reliability Architecture
 
 Status: Core architecture implemented; deferred research tracked below
-Last updated: 2026-07-14
+Last updated: 2026-07-19
 
 ## Purpose
 
@@ -501,14 +501,16 @@ The completed high-throughput workflow adds stable scope progress, one-handed
 A/S/D/F primary shortcuts, compatibility aliases, numeric ratings, opt-in
 auto-advance, one-step undo, and an explicit Process Results dialog. Result
 processing can move a bounded set of local rejects through the native trash
-path or export a deterministic JSON manifest without absolute native paths.
-The full contract is specified in
+path or copy accepted instances into a user-selected destination with bounded,
+collision-safe native work. The full contract is specified in
 [`review-workflow.md`](review-workflow.md).
 
 The implementation keeps this library deliberately lightweight. Pinned roots,
 saved views, directory rows, and metadata remain profile-local references to
-source files; Video Swarm never copies or takes ownership of the media. Folder
-view restoration is a 128-entry in-memory LRU containing only serializable
+source files; Video Swarm does not take ownership of source media. Copy
+Accepted creates only an explicit user-directed copy and does not turn its
+destination into an app-managed library. Folder view restoration
+is a 128-entry in-memory LRU containing only serializable
 scroll offsets, bounded ID selections, filters, and sort state. It never
 retains media elements, React nodes, blobs, or inactive video records.
 
@@ -727,7 +729,7 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Asynchronous thumbnail IPC and persistence | **Implemented** | Thumbnail reads/writes use asynchronous IPC, bounded read/write lanes, byte/pixel-aware memory and disk LRUs, atomic files, and coalesced bounded index persistence. |
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
 | Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
-| Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, inspector, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and manifest export without absolute native paths are implemented; see [`review-workflow.md`](review-workflow.md). |
+| Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, inspector, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and authoritative no-overwrite Copy Accepted are implemented; see [`review-workflow.md`](review-workflow.md). |
 | Embedded generation metadata | **Initial slice implemented** | Bounded, instance-keyed embedded ComfyUI/VHS API-graph extraction is primary, with exact sidecar fallback, compact profile-local storage, provenance, LoRAs and richer sampling fields. Packaged cross-platform reader delivery, visual-graph interpretation, custom concat adapters, and Electron fixture smoke remain explicit follow-up work in [`embedded-generation-metadata.md`](embedded-generation-metadata.md). |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
 | Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
@@ -1224,10 +1226,15 @@ universal limits.
 16. **Implemented** — Add the scope-stable review toolbar, profile-local opt-in
     auto-advance, one-step ownership-bound undo, and authoritative Process
     Results dialog. Local rejected instances reuse the hardened native trash
-    path with a 2,000-file bound; manifest export is deterministic, atomic,
-    limited to 20,000 records and 32 MiB, and deliberately excludes absolute
-    native paths. See [`review-workflow.md`](review-workflow.md) for the full
-    implementation and verification record.
+    path with a 2,000-file bound. See
+    [`review-workflow.md`](review-workflow.md) for the full implementation and
+    verification record.
+17. **Implemented** — Replace the deferred accepted-result placeholder with a
+    main-owned Copy Accepted workflow. Authoritative SQLite scope reads,
+    native destination ownership, root-relative paths, optional exact
+    sidecars, collision preflight, exclusive no-overwrite writes, bounded
+    progress/cancellation, and lifecycle draining are verified in
+    [`review-workflow.md`](review-workflow.md).
 
 The following work remains **Unimplemented** after this slice:
 

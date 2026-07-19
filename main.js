@@ -105,13 +105,14 @@ const {
   trashAuthorizedPaths,
 } = require("./main/ipc-trash");
 const {
-  REVIEW_MANIFEST_MAX_RECORDS,
-  normalizeManifestDirectory,
-  normalizeManifestScope,
-} = require("./main/review-manifest");
+  ACCEPTED_COPY_MAX_MEDIA,
+  ACCEPTED_COPY_MAX_PATH_BYTES,
+  normalizeReviewExportDirectory,
+  normalizeReviewExportScope,
+} = require("./main/review-export-scope");
 const {
-  createReviewManifestExportCoordinator,
-} = require("./main/review-manifest-export-coordinator");
+  createReviewCopyAcceptedCoordinator,
+} = require("./main/review-copy-accepted");
 const {
   normalizeReviewRestoreSnapshots,
 } = require("./main/review-metadata-restore");
@@ -891,6 +892,7 @@ function registerNativeWorkOwner(sender) {
 function invalidateNativeWorkOwner(sender) {
   if (!sender) return false;
   reviewSessionFlushCoordinator.cancelOwner(sender);
+  reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
@@ -916,6 +918,7 @@ function activateNativeWorkOwner(sender) {
 function disposeNativeWorkOwner(sender) {
   if (!sender) return false;
   reviewSessionFlushCoordinator.cancelOwner(sender);
+  reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
@@ -1852,7 +1855,7 @@ async function runSerializedProfileOperation(run) {
     trashAdmissionOpen = false;
     await Promise.all([
       drainActiveTrashOperations(),
-      reviewManifestExportCoordinator.pauseAndDrain(),
+      reviewCopyAcceptedCoordinator.pauseAndDrain(),
     ]);
     trashConfirmationStore.revokeAll();
     try {
@@ -1860,7 +1863,7 @@ async function runSerializedProfileOperation(run) {
     } finally {
       if (!nativeShutdownPreparing && !nativeShutdownRequested) {
         trashAdmissionOpen = true;
-        reviewManifestExportCoordinator.resume();
+        reviewCopyAcceptedCoordinator.resume();
       }
     }
   };
@@ -3963,14 +3966,13 @@ function runLibraryCatalogOperation(operation) {
   return runMetadataContextOperation(operation, "LIBRARY_CATALOG_ERROR");
 }
 
-const reviewManifestExportCoordinator =
-  createReviewManifestExportCoordinator({
+const reviewCopyAcceptedCoordinator =
+  createReviewCopyAcceptedCoordinator({
     captureContext: ({ owner }) => {
       const context = captureMetadataContext();
       registerNativeWorkOwner(owner);
       return {
         ...context,
-        profileName: getProfileDisplayName(context.profileId),
         ownerContext: nativeOwnerLifecycle.capture(owner),
       };
     },
@@ -3991,40 +3993,52 @@ const reviewManifestExportCoordinator =
       assertRendererPath({ sender: owner }, rootPath, "directory"),
     getRoot: ({ context, rootPath }) =>
       context.metadataStore.getLibraryRoot(rootPath),
-    showSaveDialog: async ({ owner, defaultName }) => {
+    showDirectoryPicker: async ({ owner }) => {
       const win = BrowserWindow.fromWebContents(owner);
       if (!win || win.isDestroyed() || owner.isDestroyed?.()) {
         throw new ProfileOperationInvalidatedError();
       }
-      return dialog.showSaveDialog(win, {
-        title: "Export review manifest",
-        defaultPath: path.join(app.getPath("documents"), defaultName),
-        filters: [{ name: "JSON manifest", extensions: ["json"] }],
-        properties: ["createDirectory", "showOverwriteConfirmation"],
+      return dialog.showOpenDialog(win, {
+        title: "Copy accepted clips",
+        buttonLabel: "Choose destination",
+        defaultPath: app.getPath("documents"),
+        properties: ["openDirectory", "createDirectory"],
       });
     },
-    queryScopeRecords: ({
+    queryAcceptedInstances: ({
       context,
       rootPath,
       directory,
       scope,
-      limit,
+      maxRecords,
+      maxPathBytes,
       assertActive,
-    }) => {
-      const requestedMaximum = Number(limit) - 1;
-      const maxRecords = Number.isSafeInteger(requestedMaximum)
-        ? Math.max(
-            1,
-            Math.min(REVIEW_MANIFEST_MAX_RECORDS, requestedMaximum)
-          )
-        : REVIEW_MANIFEST_MAX_RECORDS;
-      return context.metadataStore.getReviewManifestSnapshot(rootPath, {
+    }) =>
+      context.metadataStore.getAcceptedExportSnapshot(rootPath, {
         directory,
         scope,
-        maxRecords,
+        maxRecords: Math.min(
+          ACCEPTED_COPY_MAX_MEDIA,
+          Math.max(1, Number(maxRecords) || ACCEPTED_COPY_MAX_MEDIA)
+        ),
+        maxPathBytes: Math.min(
+          ACCEPTED_COPY_MAX_PATH_BYTES,
+          Math.max(1, Number(maxPathBytes) || ACCEPTED_COPY_MAX_PATH_BYTES)
+        ),
         assertActive,
-      });
+      }),
+    emitProgress: ({ owner, payload }) => {
+      if (
+        owner &&
+        !owner.isDestroyed?.() &&
+        mainWindow &&
+        !mainWindow.isDestroyed() &&
+        mainWindow.webContents === owner
+      ) {
+        owner.send("review:copy-accepted-progress", payload);
+      }
     },
+    fsPromises,
     logger: console,
   });
 
@@ -4079,27 +4093,64 @@ ipcMain.handle("library:get-tree", async (_event, payload = {}) => {
   });
 });
 
-ipcMain.handle("review:export-manifest", async (event, payload = {}) => {
-  assertPlainObject(payload, "review manifest request");
+ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
+  assertPlainObject(payload, "Copy Accepted request");
   const requestedRoot = normalizeLibraryIpcRootPath(payload);
-  const directory = normalizeManifestDirectory(
+  const directory = normalizeReviewExportDirectory(
     assertString(payload?.directory ?? "", {
-      name: "review manifest directory",
+      name: "Copy Accepted directory",
       maxChars: IPC_LIMITS.maxPathChars,
     })
   );
-  const scope = normalizeManifestScope(
+  const scope = normalizeReviewExportScope(
     assertString(payload?.scope, {
-      name: "review manifest scope",
+      name: "Copy Accepted scope",
       minChars: 1,
       maxChars: 32,
     })
   );
-  return reviewManifestExportCoordinator.exportManifest({
+  const includeSidecars = assertBoolean(
+    payload?.includeSidecars,
+    "includeSidecars"
+  );
+  return reviewCopyAcceptedCoordinator.prepare({
     owner: event.sender,
     rootPath: requestedRoot,
     directory,
     scope,
+    includeSidecars,
+  });
+});
+
+ipcMain.handle("review:copy-accepted:start", async (event, payload = {}) => {
+  assertPlainObject(payload, "Copy Accepted start request");
+  const planId = assertString(payload?.planId, {
+    name: "Copy Accepted plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  const collisionPolicy = assertString(payload?.collisionPolicy, {
+    name: "Copy Accepted collision policy",
+    minChars: 1,
+    maxChars: 16,
+  });
+  return reviewCopyAcceptedCoordinator.start({
+    owner: event.sender,
+    planId,
+    collisionPolicy,
+  });
+});
+
+ipcMain.handle("review:copy-accepted:cancel", async (event, payload = {}) => {
+  assertPlainObject(payload, "Copy Accepted cancellation request");
+  const planId = assertString(payload?.planId, {
+    name: "Copy Accepted plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  return reviewCopyAcceptedCoordinator.cancel({
+    owner: event.sender,
+    planId,
   });
 });
 
@@ -4770,13 +4821,13 @@ async function performNativeShutdown() {
   // Mark scans interrupted while their old profile generation is still valid,
   // then stop every filesystem producer before the durable flush boundary.
   trashAdmissionOpen = false;
-  const manifestShutdownDrain =
-    reviewManifestExportCoordinator.closeAndDrain();
+  const acceptedCopyShutdownDrain =
+    reviewCopyAcceptedCoordinator.closeAndDrain();
   cancelAllDirectoryScans();
   cancelPendingProfilePrompts();
   await Promise.all([
     drainActiveTrashOperations(),
-    manifestShutdownDrain,
+    acceptedCopyShutdownDrain,
   ]);
   trashConfirmationStore.revokeAll();
   await folderWatcher.stop().catch((error) => {

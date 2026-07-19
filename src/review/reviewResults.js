@@ -59,6 +59,7 @@ export function summarizeReviewScope(videos = []) {
     instanceCount: rows.length,
     uniqueCount: unique.size,
     pick: counts.pick,
+    acceptedCount: counts.pick,
     reviewed: counts.reviewed,
     reject: counts.reject,
     unreviewed: counts.unreviewed,
@@ -70,5 +71,6 @@ export function summarizeReviewScope(videos = []) {
     canTrashRejects:
       rejectVideos.length > 0 &&
       rejectVideos.length <= REVIEW_RESULTS_TRASH_LIMIT,
+    canCopyAccepted: counts.pick > 0,
   };
 }
