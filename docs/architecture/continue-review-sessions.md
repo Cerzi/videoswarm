@@ -1,7 +1,7 @@
 # Persistent Continue Review Sessions
 
 Status: **Implemented and verified** (2026-07-15)
-Last updated: 2026-07-15
+Last updated: 2026-07-19
 
 ## Summary
 
@@ -613,18 +613,16 @@ unimplemented v1 behavior.
 
 ## Subsequent product order
 
-With Continue Review verified, subsequent product work proceeds in this order:
+Continue Review and the non-destructive **Copy Accepted** workflow are now
+verified. Destructive Move and metadata transfer remain deferred. Subsequent
+product work proceeds in this order:
 
-1. **Export Accepted:** copy-first export with destination selection,
-   relative-tree preservation, optional recognized sidecars, manifest,
-   collision preflight, bounded progress/cancellation, and partial-failure
-   reporting. Destructive Move and metadata transfer remain deferred.
-2. **Generation-aware search:** bounded background indexing of prompt, model,
+1. **Generation-aware search:** bounded background indexing of prompt, model,
    seed, sampler, source, and run metadata for filters, grouping, and smart
    views.
-3. **Comparison workspace:** synchronized playback for two to four clips with
+2. **Comparison workspace:** synchronized playback for two to four clips with
    metadata differences and review controls.
-4. **Linux Motion Sweep:** only after playback baselines; rotate a bounded
+3. **Linux Motion Sweep:** only after playback baselines; rotate a bounded
    full-speed cohort while leaving All Motion behavior unchanged.
 
 Fingerprint v2, automatic decoder derating, masonry refinements, interleaved

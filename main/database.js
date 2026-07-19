@@ -5,15 +5,13 @@ const { BoundedAsyncCache } = require('./bounded-async-cache');
 const { computeFingerprint } = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
 const {
-  REVIEW_MANIFEST_MAX_QUERY_BYTES,
-  REVIEW_MANIFEST_MAX_RECORDS,
-  REVIEW_MANIFEST_MAX_TAG_BYTES,
-  REVIEW_MANIFEST_MAX_TAG_ROWS,
-  ReviewManifestError,
-  assertPersistedCoverage,
-  normalizeManifestDirectory,
-  normalizeManifestScope,
-} = require('./review-manifest');
+  ACCEPTED_COPY_MAX_MEDIA,
+  ACCEPTED_COPY_MAX_PATH_BYTES,
+  ReviewExportError,
+  assertReviewExportCoverage,
+  normalizeReviewExportDirectory,
+  normalizeReviewExportScope,
+} = require('./review-export-scope');
 const {
   REVIEW_VIEW_DEFINITION_BYTE_LIMIT,
   normalizeReviewViewDefinition,
@@ -1333,7 +1331,7 @@ function createMetadataStore(db) {
       AND is_present != 0
       AND (? != 0 OR instr(relative_path, '/') = 0);
   `);
-  const reviewManifestScopePredicates = Object.freeze({
+  const acceptedExportScopePredicates = Object.freeze({
     'all-descendants': '1 = 1',
     'current-folder': 'd.relative_path = @directory',
     'current-subtree': `(
@@ -1342,47 +1340,21 @@ function createMetadataStore(db) {
       OR substr(d.relative_path, 1, length(@directory) + 1) = @directory || '/'
     )`,
   });
-  const reviewManifestRecordQueries = Object.fromEntries(
-    Object.entries(reviewManifestScopePredicates).map(([scope, predicate]) => [
+  const acceptedExportRecordQueries = Object.fromEntries(
+    Object.entries(acceptedExportScopePredicates).map(([scope, predicate]) => [
       scope,
       db.prepare(`
-        SELECT fi.id, fi.relative_path, fi.size, fi.mtime_ms, fi.fingerprint,
-          mc.created_ms AS content_created_ms,
-          mc.width AS content_width,
-          mc.height AS content_height,
-          r.value AS rating_value,
-          COALESCE(cr.state,
-            CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
-          ) AS review_state
+        SELECT fi.id, fi.absolute_path, fi.relative_path, fi.size,
+          fi.mtime_ms, fi.fingerprint
         FROM file_instances fi
         INNER JOIN directories d ON d.id = fi.directory_id
-        LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
-        LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
-        LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+        INNER JOIN content_review cr
+          ON cr.fingerprint = fi.fingerprint AND cr.state = 'pick'
         WHERE fi.root_id = @root_id
           AND fi.is_present != 0
           AND d.is_present != 0
           AND ${predicate}
         ORDER BY fi.relative_path COLLATE BINARY, fi.id
-        LIMIT @limit;
-      `),
-    ])
-  );
-  const reviewManifestTagQueries = Object.fromEntries(
-    Object.entries(reviewManifestScopePredicates).map(([scope, predicate]) => [
-      scope,
-      db.prepare(`
-        SELECT DISTINCT fi.fingerprint AS fingerprint, t.name AS name
-        FROM file_instances fi
-        INNER JOIN directories d ON d.id = fi.directory_id
-        INNER JOIN file_tags ft ON ft.fingerprint = fi.fingerprint
-        INNER JOIN tags t ON t.id = ft.tag_id
-        WHERE fi.root_id = @root_id
-          AND fi.is_present != 0
-          AND d.is_present != 0
-          AND fi.fingerprint IS NOT NULL
-          AND ${predicate}
-        ORDER BY fi.fingerprint COLLATE BINARY, t.name COLLATE BINARY
         LIMIT @limit;
       `),
     ])
@@ -2539,7 +2511,7 @@ function createMetadataStore(db) {
     };
   }
 
-  function normalizeManifestReadLimit(value, hardLimit, label) {
+  function normalizeAcceptedExportReadLimit(value, hardLimit, label) {
     const candidate = value === undefined ? hardLimit : Number(value);
     if (
       !Number.isSafeInteger(candidate) ||
@@ -2552,57 +2524,49 @@ function createMetadataStore(db) {
   }
 
   /**
-   * Read only the indexed rows needed for a review-manifest scope. The SQL
-   * LIMIT and streaming iterators keep hostile or unexpectedly large catalogs
-   * bounded before renderer-independent JavaScript objects are assembled.
+   * Read only present Accepted file instances for one authoritative review
+   * scope. Absolute paths remain inside the main process; the copy coordinator
+   * reauthorizes and identity-checks each source before native work begins.
+   * SQL LIMIT plus a byte budget prevent unexpectedly large catalogs or path
+   * data from becoming an unbounded in-memory export plan.
    */
-  function getReviewManifestSnapshot(rootPath, options = {}) {
+  function getAcceptedExportSnapshot(rootPath, options = {}) {
     assertOperationActive(options.assertActive);
     const normalizedRoot = normalizeRootPath(rootPath);
     const row = rootByPath.get(normalizedRoot);
     if (!row) {
-      throw new ReviewManifestError(
+      throw new ReviewExportError(
         `Library root has not been indexed: ${normalizedRoot}`,
-        'REVIEW_MANIFEST_ROOT_MISSING'
+        'REVIEW_EXPORT_ROOT_MISSING'
       );
     }
 
-    const scope = normalizeManifestScope(options.scope);
+    const scope = normalizeReviewExportScope(options.scope);
     const directory = scope === 'all-descendants'
       ? ''
-      : normalizeManifestDirectory(options.directory ?? '');
+      : normalizeReviewExportDirectory(options.directory ?? '');
     const root = mapRootRow(row);
-    assertPersistedCoverage(root, directory, scope);
+    assertReviewExportCoverage(root, directory, scope);
 
     if (scope !== 'all-descendants') {
       const directoryRow = directoryByPath.get(row.id, directory);
       if (!directoryRow || !Boolean(directoryRow.is_present)) {
-        throw new ReviewManifestError(
-          'The selected review-manifest directory is not present in the completed index.',
-          'REVIEW_MANIFEST_DIRECTORY_NOT_INDEXED'
+        throw new ReviewExportError(
+          'The selected review directory is not present in the completed index.',
+          'REVIEW_EXPORT_DIRECTORY_NOT_INDEXED'
         );
       }
     }
 
-    const maxRecords = normalizeManifestReadLimit(
+    const maxRecords = normalizeAcceptedExportReadLimit(
       options.maxRecords,
-      REVIEW_MANIFEST_MAX_RECORDS,
-      'Review manifest record limit'
+      ACCEPTED_COPY_MAX_MEDIA,
+      'Accepted copy media limit'
     );
-    const maxTagRows = normalizeManifestReadLimit(
-      options.maxTagRows,
-      REVIEW_MANIFEST_MAX_TAG_ROWS,
-      'Review manifest tag-row limit'
-    );
-    const maxTagBytes = normalizeManifestReadLimit(
-      options.maxTagBytes,
-      REVIEW_MANIFEST_MAX_TAG_BYTES,
-      'Review manifest tag-byte limit'
-    );
-    const maxQueryBytes = normalizeManifestReadLimit(
-      options.maxQueryBytes,
-      REVIEW_MANIFEST_MAX_QUERY_BYTES,
-      'Review manifest query-byte limit'
+    const maxPathBytes = normalizeAcceptedExportReadLimit(
+      options.maxPathBytes,
+      ACCEPTED_COPY_MAX_PATH_BYTES,
+      'Accepted copy path-byte limit'
     );
     const queryParameters = {
       root_id: row.id,
@@ -2610,125 +2574,44 @@ function createMetadataStore(db) {
       limit: maxRecords + 1,
     };
     const records = [];
-    const instanceCountsByFingerprint = new Map();
-    let queryBytes = 0;
+    let pathBytes = 0;
     let recordCount = 0;
 
-    for (const instance of reviewManifestRecordQueries[scope].iterate(
+    for (const instance of acceptedExportRecordQueries[scope].iterate(
       queryParameters
     )) {
       recordCount += 1;
       if (recordCount > maxRecords) {
-        throw new ReviewManifestError(
-          `Review manifests are limited to ${maxRecords.toLocaleString()} files`,
-          'REVIEW_MANIFEST_TOO_MANY_RECORDS'
+        throw new ReviewExportError(
+          `Copy Accepted is limited to ${maxRecords.toLocaleString()} media files per operation`,
+          'ACCEPTED_COPY_TOO_MANY_MEDIA'
         );
       }
       if ((recordCount & 255) === 0) {
         assertOperationActive(options.assertActive);
       }
 
-      const width = Number(instance.content_width || 0);
-      const height = Number(instance.content_height || 0);
-      const fingerprint = instance.fingerprint || null;
+      const absolutePath = String(instance.absolute_path || '');
+      const relativePath = String(instance.relative_path || '');
+      pathBytes += Buffer.byteLength(absolutePath, 'utf8');
+      pathBytes += Buffer.byteLength(relativePath, 'utf8');
+      if (pathBytes > maxPathBytes) {
+        throw new ReviewExportError(
+          'Accepted copy paths exceed the bounded query budget.',
+          'ACCEPTED_COPY_PATHS_TOO_LARGE'
+        );
+      }
       const record = {
         instanceId: Number(instance.id),
-        relativePath: instance.relative_path,
-        fingerprint,
-        reviewState: REVIEW_STATES.has(instance.review_state)
-          ? instance.review_state
-          : 'unreviewed',
-        rating: instance.rating_value !== null &&
-          instance.rating_value !== undefined &&
-          Number.isFinite(Number(instance.rating_value))
-            ? Number(instance.rating_value)
-            : null,
-        tags: [],
+        absolutePath,
+        relativePath,
+        fingerprint: instance.fingerprint || null,
         size: Number(instance.size || 0),
         mtimeMs: Number(instance.mtime_ms || 0),
-        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
-        dimensions: width > 0 && height > 0
-          ? { width, height, aspectRatio: width / height }
-          : null,
       };
-      queryBytes += Buffer.byteLength(JSON.stringify(record), 'utf8');
-      if (queryBytes > maxQueryBytes) {
-        throw new ReviewManifestError(
-          'Review manifest record data exceeds the bounded query budget.',
-          'REVIEW_MANIFEST_QUERY_TOO_LARGE'
-        );
-      }
       records.push(record);
-      if (fingerprint) {
-        instanceCountsByFingerprint.set(
-          fingerprint,
-          (instanceCountsByFingerprint.get(fingerprint) || 0) + 1
-        );
-      }
     }
     assertOperationActive(options.assertActive);
-
-    if (records.length === 0 || instanceCountsByFingerprint.size === 0) {
-      return { root, directory, scope, records };
-    }
-
-    const tagsByFingerprint = new Map();
-    let fetchedTagRows = 0;
-    let expandedTagRows = 0;
-    let expandedTagBytes = 0;
-    const tagParameters = {
-      root_id: row.id,
-      directory,
-      limit: maxTagRows + 1,
-    };
-    for (const tagRow of reviewManifestTagQueries[scope].iterate(tagParameters)) {
-      fetchedTagRows += 1;
-      if (fetchedTagRows > maxTagRows) {
-        throw new ReviewManifestError(
-          `Review manifests are limited to ${maxTagRows.toLocaleString()} tag assignments`,
-          'REVIEW_MANIFEST_TOO_MANY_TAGS'
-        );
-      }
-      if ((fetchedTagRows & 255) === 0) {
-        assertOperationActive(options.assertActive);
-      }
-
-      const fingerprint = String(tagRow.fingerprint || '');
-      const multiplicity = instanceCountsByFingerprint.get(fingerprint) || 0;
-      if (multiplicity === 0) continue;
-      const tag = String(tagRow.name || '');
-      expandedTagRows += multiplicity;
-      expandedTagBytes += Buffer.byteLength(tag, 'utf8') * multiplicity;
-      queryBytes += (
-        Buffer.byteLength(JSON.stringify(tag), 'utf8') + 1
-      ) * multiplicity;
-      if (expandedTagRows > maxTagRows) {
-        throw new ReviewManifestError(
-          `Review manifests are limited to ${maxTagRows.toLocaleString()} expanded tag assignments`,
-          'REVIEW_MANIFEST_TOO_MANY_TAGS'
-        );
-      }
-      if (expandedTagBytes > maxTagBytes) {
-        throw new ReviewManifestError(
-          'Review manifest tags exceed the bounded UTF-8 byte budget.',
-          'REVIEW_MANIFEST_TAGS_TOO_LARGE'
-        );
-      }
-      if (queryBytes > maxQueryBytes) {
-        throw new ReviewManifestError(
-          'Review manifest record data exceeds the bounded query budget.',
-          'REVIEW_MANIFEST_QUERY_TOO_LARGE'
-        );
-      }
-      const tags = tagsByFingerprint.get(fingerprint) || [];
-      tags.push(tag);
-      tagsByFingerprint.set(fingerprint, tags);
-    }
-    assertOperationActive(options.assertActive);
-
-    records.forEach((record) => {
-      record.tags = tagsByFingerprint.get(record.fingerprint) || [];
-    });
     return { root, directory, scope, records };
   }
 
@@ -3834,7 +3717,7 @@ function createMetadataStore(db) {
     getDirectorySummaries,
     getLibraryTree,
     getCachedLibrarySnapshot,
-    getReviewManifestSnapshot,
+    getAcceptedExportSnapshot,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,

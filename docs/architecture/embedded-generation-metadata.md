@@ -3,7 +3,7 @@
 Status: **Embedded API-graph extraction implemented and verified for core
 ComfyUI and the fixture-backed WanVideoWrapper slice; bounded follow-up work
 remains explicit below**
-Last updated: 2026-07-15
+Last updated: 2026-07-19
 
 ## Summary
 
@@ -55,7 +55,6 @@ marked **Verified** only after the applicable repository-wide gates pass.
   process-lifetime cache.
 - Do not add an unbounded media cache or prefetch metadata for off-screen clips.
 - Do not mutate, repair, or rewrite source media.
-- Do not make generation metadata part of review-manifest export by default.
 - Do not require a ComfyUI installation or contact a ComfyUI server.
 
 ## 1. Existing baseline

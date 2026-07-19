@@ -13,37 +13,56 @@ function section(startMarker, endMarker) {
 }
 
 describe("review main-process integration", () => {
-  it("delegates export to the single-flight bounded coordinator", () => {
+  it("delegates Copy Accepted to the bounded profile-owned coordinator", () => {
     const coordinator = section(
-      "const reviewManifestExportCoordinator =",
+      "const reviewCopyAcceptedCoordinator =",
       'ipcMain.handle("library:list-roots"'
     );
     expect(coordinator).toContain("nativeOwnerLifecycle.capture(owner)");
-    expect(coordinator).toContain("getReviewManifestSnapshot(rootPath");
-    expect(coordinator).toContain("REVIEW_MANIFEST_MAX_RECORDS");
+    expect(coordinator).toContain("getAcceptedExportSnapshot(rootPath");
+    expect(coordinator).toContain("ACCEPTED_COPY_MAX_MEDIA");
+    expect(coordinator).toContain("ACCEPTED_COPY_MAX_PATH_BYTES");
+    expect(coordinator).toContain('properties: ["openDirectory", "createDirectory"]');
+    expect(coordinator).toContain('owner.send("review:copy-accepted-progress"');
 
-    const handler = section(
-      'ipcMain.handle("review:export-manifest"',
-      'ipcMain.handle("library:set-pinned"'
+    const handlers = section(
+      'ipcMain.handle("review:copy-accepted:prepare"',
+      'ipcMain.handle("review-sessions:list"'
     );
-    expect(handler).toContain("reviewManifestExportCoordinator.exportManifest");
-    expect(handler).not.toContain("getCachedLibrarySnapshot");
+    expect(handlers).toContain("reviewCopyAcceptedCoordinator.prepare");
+    expect(handlers).toContain('ipcMain.handle("review:copy-accepted:start"');
+    expect(handlers).toContain('ipcMain.handle("review:copy-accepted:cancel"');
+    expect(handlers).toContain("normalizeReviewExportScope");
+    expect(handlers).not.toContain("payload.records");
+    expect(handlers).not.toContain("payload.videos");
   });
 
-  it("drains exports across profile and shutdown ownership boundaries", () => {
+  it("cancels and drains accepted copies across every ownership boundary", () => {
     const profile = section(
       "async function runSerializedProfileOperation",
       "async function deleteProfileWithTransition"
     );
-    expect(profile).toContain("reviewManifestExportCoordinator.pauseAndDrain()");
-    expect(profile).toContain("reviewManifestExportCoordinator.resume()");
+    expect(profile).toContain("reviewCopyAcceptedCoordinator.pauseAndDrain()");
+    expect(profile).toContain("reviewCopyAcceptedCoordinator.resume()");
+
+    const ownerLifecycle = section(
+      "function invalidateNativeWorkOwner",
+      "function assertProfileReconfigurationActive"
+    );
+    expect(ownerLifecycle.match(/reviewCopyAcceptedCoordinator\.cancelOwner\(sender\)/g))
+      .toHaveLength(2);
 
     const shutdown = section(
       "async function performNativeShutdown",
       "function beginNativeShutdown"
     );
-    expect(shutdown).toContain("reviewManifestExportCoordinator.closeAndDrain()");
-    expect(shutdown).toContain("manifestShutdownDrain");
+    expect(shutdown).toContain("reviewCopyAcceptedCoordinator.closeAndDrain()");
+    expect(shutdown).toContain("acceptedCopyShutdownDrain");
+  });
+
+  it("does not retain the removed JSON review-manifest feature", () => {
+    expect(source.toLowerCase()).not.toContain("review manifest");
+    expect(source).not.toContain("review:export-manifest");
   });
 
   it("routes bounded atomic undo and immediately reconciles trashed paths", () => {
