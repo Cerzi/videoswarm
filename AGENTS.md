@@ -30,8 +30,8 @@ Node.js `>=22.12.0` is required. Electron 43 requires this, and native modules m
   `npm run dev`
 - If a Linux development host cannot provide Chromium's sandbox, use the
   explicit development-only fallback `npm run electron:dev:no-sandbox` or
-  `npm run dev:no-sandbox`; normal source and packaged launches remain
-  sandboxed.
+  `npm run dev:no-sandbox`; normal source launches and installed `.deb`
+  releases remain sandboxed.
 - Run the renderer dev server only:
   `npm run vite:dev`
 - Build the renderer only:
@@ -77,7 +77,9 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - `src/app/hooks/`: app-level hooks for Electron folder lifecycle, filters, masonry layout, metadata actions, and zoom controls.
 - `src/services/thumbService.js`: renderer thumbnail capture/cache coordination for drag thumbnails.
 - `src/config/`: feature flags and support/donation content.
-- `scripts/linux-fix.js`: electron-builder Linux wrapper that preserves Chromium sandboxing by default and supports an explicit warned compatibility opt-out.
+- `scripts/linux-fix.js`: electron-builder Linux packaging support that keeps
+  Chromium sandboxing enabled. The supported Linux release is the installed
+  `.deb`, whose package lifecycle configures the bundled SUID sandbox helper.
 - `dist-react/`, `dist/`, `coverage/`, and `node_modules/` are generated and should not be edited by hand.
 
 ## Architecture Notes
@@ -114,7 +116,13 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 
 - Linux is a priority platform, but NVIDIA hardware video decoding is not currently assumed to work in Electron/Chromium. Avoid promising GPU video decode support without fresh verification on target hardware.
 - Current Linux startup flags in `main.js` use EGL/ANGLE/OpenGL-related Chromium switches and ignore the GPU blocklist. These affect compositing/GL behavior, not guaranteed hardware video decode.
-- Packaged Linux launches keep Chromium sandboxing enabled by default. `VIDEOSWARM_DISABLE_SANDBOX=1` is an explicit warned compatibility escape hatch, not an acceptable release default or test assumption.
+- Linux releases are Debian/Ubuntu x64 `.deb` packages. Their post-installation
+  hook must leave the bundled `chrome-sandbox` owned by root with mode `4755`;
+  do not publish a Linux artifact whose normal launch requires `--no-sandbox`.
+- Portable AppImages are unsupported because their temporary mount cannot
+  reliably provide that SUID helper configuration on hardened Ubuntu. The
+  explicit `*:no-sandbox` commands are development-only escape hatches, not
+  acceptable release defaults or package smoke assumptions.
 
 ## Coding Conventions
 

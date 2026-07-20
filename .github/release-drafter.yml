@@ -17,12 +17,13 @@ template: |
     - `VideoSwarm-*-win-x64.exe`: Standard installer (recommended)
     - `VideoSwarm-*-win-x64-Portable.exe`: Portable build
   - **Linux**
-    - `VideoSwarm-*-linux.AppImage`: Portable image, mark executable and run
-    - `VideoSwarm-*-linux.deb`: Install with your package manager
+    - `VideoSwarm-*-linux.deb`: Install on Debian/Ubuntu with
+      `sudo apt install ./VideoSwarm-*-linux.deb`, then launch `video-swarm`;
+      the package configures Chromium's SUID sandbox helper
 
   ## Assets & checksums
   - The release workflow attaches the Windows installer/portable build and the
-    Linux AppImage/deb to a draft release.
+    Linux `.deb` to a draft release.
   - SHA256 checksums are included in the generated release notes.
 
   ## Notes

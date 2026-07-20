@@ -33,7 +33,7 @@ body:
     attributes:
       label: VideoSwarm version
       description: Copy the complete version, including any rc suffix.
-      placeholder: 0.6.0-rc.2
+      placeholder: 0.6.0-rc.3
     validations:
       required: true
 
@@ -44,7 +44,6 @@ body:
       options:
         - Windows installer
         - Windows portable
-        - Linux AppImage
         - Linux deb package
         - Development checkout
         - Other
