@@ -30,6 +30,17 @@ export default function useIntersectionObserverRegistry(
     nearPx = 900,              // distance beyond viewport considered "near"
   } = {}
 ) {
+  const thresholdKey = (Array.isArray(threshold) ? threshold : [threshold])
+    .map((value) => Number(value))
+    .filter(Number.isFinite)
+    .join("|");
+  const stableThreshold = useMemo(
+    () =>
+      thresholdKey === ""
+        ? [0]
+        : thresholdKey.split("|").map((value) => Number(value)),
+    [thresholdKey]
+  );
   const handlersRef = useRef(new Map()); // Element -> (visible:boolean, entry)=>void
   const idsRef = useRef(new Map());      // Element -> id
   const visibleIdsRef = useRef(new Set()); // Set<id>
@@ -276,7 +287,7 @@ export default function useIntersectionObserverRegistry(
     const obs = new IntersectionObserver(handleEntries, {
       root: rootRef?.current ?? null,
       rootMargin: currentRootMarginRef.current,
-      threshold,
+      threshold: stableThreshold,
     });
     observerRef.current = obs;
 
@@ -289,7 +300,7 @@ export default function useIntersectionObserverRegistry(
       try { observerRef.current?.disconnect(); } catch {}
       observerRef.current = null;
     };
-  }, [rootRef, rootMargin, threshold, handleEntries]);
+  }, [rootRef, rootMargin, stableThreshold, handleEntries]);
 
   // Public API: observe supports (el, cb) and (el, id, cb)
   const observe = useCallback((el, idOrCb, maybeCb) => {

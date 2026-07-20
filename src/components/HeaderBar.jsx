@@ -2,9 +2,13 @@ import React from "react";
 import RecentLocationsMenu from "./RecentLocationsMenu";
 import SupportLink from "./SupportLink";
 import { supportContent } from "../config/supportContent";
-import { ZOOM_MAX_INDEX } from "../zoom/config.js";
-import { clampZoomIndex } from "../zoom/utils.js";
+import { ZOOM_LEVEL_STEP, ZOOM_MAX_INDEX } from "../zoom/config.js";
+import {
+  clampZoomIndex,
+  getTileWidthForZoomLevel,
+} from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
+import PlaybackModeControl from "./PlaybackModeControl";
 
 // --- Minimal inline SVG icons (fallback for environments without icon libs)
 const Icon = (props) => (
@@ -90,6 +94,22 @@ const FilterIcon = (props) => (
   </Icon>
 );
 
+const SpeakerOnIcon = (props) => (
+  <Icon {...props}>
+    <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M18.5 6a8.5 8.5 0 0 1 0 12" />
+  </Icon>
+);
+
+const SpeakerOffIcon = (props) => (
+  <Icon {...props}>
+    <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+    <line x1="23" y1="9" x2="17" y2="15" />
+    <line x1="17" y1="9" x2="23" y2="15" />
+  </Icon>
+);
+
 export default function HeaderBar({
   isLoadingFolder,
   handleFolderSelect,
@@ -118,6 +138,18 @@ export default function HeaderBar({
   filtersActiveCount = 0,
   filtersAreOpen = false,
   filtersButtonRef,
+  hoverAudioEnabled = false,
+  onHoverAudioToggle,
+  playbackMode = "balanced",
+  onPlaybackModeChange,
+  playbackDecision,
+  playbackCapabilityStatus = "",
+  proxyPlaybackEnabled = false,
+  onProxyPlaybackToggle,
+  proxyPlaybackAvailable = true,
+  workSuspended = false,
+  isRefreshingFolder = false,
+  onHotkeyHelp,
 }) {
   const isElectron = !!window.electronAPI?.isElectron;
 
@@ -175,6 +207,13 @@ export default function HeaderBar({
         {hasOpenFolder && recentFolders.length > 0 && (
           <RecentLocationsMenu items={recentFolders} onOpen={onRecentOpen} />
         )}
+
+        {isRefreshingFolder && (
+          <span className="folder-refresh-status" role="status">
+            <span className="folder-refresh-status__spinner" aria-hidden="true" />
+            Refreshing index
+          </span>
+        )}
       </div>
 
       <div className="controls" style={{ display: "flex", alignItems: "center" }}>
@@ -186,6 +225,20 @@ export default function HeaderBar({
         >
           <TextIcon />
         </button>
+
+        <div style={dividerStyle}>
+          <PlaybackModeControl
+            mode={playbackMode}
+            onModeChange={onPlaybackModeChange}
+            decision={playbackDecision}
+            capabilityStatus={playbackCapabilityStatus}
+            proxyEnabled={proxyPlaybackEnabled}
+            onProxyToggle={onProxyPlaybackToggle}
+            proxyAvailable={proxyPlaybackAvailable}
+            disabled={isLoadingFolder}
+            workSuspended={workSuspended}
+          />
+        </div>
 
         <div style={dividerStyle}>
           <div className="video-limit-control" title="Limit rendered VideoCards">
@@ -208,16 +261,31 @@ export default function HeaderBar({
           </div>
 
           <div className="zoom-control" title="Zoom">
+            <button
+              onClick={() => onHoverAudioToggle?.()}
+              className={`toggle-button ${hoverAudioEnabled ? "active" : ""}`}
+              disabled={isLoadingFolder}
+              title="Play audio on hover"
+              aria-label="Play audio on hover"
+              aria-pressed={hoverAudioEnabled}
+              type="button"
+              style={{ opacity: hoverAudioEnabled ? 1 : 0.75 }}
+            >
+              {hoverAudioEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+            </button>
+
             <ZoomInIcon />
             <input
               type="range"
               min={minZoomIndex}
               max={ZOOM_MAX_INDEX}
               value={zoomLevel}
-              step="1"
+              step={ZOOM_LEVEL_STEP}
+              aria-label="Grid zoom"
+              aria-valuetext={`${getTileWidthForZoomLevel(zoomLevel)}px cards`}
               onChange={(e) =>
                 handleZoomChangeSafe(
-                  clampZoomIndex(parseInt(e.target.value, 10))
+                  clampZoomIndex(Number.parseFloat(e.target.value))
                 )
               }
               disabled={isLoadingFolder}
@@ -299,6 +367,16 @@ export default function HeaderBar({
               )}
             </button>
           </div>
+
+          <button
+            type="button"
+            className="toggle-button hotkey-help-button"
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+            onClick={() => onHotkeyHelp?.()}
+          >
+            <span aria-hidden="true">?</span>
+          </button>
 
           <SupportLink
             className="donate-button"

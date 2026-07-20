@@ -1,22 +1,27 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import useVideoResourceManager from './useVideoResourceManager';
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import useVideoResourceManager from "./useVideoResourceManager";
 
-const makeVideos = (n) => Array.from({ length: n }, (_, i) => ({ id: String(i + 1) }));
+const makeVideos = (count) =>
+  Array.from({ length: count }, (_, index) => ({ id: String(index + 1) }));
 
-// let the hook's async memory tick settle
 const flushAsync = async (times = 2) => {
-  for (let i = 0; i < times; i++) {
-    await new Promise((r) => setTimeout(r, 0));
+  for (let index = 0; index < times; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 };
 
+const makeReady = (manager, id, options = { assumeVisible: true }) => {
+  const lease = manager.reserveLoadSlot(id, options);
+  if (!lease) return null;
+  return manager.finishLoadSlot(lease, { ready: true });
+};
+
 beforeEach(() => {
-  // Stub Electron memory so limits are stable/deterministic
   global.window = global.window || {};
   window.appMem = {
     get: vi.fn().mockResolvedValue({
-      totals: { wsMB: 512, totalMB: 8192 }, // 0.5 GB app WS, 8 GB total
+      totals: { wsMB: 512, totalMB: 8192 },
       processes: [],
     }),
   };
@@ -26,227 +31,219 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('useVideoResourceManager (current behavior)', () => {
-  test('canLoadVideo: visible allowed under limits; non-visible requires isNear; visible can overflow loader cap slightly', async () => {
-    const progressiveVideos = makeVideos(50);
-    const visible = new Set(['1', '2']);
-    const loaded = new Set();
-    const loading = new Set();
-    const playing = new Set();
-
-    // Mark id '10' as "near" even though it's not visible
-    const isNear = (id) => id === '10';
-
+describe("useVideoResourceManager scheduler admission", () => {
+  test("same-tick visible requests never exceed the exact loader cap", async () => {
+    const progressiveVideos = makeVideos(80);
+    const visible = new Set(progressiveVideos.map((video) => video.id));
     const { result } = renderHook(() =>
       useVideoResourceManager({
         progressiveVideos,
         visibleVideos: visible,
-        loadedVideos: loaded,
-        loadingVideos: loading,
-        playingVideos: playing,
-        isNear,
+        loadedVideos: new Set(),
+        loadingVideos: new Set(),
+        playingVideos: new Set(),
+        isNear: () => true,
       })
     );
-
     await flushAsync();
 
-    // Under limits: visible ids allowed
-    expect(result.current.canLoadVideo('1')).toBe(true);
-    expect(result.current.canLoadVideo('2')).toBe(true);
+    const cap = result.current.limits.maxConcurrentLoading;
+    const leases = progressiveVideos.map((video) =>
+      result.current.reserveLoadSlot(video.id, { assumeVisible: true })
+    );
 
-    // Non-visible but near → allowed under limits
-    expect(result.current.canLoadVideo('10')).toBe(true);
+    expect(leases.filter(Boolean)).toHaveLength(cap);
+    expect(result.current.mediaScheduler.getSnapshot().loading).toBe(cap);
+    expect(
+      result.current.canLoadVideo("overflow", { assumeVisible: true })
+    ).toBe(false);
 
-    // ── Consume background headroom so "far non-visible" should be blocked ──
-    const { maxConcurrentLoading, maxLoaded } = result.current.limits;
-
-    // Fill some "loaded" but keep below cap so loaded-size doesn't trip the other guard
-    for (let i = 0; i < Math.max(0, maxLoaded - 5); i++) loaded.add(`L${i}`);
-
-    // Fill loader usage to reach the 50% headroom threshold (policy blocks when >= 50%)
-    const halfCap = Math.floor(maxConcurrentLoading * 0.5);
-    for (let i = 0; i < halfCap; i++) loading.add(`H${i}`);
-
-    // Non-visible and NOT near → now blocked (headroom consumed)
-    expect(result.current.canLoadVideo('11')).toBe(false);
-
-    // ── Hit loader cap and verify visible-bypass overflow ──
-    for (let i = loading.size; i < maxConcurrentLoading; i++) loading.add(`X${i}`);
-
-    // At the cap: visible can still load (overflow allowance), non-visible cannot
-    expect(result.current.canLoadVideo('2')).toBe(true);   // visible allowed via overflow
-    expect(result.current.canLoadVideo('10')).toBe(false); // near but non-visible → blocked at cap
-
-    // Push beyond overflow → now visible is also blocked
-    const overflow = Math.max(2, Math.floor(maxConcurrentLoading * 0.25));
-    for (let i = 0; i < overflow + 1; i++) loading.add(`O${i}`);
-    expect(result.current.canLoadVideo('2')).toBe(false);
+    result.current.finishLoadSlot(leases[0], { ready: false });
+    expect(
+      result.current.reserveLoadSlot("replacement", { assumeVisible: true })
+    ).toBeTruthy();
+    expect(result.current.mediaScheduler.getSnapshot().loading).toBe(cap);
   });
 
-  test('canLoadVideo treats assumeVisible option as a visibility override', async () => {
+  test("visibility changes priority but never bypasses an exhausted cap", async () => {
     const progressiveVideos = makeVideos(40);
-    const visible = new Set();
-    const loaded = new Set();
-    const loading = new Set();
-
     const { result } = renderHook(() =>
       useVideoResourceManager({
         progressiveVideos,
-        visibleVideos: visible,
-        loadedVideos: loaded,
-        loadingVideos: loading,
+        visibleVideos: new Set(),
+        loadedVideos: new Set(),
+        loadingVideos: new Set(),
         playingVideos: new Set(),
         isNear: () => false,
       })
     );
-
     await flushAsync();
 
-    // Without override the id is considered far and blocked once loaders are saturated
-    const { maxConcurrentLoading } = result.current.limits;
-    for (let i = 0; i < maxConcurrentLoading; i++) loading.add(`L${i}`);
-    expect(result.current.canLoadVideo('v-stuck')).toBe(false);
+    const cap = result.current.limits.maxConcurrentLoading;
+    const backgroundLimit = Math.floor(cap * 0.5);
+    for (let index = 0; index < backgroundLimit; index += 1) {
+      expect(
+        result.current.reserveLoadSlot(`near-${index}`, { assumeNear: true })
+      ).toBeTruthy();
+    }
 
-    // With assumeVisible it is treated like a visible tile and allowed despite loader usage
-    expect(result.current.canLoadVideo('v-stuck', { assumeVisible: true })).toBe(true);
+    expect(result.current.canLoadVideo("far")).toBe(false);
+    expect(
+      result.current.canLoadVideo("visible", { assumeVisible: true })
+    ).toBe(true);
+
+    for (let index = backgroundLimit; index < cap; index += 1) {
+      result.current.reserveLoadSlot(`visible-${index}`, {
+        assumeVisible: true,
+      });
+    }
+    expect(
+      result.current.reserveLoadSlot("strict-overflow", {
+        assumeVisible: true,
+      })
+    ).toBeNull();
   });
 
-  test('performCleanup returns victim ids when over the limit; never evicts playing or visible', async () => {
+  test("cleanup scores scheduler-owned residents and protects visible/playing ids", async () => {
+    let now = 1000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     const progressiveVideos = makeVideos(200);
-    const visible = new Set(['1', '2', '3']);
-    const playing = new Set(['1']); // protect playing tiles
+    const visible = new Set(["1", "2", "3"]);
+    const playing = new Set(["1"]);
     const loaded = new Set();
-    const loading = new Set();
-
     const { result } = renderHook(() =>
       useVideoResourceManager({
         progressiveVideos,
         visibleVideos: visible,
         loadedVideos: loaded,
-        loadingVideos: loading,
+        loadingVideos: new Set(),
         playingVideos: playing,
         isNear: () => false,
       })
     );
-
     await flushAsync();
 
-    const { maxLoaded } = result.current.limits;
-
-    // Make ourselves over the limit by ~20; include '1','2','3' in loaded
-    const overBy = 20;
-    for (let i = 0; i < maxLoaded + overBy; i++) {
-      loaded.add(String(i + 1));
+    const initialCap = result.current.limits.maxLoaded;
+    for (let index = 1; index <= initialCap; index += 1) {
+      const id = String(index);
+      loaded.add(id);
+      expect(makeReady(result.current, id)).toBeTruthy();
     }
+
+    act(() => result.current.reportPlayerCreationFailure());
+    await flushAsync();
+    now += 600;
 
     const victims = result.current.performCleanup();
-    expect(Array.isArray(victims)).toBe(true);
-
-    if (Array.isArray(victims)) {
-      // should never evict playing/visible
-      expect(victims.includes('1')).toBe(false); // playing
-      expect(victims.includes('2')).toBe(false); // visible
-      expect(victims.includes('3')).toBe(false); // visible
-
-      // reasonable count (<= overBy) and drawn from loaded set
-      const victimsInLoaded = victims.filter((id) => loaded.has(id));
-      expect(victimsInLoaded.length).toBeGreaterThan(0);
-      expect(victimsInLoaded.length).toBeLessThanOrEqual(overBy);
-    }
+    expect(victims?.length).toBe(initialCap - result.current.limits.maxLoaded);
+    expect(victims).not.toContain("1");
+    expect(victims).not.toContain("2");
+    expect(victims).not.toContain("3");
+    expect(victims.every((id) => loaded.has(id))).toBe(true);
   });
 
-  test('performCleanup is suppressed while evictions are suspended', async () => {
+  test("cleanup remains blocked during layout-owned eviction suspension", async () => {
+    let now = 1000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     const progressiveVideos = makeVideos(120);
-    const visible = new Set(['1']);
-    const loaded = new Set();
-    const loading = new Set();
-    const isNear = () => false;
-
+    const props = {
+      progressiveVideos,
+      visibleVideos: new Set(["1"]),
+      loadedVideos: new Set(),
+      loadingVideos: new Set(),
+      playingVideos: new Set(),
+      isNear: () => false,
+      suspendEvictions: true,
+    };
     const { result, rerender } = renderHook(
-      (props) => useVideoResourceManager(props),
-      {
-        initialProps: {
-          progressiveVideos,
-          visibleVideos: visible,
-          loadedVideos: loaded,
-          loadingVideos: loading,
-          playingVideos: new Set(),
-          isNear,
-          suspendEvictions: true,
-        },
-      }
+      (current) => useVideoResourceManager(current),
+      { initialProps: props }
     );
-
     await flushAsync();
 
-    const { maxLoaded } = result.current.limits;
-    for (let i = 0; i < maxLoaded + 10; i++) {
-      loaded.add(String(i + 1));
+    const initialCap = result.current.limits.maxLoaded;
+    for (let index = 1; index <= initialCap; index += 1) {
+      makeReady(result.current, String(index));
     }
-
+    act(() => result.current.reportPlayerCreationFailure());
+    await flushAsync();
     expect(result.current.performCleanup()).toBeUndefined();
 
+    rerender({ ...props, suspendEvictions: false });
     await flushAsync();
-
-    act(() => {
-      rerender({
-        progressiveVideos,
-        visibleVideos: visible,
-        loadedVideos: loaded,
-        loadingVideos: loading,
-        playingVideos: new Set(),
-        isNear,
-        suspendEvictions: false,
-      });
-    });
-
-    await flushAsync();
-
-    const victims = result.current.performCleanup();
-    expect(Array.isArray(victims) && victims.length > 0).toBe(true);
+    now += 600;
+    expect(result.current.performCleanup()?.length).toBeGreaterThan(0);
   });
 });
 
-describe('reportPlayerCreationFailure', () => {
-  test('halves limits and blocks loads over the new cap', async () => {
+describe("reportPlayerCreationFailure", () => {
+  test("halves configured limits and blocks new resident reservations", async () => {
     const progressiveVideos = makeVideos(200);
-    const visible = new Set();
-    const loaded = new Set();
-    const loading = new Set();
-
     const { result } = renderHook(() =>
       useVideoResourceManager({
         progressiveVideos,
-        visibleVideos: visible,
-        loadedVideos: loaded,
-        loadingVideos: loading,
+        visibleVideos: new Set(),
+        loadedVideos: new Set(),
+        loadingVideos: new Set(),
         playingVideos: new Set(),
         isNear: () => false,
       })
     );
-
     await flushAsync();
 
-    const { maxLoaded: beforeLoaded, maxConcurrentLoading: beforeLoading } =
-      result.current.limits;
+    const before = result.current.limits;
+    for (let index = 0; index < before.maxLoaded; index += 1) {
+      expect(makeReady(result.current, `loaded-${index}`)).toBeTruthy();
+    }
 
-    for (let i = 0; i < beforeLoaded; i++) loaded.add(`L${i}`);
+    act(() => result.current.reportPlayerCreationFailure());
+    await flushAsync();
 
-    act(() => {
-      result.current.reportPlayerCreationFailure();
+    expect(result.current.limits.maxLoaded).toBe(
+      Math.floor(before.maxLoaded * 0.5)
+    );
+    expect(result.current.limits.maxConcurrentLoading).toBe(
+      Math.max(2, Math.floor(before.maxConcurrentLoading * 0.5))
+    );
+    expect(
+      result.current.reserveLoadSlot("extra", { assumeVisible: true })
+    ).toBeNull();
+  });
+});
+
+describe("work suspension", () => {
+  test("stops memory polling and drives loader, resident, and decoder caps to zero", async () => {
+    const progressiveVideos = makeVideos(20);
+    const props = {
+      progressiveVideos,
+      visibleVideos: new Set(["1"]),
+      loadedVideos: new Set(),
+      loadingVideos: new Set(),
+      playingVideos: new Set(),
+      isNear: () => true,
+      workSuspended: false,
+      maxDecoders: 4,
+    };
+    const { result, rerender } = renderHook(
+      (current) => useVideoResourceManager(current),
+      { initialProps: props }
+    );
+    await flushAsync();
+    expect(result.current.reserveLoadSlot("1", { assumeVisible: true })).toBeTruthy();
+
+    rerender({ ...props, workSuspended: true });
+    expect(result.current.limits).toMatchObject({
+      maxLoaded: 0,
+      maxConcurrentLoading: 0,
     });
-
-    await flushAsync();
-
-    const { maxLoaded: afterLoaded, maxConcurrentLoading: afterLoading } =
-      result.current.limits;
-
-    const expectedLoaded = Math.floor(beforeLoaded * 0.5);
-    const expectedLoading = Math.max(2, Math.floor(beforeLoading * 0.5));
-
-    expect(afterLoaded).toBe(expectedLoaded);
-    expect(afterLoading).toBe(expectedLoading);
-
-    expect(result.current.canLoadVideo('extra')).toBe(false);
+    expect(result.current.reserveLoadSlot("2", { assumeVisible: true })).toBeNull();
+    expect(result.current.mediaScheduler.getSnapshot().limits).toMatchObject({
+      maxResident: 0,
+      maxLoaders: 0,
+      maxDecoders: 0,
+      maxExternalDecoders: 0,
+      maxAuxiliaryDecoders: 0,
+    });
+    expect(result.current.memoryStatus.pollingSuspended).toBe(true);
   });
 });

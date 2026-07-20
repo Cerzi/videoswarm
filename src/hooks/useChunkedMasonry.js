@@ -2,6 +2,18 @@
 import { useCallback, useEffect, useRef } from "react";
 import { zoomClassForLevel } from "../zoom/utils.js";
 
+export const MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES = 4096;
+
+const setBoundedAspectRatio = (cache, id, ratio) => {
+  cache.delete(id);
+  cache.set(id, ratio);
+  while (cache.size > MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES) {
+    const oldestId = cache.keys().next().value;
+    if (oldestId === undefined) break;
+    cache.delete(oldestId);
+  }
+};
+
 export default function useChunkedMasonry({
   gridRef,
   zoomClassForLevel: zoomClassForLevelProp = zoomClassForLevel,
@@ -19,7 +31,11 @@ export default function useChunkedMasonry({
   const lastMetricsRef = useRef(null);
 
   const isLayingOutRef = useRef(false);
-  const relayoutRequestedRef = useRef(false);
+  const layoutGenerationRef = useRef(0);
+  const layoutFrameIdsRef = useRef(new Set());
+  const activeLayoutDisposeRef = useRef(null);
+  const activeLayoutItemCountRef = useRef(0);
+  const disposedRef = useRef(false);
   const isUserScrollingRef = useRef(false);
   const lastUserActionRef = useRef(0);
 
@@ -113,16 +129,55 @@ export default function useChunkedMasonry({
     }
   }, [gridRef, getColumnCount, columnGapFallback, onMetricsChange]);
 
-  const scheduleLayout = useCallback(() => {
-    // coalesce concurrent requests
-    if (isLayingOutRef.current) {
-      relayoutRequestedRef.current = true;
-      return;
+  const cancelActiveLayout = useCallback(() => {
+    layoutGenerationRef.current += 1;
+    for (const frameId of layoutFrameIdsRef.current) {
+      cancelAnimationFrame(frameId);
     }
+    layoutFrameIdsRef.current.clear();
+    activeLayoutDisposeRef.current?.();
+    activeLayoutDisposeRef.current = null;
+    activeLayoutItemCountRef.current = 0;
+    isLayingOutRef.current = false;
+  }, []);
+
+  const scheduleLayoutFrame = useCallback((layoutGeneration, callback) => {
+    if (
+      disposedRef.current ||
+      layoutGeneration !== layoutGenerationRef.current
+    ) {
+      return null;
+    }
+
+    let frameId = null;
+    let invokedSynchronously = false;
+    const wrapped = (timestamp) => {
+      invokedSynchronously = true;
+      if (frameId !== null) layoutFrameIdsRef.current.delete(frameId);
+      if (
+        disposedRef.current ||
+        layoutGeneration !== layoutGenerationRef.current
+      ) {
+        return;
+      }
+      callback(timestamp);
+    };
+    frameId = requestAnimationFrame(wrapped);
+    if (!invokedSynchronously) layoutFrameIdsRef.current.add(frameId);
+    return frameId;
+  }, []);
+
+  const scheduleLayout = useCallback(() => {
+    if (disposedRef.current) return;
+    // Each request replaces the prior generation. Cancelling both the frame
+    // and its captured item array prevents stale large DOM collections from
+    // surviving until every old chunk would otherwise have run.
+    cancelActiveLayout();
+    const layoutGeneration = layoutGenerationRef.current;
     isLayingOutRef.current = true;
 
-    requestAnimationFrame(() => {
-      const grid = gridRef.current;
+    scheduleLayoutFrame(layoutGeneration, () => {
+      let grid = gridRef.current;
       if (!grid) {
         isLayingOutRef.current = false;
         return;
@@ -138,13 +193,47 @@ export default function useChunkedMasonry({
 
       const columnHeights = new Array(columnCount).fill(0);
       const items = Array.from(grid.querySelectorAll(".video-item"));
+      activeLayoutItemCountRef.current = items.length;
+
+      const currentIds = new Set(
+        items.map(
+          (element, index) =>
+            element.dataset.videoId ||
+            element.dataset.filename ||
+            `__idx_${index}`
+        )
+      );
+      for (const cachedId of aspectRatioCacheRef.current.keys()) {
+        if (!currentIds.has(cachedId)) {
+          aspectRatioCacheRef.current.delete(cachedId);
+        }
+      }
+      currentIds.clear();
 
       // Collect positions for order calculation
       const positions = [];
 
+      let cancelled = false;
+      const disposeLayout = () => {
+        if (cancelled) return;
+        cancelled = true;
+        items.length = 0;
+        positions.length = 0;
+        grid = null;
+        activeLayoutItemCountRef.current = 0;
+      };
+      activeLayoutDisposeRef.current = disposeLayout;
+
       // work in chunks to avoid long tasks
       let i = 0;
       const step = () => {
+        if (
+          cancelled ||
+          disposedRef.current ||
+          layoutGeneration !== layoutGenerationRef.current
+        ) {
+          return;
+        }
         const end = Math.min(i + chunkSize, items.length);
         for (; i < end; i++) {
           const el = items[i];
@@ -155,14 +244,14 @@ export default function useChunkedMasonry({
             const datasetRatio = Number(el.dataset?.aspectRatio);
             if (Number.isFinite(datasetRatio) && datasetRatio > 0) {
               ar = datasetRatio;
-              aspectRatioCacheRef.current.set(id, ar);
+              setBoundedAspectRatio(aspectRatioCacheRef.current, id, ar);
             }
           }
           if (!ar) {
             const v = el.querySelector("video");
             if (v && v.videoWidth && v.videoHeight) {
               ar = v.videoWidth / v.videoHeight;
-              aspectRatioCacheRef.current.set(id, ar);
+              setBoundedAspectRatio(aspectRatioCacheRef.current, id, ar);
             } else {
               ar = defaultAspect;
             }
@@ -209,7 +298,7 @@ export default function useChunkedMasonry({
         }
 
         if (i < items.length) {
-          requestAnimationFrame(step);
+          scheduleLayoutFrame(layoutGeneration, step);
         } else {
           const maxHeight = columnHeights.length
             ? Math.max(...columnHeights)
@@ -217,7 +306,8 @@ export default function useChunkedMasonry({
           grid.style.height = `${maxHeight}px`;
           grid.style.position = "relative";
 
-          // Compute and publish visual order (top-to-bottom, then left-to-right)
+          // Compute the callback payloads before releasing all captured DOM.
+          let orderToPublish = null;
           if (typeof onOrderChange === "function") {
             positions.sort((a, b) => a.y - b.y || a.x - b.x);
             const order = positions.map((p) => p.id);
@@ -228,29 +318,31 @@ export default function useChunkedMasonry({
               order.some((id, idx) => id !== prev[idx]);
             if (changed) {
               lastOrderRef.current = order;
-              onOrderChange(order);
+              orderToPublish = order;
             }
           }
 
+          const completionPayload = {
+            columnHeights: columnHeights.slice(),
+            maxHeight,
+            metrics: cachedGridMeasurementsRef.current || null,
+          };
+          if (activeLayoutDisposeRef.current === disposeLayout) {
+            activeLayoutDisposeRef.current = null;
+          }
           isLayingOutRef.current = false;
+          disposeLayout();
+
+          if (orderToPublish) onOrderChange(orderToPublish);
           if (typeof onLayoutComplete === "function") {
             try {
-              const metrics = cachedGridMeasurementsRef.current || null;
-              onLayoutComplete({
-                columnHeights: columnHeights.slice(),
-                maxHeight,
-                metrics,
-              });
+              onLayoutComplete(completionPayload);
             } catch (err) {
               if (process.env.NODE_ENV !== "production") {
                 // eslint-disable-next-line no-console
                 console.error("useChunkedMasonry onLayoutComplete error", err);
               }
             }
-          }
-          if (relayoutRequestedRef.current) {
-            relayoutRequestedRef.current = false;
-            scheduleLayout();
           }
         }
       };
@@ -259,7 +351,9 @@ export default function useChunkedMasonry({
     });
   }, [
     gridRef,
+    cancelActiveLayout,
     updateCachedGridMeasurements,
+    scheduleLayoutFrame,
     chunkSize,
     defaultAspect,
     onOrderChange,
@@ -272,7 +366,7 @@ export default function useChunkedMasonry({
       if (!id || !Number.isFinite(ar) || ar <= 0) return;
       const prev = aspectRatioCacheRef.current.get(id);
       if (prev !== ar) {
-        aspectRatioCacheRef.current.set(id, ar);
+        setBoundedAspectRatio(aspectRatioCacheRef.current, id, ar);
         const grid = gridRef.current;
         if (grid) {
           const selectorId = window.CSS?.escape ? window.CSS.escape(id) : id;
@@ -337,13 +431,17 @@ export default function useChunkedMasonry({
   );
 
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
+      cancelActiveLayout();
       if (zoomFrameRef.current) {
         cancelAnimationFrame(zoomFrameRef.current);
         zoomFrameRef.current = 0;
       }
+      aspectRatioCacheRef.current.clear();
     };
-  }, []);
+  }, [cancelActiveLayout]);
 
   // scroll tracking — avoid thrashing while user is scrolling
   useEffect(() => {
@@ -392,5 +490,12 @@ export default function useChunkedMasonry({
     onItemsChanged,
     setZoomClass,
     scheduleLayout, // exposed in case you want a manual nudge
+    getCacheDebugSnapshot: () => ({
+      aspectRatioEntries: aspectRatioCacheRef.current.size,
+      maxAspectRatioEntries: MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES,
+      scheduledLayoutFrames: layoutFrameIdsRef.current.size,
+      layoutInProgress: isLayingOutRef.current,
+      activeLayoutItems: activeLayoutItemCountRef.current,
+    }),
   };
 }

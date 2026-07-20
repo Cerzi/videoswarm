@@ -1,6 +1,9 @@
 import { describe, test, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import usePlayOrchestrator from './usePlayOrchestrator';
+import usePlayOrchestrator, {
+  MAX_PLAYBACK_START_HISTORY,
+} from './usePlayOrchestrator';
+import { createMediaSlotScheduler } from '../../services/mediaSlotScheduler';
 
 const setOf = (arr) => new Set(arr);
 
@@ -31,10 +34,15 @@ describe('usePlayOrchestrator', () => {
       result.current.reportStarted('x');
     });
     expect(result.current.playingSet.has('x')).toBe(true);
+    const xLease = result.current.getDecoderLease('x');
 
     act(() => {
-      result.current.markHover('y'); // prioritizes y
-      result.current.reportStarted('y');
+      result.current.markHover('y'); // requests x -> y handoff
+    });
+    expect(result.current.playingSet.size).toBe(0);
+
+    act(() => {
+      result.current.reportPaused('x', xLease);
     });
     expect(result.current.playingSet.has('y')).toBe(true);
   });
@@ -108,5 +116,293 @@ describe('usePlayOrchestrator', () => {
 
     expect(result.current.playingSet.has('keep')).toBe(true);
     expect(result.current.playingSet.has('reload')).toBe(false);
+  });
+
+  test('hover audio start/end tracks active card and switches cleanly', () => {
+    const visible = setOf(['a', 'b']);
+    const loaded = setOf(['a', 'b']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 2,
+        hoverAudioEnabled: true,
+      })
+    );
+
+    act(() => {
+      result.current.onCardHoverAudioStart('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('a');
+
+    act(() => {
+      result.current.onCardHoverAudioStart('b');
+    });
+    expect(result.current.activeHoverAudioId).toBe('b');
+
+    act(() => {
+      result.current.onCardHoverAudioEnd('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('b');
+
+    act(() => {
+      result.current.onCardHoverAudioEnd('b');
+    });
+    expect(result.current.activeHoverAudioId).toBe(null);
+  });
+
+  test('disabling hover audio clears active hover-audio state', () => {
+    const visible = setOf(['a']);
+    const loaded = setOf(['a']);
+    const { result, rerender } = renderHook((props) => usePlayOrchestrator(props), {
+      initialProps: {
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 2,
+        hoverAudioEnabled: true,
+      },
+    });
+
+    act(() => {
+      result.current.onCardHoverAudioStart('a');
+    });
+    expect(result.current.activeHoverAudioId).toBe('a');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      hoverAudioEnabled: false,
+    });
+    expect(result.current.activeHoverAudioId).toBe(null);
+  });
+
+  test('uses exact injected leases and ignores stale pause acknowledgements', () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 2,
+      maxLoaders: 2,
+      maxDecoders: 1,
+    });
+    for (const id of ['a', 'b']) {
+      const loader = scheduler.reserveLoader(id);
+      scheduler.markLoaderReady(loader);
+    }
+    const visible = setOf(['a', 'b']);
+    const loaded = setOf(['a', 'b']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 1,
+        mediaScheduler: scheduler,
+      })
+    );
+    const firstId = Array.from(result.current.playingSet)[0];
+    const nextId = firstId === 'a' ? 'b' : 'a';
+    const firstLease = result.current.getDecoderLease(firstId);
+
+    act(() => result.current.markHover(nextId));
+    expect(result.current.playingSet.size).toBe(0);
+    expect(scheduler.getSnapshot()).toMatchObject({
+      decoders: 1,
+      stoppingDecoders: 1,
+    });
+
+    act(() => {
+      expect(result.current.reportPaused(firstId, firstLease)).toBe(true);
+    });
+    const nextLease = result.current.getDecoderLease(nextId);
+    expect(nextLease).toBeTruthy();
+    expect(nextLease).not.toBe(firstLease);
+    expect(result.current.playingSet).toEqual(new Set([nextId]));
+
+    act(() => {
+      expect(result.current.reportPaused(firstId, firstLease)).toBe(false);
+    });
+    expect(result.current.getDecoderLease(nextId)).toBe(nextLease);
+  });
+
+  test('never lets a lease-less pause release a newly granted decoder', () => {
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+    });
+    scheduler.markLoaderReady(scheduler.reserveLoader('fresh'));
+
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: setOf(['fresh']),
+        loadedIds: setOf(['fresh']),
+        maxPlaying: 1,
+        mediaScheduler: scheduler,
+      })
+    );
+    const freshLease = result.current.getDecoderLease('fresh');
+    expect(freshLease).toBeTruthy();
+
+    act(() => {
+      expect(result.current.reportPaused('fresh', null)).toBe(false);
+    });
+
+    expect(result.current.getDecoderLease('fresh')).toBe(freshLease);
+    expect(result.current.playingSet).toEqual(new Set(['fresh']));
+  });
+
+  test('All Motion retains admitted decoders when viewport-center order changes', () => {
+    const visible = setOf(['first', 'second', 'third']);
+    const loaded = setOf(['first', 'second', 'third']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 2,
+          playbackMode: 'all-motion',
+          centerPriorityIds: ['first', 'second', 'third'],
+        },
+      }
+    );
+    const firstLease = result.current.getDecoderLease('first');
+    const secondLease = result.current.getDecoderLease('second');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      playbackMode: 'all-motion',
+      centerPriorityIds: ['third', 'second', 'first'],
+    });
+
+    expect(result.current.getDecoderLease('first')).toBe(firstLease);
+    expect(result.current.getDecoderLease('second')).toBe(secondLease);
+    expect(result.current.getDecoderLease('third')).toBeNull();
+  });
+
+  test('bounded modes retain visible decoders across center-order churn', () => {
+    const visible = setOf(['first', 'second', 'third']);
+    const loaded = setOf(['first', 'second', 'third']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 2,
+          playbackMode: 'balanced',
+          centerPriorityIds: ['first', 'second', 'third'],
+        },
+      }
+    );
+    const firstLease = result.current.getDecoderLease('first');
+    const secondLease = result.current.getDecoderLease('second');
+
+    rerender({
+      visibleIds: visible,
+      loadedIds: loaded,
+      maxPlaying: 2,
+      playbackMode: 'balanced',
+      centerPriorityIds: ['third', 'second', 'first'],
+    });
+
+    expect(result.current.getDecoderLease('first')).toBe(firstLease);
+    expect(result.current.getDecoderLease('second')).toBe(secondLease);
+    expect(result.current.getDecoderLease('third')).toBeNull();
+  });
+
+  test('prioritizes hover, selection, then viewport center', () => {
+    const visible = setOf(['edge', 'selected', 'center', 'hover']);
+    const loaded = setOf(['edge', 'selected', 'center', 'hover']);
+    const { result } = renderHook(() =>
+      usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 3,
+        centerPriorityIds: ['center', 'selected', 'edge', 'hover'],
+        selectedIds: setOf(['selected']),
+        hoveredId: 'hover',
+      })
+    );
+
+    expect(result.current.playingSet).toEqual(
+      new Set(['hover', 'selected', 'center'])
+    );
+  });
+
+  test('Static + Hover admits only hovered and selected visible cards', () => {
+    const visible = setOf(['still', 'selected', 'hover']);
+    const loaded = setOf(['still', 'selected', 'hover']);
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      {
+        initialProps: {
+          visibleIds: visible,
+          loadedIds: loaded,
+          maxPlaying: 3,
+          playbackMode: 'static-hover',
+          selectedIds: setOf(['selected']),
+          hoveredId: 'hover',
+          centerPriorityIds: ['still', 'selected', 'hover'],
+        },
+      }
+    );
+
+    expect(result.current.playingSet).toEqual(new Set(['hover', 'selected']));
+    const hoverLease = result.current.getDecoderLease('hover');
+    act(() => {
+      rerender({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 3,
+        playbackMode: 'static-hover',
+        selectedIds: setOf(['selected']),
+        hoveredId: null,
+        centerPriorityIds: ['still', 'selected', 'hover'],
+      });
+    });
+    expect(result.current.playingSet).toEqual(new Set(['selected']));
+    act(() => {
+      expect(result.current.reportPaused('hover', hoverLease)).toBe(true);
+    });
+  });
+
+  test('bounds start history and prunes stale collection generations', () => {
+    const idsA = Array.from(
+      { length: MAX_PLAYBACK_START_HISTORY + 128 },
+      (_, index) => `a-${index}`
+    );
+    const propsA = {
+      visibleIds: setOf(idsA),
+      loadedIds: setOf(idsA),
+      maxPlaying: idsA.length,
+    };
+    const { result, rerender } = renderHook(
+      (props) => usePlayOrchestrator(props),
+      { initialProps: propsA }
+    );
+
+    act(() => {
+      idsA.forEach((id) => result.current.reportStarted(id));
+    });
+    expect(result.current.getCacheDebugSnapshot()).toEqual({
+      startHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+      staleStartHistoryEntries: 0,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+    });
+
+    const idsB = Array.from({ length: 8 }, (_, index) => `b-${index}`);
+    act(() => {
+      rerender({
+        visibleIds: setOf(idsB),
+        loadedIds: setOf(idsB),
+        maxPlaying: idsB.length,
+      });
+    });
+    expect(result.current.getCacheDebugSnapshot()).toEqual({
+      startHistoryEntries: 0,
+      staleStartHistoryEntries: 0,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+    });
   });
 });

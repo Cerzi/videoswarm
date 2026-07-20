@@ -1,10 +1,12 @@
 import { useMemo } from "react";
+import { REVIEW_FILTERS, normalizeReviewFilter } from "../../review/reviewState";
 
 export const createDefaultFilters = () => ({
   includeTags: [],
   excludeTags: [],
   minRating: null,
   exactRating: null,
+  reviewFilter: REVIEW_FILTERS.ANY,
 });
 
 export const normalizeTagList = (tags) =>
@@ -51,5 +53,7 @@ export const useFiltersActiveCount = (filters) =>
         : filters.minRating !== null && filters.minRating !== undefined
         ? 1
         : 0;
-    return includeCount + excludeCount + ratingCount;
+    const reviewCount =
+      normalizeReviewFilter(filters.reviewFilter) === REVIEW_FILTERS.ANY ? 0 : 1;
+    return includeCount + excludeCount + ratingCount + reviewCount;
   }, [filters]);

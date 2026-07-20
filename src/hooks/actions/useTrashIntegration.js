@@ -8,6 +8,10 @@ export default function useTrashIntegration({
   postConfirmRecovery,
   captureLastFocusSelector,
   releaseVideoHandlesForAsync,
+  beginMediaMutation,
+  endMediaMutation,
+  mediaScheduler,
+  workSuspended = false,
 
   // your real setters
   setVideos,            // (prev) => next array
@@ -59,7 +63,7 @@ export default function useTrashIntegration({
     return () => api.offFilesTrashed?.(handler);
   }, [electronAPI, onItemsRemoved, releaseVideoHandlesForAsync]);
 
-  const confirmMoveToTrash = useCallback(async ({ count, sampleName }) => {
+  const confirmMoveToTrash = useCallback(async ({ paths, count, sampleName }) => {
     preTrashCleanup?.();
 
     const lastFocusedSelector = captureLastFocusSelector?.() ?? null;
@@ -84,9 +88,18 @@ export default function useTrashIntegration({
     };
 
     let confirmed = false;
+    let confirmationToken = null;
     try {
       if (electronAPI?.confirmMoveToTrash) {
-        confirmed = await electronAPI.confirmMoveToTrash({ count, sampleName });
+        const result = await electronAPI.confirmMoveToTrash({
+          paths,
+          count,
+          sampleName,
+        });
+        confirmed = result === true || result?.confirmed === true;
+        confirmationToken = result && typeof result === "object"
+          ? result.token || null
+          : null;
       } else {
         confirmed = fallbackConfirm();
       }
@@ -100,7 +113,11 @@ export default function useTrashIntegration({
       lastFocusedSelector,
     });
 
-    return { confirmed: !!confirmed, lastFocusedSelector };
+    return {
+      confirmed: !!confirmed,
+      confirmationToken,
+      lastFocusedSelector,
+    };
   }, [captureLastFocusSelector, confirm, electronAPI, postConfirmRecovery, preTrashCleanup]);
 
   return {
@@ -109,6 +126,10 @@ export default function useTrashIntegration({
     confirmMoveToTrash,
     postConfirmRecovery,
     releaseVideoHandlesForAsync,
+    beginMediaMutation,
+    endMediaMutation,
+    mediaScheduler,
+    workSuspended,
     onItemsRemoved,
   };
 }

@@ -1,5 +1,13 @@
 // src/hooks/video-collection/useVideoResourceManager.js
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createMediaSlotScheduler } from "../../services/mediaSlotScheduler";
 
 const __DEV__ = process.env.NODE_ENV !== "production";
 
@@ -64,12 +72,15 @@ export default function useVideoResourceManager({
   progressiveTargetCount = progressiveVideos?.length || 0,
   desiredActiveCount = progressiveVisibleCount,
   visibleVideos,
-  loadedVideos,
-  loadingVideos,
+  loadedVideos: _loadedVideos,
+  loadingVideos: _loadingVideos,
   playingVideos,
   hadLongTaskRecently = false,
   isNear = () => false,
   suspendEvictions = false,
+  mediaScheduler = null,
+  maxDecoders = 1,
+  workSuspended = false,
 }) {
   // --- normalize inputs: accept Set/Array/iterable; store as Set
   const asSet = (v) =>
@@ -77,9 +88,12 @@ export default function useVideoResourceManager({
       ? v
       : new Set(Array.isArray(v) ? v : v ? Array.from(v) : []);
   const _visibleVideos = asSet(visibleVideos);
-  const _loadedVideos = asSet(loadedVideos);
-  const _loadingVideos = asSet(loadingVideos);
   const _playingVideos = asSet(playingVideos);
+  const fallbackSchedulerRef = useRef(null);
+  if (!fallbackSchedulerRef.current) {
+    fallbackSchedulerRef.current = createMediaSlotScheduler();
+  }
+  const slotScheduler = mediaScheduler || fallbackSchedulerRef.current;
 
   // --- memory sampling ---
   const [mem, setMem] = useState(() => ({
@@ -90,6 +104,7 @@ export default function useVideoResourceManager({
   }));
 
   useEffect(() => {
+    if (workSuspended) return undefined;
     let alive = true;
     const tick = async () => {
       const res = await readAppMemorySafe();
@@ -110,7 +125,7 @@ export default function useVideoResourceManager({
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [workSuspended]);
 
   // EWMA smoothing for memoryPressure (avoid twitchy decisions)
   const smoothPressureRef = useRef(0);
@@ -273,49 +288,108 @@ export default function useVideoResourceManager({
     limitMultiplier,
   ]);
 
-  // --- admission control (relaxed + visible priority) ---
-  const canLoadVideo = useCallback(
-    (id, options = {}) => {
-      if (!id) return false;
+  // Imperative admission reads these limits synchronously. React Sets below
+  // remain useful mirrors for UI/scoring, but they never authorize a slot.
+  useLayoutEffect(() => {
+    slotScheduler.configure({
+      maxResident: workSuspended ? 0 : limits.maxLoaded,
+      maxLoaders: workSuspended ? 0 : limits.maxConcurrentLoading,
+      maxDecoders: workSuspended ? 0 : maxDecoders,
+      maxExternalDecoders: workSuspended ? 0 : 1,
+      maxAuxiliaryDecoders: workSuspended ? 0 : 1,
+    });
+  }, [
+    limits.maxConcurrentLoading,
+    limits.maxLoaded,
+    maxDecoders,
+    slotScheduler,
+    workSuspended,
+  ]);
 
+  const getAdmissionOptions = useCallback(
+    (id, options = {}) => {
+      if (!id || workSuspended) return null;
       const assumeVisible = Boolean(options?.assumeVisible);
       const assumeNear = assumeVisible || Boolean(options?.assumeNear);
+      const visible = assumeVisible || _visibleVideos.has(id);
+      const near = assumeNear || (isNear ? Boolean(isNear(id)) : false);
 
-      // Hard cap on *loaded* to avoid runaway memory; let visible bypass to reload if needed
-      if (_loadedVideos.size >= limits.maxLoaded) {
-        const isVisCapBypass = assumeVisible || _visibleVideos.has(id);
-        if (!isVisCapBypass) return false;
+      if (!visible && !near) {
+        const snapshot = slotScheduler.getSnapshot();
+        if (snapshot.loading >= Math.floor(limits.maxConcurrentLoading * 0.5)) {
+          return null;
+        }
       }
 
-      const isVis = assumeVisible || _visibleVideos.has(id);
-      const near = assumeNear || (isNear ? !!isNear(id) : false);
-
-      // Always allow visible; permit small overflow over loader cap
-      if (isVis) {
-        const overflow = Math.max(2, Math.floor(limits.maxConcurrentLoading * 0.25));
-        if (_loadingVideos.size <= limits.maxConcurrentLoading + overflow) return true;
-        return false;
-      }
-
-      // Non-visible obey the loader cap strictly
-      if (_loadingVideos.size >= limits.maxConcurrentLoading) return false;
-
-      // Allow near items
-      if (near) return true;
-
-      // Allow far non-visible when we have headroom (keep 50% slots free)
-      const loaderHeadroom =
-        _loadingVideos.size < Math.floor(limits.maxConcurrentLoading * 0.5);
-      return loaderHeadroom;
+      return {
+        replaceResident: Boolean(options?.replaceResident),
+      };
     },
     [
       _visibleVideos,
-      _loadedVideos.size,
-      _loadingVideos.size,
-      limits.maxLoaded,
-      limits.maxConcurrentLoading,
       isNear,
+      limits.maxConcurrentLoading,
+      slotScheduler,
+      workSuspended,
     ]
+  );
+
+  // --- admission control (scheduler-authoritative, strict caps) ---
+  const canLoadVideo = useCallback(
+    (id, options = {}) => {
+      const admission = getAdmissionOptions(id, options);
+      return Boolean(
+        admission && slotScheduler.canReserveLoader(id, admission)
+      );
+    },
+    [getAdmissionOptions, slotScheduler]
+  );
+
+  const reserveLoadSlot = useCallback(
+    (id, options = {}) => {
+      const admission = getAdmissionOptions(id, options);
+      return admission ? slotScheduler.reserveLoader(id, admission) : null;
+    },
+    [getAdmissionOptions, slotScheduler]
+  );
+
+  const queueLoadSlot = useCallback(
+    (id, options = {}, onGranted) => {
+      const admission = getAdmissionOptions(id, options);
+      if (!admission || typeof onGranted !== "function") return null;
+      const assumeVisible = Boolean(options?.assumeVisible);
+      const assumeNear = assumeVisible || Boolean(options?.assumeNear);
+      const visible = assumeVisible || _visibleVideos.has(id);
+      const priority = visible
+        ? 2
+        : assumeNear
+          ? 1
+          : 0;
+      return slotScheduler.queueLoader(
+        id,
+        { ...admission, priority },
+        onGranted
+      );
+    },
+    [_visibleVideos, getAdmissionOptions, slotScheduler]
+  );
+
+  const cancelQueuedLoadSlot = useCallback(
+    (waiterLease) => slotScheduler.cancelQueuedLoader(waiterLease),
+    [slotScheduler]
+  );
+
+  const finishLoadSlot = useCallback(
+    (lease, { ready = false } = {}) =>
+      ready
+        ? slotScheduler.markLoaderReady(lease)
+        : slotScheduler.failLoader(lease),
+    [slotScheduler]
+  );
+
+  const releaseMediaSlot = useCallback(
+    (lease) => slotScheduler.releaseMedia(lease),
+    [slotScheduler]
   );
 
   // Evict to meet limits (prefer to free non-visible, non-playing first; never evict visible/playing)
@@ -327,10 +401,11 @@ export default function useVideoResourceManager({
     if (now - lastCleanupAtRef.current < 500) return;
     lastCleanupAtRef.current = now;
 
-    const overBy = _loadedVideos.size - limits.maxLoaded;
+    const residentIds = slotScheduler.getSnapshot().residentIds;
+    const overBy = residentIds.size - limits.maxLoaded;
     if (overBy <= 0) return;
 
-    const loaded = Array.from(_loadedVideos);
+    const loaded = Array.from(residentIds);
 
     // Score: lower = better candidate for eviction
     const score = (id) => {
@@ -358,25 +433,18 @@ export default function useVideoResourceManager({
     }
     return victims.length > 0 ? victims : undefined;
   }, [
-    _loadedVideos,
     limits.maxLoaded,
     _visibleVideos,
     _playingVideos,
     isNear,
     suspendEvictions,
+    slotScheduler,
   ]);
 
   // Reduce limits after catastrophic player creation failures
   const reportPlayerCreationFailure = useCallback(() => {
     setLimitMultiplier((m) => m * 0.5);
   }, []);
-
-  // Cleanup once multiplier has reduced limits
-  useEffect(() => {
-    if (limitMultiplier < 1) {
-      performCleanup();
-    }
-  }, [limitMultiplier, performCleanup]);
 
   // Dev logging (throttled, skip until IPC answers)
   const logThrottle = useRef(0);
@@ -406,14 +474,30 @@ export default function useVideoResourceManager({
       memoryPressure: Math.round(mem.memoryPressure * 100),
       isNearLimit: mem.memoryPressure > 0.85,
       source: mem.source,
+      pollingSuspended: workSuspended,
     }),
-    [mem]
+    [mem, workSuspended]
+  );
+
+  const effectiveLimits = useMemo(
+    () =>
+      workSuspended
+        ? { ...limits, maxLoaded: 0, maxConcurrentLoading: 0 }
+        : limits,
+    [limits, workSuspended]
   );
 
   return {
     canLoadVideo,
+    reserveLoadSlot,
+    queueLoadSlot,
+    cancelQueuedLoadSlot,
+    finishLoadSlot,
+    releaseMediaSlot,
+    isCurrentMediaLease: slotScheduler.isCurrentMediaLease,
+    mediaScheduler: slotScheduler,
     performCleanup,
-    limits,
+    limits: effectiveLimits,
     memoryStatus,
     reportPlayerCreationFailure,
   };

@@ -24,22 +24,38 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install
         run: npm ci
 
       - name: Lint
-        run: npm run lint --if-present
+        run: npm run lint
 
-      - name: Unit tests
-        run: npm test -- --run
+      - name: Unit tests and coverage (Electron ABI)
+        run: npm run test:coverage
 
-      # Fast sanity build. If you have a pure web build, run it first.
-      - name: Build (web)
-        run: npm run build --if-present
+      - name: Build renderer
+        run: npm run vite:build
 
-      # Optional: electron pack without making installers (faster than electron:dist)
+      - name: Install Electron smoke-test display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: Electron production smoke test
+        run: xvfb-run -a npm run test:electron-smoke
+
+      - name: Upload smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-smoke-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+
       - name: Electron pack (no installers)
-        run: npm run electron:pack --if-present
+        run: npm run electron:pack

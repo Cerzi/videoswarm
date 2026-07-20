@@ -1,5 +1,5 @@
 // src/hooks/selection/useSelectionState.js
-import { useMemo, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 export default function useSelectionState() {
   const [selected, setSelected] = useState(() => new Set());
@@ -23,6 +23,25 @@ export default function useSelectionState() {
     });
   }, []);
 
+  const selectExactly = useCallback((id) => {
+    if (id == null) {
+      setSelected(new Set());
+      setAnchorId(null);
+      return;
+    }
+    setSelected(new Set([id]));
+    setAnchorId(id);
+  }, []);
+
+  const setSelectedIds = useCallback((ids) => {
+    const next = ids instanceof Set ? new Set(ids) : new Set(ids || []);
+    setSelected(next);
+    setAnchorId((previous) => {
+      if (previous != null && next.has(previous)) return previous;
+      return next.values().next().value ?? null;
+    });
+  }, []);
+
   const toggle = useCallback((id) => {
     setSelected(prev => {
       const ns = new Set(prev);
@@ -36,6 +55,30 @@ export default function useSelectionState() {
   const clear = useCallback(() => {
     setSelected(new Set());
     setAnchorId(null);
+  }, []);
+
+  const remove = useCallback((id) => {
+    setSelected((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setAnchorId((prev) => (prev === id ? null : prev));
+  }, []);
+
+  const pruneTo = useCallback((validIds) => {
+    const valid = validIds instanceof Set ? validIds : new Set(validIds || []);
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set();
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+    setAnchorId((prev) => (prev != null && !valid.has(prev) ? null : prev));
   }, []);
 
   // Select a whole range, given the *ordered ids* array and the end id.
@@ -63,8 +106,12 @@ export default function useSelectionState() {
     anchorId,
     setSelected,  // used by FS watcher cleanup
     selectOnly,
+    selectExactly,
+    setSelectedIds,
     toggle,
     clear,
+    remove,
+    pruneTo,
     selectRange,
   };
 }

@@ -1,5 +1,47 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+function normalizeDragPaths(value) {
+  const candidates = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : value && Array.isArray(value.paths)
+        ? value.paths
+        : [];
+  return candidates.filter(
+    (entry) => typeof entry === "string" && entry.trim().length > 0
+  );
+}
+
+function startFileDrag(paths) {
+  const payloadPaths = normalizeDragPaths(paths);
+  if (!payloadPaths.length) return { ok: false, error: "NO_FILE" };
+  ipcRenderer.send("dnd:start-file", { paths: payloadPaths });
+  return { ok: true, queued: true };
+}
+
+function normalizePlaybackSourceRequest(payload) {
+  const instanceId = Number(payload?.instanceId);
+  const sourceUrl = typeof payload?.sourceUrl === "string"
+    ? payload.sourceUrl
+    : "";
+  return {
+    instanceId:
+      Number.isSafeInteger(instanceId) && instanceId > 0 ? instanceId : null,
+    sourceUrl:
+      sourceUrl.length <= 2048 && sourceUrl.startsWith("videoswarm-media://")
+        ? sourceUrl
+        : null,
+    enabled: Boolean(payload?.enabled),
+  };
+}
+
+function normalizeAcceptedCopyPlanId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : "";
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -32,16 +74,67 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Directory reading with enhanced metadata
-  readDirectory: async (folderPath, recursive = false) => {
-    return await ipcRenderer.invoke("read-directory", folderPath, recursive);
+  readDirectory: async (
+    folderPath,
+    recursive = false,
+    scanId = null,
+    options = undefined
+  ) => {
+    return await ipcRenderer.invoke(
+      "read-directory",
+      folderPath,
+      recursive,
+      scanId,
+      options
+    );
+  },
+
+  readDirectoryCache: async (
+    folderPath,
+    recursive = false,
+    scanId = null,
+    options = undefined
+  ) => {
+    const args = ["read-directory-cache", folderPath, recursive, scanId];
+    if (options !== undefined) args.push(options);
+    return await ipcRenderer.invoke(...args);
+  },
+
+  cancelDirectoryScan: async (scanId) => {
+    return await ipcRenderer.invoke("cancel-directory-scan", scanId);
+  },
+
+  onDirectoryScanProgress: (callback) => {
+    if (typeof callback !== "function") {
+      return () => {};
+    }
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on("directory-scan-progress", handler);
+    return () =>
+      ipcRenderer.removeListener("directory-scan-progress", handler);
+  },
+
+  onDirectoryScanRecords: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("directory-scan-records", handler);
+    return () => ipcRenderer.removeListener("directory-scan-records", handler);
+  },
+
+  prioritizeDirectoryScan: (scanId, ids = []) => {
+    ipcRenderer.send("prioritize-directory-scan", {
+      scanId,
+      ids: Array.isArray(ids) ? ids : [],
+    });
   },
 
   // File system watching
-  startFolderWatch: async (folderPath, recursive) => {
+  startFolderWatch: async (folderPath, recursive, options = undefined) => {
     return await ipcRenderer.invoke(
       "start-folder-watch",
       folderPath,
-      recursive
+      recursive,
+      options
     );
   },
 
@@ -51,19 +144,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // File system events
   onFileAdded: (callback) => {
-    const handler = (_event, videoFile) => callback(videoFile);
+    const handler = (_event, payload) =>
+      callback(payload?.videoFile || payload, payload?.watch || null);
     ipcRenderer.on("file-added", handler);
     return () => ipcRenderer.removeListener("file-added", handler);
   },
 
   onFileRemoved: (callback) => {
-    const handler = (_event, filePath) => callback(filePath);
+    const handler = (_event, payload) =>
+      callback(payload?.filePath || payload, payload?.watch || null);
     ipcRenderer.on("file-removed", handler);
     return () => ipcRenderer.removeListener("file-removed", handler);
   },
 
   onFileChanged: (callback) => {
-    const handler = (_event, videoFile) => callback(videoFile);
+    const handler = (_event, payload) =>
+      callback(payload?.videoFile || payload, payload?.watch || null);
     ipcRenderer.on("file-changed", handler);
     return () => ipcRenderer.removeListener("file-changed", handler);
   },
@@ -72,11 +168,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const handler = (_event, error) => callback(error);
     ipcRenderer.on("file-watch-error", handler);
     return () => ipcRenderer.removeListener("file-watch-error", handler);
-  },
-
-  // Get file info
-  getFileInfo: async (filePath) => {
-    return await ipcRenderer.invoke("get-file-info", filePath);
   },
 
   // Folder selection dialog
@@ -115,9 +206,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   onSettingsLoaded: (callback) => {
-    ipcRenderer.on("settings-loaded", (event, settings) => {
+    const handler = (_event, settings) => {
       callback(settings);
-    });
+    };
+    ipcRenderer.on("settings-loaded", handler);
+    return () => ipcRenderer.removeListener("settings-loaded", handler);
   },
 
   profiles: {
@@ -155,29 +248,44 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("request-settings");
   },
 
-  // Additional file operations (from your main.js)
-  bulkMoveToTrash: async (paths) => {
-    return await ipcRenderer.invoke('bulk-move-to-trash', paths);
+  playback: {
+    getCapabilities: () => ipcRenderer.invoke("playback:get-capabilities"),
+    getWindowActivity: () =>
+      ipcRenderer.invoke("playback:get-window-activity"),
+    setRendererActive: (active) =>
+      ipcRenderer.invoke("playback:set-renderer-active", Boolean(active)),
+    resolveSource: (payload) =>
+      ipcRenderer.invoke(
+        "playback:resolve-source",
+        normalizePlaybackSourceRequest(payload)
+      ),
+    onWindowActivity: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, activity) => callback(activity);
+      ipcRenderer.on("playback:window-activity", handler);
+      return () =>
+        ipcRenderer.removeListener("playback:window-activity", handler);
+    },
   },
-  moveToTrash: async (filePath) => {
-    return await ipcRenderer.invoke("move-to-trash", filePath);
+
+  // Additional file operations (from your main.js)
+  bulkMoveToTrash: async (paths, confirmationToken) => {
+    return await ipcRenderer.invoke("bulk-move-to-trash", {
+      paths,
+      confirmationToken,
+    });
+  },
+  moveToTrash: async (filePath, confirmationToken) => {
+    return await ipcRenderer.invoke("bulk-move-to-trash", {
+      paths: [filePath],
+      confirmationToken,
+    });
   },
 
   confirmMoveToTrash: async (payload) => {
     const result = await ipcRenderer.invoke("confirm-move-to-trash", payload);
-    if (typeof result === "boolean") return result;
-    if (result && typeof result.confirmed === "boolean") {
-      return result.confirmed;
-    }
-    return !!result;
-  },
-
-  copyFile: async (sourcePath, destPath) => {
-    return await ipcRenderer.invoke("copy-file", sourcePath, destPath);
-  },
-
-  getFileProperties: async (filePath) => {
-    return await ipcRenderer.invoke("get-file-properties", filePath);
+    if (result && typeof result === "object") return result;
+    return { confirmed: result === true, token: null };
   },
 
   // External player integration
@@ -185,25 +293,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("open-in-external-player", filePath);
   },
 
-  startFileDragSync: (paths) => {
-    const normalize = (value) => {
-      if (Array.isArray(value)) return value;
-      if (typeof value === "string") return [value];
-      if (value && Array.isArray(value.paths)) return value.paths;
-      return [];
-    };
-    const payloadPaths = normalize(paths).filter(
-      (entry) => typeof entry === "string" && entry.trim().length > 0
-    );
-    if (!payloadPaths.length) {
-      return { ok: false, error: "NO_FILE" };
-    }
-    return ipcRenderer.sendSync("dnd:start-file", { paths: payloadPaths });
-  },
+  startFileDrag,
+  // Compatibility alias for older renderer bundles. This is deliberately
+  // fire-and-forget despite the legacy name so drag start never blocks IPC.
+  startFileDragSync: startFileDrag,
 
   thumbs: {
-    put: (payload) => ipcRenderer.sendSync("thumb:put", payload),
-    get: (payload) => ipcRenderer.sendSync("thumb:get", payload),
+    put: (payload) => ipcRenderer.invoke("thumb:put", payload),
+    get: (payload) => ipcRenderer.invoke("thumb:get", payload),
   },
 
   // Clipboard operations
@@ -229,8 +326,112 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("metadata:remove-tag", fingerprints, tagName),
     setRating: async (fingerprints, rating) =>
       ipcRenderer.invoke("metadata:set-rating", fingerprints, rating),
+    setReviewState: async (fingerprints, reviewState) =>
+      ipcRenderer.invoke("metadata:set-review-state", fingerprints, reviewState),
+    restoreReview: async (snapshots) =>
+      ipcRenderer.invoke("metadata:restore-review", snapshots),
     get: async (fingerprints) =>
       ipcRenderer.invoke("metadata:get", fingerprints),
+    getGeneration: async (instanceId, requestToken, options = {}) => {
+      return ipcRenderer.invoke("metadata:get-generation", {
+        instanceId,
+        ...(requestToken === undefined || requestToken === null || requestToken === ""
+          ? {}
+          : { requestToken }),
+        ...(options?.force === true ? { force: true } : {}),
+      });
+    },
+    cancelGeneration: async (requestToken) =>
+      ipcRenderer.invoke("metadata:cancel-generation", {
+        requestToken,
+      }),
+  },
+
+  library: {
+    listRoots: async (options = {}) =>
+      ipcRenderer.invoke("library:list-roots", options),
+    authorizeRoot: async (rootPath) =>
+      ipcRenderer.invoke("library:authorize-root", { rootPath }),
+    getTree: async (rootPath, options = {}) =>
+      ipcRenderer.invoke("library:get-tree", {
+        rootPath,
+        includeMissing: Boolean(options?.includeMissing),
+      }),
+    setPinned: async (rootPath, pinned) =>
+      ipcRenderer.invoke("library:set-pinned", {
+        rootPath,
+        pinned,
+      }),
+    listSavedViews: async () =>
+      ipcRenderer.invoke("library:list-saved-views"),
+    createSavedView: async (name, definition) =>
+      ipcRenderer.invoke("library:create-saved-view", { name, definition }),
+    updateSavedView: async (id, changes = {}) =>
+      ipcRenderer.invoke("library:update-saved-view", { id, ...changes }),
+    deleteSavedView: async (id) =>
+      ipcRenderer.invoke("library:delete-saved-view", { id }),
+  },
+
+  review: {
+    copyAccepted: {
+      prepare: async (payload = {}) =>
+        ipcRenderer.invoke("review:copy-accepted:prepare", {
+          rootPath: payload?.rootPath,
+          directory: payload?.directory ?? "",
+          scope: payload?.scope,
+          includeSidecars: payload?.includeSidecars === true,
+        }),
+      start: async (planId) =>
+        ipcRenderer.invoke("review:copy-accepted:start", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+          collisionPolicy: "skip",
+        }),
+      cancel: async (planId) =>
+        ipcRenderer.invoke("review:copy-accepted:cancel", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      onProgress: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on("review:copy-accepted-progress", handler);
+        return () =>
+          ipcRenderer.removeListener("review:copy-accepted-progress", handler);
+      },
+    },
+    sessions: {
+      list: async () => ipcRenderer.invoke("review-sessions:list"),
+      get: async (rootPath) =>
+        ipcRenderer.invoke("review-sessions:get", { rootPath }),
+      save: async (draft = {}) =>
+        ipcRenderer.invoke("review-sessions:save", {
+          rootPath: draft?.rootPath,
+          directory: draft?.directory ?? "",
+          scope: draft?.scope,
+          view: draft?.view,
+          anchorInstanceId: draft?.anchorInstanceId ?? null,
+          anchorFingerprint: draft?.anchorFingerprint ?? null,
+        }),
+      clear: async (rootPath) =>
+        ipcRenderer.invoke("review-sessions:clear", { rootPath }),
+      onFlushRequested: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload = {}) => {
+          const requestId = typeof payload?.requestId === "string"
+            ? payload.requestId
+            : "";
+          if (!requestId) return;
+          callback(Object.freeze({ requestId }));
+        };
+        ipcRenderer.on("review-sessions:flush-requested", handler);
+        return () =>
+          ipcRenderer.removeListener("review-sessions:flush-requested", handler);
+      },
+      acknowledgeFlush: (requestId) => {
+        if (typeof requestId !== "string" || !requestId) return false;
+        ipcRenderer.send("review-sessions:flush-ack", { requestId });
+        return true;
+      },
+    },
   },
 
   recent: {

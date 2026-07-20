@@ -2,6 +2,13 @@
 import { useProgressiveList } from "./useProgressiveList";
 import useVideoResourceManager from "./useVideoResourceManager";
 import usePlayOrchestrator from "./usePlayOrchestrator";
+import {
+  PLAYBACK_MODES,
+  normalizePlaybackMode,
+} from "../../playback/playbackPolicy";
+
+const EMPTY_SET = new Set();
+const EMPTY_IDS = Object.freeze([]);
 
 export const PROGRESSIVE_DEFAULTS = {
   initial: 100,
@@ -29,6 +36,15 @@ export default function useVideoCollection({
   activationWindowIds = [],
   suspendEvictions = false,
   renderLimit = null,
+  hoverAudioEnabled = false,
+  mediaScheduler = null,
+  playbackSuspended = false,
+  workSuspended = false,
+  playbackMode = "balanced",
+  decoderTarget = null,
+  selectedIds = EMPTY_SET,
+  centerPriorityIds = EMPTY_IDS,
+  hoveredId,
 }) {
   const {
     initial = PROGRESSIVE_DEFAULTS.initial,
@@ -68,6 +84,7 @@ export default function useVideoCollection({
       forceInterval: !!forceInterval,
       maxVisible,
       materializeAll: true,
+      suspended: workSuspended,
     }
   );
 
@@ -126,9 +143,47 @@ export default function useVideoCollection({
     return 0;
   })();
 
+  const playingCap =
+    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
+      ? Math.floor(cappedDesiredActiveCount)
+      : limitedVisibleCount;
+  const policyDecoderTarget = Number.isFinite(decoderTarget)
+    ? Math.max(0, Math.floor(decoderTarget))
+    : null;
+  const normalizedPlaybackMode = normalizePlaybackMode(playbackMode);
+  const currentVisibleCount = Number.isFinite(visibleVideos?.size)
+    ? Math.max(0, Math.floor(visibleVideos.size))
+    : 0;
+  // All Motion must not inherit the adaptive hook's one-render delay. Keep
+  // the pre-mode activation-window allowance as synchronous headroom while
+  // usePlayOrchestrator continues to admit visible candidates only. This
+  // avoids pause/regrant churn when visibility grows or the center order
+  // changes before the passive policy update lands.
+  const allMotionDecoderTarget = Math.max(
+    policyDecoderTarget ?? 0,
+    Number.isFinite(playingCap) ? Math.max(0, playingCap) : 0,
+    currentVisibleCount
+  );
+  const maxDecoders = playbackSuspended || workSuspended
+    ? 0
+    : normalizedPlaybackMode === PLAYBACK_MODES.ALL_MOTION
+      ? allMotionDecoderTarget
+    : policyDecoderTarget !== null
+      ? policyDecoderTarget
+    : Number.isFinite(playingCap) && playingCap > 0
+      ? playingCap
+      : limitedVisibleCount;
+
   // Layer 2: Resource management (Browser performance)
   const {
     canLoadVideo,
+    reserveLoadSlot,
+    queueLoadSlot,
+    cancelQueuedLoadSlot,
+    finishLoadSlot,
+    releaseMediaSlot,
+    isCurrentMediaLease,
+    mediaScheduler: slotScheduler,
     performCleanup,
     limits,
     memoryStatus,
@@ -145,21 +200,34 @@ export default function useVideoCollection({
     hadLongTaskRecently,
     isNear,
     suspendEvictions,
+    mediaScheduler,
+    maxDecoders,
+    workSuspended,
   });
 
   // Layer 3: Play orchestration (Business logic)
-  const playingCap =
-    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
-      ? Math.floor(cappedDesiredActiveCount)
-      : limitedVisibleCount;
-  const { playingSet, markHover, reportPlayError, reportStarted } =
+  const {
+    playingSet,
+    markHover,
+    reportPlayError,
+    reportStarted,
+    reportPaused,
+    activeHoverAudioId,
+    onCardHoverAudioStart,
+    onCardHoverAudioEnd,
+    getDecoderLease,
+  } =
     usePlayOrchestrator({
       visibleIds: visibleVideos,
       loadedIds: loadedVideos,
-      maxPlaying:
-        Number.isFinite(playingCap) && playingCap > 0
-          ? playingCap
-          : limitedVisibleCount,
+      maxPlaying: maxDecoders,
+      hoverAudioEnabled,
+      mediaScheduler: slotScheduler,
+      playbackSuspended: playbackSuspended || workSuspended,
+      playbackMode: normalizedPlaybackMode,
+      selectedIds,
+      centerPriorityIds,
+      hoveredId,
     });
 
   return {
@@ -168,10 +236,21 @@ export default function useVideoCollection({
 
     // Functions for VideoCard
     canLoadVideo,
+    reserveLoadSlot,
+    queueLoadSlot,
+    cancelQueuedLoadSlot,
+    finishLoadSlot,
+    releaseMediaSlot,
+    isCurrentMediaLease,
+    getDecoderLease,
     isVideoPlaying: (videoId) => playingSet.has(videoId),
     markHover,
+    activeHoverAudioId,
+    onCardHoverAudioStart,
+    onCardHoverAudioEnd,
     reportPlayError,
     reportStarted,
+    reportPaused,
     reportPlayerCreationFailure,
 
     // Functions for parent
@@ -190,6 +269,7 @@ export default function useVideoCollection({
     },
 
     memoryStatus,
+    limits,
 
     // Debug info (development only)
     debug:
