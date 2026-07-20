@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             artifact-name: linux
           # Electron 43 / better-sqlite3 currently requires a source rebuild on
           # Windows. Pin VS 2022 until the dependency publishes ABI 148 assets;
@@ -44,16 +44,71 @@ jobs:
         run: npm ci
 
       - name: Install Linux build dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.artifact-name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            icnsutils graphicsmagick xz-utils libarchive-tools
+            icnsutils \
+            graphicsmagick \
+            libarchive-tools \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxkbcommon0 \
+            libxss1 \
+            xvfb \
+            xz-utils
 
-      - name: Build application
+      - name: Build Linux Debian package
+        if: matrix.artifact-name == 'linux'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm run vite:build
+          npx electron-builder --linux deb --publish=never
+
+      - name: Build Windows application
+        if: matrix.artifact-name == 'windows'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run electron:dist
+
+      - name: Install and smoke-test Linux Debian package
+        if: matrix.artifact-name == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t debs < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.deb" | sort)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux .deb, found ${#debs[@]}"
+            exit 1
+          fi
+          if find dist -maxdepth 1 -type f -name "*.AppImage" | grep -q .; then
+            echo "AppImage output is forbidden by the Linux release policy"
+            exit 1
+          fi
+          dpkg-deb -f "${debs[0]}" Depends | grep -Eq '(^|, )libasound2(,|$)'
+          sudo apt-get install -y "./${debs[0]}"
+          test "$(stat -c '%U:%G %a' /opt/VideoSwarm/chrome-sandbox)" = "root:root 4755"
+          env -u VIDEOSWARM_DISABLE_SANDBOX \
+            VIDEOSWARM_DEB_SMOKE=1 \
+            xvfb-run -a \
+            npx playwright test tests/electron/deb-package.smoke.spec.cjs \
+              --config=playwright.electron.config.cjs
+
+      - name: Upload Linux package smoke diagnostics
+        if: failure() && matrix.artifact-name == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb-smoke-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
 
       - name: Prepare artifacts
         shell: bash
@@ -61,13 +116,20 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
 
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.AppImage" -exec cp {} release-assets/ \;
-            find dist -maxdepth 1 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm_*_amd64.deb" \) -exec cp {} release-assets/ \;
+          if [ "${{ matrix.artifact-name }}" = "linux" ]; then
+            mapfile -t assets < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.deb" | sort)
+            if [ "${#assets[@]}" -ne 1 ]; then
+              echo "Expected exactly one Linux release asset, found ${#assets[@]}"
+              exit 1
+            fi
           else
-            find dist -maxdepth 1 -type f -name "VideoSwarm-*-win-x64.exe" -exec cp {} release-assets/ \;
-            find dist -maxdepth 1 -type f -name "VideoSwarm-*-win-x64-Portable.exe" -exec cp {} release-assets/ \;
+            mapfile -t assets < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-win-x64*.exe" | sort)
+            if [ "${#assets[@]}" -ne 2 ]; then
+              echo "Expected exactly two Windows release assets, found ${#assets[@]}"
+              exit 1
+            fi
           fi
+          cp "${assets[@]}" release-assets/
 
       - name: List artifacts
         shell: bash
@@ -103,17 +165,21 @@ jobs:
 
           mkdir -p release-files
 
-          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-linux.AppImage" -exec cp {} release-files/ \;
-          find all-artifacts -maxdepth 3 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm_*_amd64.deb" \) -exec cp {} release-files/ \;
-          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64.exe" -exec cp {} release-files/ \;
-          find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64-Portable.exe" -exec cp {} release-files/ \;
+          mapfile -t linux_assets < <(find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-linux.deb" | sort)
+          mapfile -t windows_assets < <(find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64*.exe" | sort)
+          if [ "${#linux_assets[@]}" -ne 1 ] || [ "${#windows_assets[@]}" -ne 2 ]; then
+            echo "Expected one Linux .deb and two Windows executables"
+            echo "Found ${#linux_assets[@]} Linux and ${#windows_assets[@]} Windows assets"
+            exit 1
+          fi
+          cp "${linux_assets[@]}" "${windows_assets[@]}" release-files/
 
           echo "Final release files:"
           ls -la release-files/
 
           FILE_COUNT=$(find release-files -type f | wc -l)
-          if [ "$FILE_COUNT" -ne 4 ]; then
-            echo "Expected 4 release files, found $FILE_COUNT"
+          if [ "$FILE_COUNT" -ne 3 ]; then
+            echo "Expected 3 release files, found $FILE_COUNT"
             exit 1
           fi
 
@@ -153,7 +219,6 @@ jobs:
             - \`VideoSwarm-*-win-x64-Portable.exe\`: Portable build (no installation)
           - **Linux**
             - \`VideoSwarm-*-linux.deb\`: Install with your package manager
-            - \`VideoSwarm-*-linux.AppImage\`: Make executable and run directly
 
           ## Checksums (SHA256)
 

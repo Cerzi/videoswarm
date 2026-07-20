@@ -161,15 +161,16 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - The app is designed primarily for many short clips. Long, high-resolution,
   or uncapped workloads remain hardware-sensitive even though 1,000- and
   6,000-item library gates are covered.
-- Release artifacts currently target Windows x64 and Linux; there is no macOS,
-  mobile, or web release.
+- Release artifacts currently target Windows x64 and Debian/Ubuntu x64. Linux
+  releases are `.deb`-only; there is no portable Linux, macOS, mobile, or web
+  release.
 
 ---
 
 ## Test the v0.6 Release Candidate
 
-[Download v0.6.0-rc.2](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.2)
-for Windows or Linux, then follow the
+[Download v0.6.0-rc.3](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.3)
+for Windows, or install its `.deb` on Debian/Ubuntu, then follow the
 [RC feedback tracker](https://github.com/Cerzi/videoswarm/issues/80) for the
 priority test areas and stable-release gate. Close VideoSwarm before upgrading
 and back up irreplaceable profile data first.
@@ -194,6 +195,27 @@ Planned for upcoming versions:
 ---
 
 ## Installation & Development
+
+### Linux release installation
+
+Video Swarm's supported Linux release is the Debian/Ubuntu x64 `.deb`. Download
+it from the [latest release](https://github.com/Cerzi/videoswarm/releases), then
+install and launch it with:
+
+```bash
+sudo apt install ./VideoSwarm-*-linux.deb
+video-swarm
+```
+
+The package's post-installation hook gives the bundled Chromium
+`chrome-sandbox` helper root ownership and mode `4755`, so the application can
+retain its operating-system sandbox.
+
+Portable AppImages are not published. Their temporary FUSE mount cannot
+reliably preserve the helper's required root ownership and setuid mode, while
+hardened Ubuntu installations may also block Chromium's unprivileged-user-
+namespace fallback. Video Swarm does not silently disable the production
+sandbox to work around that packaging conflict.
 
 ### Prerequisites
 - **Node.js 22.12.0 or later**
@@ -223,7 +245,8 @@ npm run electron:build   # packaged app for current platform
 
 ### Other build targets:
 - `electron:dist` – build without publishing
-- `electron:pack` – portable package
+- `electron:pack` – unpacked application directory for development/package
+  smoke testing, not a portable release artifact
 
 ### Project Structure
 ```css
