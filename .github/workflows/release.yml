@@ -22,7 +22,10 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-name: linux
-          - os: windows-latest
+          # Electron 43 / better-sqlite3 currently requires a source rebuild on
+          # Windows. Pin VS 2022 until the dependency publishes ABI 148 assets;
+          # node-gyp 10 cannot discover the VS 18 image on windows-latest.
+          - os: windows-2022
             artifact-name: windows
 
     steps:
@@ -36,6 +39,8 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        env:
+          npm_config_msvs_version: ${{ runner.os == 'Windows' && '2022' || '' }}
         run: npm ci
 
       - name: Install Linux build dependencies

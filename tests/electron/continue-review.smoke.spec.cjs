@@ -101,7 +101,12 @@ test("continues a flushed review session after restart from the cached first gri
       '.video-item[data-filename="clip-0002.mp4"]'
     );
     await firstClip.click();
-    await firstPage.getByRole("button", { name: /^Accept\b/ }).click();
+    const selectionDetails = firstPage.getByRole("complementary", {
+      name: "Selection details",
+    });
+    await selectionDetails
+      .getByRole("button", { name: /^Accept\b/ })
+      .click();
 
     await expect
       .poll(() =>
@@ -121,7 +126,7 @@ test("continues a flushed review session after restart from the cached first gri
     // viewport sizes. Dismiss it through the user-facing control so this smoke
     // continues to exercise a real pointer selection rather than a forced DOM
     // click through an overlapping surface.
-    const closeSelectionDetails = firstPage.getByRole("button", {
+    const closeSelectionDetails = selectionDetails.getByRole("button", {
       name: "Close selection details",
     });
     await expect(closeSelectionDetails).toBeVisible();
