@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a VideoSwarm workflow or capability
+title: "[Feature]: "
+labels:
+  - feature request
+  - needs triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the review or browsing problem first. Concrete workflows help
+        us evaluate a feature without committing to one particular interface.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues for a similar request.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to accomplish, and what makes it difficult today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result you want, independent of a particular implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested interaction
+      description: Optional UI, shortcut, or workflow ideas.
+
+  - type: textarea
+    id: scale
+    attributes:
+      label: Typical workload
+      description: Include media type, folder size, review pattern, and platform when relevant.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround or alternatives
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, or links that clarify the request.
