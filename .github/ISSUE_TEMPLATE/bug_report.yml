@@ -1,0 +1,150 @@
+name: Bug report
+description: Report a reproducible VideoSwarm problem or regression
+title: "[Bug]: "
+labels:
+  - bug
+  - needs triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve VideoSwarm. Please provide one problem per
+        report and remove private paths, filenames, prompts, or media before
+        attaching logs and screenshots.
+
+        Testing the v0.6 release candidate? Follow the
+        [RC feedback tracker](https://github.com/Cerzi/videoswarm/issues/80)
+        for the current build and test priorities.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues for this problem.
+          required: true
+        - label: I can reproduce this with the version reported below.
+          required: true
+        - label: I removed or obscured private media, prompts, and filesystem paths.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: VideoSwarm version
+      description: Copy the complete version, including any rc suffix.
+      placeholder: 0.6.0-rc.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Installation type
+      options:
+        - Windows installer
+        - Windows portable
+        - Linux AppImage
+        - Linux deb package
+        - Development checkout
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: operating_system
+    attributes:
+      label: Operating system
+      description: Include the Windows version or Linux distribution and version.
+      placeholder: Ubuntu 24.04 / Windows 11 24H2
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Include CPU, GPU, RAM, and display configuration when relevant.
+      placeholder: |
+        CPU:
+        GPU and driver:
+        RAM:
+        Displays / scaling:
+    validations:
+      required: true
+
+  - type: textarea
+    id: workload
+    attributes:
+      label: Media and folder workload
+      description: Include clip count, recursive folder shape, container/codec, resolution, and typical duration.
+      placeholder: 6,000 recursive MP4/H.264 clips, mostly 832x480 and 5 seconds long
+    validations:
+      required: true
+
+  - type: dropdown
+    id: playback_mode
+    attributes:
+      label: Playback mode
+      options:
+        - Balanced
+        - Adaptive Motion
+        - All Motion
+        - Static + Hover
+        - Not playback-related
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Is this a regression?
+      description: A regression worked correctly in an earlier VideoSwarm release.
+      options:
+        - Yes
+        - No
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from application launch and include the smallest reliable sequence.
+      placeholder: |
+        1. Launch VideoSwarm.
+        2. Open...
+        3. Select...
+        4. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include frequency and whether restarting or changing modes affects it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste relevant renderer/main-process output after removing private data.
+      render: shell
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add safe screenshots, recordings, or anything else that helps reproduce the problem.
