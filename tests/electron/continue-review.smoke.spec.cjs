@@ -117,6 +117,16 @@ test("continues a flushed review session after restart from the cached first gri
       )
       .toBe(true);
 
+    // The floating Details panel may cover the next grid card at smaller CI
+    // viewport sizes. Dismiss it through the user-facing control so this smoke
+    // continues to exercise a real pointer selection rather than a forced DOM
+    // click through an overlapping surface.
+    const closeSelectionDetails = firstPage.getByRole("button", {
+      name: "Close selection details",
+    });
+    await expect(closeSelectionDetails).toBeVisible();
+    await closeSelectionDetails.click();
+
     // The navigation save is deliberately still inside the 400 ms debounce.
     // VideoCard waits 300 ms to distinguish a double click, so first wait only
     // until the application has actually committed this single-click cursor.
