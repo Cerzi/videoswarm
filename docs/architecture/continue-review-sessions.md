@@ -30,8 +30,8 @@ document is now the architecture, behavior, and verification record for v1.
 3. Restore a bounded, validated folder scope, filter, and sort definition.
 4. Resolve stale or duplicate anchors without skipping remaining Unreviewed
    content.
-5. Make remaining work and the Start/Continue action visible in the library
-   sidebar and review toolbar.
+5. Make remaining work and explicit review/resume actions visible in the
+   library sidebar and review toolbar.
 6. Keep all persistence profile-owned, bounded, and independent of media and
    DOM lifecycle.
 
@@ -45,8 +45,9 @@ document is now the architecture, behavior, and verification record for v1.
 - They do not create multiple named review passes for one root in v1.
 - They do not change the existing rating/review invariant: assigning a rating
   implies Reviewed, and resetting to Unreviewed clears the rating but not tags.
-- They do not implement Accepted-file export, search indexing, comparison, or
-  new Linux playback scheduling.
+- Checkpoint persistence does not own Copy Accepted, search indexing,
+  comparison, or new Linux playback scheduling. Copy Accepted is implemented
+  separately in [`review-workflow.md`](review-workflow.md).
 
 ## Persisted model
 
@@ -213,9 +214,9 @@ A checkpoint is created in either of these ways:
    validated view.
 
 One root has one checkpoint. Starting in another folder/view for a root that
-already has a checkpoint uses the explicit label **Save current position
-instead…** and requires confirmation. It overwrites only the checkpoint; review
-metadata is unaffected.
+already has a checkpoint uses the visible label **Save position here…** and the
+expanded accessible name **Save current position instead…**. It requires
+confirmation and overwrites only the checkpoint; review metadata is unaffected.
 
 For a multi-item mutation, the anchor is the last successfully affected
 instance in the pre-mutation visual order. For a context action, it is the
@@ -235,22 +236,22 @@ While a root has a checkpoint:
 - Explicit root, folder, and scope navigation flushes the engaged old
   location's latest valid draft before leaving it. The newly opened location
   remains passive and does not replace the saved position until an explicit
-  **Find Unreviewed**, **Save current position instead…**, or **Resume** action
-  engages a location again.
+  **Find Unreviewed**, **Save position here…**, or **Resume** action engages a
+  location again.
 - Keep at most one save in flight. If state changes during that save, retain
   only the newest draft and issue one trailing save; do not build an unbounded
   promise queue.
 - Cancel timers and ignore late responses on root/profile epoch changes and
   unmount. A profile switch never writes the old draft into the new profile.
 
-A checkpoint is **engaged** in the renderer only after Start, Continue, a
-qualifying automatic start, or opening a location that already matches the
-saved root/directory/scope. Passive navigation to a different location in the
-same root must not overwrite a checkpoint; it keeps the explicit **Resume** and
-**Save current position instead…** choices. Programmatic resume
-also baselines the save signature after restoring state, so applying the saved
-view or falling back from a missing directory does not immediately rewrite the
-checkpoint.
+A checkpoint is **engaged** in the renderer only after **Find Unreviewed**,
+**Resume**, **Save position here…**, a qualifying automatic start,
+or opening a location that already matches the saved root/directory/scope.
+Passive navigation to a different location in the same root must not overwrite
+a checkpoint; it keeps the explicit **Resume** and **Save current position
+instead…** choices. Programmatic resume also baselines the save signature after
+restoring state, so applying the saved view or falling back from a missing
+directory does not immediately rewrite the checkpoint.
 
 The renderer owns only the bounded checkpoint summaries and current plain-data
 draft. It does not retain prior video arrays or card references to support
@@ -270,7 +271,7 @@ refresh establishes that no candidate remains in the saved work set.
 
 ## Resume algorithm
 
-Continue Review is an explicit user action and follows this sequence:
+Resuming a saved review is an explicit user action and follows this sequence:
 
 1. Load the checkpoint and authorize/open its root. Checkpoint lookup may run
    beside authorization, but it must not wait for a filesystem scan.
@@ -329,8 +330,9 @@ Each pinned-root row adds a compact instance count and action:
 - `N unreviewed in root · Updating…` while a scan/refresh is active.
 - **Review Unreviewed** when no checkpoint exists and work remains.
 - **Resume saved view** when a checkpoint exists and work remains.
-- **Review complete** when the authoritative root count is zero; the retained
-  checkpoint becomes Continue Review again if new files appear.
+- **Review complete** when the authoritative root count is zero; if newly
+  indexed Unreviewed files appear, the retained checkpoint makes **Resume saved
+  view** actionable again.
 
 Counts are file instances, not unique fingerprints, and the tooltip states
 that reviewing duplicate content may reduce the count by more than one. The
@@ -364,7 +366,7 @@ it follows the toolbar's existing horizontal-overflow behavior.
   root directory.
 - A missing/unmounted anchor is normal and uses the fallback algorithm without
   an error dialog.
-- An explicit Start/Continue action moves focus to the selected video card once
+- An explicit review/resume action moves focus to the selected video card once
   mounted. Passive catalog refresh and profile restoration never steal focus.
 - If the candidate is outside the user's current render cap, keep the logical
   candidate selected and show **Show review target**. That explicit action
@@ -384,7 +386,7 @@ it follows the toolbar's existing horizontal-overflow behavior.
   Never reuse an anchor from the prior profile.
 - **Root switch:** flush the old root's latest draft, release its renderer/media
   resources through existing lifecycle code, and do not auto-resume the new
-  root without an explicit Start/Continue action.
+  root without an explicit review/resume action.
 - **Unpinning:** does not delete a checkpoint. Removing a root from the catalog
   in a future API cascades its checkpoint.
 - **Nonrecursive index:** root-level Current folder may resume after its scan.
@@ -398,7 +400,7 @@ it follows the toolbar's existing horizontal-overflow behavior.
   exact-instance anchor; the old fingerprint fallback is tried, then the scan
   begins at the start.
 - **Filters changed:** changes made during an active session become the saved
-  work set after debounce. A later Continue restores the persisted definition,
+  work set after debounce. A later resume restores the persisted definition,
   not unrelated filters from the root being left.
 - **New files:** authoritative refresh includes them in current visual order.
   The one-wrap search ensures newly inserted items before the anchor are not
@@ -494,7 +496,7 @@ artifacts.
   focus rings and a minimum 32 px desktop hit target.
 - The confirmation for **Clear resume point** returns focus to its invoking
   control and explicitly states that review decisions remain.
-- Continue's programmatic card focus occurs only after the explicit action and
+- Resume's programmatic card focus occurs only after the explicit action and
   after the card mounts; reduced-motion users receive no smooth scroll or
   entrance animation.
 - Any future shortcut must be added to `src/hotkeys/shortcutCatalog.js`; v1 adds
@@ -553,9 +555,9 @@ are called out below.
 
 ### UX, integration, and performance
 
-- Component and App tests covered sidebar root counts and
-  Start/Continue/complete states, toolbar states, overwrite/forget
-  confirmations, accessible labels, and status messages.
+- Component and App tests covered sidebar root counts and **Review Unreviewed**,
+  **Resume saved view**, and **Review complete** states, toolbar states,
+  overwrite/forget confirmations, accessible labels, and status messages.
 - The Electron smoke reviewed a clip, left its newest cursor inside the
   debounce, closed the app, reopened the same profile, continued, and verified
   that the cursor was flushed and restored from the cached first grid.

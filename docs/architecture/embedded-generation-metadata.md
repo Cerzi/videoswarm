@@ -169,7 +169,8 @@ only a source label such as **Embedded · Comment** or **Adjacent sidecar**.
   exit, cancellation, profile changes, and shutdown all settle deterministically.
 - Sidecars continue working when embedded probing is unavailable or empty.
 - A media or sidecar signature change invalidates the cached result.
-- No frame is decoded and no work begins for an unopened Details panel.
+- No frame is decoded and no work begins unless a visible Generation
+  disclosure is expanded.
 
 ## 3. Bounded payload normalization
 
@@ -405,7 +406,7 @@ quietly added to this read-only pass.
   error states are visually and semantically distinct.
 - Long prompts and LoRA lists remain usable without expanding the dock beyond
   its existing bounded scroll surface.
-- Floating and fullscreen panels render identical extracted facts.
+- Floating, docked, and fullscreen panels render identical extracted facts.
 - Lazy opening/closing and rapid clip navigation cancel stale work and never
   show metadata from the previous selection.
 

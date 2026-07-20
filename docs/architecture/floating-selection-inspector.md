@@ -16,6 +16,12 @@ IPC synchronization, shutdown ownership, and a meaningful memory cost without
 improving this in-app workflow. The floating inspector provides window-like
 behavior while retaining the existing explicit Electron boundary.
 
+This document specifies the floating presentation. Docked routing and shared
+editor ownership are specified in
+[`library-details-workspace.md`](library-details-workspace.md). The `I`
+shortcut and **Open details** route to whichever presentation the profile has
+chosen.
+
 ## Problem
 
 The current bottom drawer has several costs for a high-throughput video review
@@ -64,8 +70,9 @@ partial tags, tag suggestions, and the Focus action.
 
 ### Selection lifecycle
 
-- A transition from no selection to one or more selected clips opens the
-  inspector automatically without moving keyboard focus.
+- When the profile presentation is Floating, a transition from no selection to
+  one or more selected clips opens the inspector automatically without moving
+  keyboard focus.
 - The primary anchor is `selection.anchorId` when that ID remains selected and
   mounted. Otherwise it is the first mounted selected card in masonry order,
   then the first selected ID as a non-mounted fallback.
@@ -80,7 +87,8 @@ partial tags, tag suggestions, and the Focus action.
   applies only to the exact current selection; a materially different
   selection opens again.
 - The context-menu **Open details** command and the `I` shortcut explicitly
-  reopen the current selection.
+  reveal the current selection in the profile's chosen presentation. In
+  Floating mode they reopen the inspector.
 - Folder, root, profile, filter-pruning, and trash flows already remove invalid
   selected IDs. Reaching zero through any of those paths follows the same close
   lifecycle.
@@ -283,6 +291,9 @@ Returning to a wider gallery restores automatic anchored placement.
 
 ## Acceptance criteria
 
+The floating-placement criteria below apply when the profile presentation is
+Floating; docked routing follows the workspace specification.
+
 1. Selecting a visible clip opens a fully visible inspector beside it without
    changing masonry geometry, viewport padding, or scroll position.
 2. A context-menu-origin open places the inspector opposite the actual fitted
@@ -291,8 +302,8 @@ Returning to a wider gallery restores automatic anchored placement.
 3. New selections update content and action targets. Automatic placement
    follows the new primary selection once, while manual placement stays stable.
 4. Deselect closes; close does not deselect; the same selection stays
-   dismissed; a changed selection auto-opens; explicit Open details or `I`
-   reopens it.
+   dismissed; a changed selection auto-opens; explicit **Open details** or `I`
+   routes to the chosen presentation and reopens it in Floating mode.
 5. An unselected context target becomes the displayed and mutated target for a
    zero/single selection, while existing multi-select batches remain intact.
 6. Pointer and keyboard dragging clamp correctly. Resize and content growth

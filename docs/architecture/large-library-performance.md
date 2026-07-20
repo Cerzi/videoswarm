@@ -1,7 +1,7 @@
 # Large Library, Playback, and Reliability Architecture
 
 Status: Core architecture implemented; deferred research tracked below
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 ## Purpose
 
@@ -514,9 +514,10 @@ is a 128-entry in-memory LRU containing only serializable
 scroll offsets, bounded ID selections, filters, and sort state. It never
 retains media elements, React nodes, blobs, or inactive video records.
 
-Generation metadata is parsed only when the details panel requests one indexed
-instance. A bounded, shell-free container-tag probe checks embedded ComfyUI/VHS
-API graphs first; exact ordered sidecars (`video.ext.json`, then
+Generation metadata is parsed only while a visible floating, docked, or
+fullscreen Generation disclosure is expanded for one indexed instance. A
+bounded, shell-free container-tag probe checks embedded ComfyUI/VHS API graphs
+first; exact ordered sidecars (`video.ext.json`, then
 `stem.workflow.json`, then `stem.json`) remain the fallback rather than a
 directory scan. Input, graph, process, queue, time, caching, and cancellation
 bounds are recorded in
@@ -533,13 +534,14 @@ disabled state when desktop integration is unavailable. Copy, review, and
 rating actions use compact submenus; root menus and submenus clamp to the
 viewport and scroll internally when space is constrained.
 
-Selection metadata now uses the renderer-local floating inspector specified in
-[`floating-selection-inspector.md`](floating-selection-inspector.md). It opens
-beside the primary selected card without changing masonry padding, moves to the
-side opposite a fitted context menu, supports bounded pointer and keyboard
-movement, updates with selection, and falls back to a compact bottom sheet in a
-narrow gallery. It does not retain virtualized cards or create another media
-element or Electron renderer.
+Selection metadata uses the shared floating/docked editor specified in
+[`floating-selection-inspector.md`](floating-selection-inspector.md) and
+[`library-details-workspace.md`](library-details-workspace.md). Floating mode
+anchors beside the selected card with fitted-menu avoidance and a narrow-sheet
+fallback. Docked mode places the same bounded editor in the Library/Details
+workspace without copying selection state. Neither presentation retains
+virtualized cards, changes masonry geometry, owns media, or creates another
+Electron renderer.
 
 Acceptance criteria:
 
@@ -558,10 +560,12 @@ Acceptance criteria:
 - A rating promotes Unreviewed content to Reviewed, an Unreviewed reset clears
   its rating without changing tags, and Accept/Reject decisions survive rating
   changes.
-- Toolbar, shortcut, context-menu, and floating-inspector review/rating actions
-  share one serialized workflow and its bounded undo history.
+- Toolbar, shortcut, context-menu, fullscreen, and floating/docked Details
+  review/rating actions share one serialized workflow and its bounded undo
+  history.
 - Result processing ignores active filters, requires an authoritative scan,
-  bounds native trash work, and exports no absolute source or record paths.
+  and bounds native trash work. Copy Accepted never exposes absolute source or
+  destination paths or accepts renderer records as copy authority.
 
 ### 8. Observability, testing, and CI
 
@@ -728,11 +732,11 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Bounded process-lifetime caches and queues | **Implemented** | Fingerprint, dimensions, masonry, thumbnail, playback-history, waiter, watcher, and native-work state now have explicit entry/work limits, generation invalidation, snapshots, and disposal. Window-close cleanup uses a live-captured `WebContents` reference and does not dereference a destroyed `BrowserWindow`. |
 | Asynchronous thumbnail IPC and persistence | **Implemented** | Thumbnail reads/writes use asynchronous IPC, bounded read/write lanes, byte/pixel-aware memory and disk LRUs, atomic files, and coalesced bounded index persistence. |
 | Folder tree, scope control, and sibling cycling | **Implemented** | Empty-root-safe breadcrumbs, counted collapsible tree, three scopes, filtered sibling cycling, and optional visible group strips are integrated with the virtual grid. |
-| Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the library sidebar. |
-| Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, inspector, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and authoritative no-overwrite Copy Accepted are implemented; see [`review-workflow.md`](review-workflow.md). |
+| Pinned lightweight libraries and smart views | **Implemented** | Profile-local path-only pins and validated saved filter/sort/group/scope views are available from the workspace's Library tab. |
+| Review workflow and result processing | **Implemented** | Content-keyed Accept (`pick`), neutral Reviewed, Reject, and Unreviewed states share coupled rating semantics across toolbar, context, selection Details, fullscreen, and catalog-driven shortcuts. Stable progress, optional auto-advance, one-step undo, bounded local-reject trashing, and authoritative no-overwrite Copy Accepted are implemented; see [`review-workflow.md`](review-workflow.md). |
 | Embedded generation metadata | **Initial slice implemented** | Bounded, instance-keyed embedded ComfyUI/VHS API-graph extraction is primary, with exact sidecar fallback, compact profile-local storage, provenance, LoRAs and richer sampling fields. Packaged cross-platform reader delivery, visual-graph interpretation, custom concat adapters, and Electron fixture smoke remain explicit follow-up work in [`embedded-generation-metadata.md`](embedded-generation-metadata.md). |
 | Sandboxed preload and context-action regression guard | **Implemented** | Preload imports only Electron, request validation remains native-side, historical desktop actions stay discoverable, dense actions use submenus, and all menus clamp/scroll within the viewport. |
-| Floating selection inspector | **Implemented** | The former bottom dock is a selection-scoped, context-aware overlay with fitted-menu avoidance, bounded pointer/keyboard movement, narrow-sheet fallback, one-shot explicit focus, and no masonry padding or media ownership changes. |
+| Floating and docked selection details | **Implemented** | The selection-owned editor supports a context-aware floating shell or profile-persistent docked presentation in the two-tab Library/Details workspace. Both share exact mutation targets, lazy Generation work, and no media or masonry ownership. |
 | Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
 | Electron-ABI SQLite test job | **Implemented** | Coverage and focused native suites run through Electron's Node runtime with an environment gate that converts ABI load failures into test failures rather than skips. |
 | Node, lint, coverage, and build CI gates | **Implemented** | Node 22.12 repository/workflow pins, zero-warning ESLint, cleaned ratcheted coverage, explicit Vite build, Electron smoke, and unpacked packaging are mandatory. |
@@ -921,8 +925,9 @@ mandatory non-skippable Electron-ABI CI gate are also implemented in Sections
    every displayed ID, including complete positions, total height, visual
    order, direct ID lookup, and per-column binary-search windowing.
 2. **Implemented** — Mount only the viewport plus one viewport of overscan in
-   lightweight absolute slots. A bounded pinned-ID path preserves the active
-   fullscreen source card without expanding the normal activation window.
+   lightweight absolute slots. Fullscreen navigation remains independent of
+   mounted cards; on close, an explicitly visited out-of-cap item raises the
+   cap only to the smallest existing step needed to mount and focus it.
 3. **Implemented** — Keep scrolling and observer roots reactive when the
    conditional grid mounts, support direct scrolling to any logical item, and
    preserve the first surviving visible ID while dimensions, zoom, filtering,
@@ -1171,10 +1176,10 @@ universal limits.
    promote Unreviewed content to neutral Reviewed without overwriting an
    existing Accept/Reject choice; clearing a rating preserves review state,
    while resetting to Unreviewed clears the rating and leaves tags untouched.
-   Toolbar, context-menu, and floating-inspector mutations share the serialized,
-   32-input-bounded workflow. A/S/D/F primary shortcuts, P/R/X/U compatibility
-   aliases, 1-5 ratings, 0 clear-rating, and Z undo render from the shared
-   shortcut catalog.
+   Toolbar, context-menu, fullscreen, and floating/docked Details mutations
+   share the serialized, 32-input-bounded workflow. A/S/D/F primary shortcuts,
+   P/R/X/U compatibility aliases, 1-5 ratings, 0 clear-rating, and Z undo
+   render from the shared shortcut catalog.
 8. **Implemented** — Add validated, profile-local smart-view CRUD. Version 1
    stores allowlisted tag/rating/review filters, sort direction/key, grouping,
    random seed, and scope; names, count, and UTF-8 definition size are bounded.
@@ -1218,11 +1223,14 @@ universal limits.
     application, and fullscreen bindings render from one declarative catalog;
     contributor guidance requires handlers, help, and tests to stay aligned.
 15. **Implemented** — Replace the bottom metadata dock with the renderer-local
-    floating selection inspector. Selection-scoped dismissal, deselect close,
-    fitted context-menu avoidance, target correction, bounded pointer/keyboard
-    movement, one-shot focus requests, narrow-sheet behavior, and the shared
-    `I` shortcut are covered without retaining cards or changing virtual-grid
-    geometry. See `floating-selection-inspector.md` for the detailed contract.
+    floating selection inspector, then share its bounded editor with the
+    profile-persistent Library/Details workspace. Selection-scoped dismissal,
+    docking/undocking, fitted context-menu avoidance, target correction,
+    bounded pointer/keyboard movement, one-shot focus requests, narrow-sheet
+    behavior, and the shared `I` shortcut are covered without retaining cards
+    or changing virtual-grid geometry. See
+    [`floating-selection-inspector.md`](floating-selection-inspector.md) and
+    [`library-details-workspace.md`](library-details-workspace.md).
 16. **Implemented** — Add the scope-stable review toolbar, profile-local opt-in
     auto-advance, one-step ownership-bound undo, and authoritative Process
     Results dialog. Local rejected instances reuse the hardened native trash
@@ -1267,11 +1275,12 @@ their stated evidence exists:
   masonry remain an optional UX enhancement. The implemented folder tree and
   group strip already provide navigation and visible grouping without changing
   layout geometry.
-- **Expanded review-result actions:** copy/move of accepted files, collision
-  and cross-device recovery, sidecar policy, and streaming result jobs above
-  the current 2,000-local-reject safety bound remain deferred. The implemented
-  workflow requires users to narrow the active folder scope for larger trash
-  sets; see [`review-workflow.md`](review-workflow.md).
+- **Expanded review-result actions:** destructive Move Accepted with
+  cross-device recovery, metadata transfer for copied content, and streaming
+  reject processing above the current 2,000-local-reject safety bound remain
+  deferred. Copy Accepted—including optional exact sidecars, collision
+  preflight, exclusive no-overwrite writes, and bounded progress/cancellation—
+  is implemented; see [`review-workflow.md`](review-workflow.md).
 - **Cross-platform packaged validation:** Linux production smoke now exercises
   the security boundary and custom media ranges. Windows and macOS packaged
   runs should be added when runners are available, particularly for custom

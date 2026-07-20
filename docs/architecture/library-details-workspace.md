@@ -121,9 +121,10 @@ settings IPC is sufficient; no database migration or new channel is added.
 - At narrow widths the rail becomes a bounded opaque drawer over the gallery
   instead of reducing the video grid to an unusable strip. No backdrop blur is
   used on Linux.
-- Docked Details has one outer scrollbar. Popular tags may use the higher
-  bounded suggestion limit and consume available rail space; nested scrolling
-  is used only when the rail itself cannot contain the content.
+- Docked Details has one outer scrollbar. The floating editor remains bounded
+  to 15 ranked tag suggestions, while docked and fullscreen Details may show up
+  to 100. Popular tags consume available rail space; nested scrolling is used
+  only when the rail itself cannot contain the content.
 - Focus remains on the invoking control unless an explicit details command
   requests the tag input. Selection changes do not move focus.
 
@@ -160,8 +161,7 @@ Verification completed on 2026-07-20:
   large-chunk advisory remains informational and is unrelated to this slice.
 - `main.js`, `preload.js`, the new CommonJS settings helper, and the updated
   Continue Review Electron smoke passed syntax checks.
-- `git diff --check` passed, and the untracked local `example.json` fixture was
-  excluded from the change.
+- `git diff --check` passed.
 
 ## Deferred work
 

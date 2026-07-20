@@ -40,7 +40,7 @@ project gates have passed.
 - Do not add Trash, Move, or other destructive file actions.
 - Do not add a filmstrip, playback-speed control, frame stepping, A/B loops,
   comparison, customizable shortcuts, or a rotating playback cohort.
-- Do not create a Continue Review session merely by opening or navigating.
+- Do not create a review resume point merely by opening or navigating.
 
 ## 1. Media and decoder ownership
 
@@ -150,9 +150,9 @@ affected fingerprint; manual navigation still includes duplicates. Resetting
 to Unreviewed clears rating but not tags, as defined by the review workflow.
 Undo returns to the affected clip if that instance still exists.
 
-Fullscreen navigation updates an already-engaged Continue Review checkpoint
-through its existing debounce. Opening and navigation alone never create a
-checkpoint. Successful mutations continue to use the workflow's immediate
+Fullscreen navigation updates an already-engaged review resume point through
+its existing debounce. Opening and navigation alone never create a resume
+point. Successful mutations continue to use the workflow's immediate
 checkpoint persistence.
 
 ### Acceptance
@@ -161,7 +161,7 @@ checkpoint persistence.
   newly active clip.
 - Auto-advance on/off, mutation failure, boundaries, duplicate content, and
   stale async completion are covered by focused tests.
-- Continue Review behavior distinguishes an engaged checkpoint from ordinary
+- Resume-point behavior distinguishes an engaged checkpoint from ordinary
   fullscreen browsing.
 
 ## 4. Interface
@@ -207,22 +207,22 @@ component CSS. The backdrop is opaque/translucent without `backdrop-filter`.
 - File facts and relative location.
 - Existing tags, suggestions, and tag editor.
 - Generation prompt, model, seed, sampler, run, source, and other supported
-  sidecar facts.
+  generation facts.
 
 Metadata content is extracted into reusable presentation/editor sections used
-by both the existing floating grid inspector and the fullscreen dock. The
+by the floating inspector, docked workspace editor, and fullscreen dock. The
 draggable inspector shell, placement, and behavior remain unchanged.
 Generation metadata is requested only while the Details dock and its
 Generation disclosure are open. On
 narrow windows the dock becomes a bounded bottom sheet rather than overlapping
 the media controls.
 
-The compact grid inspector remains bounded to its top 15 tag suggestions.
-Fullscreen may render up to 100 ranked suggestions: on desktop that list
-expands into the dock's remaining height and scrolls only when it actually
-overflows; on narrow layouts the bounded bottom sheet owns the single
-scrollbar. The limit remains finite so profiles with very large tag
-vocabularies cannot create an unbounded React subtree.
+The floating inspector remains bounded to its top 15 tag suggestions. Docked
+and fullscreen Details may render up to 100 ranked suggestions: on desktop the
+list expands into the available height and scrolls only when it actually
+overflows; on narrow layouts the bounded surface owns the single scrollbar.
+The limit remains finite so profiles with very large tag vocabularies cannot
+create an unbounded React subtree.
 
 The Details dock defaults open for existing and new profiles. Its last state
 is saved as bounded profile setting `fullscreenDetailsOpen: boolean` through
@@ -316,7 +316,7 @@ Status: **Implemented; verification passed**
   removal, duplicate handling, owner changes, same-ID cross-root records,
   collision-safe web IDs, and stale completions.
 - Sole selection, Details preference and lazy loading, explicit action targets,
-  auto-advance/failure/Undo, Continue Review engagement, and render-cap return.
+  auto-advance/failure/Undo, resume-point engagement, and render-cap return.
 - Modal accessibility, layered surfaces, responsive layout, and shortcut
   guards/help.
 
