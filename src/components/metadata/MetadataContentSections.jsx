@@ -1,6 +1,7 @@
 import React, {
   forwardRef,
   useEffect,
+  useId,
   useMemo,
   useState,
 } from "react";
@@ -50,8 +51,34 @@ export function MetadataFileFactsSection({
   );
 }
 
-export function MetadataGenerationSection({ state }) {
+export function MetadataGenerationSection({
+  state,
+  expanded,
+  defaultExpanded = true,
+  onExpandedChange,
+}) {
+  const contentId = useId();
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(
+    Boolean(defaultExpanded)
+  );
+  const isControlled = typeof expanded === "boolean";
+  const isExpanded = isControlled ? expanded : uncontrolledExpanded;
+
   if (!state) return null;
+
+  const toggleExpanded = () => {
+    const nextExpanded = !isExpanded;
+    if (!isControlled) setUncontrolledExpanded(nextExpanded);
+    onExpandedChange?.(nextExpanded);
+  };
+  const refresh = () => {
+    if (!isExpanded) {
+      if (!isControlled) setUncontrolledExpanded(true);
+      onExpandedChange?.(true);
+    }
+    state.onRefresh?.();
+  };
+
   const metadata = state.metadata || {};
   const facts = buildGenerationMetadataFacts(metadata);
   const prompt = metadata.positivePrompt || metadata.prompt;
@@ -119,7 +146,22 @@ export function MetadataGenerationSection({ state }) {
   return (
     <section className="metadata-panel__section metadata-panel__generation">
       <div className="metadata-panel__section-header">
-        <span>Generation</span>
+        <button
+          type="button"
+          className="metadata-panel__generation-toggle"
+          onClick={toggleExpanded}
+          aria-expanded={isExpanded}
+          aria-controls={contentId}
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} Generation details`}
+        >
+          <span
+            className="metadata-panel__generation-chevron"
+            aria-hidden="true"
+          >
+            {isExpanded ? "▾" : "▸"}
+          </span>
+          <span>Generation</span>
+        </button>
         <div className="metadata-panel__generation-actions">
           {sourceBadge ? (
             <span className="metadata-panel__badge">{sourceBadge}</span>
@@ -130,106 +172,110 @@ export function MetadataGenerationSection({ state }) {
           {state.cached ? <span className="metadata-panel__badge">Cached</span> : null}
           <button
             type="button"
-            onClick={() => state.onRefresh?.()}
+            onClick={refresh}
             disabled={state.loading}
           >
             Re-read
           </button>
         </div>
       </div>
-      {state.loading ? (
-        <p className="metadata-panel__generation-status">
-          Reading embedded generation metadata…
-        </p>
-      ) : state.error ? (
-        <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
-          {state.error}
-        </p>
-      ) : status === "unrecognized" || (state.found && !hasDisplayableMetadata) ? (
-        <p className="metadata-panel__generation-status">
-          Generation metadata was found, but no supported fields could be resolved.
-        </p>
-      ) : !state.found && state.readerAvailable === false ? (
-        <p className="metadata-panel__generation-status">
-          Embedded metadata could not be checked on this system, and no adjacent JSON sidecar was found.
-        </p>
-      ) : !state.found && status === "unsupported" ? (
-        <p className="metadata-panel__generation-status">
-          This container's embedded metadata is not supported, and no adjacent JSON sidecar was found.
-        </p>
-      ) : !state.found && ["error", "timeout", "output-limit"].includes(
-        state.readerStatus
-      ) ? (
-        <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
-          Embedded metadata could not be read, and no usable adjacent sidecar was found. Re-read to retry.
-        </p>
-      ) : !state.found ? (
-        <p className="metadata-panel__generation-status">
-          No embedded generation metadata or adjacent JSON sidecar was found.
-        </p>
-      ) : (
-        <>
-          {sourceKind === "sidecar" ? (
+      {isExpanded ? (
+        <div id={contentId} className="metadata-panel__generation-body">
+          {state.loading ? (
             <p className="metadata-panel__generation-status">
-              Embedded metadata was not usable; showing the adjacent sidecar.
+              Reading embedded generation metadata…
             </p>
-          ) : null}
-          {diagnostics.length ? (
-            <ul className="metadata-panel__generation-diagnostics">
-              {diagnostics.map((message) => <li key={message}>{message}</li>)}
-            </ul>
-          ) : null}
-          <dl className="metadata-panel__generation-grid">
-            {prompt ? (
-              <div className="metadata-panel__generation-prompt">
-                <dt>Positive prompt</dt>
-                <dd>{prompt}</dd>
-              </div>
-            ) : null}
-            {negativePrompt ? (
-              <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative">
-                <dt>Negative prompt</dt>
-                <dd>{negativePrompt}</dd>
-              </div>
-            ) : null}
-            {promptFragments.length ? (
-              <div className="metadata-panel__generation-wide">
-                <dt>Prompt fragments</dt>
-                <dd>
-                  <ul>
-                    {promptFragments.map((fragment, index) => (
-                      <li key={`${index}:${fragment.text}`}>
-                        <span>{fragment.text}</span>
-                        {fragment.details.length ? (
-                          <small>{fragment.details.join(" · ")}</small>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
-              </div>
-            ) : null}
-            {loras.length ? (
-              <div className="metadata-panel__generation-wide">
-                <dt>LoRAs</dt>
-                <dd>
-                  <ul>
-                    {loras.map((lora, index) => (
-                      <li key={`${index}:${lora}`}>{lora}</li>
-                    ))}
-                  </ul>
-                </dd>
-              </div>
-            ) : null}
-            {facts.map(({ label, value }) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd title={value}>{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </>
-      )}
+          ) : state.error ? (
+            <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
+              {state.error}
+            </p>
+          ) : status === "unrecognized" || (state.found && !hasDisplayableMetadata) ? (
+            <p className="metadata-panel__generation-status">
+              Generation metadata was found, but no supported fields could be resolved.
+            </p>
+          ) : !state.found && state.readerAvailable === false ? (
+            <p className="metadata-panel__generation-status">
+              Embedded metadata could not be checked on this system, and no adjacent JSON sidecar was found.
+            </p>
+          ) : !state.found && status === "unsupported" ? (
+            <p className="metadata-panel__generation-status">
+              This container's embedded metadata is not supported, and no adjacent JSON sidecar was found.
+            </p>
+          ) : !state.found && ["error", "timeout", "output-limit"].includes(
+            state.readerStatus
+          ) ? (
+            <p className="metadata-panel__generation-status metadata-panel__generation-status--error">
+              Embedded metadata could not be read, and no usable adjacent sidecar was found. Re-read to retry.
+            </p>
+          ) : !state.found ? (
+            <p className="metadata-panel__generation-status">
+              No embedded generation metadata or adjacent JSON sidecar was found.
+            </p>
+          ) : (
+            <>
+              {sourceKind === "sidecar" ? (
+                <p className="metadata-panel__generation-status">
+                  Embedded metadata was not usable; showing the adjacent sidecar.
+                </p>
+              ) : null}
+              {diagnostics.length ? (
+                <ul className="metadata-panel__generation-diagnostics">
+                  {diagnostics.map((message) => <li key={message}>{message}</li>)}
+                </ul>
+              ) : null}
+              <dl className="metadata-panel__generation-grid">
+                {prompt ? (
+                  <div className="metadata-panel__generation-prompt">
+                    <dt>Positive prompt</dt>
+                    <dd>{prompt}</dd>
+                  </div>
+                ) : null}
+                {negativePrompt ? (
+                  <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative">
+                    <dt>Negative prompt</dt>
+                    <dd>{negativePrompt}</dd>
+                  </div>
+                ) : null}
+                {promptFragments.length ? (
+                  <div className="metadata-panel__generation-wide">
+                    <dt>Prompt fragments</dt>
+                    <dd>
+                      <ul>
+                        {promptFragments.map((fragment, index) => (
+                          <li key={`${index}:${fragment.text}`}>
+                            <span>{fragment.text}</span>
+                            {fragment.details.length ? (
+                              <small>{fragment.details.join(" · ")}</small>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : null}
+                {loras.length ? (
+                  <div className="metadata-panel__generation-wide">
+                    <dt>LoRAs</dt>
+                    <dd>
+                      <ul>
+                        {loras.map((lora, index) => (
+                          <li key={`${index}:${lora}`}>{lora}</li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : null}
+                {facts.map(({ label, value }) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd title={value}>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

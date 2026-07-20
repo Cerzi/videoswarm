@@ -1,7 +1,7 @@
 # Persistent Continue Review Sessions
 
 Status: **Implemented and verified** (2026-07-15)
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 ## Summary
 
@@ -205,16 +205,16 @@ A checkpoint is created in either of these ways:
    non-null rating assignment in an indexed active root saves the current
    scope/view and affected cursor. Clearing a rating, resetting to Unreviewed,
    undo, and failed mutations do not create a new session.
-2. **Explicit start:** **Start review here** captures the active directory,
+2. **Explicit start:** **Find Unreviewed** captures the active directory,
    scope, validated view, and primary selection (when it belongs to the scope),
    then resolves and focuses the next candidate. From an inactive pinned-root
-   row, **Start review** first opens the root at All descendants, lets existing
+   row, **Review Unreviewed** first opens the root at All descendants, lets existing
    renderer settings/in-process folder state settle, and saves that resulting
    validated view.
 
 One root has one checkpoint. Starting in another folder/view for a root that
-already has a checkpoint uses the explicit label **Move saved review position
-here…** and requires confirmation. It overwrites only the checkpoint; review
+already has a checkpoint uses the explicit label **Save current position
+instead…** and requires confirmation. It overwrites only the checkpoint; review
 metadata is unaffected.
 
 For a multi-item mutation, the anchor is the last successfully affected
@@ -235,8 +235,8 @@ While a root has a checkpoint:
 - Explicit root, folder, and scope navigation flushes the engaged old
   location's latest valid draft before leaving it. The newly opened location
   remains passive and does not replace the saved position until an explicit
-  **Start review here**, **Move saved review position here…**, or **Continue
-  saved** action engages a location again.
+  **Find Unreviewed**, **Save current position instead…**, or **Resume** action
+  engages a location again.
 - Keep at most one save in flight. If state changes during that save, retain
   only the newest draft and issue one trailing save; do not build an unbounded
   promise queue.
@@ -246,8 +246,8 @@ While a root has a checkpoint:
 A checkpoint is **engaged** in the renderer only after Start, Continue, a
 qualifying automatic start, or opening a location that already matches the
 saved root/directory/scope. Passive navigation to a different location in the
-same root must not overwrite a checkpoint; it keeps the explicit **Continue
-saved** and **Move saved review position here…** choices. Programmatic resume
+same root must not overwrite a checkpoint; it keeps the explicit **Resume** and
+**Save current position instead…** choices. Programmatic resume
 also baselines the save signature after restoring state, so applying the saved
 view or falling back from a missing directory does not immediately rewrite the
 checkpoint.
@@ -258,7 +258,7 @@ persistence.
 
 ### Clearing and completion
 
-**Forget saved position…** removes the checkpoint after a confirmation that
+**Clear resume point…** removes the checkpoint after a confirmation that
 review decisions, ratings, and tags will remain. It does not change the open
 grid or the renderer-only folder view cache. A later forward review action can
 start a new checkpoint.
@@ -325,10 +325,10 @@ keeps candidate resolution on the one existing filtered order.
 
 Each pinned-root row adds a compact instance count and action:
 
-- `N unreviewed` while the root-wide aggregate is authoritative.
-- `N unreviewed · Updating…` while a scan/refresh is active.
-- **Start review** when no checkpoint exists and work remains.
-- **Continue review** when a checkpoint exists and work remains.
+- `N unreviewed in root` while the root-wide aggregate is authoritative.
+- `N unreviewed in root · Updating…` while a scan/refresh is active.
+- **Review Unreviewed** when no checkpoint exists and work remains.
+- **Resume saved view** when a checkpoint exists and work remains.
 - **Review complete** when the authoritative root count is zero; the retained
   checkpoint becomes Continue Review again if new files appear.
 
@@ -339,13 +339,15 @@ checkpoint per folder.
 
 ### Review toolbar
 
-Add one dense session group to the existing review toolbar:
+Add one dense resume-point group to the existing review toolbar. Review and
+rating controls remain usable regardless of checkpoint state:
 
-- With no checkpoint: **Start review here**.
-- With a matching root/directory/scope checkpoint: a **Session active** status
-  and last-saved time, with **Forget saved position…** in its menu.
-- With a checkpoint elsewhere in the same root: **Continue saved** plus **Move
-  saved review position here…**.
+- With no checkpoint: **Ready to review**, an explanation that the first mark
+  saves a resume point automatically, and optional **Find Unreviewed**.
+- With a matching root/directory/scope checkpoint: a **Review position saved**
+  status and last-saved time, with direct **Clear resume point…**.
+- With a checkpoint elsewhere in the same root: **Resume** plus **Save position
+  here…**.
 - During resume: **Restoring saved review…**, followed by the candidate name or
   a completion message.
 
@@ -483,14 +485,14 @@ artifacts.
 
 ## Accessibility
 
-- Start/Continue buttons include the root or scope name and remaining count in
+- Find/Resume buttons include the root or scope name and remaining count in
   their accessible name; visible text stays compact.
 - Session state, provisional refresh, restored candidate, fallback directory,
   and completion use a polite live region. Error toasts expose an assertive
   `alert`; informational toasts expose a polite `status`.
 - Do not communicate active/completed state by color alone. Preserve visible
   focus rings and a minimum 32 px desktop hit target.
-- The confirmation for **Forget saved position** returns focus to its invoking
+- The confirmation for **Clear resume point** returns focus to its invoking
   control and explicitly states that review decisions remain.
 - Continue's programmatic card focus occurs only after the explicit action and
   after the card mounts; reduced-motion users receive no smooth scroll or

@@ -3,7 +3,7 @@
 Status: **Embedded API-graph extraction implemented and verified for core
 ComfyUI and the fixture-backed WanVideoWrapper slice; bounded follow-up work
 remains explicit below**
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 ## Summary
 
@@ -369,10 +369,11 @@ capability without exposing native stderr.
 
 ## 6. Generation-panel experience
 
-Status: **Implemented and renderer-verified** (2026-07-15)
+Status: **Implemented and renderer-verified** (extended 2026-07-20)
 
-The floating inspector and fullscreen Details dock continue sharing one
-metadata content component. Copy becomes source-neutral and informative:
+The floating inspector, docked workspace editor, and fullscreen Details dock
+share one metadata content component. Copy becomes source-neutral and
+informative:
 
 - Loading: **Reading embedded metadata…** followed by sidecar fallback when
   necessary.
@@ -431,8 +432,9 @@ and shutdown** (2026-07-15). Explicit minimize-suspension cancellation remains
 - Prompts and workflow text are untrusted inert content. They are not sent to a
   model, evaluated, used as HTML, or written to logs.
 
-The renderer starts this work only while a Generation section is mounted and
-enabled, so closing the Details surface cancels its request. A dedicated hook
+The renderer starts this work only while a visible Generation disclosure is
+expanded and enabled, so collapsing it, switching the workspace back to
+Library, or closing the Details surface cancels its request. A dedicated hook
 from whole-window work suspension into this coordinator is still outstanding;
 that gap does not create eager folder-open work, but it prevents this bullet
 from being marked fully complete. Profile/shutdown coordination uses a bounded
@@ -461,7 +463,7 @@ A packaged Electron smoke fixture and cross-platform reader verification remain
 - Hook debounce, cancellation, refresh, stale response suppression, and source
   state.
 - Shared Generation section source/completeness badges and all result states.
-- Fullscreen lazy loading only while Details is open.
+- Ordinary/fullscreen lazy loading only while Details and Generation are open.
 
 ### Repository gates
 
@@ -531,7 +533,7 @@ A packaged Electron smoke fixture and cross-platform reader verification remain
 - Migrated profile SQLite storage additively while keeping legacy sidecar
   columns readable. The IPC/preload contract remains instance-ID-only and now
   supports a bounded active-instance re-read.
-- Redesigned the shared floating/fullscreen Generation section with source,
+- Redesigned the shared floating/docked/fullscreen Generation section with source,
   cache and completeness badges; positive/negative prompts; prompt fragments;
   LoRAs; richer sampling/assets; capability fallback; and bounded diagnostics.
 - Verified 1,006 full-suite tests, 47 Electron-ABI SQLite tests, zero-warning

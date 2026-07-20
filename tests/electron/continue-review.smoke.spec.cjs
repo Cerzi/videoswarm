@@ -151,7 +151,7 @@ test("continues a flushed review session after restart from the cached first gri
     await observeFolderOpen(secondPage);
 
     const continueReview = secondPage.getByRole("button", {
-      name: /^Continue review video-library, /,
+      name: /^Resume saved view video-library, /,
     });
     await expect(continueReview).toBeVisible();
     await continueReview.click();

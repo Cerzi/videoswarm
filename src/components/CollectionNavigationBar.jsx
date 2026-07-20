@@ -39,10 +39,10 @@ function CollectionNavigationBar({
             sidebarOpen ? "is-active" : ""
           }`}
           onClick={() => onSidebarToggle?.(!sidebarOpen)}
-          aria-label={sidebarOpen ? "Hide folder sidebar" : "Show folder sidebar"}
+          aria-label={sidebarOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}
           aria-pressed={sidebarOpen}
           disabled={disabled}
-          title={sidebarOpen ? "Hide folder sidebar" : "Show folder sidebar"}
+          title={sidebarOpen ? "Hide workspace sidebar" : "Show workspace sidebar"}
         >
           ☰
         </button>

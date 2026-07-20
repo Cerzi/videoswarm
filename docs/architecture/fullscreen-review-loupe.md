@@ -1,7 +1,7 @@
 # Fullscreen Review Loupe
 
 Status: **Implemented and verified**
-Last updated: 2026-07-15
+Last updated: 2026-07-20
 
 ## Summary
 
@@ -212,7 +212,8 @@ component CSS. The backdrop is opaque/translucent without `backdrop-filter`.
 Metadata content is extracted into reusable presentation/editor sections used
 by both the existing floating grid inspector and the fullscreen dock. The
 draggable inspector shell, placement, and behavior remain unchanged.
-Generation sidecar data is requested only while the Details dock is open. On
+Generation metadata is requested only while the Details dock and its
+Generation disclosure are open. On
 narrow windows the dock becomes a bounded bottom sheet rather than overlapping
 the media controls.
 

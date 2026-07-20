@@ -151,6 +151,7 @@ export function useElectronFolderLifecycle({
   setProxyPlaybackEnabled,
   setReviewAutoAdvance,
   setFullscreenDetailsOpen,
+  setMetadataInspectorMode,
   setZoomLevelFromSettings,
   setVisibleVideos,
   setLoadedVideos,
@@ -198,6 +199,7 @@ export function useElectronFolderLifecycle({
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
     setFullscreenDetailsOpen,
+    setMetadataInspectorMode,
     setZoomLevelFromSettings,
   });
 
@@ -214,6 +216,7 @@ export function useElectronFolderLifecycle({
       setProxyPlaybackEnabled,
       setReviewAutoAdvance,
       setFullscreenDetailsOpen,
+      setMetadataInspectorMode,
       setZoomLevelFromSettings,
     };
   }, [
@@ -228,6 +231,7 @@ export function useElectronFolderLifecycle({
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
     setFullscreenDetailsOpen,
+    setMetadataInspectorMode,
     setZoomLevelFromSettings,
   ]);
 
@@ -1060,6 +1064,7 @@ export function useElectronFolderLifecycle({
       setProxyPlaybackEnabled: applyProxyPlaybackEnabled,
       setReviewAutoAdvance: applyReviewAutoAdvance,
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
+      setMetadataInspectorMode: applyMetadataInspectorMode,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
 
@@ -1095,6 +1100,11 @@ export function useElectronFolderLifecycle({
     }
     if (settings.fullscreenDetailsOpen !== undefined) {
       applyFullscreenDetailsOpen?.(settings.fullscreenDetailsOpen === true);
+    }
+    if (settings.metadataInspectorMode !== undefined) {
+      applyMetadataInspectorMode?.(
+        settings.metadataInspectorMode === "docked" ? "docked" : "floating"
+      );
     }
   }, []);
 

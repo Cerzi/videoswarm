@@ -17,7 +17,7 @@ describe("ReviewSessionControls", () => {
       />
     );
 
-    expect(screen.getByText("Session active")).toBeVisible();
+    expect(screen.getByText("Review position saved")).toBeVisible();
     expect(screen.getByText("Saved 2 minutes ago")).toBeVisible();
     expect(screen.getByText("Checking for newer files…")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -40,25 +40,25 @@ describe("ReviewSessionControls", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue saved" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume saved position" }));
     expect(onContinue).toHaveBeenCalledOnce();
 
     const move = screen.getByRole("button", {
-      name: "Move saved review position here…",
+      name: "Save current position instead…",
     });
     fireEvent.click(move);
     const dialog = screen.getByRole("alertdialog", {
-      name: "Move the saved review position here?",
+      name: "Save the current review position instead?",
     });
     expect(dialog).toHaveTextContent("Review decisions, ratings, and tags remain unchanged");
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Move position" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save position" }));
 
     expect(onMove).toHaveBeenCalledOnce();
     await waitFor(() => expect(move).toHaveFocus());
   });
 
-  it("confirms forgetting a cursor without implying that review metadata is removed", async () => {
+  it("clears a resume point directly without implying that review metadata is removed", async () => {
     const onForget = vi.fn();
     render(
       <ReviewSessionControls
@@ -67,46 +67,25 @@ describe("ReviewSessionControls", () => {
       />
     );
 
-    const options = screen.getByRole("button", {
-      name: "Review session options",
-    });
-    fireEvent.click(options);
-    const forget = screen.getByRole("menuitem", {
-      name: "Forget saved position…",
-    });
-    expect(forget).toHaveFocus();
-    fireEvent.click(forget);
+    const clear = screen.getByRole("button", { name: "Clear resume point…" });
+    fireEvent.click(clear);
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
       "Review decisions, ratings, and tags will remain unchanged"
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(options).toHaveFocus());
+    await waitFor(() => expect(clear).toHaveFocus());
     expect(onForget).not.toHaveBeenCalled();
   });
 
-  it("renders its overflow menu outside the clipped review toolbar", () => {
-    render(
-      <div data-testid="clipped" style={{ overflow: "hidden", height: 1 }}>
-        <ReviewSessionControls
-          session={{ mode: "active" }}
-          onForget={vi.fn()}
-        />
-      </div>
-    );
+  it("explains that review controls work before a resume point exists", () => {
+    render(<ReviewSessionControls session={{ mode: "none" }} onStart={vi.fn()} />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Review session options" })
+    expect(screen.getAllByText("Ready to review")[0]).toBeVisible();
+    expect(screen.getByText(/Marks work now/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Find next Unreviewed" })).toHaveAttribute(
+      "title",
+      expect.stringContaining("Review controls already work")
     );
-    const menu = screen.getByRole("menu", { name: "Review session options" });
-    expect(menu.parentElement).toBe(document.body);
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(
-      screen.queryByRole("menu", { name: "Review session options" })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Review session options" })
-    ).toHaveFocus();
   });
 
   it("offers bounded recovery actions for filtered, capped, and partial-index states", () => {
@@ -153,7 +132,7 @@ describe("ReviewSessionControls", () => {
     );
 
     fireEvent.click(screen.getByRole("button", {
-      name: "Start review here — Current folder, 12 unreviewed",
+      name: "Find next Unreviewed — Current folder, 12 unreviewed",
     }));
     expect(onStart).toHaveBeenCalledOnce();
 
@@ -169,7 +148,7 @@ describe("ReviewSessionControls", () => {
       />
     );
     fireEvent.click(screen.getByRole("button", {
-      name: "Continue review — outputs / run-a, 4 unreviewed in the root",
+      name: "Resume review — outputs / run-a, 4 unreviewed in the root",
     }));
     expect(onContinue).toHaveBeenCalledOnce();
   });

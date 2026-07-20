@@ -84,6 +84,32 @@ describe("MetadataPanel floating shell", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("offers an optional dock action without changing the floating shell", () => {
+    const onDock = vi.fn();
+    const { rerender } = renderPanel({
+      selectedVideos: [{ name: "clip-one.mp4" }],
+      onDock,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Dock selection details in sidebar",
+      })
+    );
+    expect(onDock).toHaveBeenCalledOnce();
+
+    rerender(
+      <MetadataPanel
+        {...panelProps({ selectedVideos: [{ name: "clip-one.mp4" }] })}
+      />
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Dock selection details in sidebar",
+      })
+    ).toBeNull();
+  });
+
   it("closes on Escape only when keyboard events come from inside it", () => {
     const onClose = vi.fn();
     renderPanel({

@@ -59,6 +59,75 @@ describe("reusable metadata content sections", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
+  it("defaults generation details open and keeps header actions available while collapsed", () => {
+    const onRefresh = vi.fn();
+    render(
+      <MetadataGenerationSection
+        state={{
+          found: true,
+          cached: true,
+          sourceKind: "embedded",
+          metadata: { prompt: "A long generation prompt" },
+          onRefresh,
+        }}
+      />
+    );
+
+    const collapse = screen.getByRole("button", {
+      name: "Collapse Generation details",
+    });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    expect(collapse).toHaveAttribute("aria-controls");
+    expect(screen.getByText("A long generation prompt")).toBeInTheDocument();
+
+    fireEvent.click(collapse);
+
+    const expand = screen.getByRole("button", {
+      name: "Expand Generation details",
+    });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("A long generation prompt")).not.toBeInTheDocument();
+    expect(screen.getByText("Embedded")).toBeInTheDocument();
+    expect(screen.getByText("Cached")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Re-read" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getByText("A long generation prompt")).toBeInTheDocument();
+  });
+
+  it("supports host-controlled generation disclosure state", () => {
+    const onExpandedChange = vi.fn();
+    const state = {
+      found: true,
+      metadata: { prompt: "Controlled prompt" },
+    };
+    const rendered = render(
+      <MetadataGenerationSection
+        state={state}
+        expanded={false}
+        onExpandedChange={onExpandedChange}
+      />
+    );
+
+    const expand = screen.getByRole("button", {
+      name: "Expand Generation details",
+    });
+    fireEvent.click(expand);
+    expect(onExpandedChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByText("Controlled prompt")).not.toBeInTheDocument();
+
+    rendered.rerender(
+      <MetadataGenerationSection
+        state={state}
+        expanded
+        onExpandedChange={onExpandedChange}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "Collapse Generation details" })
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Controlled prompt")).toBeInTheDocument();
+  });
+
   it("distinguishes unresolved embedded metadata from a true miss", () => {
     const { rerender } = render(
       <MetadataGenerationSection
