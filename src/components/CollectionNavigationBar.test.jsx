@@ -85,7 +85,7 @@ describe("CollectionNavigationBar", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
     expect(props.onRecursiveChange).toHaveBeenCalledWith(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide folder sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide workspace sidebar" }));
     expect(props.onSidebarToggle).toHaveBeenCalledWith(false);
   });
 

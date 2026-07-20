@@ -103,6 +103,7 @@ describe("useElectronFolderLifecycle", () => {
         proxyPlaybackEnabled: true,
         reviewAutoAdvance: true,
         fullscreenDetailsOpen: false,
+        metadataInspectorMode: "docked",
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
       readDirectory: vi.fn().mockResolvedValue([
@@ -242,6 +243,7 @@ describe("useElectronFolderLifecycle", () => {
     const setProxyPlaybackEnabled = vi.fn();
     const setReviewAutoAdvance = vi.fn();
     const setFullscreenDetailsOpen = vi.fn();
+    const setMetadataInspectorMode = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
     const { result } = renderHook(() =>
@@ -261,6 +263,7 @@ describe("useElectronFolderLifecycle", () => {
         setProxyPlaybackEnabled,
         setReviewAutoAdvance,
         setFullscreenDetailsOpen,
+        setMetadataInspectorMode,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -283,6 +286,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
     expect(setReviewAutoAdvance).toHaveBeenCalledWith(true);
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
+    expect(setMetadataInspectorMode).toHaveBeenCalledWith("docked");
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
   });
 
@@ -326,6 +330,18 @@ describe("useElectronFolderLifecycle", () => {
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("allows only the docked metadata inspector mode", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      metadataInspectorMode: "detached-window",
+    });
+    const setMetadataInspectorMode = vi.fn();
+
+    const { result } = renderDefaultLifecycle({ setMetadataInspectorMode });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setMetadataInspectorMode).toHaveBeenCalledWith("floating");
   });
 
   it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {

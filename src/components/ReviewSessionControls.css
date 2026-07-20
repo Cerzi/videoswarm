@@ -75,8 +75,6 @@
 }
 
 .review-session__actions > button,
-.review-session__options-trigger,
-.review-session__menu button,
 .review-session__confirmation button {
   min-height: 2rem;
   box-sizing: border-box;
@@ -94,8 +92,6 @@
 }
 
 .review-session__actions > button:hover:not(:disabled),
-.review-session__options-trigger:hover:not(:disabled),
-.review-session__menu button:hover:not(:disabled),
 .review-session__confirmation button:hover:not(:disabled) {
   border-color: rgba(81, 207, 102, 0.48);
   background: rgba(81, 207, 102, 0.1);
@@ -107,33 +103,9 @@
   color: #b2f2bb;
 }
 
-.review-session__options {
-  position: relative;
-}
-
-.review-session__options-trigger {
-  min-width: 2rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-}
-
-.review-session__menu {
-  position: fixed;
-  z-index: 1100;
-  min-width: 11.5rem;
-  padding: 0.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 6px;
-  background: #252829;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
-}
-
-.review-session__menu button {
-  width: 100%;
-  padding: 0.32rem 0.45rem;
-  text-align: left;
+.review-session__actions > .review-session__clear-position {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #aab2b6;
 }
 
 .review-session__checking {
@@ -197,9 +169,7 @@
   color: #ffc9c9;
 }
 
-.review-session button:focus-visible,
-.review-session__options-trigger:focus-visible,
-.review-session__menu button:focus-visible {
+.review-session button:focus-visible {
   outline: 2px solid rgba(81, 207, 102, 0.8);
   outline-offset: 2px;
 }

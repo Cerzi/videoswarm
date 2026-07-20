@@ -311,6 +311,8 @@ export function FullscreenDetailsDock({
   video,
   availableTags,
   generationMetadataState,
+  generationExpanded,
+  onGenerationExpandedChange,
   onAddTags,
   onRemoveTag,
   onApplyTag,
@@ -328,7 +330,11 @@ export function FullscreenDetailsDock({
         <span>{video.name}</span>
       </div>
       <MetadataFileFactsSection info={info} includeRelativePath />
-      <MetadataGenerationSection state={generationMetadataState} />
+      <MetadataGenerationSection
+        state={generationMetadataState}
+        expanded={generationExpanded}
+        onExpandedChange={onGenerationExpandedChange}
+      />
       <MetadataTagsSection
         selectedVideos={[video]}
         selectionCount={1}

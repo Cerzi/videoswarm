@@ -1135,6 +1135,106 @@ describe("App hook composition", () => {
     });
   });
 
+  test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
+    const video = {
+      id: "dock-video",
+      instanceId: 91,
+      name: "dock.mp4",
+      fingerprint: "fingerprint-dock",
+      reviewState: "unreviewed",
+      tags: [],
+    };
+    selectionMock.selected = new Set([video.id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = video.id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [video],
+      activeRootPath: "/dock-root",
+      libraryRoot: { rootPath: "/dock-root", name: "dock-root", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "dock-root" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [video],
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [video],
+      displayVideos: [video],
+      orderedIds: [video.id],
+      orderForRange: [video.id],
+      virtualItems: [{ id: video.id, item: video, style: {} }],
+    });
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    await waitFor(() => expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen).toBe(true));
+    act(() => metadataPanelSpy.mock.calls.at(-1)?.[0].onDock());
+
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      metadataInspectorMode: "docked",
+    });
+    expect(
+      screen.getByRole("complementary", { name: "Library and clip details" })
+    ).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Details/ })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    expect(screen.getByRole("region", { name: "Docked selection details" }))
+      .toHaveTextContent("dock.mp4");
+    expect(useGenerationMetadataMock.mock.calls
+      .filter(([options]) => options.instanceId === 91)
+      .at(-1)?.[0]).toMatchObject({
+      instanceId: 91,
+      enabled: true,
+    });
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Collapse Generation details",
+    }));
+    expect(useGenerationMetadataMock.mock.calls
+      .filter(([options]) => options.instanceId === 91)
+      .at(-1)?.[0]).toMatchObject({ enabled: false });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Expand Generation details",
+    }));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Library" }));
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    expect(useGenerationMetadataMock.mock.calls
+      .filter(([options]) => options.instanceId === 91)
+      .at(-1)?.[0]).toMatchObject({
+      instanceId: 91,
+      enabled: false,
+    });
+
+    const hotkeyOptions = useHotkeysMock.mock.calls.at(-1)?.[2];
+    act(() => hotkeyOptions.onOpenDetails());
+    expect(screen.getByRole("tab", { name: /Details/ })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Undock selection details" }));
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenLastCalledWith({
+      metadataInspectorMode: "floating",
+    });
+    expect(
+      screen.queryByRole("complementary", { name: "Library and clip details" })
+    ).toBeNull();
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      isOpen: true,
+      selectedVideos: [video],
+    });
+  });
+
   test("opens details opposite the fitted context menu and adopts its single target", async () => {
     const videos = [
       { id: "video-a", name: "a.mp4", fingerprint: "fingerprint-a" },
@@ -1407,7 +1507,7 @@ describe("App hook composition", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+      expect(screen.getAllByText("Review position saved").length).toBeGreaterThan(0)
     );
     sessions.save.mockClear();
     fireEvent.click(screen.getByTitle("run-b"));
@@ -1416,7 +1516,7 @@ describe("App hook composition", () => {
         "current-folder"
       )
     );
-    expect(screen.getAllByText("Review saved elsewhere")[0]).toBeVisible();
+    expect(screen.getAllByText("Resume point saved elsewhere")[0]).toBeVisible();
 
     const panelProps = metadataPanelSpy.mock.calls.at(-1)?.[0];
     await act(async () => panelProps.onSetReviewState("pick"));
@@ -1427,9 +1527,9 @@ describe("App hook composition", () => {
     expect(sessions.save).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", {
-      name: /Move saved review position here/,
+      name: /Save current position instead/,
     }));
-    fireEvent.click(screen.getByRole("button", { name: "Move position" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save position" }));
     await waitFor(() => expect(sessions.save).toHaveBeenCalledOnce());
     expect(sessions.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1474,7 +1574,7 @@ describe("App hook composition", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", {
-      name: /Start review here/,
+      name: /Find next Unreviewed/,
     }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     electronLifecycleReturn.handleWebFileSelection.mockClear();
@@ -1548,7 +1648,7 @@ describe("App hook composition", () => {
     );
     reloadCurrentRoot.mockClear();
 
-    fireEvent.click(screen.getByRole("button", { name: /Start review here/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Find next Unreviewed/ }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
     await act(async () => {
@@ -1618,7 +1718,7 @@ describe("App hook composition", () => {
     const rendered = render(<App />);
 
     fireEvent.click(await screen.findByRole("button", {
-      name: "Start review Target outputs, 7 unreviewed",
+      name: "Review Unreviewed Target outputs, 7 unreviewed in root",
     }));
     await waitFor(() =>
       expect(handleElectronFolderSelection).toHaveBeenCalledWith("/target-root")
@@ -1701,7 +1801,7 @@ describe("App hook composition", () => {
     render(<App />);
 
     const continueButton = await screen.findByRole("button", {
-      name: /Continue saved review/,
+      name: /Resume saved position/,
     });
     vi.useFakeTimers();
     await act(async () => {
@@ -1757,7 +1857,7 @@ describe("App hook composition", () => {
     render(<App />);
 
     const startButton = await screen.findByRole("button", {
-      name: /Start review here/,
+      name: /Find next Unreviewed/,
     });
     vi.useFakeTimers();
     await act(async () => {
@@ -1774,7 +1874,7 @@ describe("App hook composition", () => {
 
     expect(save).toHaveBeenCalledOnce();
     expect(sessions.get).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Start review here/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Find next Unreviewed/ })).toBeVisible();
     expect(selectionMock.selectExactly).not.toHaveBeenCalled();
     expect(screen.queryByText("Restoring saved review…")).toBeNull();
   });
@@ -1836,19 +1936,19 @@ describe("App hook composition", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+      expect(screen.getAllByText("Review position saved").length).toBeGreaterThan(0)
     );
     fireEvent.click(screen.getByTitle("run-b"));
     await waitFor(() =>
-      expect(screen.getAllByText("Review saved elsewhere").length).toBeGreaterThan(0)
+      expect(screen.getAllByText("Resume point saved elsewhere").length).toBeGreaterThan(0)
     );
     const getCallCount = sessions.get.mock.calls.length;
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole("button", {
-      name: /Move saved review position here/,
+      name: /Save current position instead/,
     }));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Move position" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save position" }));
       await flushPromiseTurns();
     });
     expect(save).toHaveBeenCalledOnce();
@@ -1858,7 +1958,7 @@ describe("App hook composition", () => {
 
     expect(save).toHaveBeenCalledOnce();
     expect(sessions.get).toHaveBeenCalledTimes(getCallCount);
-    expect(screen.getAllByText("Review saved elsewhere")[0]).toBeVisible();
+    expect(screen.getAllByText("Resume point saved elsewhere")[0]).toBeVisible();
     expect(selectionMock.selectExactly).not.toHaveBeenCalled();
     expect(screen.queryByText("Restoring saved review…")).toBeNull();
   });
@@ -1898,19 +1998,16 @@ describe("App hook composition", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getAllByText("Session active").length).toBeGreaterThan(0)
+      expect(screen.getAllByText("Review position saved").length).toBeGreaterThan(0)
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Review session options" })
+      screen.getByRole("button", { name: "Clear resume point…" })
     );
-    fireEvent.click(screen.getByRole("menuitem", {
-      name: "Forget saved position…",
-    }));
-    fireEvent.click(screen.getByRole("button", { name: "Forget position" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear resume point" }));
     await waitFor(() => expect(clear).toHaveBeenCalledWith("/forget-root"));
 
-    expect(screen.getAllByText("Session active")[0]).toBeVisible();
-    expect(document.body).not.toHaveTextContent("Forgot the saved review position");
+    expect(screen.getAllByText("Review position saved")[0]).toBeVisible();
+    expect(document.body).not.toHaveTextContent("Cleared the review resume point");
   });
 
   test("reactivates completed sessions without stealing focus on passive discovery", async () => {
@@ -2000,7 +2097,7 @@ describe("App hook composition", () => {
     const rendered = render(<App />);
 
     fireEvent.click(await screen.findByRole("button", {
-      name: /Continue saved review/,
+      name: /Resume saved position/,
     }));
     await screen.findByText("Review complete");
     const stableFocusTarget = screen.getByRole("button", {
@@ -2043,7 +2140,7 @@ describe("App hook composition", () => {
     expect(stableFocusTarget).toHaveFocus();
 
     fireEvent.click(screen.getByRole("button", {
-      name: /^Continue review —/,
+      name: /^Resume review —/,
     }));
     await waitFor(() =>
       expect(selectionMock.selectExactly).toHaveBeenCalledWith(visibleVideo.id)
@@ -2651,6 +2748,15 @@ describe("App hook composition", () => {
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
       fullscreenDetailsOpen: true,
     });
+    const openModalProps = fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    expect(openModalProps.detailsDock.props.generationExpanded).toBe(true);
+    expect(useGenerationMetadataMock.mock.calls
+      .filter(([options]) => options.instanceId === 11)
+      .at(-1)?.[0]).toMatchObject({ enabled: true });
+    act(() => openModalProps.detailsDock.props.onGenerationExpandedChange(false));
+    expect(useGenerationMetadataMock.mock.calls
+      .filter(([options]) => options.instanceId === 11)
+      .at(-1)?.[0]).toMatchObject({ enabled: false });
 
     await act(async () => {
       await lifecycleArgs.beforeExternalFolderSelection("/next");

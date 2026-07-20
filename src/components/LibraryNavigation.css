@@ -36,7 +36,8 @@
 
 .collection-navigation button,
 .collection-navigation select,
-.library-sidebar button {
+.library-sidebar button,
+.library-sidebar__content button {
   font: inherit;
 }
 
@@ -66,7 +67,8 @@
 .collection-navigation__icon-button:disabled,
 .collection-navigation__headers-toggle:disabled,
 .collection-navigation__crumb:disabled,
-.library-sidebar button:disabled {
+.library-sidebar button:disabled,
+.library-sidebar__content button:disabled {
   opacity: 0.42;
   cursor: default;
 }
@@ -167,6 +169,15 @@
   background: #202020;
   border-right: 1px solid var(--color-border, #3d3d3d);
   color: var(--color-text, #f5f5f5);
+  overflow: hidden;
+}
+
+.library-sidebar__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -383,6 +394,8 @@
   flex: 0 0 auto;
   align-self: stretch;
   width: 28px;
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.035);
 }
 
 .library-root-list__review {

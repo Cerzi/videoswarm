@@ -96,6 +96,10 @@ const {
 } = require("./main/settings-writer");
 const { normalizeZoomLevel } = require("./main/zoom-settings");
 const {
+  METADATA_INSPECTOR_MODES,
+  normalizeMetadataInspectorMode,
+} = require("./main/metadata-inspector-settings");
+const {
   createDirectoryAggregateBatcher,
 } = require("./main/directory-aggregate-batcher");
 const {
@@ -258,6 +262,7 @@ const defaultSettings = {
   proxyPlaybackEnabled: false,
   reviewAutoAdvance: false,
   fullscreenDetailsOpen: true,
+  metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   sortKey: "name",
@@ -1498,6 +1503,9 @@ function normaliseLoadedSettings(rawSettings) {
       source.fullscreenDetailsOpen === undefined
         ? defaultSettings.fullscreenDetailsOpen
         : source.fullscreenDetailsOpen === true,
+    metadataInspectorMode: normalizeMetadataInspectorMode(
+      source.metadataInspectorMode
+    ),
     zoomLevel: normalizeZoomLevel(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
       defaultSettings.zoomLevel

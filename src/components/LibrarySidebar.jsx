@@ -18,7 +18,7 @@ const rootReviewStateOf = (states, rootPath) => {
 const remainingLabel = (remaining) =>
   remaining === null
     ? "Review count unavailable"
-    : `${remaining.toLocaleString()} unreviewed`;
+    : `${remaining.toLocaleString()} unreviewed in root`;
 
 const RootReviewSummary = memo(function RootReviewSummary({
   root,
@@ -41,10 +41,12 @@ const RootReviewSummary = memo(function RootReviewSummary({
     ? state.action
     : null;
   const actionDisabled = disabled || Boolean(state.disabled);
-  const actionLabel = action === "continue" ? "Continue review" : "Start review";
+  const actionLabel = action === "continue"
+    ? "Resume saved view"
+    : "Review Unreviewed";
   const accessibleCount = remaining === null
     ? "review count unavailable"
-    : `${remaining.toLocaleString()} unreviewed`;
+    : `${remaining.toLocaleString()} unreviewed in root`;
   const countTooltip =
     "Counts are file instances. Reviewing duplicate content may reduce the count by more than one.";
 
@@ -199,7 +201,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
   );
 });
 
-function LibrarySidebar({
+export function LibrarySidebarContent({
   tree = null,
   currentPath = "",
   expandedPaths = new Set([""]),
@@ -238,7 +240,7 @@ function LibrarySidebar({
   };
 
   return (
-    <aside className="library-sidebar" aria-label="Library and folders">
+    <div className="library-sidebar__content">
       <section className="library-sidebar__section library-sidebar__section--roots">
         <header className="library-sidebar__section-header">
           <div>
@@ -305,6 +307,7 @@ function LibrarySidebar({
                     className="library-root-list__pin"
                     onClick={() => onTogglePin?.(rootPath, false)}
                     aria-label={`Unpin ${rootLabelOf(root)}`}
+                    aria-pressed="true"
                     title="Unpin library root"
                     disabled={disabled}
                   >
@@ -426,6 +429,14 @@ function LibrarySidebar({
           <p className="library-sidebar__empty">Open a folder to browse its tree.</p>
         )}
       </section>
+    </div>
+  );
+}
+
+function LibrarySidebar(props) {
+  return (
+    <aside className="library-sidebar" aria-label="Library and folders">
+      <LibrarySidebarContent {...props} />
     </aside>
   );
 }

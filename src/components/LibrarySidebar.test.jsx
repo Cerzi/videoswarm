@@ -52,6 +52,9 @@ describe("LibrarySidebar", () => {
       />
     );
 
+    expect(
+      screen.getByRole("complementary", { name: "Library and folders" })
+    ).toBeVisible();
     expect(screen.getByText("Wan outputs")).toBeVisible();
     expect(screen.getByText("/models/wan/outputs")).toBeVisible();
     fireEvent.click(screen.getByText("Hunyuan outputs"));
@@ -60,7 +63,11 @@ describe("LibrarySidebar", () => {
       pinnedRoots[1]
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Unpin Hunyuan outputs" }));
+    const pinnedRowStar = screen.getByRole("button", {
+      name: "Unpin Hunyuan outputs",
+    });
+    expect(pinnedRowStar).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(pinnedRowStar);
     expect(onTogglePin).toHaveBeenCalledWith(
       "/models/hunyuan/outputs",
       false
@@ -109,7 +116,7 @@ describe("LibrarySidebar", () => {
       />
     );
 
-    const count = screen.getByText("1,250 unreviewed", { exact: false });
+    const count = screen.getByText("1,250 unreviewed in root", { exact: false });
     expect(count).toHaveTextContent("Updating…");
     expect(count).toHaveAttribute(
       "title",
@@ -118,12 +125,12 @@ describe("LibrarySidebar", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Start review Wan outputs, 1,250 unreviewed",
+        name: "Review Unreviewed Wan outputs, 1,250 unreviewed in root",
       })
     );
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Continue review Hunyuan outputs, 42 unreviewed",
+        name: "Resume saved view Hunyuan outputs, 42 unreviewed in root",
       })
     );
     expect(onStartRootReview).toHaveBeenCalledWith(
@@ -149,7 +156,7 @@ describe("LibrarySidebar", () => {
       />
     );
 
-    expect(screen.getByText("0 unreviewed")).toBeVisible();
+    expect(screen.getByText("0 unreviewed in root")).toBeVisible();
     expect(
       screen.getByRole("status", { name: "Wan outputs: Review complete" })
     ).toBeVisible();

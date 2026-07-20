@@ -16,6 +16,8 @@ import HeaderBar from "./components/HeaderBar";
 import FiltersPopover from "./components/FiltersPopover";
 import CollectionNavigationBar from "./components/CollectionNavigationBar";
 import LibrarySidebar from "./components/LibrarySidebar";
+import WorkspaceSidebar from "./components/WorkspaceSidebar";
+import DockedMetadataInspector from "./components/DockedMetadataInspector";
 import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
@@ -188,6 +190,12 @@ function App() {
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
   const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
+  const [metadataInspectorMode, setMetadataInspectorMode] = useState("floating");
+  const [workspaceSidebarTab, setWorkspaceSidebarTab] = useState("library");
+  const [metadataGenerationExpanded, setMetadataGenerationExpanded] =
+    useState(true);
+  const [fullscreenGenerationExpanded, setFullscreenGenerationExpanded] =
+    useState(true);
   const [hoveredVideoId, setHoveredVideoId] = useState(null);
   const hoveredVideoIdRef = useRef(null);
   const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
@@ -420,6 +428,16 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
+  const applyMetadataInspectorModeFromSettings = useCallback((value) => {
+    const next = value === "docked" ? "docked" : "floating";
+    setMetadataInspectorMode(next);
+    if (next === "docked") {
+      setWorkspaceSidebarTab("details");
+      setLibrarySidebarOpen(true);
+      setMetadataPanelOpen(false);
+    }
+  }, []);
+
   const {
     videos,
     setVideos,
@@ -458,6 +476,7 @@ function App() {
     setProxyPlaybackEnabled,
     setReviewAutoAdvance,
     setFullscreenDetailsOpen,
+    setMetadataInspectorMode: applyMetadataInspectorModeFromSettings,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
     setVisibleVideos,
@@ -1101,20 +1120,6 @@ function App() {
     []
   );
 
-  const selectedGenerationInstanceId =
-    selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
-  const generationMetadata = useGenerationMetadata({
-    instanceId: selectedGenerationInstanceId,
-    enabled: Boolean(isMetadataPanelOpen && selectedGenerationInstanceId),
-  });
-  const generationMetadataState = useMemo(
-    () =>
-      selectedGenerationInstanceId
-        ? { ...generationMetadata, onRefresh: generationMetadata.refresh }
-        : null,
-    [generationMetadata, selectedGenerationInstanceId]
-  );
-
   const selectedFingerprints = useMemo(() => {
     const set = new Set();
     selectedVideos.forEach((video) => {
@@ -1188,6 +1193,13 @@ function App() {
       return;
     }
 
+    if (metadataInspectorMode === "docked") {
+      previousMetadataSelectionKeyRef.current = metadataSelectionKey;
+      setMetadataPanelOpen(false);
+      setMetadataDismissedSelectionKey(null);
+      return;
+    }
+
     if (
       metadataSelectionKey !== previousKey &&
       metadataDismissedSelectionKey !== metadataSelectionKey
@@ -1205,6 +1217,7 @@ function App() {
   }, [
     metadataAnchorId,
     metadataDismissedSelectionKey,
+    metadataInspectorMode,
     metadataSelectionKey,
     selection.size,
   ]);
@@ -1531,6 +1544,16 @@ function App() {
       reason = "explicit",
     } = {}) => {
       if (anchorId == null && selection.size === 0) return;
+      if (metadataInspectorMode === "docked") {
+        setLibrarySidebarOpen(true);
+        setWorkspaceSidebarTab("details");
+        setMetadataPanelOpen(false);
+        setMetadataDismissedSelectionKey(null);
+        if (focusInput) {
+          setMetadataFocusToken((token) => token + 1);
+        }
+        return;
+      }
       setMetadataPanelOpen(true);
       setMetadataDismissedSelectionKey(null);
       setMetadataPlacementRequest((previous) => ({
@@ -1543,8 +1566,37 @@ function App() {
         setMetadataFocusToken((token) => token + 1);
       }
     },
-    [metadataAnchorId, selection.size]
+    [metadataAnchorId, metadataInspectorMode, selection.size]
   );
+
+  const handleDockMetadataPanel = useCallback(() => {
+    setMetadataInspectorMode("docked");
+    setMetadataPanelOpen(false);
+    setMetadataDismissedSelectionKey(null);
+    setLibrarySidebarOpen(true);
+    setWorkspaceSidebarTab("details");
+    window.electronAPI?.saveSettingsPartial?.({
+      metadataInspectorMode: "docked",
+    });
+  }, []);
+
+  const handleUndockMetadataPanel = useCallback(() => {
+    setMetadataInspectorMode("floating");
+    setWorkspaceSidebarTab("library");
+    setMetadataDismissedSelectionKey(null);
+    if (selection.size > 0) {
+      setMetadataPanelOpen(true);
+      setMetadataPlacementRequest((previous) => ({
+        revision: previous.revision + 1,
+        anchorId: metadataAnchorId,
+        avoidRect: null,
+        reason: "undock",
+      }));
+    }
+    window.electronAPI?.saveSettingsPartial?.({
+      metadataInspectorMode: "floating",
+    });
+  }, [metadataAnchorId, selection.size]);
 
   const handleContextMenuPlacementChange = useCallback(
     (placement) => {
@@ -1939,6 +1991,29 @@ function App() {
   fullScreenControllerRef.current = fullscreenController;
   fullScreenActiveIdRef.current = fullScreenVideo?.id ?? null;
 
+  const selectedGenerationInstanceId =
+    selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
+  const metadataInspectorVisible =
+    metadataInspectorMode === "floating"
+      ? isMetadataPanelOpen
+      : isLibrarySidebarOpen && workspaceSidebarTab === "details";
+  const generationMetadata = useGenerationMetadata({
+    instanceId: selectedGenerationInstanceId,
+    enabled: Boolean(
+      !fullScreenVideo &&
+        metadataInspectorVisible &&
+        metadataGenerationExpanded &&
+        selectedGenerationInstanceId
+    ),
+  });
+  const generationMetadataState = useMemo(
+    () =>
+      selectedGenerationInstanceId
+        ? { ...generationMetadata, onRefresh: generationMetadata.refresh }
+        : null,
+    [generationMetadata, selectedGenerationInstanceId]
+  );
+
   const releaseFullScreenNow = useCallback((options) => {
     fullScreenPlayerRef.current?.releaseNow?.(options);
   }, []);
@@ -2070,6 +2145,7 @@ function App() {
     enabled: Boolean(
       fullScreenVideo &&
         fullscreenDetailsOpen &&
+        fullscreenGenerationExpanded &&
         fullscreenGenerationInstanceId &&
         !workSuspended
     ),
@@ -3465,7 +3541,7 @@ function App() {
       if (!deleted) return;
       cancelReviewResume();
       refreshLibraryRoots();
-      notify("Forgot the saved review position", "success");
+      notify("Cleared the review resume point", "success");
     } catch (error) {
       notify(error?.message || "Could not forget the review position", "error");
     }
@@ -4557,25 +4633,73 @@ function App() {
             <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
                 {activeRootPath && isLibrarySidebarOpen && (
-                  <LibrarySidebar
-                    tree={folderTree}
-                    currentPath={currentDirectory}
-                    expandedPaths={expandedFolderPaths}
-                    onToggleExpanded={handleFolderExpandedToggle}
-                    onSelectFolder={handleFolderNavigate}
-                    pinnedRoots={pinnedRoots}
-                    currentRoot={catalogCurrentRoot || libraryRoot}
-                    onOpenRoot={handleOpenLibraryRoot}
-                    onTogglePin={handleToggleLibraryPin}
-                    rootReviewStateByPath={rootReviewStateByPath}
-                    onStartRootReview={handleStartRootReview}
-                    onContinueRootReview={beginContinueReview}
-                    savedViews={savedViews}
-                    onApplySavedView={handleApplySavedView}
-                    onSaveCurrentView={handleSaveCurrentView}
-                    onDeleteSavedView={handleDeleteSavedView}
-                    disabled={isLoadingFolder}
-                  />
+                  metadataInspectorMode === "docked" ? (
+                    <WorkspaceSidebar
+                      activeTab={workspaceSidebarTab}
+                      onTabChange={setWorkspaceSidebarTab}
+                      selectionCount={selection.size}
+                      libraryProps={{
+                        tree: folderTree,
+                        currentPath: currentDirectory,
+                        expandedPaths: expandedFolderPaths,
+                        onToggleExpanded: handleFolderExpandedToggle,
+                        onSelectFolder: handleFolderNavigate,
+                        pinnedRoots,
+                        currentRoot: catalogCurrentRoot || libraryRoot,
+                        onOpenRoot: handleOpenLibraryRoot,
+                        onTogglePin: handleToggleLibraryPin,
+                        rootReviewStateByPath,
+                        onStartRootReview: handleStartRootReview,
+                        onContinueRootReview: beginContinueReview,
+                        savedViews,
+                        onApplySavedView: handleApplySavedView,
+                        onSaveCurrentView: handleSaveCurrentView,
+                        onDeleteSavedView: handleDeleteSavedView,
+                        disabled: isLoadingFolder,
+                      }}
+                      detailsContent={
+                        selection.size > 0 ? (
+                          <DockedMetadataInspector
+                            selectionKey={metadataSelectionKey}
+                            selectionCount={selection.size}
+                            selectedVideos={selectedVideos}
+                            availableTags={availableTags}
+                            onAddTag={handleAddTags}
+                            onRemoveTag={handleRemoveTag}
+                            onApplyTagToSelection={handleApplyExistingTag}
+                            onSetRating={reviewWorkflow.applyRating}
+                            onClearRating={() => reviewWorkflow.applyRating(null)}
+                            onSetReviewState={reviewWorkflow.applyReviewState}
+                            generationMetadataState={generationMetadataState}
+                            generationExpanded={metadataGenerationExpanded}
+                            onGenerationExpandedChange={setMetadataGenerationExpanded}
+                            onFocusSelection={focusSelection}
+                            onUndock={handleUndockMetadataPanel}
+                          />
+                        ) : null
+                      }
+                    />
+                  ) : (
+                    <LibrarySidebar
+                      tree={folderTree}
+                      currentPath={currentDirectory}
+                      expandedPaths={expandedFolderPaths}
+                      onToggleExpanded={handleFolderExpandedToggle}
+                      onSelectFolder={handleFolderNavigate}
+                      pinnedRoots={pinnedRoots}
+                      currentRoot={catalogCurrentRoot || libraryRoot}
+                      onOpenRoot={handleOpenLibraryRoot}
+                      onTogglePin={handleToggleLibraryPin}
+                      rootReviewStateByPath={rootReviewStateByPath}
+                      onStartRootReview={handleStartRootReview}
+                      onContinueRootReview={beginContinueReview}
+                      savedViews={savedViews}
+                      onApplySavedView={handleApplySavedView}
+                      onSaveCurrentView={handleSaveCurrentView}
+                      onDeleteSavedView={handleDeleteSavedView}
+                      disabled={isLoadingFolder}
+                    />
+                  )
                 )}
 
                 <div className="content-region__gallery" ref={galleryRef}>
@@ -4681,7 +4805,8 @@ function App() {
                   </div>
                 </div>
               </div>
-              <MetadataPanel
+              {metadataInspectorMode === "floating" ? (
+                <MetadataPanel
                 isOpen={isMetadataPanelOpen}
                 onClose={closeMetadataPanel}
                 selectionKey={metadataSelectionKey}
@@ -4690,7 +4815,7 @@ function App() {
                 resolveBoundsRect={resolveMetadataBoundsRect}
                 resolveContainerRect={resolveMetadataContainerRect}
                 placementRequest={metadataPlacementRequest}
-                boundsVersion={`${isLibrarySidebarOpen}:${
+                boundsVersion={`${isLibrarySidebarOpen}:${metadataInspectorMode}:${
                   activeRootPath || "home"
                 }`}
                 selectionCount={selection.size}
@@ -4703,9 +4828,13 @@ function App() {
                 onClearRating={() => reviewWorkflow.applyRating(null)}
                 onSetReviewState={reviewWorkflow.applyReviewState}
                 generationMetadataState={generationMetadataState}
+                generationExpanded={metadataGenerationExpanded}
+                onGenerationExpandedChange={setMetadataGenerationExpanded}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
-              />
+                onDock={activeRootPath ? handleDockMetadataPanel : undefined}
+                />
+              ) : null}
             </div>
           )}
 
@@ -4762,6 +4891,8 @@ function App() {
                   video={fullScreenVideo}
                   availableTags={availableTags}
                   generationMetadataState={fullscreenGenerationMetadataState}
+                  generationExpanded={fullscreenGenerationExpanded}
+                  onGenerationExpandedChange={setFullscreenGenerationExpanded}
                   onAddTags={handleFullscreenAddTags}
                   onRemoveTag={handleFullscreenRemoveTag}
                   onApplyTag={handleFullscreenApplyTag}

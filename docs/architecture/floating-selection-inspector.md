@@ -1,6 +1,6 @@
 # Floating Selection Inspector
 
-Status: **Implemented** (2026-07-14)
+Status: **Implemented and extended** (2026-07-20)
 
 ## Summary
 
@@ -262,6 +262,10 @@ Returning to a wider gallery restores automatic anchored placement.
    and App lifecycle regressions cover opposite placement, clamping, cleanup,
    scoped dismissal, focus-token consumption, context targeting, narrow mode,
    and invariant viewport padding/scroll state.
+8. **Implemented** — The metadata editor body is shared with the docked
+   Library/Details workspace. **Dock** persists the profile presentation mode,
+   while **Undock** restores this anchored floating shell without copying
+   selection or media state.
 
 ## Implementation notes
 

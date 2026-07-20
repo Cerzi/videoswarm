@@ -96,7 +96,7 @@ describe("ReviewToolbar", () => {
     );
 
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start review here" }));
+    fireEvent.click(screen.getByRole("button", { name: "Find next Unreviewed" }));
     expect(onStartSession).toHaveBeenCalledOnce();
   });
 });
