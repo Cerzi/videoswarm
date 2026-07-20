@@ -7,11 +7,12 @@ export default function DebugSummary({
   inView,
   activeWindow,
   activationTarget,
-  progressiveVisible,
   memoryStatus, // { currentMemoryMB, memoryPressure, isNearLimit, safetyMarginMB }
-  zoomLevel,
-  getMinimumZoomLevel,
   sortStatus,
+  playbackDecision,
+  playbackMode,
+  playbackTelemetry,
+  workSuspensionReason,
 }) {
   return (
     <div
@@ -41,6 +42,18 @@ export default function DebugSummary({
         </span>
       )}
       <span>▶️ {playing} playing</span>
+      {playbackDecision && (
+        <span title={(playbackDecision.reasons || []).join(", ")}>
+          ⚙️ {playbackMode || playbackDecision.mode}: {playbackDecision.target}/
+          {playbackDecision.safetyCap} ({playbackDecision.health})
+        </span>
+      )}
+      {workSuspensionReason && <span>⏸ {workSuspensionReason}</span>}
+      {playbackTelemetry?.droppedFrameRatio != null && (
+        <span>
+          Frames dropped {Math.round(playbackTelemetry.droppedFrameRatio * 100)}%
+        </span>
+      )}
       <span>👁️ {inView} in view</span>
 
       {memoryStatus && (

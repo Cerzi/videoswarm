@@ -2,6 +2,10 @@ const fs = require("fs");
 const fsPromises = fs.promises;
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
+const { writeFileAtomically } = require("./settings-writer");
+
+const MAX_BOOTSTRAP_BYTES = 64 * 1024;
 
 const DEFAULT_CONFIG = {
   preferredDataDir: null,
@@ -9,6 +13,8 @@ const DEFAULT_CONFIG = {
   pendingMigration: null,
   lastKnownUserDataDir: null,
   version: 1,
+  revision: 0,
+  supersedesBootstrap: null,
 };
 
 function normalizePath(value) {
@@ -22,12 +28,81 @@ function unique(array) {
   return Array.from(new Set(array.filter(Boolean)));
 }
 
+function normalizeRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function bootstrapSignature(raw) {
+  return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
+}
+
+function normalizeSupersedesBootstrap(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    typeof value.path !== "string" ||
+    !value.path.trim() ||
+    typeof value.signature !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.signature)
+  ) {
+    return null;
+  }
+  return {
+    path: path.resolve(value.path.trim()),
+    signature: value.signature,
+  };
+}
+
+function readBootstrapConfig(candidate) {
+  let handle = null;
+  try {
+    handle = fs.openSync(candidate, "r");
+    const before = fs.fstatSync(handle);
+    if (!before.isFile() || before.size > MAX_BOOTSTRAP_BYTES) {
+      throw new Error("Bootstrap configuration is not a bounded regular file");
+    }
+    const bytes = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = fs.readSync(handle, bytes, offset, bytes.length - offset, offset);
+      if (read <= 0) break;
+      offset += read;
+    }
+    const after = fs.fstatSync(handle);
+    if (offset !== before.size || after.size !== before.size) {
+      throw new Error("Bootstrap configuration changed while it was being read");
+    }
+    const raw = bytes.toString("utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Bootstrap configuration must be an object");
+    }
+    return {
+      config: {
+        ...DEFAULT_CONFIG,
+        ...parsed,
+        revision: normalizeRevision(parsed.revision),
+        supersedesBootstrap: normalizeSupersedesBootstrap(
+          parsed.supersedesBootstrap
+        ),
+      },
+      revision: normalizeRevision(parsed.revision),
+      signature: bootstrapSignature(raw),
+    };
+  } finally {
+    if (handle !== null) fs.closeSync(handle);
+  }
+}
+
 class DataLocationManager {
-  constructor({ app, dialog }) {
+  constructor({ app, dialog, homeDir = os.homedir() }) {
     this.app = app;
     this.dialog = dialog;
+    this.homeDir = path.resolve(homeDir);
     this.config = { ...DEFAULT_CONFIG };
     this.configPath = null;
+    this.configSignature = null;
     this.defaultPath = null;
     this.commandLinePath = null;
     this.effectivePath = null;
@@ -91,7 +166,7 @@ class DataLocationManager {
     const appFolder = this.resolveAppFolder();
     candidates.push(path.join(appFolder, "videoswarm-bootstrap.json"));
 
-    const homeFallback = path.join(os.homedir(), ".videoswarm");
+    const homeFallback = path.join(this.homeDir, ".videoswarm");
     candidates.push(path.join(homeFallback, "videoswarm-bootstrap.json"));
 
     return unique(candidates);
@@ -111,26 +186,50 @@ class DataLocationManager {
 
   loadConfig() {
     const candidates = this.getBootstrapCandidates();
+    let selected = null;
     for (const candidate of candidates) {
       try {
         if (!fs.existsSync(candidate)) {
           continue;
         }
-        const raw = fs.readFileSync(candidate, "utf8");
-        const parsed = JSON.parse(raw);
-        this.configPath = candidate;
-        return { ...DEFAULT_CONFIG, ...parsed };
+        const loaded = readBootstrapConfig(candidate);
+        const supersedes = loaded.config.supersedesBootstrap;
+        const replacesSelected =
+          selected &&
+          supersedes?.path === path.resolve(selected.candidate) &&
+          supersedes?.signature === selected.signature &&
+          loaded.revision > selected.revision;
+        if (!selected || replacesSelected) {
+          selected = { ...loaded, candidate };
+        }
       } catch (error) {
         console.warn("[data-location] Failed to read bootstrap config", error);
       }
     }
 
+    if (selected) {
+      this.configPath = selected.candidate;
+      this.configSignature = selected.signature;
+      return selected.config;
+    }
+
     this.configPath = candidates[0];
+    this.configSignature = null;
     return { ...DEFAULT_CONFIG };
   }
 
   async saveConfig() {
-    const payload = JSON.stringify({ ...this.config, version: 1 }, null, 2);
+    const currentRevision = normalizeRevision(this.config.revision);
+    if (currentRevision >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Bootstrap configuration revision is exhausted");
+    }
+    const nextConfigBase = {
+      ...this.config,
+      version: 1,
+      revision: currentRevision + 1,
+    };
+    const sourcePath = this.configPath ? path.resolve(this.configPath) : null;
+    const sourceSignature = this.configSignature;
     const tried = new Set();
     const candidates = unique([this.configPath, ...this.getBootstrapCandidates()]);
 
@@ -140,9 +239,24 @@ class DataLocationManager {
       }
       tried.add(candidate);
       try {
-        await fsPromises.mkdir(path.dirname(candidate), { recursive: true });
-        await fsPromises.writeFile(candidate, payload, "utf8");
+        const normalizedCandidate = path.resolve(candidate);
+        const supersedesBootstrap =
+          sourcePath &&
+          sourceSignature &&
+          normalizedCandidate !== sourcePath
+            ? { path: sourcePath, signature: sourceSignature }
+            : normalizeSupersedesBootstrap(
+                nextConfigBase.supersedesBootstrap
+              );
+        const nextConfig = {
+          ...nextConfigBase,
+          supersedesBootstrap,
+        };
+        const payload = JSON.stringify(nextConfig, null, 2);
+        await writeFileAtomically(candidate, payload, { fsApi: fsPromises });
+        this.config = nextConfig;
         this.configPath = candidate;
+        this.configSignature = bootstrapSignature(payload);
         return candidate;
       } catch (error) {
         console.warn("[data-location] Failed to save bootstrap config", {
@@ -438,7 +552,7 @@ class DataLocationManager {
     return normalizePath(result.filePaths[0]);
   }
 
-  async applySelection(payload = {}, browserWindow) {
+  async applySelection(payload = {}, browserWindow, options = {}) {
     if (this.commandLinePath) {
       return { status: "overridden" };
     }
@@ -468,6 +582,7 @@ class DataLocationManager {
       title: "VideoSwarm",
       message:
         "VideoSwarm needs to restart to use the new data folder. Move your existing settings, profiles, thumbnails, and caches to the new location?",
+      detail: `New data folder:\n${targetPath}`,
       noLink: true,
     });
 
@@ -494,26 +609,39 @@ class DataLocationManager {
     const normalizedTarget = normalizePath(targetPath);
     const normalizedCurrent = normalizePath(current);
 
-    this.config.preferredDataDir =
-      normalizedTarget && normalizedTarget === this.defaultPath
-        ? null
-        : normalizedTarget;
-    this.config.lastKnownUserDataDir = normalizedTarget;
-    this.source = normalizedTarget === this.defaultPath ? "default" : "config";
+    const previousConfig = { ...this.config };
+    const previousSource = this.source;
+    try {
+      this.config.preferredDataDir =
+        normalizedTarget && normalizedTarget === this.defaultPath
+          ? null
+          : normalizedTarget;
+      this.config.lastKnownUserDataDir = normalizedTarget;
+      this.source = normalizedTarget === this.defaultPath ? "default" : "config";
 
-    if (shouldMove) {
-      this.config.migrationRequested = true;
-      this.config.pendingMigration = {
-        from: normalizedCurrent,
-        to: normalizedTarget,
-        mode: "move",
-      };
-    } else {
-      this.config.migrationRequested = false;
-      this.config.pendingMigration = null;
+      if (shouldMove) {
+        this.config.migrationRequested = true;
+        this.config.pendingMigration = {
+          from: normalizedCurrent,
+          to: normalizedTarget,
+          mode: "move",
+        };
+      } else {
+        this.config.migrationRequested = false;
+        this.config.pendingMigration = null;
+      }
+
+      // A relaunch is only safe once the new bootstrap location is durable.
+      await this.saveConfig();
+    } catch (error) {
+      this.config = previousConfig;
+      this.source = previousSource;
+      throw error;
     }
 
-    await this.saveConfigSafe();
+    if (typeof options.beforeRestart === "function") {
+      await options.beforeRestart();
+    }
 
     setImmediate(() => {
       try {

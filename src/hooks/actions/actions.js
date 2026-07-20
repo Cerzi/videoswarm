@@ -4,7 +4,7 @@
  * No React here. Easy to unit test.
  */
 
-import { toFileURL } from "../../components/VideoCard/videoDom";
+import { getOpaqueMediaSource, getWebMediaSource } from "../../utils/mediaSource";
 
 export const ActionIds = {
     OPEN_EXTERNAL: 'open-external',
@@ -15,6 +15,15 @@ export const ActionIds = {
     SHOW_IN_FOLDER: 'show-in-folder',
     FILE_PROPERTIES: 'file-properties',
     MOVE_TO_TRASH: 'move-to-trash',
+};
+
+let frameCaptureSequence = 0;
+let frameCaptureTail = Promise.resolve();
+
+const scheduleFrameCapture = (task) => {
+  const result = frameCaptureTail.catch(() => {}).then(task);
+  frameCaptureTail = result.catch(() => {});
+  return result;
 };
 
 const waitForEvent = (el, eventName, { timeoutMs = 6000, errorMessage } = {}) =>
@@ -45,13 +54,36 @@ const waitForEvent = (el, eventName, { timeoutMs = 6000, errorMessage } = {}) =>
     }, timeoutMs);
   });
 
-const waitForFrame = (videoEl) =>
-  new Promise((resolve) => {
+const waitForFrame = (videoEl, { timeoutMs = 2000 } = {}) =>
+  new Promise((resolve, reject) => {
     if (typeof videoEl?.requestVideoFrameCallback === "function") {
+      let settled = false;
+      let frameId = null;
+      const finish = (error = null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeoutId = setTimeout(() => {
+        try {
+          if (
+            frameId !== null &&
+            typeof videoEl.cancelVideoFrameCallback === "function"
+          ) {
+            videoEl.cancelVideoFrameCallback(frameId);
+          }
+        } catch {}
+        finish(new Error("Timed out waiting for video frame"));
+      }, timeoutMs);
       try {
-        videoEl.requestVideoFrameCallback(() => resolve());
+        frameId = videoEl.requestVideoFrameCallback(() => finish());
         return;
-      } catch {}
+      } catch (error) {
+        finish(error);
+        return;
+      }
     }
     setTimeout(resolve, 120);
   });
@@ -75,16 +107,15 @@ const findExistingVideoElement = (video) => {
   }
 };
 
-const resolveVideoSource = (video) => {
+export const resolveVideoSource = (video) => {
   if (!video) return {};
-  if (video.isElectronFile && video.fullPath) {
-    return { src: toFileURL(video.fullPath) };
+  const opaqueSource = getOpaqueMediaSource(video);
+  if (opaqueSource) {
+    return { src: opaqueSource };
   }
-  if (video.fullPath) {
-    return { src: toFileURL(video.fullPath) };
-  }
-  if (video.blobUrl) {
-    return { src: video.blobUrl };
+  const webSource = getWebMediaSource(video);
+  if (webSource) {
+    return { src: webSource };
   }
   if (video.file) {
     const objectUrl = URL.createObjectURL(video.file);
@@ -93,15 +124,31 @@ const resolveVideoSource = (video) => {
   return {};
 };
 
-const captureLastFrame = async (video) => {
+const captureLastFrame = async (video, mediaScheduler = null) => {
   const existingVideo = findExistingVideoElement(video);
-  const { src, revoke } = resolveVideoSource(video);
+  const ownsElement = !existingVideo;
+  const { src, revoke } = ownsElement ? resolveVideoSource(video) : {};
   if (!existingVideo && !src) {
     throw new Error("No video source available");
   }
 
-  const ownsElement = !existingVideo;
   const videoEl = existingVideo || document.createElement("video");
+  let auxiliaryLease = null;
+  const needsAuxiliaryLease =
+    ownsElement || existingVideo?.dataset?.playbackDesired !== "true";
+  const reserveAuxiliary =
+    mediaScheduler?.reserveAuxiliaryDecoder ||
+    mediaScheduler?.reserveExternalDecoder;
+  if (needsAuxiliaryLease && reserveAuxiliary) {
+    auxiliaryLease = reserveAuxiliary.call(
+      mediaScheduler,
+      `frame-capture:${++frameCaptureSequence}`
+    );
+    if (!auxiliaryLease) {
+      revoke?.();
+      throw new Error("Media capture capacity is busy");
+    }
+  }
   if (ownsElement) {
     videoEl.preload = "auto";
     videoEl.muted = true;
@@ -114,17 +161,33 @@ const captureLastFrame = async (video) => {
     try {
       videoEl.pause();
     } catch {}
-    try {
-      videoEl.removeAttribute("src");
-      videoEl.load();
-    } catch {}
-    revoke?.();
+    try { videoEl.removeAttribute("src"); } catch {}
+    try { videoEl.srcObject = null; } catch {}
+    try { videoEl.load(); } catch {}
+    try { videoEl.remove?.(); } catch {}
+    try { revoke?.(); } catch {}
+  };
+
+  const startingTime = videoEl.currentTime || 0;
+  const wasPaused = videoEl.paused;
+  const startingLoop =
+    typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
+
+  const restoreExistingElement = () => {
+    if (ownsElement) return;
+    const shouldResume = videoEl.dataset?.playbackDesired !== "false";
+    try { videoEl.currentTime = startingTime; } catch {}
+    if (typeof startingLoop === "boolean") videoEl.loop = startingLoop;
+    if (videoEl.dataset) delete videoEl.dataset.mediaOperation;
+    if (!wasPaused && shouldResume && typeof videoEl.play === "function") {
+      try { videoEl.play()?.catch?.(() => {}); } catch {}
+    }
   };
 
   try {
-    const startingTime = videoEl.currentTime || 0;
-    const wasPaused = videoEl.paused;
-    const startingLoop = typeof videoEl.loop === "boolean" ? videoEl.loop : undefined;
+    if (!ownsElement && videoEl.dataset) {
+      videoEl.dataset.mediaOperation = "frame-capture";
+    }
     if (!wasPaused && typeof videoEl.pause === "function") {
       try {
         videoEl.pause();
@@ -198,23 +261,11 @@ const captureLastFrame = async (video) => {
       throw new Error("Failed to create image blob");
     }
 
-    if (!ownsElement) {
-      try {
-        videoEl.currentTime = startingTime;
-      } catch {}
-      if (typeof startingLoop === "boolean") {
-        videoEl.loop = startingLoop;
-      }
-      if (!wasPaused && typeof videoEl.play === "function") {
-        try {
-          videoEl.play().catch(() => {});
-        } catch {}
-      }
-    }
-
     return { blob, dataUrl };
   } finally {
+    restoreExistingElement();
     cleanup();
+    if (auxiliaryLease) mediaScheduler?.releaseDecoder?.(auxiliaryLease);
   }
 };
 
@@ -249,9 +300,16 @@ export const actionRegistry = {
         notify('Relative path(s) copied', 'success');
     },
 
-    [ActionIds.COPY_LAST_FRAME]: async (videos, { electronAPI, notify }) => {
+    [ActionIds.COPY_LAST_FRAME]: async (
+      videos,
+      { electronAPI, notify, mediaScheduler, workSuspended }
+    ) => {
         const video = videos[0];
         if (!video) return;
+        if (workSuspended) {
+          notify('Restore the app before capturing a frame', 'error');
+          return;
+        }
 
         try {
           if (video.isElectronFile && video.fullPath && electronAPI?.copyLastFrameFromFile) {
@@ -263,7 +321,9 @@ export const actionRegistry = {
             return;
           }
 
-          const { blob, dataUrl } = await captureLastFrame(video);
+          const { blob, dataUrl } = await scheduleFrameCapture(() =>
+            captureLastFrame(video, mediaScheduler)
+          );
           if (electronAPI?.copyImageToClipboard) {
             const result = await electronAPI.copyImageToClipboard(dataUrl);
             if (result?.success === false) {
@@ -306,6 +366,8 @@ export const actionRegistry = {
           confirmMoveToTrash,
           postConfirmRecovery,
           releaseVideoHandlesForAsync,      // inject this
+          beginMediaMutation,
+          endMediaMutation,
           onItemsRemoved,                   // inject: (movedSet: Set<string>) => void
         }
       ) => {
@@ -320,7 +382,11 @@ export const actionRegistry = {
 
         const sampleName = videos[0]?.name || '';
         const confirmResult = confirmMoveToTrash
-          ? await confirmMoveToTrash({ count: candidates.length, sampleName })
+          ? await confirmMoveToTrash({
+              paths: candidates,
+              count: candidates.length,
+              sampleName,
+            })
           : (() => {
               const fn = typeof confirm === 'function' ? confirm : window?.confirm;
               const message = candidates.length === 1
@@ -336,67 +402,92 @@ export const actionRegistry = {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const isTransient = (msg = '') =>
           /aborted|busy|access is denied|used by another process|locked|eperm|eacces|ebusy/i.test(msg);
-      
-        // 1) Pre-release (awaited)
-        try { await releaseVideoHandlesForAsync?.(candidates); } catch {}
-      
-        // 2) First bulk attempt
-        let result = await electronAPI?.bulkMoveToTrash?.(candidates);
-        const failed = Array.isArray(result?.failed) ? result.failed.slice() : [];
-      
-        // 3) Targeted retries on transient errors (per-file; bounded)
-        const retryList = failed
-          .filter(f => isTransient(String(f.error || '').toLowerCase()))
-          .map(f => f.path)
-          .filter(Boolean);
-      
-        const finalFailed = failed.filter(f => !retryList.includes(f.path));
-        for (const p of retryList) {
-          let ok = false;
-          for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
+
+        beginMediaMutation?.(candidates);
+        let moved = new Set();
+        try {
+          // 1) Pre-release (awaited)
+          try { await releaseVideoHandlesForAsync?.(candidates); } catch {}
+
+          // 2) First bulk attempt consumes the one-shot confirmation grant.
+          let result = await electronAPI?.bulkMoveToTrash?.(
+            candidates,
+            confirmResult?.confirmationToken
+          );
+          for (const path of result?.moved || []) moved.add(path);
+          const initialFailures = Array.isArray(result?.failed)
+            ? result.failed.slice()
+            : [];
+          let retryPaths = initialFailures
+            .filter((failure) =>
+              isTransient(String(failure.error || '').toLowerCase())
+            )
+            .map((failure) => failure.path)
+            .filter(Boolean);
+          let retryToken = result?.retryConfirmationToken || null;
+          const retrySet = new Set(retryPaths);
+          const finalFailed = initialFailures.filter(
+            (failure) => !retrySet.has(failure.path)
+          );
+          if (!retryToken) {
+            finalFailed.push(
+              ...initialFailures.filter((failure) => retrySet.has(failure.path))
+            );
+            retryPaths = [];
+          }
+
+          // 3) Retry the remaining confirmed set as a batch. Each native
+          // response returns a new one-shot token only for unchanged failures.
+          for (let attempt = 1; attempt <= 2 && retryPaths.length; attempt++) {
             await sleep(100 * attempt);
-            try { await releaseVideoHandlesForAsync?.([p]); } catch {}
-            const res = await electronAPI?.bulkMoveToTrash?.([p]);
-            if (res?.moved?.includes?.(p)) ok = true;
-            else {
-              const err = res?.failed?.find?.(f => f.path === p)?.error;
-              if (!isTransient(String(err || '')) || attempt === 2) {
-                finalFailed.push({ path: p, error: err || 'Unknown error' });
-              }
-            }
+            try { await releaseVideoHandlesForAsync?.(retryPaths); } catch {}
+            result = await electronAPI?.bulkMoveToTrash?.(retryPaths, retryToken);
+            for (const path of result?.moved || []) moved.add(path);
+            const failures = Array.isArray(result?.failed)
+              ? result.failed.slice()
+              : retryPaths.map((path) => ({ path, error: 'Unknown error' }));
+            const canRetryAgain = attempt < 2 && result?.retryConfirmationToken;
+            const nextRetry = canRetryAgain
+              ? failures.filter((failure) =>
+                  isTransient(String(failure.error || '').toLowerCase())
+                )
+              : [];
+            const nextRetrySet = new Set(nextRetry.map((failure) => failure.path));
+            finalFailed.push(
+              ...failures.filter((failure) => !nextRetrySet.has(failure.path))
+            );
+            retryPaths = nextRetry.map((failure) => failure.path).filter(Boolean);
+            retryToken = result?.retryConfirmationToken || null;
           }
-          if (ok) {
-            result.moved = [...(result.moved || []), p];
+
+          // 4) Optimistically update the model NOW (so cards unmount immediately)
+          if (moved.size) onItemsRemoved?.(moved);
+
+          // 5) Final release pass for the confirmed moved files
+          if (moved.size) {
+            try { await releaseVideoHandlesForAsync?.(Array.from(moved)); } catch {}
           }
-        }
-      
-        const moved = new Set(result?.moved || []);
-      
-        // 4) Optimistically update the model NOW (so cards unmount immediately)
-        if (moved.size) onItemsRemoved?.(moved);
-      
-        // 5) Final release pass for the confirmed moved files
-        if (moved.size) {
-          try { await releaseVideoHandlesForAsync?.(Array.from(moved)); } catch {}
-        }
 
-        // 6) Notify
-        const movedCount = moved.size;
-        const failedCount = finalFailed.length;
-        if (movedCount && !failedCount) {
-          notify(`Moved ${movedCount} item(s) to Recycle Bin`, 'success');
-        } else if (movedCount && failedCount) {
-          notify(`Moved ${movedCount}, ${failedCount} failed (in use)`, 'warning');
-          console.warn('[trash] failed entries:', finalFailed);
-        } else {
-          notify('Failed to move items to Recycle Bin', 'error');
-          console.warn('[trash] bulk failure:', result);
-        }
+          // 6) Notify
+          const movedCount = moved.size;
+          const failedCount = finalFailed.length;
+          if (movedCount && !failedCount) {
+            notify(`Moved ${movedCount} item(s) to Recycle Bin`, 'success');
+          } else if (movedCount && failedCount) {
+            notify(`Moved ${movedCount}, ${failedCount} failed (in use)`, 'warning');
+            console.warn('[trash] failed entries:', finalFailed);
+          } else {
+            notify('Failed to move items to Recycle Bin', 'error');
+            console.warn('[trash] bulk failure:', result);
+          }
 
-        postConfirmRecovery?.({
-          cancelled: false,
-          lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
-        });
+          postConfirmRecovery?.({
+            cancelled: false,
+            lastFocusedSelector: confirmResult?.lastFocusedSelector ?? null,
+          });
+        } finally {
+          endMediaMutation?.(candidates, moved);
+        }
       },
 
 };

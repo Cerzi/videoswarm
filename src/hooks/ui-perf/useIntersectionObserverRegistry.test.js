@@ -4,6 +4,7 @@ import React from 'react';
 import useIntersectionObserverRegistry from './useIntersectionObserverRegistry';
 
 let lastObserver = null;
+let observerConstructionCount = 0;
 let originalIntersectionObserver;
 let originalRAF;
 let originalCancelRAF;
@@ -14,6 +15,7 @@ class MockIntersectionObserver {
     this.options = options;
     this.observed = new Set();
     lastObserver = this;
+    observerConstructionCount += 1;
   }
 
   observe(el) {
@@ -37,6 +39,7 @@ beforeEach(() => {
   originalIntersectionObserver = global.IntersectionObserver;
   global.IntersectionObserver = MockIntersectionObserver;
   lastObserver = null;
+  observerConstructionCount = 0;
   originalRAF = global.requestAnimationFrame;
   originalCancelRAF = global.cancelAnimationFrame;
   global.requestAnimationFrame = (cb) => {
@@ -154,5 +157,40 @@ describe('useIntersectionObserverRegistry', () => {
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0]).toBe(true);
     expect(result.current.isVisible('video-3')).toBe(true);
+  });
+
+  test('does not rebuild for value-equivalent threshold arrays', () => {
+    const rootRef = { current: document.createElement('div') };
+    const { rerender } = renderHook(
+      ({ threshold, rootMargin }) =>
+        useIntersectionObserverRegistry(rootRef, {
+          rootMargin,
+          threshold,
+          nearPx: 100,
+        }),
+      {
+        initialProps: {
+          threshold: [0, 0.15],
+          rootMargin: '100% 0px 100% 0px',
+        },
+      }
+    );
+
+    expect(observerConstructionCount).toBe(1);
+
+    rerender({
+      threshold: [0, 0.15],
+      rootMargin: '100% 0px 100% 0px',
+    });
+    expect(observerConstructionCount).toBe(1);
+
+    rerender({
+      threshold: [0, 0.5],
+      rootMargin: '100% 0px 100% 0px',
+    });
+    expect(observerConstructionCount).toBe(2);
+
+    rerender({ threshold: [0, 0.5], rootMargin: '0px' });
+    expect(observerConstructionCount).toBe(3);
   });
 });

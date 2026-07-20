@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Install dependencies
@@ -118,14 +118,30 @@ jobs:
           set -euo pipefail
 
           TAG_NAME="${{ github.ref_name }}"
+          BASE_TAG="${TAG_NAME%%-*}"
+          HIGHLIGHTS_FILE="docs/releases/${BASE_TAG}.md"
 
           pushd release-files >/dev/null
           sha256sum * | sort > ../checksums.txt
           popd >/dev/null
 
-          cat > release_notes.md << EOF
-          # VideoSwarm $TAG_NAME
+          {
+            printf '# VideoSwarm %s\n\n' "$TAG_NAME"
 
+            if [[ "$TAG_NAME" == *-* ]]; then
+              cat << 'EOF'
+          > **Pre-release:** Please back up irreplaceable profile data before
+          > upgrading and report upgrade, playback, or file-operation regressions.
+
+          EOF
+            fi
+
+            if [ -f "$HIGHLIGHTS_FILE" ]; then
+              cat "$HIGHLIGHTS_FILE"
+              printf '\n'
+            fi
+
+            cat << EOF
           ## Installation
           - **Windows**
             - \`VideoSwarm-*-win-x64.exe\`: Installer (recommended)
@@ -140,6 +156,7 @@ jobs:
           $(cat checksums.txt)
           \`\`\`
           EOF
+          } > release_notes.md
 
       - name: Create Release
         env:

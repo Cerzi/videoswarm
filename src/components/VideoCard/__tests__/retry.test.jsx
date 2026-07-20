@@ -25,8 +25,9 @@ function makeVideoStub(realCreate) {
     origAdd(t, fn);
   };
   el.removeEventListener = (t) => {
+    const handler = listeners[t];
     delete listeners[t];
-    origRemove(t, listeners[t]);
+    origRemove(t, handler);
   };
 
   // Patch media methods
@@ -109,6 +110,7 @@ describe("VideoCard local transient errors", () => {
           name: "new.mp4",
           fullPath: "/tmp/new.mp4",
           isElectronFile: true, // local → first code-4 is transient
+          sourceUrl: "videoswarm-media://instance/1?v=retry-one",
           size: 1024,
           dateModified: new Date().toISOString(),
         }}
@@ -178,16 +180,18 @@ describe("VideoCard local transient errors", () => {
       return realCreate(tag, opts);
     });
 
-    render(
+    const badVideo = {
+      id: "/tmp/bad.mkv",
+      name: "bad.mkv",
+      fullPath: "/tmp/bad.mkv",
+      isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/2?v=retry-permanent",
+      size: 2048,
+      dateModified: new Date().toISOString(),
+    };
+    const { rerender } = render(
       <VideoCard
-        video={{
-          id: "/tmp/bad.mkv",
-          name: "bad.mkv",
-          fullPath: "/tmp/bad.mkv",
-          isElectronFile: true,
-          size: 2048,
-          dateModified: new Date().toISOString(),
-        }}
+        video={badVideo}
         isVisible
         isLoaded={false}
         isLoading={false}
@@ -212,6 +216,17 @@ describe("VideoCard local transient errors", () => {
     });
 
     const createdAfterSecond = creates;
+    rerender(
+      <VideoCard
+        video={badVideo}
+        isVisible
+        isLoaded={false}
+        isLoading={false}
+        showFilenames={false}
+        canLoadMoreVideos={() => true}
+        scrollRootRef={makeScrollRootRef()}
+      />
+    );
     await tick(3000);
     // No third creation (permanent)
     expect(creates).toBe(createdAfterSecond);
@@ -236,6 +251,7 @@ describe("VideoCard local transient errors", () => {
       name: "new.mp4",
       fullPath: "/tmp/new.mp4",
       isElectronFile: true,
+      sourceUrl: "videoswarm-media://instance/3?v=retry-changed",
       size: 1024,
       dateModified: new Date().toISOString(),
     };
@@ -278,7 +294,6 @@ describe("VideoCard local transient errors", () => {
 
     // Retry after change
     await tick(1600);
-    second.el.dataset.adopted = "modal";
     await act(async () => {
       second.listeners.loadeddata?.();
     });

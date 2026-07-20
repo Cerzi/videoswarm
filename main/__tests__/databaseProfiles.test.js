@@ -3,8 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
+import { requireSqliteSuite } from "./sqliteTestGate";
 
 let database;
 let databaseLoadError;
@@ -26,8 +25,15 @@ try {
   databaseLoadError = error;
 }
 
+const sqliteDescribe = requireSqliteSuite(
+  describe,
+  !hasNativeDriver || databaseLoadError
+    ? databaseLoadError || new Error("better-sqlite3 probe failed")
+    : null
+);
+
 if (!hasNativeDriver || databaseLoadError) {
-  describe.skip("profile-aware database", () => {});
+  sqliteDescribe("profile-aware database", () => {});
 } else {
   const { initMetadataStore, getMetadataStore, resetDatabase } = database;
 
@@ -75,6 +81,102 @@ if (!hasNativeDriver || databaseLoadError) {
       expect(fs.existsSync(dbAPath)).toBe(true);
       expect(fs.existsSync(dbBPath)).toBe(true);
       expect(dbAPath).not.toBe(dbBPath);
+    });
+
+    it("keeps normalized generation metadata isolated per profile", async () => {
+      resetDatabase();
+      const rootPath = path.join(baseDir, "shared-generation-library");
+      const filePath = path.join(rootPath, "clip.mp4");
+      fs.mkdirSync(rootPath, { recursive: true });
+      fs.writeFileSync(filePath, "shared media bytes");
+      const stats = fs.statSync(filePath);
+
+      initMetadataStore(mockApp, profileA);
+      let store = getMetadataStore();
+      const profileARecord = await store.indexFile({ rootPath, filePath, stats });
+      store.setGenerationMetadata(profileARecord.instance.id, {
+        sourceKind: "embedded",
+        parserVersion: 2,
+        prompt: "profile A prompt",
+      });
+
+      initMetadataStore(mockApp, profileB);
+      store = getMetadataStore();
+      const profileBRecord = await store.indexFile({ rootPath, filePath, stats });
+      expect(store.getGenerationMetadata(profileBRecord.instance.id)).toBeNull();
+      store.setGenerationMetadata(profileBRecord.instance.id, {
+        sourceKind: "embedded",
+        parserVersion: 2,
+        prompt: "profile B prompt",
+      });
+
+      initMetadataStore(mockApp, profileA);
+      store = getMetadataStore();
+      expect(store.getGenerationMetadata(profileARecord.instance.id)?.prompt).toBe(
+        "profile A prompt"
+      );
+    });
+
+    it("deduplicates bounded fingerprint work and disposes it on profile changes", async () => {
+      resetDatabase();
+      initMetadataStore(mockApp, profileA);
+      const storeA = getMetadataStore();
+      const filePath = path.join(profileA, "cache-lifecycle.mp4");
+      fs.writeFileSync(filePath, "shared fingerprint work");
+      const stats = fs.statSync(filePath);
+
+      const [first, second] = await Promise.all([
+        storeA.indexFile({ filePath, stats }),
+        storeA.indexFile({ filePath, stats }),
+      ]);
+
+      expect(first.fingerprint).toBe(second.fingerprint);
+      expect(storeA.getResourceSnapshot()).toMatchObject({
+        disposed: false,
+        fingerprintCache: {
+          entries: 1,
+          inFlight: 0,
+          maxEntries: database.FINGERPRINT_CACHE_MAX_ENTRIES,
+          maxInFlight: database.FINGERPRINT_CACHE_MAX_IN_FLIGHT,
+          totals: { deduplicated: 1 },
+        },
+      });
+
+      // Switching profiles directly must dispose the prior store even when a
+      // caller does not explicitly reset the singleton first.
+      initMetadataStore(mockApp, profileB);
+      const storeB = getMetadataStore();
+      expect(storeB).not.toBe(storeA);
+      expect(storeA.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
+
+      resetDatabase();
+      expect(storeB.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
+    });
+
+    it("prevents fingerprint work from resuming into a disposed store", async () => {
+      resetDatabase();
+      initMetadataStore(mockApp, profileA);
+      const store = getMetadataStore();
+      const filePath = path.join(profileA, "disposed-work.mp4");
+      fs.writeFileSync(filePath, Buffer.alloc(1024, 7));
+      const stats = fs.statSync(filePath);
+
+      const indexing = store.indexFile({ filePath, stats });
+      resetDatabase();
+
+      await expect(indexing).rejects.toMatchObject({
+        code: "METADATA_STORE_DISPOSED",
+      });
+      expect(store.getResourceSnapshot()).toMatchObject({
+        disposed: true,
+        fingerprintCache: { entries: 0, inFlight: 0, disposed: true },
+      });
     });
 
     it("restores legacy database when corruption is detected", async () => {

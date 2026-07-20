@@ -1,16 +1,22 @@
 const fs = require("fs");
 const path = require("path");
+const { BoundedAsyncCache } = require("./bounded-async-cache");
 
 const MP4_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".qt"]); // quicktime family
 
 const MATROSKA_EXTENSIONS = new Set([".mkv", ".webm", ".mk3d", ".mka"]);
 
-const CACHE = new Map();
+const VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES = 4096;
+const VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT = 64;
+const dimensionCache = new BoundedAsyncCache({
+  maxEntries: VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+  maxInFlight: VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+});
 
 function cacheKey(filePath, stats) {
-  const size = stats?.size ?? 0;
-  const mtimeMs = stats?.mtimeMs ?? 0;
-  return `${filePath}::${size}::${mtimeMs}`;
+  const size = Number(stats.size) || 0;
+  const mtimeMs = Number(stats.mtimeMs) || 0;
+  return `${path.resolve(filePath)}::${size}::${mtimeMs}`;
 }
 
 function readFixed1616(buffer, offset) {
@@ -114,80 +120,113 @@ function findAtom(buffer, type) {
 
 function parseMp4Moov(buffer) {
   let offset = 0;
+  let videoDimensions = null;
+  let fallbackDimensions = null;
+  let hasAudio = false;
   while (offset + 8 <= buffer.length) {
     const atom = readAtom(buffer, offset);
     if (!atom) break;
     if (atom.type === "trak") {
       const handler = findAtom(atom.data, "mdia");
       let isVideoTrack = false;
+      let isAudioTrack = false;
       if (handler) {
         const hdlr = findAtom(handler.data, "hdlr");
         if (hdlr && hdlr.data.length >= 12) {
           const handlerType = hdlr.data.toString("ascii", 8, 12);
           isVideoTrack = handlerType === "vide";
+          isAudioTrack = handlerType === "soun";
         }
       }
+      if (isAudioTrack) hasAudio = true;
       const tkhdAtom = findAtom(atom.data, "tkhd");
       if (tkhdAtom) {
         const dims = parseTkhd(tkhdAtom.data);
         if (dims && dims.width > 0 && dims.height > 0) {
-          if (isVideoTrack) return dims;
-          if (!isVideoTrack && !dims.guess) {
-            return dims;
-          }
+          if (isVideoTrack && !videoDimensions) videoDimensions = dims;
+          else if (!isAudioTrack && !fallbackDimensions) fallbackDimensions = dims;
         }
       }
     }
     offset = atom.end;
   }
-  return null;
+  const dimensions = videoDimensions || fallbackDimensions;
+  return dimensions ? { ...dimensions, hasAudio } : null;
 }
 
-async function extractMp4Dimensions(filePath) {
+async function readHandleRange(handle, length, position) {
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      offset,
+      length - offset,
+      position + offset
+    );
+    if (!bytesRead) break;
+    offset += bytesRead;
+  }
+  return buffer.slice(0, offset);
+}
+
+async function extractMp4Dimensions(filePath, knownSize = null) {
   const handle = await fs.promises.open(filePath, "r");
   try {
-    const chunkSize = 512 * 1024; // 512KB
-    const maxRead = 8 * 1024 * 1024; // 8MB cap
-    const moovToken = Buffer.from("moov");
-    let buffer = Buffer.alloc(0);
-    let bytesReadTotal = 0;
+    const statSize = Number(knownSize);
+    const fileSize = Number.isSafeInteger(statSize) && statSize > 0
+      ? statSize
+      : Number((await handle.stat()).size || 0);
+    const maxMoovBytes = 8 * 1024 * 1024;
+    const maxTopLevelAtoms = 16_384;
+    let position = 0;
+    let visitedAtoms = 0;
 
-    while (bytesReadTotal < maxRead) {
-      const chunk = Buffer.alloc(chunkSize);
-      const { bytesRead } = await handle.read(chunk, 0, chunkSize, bytesReadTotal);
-      if (!bytesRead) break;
-      bytesReadTotal += bytesRead;
-      buffer = Buffer.concat([buffer, chunk.slice(0, bytesRead)]);
+    // Walk only top-level atom headers and seek over media payloads. Generated
+    // MP4s commonly put `moov` after a very large `mdat`; scanning the first
+    // several megabytes would both miss that metadata and multiply I/O across
+    // large libraries.
+    while (position + 8 <= fileSize && visitedAtoms < maxTopLevelAtoms) {
+      visitedAtoms += 1;
+      const header = await readHandleRange(handle, 16, position);
+      if (header.length < 8) break;
+      const atomType = header.toString("ascii", 4, 8);
+      const size32 = header.readUInt32BE(0);
+      let atomSize = size32;
+      let headerSize = 8;
+      if (size32 === 1) {
+        if (header.length < 16) break;
+        const atomSizeBig =
+          (BigInt(header.readUInt32BE(8)) << 32n) |
+          BigInt(header.readUInt32BE(12));
+        if (atomSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) break;
+        atomSize = Number(atomSizeBig);
+        headerSize = 16;
+      } else if (size32 === 0) {
+        atomSize = fileSize - position;
+      }
+      if (
+        !Number.isSafeInteger(atomSize) ||
+        atomSize < headerSize ||
+        position + atomSize > fileSize
+      ) {
+        break;
+      }
 
-      let searchIndex = 0;
-      while (true) {
-        const idx = buffer.indexOf(moovToken, searchIndex);
-        if (idx === -1) break;
-        if (idx < 4) {
-          searchIndex = idx + 1;
-          continue;
-        }
-        const start = idx - 4;
-        const atomSize = buffer.readUInt32BE(start);
-        if (atomSize <= 0) {
-          searchIndex = idx + 1;
-          continue;
-        }
-        if (buffer.length < start + atomSize) {
-          // Need more data
-          break;
-        }
-        const moovBuffer = buffer.slice(start + 8, start + atomSize);
+      if (atomType === "moov") {
+        const payloadLength = atomSize - headerSize;
+        if (payloadLength > maxMoovBytes) return null;
+        const moovBuffer = await readHandleRange(
+          handle,
+          payloadLength,
+          position + headerSize
+        );
+        if (moovBuffer.length !== payloadLength) return null;
         const dims = parseMp4Moov(moovBuffer);
-        if (dims && dims.width > 0 && dims.height > 0) {
-          return dims;
-        }
-        searchIndex = idx + 1;
+        if (dims && dims.width > 0 && dims.height > 0) return dims;
       }
 
-      if (buffer.length > 4 * chunkSize) {
-        buffer = buffer.slice(buffer.length - 4 * chunkSize);
-      }
+      position += atomSize;
     }
     return null;
   } finally {
@@ -219,6 +258,8 @@ function parseMatroska(buffer) {
   const VIDEO_ID = Buffer.from([0xe0]);
   const PIXEL_WIDTH_ID = Buffer.from([0xb0]);
   const PIXEL_HEIGHT_ID = Buffer.from([0xba]);
+  let videoDimensions = null;
+  let hasAudio = false;
 
   while (offset < buffer.length) {
     const idInfo = decodeVint(buffer, offset);
@@ -259,6 +300,7 @@ function parseMatroska(buffer) {
         let width = null;
         let height = null;
         let isVideo = false;
+        let isAudio = false;
 
         while (trackBufferOffset < trackBuffer.length) {
           const elementIdInfo = decodeVint(trackBuffer, trackBufferOffset);
@@ -281,6 +323,8 @@ function parseMatroska(buffer) {
             const trackType = trackBuffer.readUInt8(trackBufferOffset);
             if (trackType === 1) {
               isVideo = true;
+            } else if (trackType === 2) {
+              isAudio = true;
             }
           } else if (elementIdBytes.equals(VIDEO_ID)) {
             let videoOffset = trackBufferOffset;
@@ -320,8 +364,9 @@ function parseMatroska(buffer) {
           trackBufferOffset += elementSize;
         }
 
-        if (isVideo && width && height) {
-          return { width, height };
+        if (isAudio) hasAudio = true;
+        if (isVideo && width && height && !videoDimensions) {
+          videoDimensions = { width, height };
         }
       }
     }
@@ -329,7 +374,7 @@ function parseMatroska(buffer) {
     offset += dataSize;
   }
 
-  return null;
+  return videoDimensions ? { ...videoDimensions, hasAudio } : null;
 }
 
 async function extractMatroskaDimensions(filePath) {
@@ -363,42 +408,61 @@ async function extractMatroskaDimensions(filePath) {
 }
 
 async function getVideoDimensions(filePath, stats = null) {
-  const key = cacheKey(filePath, stats);
-  if (CACHE.has(key)) {
-    return CACHE.get(key);
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-  let dims = null;
-
-  try {
-    if (MP4_EXTENSIONS.has(ext)) {
-      dims = await extractMp4Dimensions(filePath);
-    } else if (MATROSKA_EXTENSIONS.has(ext)) {
-      dims = await extractMatroskaDimensions(filePath);
+  let safeStats = stats;
+  if (!safeStats) {
+    try {
+      safeStats = await fs.promises.stat(filePath);
+    } catch (error) {
+      console.warn(`[dimensions] Failed to stat ${filePath}:`, error.message || error);
+      return null;
     }
-  } catch (error) {
-    console.warn(`[dimensions] Failed to parse ${filePath}:`, error.message || error);
-    dims = null;
   }
+  const key = cacheKey(filePath, safeStats);
 
-  if (dims && dims.width > 0 && dims.height > 0) {
-    dims = {
-      width: Math.round(dims.width),
-      height: Math.round(dims.height),
-      aspectRatio: dims.width / dims.height,
-    };
-  } else {
-    dims = null;
-  }
+  return dimensionCache.getOrCreate(key, async () => {
+    const ext = path.extname(filePath).toLowerCase();
+    let dims = null;
 
-  CACHE.set(key, dims);
-  return dims;
+    try {
+      if (MP4_EXTENSIONS.has(ext)) {
+        dims = await extractMp4Dimensions(filePath, safeStats.size);
+      } else if (MATROSKA_EXTENSIONS.has(ext)) {
+        dims = await extractMatroskaDimensions(filePath);
+      }
+    } catch (error) {
+      console.warn(`[dimensions] Failed to parse ${filePath}:`, error.message || error);
+      dims = null;
+    }
+
+    if (dims && dims.width > 0 && dims.height > 0) {
+      return {
+        width: Math.round(dims.width),
+        height: Math.round(dims.height),
+        aspectRatio: dims.width / dims.height,
+        hasAudio:
+          typeof dims.hasAudio === "boolean" ? dims.hasAudio : null,
+      };
+    }
+    return null;
+  });
+}
+
+function clearVideoDimensionsCache() {
+  dimensionCache.clear();
+}
+
+function getVideoDimensionsCacheSnapshot() {
+  return dimensionCache.getSnapshot();
 }
 
 module.exports = {
+  VIDEO_DIMENSIONS_CACHE_MAX_ENTRIES,
+  VIDEO_DIMENSIONS_CACHE_MAX_IN_FLIGHT,
+  clearVideoDimensionsCache,
   getVideoDimensions,
+  getVideoDimensionsCacheSnapshot,
   __internals: {
+    cacheKey,
     parseTkhd,
     detectRotationFromMatrix,
     parseMp4Moov,

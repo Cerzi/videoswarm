@@ -1,0 +1,193 @@
+.review-session {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.16);
+  white-space: nowrap;
+}
+
+.review-session__summary,
+.review-session__actions,
+.review-session__copy,
+.review-session__confirmation-actions {
+  display: flex;
+  align-items: center;
+}
+
+.review-session__summary {
+  gap: 0.38rem;
+}
+
+.review-session__indicator {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.review-session--active .review-session__indicator,
+.review-session--available .review-session__indicator {
+  border-color: #8ce99a;
+  background: #51cf66;
+}
+
+.review-session--restoring .review-session__indicator {
+  border-top-color: transparent;
+  background: transparent;
+  animation: review-session-spin 700ms linear infinite;
+}
+
+.review-session--complete .review-session__indicator,
+.review-session--complete-view .review-session__indicator {
+  border-color: #74c0fc;
+  background: #339af0;
+}
+
+.review-session__copy {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.04rem;
+  font-size: 0.64rem;
+  line-height: 1.15;
+}
+
+.review-session__copy strong {
+  color: #edf0f1;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.review-session__copy span,
+.review-session__checking {
+  color: #8f989c;
+}
+
+.review-session__actions {
+  gap: 0.3rem;
+}
+
+.review-session__actions > button,
+.review-session__confirmation button {
+  min-height: 2rem;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #dce0e2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.review-session__actions > button {
+  padding: 0.25rem 0.45rem;
+}
+
+.review-session__actions > button:hover:not(:disabled),
+.review-session__confirmation button:hover:not(:disabled) {
+  border-color: rgba(81, 207, 102, 0.48);
+  background: rgba(81, 207, 102, 0.1);
+  color: #fff;
+}
+
+.review-session__actions > .review-session__primary {
+  border-color: rgba(81, 207, 102, 0.38);
+  color: #b2f2bb;
+}
+
+.review-session__actions > .review-session__clear-position {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #aab2b6;
+}
+
+.review-session__checking {
+  font-size: 0.64rem;
+}
+
+.review-session__announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.review-session__confirmation {
+  position: fixed;
+  z-index: 1200;
+  left: 50%;
+  top: 50%;
+  width: min(25rem, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  box-sizing: border-box;
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9px;
+  background: #252829;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.55);
+  color: #e9ecef;
+  white-space: normal;
+  transform: translate(-50%, -50%);
+}
+
+.review-session__confirmation > strong {
+  font-size: 0.86rem;
+}
+
+.review-session__confirmation > span:not(.review-session__confirmation-actions) {
+  color: #b6bdc0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.review-session__confirmation-actions {
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.review-session__confirmation button {
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
+}
+
+.review-session__confirmation .review-session__confirm {
+  border-color: rgba(255, 107, 107, 0.5);
+  color: #ffc9c9;
+}
+
+.review-session button:focus-visible {
+  outline: 2px solid rgba(81, 207, 102, 0.8);
+  outline-offset: 2px;
+}
+
+.review-session button:disabled {
+  opacity: 0.43;
+  cursor: not-allowed;
+}
+
+@keyframes review-session-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-session--restoring .review-session__indicator {
+    animation: none;
+    border-top-color: currentColor;
+  }
+}

@@ -1,189 +1,354 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createMediaSlotScheduler } from "../../services/mediaSlotScheduler";
+import {
+  buildPlaybackPriority,
+  DEFAULT_PLAYBACK_MODE,
+  normalizePlaybackMode,
+  PLAYBACK_MODES,
+} from "../../playback/playbackPolicy";
+
+const ERROR_COOLDOWN_MS = 8000;
+export const MAX_PLAYBACK_START_HISTORY = 1024;
+const EMPTY_IDS = Object.freeze([]);
+const EMPTY_SET = new Set();
+
+const asSet = (value) =>
+  value && typeof value.has === "function"
+    ? value
+    : value
+      ? new Set(Array.isArray(value) ? value : Array.from(value))
+      : EMPTY_SET;
+
+const sameSet = (left, right) => {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+};
 
 /**
- * Centralized play orchestration.
- * - playingSet is the *desired* (allowed) set.
- * - Hover reserves a slot immediately (even if not yet loaded).
- * - Eviction prefers: hovered > visible+loaded > visible > others.
- * - Caller reports actual starts/errors via reportStarted/reportPlayError.
+ * Decoder orchestration backed by the imperative media-slot scheduler.
+ * `playingSet` is a React mirror used to drive card effects; it never grants a
+ * decoder by itself.
  */
 export default function usePlayOrchestrator({
-  visibleIds, // Set<string>
-  loadedIds, // Set<string>
-  maxPlaying, // number
+  visibleIds,
+  loadedIds,
+  maxPlaying,
+  hoverAudioEnabled = false,
+  mediaScheduler = null,
+  playbackSuspended = false,
+  playbackMode = DEFAULT_PLAYBACK_MODE,
+  selectedIds = EMPTY_SET,
+  centerPriorityIds = EMPTY_IDS,
+  hoveredId,
 }) {
-  const [playingSet, setPlayingSet] = useState(new Set()); // allowed/desired
-  const hoveredRef = useRef(null);
-  const startOrderRef = useRef([]); // newer at the end
-  const recentlyErroredRef = useRef(new Map()); // id -> ts
+  const fallbackSchedulerRef = useRef(null);
+  if (!fallbackSchedulerRef.current) {
+    fallbackSchedulerRef.current = createMediaSlotScheduler();
+  }
+  const scheduler = mediaScheduler || fallbackSchedulerRef.current;
+  const ownsScheduler = !mediaScheduler;
+  const visible = asSet(visibleIds);
+  const loaded = asSet(loadedIds);
+  const selected = asSet(selectedIds);
+  const normalizedMode = normalizePlaybackMode(playbackMode);
+  const centerOrder = Array.isArray(centerPriorityIds)
+    ? centerPriorityIds
+    : EMPTY_IDS;
+  // All Motion deliberately retains the pre-mode ordering. In particular,
+  // viewport-center changes must not make already-playing media hand its
+  // decoder back merely because the user scrolled a few pixels.
+  const boundedCenterOrder =
+    normalizedMode === PLAYBACK_MODES.ALL_MOTION ? EMPTY_IDS : centerOrder;
+  const decoderCap = playbackSuspended
+    ? 0
+    : Math.max(0, Math.floor(Number(maxPlaying) || 0));
 
-  // Stable function to avoid recreation on every render
-  const pushStartOrder = useCallback((id) => {
-    startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
-    startOrderRef.current.push(id);
-  }, []);
-
-  // Media actually started - FIXED to prevent infinite loops
-  const reportStarted = useCallback(
-    (id) => {
-      setPlayingSet((prev) => {
-        if (prev.has(id)) return prev; // No change needed
-        const next = new Set(prev);
-        next.add(id);
-        // Move pushStartOrder outside setState to avoid side effects during render
-        setTimeout(() => pushStartOrder(id), 0);
-        return next;
-      });
-    },
-    [pushStartOrder]
+  const [playingSet, setPlayingSet] = useState(
+    () => scheduler.getSnapshot().decoderIds
   );
+  const [activeHoverAudioId, setActiveHoverAudioId] = useState(null);
+  const [reconcileRevision, setReconcileRevision] = useState(0);
+  const hoveredRef = useRef(null);
+  const startOrderRef = useRef([]);
+  const recentlyErroredRef = useRef(new Map());
+  const errorTimersRef = useRef(new Map());
 
-  const reportPlayError = useCallback((id, _err) => {
-    recentlyErroredRef.current.set(id, performance.now());
-    setPlayingSet((prev) => {
-      if (!prev.has(id)) return prev; // No change needed
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+  const mirrorScheduler = useCallback(() => {
+    const next = scheduler.getSnapshot().decoderIds;
+    setPlayingSet((previous) => (sameSet(previous, next) ? previous : next));
+    return next;
+  }, [scheduler]);
+
+  const pushStartOrder = useCallback((id) => {
+    startOrderRef.current = startOrderRef.current.filter((value) => value !== id);
+    startOrderRef.current.push(id);
+    if (startOrderRef.current.length > MAX_PLAYBACK_START_HISTORY) {
+      startOrderRef.current.splice(
+        0,
+        startOrderRef.current.length - MAX_PLAYBACK_START_HISTORY
+      );
+    }
   }, []);
 
-  // IMPROVED: More stable eviction that doesn't disrupt existing players
-  const evictIfNeeded = useCallback(
-    (baseSet) => {
-      const cap = Math.max(0, Number(maxPlaying) || 0);
-      if (baseSet.size <= cap) return baseSet;
+  const reconcile = useCallback(() => {
+    startOrderRef.current = startOrderRef.current
+      .filter((id) => loaded.has(id))
+      .slice(-MAX_PLAYBACK_START_HISTORY);
+    if (decoderCap <= 0 || playbackSuspended) {
+      scheduler.reconcileDecoders([]);
+      mirrorScheduler();
+      return;
+    }
 
-      const hovered = hoveredRef.current;
-      const entries = Array.from(baseSet);
-
-      const orderIdx = new Map();
-      startOrderRef.current.forEach((id, idx) => orderIdx.set(id, idx));
-
-      const desirability = (id) => {
-        const isHovered = hovered && id === hovered ? 10 : 0; // Much higher priority for hovered
-        const visible = visibleIds.has(id) ? 5 : 0;
-        const loaded = loadedIds.has(id) ? 1 : 0;
-        return isHovered + visible + loaded;
+    const now = performance.now();
+    const recentOrder = [...startOrderRef.current].reverse();
+    const retained = scheduler.getSnapshot().decoderIds;
+    let priority;
+    if (normalizedMode === PLAYBACK_MODES.ALL_MOTION) {
+      const included = new Set();
+      priority = [];
+      const add = (id) => {
+        if (
+          id == null ||
+          included.has(id) ||
+          !visible.has(id) ||
+          !loaded.has(id)
+        ) {
+          return;
+        }
+        included.add(id);
+        priority.push(id);
       };
 
-      entries.sort((a, b) => {
-        const db = desirability(b);
-        const da = desirability(a);
-        if (db !== da) return db - da;
-        // tie-break: keep more recently started first
-        const ib = orderIdx.get(b) ?? -1;
-        const ia = orderIdx.get(a) ?? -1;
-        return ib - ia;
+      add(hoveredId !== undefined ? hoveredId : hoveredRef.current);
+      for (const id of retained) add(id);
+      for (const id of recentOrder) add(id);
+      for (const id of visible) add(id);
+    } else {
+      const ranked = buildPlaybackPriority({
+        mode: normalizedMode,
+        visibleIds: visible,
+        loadedIds: loaded,
+        centerOrderedIds: boundedCenterOrder.length
+          ? boundedCenterOrder
+          : recentOrder,
+        hoveredId: hoveredId !== undefined ? hoveredId : hoveredRef.current,
+        selectedIds: selected,
       });
+      const rankedSet = new Set(ranked);
+      const included = new Set();
+      priority = [];
+      const add = (id) => {
+        if (id == null || included.has(id) || !rankedSet.has(id)) return;
+        included.add(id);
+        priority.push(id);
+      };
 
-      const toKeep = new Set(entries.slice(0, cap));
-
-      // CRITICAL: Always ensure hovered video is included if visible
-      if (hovered && visibleIds.has(hovered)) {
-        toKeep.add(hovered);
-        // If we're now over capacity, remove the least important non-hovered video
-        if (toKeep.size > cap) {
-          const nonHovered = entries.filter((id) => id !== hovered);
-          const leastImportant = nonHovered[nonHovered.length - 1];
-          if (leastImportant) toKeep.delete(leastImportant);
-        }
+      // Explicit interaction can preempt a decoder. Otherwise retain current
+      // visible owners before admitting the rest of the center-ranked list, so
+      // small scroll/layout changes do not churn healthy decoders.
+      add(hoveredId !== undefined ? hoveredId : hoveredRef.current);
+      for (const id of ranked) {
+        if (selected.has(id)) add(id);
       }
-
-      return toKeep;
-    },
-    [maxPlaying, visibleIds, loadedIds]
-  );
-
-  // MUCH more conservative reconcile - only runs when really needed
-  const reconcile = useCallback(() => {
-    setPlayingSet((prev) => {
-      let next = new Set(prev);
-      let hasChanges = false;
-
-      // Only remove videos that are no longer visible **or** no longer loaded.
-      // A relayout can temporarily tear down media elements which clears the
-      // loaded set even though the tile remains visible. Keeping those ids in
-      // the playing set makes the debug summary report them as active and
-      // prevents other tiles from being admitted. Drop them until they reload.
-      for (const id of next) {
-        if (!visibleIds.has(id) || !loadedIds.has(id)) {
-          next.delete(id);
-          hasChanges = true;
-          if (startOrderRef.current.length) {
-            startOrderRef.current = startOrderRef.current.filter((x) => x !== id);
-          }
-        }
-      }
-
-      // Only add videos that should be playing but aren't
-      for (const id of visibleIds) {
-        if (loadedIds.has(id) && !next.has(id)) {
-          next.add(id);
-          hasChanges = true;
-          setTimeout(() => pushStartOrder(id), 0);
-        }
-      }
-
-      // Handle hovered video priority without disrupting others
-      const hovered = hoveredRef.current;
-      if (hovered && visibleIds.has(hovered) && loadedIds.has(hovered)) {
-        if (!next.has(hovered)) {
-          next.add(hovered);
-          hasChanges = true;
-          setTimeout(() => pushStartOrder(hovered), 0);
-        }
-      }
-
-      // Only evict if we're significantly over capacity (not for small overruns)
-      if (next.size > maxPlaying * 1.1) {
-        // 10% buffer before evicting
-        const evicted = evictIfNeeded(next);
-        if (evicted.size !== next.size) {
-          next = evicted;
-          hasChanges = true;
-        }
-      }
-
-      return hasChanges ? next : prev; // Only return new set if there are actual changes
+      for (const id of retained) add(id);
+      for (const id of ranked) add(id);
+    }
+    const candidates = priority.filter((id) => {
+      if (!scheduler.getResidentLease(id)) return false;
+      const failedAt = recentlyErroredRef.current.get(id);
+      return !(failedAt && now - failedAt < ERROR_COOLDOWN_MS);
     });
-  }, [visibleIds, loadedIds, maxPlaying, evictIfNeeded, pushStartOrder]);
 
-  const markHover = useCallback(
-    (id) => {
-      if (hoveredRef.current === id) return;
-      hoveredRef.current = id;
-      reconcile();
+    scheduler.reconcileDecoders(candidates);
+    mirrorScheduler();
+  }, [
+    decoderCap,
+    loaded,
+    mirrorScheduler,
+    normalizedMode,
+    playbackSuspended,
+    reconcileRevision,
+    scheduler,
+    selected,
+    boundedCenterOrder,
+    hoveredId,
+    visible,
+  ]);
+
+  useLayoutEffect(() => {
+    scheduler.configure({
+      maxDecoders: decoderCap,
+      ...(ownsScheduler
+        ? {
+            maxResident: Math.max(1, loaded.size),
+            maxLoaders: Math.max(1, loaded.size),
+          }
+        : {}),
+    });
+    // Standalone hook callers (mainly focused tests) provide loaded IDs
+    // without card-owned resident leases. Production never uses this branch.
+    if (ownsScheduler) {
+      const residentIds = scheduler.getSnapshot().residentIds;
+      for (const id of residentIds) {
+        if (!loaded.has(id)) scheduler.releaseId(id);
+      }
+      for (const id of loaded) {
+        if (scheduler.getResidentLease(id)) continue;
+        const lease = scheduler.reserveLoader(id);
+        if (lease) scheduler.markLoaderReady(lease);
+      }
+    }
+    reconcile();
+  }, [decoderCap, loaded.size, ownsScheduler, reconcile, scheduler]);
+
+  const reportStarted = useCallback(
+    (id, lease = null) => {
+      const current = scheduler.getDecoderLease(id);
+      const activeIds = scheduler.getSnapshot().decoderIds;
+      if (
+        !current ||
+        !activeIds.has(id) ||
+        (lease && current !== lease)
+      ) {
+        return false;
+      }
+      pushStartOrder(id);
+      return true;
     },
-    [reconcile]
+    [pushStartOrder, scheduler]
   );
 
-  // FIXED: Add proper dependency management for reconcile
-  useEffect(() => {
-    reconcile();
-  }, [reconcile, visibleIds, loadedIds, maxPlaying]);
+  const reportPlayError = useCallback(
+    (id, _error, lease = null) => {
+      const current = scheduler.getDecoderLease(id);
+      if (!current || (lease && current !== lease)) return false;
+      scheduler.requestDecoderStop(current);
+      recentlyErroredRef.current.set(id, performance.now());
+      mirrorScheduler();
+      setReconcileRevision((value) => value + 1);
 
-  // Expire "recently errored" entries so they can retry later
-  useEffect(() => {
-    const t = setInterval(() => {
-      const now = performance.now();
-      for (const [id, ts] of recentlyErroredRef.current) {
-        if (now - ts > 8000) {
-          recentlyErroredRef.current.delete(id);
-        }
-      }
-    }, 2000);
-    return () => clearInterval(t);
+      const previousTimer = errorTimersRef.current.get(id);
+      if (previousTimer) clearTimeout(previousTimer);
+      const timer = setTimeout(() => {
+        errorTimersRef.current.delete(id);
+        recentlyErroredRef.current.delete(id);
+        setReconcileRevision((value) => value + 1);
+      }, ERROR_COOLDOWN_MS);
+      errorTimersRef.current.set(id, timer);
+      return true;
+    },
+    [mirrorScheduler, scheduler]
+  );
+
+  const reportPaused = useCallback(
+    (id, lease = null) => {
+      const current = scheduler.getDecoderLease(id);
+      // A pause acknowledgement is an ownership mutation. Never let a stale
+      // render with no lease release a decoder granted by a newer layout pass.
+      if (!lease || !current || current !== lease) return false;
+      scheduler.acknowledgeDecoderStopped(current);
+      mirrorScheduler();
+      setReconcileRevision((value) => value + 1);
+      return true;
+    },
+    [mirrorScheduler, scheduler]
+  );
+
+  const markHover = useCallback((id) => {
+    if (hoveredRef.current === id) return;
+    hoveredRef.current = id;
+    setReconcileRevision((value) => value + 1);
   }, []);
 
-  // Memoize the return object to prevent unnecessary re-renders
+  const onCardHoverAudioStart = useCallback(
+    (id) => {
+      if (!hoverAudioEnabled) return;
+      setActiveHoverAudioId((previous) => (previous === id ? previous : id));
+    },
+    [hoverAudioEnabled]
+  );
+
+  const onCardHoverAudioEnd = useCallback((id) => {
+    setActiveHoverAudioId((previous) => (previous === id ? null : previous));
+  }, []);
+
+  useEffect(() => {
+    if (!hoverAudioEnabled) setActiveHoverAudioId(null);
+  }, [hoverAudioEnabled]);
+
+  useEffect(() => {
+    setActiveHoverAudioId((previous) =>
+      previous && !visible.has(previous) ? null : previous
+    );
+    if (hoveredRef.current && !visible.has(hoveredRef.current)) {
+      hoveredRef.current = null;
+      setReconcileRevision((value) => value + 1);
+    }
+  }, [visible]);
+
+  useEffect(
+    () => () => {
+      for (const timer of errorTimersRef.current.values()) clearTimeout(timer);
+      errorTimersRef.current.clear();
+      recentlyErroredRef.current.clear();
+      startOrderRef.current = [];
+      if (ownsScheduler) scheduler.reset();
+    },
+    [ownsScheduler, scheduler]
+  );
+
+  const getDecoderLease = useCallback(
+    (id) => scheduler.getDecoderLease(id),
+    [scheduler]
+  );
+
+  const getCacheDebugSnapshot = useCallback(
+    () => ({
+      startHistoryEntries: startOrderRef.current.length,
+      staleStartHistoryEntries: startOrderRef.current.filter(
+        (id) => !loaded.has(id)
+      ).length,
+      maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
+    }),
+    [loaded]
+  );
+
   return useMemo(
     () => ({
-      playingSet, // desired/allowed
-      markHover, // force-priority on hover
-      reportStarted, // call when <video> fires "playing"
-      reportPlayError, // call on error (load/play)
+      playingSet,
+      markHover,
+      activeHoverAudioId,
+      onCardHoverAudioStart,
+      onCardHoverAudioEnd,
+      reportStarted,
+      reportPlayError,
+      reportPaused,
+      getDecoderLease,
+      getCacheDebugSnapshot,
     }),
-    [playingSet, markHover, reportStarted, reportPlayError]
+    [
+      activeHoverAudioId,
+      getDecoderLease,
+      getCacheDebugSnapshot,
+      markHover,
+      onCardHoverAudioEnd,
+      onCardHoverAudioStart,
+      playingSet,
+      reportPlayError,
+      reportPaused,
+      reportStarted,
+    ]
   );
 }

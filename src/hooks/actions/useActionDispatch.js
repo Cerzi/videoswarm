@@ -54,5 +54,17 @@ export default function useActionDispatch(deps, getById) {
     [deps, getById, resolveTargetIds]
   );
 
-  return { runAction };
+  const runActionForVideos = useCallback(
+    async (actionId, videos) => {
+      const exec = actionRegistry[actionId];
+      if (!exec) return false;
+      const targets = (Array.isArray(videos) ? videos : [videos]).filter(Boolean);
+      if (targets.length === 0) return false;
+      await exec(targets, deps);
+      return true;
+    },
+    [deps]
+  );
+
+  return { runAction, runActionForVideos };
 }

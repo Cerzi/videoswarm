@@ -16,6 +16,7 @@ describe("filtersUtils", () => {
       excludeTags: [],
       minRating: null,
       exactRating: null,
+      reviewFilter: "any",
     });
   });
 
@@ -49,15 +50,16 @@ describe("filtersUtils", () => {
       excludeTags: [],
       minRating: 4,
       exactRating: null,
+      reviewFilter: "pick",
     };
     const { result, rerender } = renderHook(({ value }) =>
       useFiltersActiveCount(value)
     , {
       initialProps: { value: filters },
     });
-    expect(result.current).toBe(2);
+    expect(result.current).toBe(3);
 
     rerender({ value: { ...filters, minRating: null, exactRating: 5 } });
-    expect(result.current).toBe(2);
+    expect(result.current).toBe(3);
   });
 });

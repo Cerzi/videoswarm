@@ -1,15 +1,23 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import useChunkedMasonry from './useChunkedMasonry';
+import useChunkedMasonry, {
+  MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES,
+} from './useChunkedMasonry';
 import React from 'react';
 
 // --- RAF mock helpers ---
 let rafQueue;
+let rafSequence;
 beforeEach(() => {
   rafQueue = [];
+  rafSequence = 0;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
-    rafQueue.push(cb);
-    return rafQueue.length; // pseudo handle
+    const id = ++rafSequence;
+    rafQueue.push({ id, callback: cb });
+    return id;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    rafQueue = rafQueue.filter((entry) => entry.id !== id);
   });
 });
 
@@ -24,7 +32,7 @@ function flushRaf(times = 10) {
     if (rafQueue.length === 0) break;
     const q = rafQueue.slice();
     rafQueue.length = 0;
-    q.forEach((cb) => cb(performance.now()));
+    q.forEach(({ callback }) => callback(performance.now()));
   }
 }
 
@@ -270,5 +278,122 @@ describe('useChunkedMasonry – core layout & order', () => {
     });
 
     expect(onLayoutComplete).toHaveBeenCalledTimes(2);
+  });
+
+  test('bounds and prunes the legacy aspect-ratio cache', () => {
+    const grid = makeGrid({ width: 630 });
+    grid.appendChild(makeItem('current'));
+    const gridRef = { current: grid };
+    const { result } = renderHook(() =>
+      useChunkedMasonry({ gridRef, defaultAspect: 1 })
+    );
+    act(() => flushRaf(5));
+
+    act(() => {
+      for (
+        let index = 0;
+        index < MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES + 128;
+        index += 1
+      ) {
+        result.current.updateAspectRatio(`stale-${index}`, 1.5);
+      }
+    });
+    expect(result.current.getCacheDebugSnapshot()).toMatchObject({
+      aspectRatioEntries: MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES,
+      maxAspectRatioEntries: MAX_CHUNKED_MASONRY_ASPECT_CACHE_ENTRIES,
+    });
+
+    act(() => {
+      result.current.onItemsChanged();
+      flushRaf(10);
+    });
+    expect(
+      result.current.getCacheDebugSnapshot().aspectRatioEntries
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test('cancels a mid-layout chunk and releases captured DOM items on unmount', () => {
+    const grid = makeGrid({ width: 630 });
+    for (let index = 0; index < 550; index += 1) {
+      grid.appendChild(makeItem(`large-${index}`));
+    }
+    const gridRef = { current: grid };
+    const onOrderChange = vi.fn();
+    const onLayoutComplete = vi.fn();
+    const rendered = renderHook(() =>
+      useChunkedMasonry({
+        gridRef,
+        chunkSize: 100,
+        defaultAspect: 1,
+        onOrderChange,
+        onLayoutComplete,
+      })
+    );
+
+    act(() => flushRaf(1));
+    expect(
+      grid.querySelectorAll('[data-pos="1"]').length
+    ).toBe(100);
+    expect(rendered.result.current.getCacheDebugSnapshot()).toMatchObject({
+      scheduledLayoutFrames: 1,
+      layoutInProgress: true,
+      activeLayoutItems: 550,
+    });
+    const getSnapshot = rendered.result.current.getCacheDebugSnapshot;
+
+    rendered.unmount();
+    expect(getSnapshot()).toMatchObject({
+      scheduledLayoutFrames: 0,
+      layoutInProgress: false,
+      activeLayoutItems: 0,
+    });
+    expect(rafQueue).toHaveLength(0);
+    expect(window.cancelAnimationFrame).toHaveBeenCalled();
+
+    act(() => flushRaf(10));
+    expect(grid.querySelectorAll('[data-pos="1"]').length).toBe(100);
+    expect(onOrderChange).not.toHaveBeenCalled();
+    expect(onLayoutComplete).not.toHaveBeenCalled();
+  });
+
+  test('replaces an in-progress layout generation without finishing stale chunks', () => {
+    const grid = makeGrid({ width: 630 });
+    for (let index = 0; index < 450; index += 1) {
+      grid.appendChild(makeItem(`before-${index}`));
+    }
+    const gridRef = { current: grid };
+    const onOrderChange = vi.fn();
+    const onLayoutComplete = vi.fn();
+    const { result } = renderHook(() =>
+      useChunkedMasonry({
+        gridRef,
+        chunkSize: 100,
+        defaultAspect: 1,
+        onOrderChange,
+        onLayoutComplete,
+      })
+    );
+
+    act(() => flushRaf(1));
+    expect(result.current.getCacheDebugSnapshot().activeLayoutItems).toBe(450);
+
+    grid.appendChild(makeItem('replacement-only'));
+    act(() => result.current.onItemsChanged());
+    expect(result.current.getCacheDebugSnapshot()).toMatchObject({
+      scheduledLayoutFrames: 1,
+      layoutInProgress: true,
+      activeLayoutItems: 0,
+    });
+
+    act(() => flushRaf(10));
+    expect(grid.querySelectorAll('[data-pos="1"]').length).toBe(451);
+    expect(onOrderChange).toHaveBeenCalledOnce();
+    expect(onOrderChange.mock.calls[0][0]).toContain('replacement-only');
+    expect(onLayoutComplete).toHaveBeenCalledOnce();
+    expect(result.current.getCacheDebugSnapshot()).toMatchObject({
+      scheduledLayoutFrames: 0,
+      layoutInProgress: false,
+      activeLayoutItems: 0,
+    });
   });
 });

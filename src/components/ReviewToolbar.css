@@ -1,0 +1,189 @@
+.review-toolbar {
+  min-width: 0;
+  color: #e8ebed;
+  background: linear-gradient(90deg, rgba(42, 46, 47, 0.98), rgba(34, 37, 38, 0.98));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.review-toolbar__scroller {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.42rem 0.75rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.review-toolbar__progress {
+  width: 9.2rem;
+  flex: 0 0 auto;
+}
+
+.review-toolbar__progress-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  color: #aeb5b9;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.review-toolbar__progress-copy strong {
+  color: #f5f7f6;
+  font-size: 0.82rem;
+}
+
+.review-toolbar__progress-total {
+  color: #858e93;
+}
+
+.review-toolbar__progress-track {
+  height: 3px;
+  display: block;
+  margin-top: 0.24rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+
+.review-toolbar__progress-track > span {
+  height: 100%;
+  display: block;
+  background: var(--color-accent);
+  border-radius: inherit;
+  transition: width 160ms ease-out;
+}
+
+.review-toolbar__counts,
+.review-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.review-toolbar__counts {
+  padding-right: 0.65rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.review-toolbar__count {
+  padding: 0.22rem 0.42rem;
+  color: #aab1b5;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.review-toolbar__count strong {
+  margin-left: 0.2rem;
+  color: #f3f5f4;
+}
+
+.review-toolbar__count--accept strong {
+  color: #79dd8a;
+}
+
+.review-toolbar__count--reject strong {
+  color: #ff8585;
+}
+
+.review-toolbar button {
+  font: inherit;
+}
+
+.review-toolbar__action,
+.review-toolbar__utility,
+.review-toolbar__process {
+  min-height: 1.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.34rem;
+  padding: 0.3rem 0.48rem;
+  color: #dde1e3;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.review-toolbar__action:hover:not(:disabled),
+.review-toolbar__utility:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.review-toolbar__action--pick:hover:not(:disabled) {
+  border-color: rgba(81, 207, 102, 0.58);
+}
+
+.review-toolbar__action--reject:hover:not(:disabled) {
+  border-color: rgba(255, 107, 107, 0.62);
+}
+
+.review-toolbar__action kbd,
+.review-toolbar__utility kbd {
+  min-width: 1.05rem;
+  padding: 0.1rem 0.22rem;
+  color: #c7cdcf;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.62rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.review-toolbar__advance {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  color: #b7bdc0;
+  cursor: pointer;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.review-toolbar__advance input {
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.review-toolbar__process {
+  color: #101512;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  font-weight: 680;
+}
+
+.review-toolbar__process:hover:not(:disabled) {
+  background: #69d77a;
+}
+
+.review-toolbar button:focus-visible,
+.review-toolbar input:focus-visible {
+  outline: 2px solid rgba(81, 207, 102, 0.8);
+  outline-offset: 2px;
+}
+
+.review-toolbar button:disabled,
+.review-toolbar input:disabled {
+  opacity: 0.43;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-toolbar__progress-track > span {
+    transition: none;
+  }
+}

@@ -1,4 +1,5 @@
 # 🐝 Video Swarm
+
 [![GitHub release](https://img.shields.io/github/v/release/Cerzi/videoswarm?include_prereleases&sort=semver)](https://github.com/Cerzi/videoswarm/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
@@ -15,13 +16,20 @@ https://github.com/user-attachments/assets/85845a4e-488d-4817-806c-a39bc290aabc
 ---
 
 ## TL;DR
-- Download [latest release](https://github.com/Cerzi/videoswarm/releases)  
-- Open a folder with clips (optionally enable recursive scan by ticking Subdirectories)  
-- Browse videos in a live-playing masonry grid
-- Tag and rate videos to organize your dataset
-- Drag and drop videos directly into other apps (eg ComfyUI to re-use a video's workflow, or DaVinci Resolve to add the video to the timeline)
-- Double-click → fullscreen, ←/→ to navigate, Space to pause/play  
-- Right click for context menu: move to trash, open containing folder, etc
+
+- Download the [latest release](https://github.com/Cerzi/videoswarm/releases).
+- Open a folder or pin frequently reviewed roots in the Library.
+- Browse thousands of short clips in a virtualized, live-motion masonry grid.
+- Navigate recursive folder trees, change folder scope, and save filter/sort views.
+- Review with one hand: `A` Accept, `S` Reviewed, `D` Reject, `F` Unreviewed,
+  `1`–`5` rating, and `Z` undo.
+- Resume saved review positions, trash rejected clips in bounded batches, or
+  safely copy accepted clips to a new destination.
+- Double-click for the fullscreen review loupe; use `Q`/`E` or `←`/`→` to
+  navigate, Space to play/pause, `M` for audio, and `I` for Details.
+- Inspect tags, ratings, audio presence, and supported embedded ComfyUI/VHS
+  generation metadata.
+- Press `?` for the complete shortcut guide.
 
 ---
 
@@ -40,46 +48,84 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 ## Features
 
 ### Playback and Layout
-- Configurable concurrent playback (default 50; adjustable up to 500 depending on system resources)
-- Lazy loading: videos only play when visible in the viewport
-- Automatic cleanup of off-screen elements to reduce memory usage
-- Vertical masonry layout: fixed width, variable height; handles portrait, square, and landscape videos without wasted space
-- Responsive column count, scroll-position preserved on resize
+
+- Virtualized masonry mounts only the viewport and bounded overscan while
+  retaining complete logical navigation for large collections.
+- **Balanced**, **Adaptive Motion**, **All Motion**, and **Static + Hover**
+  playback modes cover efficient review through fully uncapped visible motion.
+- Optional bounded 720p playback proxies are available when native tooling is
+  present; source media is never modified.
+- Off-screen, hidden-window, and stale-collection media resources are released
+  deterministically.
+- Nine grid-size steps span approximately 150–650 px with scroll anchoring and
+  automatic safety adjustment.
+- Audio-bearing cards are identified, with hover-audio and fullscreen session
+  controls.
 
 ### Navigation and Interaction
-- Double-click video → full-screen modal
-- Keyboard navigation in full-screen (←/→, Space, Esc)
-- Context menu for file operations (open in system player, show in folder, copy path, move to trash)
-- Multi-select via Ctrl+Click
-- Adjustable zoom levels (75%, 100%, 150%, 200%)
-- Toggle display of filenames
-- Header controls for sorting and filtering by tags or rating
 
-### Tagging, Ratings, and Metadata
-- Collapsible metadata panel for managing the active selection
-- Custom tag creation with auto-complete suggestions and bulk apply/remove actions
-- Five-star rating system with overlays on video cards
-- Popular tag shortcuts and searchable tag catalog for quick tagging
-- Persistent metadata storage backed by SQLite, shared across sessions
-- Multiple user profiles can be created with independent tag/review collections
+- Recursive folder tree, breadcrumbs, **Current folder**, **Current subtree**,
+  and **All descendants** scopes, plus `[`/`]` sibling-folder cycling.
+- Pinned library roots and reusable saved views for filters, sort, grouping, and
+  scope.
+- Cancellable folder loading with live phase, progress, active path,
+  elapsed-time, and working-set feedback.
+- Fullscreen review loupe with complete-order navigation, tagging/rating/review
+  controls, Details, safe file utilities, and immediate audio teardown.
+- A draggable floating Details inspector or docked Library/Details workspace.
+- Multi-selection and context-menu utilities for native trash, path/name copy,
+  open externally, show in folder, and last-frame capture.
+- A built-in, catalog-driven `?` shortcut reference.
+
+### Review, Tags, Ratings, and Metadata
+
+- Explicit **Accept**, **Reviewed**, **Reject**, and **Unreviewed** states remain
+  separate from tags and ratings.
+- Rating an Unreviewed clip marks it Reviewed; resetting to Unreviewed clears
+  its rating but never its tags.
+- One-handed shortcuts, optional advance-after-marking, one-step coupled undo,
+  and stable scope progress.
+- Persistent saved review positions with **Find Unreviewed** and **Resume saved
+  view** across application restarts.
+- **Process Results** supports bounded parallel Reject trashing and
+  no-overwrite **Copy Accepted**, preserving relative folders and optionally
+  recognized adjacent JSON sidecars.
+- Custom tags, bulk add/remove, ranked suggestions, five-star ratings, and
+  profile-local SQLite persistence.
+- Lazy embedded ComfyUI/VHS API-graph extraction for supported prompt, negative
+  prompt, seed, model, sampler, LoRA, source, and provenance fields.
+- Multiple profiles isolate libraries, tags, review state, ratings, settings,
+  and saved review positions.
 
 ### File System Integration
-- Recursive directory scanning (configurable)
-- Real-time folder monitoring with [Chokidar](https://github.com/paulmillr/chokidar); fallback to polling if too many files
-- Recent Folders list: automatically tracks and persists recently opened folders
-- Rich metadata: size, modification time, creation time
-- Native file operations (show, open, delete, copy) - show in folder is particularly useful for ComfyUI users for quickly accessing the video in order to re-use workflows
-- Fingerprint-based file tracking keeps tags and ratings attached even if files move
+
+- Incremental recursive scanning with a persistent SQLite-backed index and fast
+  stale-while-revalidate revisits.
+- Real-time monitoring with
+  [Chokidar](https://github.com/paulmillr/chokidar) and bounded polling fallback
+  when host watcher limits are exhausted.
+- Profile-local pinned roots, empty-directory records, folder counts, saved
+  views, review positions, and compact generation metadata.
+- Recent folders, rich file facts, fingerprint-based metadata continuity, and
+  configurable application data location.
+- Sandboxed renderer, opaque local-media protocol, and main-process-authorized
+  native file actions.
+- **Copy Accepted** never overwrites destinations or modifies originals.
 
 ### Live Drag Thumbnails
-- Captures the current frame of any visible, playing clip and renders a 96×96 PNG with rounded corners and overlay in the renderer.
-- Drag and drop clips with full payload data, for dragging into other services (eg ComfyUI workflows, video editor timeline drop-in, copying to filesystem location)
+
+- Drag clips directly into ComfyUI, video editors, and file managers.
+- Bounded cached live-frame thumbnails keep dragging responsive without
+  retaining unbounded media resources.
 
 ### Settings
-- Persistent settings stored in Electron’s userData directory (JSON)
-- Saved window size/position
-- Saved playback and zoom preferences
-- Automatic zoom adjustment for high-DPI displays
+
+- Atomic, profile-local settings stored in Electron's application data
+  directory.
+- Saved window position, playback mode, zoom, fullscreen Details, review, and
+  inspector presentation preferences.
+- Configurable data location with coordinated migration/relaunch behavior.
+- Automatic zoom safety adjustment for high-DPI displays and large grids.
 
 ---
 
@@ -88,20 +134,35 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 - **Frontend:** React 18 + hooks, Vite for bundling
 - **Backend:** Electron main process with IPC for filesystem access
 - **Layout:** Custom vertical masonry renderer
-- **Performance:** Intersection Observer for visibility detection; debounced updates; GC enabled via Electron flags
+- **Storage:** Profile-local SQLite databases plus bounded atomic JSON settings
+- **Performance:** Virtual masonry, cancellable scans, bounded schedulers/caches,
+  and SQLite-first folder revisits
 - **File formats:** Supports any codec/container playable by Chromium (tested with MP4/H.264; partial HEVC support depends on system codecs)
-- **Rough edges:** Early release; expect some quirks and ongoing polish
+- **Release status:** Pre-1.0; expect ongoing platform validation and polish
 
 ---
 
 ## Known Limitations
 
-- Designed primarily for folders of short videoclips (~5 seconds) - loading large directories of long videos may have issues
-- Linux: No native support for Nvidia video decoding - app runs generally more sluggish than on Windows due to being CPU bound. Planning a custom render pipeline to resolve this but it's a long way off.
+- Linux NVIDIA hardware decoding is not guaranteed by Electron/Chromium.
+  **Balanced** or **Static + Hover** is recommended on CPU-bound systems.
+- **All Motion** intentionally requests every visible clip and can consume
+  substantial CPU and memory.
 - Desktop-only: no web version (requires unrestricted filesystem access)
-- HEVC/H.265: limited browser support; may not decode on all systems
-- Very large directories (3000+ files): performance may degrade despite lazy loading, can be some glitchiness during load
-- No mobile/touch support
+- Codec support comes from the bundled Chromium build; HEVC/H.265 may not
+  decode on every system.
+- Embedded generation extraction currently relies on a compatible system
+  `ffprobe`; exact adjacent JSON sidecars remain the fallback. Arbitrary custom
+  nodes and visual-workflow-only composition may produce a transparent partial
+  result rather than a guessed prompt.
+- **Copy Accepted** is copy-only, does not transfer Video Swarm metadata, and
+  never overwrites. Move Accepted remains deferred.
+- Reject processing is limited to 2,000 local files per scoped batch.
+- The app is designed primarily for many short clips. Long, high-resolution,
+  or uncapped workloads remain hardware-sensitive even though 1,000- and
+  6,000-item library gates are covered.
+- Release artifacts currently target Windows x64 and Linux; there is no macOS,
+  mobile, or web release.
 
 ---
 
@@ -109,18 +170,19 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 Planned for upcoming versions:
 
-- Better dynamic rendering to improve performance with very large datasets
-- Smart collections and saved filter presets
-- Enhanced search (text + metadata)
-- Further performance improvements
+- Generation-aware search and smart metadata filters
+- A synchronized 2–4 clip comparison workspace
+- A packaged cross-platform embedded-metadata reader
+- Evidence-gated Linux motion sweep and further playback profiling
+- Optional Move Accepted and copied-metadata transfer
 
 ---
 
 ## Installation & Development
 
 ### Prerequisites
-- **Node.js 20 LTS or later** (Node 22 recommended)  
-  > Note: Some dependencies such as `better-sqlite3@12`, `conf@14`, and `electron-store@10` require Node 20+.  
+- **Node.js 22.12.0 or later**
+  > Note: Electron 43 requires Node 22.12.0+, and some dependencies such as `better-sqlite3@12`, `conf@14`, and `electron-store@10` require Node 20+.
 
 ### Setup
 ```bash
@@ -160,11 +222,11 @@ preload.js             IPC bridge
 
 ### Usage
 1. Start the application
-2. Select a folder (optionally enable recursive scan to load all videos in subdirs)
-3. Videos will be scanned and loaded into the masonry grid
-4. Adjust zoom via the top control bar
-5. Ctrl+R to clear all videos
-6. Access recently opened folders from the Recent Folders menu
+2. Open a folder and optionally pin it in the Library
+3. Choose a folder scope and playback mode for the current workload
+4. Review with `A`/`S`/`D`/`F`, ratings, tags, or the Details workspace
+5. Use **Find Unreviewed** or **Resume saved view** for a persistent review pass
+6. Press `?` at any time for the current shortcut reference
 
 ## License
 

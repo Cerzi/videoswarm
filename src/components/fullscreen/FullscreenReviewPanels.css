@@ -1,0 +1,345 @@
+.fullscreen-review-panel__header-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  color: var(--fullscreen-muted, #aeb8c6);
+  font-size: 0.78rem;
+}
+
+.fullscreen-review-panel__header-copy > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-review-panel__state,
+.fullscreen-review-panel__outside-view,
+.fullscreen-review-panel__progress {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  padding: 0.22rem 0.5rem;
+  color: #dce5ef;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.fullscreen-review-panel__outside-view {
+  color: #ffd18b;
+  border-color: rgba(255, 180, 72, 0.35);
+}
+
+.fullscreen-review-panel__rail-content,
+.fullscreen-review-panel__details-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+.fullscreen-review-panel__rail-heading,
+.fullscreen-review-panel__details-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.fullscreen-review-panel__rail-heading span,
+.fullscreen-review-panel__details-heading span {
+  color: var(--fullscreen-muted, #aeb8c6);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-review-panel__review-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.fullscreen-review-panel__review-button,
+.fullscreen-review-panel__undo,
+.fullscreen-review-panel__clear-rating {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.055);
+  color: #e9f0f7;
+  min-height: 2.15rem;
+  cursor: pointer;
+}
+
+.fullscreen-review-panel__review-button {
+  --fullscreen-review-tone: #71777b;
+  --fullscreen-review-tone-rgb: 113, 119, 123;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  border-color: rgba(var(--fullscreen-review-tone-rgb), 0.42);
+  background: rgba(var(--fullscreen-review-tone-rgb), 0.1);
+}
+
+.fullscreen-review-panel__review-button--pick {
+  --fullscreen-review-tone: #51cf66;
+  --fullscreen-review-tone-rgb: 81, 207, 102;
+}
+
+.fullscreen-review-panel__review-button--reviewed {
+  --fullscreen-review-tone: #5da9e9;
+  --fullscreen-review-tone-rgb: 93, 169, 233;
+}
+
+.fullscreen-review-panel__review-button--reject {
+  --fullscreen-review-tone: #ff6b6b;
+  --fullscreen-review-tone-rgb: 255, 107, 107;
+}
+
+.fullscreen-review-panel__review-button--unreviewed {
+  --fullscreen-review-tone: #71777b;
+  --fullscreen-review-tone-rgb: 113, 119, 123;
+}
+
+.fullscreen-review-panel__review-button:not(:disabled):hover,
+.fullscreen-review-panel__review-button[aria-pressed="true"] {
+  border-color: var(--fullscreen-review-tone);
+  background: rgba(var(--fullscreen-review-tone-rgb), 0.24);
+}
+
+.fullscreen-review-panel__review-button[aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 var(--fullscreen-review-tone);
+}
+
+.fullscreen-review-panel__review-shortcut {
+  color: var(--fullscreen-review-tone);
+  font-weight: 650;
+}
+
+.fullscreen-review-panel__review-shortcut kbd {
+  color: inherit;
+}
+
+.fullscreen-review-panel__review-button:disabled,
+.fullscreen-review-panel__undo:disabled,
+.fullscreen-review-panel__clear-rating:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.fullscreen-review-panel__rating {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.fullscreen-review-panel__rating > span {
+  color: var(--fullscreen-muted, #aeb8c6);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fullscreen-review-panel__rating > div {
+  display: flex;
+}
+
+.fullscreen-review-panel__rating > div button {
+  border: 0;
+  background: transparent;
+  color: #66717e;
+  font-size: 1.35rem;
+  cursor: pointer;
+  padding: 0.15rem;
+}
+
+.fullscreen-review-panel__rating > div button.is-active {
+  color: #ffc857;
+}
+
+.fullscreen-review-panel__clear-rating,
+.fullscreen-review-panel__undo {
+  padding: 0.35rem 0.55rem;
+}
+
+.fullscreen-review-panel__advance {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  color: #e4ebf2;
+  font-size: 0.8rem;
+}
+
+.fullscreen-review-panel__advance small {
+  display: block;
+  margin-top: 0.18rem;
+  color: var(--fullscreen-muted, #aeb8c6);
+  line-height: 1.35;
+}
+
+.fullscreen-review-panel__actions {
+  position: relative;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.fullscreen-review-panel__menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 13rem;
+  padding: 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.65rem;
+  background: #151a20;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+}
+
+.fullscreen-review-panel__menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.55rem 0.65rem;
+  background: transparent;
+  color: #e8eef5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fullscreen-review-panel__menu button:hover,
+.fullscreen-review-panel__menu button:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.fullscreen-review-panel__help {
+  position: fixed;
+  z-index: 8;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(44rem, calc(100vw - 2rem));
+  max-height: min(42rem, calc(100vh - 2rem));
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.9rem;
+  padding: 1rem;
+  background: #151a20;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+}
+
+.fullscreen-review-panel__help > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.fullscreen-review-panel__help h3,
+.fullscreen-review-panel__help h4,
+.fullscreen-review-panel__help p {
+  margin: 0;
+}
+
+.fullscreen-review-panel__help p {
+  margin-top: 0.25rem;
+  color: var(--fullscreen-muted, #aeb8c6);
+}
+
+.fullscreen-review-panel__help > header button {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+
+.fullscreen-review-panel__help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.fullscreen-review-panel__help-grid section > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 0.78rem;
+}
+
+.fullscreen-review-panel__help-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.fullscreen-review-panel__details-content {
+  flex: 1 1 auto;
+  height: 100%;
+  overflow: hidden;
+  padding-right: 0.2rem;
+}
+
+.fullscreen-review__details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-review-panel__details-content > .metadata-panel__section {
+  flex: 0 0 auto;
+}
+
+.fullscreen-review-panel__details-content > .metadata-panel__section--suggestions {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.fullscreen-review-panel__details-content .metadata-panel__suggestion-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 900px) {
+  .fullscreen-review-panel__help-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The narrow Details dock is a bounded bottom sheet. Let that sheet own
+     overflow instead of introducing a nested tag-list scrollbar. */
+  .fullscreen-review__details {
+    overflow-y: auto;
+  }
+
+  .fullscreen-review-panel__details-content {
+    flex: 0 0 auto;
+    height: auto;
+    overflow: visible;
+  }
+
+  .fullscreen-review-panel__details-content > .metadata-panel__section--suggestions,
+  .fullscreen-review-panel__details-content .metadata-panel__suggestion-list {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fullscreen-review-panel__help,
+  .fullscreen-review-panel__menu {
+    scroll-behavior: auto;
+  }
+}

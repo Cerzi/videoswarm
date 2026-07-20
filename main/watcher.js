@@ -3,15 +3,49 @@
 // Emits: 'mode', 'ready', 'added', 'removed', 'changed', 'error'
 
 const chokidar = require("chokidar");
-const path = require("path");
 const { EventEmitter } = require("events");
+const { promises: fsPromises } = require("fs");
+const path = require("path");
+
+const EMPTY_CONTEXT = Object.freeze({});
+const DEFAULT_WATCHER_LIMITS = Object.freeze({
+  maxChangeDebouncers: 2048,
+  enrichmentConcurrency: 2,
+  maxPendingEnrichments: 2048,
+  maxOutstandingEnrichments: 8,
+  maxInitializationEvents: 16384,
+  reconciliationRetryBaseMs: 250,
+  maxReconciliationRetries: 3,
+});
+
+function finiteInteger(value, fallback, minimum) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(minimum, Math.floor(numeric));
+}
+
+class StaleWatcherSessionError extends Error {
+  constructor() {
+    super("Watcher session is no longer active");
+    this.name = "StaleWatcherSessionError";
+    this.code = "WATCHER_SESSION_STALE";
+  }
+}
 
 function createFolderWatcher({
   isVideoFile,
   createVideoFileObject,
   scanFolderForChanges,   // used for polling fallback
+  onDirectoryAggregatesDirty = null,
   logger = console,
   depth = 10,             // keep your previous recursion limit; set to undefined for unlimited
+  maxChangeDebouncers = DEFAULT_WATCHER_LIMITS.maxChangeDebouncers,
+  enrichmentConcurrency = DEFAULT_WATCHER_LIMITS.enrichmentConcurrency,
+  maxPendingEnrichments = DEFAULT_WATCHER_LIMITS.maxPendingEnrichments,
+  maxOutstandingEnrichments = DEFAULT_WATCHER_LIMITS.maxOutstandingEnrichments,
+  maxInitializationEvents = DEFAULT_WATCHER_LIMITS.maxInitializationEvents,
+  reconciliationRetryBaseMs = DEFAULT_WATCHER_LIMITS.reconciliationRetryBaseMs,
+  maxReconciliationRetries = DEFAULT_WATCHER_LIMITS.maxReconciliationRetries,
 }) {
   if (typeof isVideoFile !== "function") {
     throw new Error("createFolderWatcher: isVideoFile(fn) is required");
@@ -22,39 +56,327 @@ function createFolderWatcher({
   if (typeof scanFolderForChanges !== "function") {
     throw new Error("createFolderWatcher: scanFolderForChanges(fn) is required");
   }
+  if (
+    onDirectoryAggregatesDirty !== null &&
+    typeof onDirectoryAggregatesDirty !== "function"
+  ) {
+    throw new Error(
+      "createFolderWatcher: onDirectoryAggregatesDirty must be a function"
+    );
+  }
 
   const events = new EventEmitter();
+  const changeDebouncerLimit = finiteInteger(
+    maxChangeDebouncers,
+    DEFAULT_WATCHER_LIMITS.maxChangeDebouncers,
+    1
+  );
+  const enrichmentConcurrencyLimit = finiteInteger(
+    enrichmentConcurrency,
+    DEFAULT_WATCHER_LIMITS.enrichmentConcurrency,
+    1
+  );
+  const pendingEnrichmentLimit = finiteInteger(
+    maxPendingEnrichments,
+    DEFAULT_WATCHER_LIMITS.maxPendingEnrichments,
+    0
+  );
+  const outstandingEnrichmentLimit = finiteInteger(
+    maxOutstandingEnrichments,
+    DEFAULT_WATCHER_LIMITS.maxOutstandingEnrichments,
+    1
+  );
+  const initializationEventLimit = finiteInteger(
+    maxInitializationEvents,
+    DEFAULT_WATCHER_LIMITS.maxInitializationEvents,
+    1
+  );
+  const reconciliationRetryBase = finiteInteger(
+    reconciliationRetryBaseMs,
+    DEFAULT_WATCHER_LIMITS.reconciliationRetryBaseMs,
+    1
+  );
+  const reconciliationRetryLimit = finiteInteger(
+    maxReconciliationRetries,
+    DEFAULT_WATCHER_LIMITS.maxReconciliationRetries,
+    0
+  );
 
   let fileWatcher = null; // active chokidar watcher (native events)
   let pollingInterval = null; // setInterval id (polling fallback)
   let currentFolder = null; // current root
-  let fellBackThisSession = false; // one-shot fallback flag per folder
-  let currentOptions = { recursive: true }; // last requested options
+  let currentOptions = { recursive: true, context: EMPTY_CONTEXT };
+  let activeSession = null;
+  let sessionSequence = 0;
+  let lifecycleGeneration = 0;
+  let nativeCloseTail = Promise.resolve();
   const changeTimeouts = new Map(); // debounce timers per file
+  const pendingEnrichments = new Map(); // one coalesced job per path
+  const activeEnrichments = new Map(); // at most one current-session job per path
+  const rawEnrichments = new Map(); // retained until createVideoFileObject settles
+  let enrichmentSequence = 0;
+  let disposed = false;
+  const enrichmentTotals = {
+    queued: 0,
+    coalesced: 0,
+    completed: 0,
+    overflowed: 0,
+    cancelled: 0,
+    reconciliations: 0,
+    reconciliationFailures: 0,
+    reconciliationRetries: 0,
+    rawStarted: 0,
+    rawSettled: 0,
+    initializationBuffered: 0,
+    initializationCoalesced: 0,
+    initializationOverflowed: 0,
+    initializationReconciliations: 0,
+  };
 
   // ---- helpers ----
   function isPolling() {
     return !!pollingInterval;
   }
+
   function getCurrentFolder() {
     return currentFolder;
   }
+
+  function getSnapshot() {
+    let retiredEnrichments = 0;
+    for (const record of rawEnrichments.values()) {
+      if (
+        record.item.cancelled ||
+        record.item.released ||
+        !isSessionActive(record.item.session)
+      ) {
+        retiredEnrichments += 1;
+      }
+    }
+    return {
+      disposed,
+      currentFolder,
+      mode: isPolling() ? "polling" : fileWatcher ? "watch" : "stopped",
+      pendingChangeDebouncers: changeTimeouts.size,
+      activeEnrichments: activeEnrichments.size,
+      outstandingEnrichments: rawEnrichments.size,
+      retiredEnrichments,
+      pendingEnrichments: pendingEnrichments.size,
+      reconciliationNeeded: Boolean(activeSession?.reconciliationNeeded),
+      reconciliationInFlight: Boolean(activeSession?.reconciliationInFlight),
+      reconciliationRetryScheduled: Boolean(
+        activeSession?.reconciliationRetryTimer
+      ),
+      reconciliationAttempts: activeSession?.reconciliationAttempts || 0,
+      reconciliationRetryExhausted: Boolean(
+        activeSession?.reconciliationRetryExhausted
+      ),
+      initializing: Boolean(activeSession?.initializing),
+      bufferedInitializationEvents:
+        activeSession?.initializationEvents?.size || 0,
+      initializationOverflow: Boolean(activeSession?.initializationOverflow),
+      limits: {
+        maxChangeDebouncers: changeDebouncerLimit,
+        enrichmentConcurrency: enrichmentConcurrencyLimit,
+        maxPendingEnrichments: pendingEnrichmentLimit,
+        maxOutstandingEnrichments: outstandingEnrichmentLimit,
+        maxInitializationEvents: initializationEventLimit,
+        reconciliationRetryBaseMs: reconciliationRetryBase,
+        maxReconciliationRetries: reconciliationRetryLimit,
+      },
+      totals: { ...enrichmentTotals },
+    };
+  }
+
   function clearChangeDebouncers() {
-    for (const t of changeTimeouts.values()) clearTimeout(t);
+    for (const entry of changeTimeouts.values()) {
+      clearTimeout(entry.timer);
+    }
     changeTimeouts.clear();
   }
 
-  async function stop() {
-    try {
-      if (fileWatcher) {
-        fileWatcher.removeAllListeners?.();
-        await fileWatcher.close();
-      }
-    } catch (e) {
-      logger.warn("[watch] Error closing watcher:", e);
-    } finally {
-      fileWatcher = null;
+  function clearPendingEnrichments() {
+    pendingEnrichments.clear();
+  }
+
+  function isSessionActive(session) {
+    return !!session &&
+      session.active &&
+      activeSession === session &&
+      session.context?.cancelled !== true;
+  }
+
+  function assertSessionActive(session) {
+    if (!isSessionActive(session)) {
+      throw new StaleWatcherSessionError();
     }
+  }
+
+  function isStaleSessionError(error) {
+    return error?.code === "WATCHER_SESSION_STALE";
+  }
+
+  function eventMetadata(session) {
+    return {
+      folderPath: session.folderPath,
+      sessionId: session.sessionId,
+      context: session.context,
+    };
+  }
+
+  function helperContext(session, item = null) {
+    return {
+      ...session.context,
+      // Native watcher bursts must not recalculate the full directory tree for
+      // every file when a deferred aggregate owner is installed. The
+      // main-process record creator forwards this flag to the metadata store;
+      // onDirectoryAggregatesDirty schedules the one refresh for the root.
+      ...(onDirectoryAggregatesDirty
+        ? { refreshDirectoryCounts: false }
+        : {}),
+      ...(item?.abortController
+        ? { signal: item.abortController.signal }
+        : {}),
+      assertActive: () => {
+        assertSessionActive(session);
+        if (item?.cancelled) throw new StaleWatcherSessionError();
+      },
+    };
+  }
+
+  function markDirectoryAggregatesDirty(session) {
+    if (!onDirectoryAggregatesDirty || !isSessionActive(session)) return false;
+    try {
+      return onDirectoryAggregatesDirty({
+        ...session.context,
+        rootPath: session.folderPath,
+        assertActive: () => assertSessionActive(session),
+      }) !== false;
+    } catch (error) {
+      if (!isSessionActive(session) || isStaleSessionError(error)) return false;
+      logger.warn("[watch] Failed to schedule directory aggregate refresh:", error);
+      return false;
+    }
+  }
+
+  function pollingOptions(session) {
+    return {
+      recursive: session.recursive,
+      ...session.context,
+      assertActive: () => assertSessionActive(session),
+      pollingState: session.pollingState,
+      ...(onDirectoryAggregatesDirty
+        ? { refreshDirectoryCounts: false }
+        : {}),
+      sendEvent: (channel, payload) => {
+        assertSessionActive(session);
+        markDirectoryAggregatesDirty(session);
+        if (channel === "file-added") {
+          events.emit("added", payload, eventMetadata(session));
+        } else if (channel === "file-changed") {
+          events.emit("changed", payload, eventMetadata(session));
+        } else if (channel === "file-removed") {
+          events.emit("removed", payload, eventMetadata(session));
+        }
+      },
+    };
+  }
+
+  function createSession(folderPath, options) {
+    const context =
+      options.context && typeof options.context === "object"
+        ? options.context
+        : EMPTY_CONTEXT;
+    let resolveReady;
+    const readyPromise = new Promise((resolve) => {
+      resolveReady = resolve;
+    });
+    const session = {
+      sessionId: `watch-${++sessionSequence}`,
+      folderPath,
+      recursive: options.recursive,
+      context,
+      active: true,
+      fellBack: false,
+      pollInFlight: null,
+      reconciliationNeeded: false,
+      reconciliationInFlight: null,
+      reconciliationVersion: 0,
+      reconciliationAttempts: 0,
+      reconciliationRetryExhausted: false,
+      reconciliationRetryTimer: null,
+      initializing: Boolean(options.bufferInitialEvents),
+      initializationEvents: new Map(),
+      initializationOverflow: false,
+      watcherReady: false,
+      readyPromise,
+      resolveReady,
+      pollingState: {
+        lastFiles: new Map(),
+        initialized: false,
+      },
+    };
+
+    activeSession = session;
+    currentFolder = folderPath;
+    currentOptions = {
+      recursive: options.recursive,
+      context,
+    };
+    return session;
+  }
+
+  function invalidateActiveSession() {
+    const session = activeSession;
+    if (session) {
+      session.active = false;
+      session.resolveReady?.();
+      session.resolveReady = null;
+    }
+    activeSession = null;
+    return session;
+  }
+
+  function bufferInitializationEvent(
+    session,
+    eventName,
+    filePath,
+    stats = null
+  ) {
+    if (!isSessionActive(session) || !session.initializing) return false;
+    const normalizedPath = path.resolve(filePath);
+    const entry = {
+      eventName,
+      initial: !session.watcherReady && eventName === "added",
+      stats:
+        stats && Number.isFinite(Number(stats.size))
+          ? {
+              size: Number(stats.size),
+              mtimeMs: Number(stats.mtimeMs || stats.mtime || 0),
+            }
+          : null,
+    };
+    if (session.initializationEvents.has(normalizedPath)) {
+      session.initializationEvents.set(normalizedPath, entry);
+      enrichmentTotals.initializationCoalesced += 1;
+      return true;
+    }
+    if (session.initializationEvents.size >= initializationEventLimit) {
+      session.initializationOverflow = true;
+      enrichmentTotals.initializationOverflowed += 1;
+      return true;
+    }
+    session.initializationEvents.set(normalizedPath, entry);
+    enrichmentTotals.initializationBuffered += 1;
+    return true;
+  }
+
+  // Detach synchronously. In particular, stop() must invalidate assertActive
+  // before it waits for chokidar.close(), and an old close must never clear a
+  // newer watcher's state when starts overlap.
+  function detachActiveResources() {
+    const watcherToClose = fileWatcher;
+    fileWatcher = null;
 
     if (pollingInterval) {
       clearInterval(pollingInterval);
@@ -62,197 +384,815 @@ function createFolderWatcher({
     }
 
     clearChangeDebouncers();
+    clearPendingEnrichments();
+    const invalidatedSession = invalidateActiveSession();
+    if (invalidatedSession?.reconciliationRetryTimer) {
+      clearTimeout(invalidatedSession.reconciliationRetryTimer);
+      invalidatedSession.reconciliationRetryTimer = null;
+    }
+    cancelActiveEnrichmentsForSession(invalidatedSession);
     currentFolder = null;
-    currentOptions = { recursive: true };
+    currentOptions = { recursive: true, context: EMPTY_CONTEXT };
+    return watcherToClose;
   }
 
-  function startPollingMode(folderPath, options = currentOptions) {
-    const resolvedOptions = {
-      recursive: true,
-      ...options,
+  async function closeNativeWatcher(watcherToClose) {
+    if (!watcherToClose) return;
+    try {
+      watcherToClose.removeAllListeners?.();
+      await watcherToClose.close();
+    } catch (error) {
+      logger.warn("[watch] Error closing watcher:", error);
+    }
+  }
+
+  function queueNativeWatcherClose(watcherToClose) {
+    const operation = nativeCloseTail.then(() =>
+      closeNativeWatcher(watcherToClose)
+    );
+    nativeCloseTail = operation;
+    return operation;
+  }
+
+  async function stop() {
+    lifecycleGeneration += 1;
+    const watcherToClose = detachActiveResources();
+    await queueNativeWatcherClose(watcherToClose);
+  }
+
+  async function dispose() {
+    if (disposed) return;
+    disposed = true;
+    await stop();
+    events.removeAllListeners();
+  }
+
+  async function runPollingScan(session, label = "scan") {
+    if (!isSessionActive(session)) return { success: false, stale: true };
+    if (session.pollInFlight) return session.pollInFlight;
+
+    let runPromise;
+    runPromise = Promise.resolve()
+      .then(async () => {
+        assertSessionActive(session);
+        await scanFolderForChanges(
+          session.folderPath,
+          pollingOptions(session)
+        );
+        assertSessionActive(session);
+        return { success: true };
+      })
+      .catch((error) => {
+        if (!isSessionActive(session) || isStaleSessionError(error)) {
+          return { success: false, stale: true, error };
+        }
+        logger.error(`[watch] Polling ${label} failed:`, error);
+        events.emit("error", error, eventMetadata(session));
+        return { success: false, stale: false, error };
+      })
+      .finally(() => {
+        if (session.pollInFlight === runPromise) {
+          session.pollInFlight = null;
+        }
+      });
+
+    session.pollInFlight = runPromise;
+    return runPromise;
+  }
+
+  function normalizeInitializationBaseline(entries) {
+    const baseline = new Map();
+    const source = entries instanceof Map
+      ? entries.entries()
+      : (Array.isArray(entries) ? entries : []).map((entry) => [
+          entry?.filePath,
+          entry?.stats || entry,
+        ]);
+    for (const [filePath, stats] of source) {
+      if (typeof filePath !== "string" || !filePath) continue;
+      baseline.set(path.resolve(filePath), {
+        size: Number(stats?.size || 0),
+        mtimeMs: Number(stats?.mtimeMs || stats?.mtime || 0),
+      });
+    }
+    return baseline;
+  }
+
+  async function releaseInitialization(sessionId, baselineEntries = []) {
+    const session = activeSession;
+    if (
+      !isSessionActive(session) ||
+      session.sessionId !== sessionId ||
+      !session.initializing
+    ) {
+      return { success: false, stale: true };
+    }
+
+    await session.readyPromise;
+    assertSessionActive(session);
+
+    const baseline = normalizeInitializationBaseline(baselineEntries);
+    // Polling reconciliation must compare against the authoritative scan, not
+    // an empty session baseline that would replay every file as a fresh add.
+    session.pollingState.lastFiles = new Map(
+      [...baseline.entries()].map(([filePath, stats]) => [
+        filePath,
+        { size: stats.size, mtime: stats.mtimeMs },
+      ])
+    );
+    session.pollingState.initialized = true;
+
+    const outcomes = new Map();
+    let bufferedCount = 0;
+    let overflowed = false;
+    let usedFullReconciliation = false;
+    let replayed = 0;
+    let removed = 0;
+    let reconciliationSucceeded = true;
+    let comparedObservedBaseline = false;
+
+    // Keep native events in a fresh generation while each snapshot is being
+    // inspected. The empty check and transition to live mode are synchronous,
+    // so an event is either in the last snapshot or delivered by the live path.
+    while (true) {
+      assertSessionActive(session);
+      const snapshot = session.initializationEvents;
+      let snapshotOverflowed = session.initializationOverflow;
+      session.initializationEvents = new Map();
+      session.initializationOverflow = false;
+      if (!comparedObservedBaseline) {
+        comparedObservedBaseline = true;
+        for (const filePath of baseline.keys()) {
+          if (snapshot.has(filePath)) continue;
+          if (snapshot.size >= initializationEventLimit) {
+            snapshotOverflowed = true;
+            break;
+          }
+          // A file enumerated by the scan but absent from chokidar's complete
+          // initial observation may have disappeared before its subtree was
+          // attached. Verify it once instead of silently trusting the scan.
+          snapshot.set(filePath, {
+            eventName: "verify",
+            initial: false,
+            stats: null,
+          });
+        }
+      }
+      bufferedCount += snapshot.size;
+      overflowed = overflowed || snapshotOverflowed;
+
+      if (snapshotOverflowed || isPolling()) {
+        usedFullReconciliation = true;
+        outcomes.clear();
+        enrichmentTotals.initializationReconciliations += 1;
+        const result = await runPollingScan(
+          session,
+          snapshotOverflowed
+            ? "initialization overflow reconciliation"
+            : "initialization reconciliation"
+        );
+        reconciliationSucceeded = reconciliationSucceeded && Boolean(result?.success);
+        if (result?.stale) {
+          return { success: false, stale: true };
+        }
+      } else if (snapshot.size > 0) {
+        const pending = [...snapshot.entries()];
+        let nextIndex = 0;
+        const workerCount = Math.min(8, pending.length);
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (true) {
+            assertSessionActive(session);
+            const index = nextIndex;
+            nextIndex += 1;
+            if (index >= pending.length) return;
+            const [filePath, bufferedEvent] = pending[index];
+            const baselineStats = baseline.get(filePath);
+            const observedStats = bufferedEvent?.stats;
+            if (
+              bufferedEvent?.eventName !== "removed" &&
+              observedStats
+            ) {
+              const signatureMatches =
+                baselineStats &&
+                baselineStats.size === observedStats.size &&
+                baselineStats.mtimeMs === observedStats.mtimeMs;
+              if (bufferedEvent.initial && signatureMatches) {
+                outcomes.delete(filePath);
+                continue;
+              }
+              outcomes.set(filePath, {
+                exists: true,
+                wasPresent: Boolean(baselineStats),
+              });
+              continue;
+            }
+            let stats = null;
+            try {
+              stats = await fsPromises.stat(filePath);
+              assertSessionActive(session);
+            } catch (error) {
+              assertSessionActive(session);
+              if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") {
+                // A permission or transient read error is not evidence of
+                // removal; leave the prior collection record untouched.
+                outcomes.delete(filePath);
+                continue;
+              }
+            }
+            outcomes.set(filePath, {
+              exists: Boolean(stats?.isFile?.() && isVideoFile(filePath)),
+              wasPresent: baseline.has(filePath),
+            });
+          }
+        });
+        await Promise.all(workers);
+      }
+
+      assertSessionActive(session);
+      if (
+        session.initializationEvents.size === 0 &&
+        !session.initializationOverflow
+      ) {
+        session.initializing = false;
+        break;
+      }
+    }
+
+    // Full polling already emitted its authoritative delta. Targeted outcomes
+    // cover only events that were buffered outside that full reconciliation.
+    for (const [filePath, outcome] of outcomes) {
+      assertSessionActive(session);
+      if (outcome.exists) {
+        enqueueVideoEvent(
+          session,
+          outcome.wasPresent ? "changed" : "added",
+          filePath
+        );
+        replayed += 1;
+      } else if (outcome.wasPresent) {
+        events.emit("removed", filePath, eventMetadata(session));
+        markDirectoryAggregatesDirty(session);
+        removed += 1;
+      }
+    }
+
+    return {
+      success: reconciliationSucceeded,
+      stale: false,
+      overflowed,
+      reconciled: true,
+      fullReconciliation: usedFullReconciliation,
+      buffered: bufferedCount,
+      replayed,
+      removed,
     };
-    // Ensure single instance
-    stop().catch(() => {});
-    currentFolder = folderPath;
-    currentOptions = resolvedOptions;
+  }
+
+  function startPollingMode(session) {
+    if (!isSessionActive(session)) return;
 
     logger.log(
       "[watch] Starting polling mode:",
-      folderPath,
-      `(recursive=${resolvedOptions.recursive})`
+      session.folderPath,
+      `(recursive=${session.recursive})`
     );
     events.emit("mode", {
       mode: "polling",
-      folderPath,
-      recursive: resolvedOptions.recursive,
+      recursive: session.recursive,
+      ...eventMetadata(session),
     });
 
-    // Initial scan
-    try {
-      scanFolderForChanges(folderPath, resolvedOptions);
-    } catch (e) {
-      logger.error("[watch] Polling initial scan failed:", e);
-      events.emit("error", e);
+    // Polling owns a separate single-flight scan lane. It must not wait for a
+    // retired native-event enrichment that may be stalled indefinitely.
+    if (!session.initializing) {
+      void runPollingScan(session, "initial scan");
     }
-
-    // Poll every 5 seconds (matches your previous behavior)
     pollingInterval = setInterval(() => {
-      try {
-        scanFolderForChanges(folderPath, resolvedOptions);
-      } catch (e) {
-        logger.error("[watch] Polling scan failed:", e);
-        events.emit("error", e);
+      if (!session.initializing) {
+        void runPollingScan(session);
       }
     }, 5000);
 
-    return { success: true, mode: "polling", recursive: resolvedOptions.recursive };
+    return {
+      success: true,
+      mode: "polling",
+      recursive: session.recursive,
+      sessionId: session.sessionId,
+      initializing: session.initializing,
+    };
+  }
+
+  function createCancellation() {
+    let cancel;
+    const promise = new Promise((resolve) => {
+      cancel = resolve;
+    });
+    return { promise, cancel };
+  }
+
+  function trackRawEnrichment(item, creation) {
+    const record = { item, creation };
+    rawEnrichments.set(item.id, record);
+    enrichmentTotals.rawStarted += 1;
+    const settle = () => {
+      if (rawEnrichments.get(item.id) !== record) return;
+      rawEnrichments.delete(item.id);
+      enrichmentTotals.rawSettled += 1;
+      drainEnrichmentQueue();
+      maybeRunOverflowReconciliation();
+    };
+    void creation.then(settle, settle);
+    return creation;
+  }
+
+  function assertEnrichmentActive(item) {
+    if (
+      item.cancelled ||
+      !isSessionActive(item.session) ||
+      activeEnrichments.get(item.filePath) !== item
+    ) {
+      throw new StaleWatcherSessionError();
+    }
+  }
+
+  async function emitVideoEvent(item) {
+    const { session, eventName, filePath } = item;
+    if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+
+    try {
+      assertEnrichmentActive(item);
+      let creation;
+      try {
+        creation = Promise.resolve(
+          createVideoFileObject(
+            filePath,
+            session.folderPath,
+            helperContext(session, item)
+          )
+        );
+      } catch (error) {
+        creation = Promise.reject(error);
+      }
+      trackRawEnrichment(item, creation);
+      const outcome = await Promise.race([
+        creation.then(
+          (videoFile) => ({ videoFile }),
+          (error) => ({ error })
+        ),
+        item.cancellation.promise.then(() => ({ cancelled: true })),
+      ]);
+      if (outcome.cancelled) return;
+      if (outcome.error) throw outcome.error;
+      assertEnrichmentActive(item);
+      if (outcome.videoFile) {
+        markDirectoryAggregatesDirty(session);
+        events.emit(eventName, outcome.videoFile, eventMetadata(session));
+      }
+    } catch (error) {
+      if (
+        item.cancelled ||
+        !isSessionActive(session) ||
+        isStaleSessionError(error)
+      ) {
+        return;
+      }
+      logger.error(
+        `[watch:${eventName === "added" ? "add" : "change"}] createVideoFileObject failed:`,
+        error
+      );
+      events.emit("error", error, eventMetadata(session));
+    }
+  }
+
+  function mergeEventName(current, incoming) {
+    return current === "added" || incoming === "added" ? "added" : "changed";
+  }
+
+  function markOverflowReconciliation(session) {
+    if (!isSessionActive(session)) return;
+    session.reconciliationNeeded = true;
+    session.reconciliationVersion += 1;
+    session.reconciliationAttempts = 0;
+    session.reconciliationRetryExhausted = false;
+    if (session.reconciliationRetryTimer) {
+      clearTimeout(session.reconciliationRetryTimer);
+      session.reconciliationRetryTimer = null;
+    }
+  }
+
+  function scheduleReconciliationRetry(session) {
+    if (
+      !isSessionActive(session) ||
+      session.reconciliationRetryTimer ||
+      session.reconciliationRetryExhausted
+    ) {
+      return;
+    }
+    if (session.reconciliationAttempts > reconciliationRetryLimit) {
+      session.reconciliationRetryExhausted = true;
+      return;
+    }
+    const exponent = Math.max(0, session.reconciliationAttempts - 1);
+    const delay = reconciliationRetryBase * Math.min(16, 2 ** exponent);
+    session.reconciliationRetryTimer = setTimeout(() => {
+      session.reconciliationRetryTimer = null;
+      if (!isSessionActive(session)) return;
+      enrichmentTotals.reconciliationRetries += 1;
+      maybeRunOverflowReconciliation(session);
+    }, delay);
+  }
+
+  function maybeRunOverflowReconciliation(session = activeSession) {
+    if (
+      !isSessionActive(session) ||
+      !session.reconciliationNeeded ||
+      session.reconciliationInFlight ||
+      session.reconciliationRetryTimer ||
+      session.reconciliationRetryExhausted ||
+      activeEnrichments.size > 0 ||
+      pendingEnrichments.size > 0
+    ) {
+      return;
+    }
+
+    const attemptedVersion = session.reconciliationVersion;
+    enrichmentTotals.reconciliations += 1;
+    const reconciliation = runPollingScan(session, "overflow reconciliation");
+    session.reconciliationInFlight = reconciliation;
+    const finishReconciliation = (result) => {
+      if (session.reconciliationInFlight === reconciliation) {
+        session.reconciliationInFlight = null;
+      }
+      if (result?.success) {
+        session.reconciliationAttempts = 0;
+        session.reconciliationRetryExhausted = false;
+        if (session.reconciliationVersion === attemptedVersion) {
+          session.reconciliationNeeded = false;
+        }
+      } else if (isSessionActive(session) && !result?.stale) {
+        enrichmentTotals.reconciliationFailures += 1;
+        session.reconciliationAttempts += 1;
+        scheduleReconciliationRetry(session);
+      }
+      drainEnrichmentQueue();
+      maybeRunOverflowReconciliation(session);
+    };
+    void reconciliation.then(finishReconciliation, (error) =>
+      finishReconciliation({ success: false, stale: false, error })
+    );
+  }
+
+  function releaseActiveEnrichment(item) {
+    if (item.released) return false;
+    item.released = true;
+    if (activeEnrichments.get(item.filePath) === item) {
+      activeEnrichments.delete(item.filePath);
+    }
+    return true;
+  }
+
+  function cancelActiveEnrichment(item) {
+    if (!item || item.cancelled) return false;
+    item.cancelled = true;
+    item.followUpEventName = null;
+    item.abortController?.abort();
+    item.cancellation.cancel();
+    releaseActiveEnrichment(item);
+    enrichmentTotals.cancelled += 1;
+    return true;
+  }
+
+  function cancelActiveEnrichmentsForSession(session) {
+    if (!session) return;
+    for (const item of [...activeEnrichments.values()]) {
+      if (item.session === session) cancelActiveEnrichment(item);
+    }
+  }
+
+  function drainEnrichmentQueue() {
+    if (activeSession?.reconciliationInFlight) return;
+
+    while (
+      activeEnrichments.size < enrichmentConcurrencyLimit &&
+      rawEnrichments.size < outstandingEnrichmentLimit &&
+      pendingEnrichments.size > 0
+    ) {
+      const [filePath, item] = pendingEnrichments.entries().next().value;
+      pendingEnrichments.delete(filePath);
+      if (!isSessionActive(item.session)) continue;
+
+      const cancellation = createCancellation();
+      const activeItem = {
+        ...item,
+        id: ++enrichmentSequence,
+        filePath,
+        cancellation,
+        abortController: new AbortController(),
+        cancelled: false,
+        released: false,
+        followUpEventName: null,
+      };
+      activeEnrichments.set(filePath, activeItem);
+      const enrichment = emitVideoEvent(activeItem);
+      const finishEnrichment = () => {
+        const followUpEventName = activeItem.cancelled
+          ? null
+          : activeItem.followUpEventName;
+        releaseActiveEnrichment(activeItem);
+        enrichmentTotals.completed += 1;
+        if (followUpEventName && isSessionActive(activeItem.session)) {
+          enqueueVideoEvent(
+            activeItem.session,
+            followUpEventName,
+            activeItem.filePath
+          );
+        }
+        drainEnrichmentQueue();
+        maybeRunOverflowReconciliation();
+      };
+      void enrichment.then(finishEnrichment, finishEnrichment);
+    }
+
+    maybeRunOverflowReconciliation();
+  }
+
+  function enqueueVideoEvent(session, eventName, filePath) {
+    if (!isSessionActive(session)) return false;
+    if (
+      session.reconciliationNeeded &&
+      session.reconciliationRetryExhausted
+    ) {
+      session.reconciliationRetryExhausted = false;
+      session.reconciliationAttempts = 0;
+    }
+    const active = activeEnrichments.get(filePath);
+    if (active && active.session === session && !active.cancelled) {
+      active.followUpEventName = active.followUpEventName
+        ? mergeEventName(active.followUpEventName, eventName)
+        : eventName;
+      enrichmentTotals.coalesced += 1;
+      return true;
+    }
+    const existing = pendingEnrichments.get(filePath);
+    if (existing) {
+      existing.eventName = mergeEventName(existing.eventName, eventName);
+      enrichmentTotals.coalesced += 1;
+      return true;
+    }
+
+    if (pendingEnrichments.size >= pendingEnrichmentLimit) {
+      markOverflowReconciliation(session);
+      enrichmentTotals.overflowed += 1;
+      maybeRunOverflowReconciliation(session);
+      return false;
+    }
+
+    pendingEnrichments.set(filePath, { eventName, session });
+    enrichmentTotals.queued += 1;
+    drainEnrichmentQueue();
+    return true;
+  }
+
+  function dispatchDebouncedChange(filePath, entry) {
+    if (changeTimeouts.get(filePath) !== entry) return;
+    changeTimeouts.delete(filePath);
+    if (!isSessionActive(entry.session)) return;
+    logger.log("Video file changed:", filePath);
+    enqueueVideoEvent(entry.session, "changed", filePath);
+  }
+
+  function flushOldestChangeDebouncer() {
+    const oldest = changeTimeouts.entries().next().value;
+    if (!oldest) return;
+    const [filePath, entry] = oldest;
+    clearTimeout(entry.timer);
+    dispatchDebouncedChange(filePath, entry);
   }
 
   async function start(folderPath, options = {}) {
-    const { recursive = true } = options;
-    // If already watching the same folder, return current mode
+    if (disposed) {
+      throw new Error("Folder watcher is disposed");
+    }
+    const recursive = options.recursive ?? true;
+    const context =
+      options.context && typeof options.context === "object"
+        ? options.context
+        : EMPTY_CONTEXT;
+
+    // An identical request can reuse the existing watcher. A new context is a
+    // new ownership generation even when the root path did not change.
     if (
       currentFolder === folderPath &&
       currentOptions.recursive === recursive &&
+      currentOptions.context === context &&
+      isSessionActive(activeSession) &&
       (fileWatcher || pollingInterval)
     ) {
-      return { success: true, mode: isPolling() ? "polling" : "watch" };
+      return {
+        success: true,
+        mode: isPolling() ? "polling" : "watch",
+        recursive,
+        sessionId: activeSession.sessionId,
+        initializing: activeSession.initializing,
+      };
     }
 
-    await stop();
-    currentFolder = folderPath;
-    currentOptions = { recursive };
-    fellBackThisSession = false; // allow native attempt on each new folder
+    const startGeneration = ++lifecycleGeneration;
+    const watcherToClose = detachActiveResources();
+    await queueNativeWatcherClose(watcherToClose);
 
-    // Create chokidar watcher (native events)
-    fileWatcher = chokidar.watch(folderPath, {
-      ignored: [
-        /(^|[\/\\])\../,      // ignore dot files/dirs
-        "**/node_modules/**",
-        "**/.git/**",
-      ],
-      persistent: true,
-      ignoreInitial: true,
-      ...(recursive
-        ? { depth }
-        : { depth: 0 }), // follow recursion preference
+    // A later start/stop superseded this request while the old watcher closed.
+    if (startGeneration !== lifecycleGeneration) {
+      return { success: false, cancelled: true, recursive };
+    }
 
-      // Prefer native events
-      usePolling: false,
-      awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
-
-      // Churn/permissions
-      atomic: true,
-      alwaysStat: false,
-      followSymlinks: false,
-      ignorePermissionErrors: true,
-
-      // Platform quirks
-      ...(process.platform === "darwin" && { useFsEvents: true }),
-      ...(process.platform === "win32" && { useReaddir: false }),
+    const session = createSession(folderPath, {
+      recursive,
+      context,
+      bufferInitialEvents: Boolean(options.bufferInitialEvents),
     });
+    let nativeWatcher;
+    try {
+      // Create chokidar watcher (native events)
+      nativeWatcher = chokidar.watch(folderPath, {
+        ignored: [
+          /(^|[\/\\])\../,      // ignore dot files/dirs
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/System Volume Information/**",
+          "**/$RECYCLE.BIN/**",
+        ],
+        persistent: true,
+        // During an initial folder scan, capture chokidar's own observed
+        // baseline instead of suppressing it. Signatures matching the main
+        // enumeration are discarded at release without a second stat pass;
+        // differences close the pre-ready attachment race.
+        ignoreInitial: !session.initializing,
+        ...(recursive
+          ? { depth }
+          : { depth: 0 }), // follow recursion preference
+
+        // Prefer native events
+        usePolling: false,
+        awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+
+        // Churn/permissions
+        atomic: true,
+        alwaysStat: session.initializing,
+        followSymlinks: false,
+        ignorePermissionErrors: true,
+
+        // Platform quirks
+        ...(process.platform === "darwin" && { useFsEvents: true }),
+        ...(process.platform === "win32" && { useReaddir: false }),
+      });
+    } catch (error) {
+      if (isSessionActive(session)) {
+        detachActiveResources();
+      }
+      throw error;
+    }
+
+    fileWatcher = nativeWatcher;
 
     // ---- events ----
-    fileWatcher.on("ready", () => {
+    nativeWatcher.on("ready", () => {
+      if (!isSessionActive(session) || fileWatcher !== nativeWatcher) return;
+      session.watcherReady = true;
+      session.resolveReady?.();
+      session.resolveReady = null;
       // Instrumentation: count directories/files chokidar believes it has
       try {
-        const watched = fileWatcher.getWatched?.() || {};
+        const watched = nativeWatcher.getWatched?.() || {};
         const dirs = Object.keys(watched).length;
-        let files = 0; for (const d in watched) files += watched[d].length;
+        let files = 0;
+        for (const dir in watched) files += watched[dir].length;
         logger.log(`[watch] ready: dirs=${dirs} files=${files}`);
       } catch {}
       events.emit("mode", {
         mode: "watch",
-        folderPath,
-        recursive: currentOptions.recursive,
+        recursive: session.recursive,
+        ...eventMetadata(session),
       });
-      events.emit("ready", { folderPath });
-      logger.log("[watch] Watching:", folderPath);
+      events.emit("ready", eventMetadata(session));
+      logger.log("[watch] Watching:", session.folderPath);
     });
 
-    fileWatcher.on("add", async (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("add", (filePath, stats) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "added", filePath, stats)) return;
       logger.log("Video file added:", filePath);
-      try {
-        const videoFile = await createVideoFileObject(filePath, folderPath);
-        if (videoFile) events.emit("added", videoFile);
-      } catch (e) {
-        logger.error("[watch:add] createVideoFileObject failed:", e);
-        events.emit("error", e);
-      }
+      enqueueVideoEvent(session, "added", filePath);
     });
 
-    fileWatcher.on("unlink", (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("unlink", (filePath) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "removed", filePath)) return;
+      const pendingChange = changeTimeouts.get(filePath);
+      if (pendingChange) {
+        clearTimeout(pendingChange.timer);
+        changeTimeouts.delete(filePath);
+      }
+      pendingEnrichments.delete(filePath);
+      const active = activeEnrichments.get(filePath);
+      if (active?.session === session) {
+        cancelActiveEnrichment(active);
+      }
       logger.log("Video file removed:", filePath);
-      events.emit("removed", filePath);
+      events.emit("removed", filePath, eventMetadata(session));
+      markDirectoryAggregatesDirty(session);
+      drainEnrichmentQueue();
     });
 
-    fileWatcher.on("change", async (filePath) => {
-      if (!isVideoFile(filePath)) return;
+    nativeWatcher.on("change", (filePath, stats) => {
+      if (!isSessionActive(session) || !isVideoFile(filePath)) return;
+      if (bufferInitializationEvent(session, "changed", filePath, stats)) return;
 
-      if (changeTimeouts.has(filePath)) {
-        clearTimeout(changeTimeouts.get(filePath));
+      const existing = changeTimeouts.get(filePath);
+      if (existing) {
+        clearTimeout(existing.timer);
+        changeTimeouts.delete(filePath);
+      } else if (changeTimeouts.size >= changeDebouncerLimit) {
+        // Preserve the oldest notification by moving it into the independently
+        // bounded enrichment queue before accepting another debounce key.
+        flushOldestChangeDebouncer();
       }
-      changeTimeouts.set(
-        filePath,
-        setTimeout(async () => {
-          logger.log("Video file changed:", filePath);
-          try {
-            const videoFile = await createVideoFileObject(filePath, folderPath);
-            if (videoFile) events.emit("changed", videoFile);
-          } catch (e) {
-            logger.error("[watch:change] createVideoFileObject failed:", e);
-            events.emit("error", e);
-          } finally {
-            changeTimeouts.delete(filePath);
-          }
-        }, 1000)
-      );
+
+      const entry = { session, timer: null };
+      entry.timer = setTimeout(() => {
+        dispatchDebouncedChange(filePath, entry);
+      }, 1000);
+      changeTimeouts.set(filePath, entry);
     });
 
-    fileWatcher.on("error", async (error) => {
+    nativeWatcher.on("error", async (error) => {
+      if (!isSessionActive(session)) return;
       const code = error && error.code;
       const isLimitError = code === "EMFILE" || code === "ENOSPC";
 
-      if (isLimitError && !fellBackThisSession) {
-        fellBackThisSession = true; // one-shot per folder
+      if (isLimitError && !session.fellBack) {
+        session.fellBack = true; // one-shot per watcher session
+        session.watcherReady = true;
+        session.resolveReady?.();
+        session.resolveReady = null;
         logger.warn("[watch] Limit hit:", code, "→ switching to polling");
-        // Preserve context before tearing down
-        const prevFolder = currentFolder;
-        const prevOptions = currentOptions;
-        // Close partially-initialized watcher before falling back
-        try {
-          await stop();
-        } catch {}
-        // Emit mode explicitly because 'ready' may never fire when erroring early
-        events.emit("mode", {
-          mode: "polling",
-          folderPath: prevFolder,
-          recursive: prevOptions.recursive,
-        });
-        if (prevFolder) {
-          startPollingMode(prevFolder, prevOptions);
+
+        // Detach this native watcher before awaiting close. A new start/stop can
+        // now invalidate the session without being clobbered by this callback.
+        if (fileWatcher === nativeWatcher) {
+          fileWatcher = null;
         }
-        // Optional UI hint
-        events.emit("error", new Error("Switched to polling mode"));
+        clearChangeDebouncers();
+        clearPendingEnrichments();
+        cancelActiveEnrichmentsForSession(session);
+        // Join the same close tail used by start/stop. Otherwise a concurrent
+        // stop can observe the detached watcher and resolve while chokidar is
+        // still closing this fallback instance.
+        await queueNativeWatcherClose(nativeWatcher);
+        if (!isSessionActive(session)) return;
+
+        startPollingMode(session);
+        // Preserve the existing UI hint while attaching session metadata.
+        events.emit(
+          "error",
+          new Error("Switched to polling mode"),
+          eventMetadata(session)
+        );
         return;
       }
 
       // Non-limit errors or repeated limit errors
+      if (session.initializing && !session.watcherReady) {
+        // Chokidar is not guaranteed to emit `ready` after an early native
+        // failure. Release the waiter and force one authoritative polling
+        // reconciliation instead of hanging folder completion indefinitely.
+        session.initializationOverflow = true;
+        session.watcherReady = true;
+        session.resolveReady?.();
+        session.resolveReady = null;
+      }
       logger.error("File watcher error:", error);
-      events.emit("error", error);
+      events.emit("error", error, eventMetadata(session));
     });
 
-    return { success: true, mode: "watch", recursive };
+    return {
+      success: true,
+      mode: "watch",
+      recursive,
+      sessionId: session.sessionId,
+      initializing: session.initializing,
+    };
   }
 
   // public API
   return {
     start,
     stop,
+    dispose,
     isPolling,
     getCurrentFolder,
+    getSnapshot,
+    releaseInitialization,
     on: (...args) => events.on(...args),
     off: (...args) => events.off?.(...args) || events.removeListener(...args),
     once: (...args) => events.once(...args),
@@ -260,4 +1200,4 @@ function createFolderWatcher({
   };
 }
 
-module.exports = { createFolderWatcher };
+module.exports = { DEFAULT_WATCHER_LIMITS, createFolderWatcher };
