@@ -1,6 +1,6 @@
 {
   "name": "video-swarm",
-  "version": "0.6.0-rc.2",
+  "version": "0.6.0-rc.3",
   "description": "Desktop application for viewing hundreds of videos simultaneously with advanced masonry layouts and real-time file system monitoring",
   "main": "main.js",
   "homepage": "https://github.com/Cerzi/videoswarm",
@@ -139,7 +139,6 @@
     },
     "linux": {
       "target": [
-        "AppImage",
         "deb"
       ],
       "artifactName": "VideoSwarm-${version}-linux.${ext}",
@@ -152,6 +151,12 @@
         "Categories": "Video;"
       },
       "maintainer": "Cerzi <bpateman@gmail.com>"
+    },
+    "deb": {
+      "afterInstall": "scripts/deb-after-install.tpl",
+      "fpm": [
+        "--depends=libasound2"
+      ]
     },
     "nsis": {
       "oneClick": false,
