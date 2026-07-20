@@ -1,24 +1,24 @@
 const fs = require('fs');
 const path = require('path');
 
-exports.default = async function(context) {
-  console.log('Installing Linux launcher wrapper...');
-  
-  if (context.electronPlatformName === 'linux') {
-    const appOutDir = context.appOutDir;
-    const executableName = 'video-swarm'; // Match the executableName in package.json
-    const executablePath = path.join(appOutDir, executableName);
-    
-    console.log('Installing secure launcher at:', executablePath);
-    
-    // Rename original executable
-    fs.renameSync(executablePath, executablePath + '-bin');
-    
-    // Create wrapper script
-    const wrapperScript = `#!/bin/bash
+const EXECUTABLE_NAME = 'video-swarm';
+
+function createDebianLauncherScript(executableName = EXECUTABLE_NAME) {
+  return `#!/bin/bash
 set -e
 
-launcher_dir="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the installed /usr/bin symlink before looking for the packaged
+# executable. Debian packages place the application itself under /opt.
+launcher_path="${'${BASH_SOURCE[0]}'}"
+while [[ -L "$launcher_path" ]]; do
+  launcher_dir="$(cd -P "$(dirname "$launcher_path")" >/dev/null 2>&1 && pwd)"
+  launcher_path="$(readlink "$launcher_path")"
+  if [[ "$launcher_path" != /* ]]; then
+    launcher_path="$launcher_dir/$launcher_path"
+  fi
+done
+launcher_dir="$(cd -P "$(dirname "$launcher_path")" >/dev/null 2>&1 && pwd)"
+
 sandbox_args=()
 if [[ "${'${VIDEOSWARM_DISABLE_SANDBOX:-0}'}" == "1" ]]; then
   echo "Video Swarm warning: Chromium OS sandbox disabled by VIDEOSWARM_DISABLE_SANDBOX=1" >&2
@@ -27,10 +27,21 @@ fi
 
 exec "$launcher_dir/${executableName}-bin" "${'${sandbox_args[@]}'}" "$@"
 `;
-    
-    fs.writeFileSync(executablePath, wrapperScript);
+}
+
+exports.default = async function(context) {
+  if (context.electronPlatformName === 'linux') {
+    const appOutDir = context.appOutDir;
+    const executablePath = path.join(appOutDir, EXECUTABLE_NAME);
+
+    console.log('Installing sandbox-preserving Debian launcher at:', executablePath);
+
+    fs.renameSync(executablePath, executablePath + '-bin');
+    fs.writeFileSync(executablePath, createDebianLauncherScript());
     fs.chmodSync(executablePath, 0o755);
-    
-    console.log('Linux launcher installed with sandboxing enabled by default');
+
+    console.log('Debian launcher installed with sandboxing enabled by default');
   }
 };
+
+exports.createDebianLauncherScript = createDebianLauncherScript;

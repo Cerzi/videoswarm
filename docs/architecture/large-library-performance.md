@@ -678,12 +678,15 @@ macOS activation, and second-instance restoration share one window-creation
 single flight; fatal startup failure releases the invisible primary rather than
 leaving the lock-owning process headless.
 
-The packaged Linux launcher no longer disables Chromium's OS sandbox by
-default. A user can explicitly set `VIDEOSWARM_DISABLE_SANDBOX=1` as a
-diagnostic compatibility escape hatch, which emits a warning and must not be
-treated as the production security baseline. Development and CI launchers may
-still opt out where their container forbids user namespaces; the packaged
-default is the acceptance surface here.
+The supported Linux release is now the installed Debian/Ubuntu x64 `.deb`.
+Its package lifecycle gives the bundled Chromium `chrome-sandbox` helper root
+ownership and mode `4755`, and the production launcher does not disable the OS
+sandbox. Portable AppImages are not a supported release surface: their
+temporary FUSE mount cannot reliably retain the helper's root/setuid
+configuration, and hardened Ubuntu may also deny Chromium's unprivileged user
+namespace fallback. Development and CI launchers may still explicitly opt out
+where their container forbids both sandbox mechanisms; that escape hatch is
+never a release default or packaged acceptance surface.
 
 Acceptance criteria:
 
@@ -740,7 +743,7 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
 | Electron smoke and performance soak harnesses | **Implemented** | Production Electron lifecycle smoke is CI-gated under Xvfb; the local Linux runner emits measured plateau/slope and baseline-relative diagnostics with optional traces and heap snapshots. |
 | Electron-ABI SQLite test job | **Implemented** | Coverage and focused native suites run through Electron's Node runtime with an environment gate that converts ABI load failures into test failures rather than skips. |
 | Node, lint, coverage, and build CI gates | **Implemented** | Node 22.12 repository/workflow pins, zero-warning ESLint, cleaned ratcheted coverage, explicit Vite build, Electron smoke, and unpacked packaging are mandatory. |
-| Production Electron boundary hardening | **Implemented** | Sandboxed, web-secure windows now use opaque range-capable media URLs, one trusted and bounded IPC registrar, profile/owner-scoped path grants, confirmation-bound trash, atomic/bounded settings and profile catalogs, single-instance ownership, denied popup/navigation/permissions, and coordinated native shutdown/relaunch. |
+| Production Electron boundary hardening | **Implemented** | Sandboxed, web-secure windows now use opaque range-capable media URLs, one trusted and bounded IPC registrar, profile/owner-scoped path grants, confirmation-bound trash, atomic/bounded settings and profile catalogs, single-instance ownership, denied popup/navigation/permissions, coordinated native shutdown/relaunch, and a `.deb` lifecycle that configures Chromium's SUID sandbox helper. |
 
 ## Production boundary and deferred-work implementation slice
 
@@ -754,11 +757,12 @@ updates, catalog recovery/profile isolation, and shutdown ownership.
    cache signatures and reject canonical proxy paths that escape the
    profile-local cache, including through a replaced symlink.
 3. **Implemented** — Enable production `webSecurity`, renderer sandbox
-   preferences, context isolation, and a secure-by-default packaged Linux
-   launcher; deny popups, webviews, unexpected navigation, redirects, and
-   permission requests. Production CSP removes Vite's localhost WebSocket
-   sources, while the development HTML transform adds only those local HMR
-   endpoints.
+   preferences, context isolation, and a secure-by-default installed Linux
+   `.deb`; deny popups, webviews, unexpected navigation, redirects, and
+   permission requests. The `.deb` lifecycle configures the root-owned,
+   mode-`4755` Chromium helper. Production CSP removes Vite's localhost
+   WebSocket sources, while the development HTML transform adds only those
+   local HMR endpoints.
 4. **Implemented** — Put every static inbound IPC handler behind live-window,
    main-frame, exact-origin trust and a default payload-size ceiling. Add
    channel-specific shape/count/string bounds and dispose registrations with
@@ -1281,16 +1285,17 @@ their stated evidence exists:
   deferred. Copy Accepted—including optional exact sidecars, collision
   preflight, exclusive no-overwrite writes, and bounded progress/cancellation—
   is implemented; see [`review-workflow.md`](review-workflow.md).
-- **Cross-platform packaged validation:** Linux production smoke now exercises
-  the security boundary and custom media ranges. Windows and macOS packaged
-  runs should be added when runners are available, particularly for custom
-  protocol playback, atomic replacement semantics, native trash/shell actions,
-  macOS activation, and shutdown/relaunch behavior. Add a true two-process
-  single-instance smoke rather than relying only on focused lifecycle wiring
-  coverage. A real-host Linux launch should also verify the secure-by-default
-  package on distributions with supported user namespaces; the automated
-  container smoke intentionally opts out of the OS sandbox. This is a
-  validation gap, not a known application-boundary defect.
+- **Cross-platform packaged validation:** Linux source-production smoke
+  exercises the security boundary and custom media ranges. In addition, CI and
+  the release workflow install the generated Debian package, assert that
+  `chrome-sandbox` is root-owned with mode `4755`, and launch the installed
+  `/usr/bin/video-swarm` command without either sandbox-disable switch before
+  accepting the artifact. Windows and macOS packaged runs should be added when
+  runners are available, particularly for
+  custom protocol playback, atomic replacement semantics, native trash/shell
+  actions, macOS activation, and shutdown/relaunch behavior. Add a true
+  two-process single-instance smoke rather than relying only on focused
+  lifecycle wiring coverage.
 - **Descriptor-level filesystem race hardening:** canonical root validation
   rejects existing symlink escapes, but an external process can still replace
   a validated path between validation and some path-based shell/media/native

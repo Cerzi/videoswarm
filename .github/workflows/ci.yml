@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   test-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -42,7 +42,17 @@ jobs:
       - name: Install Electron smoke-test display
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxkbcommon0 \
+            libxss1
 
       - name: Electron production smoke test
         run: xvfb-run -a npm run test:electron-smoke
@@ -59,3 +69,33 @@ jobs:
 
       - name: Electron pack (no installers)
         run: npm run electron:pack
+
+      - name: Build Debian package from packed app
+        run: >-
+          npx electron-builder --linux deb
+          --prepackaged dist/linux-unpacked --publish=never
+
+      - name: Install Debian package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t debs < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.deb" | sort)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux .deb, found ${#debs[@]}"
+            exit 1
+          fi
+          if find dist -maxdepth 1 -type f -name "*.AppImage" | grep -q .; then
+            echo "AppImage output is forbidden by the Linux release policy"
+            exit 1
+          fi
+          dpkg-deb -f "${debs[0]}" Depends | grep -Eq '(^|, )libasound2(,|$)'
+          sudo apt-get install -y "./${debs[0]}"
+          test "$(stat -c '%U:%G %a' /opt/VideoSwarm/chrome-sandbox)" = "root:root 4755"
+
+      - name: Installed Debian package sandbox smoke test
+        run: >-
+          env -u VIDEOSWARM_DISABLE_SANDBOX
+          VIDEOSWARM_DEB_SMOKE=1
+          xvfb-run -a
+          npx playwright test tests/electron/deb-package.smoke.spec.cjs
+          --config=playwright.electron.config.cjs
