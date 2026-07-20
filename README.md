@@ -166,6 +166,21 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 ---
 
+## Test the v0.6 Release Candidate
+
+[Download v0.6.0-rc.2](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.2)
+for Windows or Linux, then follow the
+[RC feedback tracker](https://github.com/Cerzi/videoswarm/issues/80) for the
+priority test areas and stable-release gate. Close VideoSwarm before upgrading
+and back up irreplaceable profile data first.
+
+Please file each reproducible problem through the
+[structured bug-report form](https://github.com/Cerzi/videoswarm/issues/new?template=bug_report.yml&labels=rc%20feedback)
+so platform, workload, playback, and diagnostic details stay attached to the
+report. Feature ideas have a separate form in the issue chooser.
+
+---
+
 ## Roadmap
 
 Planned for upcoming versions:
