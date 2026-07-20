@@ -1,7 +1,7 @@
 # Review Workflow and Result Processing
 
-Status: Active design specification
-Last updated: 2026-07-19
+Status: **Implemented and verified; deferred extensions tracked below**
+Last updated: 2026-07-20
 
 ## Summary
 
@@ -60,11 +60,11 @@ removes newly classified clips. The toolbar remains one dense row and may
 scroll horizontally on narrow windows rather than expanding into a tall
 dashboard.
 
-Toolbar buttons, keyboard shortcuts, context-menu actions, and review/rating
-controls in the floating selection inspector all use the same serialized
-workflow mutation path. Context-menu mutations target the invoked clip's
-fingerprint and suppress auto-advance; all of these surfaces therefore share
-the coupled rating/review invariants and one-step undo history.
+Toolbar buttons, keyboard shortcuts, context-menu actions, the floating or
+docked selection Details editor, and the fullscreen review rail all use the
+same serialized workflow mutation path. Context-menu mutations target the
+invoked clip's fingerprint and suppress auto-advance; all of these surfaces
+therefore share the coupled rating/review invariants and one-step undo history.
 
 ### One-handed shortcuts
 
@@ -167,7 +167,7 @@ Status: **Implemented** (2026-07-19)
 Copy Accepted turns the review result into a usable, non-destructive media
 collection. It operates on the same authoritative, unfiltered navigation scope
 shown by Process Results: the active indexed root, current directory, and
-direct-folder/current-subtree/all-descendants scope. An accepted file is a
+current-folder/current-subtree/all-descendants scope. An accepted file is a
 present file instance whose content-keyed review state is exactly `pick`.
 Ratings and neutral Reviewed state never make a file eligible. When duplicate
 instances of accepted content are present in scope, each concrete instance is
