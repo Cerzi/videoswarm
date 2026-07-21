@@ -143,25 +143,42 @@ describe("LibrarySidebar", () => {
     expect(screen.queryByRole("button", { name: /review Wan outputs/i })).toBeNull();
   });
 
-  it("sorts pinned roots by name in either direction with one compact control", () => {
-    const { container } = render(<LibrarySidebar pinnedRoots={pinnedRoots} />);
+  it("sorts the visible folder tree by name in either direction", () => {
+    const { container } = render(
+      <LibrarySidebar tree={tree} expandedPaths={new Set([""])} />
+    );
     const labels = () =>
-      Array.from(container.querySelectorAll(".library-root-list__name"), (node) =>
-        node.textContent
+      Array.from(container.querySelectorAll(".library-folder-tree__name"), (node) =>
+        node.lastElementChild?.textContent
       );
 
-    expect(labels()).toEqual(["Hunyuan outputs", "Wan outputs"]);
+    expect(labels()).toEqual(["outputs", "empty", "run-a", "run-b"]);
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Pinned roots sorted A to Z; switch to Z to A",
+        name: "Folders sorted A to Z; switch to Z to A",
       })
     );
-    expect(labels()).toEqual(["Wan outputs", "Hunyuan outputs"]);
+    expect(labels()).toEqual(["outputs", "run-b", "run-a", "empty"]);
     expect(
       screen.getByRole("button", {
-        name: "Pinned roots sorted Z to A; switch to A to Z",
+        name: "Folders sorted Z to A; switch to A to Z",
       })
     ).toBeVisible();
+  });
+
+  it("shows plain clip totals without review language when review mode is off", () => {
+    render(
+      <LibrarySidebar
+        tree={tree}
+        expandedPaths={new Set([""])}
+        pinnedRoots={[pinnedRoots[0]]}
+        reviewModeEnabled={false}
+      />
+    );
+
+    expect(screen.queryByText(/unreviewed/i)).toBeNull();
+    expect(screen.getByTitle("run-a")).toHaveTextContent("2");
+    expect(screen.getByText(/1,500 clips/)).toBeVisible();
   });
 
   it("mounts only expanded branches and forwards controlled expansion", () => {
@@ -291,8 +308,8 @@ describe("LibrarySidebar", () => {
 
   it("renders useful empty states without owning any Electron behavior", () => {
     render(<LibrarySidebar />);
-    expect(screen.getByText("Pin frequently reviewed roots here.")).toBeVisible();
-    expect(screen.getByText("Save filters for repeat review passes.")).toBeVisible();
+    expect(screen.getByText("Pin frequently used roots here.")).toBeVisible();
+    expect(screen.getByText("Save filters for repeat browsing setups.")).toBeVisible();
     expect(screen.getByText("Open a folder to browse its tree.")).toBeVisible();
   });
 });

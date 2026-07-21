@@ -3,6 +3,7 @@ import {
   REVIEW_RESULTS_TRASH_LIMIT,
   summarizeReviewScope,
 } from "../review/reviewResults";
+import { CopyIcon, MoveIcon } from "./UiIcons";
 import "./ProcessReviewResultsDialog.css";
 
 const FOCUSABLE_SELECTOR = [
@@ -120,9 +121,13 @@ const normalizeCopyPlan = (value) => {
   };
 };
 
-const normalizeCopyResult = (value) => {
+const normalizeCopyResult = (value, fallbackTransferMode = "copy") => {
   const result = value && typeof value === "object" ? value : {};
   return {
+    transferMode:
+      result.transferMode === "move" || fallbackTransferMode === "move"
+        ? "move"
+        : "copy",
     cancelled: Boolean(result.cancelled || result.canceled),
     copiedCount: boundedCount(
       result.copiedCount ?? result.copiedMedia ?? result.copied
@@ -176,13 +181,14 @@ export default function ProcessReviewResultsDialog({
   const [copyPhase, setCopyPhase] = useState(COPY_PHASES.IDLE);
   const [copyPlan, setCopyPlan] = useState(null);
   const [copyResult, setCopyResult] = useState(null);
+  const [transferMode, setTransferMode] = useState("copy");
   const summary = useMemo(() => summarizeReviewScope(videos), [videos]);
   const copyBusy = [
     COPY_PHASES.PREPARING,
     COPY_PHASES.COPYING,
     COPY_PHASES.CANCELLING,
   ].includes(copyPhase);
-  const copyOwnsActions = copyBusy || copyPhase === COPY_PHASES.READY;
+  const copyOwnsActions = copyBusy;
   const closeBlocked = Boolean(busy || pendingAction !== null || copyBusy);
   const actionBusy = Boolean(busy || pendingAction !== null || copyOwnsActions);
   actionBusyRef.current = closeBlocked;
@@ -244,6 +250,7 @@ export default function ProcessReviewResultsDialog({
     setCopyPhase(COPY_PHASES.IDLE);
     setCopyPlan(null);
     setCopyResult(null);
+    setTransferMode("copy");
     setActionError("");
   };
 
@@ -261,6 +268,7 @@ export default function ProcessReviewResultsDialog({
       setCopyPhase(COPY_PHASES.IDLE);
       setCopyPlan(null);
       setCopyResult(null);
+      setTransferMode("copy");
       return undefined;
     }
 
@@ -385,7 +393,21 @@ export default function ProcessReviewResultsDialog({
     }
   };
 
-  const startAcceptedCopy = async () => {
+  const chooseAcceptedDestination = async () => {
+    if (!canPrepareCopy || copyOperationRef.current) return;
+    const previousPlanId = activePlanIdRef.current;
+    if (previousPlanId) {
+      await requestPlanCancellation(previousPlanId);
+      activePlanIdRef.current = null;
+      cancelRequestedPlanIdRef.current = null;
+    }
+    setCopyPlan(null);
+    setCopyResult(null);
+    setCopyPhase(COPY_PHASES.IDLE);
+    await prepareAcceptedCopy();
+  };
+
+  const startAcceptedCopy = async (requestedMode) => {
     if (
       copyOperationRef.current ||
       copyPhase !== COPY_PHASES.READY ||
@@ -396,14 +418,19 @@ export default function ProcessReviewResultsDialog({
     }
     copyOperationRef.current = true;
     actionBusyRef.current = true;
+    const nextTransferMode = requestedMode === "move" ? "move" : "copy";
+    setTransferMode(nextTransferMode);
     const requestId = copyRequestRef.current + 1;
     copyRequestRef.current = requestId;
     setCopyPhase(COPY_PHASES.COPYING);
     setActionError("");
     try {
-      const response = await onStartAcceptedCopy(copyPlan.planId);
+      const response = await onStartAcceptedCopy(
+        copyPlan.planId,
+        nextTransferMode
+      );
       if (!openRef.current || copyRequestRef.current !== requestId) return;
-      const result = normalizeCopyResult(response);
+      const result = normalizeCopyResult(response, nextTransferMode);
       const hasTerminalCounts =
         result.cancelled ||
         result.copiedCount > 0 ||
@@ -612,28 +639,31 @@ export default function ProcessReviewResultsDialog({
             <article className="review-results-action review-results-action--copy">
               <div className="review-results-action__copy-heading">
                 <div>
-                  <h3>Copy accepted clips</h3>
+                  <h3>Accepted clips</h3>
                   <p>
-                    Copy {summary.acceptedCount.toLocaleString()} accepted file
-                    {summary.acceptedCount === 1 ? "" : "s"} to another folder. Originals stay in place
-                    and source folders are preserved.
+                    Send {summary.acceptedCount.toLocaleString()} accepted file
+                    {summary.acceptedCount === 1 ? "" : "s"} to another folder while preserving the source folder structure.
                   </p>
                 </div>
+              </div>
 
-                {copyPhase === COPY_PHASES.IDLE && (
-                  <button
-                    type="button"
-                    disabled={!canPrepareCopy}
-                    onClick={prepareAcceptedCopy}
-                  >
-                    Choose destination…
-                  </button>
-                )}
-                {copyPhase === COPY_PHASES.PREPARING && (
-                  <button type="button" disabled>
-                    Checking destination…
-                  </button>
-                )}
+              <div className="review-results-destination" aria-live="polite">
+                <div>
+                  <span>Destination</span>
+                  <strong>{copyPlan?.destinationLabel || "No folder selected"}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="review-results-copy-actions__secondary"
+                  disabled={!canPrepareCopy || copyBusy}
+                  onClick={chooseAcceptedDestination}
+                >
+                  {copyPhase === COPY_PHASES.PREPARING
+                    ? "Checking destination…"
+                    : copyPlan
+                      ? "Change…"
+                      : "Choose destination…"}
+                </button>
               </div>
 
               {[COPY_PHASES.IDLE, COPY_PHASES.PREPARING].includes(copyPhase) && (
@@ -651,10 +681,33 @@ export default function ProcessReviewResultsDialog({
                 </label>
               )}
 
+              {[COPY_PHASES.IDLE, COPY_PHASES.PREPARING].includes(copyPhase) && (
+                <div className="review-results-transfer-actions">
+                  <button
+                    type="button"
+                    className="review-results-transfer-actions__move"
+                    aria-label="Move accepted clips; choose a destination first"
+                    disabled
+                  >
+                    <MoveIcon aria-hidden="true" />
+                    <span>Move</span>
+                    <small>Remove originals</small>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Copy accepted clips; choose a destination first"
+                    disabled
+                  >
+                    <CopyIcon aria-hidden="true" />
+                    <span>Copy</span>
+                    <small>Keep originals</small>
+                  </button>
+                </div>
+              )}
+
               {copyPhase === COPY_PHASES.READY && copyPlan && (
                 <div className="review-results-copy-plan" aria-live="polite">
                   <dl className="review-results-copy-plan__facts">
-                    <div><dt>Destination</dt><dd>{copyPlan.destinationLabel}</dd></div>
                     <div><dt>Media</dt><dd>{copyPlan.mediaCount.toLocaleString()}</dd></div>
                     <div><dt>Workflow JSON</dt><dd>{copyPlan.sidecarCount.toLocaleString()}</dd></div>
                     <div><dt>Estimated size</dt><dd>{formatBytes(copyPlan.totalBytes)}</dd></div>
@@ -701,26 +754,31 @@ export default function ProcessReviewResultsDialog({
                   )}
                   {!copyPlan.canStart && (
                     <p className="review-results-dialog__notice" role="status">
-                      No files remain to copy to this destination.
+                      No files remain to transfer to this destination.
                     </p>
                   )}
-                  <div className="review-results-copy-actions">
+                  <div className="review-results-transfer-actions">
                     <button
                       type="button"
-                      className="review-results-copy-actions__secondary"
-                      onClick={() => resetCopyWorkflow({ cancelPlan: true })}
+                      className="review-results-transfer-actions__move"
+                      aria-label={`Move ${copyPlan.copyableCount.toLocaleString()} file${copyPlan.copyableCount === 1 ? "" : "s"}; remove originals`}
+                      disabled={!copyPlan.canStart}
+                      onClick={() => startAcceptedCopy("move")}
                     >
-                      Choose another folder
+                      <MoveIcon aria-hidden="true" />
+                      <span>Move</span>
+                      <small>Remove originals</small>
                     </button>
                     <button
                       ref={copyPrimaryActionRef}
                       type="button"
+                      aria-label={`Copy ${copyPlan.copyableCount.toLocaleString()} file${copyPlan.copyableCount === 1 ? "" : "s"}; keep originals`}
                       disabled={!copyPlan.canStart}
-                      onClick={startAcceptedCopy}
+                      onClick={() => startAcceptedCopy("copy")}
                     >
-                      {copyPlan.collisionCount > 0
-                        ? `Skip existing and copy ${copyPlan.copyableCount.toLocaleString()}`
-                        : `Copy ${copyPlan.copyableCount.toLocaleString()} file${copyPlan.copyableCount === 1 ? "" : "s"}`}
+                      <CopyIcon aria-hidden="true" />
+                      <span>Copy</span>
+                      <small>Keep originals</small>
                     </button>
                   </div>
                 </div>
@@ -736,14 +794,14 @@ export default function ProcessReviewResultsDialog({
                     <strong>
                       {copyPhase === COPY_PHASES.CANCELLING
                         ? "Finishing the current file…"
-                        : `Copying ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} files…`}
+                        : `${transferMode === "move" ? "Moving" : "Copying"} ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} files…`}
                     </strong>
                     <span>{copyPlan?.destinationLabel}</span>
                   </div>
                   <div
                     className="review-results-dialog__progress review-results-dialog__progress--copy"
                     role="progressbar"
-                    aria-label="Accepted clip copy progress"
+                    aria-label={`Accepted clip ${transferMode} progress`}
                     aria-valuemin="0"
                     aria-valuemax={progressTotal}
                     aria-valuenow={progressValue}
@@ -757,7 +815,9 @@ export default function ProcessReviewResultsDialog({
                     disabled={copyPhase === COPY_PHASES.CANCELLING}
                     onClick={cancelAcceptedCopy}
                   >
-                    {copyPhase === COPY_PHASES.CANCELLING ? "Cancel requested" : "Cancel copy"}
+                    {copyPhase === COPY_PHASES.CANCELLING
+                      ? "Cancel requested"
+                      : `Cancel ${transferMode}`}
                   </button>
                 </div>
               )}
@@ -769,17 +829,17 @@ export default function ProcessReviewResultsDialog({
                 >
                   <strong>
                     {copyResult.cancelled
-                      ? "Copy cancelled"
+                      ? `${copyResult.transferMode === "move" ? "Move" : "Copy"} cancelled`
                       : copyResult.error && copyResult.copiedCount === 0
-                        ? "Copy could not be completed"
+                        ? `${copyResult.transferMode === "move" ? "Move" : "Copy"} could not be completed`
                       : terminalHasIssues
-                        ? "Copy finished with issues"
-                        : "Copy complete"}
+                        ? `${copyResult.transferMode === "move" ? "Move" : "Copy"} finished with issues`
+                        : `${copyResult.transferMode === "move" ? "Move" : "Copy"} complete`}
                   </strong>
                   {copyResult.error && <p>{copyResult.error}</p>}
                   <p>
                     {copyResult.copiedCount.toLocaleString()} media file
-                    {copyResult.copiedCount === 1 ? "" : "s"} copied
+                    {copyResult.copiedCount === 1 ? "" : "s"} {copyResult.transferMode === "move" ? "moved" : "copied"}
                     {copyResult.sidecarCopiedCount > 0
                       ? ` · ${copyResult.sidecarCopiedCount.toLocaleString()} workflow JSON`
                       : ""}
@@ -808,7 +868,7 @@ export default function ProcessReviewResultsDialog({
                     type="button"
                     onClick={() => resetCopyWorkflow()}
                   >
-                    Copy again
+                    Transfer again
                   </button>
                 </div>
               )}

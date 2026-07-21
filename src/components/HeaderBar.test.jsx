@@ -29,6 +29,8 @@ const baseProps = {
   filtersButtonRef: { current: null },
   hoverAudioEnabled: false,
   onHoverAudioToggle: vi.fn(),
+  reviewModeEnabled: true,
+  onReviewModeToggle: vi.fn(),
   playbackMode: "balanced",
   onPlaybackModeChange: vi.fn(),
   playbackDecision: { target: 2, safetyCap: 4, health: "healthy" },
@@ -87,6 +89,24 @@ describe("HeaderBar hover audio control", () => {
     const activeButton = screen.getByRole("button", { name: "Player audio on hover" });
     expect(activeButton).toHaveAttribute("aria-pressed", "true");
     expect(activeButton.className).toContain("active");
+  });
+});
+
+describe("HeaderBar review mode control", () => {
+  it("exposes a compact persisted-mode toggle beside the view controls", () => {
+    const onReviewModeToggle = vi.fn();
+    render(
+      <HeaderBar
+        {...baseProps}
+        reviewModeEnabled={false}
+        onReviewModeToggle={onReviewModeToggle}
+      />
+    );
+    const button = screen.getByRole("button", { name: "Review mode" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(button).toHaveAttribute("title", "Enable review mode");
+    fireEvent.click(button);
+    expect(onReviewModeToggle).toHaveBeenCalledOnce();
   });
 });
 

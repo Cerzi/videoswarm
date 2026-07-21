@@ -84,6 +84,33 @@ const formatFileSize = (bytes) => {
   }`;
 };
 
+const formatDuration = (milliseconds) => {
+  const value = Number(milliseconds);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const seconds = value / 1000;
+  if (seconds < 60) {
+    return `${seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2)}`
+      .replace(/\.0+$|(?<=\.[0-9])0$/, "") + " s";
+  }
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remaining = rounded % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`
+    : `${minutes}:${String(remaining).padStart(2, "0")}`;
+};
+
+const formatFrameRate = (value) => {
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  const rounded = Math.round(rate);
+  const label = Math.abs(rate - rounded) < 0.01
+    ? String(rounded)
+    : rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `${label} fps`;
+};
+
 export const deriveMetadataFilename = (video) => {
   const fromMetadata = video?.metadata?.filename || video?.metadata?.fileName;
   const primary =
@@ -136,8 +163,22 @@ export const deriveSingleSelectionInfo = (
   const filename = deriveMetadataFilename(video);
   const relativePath = deriveMetadataRelativePath(video);
   const sizeBytes = asFiniteNumber(video?.size ?? video?.file?.size);
+  const duration = formatDuration(
+    video?.dimensions?.durationMs ?? video?.durationMs
+  );
+  const frameRate = formatFrameRate(
+    video?.dimensions?.frameRate ?? video?.frameRate
+  );
 
-  if (!filename && !created && !resolution && !relativePath && sizeBytes === null) {
+  if (
+    !filename &&
+    !created &&
+    !resolution &&
+    !duration &&
+    !frameRate &&
+    !relativePath &&
+    sizeBytes === null
+  ) {
     return null;
   }
 
@@ -146,6 +187,8 @@ export const deriveSingleSelectionInfo = (
     relativePath,
     created,
     resolution,
+    duration,
+    frameRate,
     sizeBytes,
   };
 };
@@ -178,6 +221,12 @@ export const buildMetadataInfoLineItems = (
   }
   if (info.resolution) {
     items.push({ key: "resolution", label: info.resolution });
+  }
+  if (info.frameRate) {
+    items.push({ key: "frame-rate", label: info.frameRate });
+  }
+  if (info.duration) {
+    items.push({ key: "duration", label: info.duration });
   }
   const formattedSize = formatFileSize(info.sizeBytes);
   if (formattedSize) {

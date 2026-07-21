@@ -163,7 +163,7 @@ describe("preload native-work bridge", () => {
       includeSidecars: true,
       clips: [{ absolutePath: "/private/clip.mp4" }],
     });
-    await api.review.copyAccepted.start("native-plan-1");
+    await api.review.copyAccepted.start("native-plan-1", "move");
     await api.review.copyAccepted.cancel("native-plan-1");
     const unsubscribe = api.review.copyAccepted.onProgress(onProgress);
 
@@ -180,7 +180,11 @@ describe("preload native-work bridge", () => {
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
       2,
       "review:copy-accepted:start",
-      { planId: "native-plan-1", collisionPolicy: "skip" }
+      {
+        planId: "native-plan-1",
+        collisionPolicy: "skip",
+        transferMode: "move",
+      }
     );
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
       3,

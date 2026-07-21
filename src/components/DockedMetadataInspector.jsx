@@ -23,6 +23,7 @@ export default function DockedMetadataInspector({
   onSetReviewState,
   onFocusSelection,
   onUndock,
+  reviewModeEnabled = true,
 }) {
   const count = useMemo(
     () => deriveMetadataSelectionCount(selectionCount, selectedVideos),
@@ -99,6 +100,7 @@ export default function DockedMetadataInspector({
           onSetRating={onSetRating}
           onClearRating={onClearRating}
           onSetReviewState={onSetReviewState}
+          reviewModeEnabled={reviewModeEnabled}
         />
       </div>
     </section>

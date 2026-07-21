@@ -38,6 +38,11 @@ body {
   overflow-anchor: none;
 }
 
+.app.review-mode-active .header {
+  border-bottom-color: rgba(81, 207, 102, 0.5);
+  box-shadow: inset 0 -1px 0 rgba(81, 207, 102, 0.12);
+}
+
 .nav-left {
   display: flex;
   align-items: center;
@@ -106,6 +111,12 @@ body {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: #000;
+}
+
+.review-mode-toggle.active {
+  background: #397947;
+  border-color: #5ad06e;
+  color: #f4fff6;
 }
 
 .toggle-button:disabled {

@@ -329,6 +329,42 @@ describe("Copy Accepted native coordinator", () => {
     });
   });
 
+  it("moves accepted clips only after an exclusive destination copy succeeds", async () => {
+    const rootPath = await temporaryDirectory("move-accepted-root");
+    const destinationPath = await temporaryDirectory("move-accepted-output");
+    const sourcePath = await writeFile(
+      path.join(rootPath, "batch", "move-me.mp4"),
+      "move-video"
+    );
+    const test = harness({
+      rootPath,
+      destinationPath,
+      records: [await recordFor(rootPath, "batch/move-me.mp4")],
+    });
+    const prepared = await test.coordinator.prepare(
+      prepareRequest(test.owner, rootPath)
+    );
+
+    const result = await test.coordinator.start({
+      owner: test.owner,
+      planId: prepared.planId,
+      collisionPolicy: "skip",
+      transferMode: "move",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      transferMode: "move",
+      copiedCount: 1,
+      movedCount: 1,
+    });
+    await expect(fsp.readFile(
+      path.join(destinationPath, "batch", "move-me.mp4"),
+      "utf8"
+    )).resolves.toBe("move-video");
+    await expect(fsp.stat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("never follows a recognized sidecar symbolic link", async () => {
     const rootPath = await temporaryDirectory("copy-sidecar-link-root");
     const destinationPath = await temporaryDirectory("copy-sidecar-link-output");

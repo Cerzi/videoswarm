@@ -48,6 +48,7 @@ describe("useElectronFolderLifecycle", () => {
         setPlaybackMode: vi.fn(),
         setProxyPlaybackEnabled: vi.fn(),
         setReviewAutoAdvance: vi.fn(),
+        setReviewModeEnabled: vi.fn(),
         setFullscreenDetailsOpen: vi.fn(),
         setZoomLevelFromSettings: vi.fn(),
         setVisibleVideos: setVisibleVideosMock.setter,
@@ -100,6 +101,7 @@ describe("useElectronFolderLifecycle", () => {
         playbackMode: "static-hover",
         proxyPlaybackEnabled: true,
         reviewAutoAdvance: true,
+        reviewModeEnabled: false,
         fullscreenDetailsOpen: false,
         metadataInspectorMode: "docked",
       }),
@@ -239,6 +241,7 @@ describe("useElectronFolderLifecycle", () => {
     const setPlaybackMode = vi.fn();
     const setProxyPlaybackEnabled = vi.fn();
     const setReviewAutoAdvance = vi.fn();
+    const setReviewModeEnabled = vi.fn();
     const setFullscreenDetailsOpen = vi.fn();
     const setMetadataInspectorMode = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
@@ -258,6 +261,7 @@ describe("useElectronFolderLifecycle", () => {
         setPlaybackMode,
         setProxyPlaybackEnabled,
         setReviewAutoAdvance,
+        setReviewModeEnabled,
         setFullscreenDetailsOpen,
         setMetadataInspectorMode,
         setZoomLevelFromSettings,
@@ -281,6 +285,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(setPlaybackMode).toHaveBeenCalledWith("static-hover");
     expect(setProxyPlaybackEnabled).toHaveBeenCalledWith(true);
     expect(setReviewAutoAdvance).toHaveBeenCalledWith(true);
+    expect(setReviewModeEnabled).toHaveBeenCalledWith(false);
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
     expect(setMetadataInspectorMode).toHaveBeenCalledWith("docked");
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);

@@ -9,6 +9,7 @@ import {
 } from "../zoom/utils.js";
 import { SortKey } from "../sorting/sorting.js";
 import PlaybackModeControl from "./PlaybackModeControl";
+import { ReviewModeIcon } from "./UiIcons";
 
 // --- Minimal inline SVG icons (fallback for environments without icon libs)
 const Icon = (props) => (
@@ -127,6 +128,8 @@ export default function HeaderBar({
   filtersButtonRef,
   hoverAudioEnabled = false,
   onHoverAudioToggle,
+  reviewModeEnabled = true,
+  onReviewModeToggle,
   playbackMode = "balanced",
   onPlaybackModeChange,
   playbackDecision,
@@ -227,6 +230,24 @@ export default function HeaderBar({
           type="button"
         >
           {hoverAudioEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+        </button>
+
+        <button
+          onClick={() => onReviewModeToggle?.()}
+          className={`toggle-button review-mode-toggle ${
+            reviewModeEnabled ? "active" : ""
+          }`}
+          disabled={isLoadingFolder}
+          title={
+            reviewModeEnabled
+              ? "Disable review mode"
+              : "Enable review mode"
+          }
+          aria-label="Review mode"
+          aria-pressed={reviewModeEnabled}
+          type="button"
+        >
+          <ReviewModeIcon />
         </button>
 
         <div style={dividerStyle}>

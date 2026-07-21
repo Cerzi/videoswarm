@@ -97,6 +97,7 @@ const ContextMenu = ({
   onClose,
   onAction,
   onPlacementChange,
+  reviewModeEnabled = true,
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
@@ -188,7 +189,7 @@ const ContextMenu = ({
         label: 'ⓘ Open details',
         action: 'metadata:open',
       },
-      {
+      reviewModeEnabled ? {
         id: 'review-state',
         label: `✓ Review status${reviewTarget}`,
         children: [
@@ -213,8 +214,8 @@ const ContextMenu = ({
             action: 'metadata:review:unreviewed',
           },
         ],
-      },
-      {
+      } : null,
+      reviewModeEnabled ? {
         id: 'rating',
         label: `★ Rating${reviewTarget}`,
         children: [5, 4, 3, 2, 1].map((stars) => ({
@@ -226,7 +227,7 @@ const ContextMenu = ({
           label: '☆ Clear rating',
           action: 'metadata:rate:clear',
         }),
-      },
+      } : null,
     ]);
 
     pushSection([
@@ -279,6 +280,7 @@ const ContextMenu = ({
     canSingleFileOps,
     contextId,
     electronAPI,
+    reviewModeEnabled,
     selectionCount,
   ]);
 

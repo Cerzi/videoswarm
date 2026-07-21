@@ -57,6 +57,7 @@ const FiltersPopover = forwardRef(
       onReset,
       onClose,
       style,
+      reviewModeEnabled = true,
     },
     ref
   ) => {
@@ -368,6 +369,7 @@ const FiltersPopover = forwardRef(
           </div>
         </section>
 
+        {reviewModeEnabled ? (
         <section className="filters-section">
           <header className="filters-section__title">Review state</header>
           <div className="filters-rating-row" role="group" aria-label="Review state">
@@ -391,6 +393,7 @@ const FiltersPopover = forwardRef(
             Accepted and rejected clips also count as reviewed.
           </span>
         </section>
+        ) : null}
       </div>
     );
   }

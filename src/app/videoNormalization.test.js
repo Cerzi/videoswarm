@@ -31,6 +31,22 @@ describe("normalizeVideoFromMain", () => {
     expect(result.hasAudio).toBeNull();
   });
 
+  it("preserves valid video timing metadata", () => {
+    const result = normalizeVideoFromMain({
+      dimensions: {
+        width: 1920,
+        height: 1080,
+        durationMs: 12_345.6,
+        frameRate: 29.97,
+      },
+    });
+
+    expect(result.dimensions).toMatchObject({
+      durationMs: 12_345.6,
+      frameRate: 29.97,
+    });
+  });
+
   it("only accepts authoritative boolean audio-stream metadata", () => {
     expect(normalizeVideoFromMain({ hasAudio: false }).hasAudio).toBe(false);
     expect(normalizeVideoFromMain({ hasAudio: 1 }).hasAudio).toBeNull();

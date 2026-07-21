@@ -118,11 +118,54 @@ function findAtom(buffer, type) {
   return null;
 }
 
+function readUInt64BE(buffer, offset) {
+  if (offset + 8 > buffer.length) return null;
+  const value =
+    (BigInt(buffer.readUInt32BE(offset)) << 32n) |
+    BigInt(buffer.readUInt32BE(offset + 4));
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+}
+
+function parseMp4Timebox(buffer) {
+  if (!buffer || buffer.length < 20) return null;
+  const version = buffer.readUInt8(0);
+  const timescaleOffset = version === 1 ? 20 : 12;
+  const durationOffset = version === 1 ? 24 : 16;
+  const durationSize = version === 1 ? 8 : 4;
+  if (durationOffset + durationSize > buffer.length) return null;
+  const timescale = buffer.readUInt32BE(timescaleOffset);
+  const duration = version === 1
+    ? readUInt64BE(buffer, durationOffset)
+    : buffer.readUInt32BE(durationOffset);
+  if (!timescale || duration === null || duration <= 0) return null;
+  return { timescale, duration, durationMs: (duration / timescale) * 1000 };
+}
+
+function parseMp4SampleRate(buffer, timescale) {
+  if (!buffer || buffer.length < 8 || !timescale) return null;
+  const entryCount = buffer.readUInt32BE(4);
+  if (entryCount > 1_000_000 || 8 + entryCount * 8 > buffer.length) return null;
+  let samples = 0;
+  let duration = 0;
+  for (let index = 0; index < entryCount; index += 1) {
+    const offset = 8 + index * 8;
+    const sampleCount = buffer.readUInt32BE(offset);
+    const sampleDelta = buffer.readUInt32BE(offset + 4);
+    samples += sampleCount;
+    duration += sampleCount * sampleDelta;
+  }
+  if (!samples || !duration) return null;
+  const rate = (samples * timescale) / duration;
+  return Number.isFinite(rate) && rate > 0 && rate <= 1000 ? rate : null;
+}
+
 function parseMp4Moov(buffer) {
   let offset = 0;
   let videoDimensions = null;
   let fallbackDimensions = null;
   let hasAudio = false;
+  let durationMs = parseMp4Timebox(findAtom(buffer, "mvhd")?.data)?.durationMs ?? null;
+  let frameRate = null;
   while (offset + 8 <= buffer.length) {
     const atom = readAtom(buffer, offset);
     if (!atom) break;
@@ -136,6 +179,16 @@ function parseMp4Moov(buffer) {
           const handlerType = hdlr.data.toString("ascii", 8, 12);
           isVideoTrack = handlerType === "vide";
           isAudioTrack = handlerType === "soun";
+        }
+        if (isVideoTrack) {
+          const mediaTiming = parseMp4Timebox(findAtom(handler.data, "mdhd")?.data);
+          if (durationMs === null && mediaTiming?.durationMs) {
+            durationMs = mediaTiming.durationMs;
+          }
+          const minf = findAtom(handler.data, "minf");
+          const stbl = minf ? findAtom(minf.data, "stbl") : null;
+          const stts = stbl ? findAtom(stbl.data, "stts") : null;
+          frameRate = parseMp4SampleRate(stts?.data, mediaTiming?.timescale);
         }
       }
       if (isAudioTrack) hasAudio = true;
@@ -151,7 +204,9 @@ function parseMp4Moov(buffer) {
     offset = atom.end;
   }
   const dimensions = videoDimensions || fallbackDimensions;
-  return dimensions ? { ...dimensions, hasAudio } : null;
+  return dimensions
+    ? { ...dimensions, hasAudio, durationMs, frameRate }
+    : null;
 }
 
 async function readHandleRange(handle, length, position) {
@@ -244,11 +299,38 @@ function decodeVint(buffer, offset) {
     length += 1;
   }
   if (length > 8 || offset + length > buffer.length) return null;
-  let value = firstByte & (mask - 1);
+  let value = BigInt(firstByte & (mask - 1));
   for (let i = 1; i < length; i++) {
-    value = (value << 8) + buffer[offset + i];
+    value = value * 256n + BigInt(buffer[offset + i]);
   }
-  return { length, value };
+  const unknown = value === (1n << BigInt(length * 7)) - 1n;
+  return {
+    length,
+    unknown,
+    value:
+      value <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(value)
+        : Number.MAX_SAFE_INTEGER,
+  };
+}
+
+function readUnsigned(buffer, offset, length) {
+  if (length < 1 || length > 8 || offset + length > buffer.length) return null;
+  let value = 0n;
+  for (let index = 0; index < length; index += 1) {
+    value = value * 256n + BigInt(buffer[offset + index]);
+  }
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+}
+
+function readEbmlFloat(buffer, offset, length) {
+  if (length === 4 && offset + 4 <= buffer.length) {
+    return buffer.readFloatBE(offset);
+  }
+  if (length === 8 && offset + 8 <= buffer.length) {
+    return buffer.readDoubleBE(offset);
+  }
+  return null;
 }
 
 function parseMatroska(buffer) {
@@ -258,8 +340,15 @@ function parseMatroska(buffer) {
   const VIDEO_ID = Buffer.from([0xe0]);
   const PIXEL_WIDTH_ID = Buffer.from([0xb0]);
   const PIXEL_HEIGHT_ID = Buffer.from([0xba]);
+  const SEGMENT_ID = Buffer.from([0x18, 0x53, 0x80, 0x67]);
+  const INFO_ID = Buffer.from([0x15, 0x49, 0xa9, 0x66]);
+  const TIMECODE_SCALE_ID = Buffer.from([0x2a, 0xd7, 0xb1]);
+  const DURATION_ID = Buffer.from([0x44, 0x89]);
+  const DEFAULT_DURATION_ID = Buffer.from([0x23, 0xe3, 0x83]);
   let videoDimensions = null;
   let hasAudio = false;
+  let durationMs = null;
+  let frameRate = null;
 
   while (offset < buffer.length) {
     const idInfo = decodeVint(buffer, offset);
@@ -270,11 +359,43 @@ function parseMatroska(buffer) {
     const sizeInfo = decodeVint(buffer, offset);
     if (!sizeInfo) break;
     offset += sizeInfo.length;
-    const dataSize = sizeInfo.value;
+    const dataSize = sizeInfo.unknown
+      ? buffer.length - offset
+      : sizeInfo.value;
 
     if (offset + dataSize > buffer.length) break;
 
-    if (idBytes.equals(TRACKS_ID)) {
+    if (idBytes.equals(SEGMENT_ID)) {
+      const nested = parseMatroska(buffer.slice(offset, offset + dataSize));
+      if (nested) return nested;
+    } else if (idBytes.equals(INFO_ID)) {
+      const infoBuffer = buffer.slice(offset, offset + dataSize);
+      let infoOffset = 0;
+      let timecodeScale = 1_000_000;
+      let durationTicks = null;
+      while (infoOffset < infoBuffer.length) {
+        const infoId = decodeVint(infoBuffer, infoOffset);
+        if (!infoId) break;
+        const infoIdBytes = infoBuffer.slice(infoOffset, infoOffset + infoId.length);
+        infoOffset += infoId.length;
+        const infoSize = decodeVint(infoBuffer, infoOffset);
+        if (!infoSize) break;
+        infoOffset += infoSize.length;
+        const elementSize = infoSize.unknown
+          ? infoBuffer.length - infoOffset
+          : infoSize.value;
+        if (infoOffset + elementSize > infoBuffer.length) break;
+        if (infoIdBytes.equals(TIMECODE_SCALE_ID)) {
+          timecodeScale = readUnsigned(infoBuffer, infoOffset, elementSize) || timecodeScale;
+        } else if (infoIdBytes.equals(DURATION_ID)) {
+          durationTicks = readEbmlFloat(infoBuffer, infoOffset, elementSize);
+        }
+        infoOffset += elementSize;
+      }
+      if (Number.isFinite(durationTicks) && durationTicks > 0) {
+        durationMs = (durationTicks * timecodeScale) / 1_000_000;
+      }
+    } else if (idBytes.equals(TRACKS_ID)) {
       const tracksBuffer = buffer.slice(offset, offset + dataSize);
       let tracksOffset = 0;
       while (tracksOffset < tracksBuffer.length) {
@@ -301,6 +422,7 @@ function parseMatroska(buffer) {
         let height = null;
         let isVideo = false;
         let isAudio = false;
+        let defaultDuration = null;
 
         while (trackBufferOffset < trackBuffer.length) {
           const elementIdInfo = decodeVint(trackBuffer, trackBufferOffset);
@@ -326,6 +448,12 @@ function parseMatroska(buffer) {
             } else if (trackType === 2) {
               isAudio = true;
             }
+          } else if (elementIdBytes.equals(DEFAULT_DURATION_ID)) {
+            defaultDuration = readUnsigned(
+              trackBuffer,
+              trackBufferOffset,
+              elementSize
+            );
           } else if (elementIdBytes.equals(VIDEO_ID)) {
             let videoOffset = trackBufferOffset;
             const videoBuffer = trackBuffer.slice(videoOffset, videoOffset + elementSize);
@@ -367,6 +495,10 @@ function parseMatroska(buffer) {
         if (isAudio) hasAudio = true;
         if (isVideo && width && height && !videoDimensions) {
           videoDimensions = { width, height };
+          if (defaultDuration > 0) {
+            const rate = 1_000_000_000 / defaultDuration;
+            frameRate = Number.isFinite(rate) && rate <= 1000 ? rate : null;
+          }
         }
       }
     }
@@ -374,7 +506,9 @@ function parseMatroska(buffer) {
     offset += dataSize;
   }
 
-  return videoDimensions ? { ...videoDimensions, hasAudio } : null;
+  return videoDimensions
+    ? { ...videoDimensions, hasAudio, durationMs, frameRate }
+    : null;
 }
 
 async function extractMatroskaDimensions(filePath) {
@@ -441,6 +575,14 @@ async function getVideoDimensions(filePath, stats = null) {
         aspectRatio: dims.width / dims.height,
         hasAudio:
           typeof dims.hasAudio === "boolean" ? dims.hasAudio : null,
+        durationMs:
+          Number.isFinite(dims.durationMs) && dims.durationMs > 0
+            ? dims.durationMs
+            : null,
+        frameRate:
+          Number.isFinite(dims.frameRate) && dims.frameRate > 0
+            ? dims.frameRate
+            : null,
       };
     }
     return null;

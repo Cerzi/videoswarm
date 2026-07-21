@@ -188,6 +188,7 @@ export function FullscreenHeaderActions({
   onSurfaceChange,
   onSafeAction,
   onRetry,
+  reviewModeEnabled = true,
 }) {
   const menuRef = useRef(null);
   const helpRef = useRef(null);
@@ -278,7 +279,7 @@ export function FullscreenHeaderActions({
           <header>
             <div>
               <h3 id="fullscreen-shortcuts-title">Fullscreen shortcuts</h3>
-              <p>Review the active clip without leaving the Loupe.</p>
+              <p>Control the active clip without leaving the Loupe.</p>
             </div>
             <button
               type="button"
@@ -289,7 +290,10 @@ export function FullscreenHeaderActions({
             </button>
           </header>
           <div className="fullscreen-review-panel__help-grid">
-            {FULLSCREEN_SHORTCUT_HELP_SECTIONS.map((section) => (
+            {FULLSCREEN_SHORTCUT_HELP_SECTIONS.filter(
+              (section) =>
+                reviewModeEnabled || section.id !== "fullscreen-review"
+            ).map((section) => (
               <section key={section.id}>
                 <h4>{section.title}</h4>
                 {section.shortcuts.map((shortcut) => (

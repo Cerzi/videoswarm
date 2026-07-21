@@ -121,7 +121,21 @@ describe("videoDimensions internals", () => {
     hdlrData.writeUInt32BE(0, 4); // pre_defined
     hdlrData.write("vide", 8, 4, "ascii");
     const hdlrAtom = makeAtom("hdlr", hdlrData);
-    const mdiaAtom = makeAtom("mdia", hdlrAtom);
+    const mdhdData = Buffer.alloc(20);
+    mdhdData.writeUInt32BE(1000, 12);
+    mdhdData.writeUInt32BE(5000, 16);
+    const sttsData = Buffer.alloc(16);
+    sttsData.writeUInt32BE(1, 4);
+    sttsData.writeUInt32BE(120, 8);
+    sttsData.writeUInt32BE(40, 12);
+    const mdiaAtom = makeAtom(
+      "mdia",
+      Buffer.concat([
+        hdlrAtom,
+        makeAtom("mdhd", mdhdData),
+        makeAtom("minf", makeAtom("stbl", makeAtom("stts", sttsData))),
+      ])
+    );
 
     const trakAtom = makeAtom("trak", Buffer.concat([tkhdAtom, mdiaAtom]));
     const audioHandlerData = Buffer.alloc(24);
@@ -130,13 +144,21 @@ describe("videoDimensions internals", () => {
       "trak",
       makeAtom("mdia", makeAtom("hdlr", audioHandlerData))
     );
-    const moovAtom = makeAtom("moov", Buffer.concat([trakAtom, audioTrack]));
+    const mvhdData = Buffer.alloc(20);
+    mvhdData.writeUInt32BE(1000, 12);
+    mvhdData.writeUInt32BE(5000, 16);
+    const moovAtom = makeAtom(
+      "moov",
+      Buffer.concat([makeAtom("mvhd", mvhdData), trakAtom, audioTrack])
+    );
 
     const dims = parseMp4Moov(moovAtom.slice(8));
     expect(dims).toBeTruthy();
     expect(dims.width).toBeCloseTo(1280, 3);
     expect(dims.height).toBeCloseTo(720, 3);
     expect(dims.hasAudio).toBe(true);
+    expect(dims.durationMs).toBe(5000);
+    expect(dims.frameRate).toBe(25);
   });
 
   it("parses matroska track entry pixel dimensions", () => {
@@ -144,9 +166,15 @@ describe("videoDimensions internals", () => {
     const pixelHeight = makeEbmlElement(Buffer.from([0xba]), Buffer.from([0x04, 0x38])); // 1080
     const video = makeEbmlElement(Buffer.from([0xe0]), Buffer.concat([pixelWidth, pixelHeight]));
     const trackType = makeEbmlElement(Buffer.from([0x83]), Buffer.from([0x01]));
+    const defaultDuration = Buffer.alloc(4);
+    defaultDuration.writeUInt32BE(41_666_667);
     const trackEntry = makeEbmlElement(
       Buffer.from([0xae]),
-      Buffer.concat([trackType, video])
+      Buffer.concat([
+        trackType,
+        makeEbmlElement(Buffer.from([0x23, 0xe3, 0x83]), defaultDuration),
+        video,
+      ])
     );
     const audioTrack = makeEbmlElement(
       Buffer.from([0xae]),
@@ -156,12 +184,20 @@ describe("videoDimensions internals", () => {
       Buffer.from([0x16, 0x54, 0xae, 0x6b]),
       Buffer.concat([trackEntry, audioTrack])
     );
+    const duration = Buffer.alloc(8);
+    duration.writeDoubleBE(2500);
+    const info = makeEbmlElement(
+      Buffer.from([0x15, 0x49, 0xa9, 0x66]),
+      makeEbmlElement(Buffer.from([0x44, 0x89]), duration)
+    );
 
-    const dims = parseMatroska(tracks);
+    const dims = parseMatroska(Buffer.concat([info, tracks]));
     expect(dims).toBeTruthy();
     expect(dims.width).toBe(1920);
     expect(dims.height).toBe(1080);
     expect(dims.hasAudio).toBe(true);
+    expect(dims.durationMs).toBe(2500);
+    expect(dims.frameRate).toBeCloseTo(24, 3);
   });
 
   it("stats before forming a key when callers omit file stats", async () => {

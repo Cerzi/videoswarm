@@ -63,7 +63,12 @@ describe("ProcessReviewResultsDialog", () => {
 
     expect(screen.getByText(/batch\/a · 4 files · 4 unique/i)).toBeInTheDocument();
     expect(screen.getByText("3 reviewed")).toBeInTheDocument();
-    expect(screen.getByText(/Copy 1 accepted file/i)).toBeInTheDocument();
+    expect(screen.getByText(/Send 1 accepted file/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Copy accepted clips; choose a destination first/i,
+      })
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Move 1 to Bin" }));
 
     await waitFor(() => expect(props.onTrashRejects).toHaveBeenCalledTimes(1));
@@ -88,7 +93,7 @@ describe("ProcessReviewResultsDialog", () => {
     });
     render(<ProcessReviewResultsDialog {...props} />);
 
-    expect(screen.getByText(/Copy 0 accepted files/i)).toBeInTheDocument();
+    expect(screen.getByText(/Send 0 accepted files/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose destination…" })).toBeDisabled();
   });
 
@@ -131,13 +136,15 @@ describe("ProcessReviewResultsDialog", () => {
 
     await waitFor(() => {
       expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith({ includeSidecars: true });
-      expect(screen.getByRole("button", { name: "Copy 2 files" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /Copy 2 files/ })).toBeEnabled();
     });
-    expect(screen.getByText("Accepted clips")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Accepted clips" })
+    ).toBeInTheDocument();
     expect(screen.getByText("2.0 MB")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy 2 files" }));
-    expect(props.onStartAcceptedCopy).toHaveBeenCalledWith("copy-plan-1");
+    fireEvent.click(screen.getByRole("button", { name: /Copy 2 files/ }));
+    expect(props.onStartAcceptedCopy).toHaveBeenCalledWith("copy-plan-1", "copy");
 
     rerender(
       <ProcessReviewResultsDialog
@@ -184,6 +191,32 @@ describe("ProcessReviewResultsDialog", () => {
     expect(screen.getByText(/1 media file copied · 1 workflow JSON/i)).toBeInTheDocument();
   });
 
+  it("starts an explicit move only after a destination is locked in", async () => {
+    const props = dialogProps({
+      onStartAcceptedCopy: vi.fn().mockResolvedValue({
+        success: true,
+        transferMode: "move",
+        copiedCount: 1,
+        movedCount: 1,
+      }),
+    });
+    render(<ProcessReviewResultsDialog {...props} />);
+
+    expect(
+      screen.getByRole("button", {
+        name: /Move accepted clips; choose a destination first/i,
+      })
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Move 1 file; remove originals/i })
+    );
+
+    expect(props.onStartAcceptedCopy).toHaveBeenCalledWith("copy-plan-1", "move");
+    expect(await screen.findByRole("status")).toHaveTextContent("Move complete");
+    expect(screen.getByText(/1 media file moved/i)).toBeInTheDocument();
+  });
+
   it("preflights collisions without displaying absolute paths and can abandon the plan", async () => {
     const props = dialogProps({
       onPrepareAcceptedCopy: vi.fn().mockResolvedValue({
@@ -205,12 +238,14 @@ describe("ProcessReviewResultsDialog", () => {
     expect(await screen.findByText("nested/existing.mp4")).toBeInTheDocument();
     expect(screen.queryByText(/private\/exports/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Skip existing and copy 2" })
+      screen.getByRole("button", { name: /Copy 2 files/ })
     ).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose another folder" }));
-    expect(props.onCancelAcceptedCopy).toHaveBeenCalledWith("copy-plan-1");
-    expect(screen.getByRole("button", { name: "Choose destination…" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Change…" }));
+    await waitFor(() =>
+      expect(props.onCancelAcceptedCopy).toHaveBeenCalledWith("copy-plan-1")
+    );
+    expect(await screen.findByRole("button", { name: "Change…" })).toBeEnabled();
   });
 
   it("returns quietly to idle when destination selection is cancelled", async () => {
@@ -253,7 +288,7 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    await screen.findByRole("button", { name: "Copy 1 file" });
+    await screen.findByRole("button", { name: /Copy 1 file/ });
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(props.onCancelAcceptedCopy).toHaveBeenCalledTimes(1);
@@ -269,7 +304,7 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel copy" }));
     expect(props.onCancelAcceptedCopy).toHaveBeenCalledWith("copy-plan-1");
     expect(screen.getByRole("button", { name: "Cancel requested" })).toBeDisabled();
@@ -302,7 +337,7 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel copy" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -338,7 +373,7 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Copy finished with issues");
@@ -385,13 +420,13 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Copy could not be completed");
     expect(alert).toHaveTextContent("destination changed after preflight");
-    expect(screen.getByRole("button", { name: "Copy again" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Copy 1 file" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Transfer again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Copy 1 file/ })).not.toBeInTheDocument();
   });
 
   it("retires an expired plan even when native no longer returns its id", async () => {
@@ -406,12 +441,12 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "plan expired"
     );
-    expect(screen.getByRole("button", { name: "Copy again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Transfer again" })).toBeEnabled();
   });
 
   it("cancels a pending plan when unmounted", async () => {
@@ -419,7 +454,7 @@ describe("ProcessReviewResultsDialog", () => {
     const { unmount } = render(<ProcessReviewResultsDialog {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    await screen.findByRole("button", { name: "Copy 1 file" });
+    await screen.findByRole("button", { name: /Copy 1 file/ });
     unmount();
 
     expect(props.onCancelAcceptedCopy).toHaveBeenCalledTimes(1);

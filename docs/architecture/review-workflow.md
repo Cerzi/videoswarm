@@ -160,12 +160,13 @@ authorization and identity checks use a separate 16-worker bounded pool;
 failed-item retry grants retain their original identity and profile ownership
 constraints.
 
-### Copy Accepted
+### Accepted clip transfer
 
 Status: **Implemented** (2026-07-19)
 
-Copy Accepted turns the review result into a usable, non-destructive media
-collection. It operates on the same authoritative, unfiltered navigation scope
+Accepted clip transfer turns the review result into a usable media collection.
+The user locks in a native-picked destination, then explicitly chooses Copy or
+Move. It operates on the same authoritative, unfiltered navigation scope
 shown by Process Results: the active indexed root, current directory, and
 current-folder/current-subtree/all-descendants scope. An accepted file is a
 present file instance whose content-keyed review state is exactly `pick`.
@@ -181,8 +182,11 @@ picker performs no database materialization or filesystem work. Renderer
 records and renderer-supplied source or destination paths are never accepted
 as authority.
 
-The default copy preserves each media file's path relative to the library
-root beneath the chosen destination. An optional **Include adjacent JSON
+Both operations preserve each media file's path relative to the library root
+beneath the chosen destination. Copy leaves originals untouched. Move uses the
+same exclusive copy and identity verification, then removes the source only
+after its destination is complete; an unlink failure is reported as a partial
+result and leaves the source in place. An optional **Include adjacent JSON
 sidecars** choice is off by default. When enabled, the plan checks only the
 three already-recognized exact adjacent candidates for each accepted clip, in
 the established order:
@@ -194,7 +198,7 @@ the established order:
 There is no directory scan or fuzzy sidecar matching. A sidecar reached by
 more than one media item is copied at most once.
 
-Copy Accepted never overwrites a destination file. Before copying, a bounded
+Accepted clip transfer never overwrites a destination file. Before execution, a bounded
 main-process planner validates source containment and identity, normalizes
 every relative destination, detects both existing-target and intra-plan
 collisions, and reports the files that will be skipped. The user confirms the
@@ -211,9 +215,11 @@ operations, and returns a truthful partial result; files already copied remain
 valid. Per-file failures do not abort unrelated copies, and overflow beyond the
 bounded detailed failure list remains visible through aggregate counts.
 
-The source files, their review/rating/tag metadata, and the source library
-index are never changed. A successful copy does not automatically register the
-destination as a library or transfer profile metadata. Profile changes, owner
+Copy never changes source files. Move changes only source files whose exclusive
+destination copy and post-copy identity check succeeded; the normal watcher
+reconciles those removals with the library index. Neither operation changes
+review/rating/tag metadata, automatically registers the destination as a
+library, or transfers profile metadata. Profile changes, owner
 destruction, source-root invalidation, application shutdown, and relaunch first
 cancel the job and then drain its bounded in-flight work. Stale progress and
 completion events are ignored by owner, profile generation, and job token.
@@ -222,8 +228,6 @@ completion events are ignored by owner, profile generation, and job token.
 
 Status: **Unimplemented**
 
-- Move accepted media. Cross-device move recovery and rollback need a separate
-  destructive-operation design after copy behavior has been proven.
 - Metadata transfer for copied content. Fingerprint v1 includes creation time,
   so a copied instance cannot yet be promised the same content identity.
 - Result sets above 2,000 rejects without narrowing folder scope. A future
@@ -245,10 +249,12 @@ Status: **Unimplemented**
 - Reject trashing is explicit, limited to local Electron-backed instances,
   bounded, identity-confirmed, and reports partial failures without touching
   sidecars.
-- Copy Accepted satisfies the contract above: authoritative `pick` instances
+- Accepted clip Move/Copy satisfies the contract above: authoritative `pick` instances
   only, native path ownership,
   relative-tree preservation, no overwrite, bounded preflight/job/progress,
-  cancellation, partial results, and no source or metadata mutation.
+  cancellation, and partial results. Copy preserves sources; Move removes only
+  sources whose destination copy and identity verification succeeded. Neither
+  action mutates profile metadata.
 
 ## Implementation and verification record
 
@@ -289,7 +295,7 @@ deferred work were **Implemented**.
 
 ### 2026-07-19
 
-Copy Accepted is **Implemented**.
+Accepted clip Copy is **Implemented**.
 
 - The renderer sends only the active root, relative directory, folder scope,
   and the optional sidecar flag. The main process reads present `pick`
@@ -328,3 +334,14 @@ Copy Accepted is **Implemented**.
 - Completion verification passed 1,042 standard Vitest tests, 51 Electron-ABI
   SQLite tests, ESLint, main/preload/native syntax checks, the Vite production
   build, and `git diff --check` on 2026-07-19.
+
+### 2026-07-21
+
+Accepted clip Move and the destination-first Move/Copy flow are **Implemented**.
+
+- A selected destination remains visible while both explicit transfer actions
+  stay disabled until bounded preflight succeeds.
+- Move shares the copy planner, collision policy, exclusive destination write,
+  identity verification, progress, cancellation, and partial-result reporting.
+- Each source is unlinked only after its destination copy is complete and the
+  source identity still matches the prepared plan.

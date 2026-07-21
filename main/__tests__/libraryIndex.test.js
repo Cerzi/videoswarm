@@ -337,11 +337,23 @@ if (!database || databaseLoadError) {
         entries: [
           {
             ...direct,
-            dimensions: { width: 512, height: 288, hasAudio: true },
+            dimensions: {
+              width: 512,
+              height: 288,
+              hasAudio: true,
+              durationMs: 12_345.6,
+              frameRate: 29.97,
+            },
           },
           {
             ...nested,
-            dimensions: { width: 720, height: 1280, hasAudio: false },
+            dimensions: {
+              width: 720,
+              height: 1280,
+              hasAudio: false,
+              durationMs: 6_000,
+              frameRate: 24,
+            },
           },
           removed,
         ],
@@ -373,7 +385,13 @@ if (!database || databaseLoadError) {
           rating: null,
           reviewState: 'pick',
           hasAudio: false,
-          dimensions: { width: 720, height: 1280, aspectRatio: 0.5625 },
+          dimensions: {
+            width: 720,
+            height: 1280,
+            aspectRatio: 0.5625,
+            durationMs: 6_000,
+            frameRate: 24,
+          },
         }),
         expect.objectContaining({
           absolutePath: direct.filePath,
@@ -382,7 +400,13 @@ if (!database || databaseLoadError) {
           rating: 5,
           reviewState: 'reviewed',
           hasAudio: true,
-          dimensions: { width: 512, height: 288, aspectRatio: 512 / 288 },
+          dimensions: {
+            width: 512,
+            height: 288,
+            aspectRatio: 512 / 288,
+            durationMs: 12_345.6,
+            frameRate: 29.97,
+          },
         }),
       ]);
       expect(

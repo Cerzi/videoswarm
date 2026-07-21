@@ -132,6 +132,24 @@ describe('ContextMenu', () => {
     expect(onAction).toHaveBeenCalledWith('metadata:review:pick');
   });
 
+  test('hides review and rating actions when review mode is disabled', () => {
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 50, y: 50 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        reviewModeEnabled={false}
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole('menuitem', { name: /Review status/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Rating/i })).toBeNull();
+  });
+
   test('keeps desktop actions visible but disabled when the preload bridge is unavailable', () => {
     render(
       <ContextMenu

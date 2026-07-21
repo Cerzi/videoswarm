@@ -90,6 +90,21 @@ describe("MetadataInspectorContent", () => {
     expect(screen.getByText("A prompt that starts collapsed")).toBeVisible();
   });
 
+  it("hides review and rating controls when review mode is disabled", () => {
+    render(
+      <MetadataInspectorContent
+        selectionCount={1}
+        selectedVideos={[singleVideo]}
+        selectionKey="clip-one"
+        reviewModeEnabled={false}
+      />
+    );
+
+    expect(screen.queryByText("Rating")).toBeNull();
+    expect(screen.queryByText("Review")).toBeNull();
+    expect(screen.getByText("Tags")).toBeVisible();
+  });
+
   it("preserves mixed batch semantics and exposes the tag input ref", () => {
     const inputRef = createRef();
     const onApplyTagToSelection = vi.fn();

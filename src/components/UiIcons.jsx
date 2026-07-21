@@ -109,3 +109,31 @@ export function PlusIcon(props) {
     </Icon>
   );
 }
+
+export function ReviewModeIcon(props) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="m7.5 12 3 3 6-7" />
+    </Icon>
+  );
+}
+
+export function CopyIcon(props) {
+  return (
+    <Icon {...props}>
+      <rect x="8" y="8" width="11" height="11" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </Icon>
+  );
+}
+
+export function MoveIcon(props) {
+  return (
+    <Icon {...props}>
+      <path d="M5 12h13" />
+      <path d="m14 8 4 4-4 4" />
+      <path d="M5 7v10" />
+    </Icon>
+  );
+}
