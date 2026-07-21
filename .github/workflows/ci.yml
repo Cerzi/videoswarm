@@ -99,3 +99,31 @@ jobs:
           xvfb-run -a
           npx playwright test tests/electron/deb-package.smoke.spec.cjs
           --config=playwright.electron.config.cjs
+
+  windows-test:
+    name: Windows test and build
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install
+        env:
+          npm_config_msvs_version: '2022'
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests and coverage (Electron ABI)
+        run: npm run test:coverage
+
+      - name: Build renderer
+        run: npm run vite:build

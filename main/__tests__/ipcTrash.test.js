@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRequire } from "module";
+import path from "path";
 
 const require = createRequire(import.meta.url);
 const {
@@ -7,6 +8,9 @@ const {
   mapTrashWorkBounded,
   trashAuthorizedPaths,
 } = require("../ipc-trash");
+
+const testPath = (...segments) =>
+  path.join(path.parse(process.cwd()).root, ...segments);
 
 function createClock(initial = 1_000) {
   let current = initial;
@@ -154,22 +158,26 @@ describe("authorized trash service", () => {
 describe("trash confirmation capability store", () => {
   it("issues cryptographically shaped tokens and validates confirmed subsets", () => {
     const store = createTrashConfirmationStore();
+    const firstPath = testPath("library", "a.mp4");
+    const secondPath = testPath("library", "b.mp4");
+    const secondAlias = `${testPath("library", "sub")}${path.sep}..${path.sep}b.mp4`;
+    const thirdPath = testPath("library", "c.mp4");
     const first = store.issue({
       ownerId: 17,
       scopeId: "profile-a",
       generation: 4,
-      paths: ["/library/a.mp4", "/library/sub/../b.mp4"],
+      paths: [firstPath, secondAlias],
       bindings: {
-        "/library/a.mp4": "identity-a",
-        "/library/b.mp4": "identity-b",
+        [firstPath]: "identity-a",
+        [secondPath]: "identity-b",
       },
     });
     const second = store.issue({
       ownerId: 17,
       scopeId: "profile-a",
       generation: 4,
-      paths: ["/library/c.mp4"],
-      bindings: { "/library/c.mp4": "identity-c" },
+      paths: [thirdPath],
+      bindings: { [thirdPath]: "identity-c" },
     });
 
     expect(first.token).toMatch(/^[a-f0-9]{64}$/);
@@ -181,32 +189,35 @@ describe("trash confirmation capability store", () => {
         ownerId: 17,
         scopeId: "profile-a",
         generation: 4,
-        paths: ["/library/b.mp4"],
+        paths: [secondPath],
       })
     ).toMatchObject({
-      paths: ["/library/b.mp4"],
-      bindings: { "/library/b.mp4": "identity-b" },
+      paths: [secondPath],
+      bindings: { [secondPath]: "identity-b" },
       expiresAt: first.expiresAt,
     });
   });
 
   it("consumes a grant so a confirmed path cannot be replayed", () => {
     const store = createTrashConfirmationStore();
+    const confirmedPath = testPath("library", "a.mp4");
     const grant = store.issue({
       ownerId: 1,
       scopeId: "default",
       generation: 1,
-      paths: ["/library/a.mp4"],
+      paths: [confirmedPath],
     });
     const request = {
       token: grant.token,
       ownerId: 1,
       scopeId: "default",
       generation: 1,
-      paths: ["/library/a.mp4"],
+      paths: [confirmedPath],
     };
 
-    expect(store.consume(request)).toMatchObject({ paths: ["/library/a.mp4"] });
+    expect(store.consume(request)).toMatchObject({
+      paths: [confirmedPath],
+    });
     expect(() => store.consume(request)).toThrow(
       expect.objectContaining({ code: "TRASH_CONFIRMATION_NOT_FOUND" })
     );
@@ -215,18 +226,20 @@ describe("trash confirmation capability store", () => {
 
   it("rejects ownership, profile generation, empty, and out-of-set requests", () => {
     const store = createTrashConfirmationStore();
+    const firstPath = testPath("library", "a.mp4");
+    const secondPath = testPath("library", "b.mp4");
     const { token } = store.issue({
       ownerId: 8,
       scopeId: "profile-a",
       generation: 2,
-      paths: ["/library/a.mp4", "/library/b.mp4"],
+      paths: [firstPath, secondPath],
     });
     const request = {
       token,
       ownerId: 8,
       scopeId: "profile-a",
       generation: 2,
-      paths: ["/library/a.mp4"],
+      paths: [firstPath],
     };
 
     expect(() => store.validate({ ...request, ownerId: 9 })).toThrow(
@@ -242,7 +255,7 @@ describe("trash confirmation capability store", () => {
       expect.objectContaining({ code: "INVALID_TRASH_CONFIRMATION_PATHS" })
     );
     expect(() =>
-      store.validate({ ...request, paths: ["/library/not-confirmed.mp4"] })
+      store.validate({ ...request, paths: [testPath("library", "not-confirmed.mp4")] })
     ).toThrow(
       expect.objectContaining({ code: "TRASH_CONFIRMATION_PATH_MISMATCH" })
     );
@@ -255,14 +268,14 @@ describe("trash confirmation capability store", () => {
       ownerId: 1,
       scopeId: "default",
       generation: 1,
-      paths: ["/library/a.mp4"],
+      paths: [testPath("library", "a.mp4")],
     });
     const request = {
       token: grant.token,
       ownerId: 1,
       scopeId: "default",
       generation: 1,
-      paths: ["/library/a.mp4"],
+      paths: [testPath("library", "a.mp4")],
     };
 
     clock.advance(29_999);
@@ -293,9 +306,9 @@ describe("trash confirmation capability store", () => {
         paths: [pathName],
       });
 
-    issue("/library/a.mp4");
-    issue("/library/b.mp4");
-    expect(() => issue("/library/c.mp4")).toThrow(
+    issue(testPath("library", "a.mp4"));
+    issue(testPath("library", "b.mp4"));
+    expect(() => issue(testPath("library", "c.mp4"))).toThrow(
       expect.objectContaining({ code: "TRASH_CONFIRMATION_GRANT_LIMIT" })
     );
     expect(() =>
@@ -303,12 +316,12 @@ describe("trash confirmation capability store", () => {
         ownerId: 1,
         scopeId: "default",
         generation: 1,
-        paths: ["/a", "/b", "/c"],
+        paths: [testPath("a"), testPath("b"), testPath("c")],
       })
     ).toThrow(expect.objectContaining({ code: "INVALID_TRASH_CONFIRMATION_PATHS" }));
 
     clock.advance(30_000);
-    expect(() => issue("/library/c.mp4")).not.toThrow();
+    expect(() => issue(testPath("library", "c.mp4"))).not.toThrow();
     expect(store.snapshot()).toMatchObject({ grants: 1 });
   });
 
@@ -322,7 +335,7 @@ describe("trash confirmation capability store", () => {
         ownerId,
         scopeId,
         generation,
-        paths: [`/library/${fileName}`],
+        paths: [testPath("library", fileName)],
       });
 
     issue(1, "one", 1, "a.mp4");

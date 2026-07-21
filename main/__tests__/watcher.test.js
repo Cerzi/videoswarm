@@ -8,6 +8,7 @@ import {
 } from "vitest";
 import { EventEmitter } from "events";
 import { createRequire } from "module";
+import path from "path";
 
 const require = createRequire(import.meta.url);
 const chokidar = require("chokidar");
@@ -227,20 +228,20 @@ describe("folder watcher sessions", () => {
     await flushPromises();
 
     expect(createVideoFileObject.mock.calls.map((call) => call[0]).sort()).toEqual([
-      "/library/changed.mp4",
-      "/library/new.mp4",
+      path.resolve("/library/changed.mp4"),
+      path.resolve("/library/new.mp4"),
     ]);
     expect(onDirectoryAggregatesDirty).toHaveBeenCalledTimes(3);
     expect(changed).toHaveBeenCalledWith(
-      { id: "/library/changed.mp4" },
+      { id: path.resolve("/library/changed.mp4") },
       expect.objectContaining({ sessionId: result.sessionId })
     );
     expect(added).toHaveBeenCalledWith(
-      { id: "/library/new.mp4" },
+      { id: path.resolve("/library/new.mp4") },
       expect.objectContaining({ sessionId: result.sessionId })
     );
     expect(removed).toHaveBeenCalledWith(
-      "/library/removed.mp4",
+      path.resolve("/library/removed.mp4"),
       expect.objectContaining({ sessionId: result.sessionId })
     );
     expect(watcher.getSnapshot()).toMatchObject({
@@ -254,8 +255,8 @@ describe("folder watcher sessions", () => {
     const scanFolderForChanges = vi.fn(async (_folderPath, options) => {
       expect(options.pollingState).toMatchObject({ initialized: true });
       expect([...options.pollingState.lastFiles.keys()].sort()).toEqual([
-        "/library/one.mp4",
-        "/library/two.mp4",
+        path.resolve("/library/one.mp4"),
+        path.resolve("/library/two.mp4"),
       ]);
     });
     const watcher = createFolderWatcher({
@@ -319,7 +320,7 @@ describe("folder watcher sessions", () => {
     ).resolves.toMatchObject({ success: true, removed: 1 });
 
     expect(removed).toHaveBeenCalledWith(
-      "/library/deleted-before-attach.mp4",
+      path.resolve("/library/deleted-before-attach.mp4"),
       expect.objectContaining({ sessionId: result.sessionId })
     );
     await watcher.stop();

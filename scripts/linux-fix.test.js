@@ -8,6 +8,7 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const linuxFix = require('./linux-fix.js').default;
+const linuxOnlyIt = process.platform === 'linux' ? it : it.skip;
 const temporaryDirectories = new Set();
 const debianAfterInstall = fs.readFileSync(
   path.join(process.cwd(), 'scripts', 'deb-after-install.tpl'),
@@ -49,7 +50,7 @@ function runLauncher(executablePath, args, environment = {}) {
 }
 
 describe('packaged Debian launcher', () => {
-  it('runs the packaged executable with sandboxing on by default', async () => {
+  linuxOnlyIt('runs the packaged executable with sandboxing on by default', async () => {
     const { appOutDir, executablePath } = installTestLauncher();
 
     await linuxFix({ electronPlatformName: 'linux', appOutDir });
@@ -62,7 +63,7 @@ describe('packaged Debian launcher', () => {
     expect(fs.statSync(executablePath).mode & 0o777).toBe(0o755);
   });
 
-  it('only disables the sandbox through the explicit compatibility escape hatch', async () => {
+  linuxOnlyIt('only disables the sandbox through the explicit compatibility escape hatch', async () => {
     const { appOutDir, executablePath } = installTestLauncher();
 
     await linuxFix({ electronPlatformName: 'linux', appOutDir });
@@ -81,7 +82,7 @@ describe('packaged Debian launcher', () => {
     expect(result.stderrText).toContain('Chromium OS sandbox disabled');
   });
 
-  it('resolves the symlink used by an installed Debian command', async () => {
+  linuxOnlyIt('resolves the symlink used by an installed Debian command', async () => {
     const { appOutDir, executablePath } = installTestLauncher();
     const commandDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'videoswarm-bin-'));
     temporaryDirectories.add(commandDirectory);
@@ -141,7 +142,7 @@ describe('Debian post-install sandbox contract', () => {
     expect(debianAfterInstall).toContain('update-desktop-database');
   });
 
-  it('uses only supported builder macros and renders as valid Bash', () => {
+  linuxOnlyIt('uses only supported builder macros and renders as valid Bash', () => {
     const macros = Array.from(
       debianAfterInstall.matchAll(/\$\{([a-zA-Z]+)\}/g),
       (match) => match[1],
