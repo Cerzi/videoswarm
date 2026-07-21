@@ -143,22 +143,53 @@ describe("LibrarySidebar", () => {
     expect(screen.queryByRole("button", { name: /review Wan outputs/i })).toBeNull();
   });
 
-  it("sorts the visible folder tree by name in either direction", () => {
+  it("applies the selected name order to every expanded folder depth", () => {
+    const deepTree = buildFolderTree({
+      rootName: "outputs",
+      directorySummaries: [
+        { relativePath: "", name: "outputs" },
+        { relativePath: "alpha", name: "alpha" },
+        { relativePath: "zeta", name: "zeta" },
+        { relativePath: "alpha/beta", name: "beta" },
+        { relativePath: "alpha/yankee", name: "yankee" },
+        { relativePath: "alpha/beta/apple", name: "apple" },
+        { relativePath: "alpha/beta/zebra", name: "zebra" },
+      ],
+    });
     const { container } = render(
-      <LibrarySidebar tree={tree} expandedPaths={new Set([""])} />
+      <LibrarySidebar
+        tree={deepTree}
+        expandedPaths={new Set(["", "alpha", "alpha/beta"])}
+      />
     );
     const labels = () =>
       Array.from(container.querySelectorAll(".library-folder-tree__name"), (node) =>
         node.lastElementChild?.textContent
       );
 
-    expect(labels()).toEqual(["outputs", "empty", "run-a", "run-b"]);
+    expect(labels()).toEqual([
+      "outputs",
+      "alpha",
+      "beta",
+      "apple",
+      "zebra",
+      "yankee",
+      "zeta",
+    ]);
     fireEvent.click(
       screen.getByRole("button", {
         name: "Folders sorted A to Z; switch to Z to A",
       })
     );
-    expect(labels()).toEqual(["outputs", "run-b", "run-a", "empty"]);
+    expect(labels()).toEqual([
+      "outputs",
+      "zeta",
+      "alpha",
+      "yankee",
+      "beta",
+      "zebra",
+      "apple",
+    ]);
     expect(
       screen.getByRole("button", {
         name: "Folders sorted Z to A; switch to A to Z",

@@ -6,6 +6,27 @@ import "./LibraryNavigation.css";
 const normalizeExpandedPaths = (paths) =>
   paths instanceof Set ? paths : new Set(paths || []);
 
+const folderNameComparator = (direction) => {
+  const multiplier = direction === "desc" ? -1 : 1;
+  return (left, right) =>
+    String(left?.name || left?.path || "").localeCompare(
+      String(right?.name || right?.path || ""),
+      undefined,
+      { numeric: true, sensitivity: "base" }
+    ) * multiplier;
+};
+
+const sortFolderTree = (nodes, direction) => {
+  const compare = folderNameComparator(direction);
+  const sortNode = (node) => ({
+    ...node,
+    children: (Array.isArray(node?.children) ? node.children : [])
+      .map(sortNode)
+      .sort(compare),
+  });
+  return (Array.isArray(nodes) ? nodes : []).map(sortNode).sort(compare);
+};
+
 const rootPathOf = (root) => root?.rootPath || root?.path || "";
 const rootLabelOf = (root) =>
   root?.label || root?.name || rootPathOf(root).split(/[\\/]/).filter(Boolean).at(-1) || "Root";
@@ -78,7 +99,6 @@ const FolderTreeRow = memo(function FolderTreeRow({
   onToggleExpanded,
   onSelectFolder,
   disabled,
-  sortDirection,
   reviewModeEnabled = true,
 }) {
   const path = normalizeRelativePath(node?.path ?? node?.relativePath);
@@ -90,16 +110,6 @@ const FolderTreeRow = memo(function FolderTreeRow({
   const reviewedCount = Math.max(0, Number(node?.reviewedCount) || 0);
   const videoCount = Math.max(0, Number(node?.videoCount) || 0);
   const missingCount = Math.max(0, Number(node?.missingCount) || 0);
-  const sortedChildren = useMemo(() => {
-    const direction = sortDirection === "desc" ? -1 : 1;
-    return [...children].sort((left, right) =>
-      String(left?.name || left?.path || "").localeCompare(
-        String(right?.name || right?.path || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      ) * direction
-    );
-  }, [children, sortDirection]);
 
   return (
     <li
@@ -171,7 +181,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
 
       {expanded ? (
         <ul role="group" className="library-folder-tree__group">
-          {sortedChildren.map((child) => (
+          {children.map((child) => (
             <FolderTreeRow
               key={child?.path ?? child?.relativePath ?? child?.name}
               node={child}
@@ -181,7 +191,6 @@ const FolderTreeRow = memo(function FolderTreeRow({
               onToggleExpanded={onToggleExpanded}
               onSelectFolder={onSelectFolder}
               disabled={disabled}
-              sortDirection={sortDirection}
               reviewModeEnabled={reviewModeEnabled}
             />
           ))}
@@ -210,7 +219,10 @@ export function LibrarySidebarContent({
   disabled = false,
   reviewModeEnabled = true,
 }) {
-  const roots = Array.isArray(tree) ? tree : tree ? [tree] : [];
+  const roots = useMemo(
+    () => (Array.isArray(tree) ? tree : tree ? [tree] : []),
+    [tree]
+  );
   const expanded = normalizeExpandedPaths(expandedPaths);
   const currentRootPath = rootPathOf(currentRoot);
   const currentRootPinned = Boolean(currentRoot?.pinned);
@@ -228,14 +240,7 @@ export function LibrarySidebarContent({
     });
   }, [pinnedRoots]);
   const sortedRoots = useMemo(() => {
-    const direction = folderSortDirection === "desc" ? -1 : 1;
-    return [...roots].sort((left, right) =>
-      String(left?.name || left?.path || "").localeCompare(
-        String(right?.name || right?.path || ""),
-        undefined,
-        { numeric: true, sensitivity: "base" }
-      ) * direction
-    );
+    return sortFolderTree(roots, folderSortDirection);
   }, [folderSortDirection, roots]);
 
   const submitSavedView = async (event) => {
@@ -459,7 +464,6 @@ export function LibrarySidebarContent({
                 onToggleExpanded={onToggleExpanded}
                 onSelectFolder={onSelectFolder}
                 disabled={disabled}
-                sortDirection={folderSortDirection}
                 reviewModeEnabled={reviewModeEnabled}
               />
             ))}

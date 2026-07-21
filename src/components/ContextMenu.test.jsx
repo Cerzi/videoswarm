@@ -132,7 +132,7 @@ describe('ContextMenu', () => {
     expect(onAction).toHaveBeenCalledWith('metadata:review:pick');
   });
 
-  test('hides review and rating actions when review mode is disabled', () => {
+  test('hides review status but keeps rating when review mode is disabled', () => {
     render(
       <ContextMenu
         visible
@@ -147,7 +147,7 @@ describe('ContextMenu', () => {
     );
 
     expect(screen.queryByRole('menuitem', { name: /Review status/i })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /Rating/i })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /Rating/i })).toBeVisible();
   });
 
   test('keeps desktop actions visible but disabled when the preload bridge is unavailable', () => {

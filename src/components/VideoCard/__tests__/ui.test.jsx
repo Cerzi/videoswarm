@@ -1304,6 +1304,16 @@ describe("VideoCard", () => {
     rerender(
       <VideoCard
         {...baseProps}
+        video={{ id: "review-badge", name: "review.mp4", reviewState: "reject" }}
+        reviewModeEnabled={false}
+        canLoadMoreVideos={() => false}
+      />
+    );
+    expect(screen.queryByTitle(/Review state:/)).toBeNull();
+
+    rerender(
+      <VideoCard
+        {...baseProps}
         video={{ id: "review-badge", name: "review.mp4", reviewState: "unreviewed" }}
         canLoadMoreVideos={() => false}
       />

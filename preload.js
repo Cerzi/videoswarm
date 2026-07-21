@@ -379,7 +379,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
           rootPath: payload?.rootPath,
           directory: payload?.directory ?? "",
           scope: payload?.scope,
-          includeSidecars: payload?.includeSidecars === true,
         }),
       start: async (planId, transferMode = "copy") =>
         ipcRenderer.invoke("review:copy-accepted:start", {

@@ -77,14 +77,14 @@ describe("ReviewSessionControls", () => {
     expect(onForget).not.toHaveBeenCalled();
   });
 
-  it("explains that review controls work before a resume point exists", () => {
+  it("explains that Find Unreviewed saves this view before finding a target", () => {
     render(<ReviewSessionControls session={{ mode: "none" }} onStart={vi.fn()} />);
 
     expect(screen.getAllByText("Ready to review")[0]).toBeVisible();
     expect(screen.getByText(/Marks work now/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Find next Unreviewed" })).toHaveAttribute(
       "title",
-      expect.stringContaining("Review controls already work")
+      "Save this folder scope, filters, and sort as a resume point, then jump to the next Unreviewed clip."
     );
   });
 

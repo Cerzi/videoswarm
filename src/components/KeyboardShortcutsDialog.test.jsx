@@ -50,4 +50,19 @@ describe("KeyboardShortcutsDialog", () => {
     fireEvent.mouseDown(backdrop);
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("keeps rating shortcuts but hides review-state shortcuts when review mode is off", () => {
+    render(
+      <KeyboardShortcutsDialog
+        open
+        onClose={vi.fn()}
+        reviewModeEnabled={false}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Rating" })).toBeVisible();
+    expect(screen.getByText("Set star rating")).toBeVisible();
+    expect(screen.getByText("Clear star rating")).toBeVisible();
+    expect(screen.queryByText("Mark as Accept")).toBeNull();
+  });
 });

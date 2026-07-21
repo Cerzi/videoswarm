@@ -108,7 +108,6 @@ const normalizeCopyPlan = (value) => {
     planId,
     destinationLabel: destinationDisplayName(value.destinationLabel),
     mediaCount,
-    sidecarCount: boundedCount(value.sidecarCount),
     totalBytes: Math.max(0, Number(value.totalBytes) || 0),
     collisionCount,
     collisionSamples: boundedRelativeSamples(value.collisionSamples),
@@ -131,11 +130,6 @@ const normalizeCopyResult = (value, fallbackTransferMode = "copy") => {
     cancelled: Boolean(result.cancelled || result.canceled),
     copiedCount: boundedCount(
       result.copiedCount ?? result.copiedMedia ?? result.copied
-    ),
-    sidecarCopiedCount: boundedCount(
-      result.sidecarCopiedCount ??
-        result.copiedSidecarCount ??
-        result.copiedSidecars
     ),
     skippedCount: boundedCount(
       result.skippedExistingCount ?? result.skippedCount ?? result.skipped
@@ -177,7 +171,6 @@ export default function ProcessReviewResultsDialog({
   const copyOperationRef = useRef(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [actionError, setActionError] = useState("");
-  const [includeSidecars, setIncludeSidecars] = useState(false);
   const [copyPhase, setCopyPhase] = useState(COPY_PHASES.IDLE);
   const [copyPlan, setCopyPlan] = useState(null);
   const [copyResult, setCopyResult] = useState(null);
@@ -264,7 +257,6 @@ export default function ProcessReviewResultsDialog({
     if (!open) {
       setPendingAction(null);
       setActionError("");
-      setIncludeSidecars(false);
       setCopyPhase(COPY_PHASES.IDLE);
       setCopyPlan(null);
       setCopyResult(null);
@@ -366,7 +358,7 @@ export default function ProcessReviewResultsDialog({
     setCopyResult(null);
     setActionError("");
     try {
-      const response = await onPrepareAcceptedCopy({ includeSidecars });
+      const response = await onPrepareAcceptedCopy();
       const plan = normalizeCopyPlan(response);
       if (!openRef.current || copyRequestRef.current !== requestId) {
         if (plan?.planId) requestPlanCancellation(plan.planId);
@@ -667,21 +659,6 @@ export default function ProcessReviewResultsDialog({
               </div>
 
               {[COPY_PHASES.IDLE, COPY_PHASES.PREPARING].includes(copyPhase) && (
-                <label className="review-results-copy-option">
-                  <input
-                    type="checkbox"
-                    checked={includeSidecars}
-                    disabled={copyPhase !== COPY_PHASES.IDLE || actionBusy}
-                    onChange={(event) => setIncludeSidecars(event.target.checked)}
-                  />
-                  <span>
-                    Include adjacent workflow JSON when found
-                    <small>Recognized sidecars are copied beside their media file.</small>
-                  </span>
-                </label>
-              )}
-
-              {[COPY_PHASES.IDLE, COPY_PHASES.PREPARING].includes(copyPhase) && (
                 <div className="review-results-transfer-actions">
                   <button
                     type="button"
@@ -709,7 +686,6 @@ export default function ProcessReviewResultsDialog({
                 <div className="review-results-copy-plan" aria-live="polite">
                   <dl className="review-results-copy-plan__facts">
                     <div><dt>Media</dt><dd>{copyPlan.mediaCount.toLocaleString()}</dd></div>
-                    <div><dt>Workflow JSON</dt><dd>{copyPlan.sidecarCount.toLocaleString()}</dd></div>
                     <div><dt>Estimated size</dt><dd>{formatBytes(copyPlan.totalBytes)}</dd></div>
                   </dl>
 
@@ -794,7 +770,7 @@ export default function ProcessReviewResultsDialog({
                     <strong>
                       {copyPhase === COPY_PHASES.CANCELLING
                         ? "Finishing the current file…"
-                        : `${transferMode === "move" ? "Moving" : "Copying"} ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} files…`}
+                        : `${transferMode === "move" ? "Moving" : "Copying"} ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} ${progressTotal === 1 ? "file" : "files"}…`}
                     </strong>
                     <span>{copyPlan?.destinationLabel}</span>
                   </div>
@@ -840,9 +816,6 @@ export default function ProcessReviewResultsDialog({
                   <p>
                     {copyResult.copiedCount.toLocaleString()} media file
                     {copyResult.copiedCount === 1 ? "" : "s"} {copyResult.transferMode === "move" ? "moved" : "copied"}
-                    {copyResult.sidecarCopiedCount > 0
-                      ? ` · ${copyResult.sidecarCopiedCount.toLocaleString()} workflow JSON`
-                      : ""}
                     {copyResult.skippedCount > 0
                       ? ` · ${copyResult.skippedCount.toLocaleString()} existing skipped`
                       : ""}

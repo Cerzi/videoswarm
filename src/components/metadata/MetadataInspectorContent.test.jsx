@@ -90,7 +90,7 @@ describe("MetadataInspectorContent", () => {
     expect(screen.getByText("A prompt that starts collapsed")).toBeVisible();
   });
 
-  it("hides review and rating controls when review mode is disabled", () => {
+  it("hides review controls but keeps rating when review mode is disabled", () => {
     render(
       <MetadataInspectorContent
         selectionCount={1}
@@ -100,7 +100,7 @@ describe("MetadataInspectorContent", () => {
       />
     );
 
-    expect(screen.queryByText("Rating")).toBeNull();
+    expect(screen.getByText("Rating")).toBeVisible();
     expect(screen.queryByText("Review")).toBeNull();
     expect(screen.getByText("Tags")).toBeVisible();
   });

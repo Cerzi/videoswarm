@@ -101,7 +101,6 @@ const prepareRequest = (owner, rootPath, extra = {}) => ({
   rootPath,
   directory: "",
   scope: "all-descendants",
-  includeSidecars: false,
   ...extra,
 });
 
@@ -115,7 +114,7 @@ afterEach(async () => {
 });
 
 describe("Copy Accepted native coordinator", () => {
-  it("prepares and copies a real accepted clip plus every exact recognized sidecar", async () => {
+  it("prepares and copies accepted media without adjacent metadata files", async () => {
     const rootPath = await temporaryDirectory("copy-accepted-root");
     const destinationPath = await temporaryDirectory("copy-accepted-output");
     const mediaPath = await writeFile(
@@ -149,7 +148,7 @@ describe("Copy Accepted native coordinator", () => {
     });
 
     const prepared = await test.coordinator.prepare(
-      prepareRequest(test.owner, rootPath, { includeSidecars: true })
+      prepareRequest(test.owner, rootPath)
     );
 
     expect(prepared).toMatchObject({
@@ -157,8 +156,7 @@ describe("Copy Accepted native coordinator", () => {
       cancelled: false,
       destinationLabel: path.basename(destinationPath),
       mediaCount: 1,
-      sidecarCount: 3,
-      copyableCount: 4,
+      copyableCount: 1,
       canStart: true,
       collisionCount: 0,
       missingCount: 0,
@@ -188,35 +186,30 @@ describe("Copy Accepted native coordinator", () => {
       success: true,
       cancelled: false,
       copiedCount: 1,
-      sidecarCopiedCount: 3,
       skippedCount: 0,
       missingCount: 0,
       failedCount: 0,
     });
-    expect(peakCopies).toBe(2);
+    expect(peakCopies).toBe(1);
     await expect(fsp.readFile(
       path.join(destinationPath, "batch", "clip.mp4"),
       "utf8"
     )).resolves.toBe("video");
-    await expect(fsp.readFile(
-      path.join(destinationPath, "batch", "clip.mp4.json"),
-      "utf8"
-    )).resolves.toBe("video-json");
-    await expect(fsp.readFile(
-      path.join(destinationPath, "batch", "clip.workflow.json"),
-      "utf8"
-    )).resolves.toBe("workflow");
-    await expect(fsp.readFile(
-      path.join(destinationPath, "batch", "clip.json"),
-      "utf8"
-    )).resolves.toBe("stem-json");
+    await expect(fsp.stat(
+      path.join(destinationPath, "batch", "clip.mp4.json")
+    )).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fsp.stat(
+      path.join(destinationPath, "batch", "clip.workflow.json")
+    )).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fsp.stat(
+      path.join(destinationPath, "batch", "clip.json")
+    )).rejects.toMatchObject({ code: "ENOENT" });
     expect(JSON.stringify(result)).not.toContain(rootPath);
     expect(JSON.stringify(result)).not.toContain(destinationPath);
     expect(test.progress.at(-1)).toMatchObject({
       planId: prepared.planId,
       phase: "complete",
       copiedMedia: 1,
-      copiedSidecars: 3,
     });
     expect(JSON.stringify(test.progress)).not.toContain(rootPath);
     expect(JSON.stringify(test.progress)).not.toContain(destinationPath);
@@ -261,45 +254,7 @@ describe("Copy Accepted native coordinator", () => {
     )).resolves.toBe("keep-content");
   });
 
-  it("can copy a missing sidecar when its accepted media target already exists", async () => {
-    const rootPath = await temporaryDirectory("copy-sidecar-only-root");
-    const destinationPath = await temporaryDirectory("copy-sidecar-only-output");
-    const mediaPath = await writeFile(path.join(rootPath, "clip.mp4"), "source");
-    await writeFile(`${mediaPath}.json`, "workflow");
-    await writeFile(path.join(destinationPath, "clip.mp4"), "existing-media");
-    const records = [await recordFor(rootPath, "clip.mp4")];
-    const test = harness({ rootPath, destinationPath, records });
-
-    const prepared = await test.coordinator.prepare(
-      prepareRequest(test.owner, rootPath, { includeSidecars: true })
-    );
-    expect(prepared).toMatchObject({
-      success: true,
-      mediaCount: 1,
-      sidecarCount: 1,
-      copyableCount: 1,
-      canStart: true,
-      collisionCount: 1,
-    });
-
-    const result = await test.coordinator.start({
-      owner: test.owner,
-      planId: prepared.planId,
-      collisionPolicy: "skip",
-    });
-    expect(result).toMatchObject({
-      success: true,
-      copiedCount: 0,
-      sidecarCopiedCount: 1,
-      skippedCount: 1,
-    });
-    await expect(fsp.readFile(
-      path.join(destinationPath, "clip.mp4.json"),
-      "utf8"
-    )).resolves.toBe("workflow");
-  });
-
-  it("deduplicates shared sidecars and marks distinct in-plan target collisions", async () => {
+  it("marks distinct in-plan target collisions", async () => {
     const rootPath = await temporaryDirectory("copy-plan-collision-root");
     const destinationPath = await temporaryDirectory("copy-plan-collision-output");
     await writeFile(path.join(rootPath, "Clip.mp4"), "upper");
@@ -363,39 +318,6 @@ describe("Copy Accepted native coordinator", () => {
       "utf8"
     )).resolves.toBe("move-video");
     await expect(fsp.stat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("never follows a recognized sidecar symbolic link", async () => {
-    const rootPath = await temporaryDirectory("copy-sidecar-link-root");
-    const destinationPath = await temporaryDirectory("copy-sidecar-link-output");
-    const outsidePath = await writeFile(
-      path.join(await temporaryDirectory("copy-sidecar-outside"), "private.json"),
-      "private"
-    );
-    const mediaPath = await writeFile(path.join(rootPath, "clip.mp4"), "video");
-    await fsp.symlink(outsidePath, `${mediaPath}.json`);
-    const records = [await recordFor(rootPath, "clip.mp4")];
-    const test = harness({ rootPath, destinationPath, records });
-
-    const prepared = await test.coordinator.prepare(
-      prepareRequest(test.owner, rootPath, { includeSidecars: true })
-    );
-    expect(prepared).toMatchObject({
-      success: true,
-      mediaCount: 1,
-      sidecarCount: 0,
-      copyableCount: 1,
-      missingCount: 0,
-      failureCount: 1,
-      failureSamples: [
-        expect.objectContaining({
-          relativePath: "clip.mp4.json",
-          kind: "sidecar",
-          code: ACCEPTED_COPY_CODES.SOURCE_INVALID,
-        }),
-      ],
-    });
-    expect(JSON.stringify(prepared)).not.toContain(outsidePath);
   });
 
   it("uses exclusive creation when a collision appears after preflight", async () => {

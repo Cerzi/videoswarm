@@ -186,17 +186,8 @@ Both operations preserve each media file's path relative to the library root
 beneath the chosen destination. Copy leaves originals untouched. Move uses the
 same exclusive copy and identity verification, then removes the source only
 after its destination is complete; an unlink failure is reported as a partial
-result and leaves the source in place. An optional **Include adjacent JSON
-sidecars** choice is off by default. When enabled, the plan checks only the
-three already-recognized exact adjacent candidates for each accepted clip, in
-the established order:
-
-1. `video.ext.json`
-2. `stem.workflow.json`
-3. `stem.json`
-
-There is no directory scan or fuzzy sidecar matching. A sidecar reached by
-more than one media item is copied at most once.
+result and leaves the source in place. Transfer planning includes accepted
+media files only; adjacent metadata files are not part of this workflow.
 
 Accepted clip transfer never overwrites a destination file. Before execution, a bounded
 main-process planner validates source containment and identity, normalizes
@@ -207,7 +198,7 @@ destination creation as a second collision check so a file appearing after
 preflight is skipped rather than replaced.
 
 Planning and execution have explicit tested limits for accepted media,
-sidecar candidates, path and byte accounting, concurrent native copies,
+path and byte accounting, concurrent native copies,
 retained error detail, and IPC payload size. A main-owned job ID drives
 throttled progress containing planned, copied, skipped, failed, and byte
 counts. Cancellation stops admitting new copy work, waits for bounded in-flight
@@ -248,7 +239,7 @@ Status: **Unimplemented**
 - Progress and processing scope ignore active filters but respect folder scope.
 - Reject trashing is explicit, limited to local Electron-backed instances,
   bounded, identity-confirmed, and reports partial failures without touching
-  sidecars.
+  unrelated files.
 - Accepted clip Move/Copy satisfies the contract above: authoritative `pick` instances
   only, native path ownership,
   relative-tree preservation, no overwrite, bounded preflight/job/progress,
@@ -297,8 +288,8 @@ deferred work were **Implemented**.
 
 Accepted clip Copy is **Implemented**.
 
-- The renderer sends only the active root, relative directory, folder scope,
-  and the optional sidecar flag. The main process reads present `pick`
+- The renderer sends only the active root, relative directory, and folder
+  scope. The main process reads present `pick`
   instances from profile-local SQLite and never accepts renderer media/path
   records as copy authority.
 - Planning is bounded to 20,000 accepted media instances, 16 MiB of aggregate
@@ -307,9 +298,8 @@ Accepted clip Copy is **Implemented**.
   samples.
 - The native directory picker is followed by a complete preflight. It rejects
   destinations inside the source library, preserves root-relative paths,
-  deduplicates the three exact recognized sidecars, validates regular-file and
-  directory identities, reports missing sources and collisions, and returns
-  no absolute destination or source paths.
+  validates regular-file and directory identities, reports missing sources
+  and collisions, and returns no absolute destination or source paths.
 - Execution uses a globally bounded two-worker pool and exclusive destination
   creation. Every source is identity-checked immediately before and after its
   copy; every concrete destination parent is revalidated before publication.

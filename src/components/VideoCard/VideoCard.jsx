@@ -114,6 +114,7 @@ const VideoCard = memo(function VideoCard({
   workSuspended = false,
   proxyPlaybackEnabled = false,
   showFilenames = true,
+  reviewModeEnabled = true,
 
   // limits & callbacks (owned by parent/orchestrator)
   canLoadVideo,           // (id, options?) => boolean
@@ -255,7 +256,8 @@ const VideoCard = memo(function VideoCard({
   const tagPreview = hasTags ? video.tags.slice(0, 3) : [];
   const extraTagCount = hasTags ? Math.max(0, video.tags.length - tagPreview.length) : 0;
   const reviewState = normalizeReviewState(video?.reviewState);
-  const hasReviewBadge = reviewState !== REVIEW_STATES.UNREVIEWED;
+  const hasReviewBadge =
+    reviewModeEnabled && reviewState !== REVIEW_STATES.UNREVIEWED;
   const hasAudio = video?.hasAudio === true;
 
   const aspectRatioHint = (() => {

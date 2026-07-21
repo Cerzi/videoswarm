@@ -19,7 +19,6 @@ const preparedPlan = {
   planId: "copy-plan-1",
   destinationLabel: "Accepted clips",
   mediaCount: 1,
-  sidecarCount: 0,
   totalBytes: 2 * 1024 * 1024,
   collisionCount: 0,
   collisionSamples: [],
@@ -118,32 +117,30 @@ describe("ProcessReviewResultsDialog", () => {
     expect(onTrashRejects).not.toHaveBeenCalled();
   });
 
-  it("prepares with the sidecar option, reports progress, and shows success", async () => {
+  it("prepares media transfer, reports progress, and shows success", async () => {
     const start = deferred();
     const props = dialogProps({
       onPrepareAcceptedCopy: vi.fn().mockResolvedValue({
         ...preparedPlan,
-        sidecarCount: 1,
-        totalFiles: 2,
-        copyableCount: 2,
+        totalFiles: 1,
+        copyableCount: 1,
       }),
       onStartAcceptedCopy: vi.fn(() => start.promise),
     });
     const { rerender } = render(<ProcessReviewResultsDialog {...props} />);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /include adjacent workflow json/i }));
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
 
     await waitFor(() => {
-      expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith({ includeSidecars: true });
-      expect(screen.getByRole("button", { name: /Copy 2 files/ })).toBeEnabled();
+      expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith();
+      expect(screen.getByRole("button", { name: /Copy 1 file/ })).toBeEnabled();
     });
     expect(
       screen.getByRole("heading", { name: "Accepted clips" })
     ).toBeInTheDocument();
     expect(screen.getByText("2.0 MB")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Copy 2 files/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Copy 1 file/ }));
     expect(props.onStartAcceptedCopy).toHaveBeenCalledWith("copy-plan-1", "copy");
 
     rerender(
@@ -152,8 +149,8 @@ describe("ProcessReviewResultsDialog", () => {
         acceptedCopyProgress={{
           planId: "copy-plan-1",
           phase: "preflight",
-          processed: 2,
-          total: 2,
+          processed: 1,
+          total: 1,
         }}
       />
     );
@@ -168,7 +165,7 @@ describe("ProcessReviewResultsDialog", () => {
           planId: "copy-plan-1",
           phase: "copying",
           processed: 1,
-          total: 2,
+          total: 1,
         }}
       />
     );
@@ -176,19 +173,18 @@ describe("ProcessReviewResultsDialog", () => {
       name: "Accepted clip copy progress",
     });
     expect(progress).toHaveAttribute("aria-valuenow", "1");
-    expect(progress).toHaveAttribute("aria-valuemax", "2");
-    expect(screen.getByText("Copying 1 of 2 files…")).toBeInTheDocument();
+    expect(progress).toHaveAttribute("aria-valuemax", "1");
+    expect(screen.getByText("Copying 1 of 1 file…")).toBeInTheDocument();
 
     await act(async () => {
       start.resolve({
         success: true,
         copiedCount: 1,
-        sidecarCopiedCount: 1,
       });
       await start.promise;
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Copy complete");
-    expect(screen.getByText(/1 media file copied · 1 workflow JSON/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 media file copied/i)).toBeInTheDocument();
   });
 
   it("starts an explicit move only after a destination is locked in", async () => {
@@ -390,8 +386,8 @@ describe("ProcessReviewResultsDialog", () => {
         failureCount: 2,
         failureSamples: [
           {
-            relativePath: "batch/clip.workflow.json",
-            message: "The sidecar is a symbolic link.",
+            relativePath: "batch/clip.mp4",
+            message: "The source file is unavailable.",
           },
           { relativePath: "/private/hidden.json", message: "secret" },
         ],
@@ -403,7 +399,7 @@ describe("ProcessReviewResultsDialog", () => {
 
     expect(await screen.findByText(/2 additional files could not be prepared/i))
       .toBeInTheDocument();
-    expect(screen.getByText(/batch\/clip\.workflow\.json — The sidecar is a symbolic link/i))
+    expect(screen.getByText(/batch\/clip\.mp4 — The source file is unavailable/i))
       .toBeInTheDocument();
     expect(screen.queryByText(/private\/hidden/)).not.toBeInTheDocument();
   });

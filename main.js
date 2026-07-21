@@ -4144,16 +4144,11 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
       maxChars: 32,
     })
   );
-  const includeSidecars = assertBoolean(
-    payload?.includeSidecars,
-    "includeSidecars"
-  );
   return reviewCopyAcceptedCoordinator.prepare({
     owner: event.sender,
     rootPath: requestedRoot,
     directory,
     scope,
-    includeSidecars,
   });
 });
 

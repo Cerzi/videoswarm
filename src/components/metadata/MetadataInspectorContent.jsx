@@ -151,7 +151,6 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
       ) : null}
 
       <div className="metadata-panel__grid">
-        {reviewModeEnabled ? (
         <section className="metadata-panel__section metadata-panel__section--rating">
           <div className="metadata-panel__section-header">
             <span title="Setting a rating also marks an Unreviewed clip as Reviewed">
@@ -175,7 +174,6 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
             disabled={!hasSelection}
           />
         </section>
-        ) : null}
 
         {reviewModeEnabled ? (
         <section className="metadata-panel__section metadata-panel__section--review">

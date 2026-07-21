@@ -160,7 +160,6 @@ describe("preload native-work bridge", () => {
       rootPath: "/library/root",
       directory: "batch/one",
       scope: "current-folder",
-      includeSidecars: true,
       clips: [{ absolutePath: "/private/clip.mp4" }],
     });
     await api.review.copyAccepted.start("native-plan-1", "move");
@@ -174,7 +173,6 @@ describe("preload native-work bridge", () => {
         rootPath: "/library/root",
         directory: "batch/one",
         scope: "current-folder",
-        includeSidecars: true,
       }
     );
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(

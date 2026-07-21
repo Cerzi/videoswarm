@@ -226,31 +226,6 @@
 .review-results-action button:disabled,
 .review-results-dialog button:disabled { opacity: 0.43; cursor: not-allowed; }
 
-.review-results-copy-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  margin-top: 0.75rem;
-  padding-top: 0.7rem;
-  color: #d6dade;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  cursor: pointer;
-  font-size: 0.75rem;
-}
-.review-results-copy-option input {
-  width: 1rem;
-  height: 1rem;
-  margin: 0.05rem 0 0;
-  accent-color: var(--color-accent);
-}
-.review-results-copy-option small {
-  display: block;
-  margin-top: 0.15rem;
-  color: #8f969b;
-  font-size: 0.66rem;
-  line-height: 1.35;
-}
-
 .review-results-copy-plan,
 .review-results-copy-running,
 .review-results-copy-result {

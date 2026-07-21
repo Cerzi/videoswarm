@@ -215,7 +215,7 @@ const ContextMenu = ({
           },
         ],
       } : null,
-      reviewModeEnabled ? {
+      {
         id: 'rating',
         label: `★ Rating${reviewTarget}`,
         children: [5, 4, 3, 2, 1].map((stars) => ({
@@ -227,7 +227,7 @@ const ContextMenu = ({
           label: '☆ Clear rating',
           action: 'metadata:rate:clear',
         }),
-      } : null,
+      },
     ]);
 
     pushSection([

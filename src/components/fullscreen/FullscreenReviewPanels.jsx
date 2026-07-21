@@ -41,7 +41,11 @@ const formatProgress = (progress) => {
   return `${reviewed.toLocaleString()} / ${total.toLocaleString()} reviewed`;
 };
 
-export function FullscreenHeaderContent({ video, isCurrentInView = true }) {
+export function FullscreenHeaderContent({
+  video,
+  isCurrentInView = true,
+  reviewModeEnabled = true,
+}) {
   const location = video?.relativePath || video?.dirname || "";
   const folder = location.includes("/")
     ? location.slice(0, Math.max(0, location.lastIndexOf("/")))
@@ -51,7 +55,9 @@ export function FullscreenHeaderContent({ video, isCurrentInView = true }) {
   return (
     <div className="fullscreen-review-panel__header-copy">
       {folder ? <span title={folder}>{folder}</span> : <span>Current collection</span>}
-      <span className="fullscreen-review-panel__state">{state}</span>
+      {reviewModeEnabled ? (
+        <span className="fullscreen-review-panel__state">{state}</span>
+      ) : null}
       {!isCurrentInView ? (
         <span className="fullscreen-review-panel__outside-view">
           No longer matches this view
@@ -74,6 +80,7 @@ export function FullscreenReviewRail({
   busy = false,
   canUndo = false,
   autoAdvance = false,
+  reviewModeEnabled = true,
   onSetReviewState,
   onSetRating,
   onUndo,
@@ -88,35 +95,37 @@ export function FullscreenReviewRail({
   return (
     <div className="fullscreen-review-panel__rail-content">
       <div className="fullscreen-review-panel__rail-heading">
-        <strong>Review</strong>
+        <strong>{reviewModeEnabled ? "Review" : "Rating"}</strong>
         {busy ? <span role="status">Saving…</span> : null}
       </div>
-      <div className="fullscreen-review-panel__review-grid">
-        {REVIEW_ACTIONS.map(({ state, label }) => {
-          const shortcut = REVIEW_PRIMARY_KEY_BY_STATE[state];
-          const actionLabel = `${label} (${shortcut})`;
-          return (
-            <button
-              key={state}
-              type="button"
-              className={`fullscreen-review-panel__review-button fullscreen-review-panel__review-button--${state}`}
-              aria-label={actionLabel}
-              aria-pressed={reviewState === state}
-              disabled={disabled}
-              onClick={() => onSetReviewState?.(state)}
-              title={actionLabel}
-            >
-              <span>{label}</span>
-              <span
-                className="fullscreen-review-panel__review-shortcut"
-                aria-hidden="true"
+      {reviewModeEnabled ? (
+        <div className="fullscreen-review-panel__review-grid">
+          {REVIEW_ACTIONS.map(({ state, label }) => {
+            const shortcut = REVIEW_PRIMARY_KEY_BY_STATE[state];
+            const actionLabel = `${label} (${shortcut})`;
+            return (
+              <button
+                key={state}
+                type="button"
+                className={`fullscreen-review-panel__review-button fullscreen-review-panel__review-button--${state}`}
+                aria-label={actionLabel}
+                aria-pressed={reviewState === state}
+                disabled={disabled}
+                onClick={() => onSetReviewState?.(state)}
+                title={actionLabel}
               >
-                (<kbd>{shortcut}</kbd>)
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                <span>{label}</span>
+                <span
+                  className="fullscreen-review-panel__review-shortcut"
+                  aria-hidden="true"
+                >
+                  (<kbd>{shortcut}</kbd>)
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="fullscreen-review-panel__rating" aria-label="Rating">
         <span>Rating</span>
@@ -147,27 +156,31 @@ export function FullscreenReviewRail({
         </button>
       </div>
 
-      <button
-        type="button"
-        className="fullscreen-review-panel__undo"
-        disabled={busy || !canUndo}
-        onClick={() => onUndo?.()}
-        title="Undo last review change (Z)"
-      >
-        Undo <kbd>Z</kbd>
-      </button>
+      {reviewModeEnabled ? (
+        <button
+          type="button"
+          className="fullscreen-review-panel__undo"
+          disabled={busy || !canUndo}
+          onClick={() => onUndo?.()}
+          title="Undo last review change (Z)"
+        >
+          Undo <kbd>Z</kbd>
+        </button>
+      ) : null}
 
-      <label className="fullscreen-review-panel__advance">
-        <input
-          type="checkbox"
-          checked={autoAdvance}
-          onChange={(event) => onAutoAdvanceChange?.(event.target.checked)}
-        />
-        <span>
-          Advance after marking
-          <small>Skip duplicate instances of the marked content</small>
-        </span>
-      </label>
+      {reviewModeEnabled ? (
+        <label className="fullscreen-review-panel__advance">
+          <input
+            type="checkbox"
+            checked={autoAdvance}
+            onChange={(event) => onAutoAdvanceChange?.(event.target.checked)}
+          />
+          <span>
+            Advance after marking
+            <small>Skip duplicate instances of the marked content</small>
+          </span>
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -290,20 +303,29 @@ export function FullscreenHeaderActions({
             </button>
           </header>
           <div className="fullscreen-review-panel__help-grid">
-            {FULLSCREEN_SHORTCUT_HELP_SECTIONS.filter(
-              (section) =>
-                reviewModeEnabled || section.id !== "fullscreen-review"
-            ).map((section) => (
-              <section key={section.id}>
-                <h4>{section.title}</h4>
-                {section.shortcuts.map((shortcut) => (
-                  <div key={shortcut.id}>
-                    <span>{shortcut.label}</span>
-                    <ShortcutKeys shortcut={shortcut} />
-                  </div>
-                ))}
-              </section>
-            ))}
+            {FULLSCREEN_SHORTCUT_HELP_SECTIONS.map((section) => {
+              const shortcuts = reviewModeEnabled || section.id !== "fullscreen-review"
+                ? section.shortcuts
+                : section.shortcuts.filter(
+                    (shortcut) => ["rating", "clear-rating"].includes(shortcut.action)
+                  );
+              if (shortcuts.length === 0) return null;
+              return (
+                <section key={section.id}>
+                  <h4>
+                    {!reviewModeEnabled && section.id === "fullscreen-review"
+                      ? "Rate current clip"
+                      : section.title}
+                  </h4>
+                  {shortcuts.map((shortcut) => (
+                    <div key={shortcut.id}>
+                      <span>{shortcut.label}</span>
+                      <ShortcutKeys shortcut={shortcut} />
+                    </div>
+                  ))}
+                </section>
+              );
+            })}
           </div>
         </section>
       ) : null}

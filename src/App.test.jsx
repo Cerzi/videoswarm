@@ -894,8 +894,18 @@ describe("App hook composition", () => {
     expect(headerBarSpy).toHaveBeenCalled();
   });
 
-  test("persists review mode and removes its hotkey handlers while disabled", async () => {
+  test("keeps navigation and rating while hiding review workflow when disabled", async () => {
     window.electronAPI = { saveSettingsPartial: vi.fn() };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      activeRootPath: "/outputs",
+      libraryRoot: {
+        rootPath: "/outputs",
+        name: "outputs",
+        recursive: true,
+        refreshState: "idle",
+      },
+    }));
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
 
@@ -903,6 +913,8 @@ describe("App hook composition", () => {
 
     const toggle = screen.getByRole("button", { name: "Review mode" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.getByLabelText("Review workflow")).toBeVisible();
     fireEvent.click(toggle);
 
     expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -911,9 +923,13 @@ describe("App hook composition", () => {
     });
     expect(useHotkeysMock.mock.calls.at(-1)?.[2]).toMatchObject({
       onSetReviewState: null,
-      onSetRating: null,
       onUndoReview: null,
     });
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2].onSetRating).toEqual(
+      expect.any(Function)
+    );
+    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.queryByLabelText("Review workflow")).toBeNull();
   });
 
   test("opens and closes keyboard shortcut help from the header", async () => {
@@ -2263,7 +2279,6 @@ describe("App hook composition", () => {
       planId: "copy-plan-app-1",
       destinationLabel: "Accepted",
       mediaCount: 1,
-      sidecarCount: 0,
       totalBytes: 16,
       collisionCount: 0,
       collisionSamples: [],
@@ -2300,7 +2315,6 @@ describe("App hook composition", () => {
       rootPath: "/outputs",
       directory: "",
       scope: "all-descendants",
-      includeSidecars: false,
     }));
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("videos");
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("records");
@@ -2350,7 +2364,6 @@ describe("App hook composition", () => {
             planId: "copy-plan-root-change",
             destinationLabel: "Accepted",
             mediaCount: 1,
-            sidecarCount: 0,
             totalBytes: 16,
             collisionCount: 0,
             collisionSamples: [],

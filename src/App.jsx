@@ -1764,7 +1764,7 @@ function App() {
   );
 
   const handlePrepareAcceptedCopy = useCallback(
-    async ({ includeSidecars = false } = {}) => {
+    async () => {
       const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
       if (typeof prepare !== "function") {
         throw new Error("Copy Accepted is unavailable");
@@ -1774,7 +1774,6 @@ function App() {
         rootPath: activeRootPath,
         directory: currentDirectory,
         scope: folderScope,
-        includeSidecars,
       });
       if (result?.success === false) {
         throw new Error(result.error || "Accepted-copy preflight failed");
@@ -1797,9 +1796,6 @@ function App() {
       const copiedMedia = Number(
         result?.copiedCount ?? result?.copiedMedia ?? 0
       );
-      const copiedSidecars = Number(
-        result?.sidecarCopiedCount ?? result?.copiedSidecars ?? 0
-      );
       const skipped = Number(
         result?.skippedCount ?? result?.skippedCollisions ?? 0
       );
@@ -1817,16 +1813,11 @@ function App() {
         missing === 0
       ) {
         notify(
-          `${transferMode === "move" ? "Moved" : "Copied"} ${copiedMedia.toLocaleString()} accepted clip(s)${
-            copiedSidecars > 0
-              ? ` and ${copiedSidecars.toLocaleString()} workflow JSON file(s)`
-              : ""
-          }`,
+          `${transferMode === "move" ? "Moved" : "Copied"} ${copiedMedia.toLocaleString()} accepted clip(s)`,
           "success"
         );
       } else if (
         copiedMedia > 0 ||
-        copiedSidecars > 0 ||
         skipped > 0 ||
         failed > 0 ||
         missing > 0
@@ -1890,7 +1881,6 @@ function App() {
         return;
       }
       if (actionId.startsWith("metadata:rate:")) {
-        if (!reviewModeEnabled) return;
         if (!contextMetadataFingerprints.length) return;
         if (actionId === "metadata:rate:clear") {
           reviewWorkflow.applyRating(null, {
@@ -2297,9 +2287,8 @@ function App() {
     [reviewModeEnabled, reviewWorkflow.applyReviewState]
   );
   const handleRatingHotkey = useCallback(
-    (rating) =>
-      reviewModeEnabled ? reviewWorkflow.applyRating(rating) : false,
-    [reviewModeEnabled, reviewWorkflow.applyRating]
+    (rating) => reviewWorkflow.applyRating(rating),
+    [reviewWorkflow.applyRating]
   );
   const handleReviewUndo = useCallback(
     () => (reviewModeEnabled ? reviewWorkflow.undo() : false),
@@ -2564,7 +2553,7 @@ function App() {
     minZoomIndex: ZOOM_MIN_INDEX,
     maxZoomIndex: ZOOM_MAX_INDEX,
     onSetReviewState: reviewModeEnabled ? handleReviewHotkey : null,
-    onSetRating: reviewModeEnabled ? handleRatingHotkey : null,
+    onSetRating: handleRatingHotkey,
     onUndoReview: reviewModeEnabled ? handleReviewUndo : null,
     onPreviousFolder:
       !isLoadingFolder && siblingFolders.previous
@@ -3134,7 +3123,6 @@ function App() {
         binding.command === FULLSCREEN_COMMANDS.RATING ||
         binding.command === FULLSCREEN_COMMANDS.CLEAR_RATING
       ) {
-        if (!reviewModeEnabled) return false;
         void handleFullscreenRating(binding.value);
         return true;
       }
@@ -4243,7 +4231,7 @@ function App() {
             filtersButtonRef={filtersButtonRef}
           />
 
-          {activeRootPath && reviewModeEnabled && (
+          {activeRootPath && (
             <CollectionNavigationBar
               breadcrumb={folderBreadcrumb}
               onBreadcrumbSelect={handleFolderNavigate}
@@ -4266,7 +4254,7 @@ function App() {
             />
           )}
 
-          {activeRootPath && (
+          {activeRootPath && reviewModeEnabled && (
             <ReviewToolbar
               progress={reviewWorkflow.progress}
               selectedCount={selection.size}
@@ -4636,6 +4624,7 @@ function App() {
                               reportPlayerCreationFailure={handlePlayerCreationFailure}
                               onHover={handleVideoHover}
                               hoverAudioEnabled={hoverAudioEnabled}
+                              reviewModeEnabled={reviewModeEnabled}
                               isHoverAudioActive={
                                 hoverAudioEnabled &&
                                 videoCollection.activeHoverAudioId === video.id
@@ -4704,6 +4693,7 @@ function App() {
                 <FullscreenHeaderContent
                   video={fullScreenVideo}
                   isCurrentInView={fullscreenController.isCurrentInView}
+                  reviewModeEnabled={reviewModeEnabled}
                 />
               }
               progressContent={reviewModeEnabled ? (
@@ -4719,18 +4709,19 @@ function App() {
                   reviewModeEnabled={reviewModeEnabled}
                 />
               )}
-              reviewRail={reviewModeEnabled ? (
+              reviewRail={
                 <FullscreenReviewRail
                   video={fullScreenVideo}
                   busy={reviewWorkflow.isBusy}
                   canUndo={fullscreenCanUndo && reviewWorkflow.canUndo}
                   autoAdvance={reviewAutoAdvance}
+                  reviewModeEnabled={reviewModeEnabled}
                   onSetReviewState={handleFullscreenReviewState}
                   onSetRating={handleFullscreenRating}
                   onUndo={handleFullscreenUndo}
                   onAutoAdvanceChange={handleReviewAutoAdvanceChange}
                 />
-              ) : null}
+              }
               detailsOpen={fullscreenDetailsOpen}
               onToggleDetails={() =>
                 handleFullscreenDetailsOpenChange(!fullscreenDetailsOpen)
