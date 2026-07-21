@@ -39,15 +39,6 @@ const TextIcon = (props) => (
   </Icon>
 );
 
-const FilmIcon = (props) => (
-  <Icon {...props}>
-    <rect x="2" y="2" width="20" height="20" rx="2" />
-    <line x1="7" y1="2" x2="7" y2="22" />
-    <line x1="17" y1="2" x2="17" y2="22" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-  </Icon>
-);
-
 const ZoomInIcon = (props) => (
   <Icon {...props}>
     <circle cx="11" cy="11" r="7" />
@@ -118,10 +109,6 @@ export default function HeaderBar({
   toggleRecursive,
   showFilenames,
   toggleFilenames,
-  renderLimitStep,
-  renderLimitLabel = "Max",
-  renderLimitMaxStep = 10,
-  handleRenderLimitChange,
   zoomLevel,
   handleZoomChangeSafe,
   getMinimumZoomLevel,
@@ -226,6 +213,22 @@ export default function HeaderBar({
           <TextIcon />
         </button>
 
+        <button
+          onClick={() => onHoverAudioToggle?.()}
+          className={`toggle-button ${hoverAudioEnabled ? "active" : ""}`}
+          disabled={isLoadingFolder}
+          title={
+            hoverAudioEnabled
+              ? "Disable player audio on hover"
+              : "Enable player audio on hover"
+          }
+          aria-label="Player audio on hover"
+          aria-pressed={hoverAudioEnabled}
+          type="button"
+        >
+          {hoverAudioEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+        </button>
+
         <div style={dividerStyle}>
           <PlaybackModeControl
             mode={playbackMode}
@@ -241,39 +244,7 @@ export default function HeaderBar({
         </div>
 
         <div style={dividerStyle}>
-          <div className="video-limit-control" title="Limit rendered VideoCards">
-            <FilmIcon />
-            <input
-              type="range"
-              min="0"
-              max={renderLimitMaxStep}
-              value={renderLimitStep}
-              step="1"
-              style={{ width: 100 }}
-              onChange={(e) =>
-                handleRenderLimitChange(parseInt(e.target.value, 10))
-              }
-              disabled={isLoadingFolder}
-              aria-label="Rendered VideoCards limit"
-              aria-valuetext={renderLimitLabel}
-            />
-            <span style={{ fontSize: "0.8rem" }}>{renderLimitLabel}</span>
-          </div>
-
           <div className="zoom-control" title="Zoom">
-            <button
-              onClick={() => onHoverAudioToggle?.()}
-              className={`toggle-button ${hoverAudioEnabled ? "active" : ""}`}
-              disabled={isLoadingFolder}
-              title="Play audio on hover"
-              aria-label="Play audio on hover"
-              aria-pressed={hoverAudioEnabled}
-              type="button"
-              style={{ opacity: hoverAudioEnabled ? 1 : 0.75 }}
-            >
-              {hoverAudioEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
-            </button>
-
             <ZoomInIcon />
             <input
               type="range"

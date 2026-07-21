@@ -82,7 +82,6 @@ function renderLayout(initialProps = {}) {
     zoomLevel: 1,
     scrollContainerRef,
     gridRef,
-    renderLimit: null,
     pinnedIds: [],
     ...initialProps,
   };
@@ -167,24 +166,23 @@ describe("useMasonryLayout virtual layout", () => {
     });
   });
 
-  it("keeps the full sorted collection while virtualizing only the limited prefix", () => {
+  it("keeps the full sorted collection while mounting a bounded window", () => {
     const videos = makeVideos(1000);
     const { result } = renderLayout({
       videos,
       filteredVideos: videos,
-      renderLimit: 120,
-      pinnedIds: ["clip-119"],
+      pinnedIds: ["clip-999"],
     });
 
     expect(result.current.orderedVideos).toHaveLength(1000);
     expect(result.current.orderedIds).toHaveLength(1000);
-    expect(result.current.visualOrderedIds).toHaveLength(120);
+    expect(result.current.visualOrderedIds).toHaveLength(1000);
     expect(result.current.orderForRange).toEqual(result.current.visualOrderedIds);
-    expect(result.current.virtualItems.length).toBeLessThan(120);
-    expect(result.current.virtualItems.some((entry) => entry.id === "clip-119")).toBe(
+    expect(result.current.virtualItems.length).toBeLessThan(100);
+    expect(result.current.virtualItems.some((entry) => entry.id === "clip-999")).toBe(
       true
     );
-    expect(result.current.activationIdSet.has("clip-119")).toBe(false);
+    expect(result.current.activationIdSet.has("clip-999")).toBe(false);
     expect(result.current.activationIds).toEqual(
       result.current.activationIds.filter((id, index, ids) => ids.indexOf(id) === index)
     );
@@ -194,7 +192,7 @@ describe("useMasonryLayout virtual layout", () => {
     expect(result.current.activationTarget).toBeLessThanOrEqual(600);
     expect(result.current.mountedVideoCount).toBe(result.current.virtualItems.length);
     expect(result.current.totalHeight).toBeGreaterThan(600);
-    expect(result.current.getPositionById("clip-999")).toBeNull();
+    expect(result.current.getPositionById("clip-999")).not.toBeNull();
   });
 
   it("orders decoder priority by logical distance from the viewport center", () => {
@@ -315,7 +313,6 @@ describe("useMasonryLayout virtual layout", () => {
       gridRef,
       scrollContainerElement: null,
       gridElement: null,
-      renderLimit: null,
       pinnedIds: [],
     };
     const rendered = renderHook((props) => useMasonryLayout(props), {

@@ -122,12 +122,59 @@ body.metadata-panel-drag-active {
   white-space: nowrap;
 }
 
-.metadata-panel__dock,
-.metadata-panel__focus,
 .metadata-panel__close {
   border: 0;
   color: inherit;
   cursor: pointer;
+}
+
+.metadata-panel__button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 0.36rem 0.62rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.metadata-panel__button svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.metadata-panel__button--compact {
+  min-height: 28px;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.61rem;
+}
+
+.metadata-panel__button:not(:disabled):hover {
+  border-color: rgba(157, 176, 255, 0.48);
+  background: rgba(116, 143, 252, 0.16);
+  color: #f2f4ff;
+}
+
+.metadata-panel__button:not(:disabled):active {
+  background: rgba(116, 143, 252, 0.23);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.metadata-panel__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .metadata-panel__header-actions {
@@ -136,31 +183,24 @@ body.metadata-panel-drag-active {
   gap: 0.35rem;
 }
 
-.metadata-panel__dock,
-.metadata-panel__focus {
-  border-radius: 999px;
-  padding: 0.4rem 0.7rem;
-  font-size: 0.64rem;
-  font-weight: 650;
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-}
-
-.metadata-panel__dock {
+.metadata-panel__button--dock {
+  border-color: rgba(116, 143, 252, 0.34);
   background: rgba(116, 143, 252, 0.15);
   color: #cdd6ff;
 }
 
-.metadata-panel__focus {
+.metadata-panel__button--focus {
+  border-color: rgba(81, 207, 102, 0.32);
   background: rgba(81, 207, 102, 0.14);
   color: #b4f8c4;
 }
 
-.metadata-panel__dock:hover {
+.metadata-panel__button--dock:not(:disabled):hover {
   background: rgba(116, 143, 252, 0.26);
 }
 
-.metadata-panel__focus:hover {
+.metadata-panel__button--focus:not(:disabled):hover {
+  border-color: rgba(81, 207, 102, 0.52);
   background: rgba(81, 207, 102, 0.24);
 }
 
@@ -181,8 +221,7 @@ body.metadata-panel-drag-active {
   color: #fff;
 }
 
-.metadata-panel__dock:focus-visible,
-.metadata-panel__focus:focus-visible,
+.metadata-panel__button:focus-visible,
 .metadata-panel__close:focus-visible,
 .metadata-panel button:focus-visible,
 .metadata-panel input:focus-visible {
@@ -270,12 +309,15 @@ body.metadata-panel-drag-active {
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055);
   padding: 0.15rem 0.45rem;
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.035em;
+  cursor: default;
+  user-select: none;
 }
 
 .metadata-panel__badge--accent {
@@ -304,7 +346,8 @@ body.metadata-panel-drag-active {
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
-  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.035);
   padding: 0.28rem 0.42rem;
 }
@@ -328,34 +371,13 @@ body.metadata-panel-drag-active {
   color: #ffd95c;
 }
 
-.metadata-panel__star:disabled,
-.metadata-panel__clear-rating:disabled,
-.metadata-panel__review-button:disabled {
+.metadata-panel__star:disabled {
   cursor: not-allowed;
   opacity: 0.42;
 }
 
-.metadata-panel__clear-rating,
-.metadata-panel__review-button,
-.metadata-panel__generation-actions button {
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  color: rgba(255, 255, 255, 0.76);
-  cursor: pointer;
-}
-
 .metadata-panel__clear-rating {
-  padding: 0.28rem 0.62rem;
-  font-size: 0.62rem;
-  font-weight: 620;
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-}
-
-.metadata-panel__clear-rating:not(:disabled):hover,
-.metadata-panel__generation-actions button:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.11);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .metadata-panel__review-row {
@@ -365,11 +387,12 @@ body.metadata-panel-drag-active {
 }
 
 .metadata-panel__review-button {
+  width: 100%;
   padding: 0.34rem 0.48rem;
   font-size: 0.64rem;
 }
 
-.metadata-panel__review-button:hover,
+.metadata-panel__review-button:not(:disabled):hover,
 .metadata-panel__review-button.is-active {
   border-color: rgba(145, 167, 255, 0.38);
   background: rgba(116, 143, 252, 0.18);
@@ -469,14 +492,9 @@ body.metadata-panel-drag-active {
   flex-direction: column;
 }
 
-.metadata-panel__generation-actions button {
+.metadata-panel__generation-actions .metadata-panel__button {
   padding: 0.2rem 0.45rem;
   font-size: 0.6rem;
-}
-
-.metadata-panel__generation-actions button:disabled {
-  cursor: default;
-  opacity: 0.42;
 }
 
 .metadata-panel__generation-status {
@@ -586,7 +604,7 @@ body.metadata-panel-drag-active {
 
 .metadata-panel__chip,
 .metadata-panel__suggestion {
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.075);
   color: inherit;
@@ -656,26 +674,8 @@ body.metadata-panel-drag-active {
   color: rgba(255, 255, 255, 0.4);
 }
 
-.metadata-panel__input-row button {
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.13);
-  color: inherit;
-  padding: 0.4rem 0.72rem;
-  font-size: 0.65rem;
-  font-weight: 650;
-  letter-spacing: 0.045em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.metadata-panel__input-row button:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.metadata-panel__input-row button:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
+.metadata-panel__input-row .metadata-panel__button {
+  min-height: 31px;
 }
 
 .metadata-panel__section--suggestions {
@@ -701,6 +701,7 @@ body.metadata-panel-drag-active {
   justify-content: space-between;
   gap: 0.35rem;
   min-width: 0;
+  border-radius: 6px;
   padding: 0.34rem 0.58rem;
   font-size: 0.64rem;
 }
@@ -721,7 +722,7 @@ body.metadata-panel-drag-active {
     padding-left: 0.55rem;
   }
 
-  .metadata-panel__focus {
+  .metadata-panel__button--focus {
     padding-inline: 0.55rem;
   }
 

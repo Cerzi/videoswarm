@@ -257,7 +257,6 @@ function getDefaultZoomForScreen() {
 // Note: zoomLevel will be set dynamically after app is ready
 const defaultSettings = {
   recursiveMode: false,
-  renderLimitStep: 10,
   playbackMode: "balanced",
   proxyPlaybackEnabled: false,
   reviewAutoAdvance: false,
@@ -265,6 +264,7 @@ const defaultSettings = {
   metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
+  hoverAudioEnabled: false,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1490,12 +1490,6 @@ function normaliseLoadedSettings(rawSettings) {
 
   return {
     recursiveMode: Boolean(source.recursiveMode),
-    renderLimitStep: clampInteger(
-      source.renderLimitStep,
-      defaultSettings.renderLimitStep,
-      0,
-      10
-    ),
     playbackMode: normalizePlaybackMode(source.playbackMode),
     proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
     reviewAutoAdvance: source.reviewAutoAdvance === true,
@@ -1514,6 +1508,10 @@ function normaliseLoadedSettings(rawSettings) {
       source.showFilenames === undefined
         ? defaultSettings.showFilenames
         : Boolean(source.showFilenames),
+    hoverAudioEnabled:
+      source.hoverAudioEnabled === undefined
+        ? defaultSettings.hoverAudioEnabled
+        : source.hoverAudioEnabled === true,
     sortKey,
     sortDir: source.sortDir === "desc" ? "desc" : "asc",
     groupByFolders:

@@ -35,7 +35,6 @@ export default function useVideoCollection({
   activationTarget = null,
   activationWindowIds = [],
   suspendEvictions = false,
-  renderLimit = null,
   hoverAudioEnabled = false,
   mediaScheduler = null,
   playbackSuspended = false,
@@ -98,37 +97,9 @@ export default function useVideoCollection({
       ? progressiveState.targetCount
       : videos.length;
 
-  const userLimit =
-    renderLimit != null && Number.isFinite(renderLimit)
-      ? Math.max(0, Math.floor(renderLimit))
-      : null;
-
-  const limitedVideos =
-    userLimit == null
-      ? progressiveVideos
-      : progressiveVideos.slice(0, userLimit);
-
-  const limitedVisibleCount =
-    userLimit == null
-      ? progressiveVisibleCount
-      : Math.min(progressiveVisibleCount, userLimit);
-
-  const limitedTargetCount =
-    userLimit == null
-      ? progressiveTargetCount
-      : Math.min(progressiveTargetCount, Math.max(userLimit, 0));
-
   const desiredActiveCount = Number.isFinite(activationTarget) && activationTarget > 0
     ? Math.max(1, Math.floor(activationTarget))
     : progressiveVisibleCount;
-
-  const cappedDesiredActiveCount =
-    userLimit == null
-      ? desiredActiveCount
-      : Math.min(
-          Math.max(0, desiredActiveCount),
-          Math.max(userLimit, 0)
-        );
 
   const activationWindowSize = (() => {
     if (activationWindowIds instanceof Set) return activationWindowIds.size;
@@ -144,9 +115,9 @@ export default function useVideoCollection({
   })();
 
   const playingCap =
-    cappedDesiredActiveCount && cappedDesiredActiveCount > 0
-      ? Math.floor(cappedDesiredActiveCount)
-      : limitedVisibleCount;
+    desiredActiveCount && desiredActiveCount > 0
+      ? Math.floor(desiredActiveCount)
+      : progressiveVisibleCount;
   const policyDecoderTarget = Number.isFinite(decoderTarget)
     ? Math.max(0, Math.floor(decoderTarget))
     : null;
@@ -172,7 +143,7 @@ export default function useVideoCollection({
       ? policyDecoderTarget
     : Number.isFinite(playingCap) && playingCap > 0
       ? playingCap
-      : limitedVisibleCount;
+      : progressiveVisibleCount;
 
   // Layer 2: Resource management (Browser performance)
   const {
@@ -189,10 +160,10 @@ export default function useVideoCollection({
     memoryStatus,
     reportPlayerCreationFailure,
   } = useVideoResourceManager({
-    progressiveVideos: limitedVideos,
-    progressiveVisibleCount: limitedVisibleCount,
-    progressiveTargetCount: limitedTargetCount,
-    desiredActiveCount: cappedDesiredActiveCount,
+    progressiveVideos,
+    progressiveVisibleCount,
+    progressiveTargetCount,
+    desiredActiveCount,
     visibleVideos,
     loadedVideos,
     loadingVideos,
@@ -232,7 +203,7 @@ export default function useVideoCollection({
 
   return {
     // What to render
-    videosToRender: limitedVideos,
+    videosToRender: progressiveVideos,
 
     // Functions for VideoCard
     canLoadVideo,
@@ -260,11 +231,11 @@ export default function useVideoCollection({
     playingVideos: playingSet,
     stats: {
       total: videos.length,
-      rendered: limitedVideos.length,
+      rendered: progressiveVideos.length,
       playing: playingSet.size,
       loaded: loadedVideos.size,
-      progressiveVisible: limitedVisibleCount,
-      activationTarget: cappedDesiredActiveCount,
+      progressiveVisible: progressiveVisibleCount,
+      activationTarget: desiredActiveCount,
       activeWindow: activationWindowSize,
     },
 

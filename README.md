@@ -59,15 +59,15 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   deterministically.
 - Nine grid-size steps span approximately 150–650 px with scroll anchoring and
   automatic safety adjustment.
-- Audio-bearing cards are identified, with hover-audio and fullscreen session
-  controls.
+- Audio-bearing cards are identified, with a profile-persistent hover-audio
+  toggle beside the filename toggle and separate fullscreen session controls.
 
 ### Navigation and Interaction
 
 - Recursive folder tree, breadcrumbs, **Current folder**, **Current subtree**,
   and **All descendants** scopes, plus `[`/`]` sibling-folder cycling.
-- Pinned library roots and reusable saved views for filters, sort, grouping, and
-  scope.
+- Pinned library roots with compact A–Z/Z–A sorting and passive total/unreviewed
+  counts, plus reusable saved views for filters, sort, grouping, and scope.
 - Cancellable folder loading with live phase, progress, active path,
   elapsed-time, and working-set feedback.
 - Fullscreen review loupe with complete-order navigation, tagging/rating/review

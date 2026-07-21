@@ -402,7 +402,7 @@ vi.mock("./components/HeaderBar", () => ({
       <>
         <button
           type="button"
-          aria-label="Play audio on hover"
+          aria-label="Player audio on hover"
           aria-pressed={Boolean(props.hoverAudioEnabled)}
           onClick={() => props.onHoverAudioToggle?.()}
         >
@@ -863,12 +863,13 @@ describe("App hook composition", () => {
   });
 
   test("wires Hover audio header toggle into useVideoCollection state", async () => {
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
 
     render(<App />);
 
-    const hoverAudioToggle = screen.getByRole("button", { name: "Play audio on hover" });
+    const hoverAudioToggle = screen.getByRole("button", { name: "Player audio on hover" });
     expect(hoverAudioToggle).toBeInTheDocument();
     expect(useVideoCollectionMock).toHaveBeenCalled();
 
@@ -879,6 +880,9 @@ describe("App hook composition", () => {
 
     const updatedArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(updatedArgs.hoverAudioEnabled).toBe(true);
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      hoverAudioEnabled: true,
+    });
     expect(headerBarSpy).toHaveBeenCalled();
   });
 
@@ -959,7 +963,7 @@ describe("App hook composition", () => {
       renderCountBeforeUnrelatedParentRender
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Play audio on hover" }));
+    fireEvent.click(screen.getByRole("button", { name: "Player audio on hover" }));
 
     const lastProps = videoCardSpy.mock.calls
       .filter(([props]) => props.video.id === "video-1")
@@ -1668,86 +1672,6 @@ describe("App hook composition", () => {
     await waitFor(() => expect(reloadCurrentRoot).toHaveBeenCalledWith(false));
     expect(screen.getByRole("combobox", { name: "Folder scope" })).toHaveValue(
       "all-descendants"
-    );
-  });
-
-  test("opens and settles an inactive root before saving its Start-review view", async () => {
-    const targetRoot = {
-      id: 7,
-      rootPath: "/target-root",
-      label: "Target outputs",
-      pinned: true,
-      presentCount: 9,
-      reviewedCount: 2,
-    };
-    const opening = createDeferredPromise();
-    const handleElectronFolderSelection = vi.fn(() => opening.promise);
-    let lifecycleState = {
-      ...electronLifecycleReturn,
-      videos: [],
-      activeRootPath: null,
-      libraryRoot: null,
-      handleElectronFolderSelection,
-    };
-    useElectronLifecycleMock.mockImplementation(() => lifecycleState);
-    let targetFilters = filterStateReturn.filters;
-    useFilterStateMock.mockImplementation(() => ({
-      ...filterStateReturn,
-      filters: targetFilters,
-      filteredVideos: [],
-    }));
-    useLibraryCatalogMock.mockImplementation(({ activeRootPath } = {}) => ({
-      roots: [targetRoot],
-      pinnedRoots: [targetRoot],
-      currentRoot: activeRootPath ? targetRoot : null,
-      directories: [],
-      refreshRoots: refreshLibraryRootsMock,
-      refreshTree: refreshLibraryTreeMock,
-      setPinned: setLibraryRootPinnedMock,
-    }));
-    const sessions = installReviewSessionsApi();
-    window.electronAPI.library = {
-      authorizeRoot: vi.fn().mockResolvedValue({
-        success: true,
-        rootPath: targetRoot.rootPath,
-      }),
-    };
-
-    vi.resetModules();
-    const { default: App } = await import("./App.jsx");
-    const rendered = render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", {
-      name: "Review Unreviewed Target outputs, 7 unreviewed in root",
-    }));
-    await waitFor(() =>
-      expect(handleElectronFolderSelection).toHaveBeenCalledWith("/target-root")
-    );
-    expect(sessions.save).not.toHaveBeenCalled();
-
-    targetFilters = reviewSessionView({ includeTags: ["target-only"] }).filters;
-    lifecycleState = {
-      ...lifecycleState,
-      activeRootPath: "/target-root",
-      libraryRoot: { ...targetRoot, recursive: true },
-      loadingStatus: { phase: "complete" },
-    };
-    rendered.rerender(<App />);
-    await act(async () => {
-      opening.resolve(true);
-      await opening.promise;
-    });
-
-    await waitFor(() => expect(sessions.save).toHaveBeenCalledOnce());
-    expect(sessions.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rootPath: "/target-root",
-        directory: "",
-        scope: "all-descendants",
-        view: expect.objectContaining({
-          filters: expect.objectContaining({ includeTags: ["target-only"] }),
-        }),
-      })
     );
   });
 
@@ -3047,11 +2971,11 @@ describe("App hook composition", () => {
     expect(selectionMock.selectExactly).toHaveBeenCalledWith(videos[1].id);
   });
 
-  test("raises the render cap only to the first step that can restore a visited clip", async () => {
+  test("returns directly to a visited virtualized clip without changing settings", async () => {
     const videos = Array.from({ length: 6_000 }, (_, index) => ({
-      id: `render-cap-${index}`,
+      id: `virtual-return-${index}`,
       instanceId: index + 1,
-      fingerprint: `render-cap-fp-${index}`,
+      fingerprint: `virtual-return-fp-${index}`,
       name: `clip-${index}.mp4`,
       reviewState: "unreviewed",
       tags: [],
@@ -3060,8 +2984,8 @@ describe("App hook composition", () => {
     useElectronLifecycleMock.mockImplementation(() => ({
       ...electronLifecycleReturn,
       videos,
-      activeRootPath: "/render-cap",
-      libraryRoot: { rootPath: "/render-cap", recursive: true },
+      activeRootPath: "/virtual-return",
+      libraryRoot: { rootPath: "/virtual-return", recursive: true },
     }));
     useFilterStateMock.mockImplementation(() => ({
       ...filterStateReturn,
@@ -3070,7 +2994,7 @@ describe("App hook composition", () => {
     }));
     Object.assign(masonryReturn, {
       orderedVideos: videos,
-      displayVideos: videos.slice(0, 100),
+      displayVideos: videos,
       orderedIds: videos.map((video) => video.id),
       orderForRange: videos.map((video) => video.id),
     });
@@ -3085,8 +3009,8 @@ describe("App hook composition", () => {
       isCurrentInView: true,
       hasPrevious: true,
       hasNext: true,
-      collectionOwnerKey: "profile:/render-cap",
-      sessionToken: "render-cap-session",
+      collectionOwnerKey: "profile:/virtual-return",
+      sessionToken: "virtual-return-session",
       close,
     });
     window.electronAPI = { saveSettingsPartial: vi.fn() };
@@ -3094,15 +3018,11 @@ describe("App hook composition", () => {
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
     render(<App />);
-    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
-    act(() => lifecycleArgs.setRenderLimitStep(0));
 
     act(() => fullScreenModalSpy.mock.calls.at(-1)?.[0].onClose());
 
     expect(close).toHaveBeenCalledOnce();
-    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith(
-      expect.objectContaining({ renderLimitStep: 1 })
-    );
+    expect(window.electronAPI.saveSettingsPartial).not.toHaveBeenCalled();
     expect(selectionMock.selectExactly).toHaveBeenCalledWith(current.id);
     expect(masonryReturn.scrollToId).toHaveBeenCalledWith(current.id, {
       align: "center",

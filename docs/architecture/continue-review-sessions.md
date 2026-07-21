@@ -124,7 +124,7 @@ For a random sort, `randomSeed` is required to be an integer; `null` is valid
 only for name/created sorts. The definition intentionally matches the
 allowlisted portions of saved views.
 It excludes transient UI state such as scroll, selection, sidebar expansion,
-zoom, render limit, playback mode, and open dialogs. A random sort always
+zoom, playback mode, and open dialogs. A random sort always
 persists its already-generated seed so the next visual order is reproducible.
 
 ### Validation and normalization
@@ -368,11 +368,10 @@ it follows the toolbar's existing horizontal-overflow behavior.
   an error dialog.
 - An explicit review/resume action moves focus to the selected video card once
   mounted. Passive catalog refresh and profile restoration never steal focus.
-- If the candidate is outside the user's current render cap, keep the logical
-  candidate selected and show **Show review target**. That explicit action
-  raises the cap to the smallest available step containing the candidate,
-  centres it, and reports the change; the app must not claim restoration or
-  completion while the selected target remains unreachable.
+- A logically selected candidate may be outside the mounted virtual window.
+  Scroll to it directly and wait for the card to mount before moving focus.
+  **Show review target** is only a retry affordance after mount/focus recovery
+  times out; it never changes a user preference.
 - Scan cancellation/error retains the checkpoint and says that completion
   could not yet be verified.
 
@@ -549,15 +548,15 @@ are called out below.
   restart/resume path. Dedicated App-level scenarios do not yet force every
   authoritative keep, replacement, completion, or duplicate
   focus/announcement permutation.
-- Pure render-step and component tests covered the render-cap calculation and
-  **Show review target** state. A dedicated App-level scenario for the complete
-  mount/focus sequence remains supplementary regression-test depth.
+- Component tests cover the **Show review target** recovery state. A dedicated
+  App-level scenario for the complete virtual scroll, mount, and focus sequence
+  remains supplementary regression-test depth.
 
 ### UX, integration, and performance
 
-- Component and App tests covered sidebar root counts and **Review Unreviewed**,
-  **Resume saved view**, and **Review complete** states, toolbar states,
-  overwrite/forget confirmations, accessible labels, and status messages.
+- Component and App tests cover passive pinned-root total/unreviewed counts,
+  root-name sorting, toolbar review states, overwrite/forget confirmations,
+  accessible labels, and status messages.
 - The Electron smoke reviewed a clip, left its newest cursor inside the
   debounce, closed the app, reopened the same profile, continued, and verified
   that the cursor was flushed and restored from the cached first grid.

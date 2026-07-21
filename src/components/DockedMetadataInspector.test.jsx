@@ -15,11 +15,13 @@ describe("DockedMetadataInspector", () => {
   it("renders the shared editor and dispatches exact selection actions", () => {
     const onSetReviewState = vi.fn();
     const onUndock = vi.fn();
+    const onFocusSelection = vi.fn();
     render(
       <DockedMetadataInspector
         selectionCount={1}
         selectedVideos={[video]}
         onSetReviewState={onSetReviewState}
+        onFocusSelection={onFocusSelection}
         onUndock={onUndock}
       />
     );
@@ -27,8 +29,16 @@ describe("DockedMetadataInspector", () => {
     expect(
       screen.getByRole("region", { name: "Docked selection details" })
     ).toHaveTextContent("clip-a.mp4");
+    const focus = screen.getByRole("button", { name: "Focus selection in grid" });
+    const undock = screen.getByRole("button", { name: "Undock selection details" });
+    expect(focus).toHaveClass("metadata-panel__button", "metadata-panel__button--focus");
+    expect(undock).toHaveClass("metadata-panel__button", "metadata-panel__button--dock");
+    expect(focus.querySelector("svg")).toBeInTheDocument();
+    expect(undock.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(focus);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
-    fireEvent.click(screen.getByRole("button", { name: "Undock selection details" }));
+    fireEvent.click(undock);
+    expect(onFocusSelection).toHaveBeenCalledOnce();
     expect(onSetReviewState).toHaveBeenCalledWith("pick");
     expect(onUndock).toHaveBeenCalledOnce();
   });

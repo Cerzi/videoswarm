@@ -55,7 +55,10 @@ describe("reusable metadata content sections", () => {
       screen.getByText("detail.safetensors (model 0.8, CLIP 1)")
     ).toBeInTheDocument();
     expect(screen.getByText("20")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Re-read" }));
+    const reread = screen.getByRole("button", { name: "Re-read" });
+    expect(reread).toHaveClass("metadata-panel__button");
+    expect(reread.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(reread);
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 

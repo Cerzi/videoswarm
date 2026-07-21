@@ -940,8 +940,8 @@ mandatory non-skippable Electron-ABI CI gate are also implemented in Sections
    key them to file signatures, and refresh only mounted observer targets. No
    card-query pass is performed during React layout.
 5. **Implemented** — Base range selection, filtering reconciliation, focus,
-   render-limit reachability, and fullscreen navigation on the displayed ID
-   model rather than mounted DOM nodes.
+   virtualized target reachability, and fullscreen navigation operate on the
+   displayed ID model rather than mounted DOM nodes.
 6. **Implemented** — Stabilize observer options and collection-level card
    callbacks, explicitly clear media/resource membership on virtual unmount,
    and remove persistent offscreen `will-change`, blur, and placeholder

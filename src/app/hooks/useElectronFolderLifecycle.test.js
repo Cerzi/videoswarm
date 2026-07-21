@@ -3,7 +3,6 @@ import {
   CACHED_FIRST_GRID_LIMIT,
   useElectronFolderLifecycle,
 } from "./useElectronFolderLifecycle";
-import { inferRenderLimitStepFromLegacy } from "../../utils/renderLimit";
 
 function createSetStateMock() {
   let current = new Set();
@@ -40,8 +39,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -93,7 +91,7 @@ describe("useElectronFolderLifecycle", () => {
       getSettings: vi.fn().mockResolvedValue({
         recursiveMode: true,
         showFilenames: false,
-        renderLimitStep: 7,
+        hoverAudioEnabled: true,
         zoomLevel: 3,
         sortKey: "name",
         sortDir: "desc",
@@ -157,8 +155,7 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode: false,
           setRecursiveMode,
           setShowFilenames: vi.fn(),
-          renderLimitStep: 5,
-          setRenderLimitStep: vi.fn(),
+          setHoverAudioEnabled: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,
@@ -234,7 +231,7 @@ describe("useElectronFolderLifecycle", () => {
   it("loads persisted settings on mount", async () => {
     const setRecursiveMode = vi.fn();
     const setShowFilenames = vi.fn();
-    const setRenderLimitStep = vi.fn();
+    const setHoverAudioEnabled = vi.fn();
     const setSortKey = vi.fn();
     const setSortDir = vi.fn();
     const setGroupByFolders = vi.fn();
@@ -252,8 +249,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode,
         setShowFilenames,
-        renderLimitStep: 5,
-        setRenderLimitStep,
+        setHoverAudioEnabled,
         setSortKey,
         setSortDir,
         groupByFolders: true,
@@ -277,7 +273,7 @@ describe("useElectronFolderLifecycle", () => {
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setRecursiveMode).toHaveBeenCalledWith(true);
     expect(setShowFilenames).toHaveBeenCalledWith(false);
-    expect(setRenderLimitStep).toHaveBeenCalledWith(7);
+    expect(setHoverAudioEnabled).toHaveBeenCalledWith(true);
     expect(setSortKey).toHaveBeenCalledWith("name");
     expect(setSortDir).toHaveBeenCalledWith("desc");
     expect(setGroupByFolders).toHaveBeenCalledWith(false);
@@ -344,45 +340,6 @@ describe("useElectronFolderLifecycle", () => {
     expect(setMetadataInspectorMode).toHaveBeenCalledWith("floating");
   });
 
-  it("converts legacy maxConcurrentPlaying setting to render limit step", async () => {
-    const legacyValue = 250;
-    window.electronAPI.getSettings.mockResolvedValueOnce({
-      recursiveMode: false,
-      showFilenames: true,
-      maxConcurrentPlaying: legacyValue,
-    });
-
-    const setRenderLimitStep = vi.fn();
-
-    const { result } = renderHook(() =>
-      useElectronFolderLifecycle({
-        selection,
-        recursiveMode: false,
-        setRecursiveMode: vi.fn(),
-        setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep,
-        setSortKey: vi.fn(),
-        setSortDir: vi.fn(),
-        groupByFolders: true,
-        setGroupByFolders: vi.fn(),
-        setRandomSeed: vi.fn(),
-        setZoomLevelFromSettings: vi.fn(),
-        setVisibleVideos: setVisibleVideosMock.setter,
-        setLoadedVideos: setLoadedVideosMock.setter,
-        setLoadingVideos: setLoadingVideosMock.setter,
-        setActualPlaying: setActualPlayingMock.setter,
-        refreshTagList,
-        addRecentFolder,
-      })
-    );
-
-    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(setRenderLimitStep).toHaveBeenCalledWith(
-      inferRenderLimitStepFromLegacy(legacyValue)
-    );
-  });
-
   it("handles folder selection lifecycle", async () => {
     const resetMediaScheduler = vi.fn();
     const resetThumbnailGeneration = vi.fn();
@@ -392,8 +349,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -1873,8 +1829,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -2085,8 +2040,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -2147,8 +2101,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -2236,8 +2189,7 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode: false,
           setRecursiveMode: vi.fn(),
           setShowFilenames: vi.fn(),
-          renderLimitStep: 5,
-          setRenderLimitStep: vi.fn(),
+          setHoverAudioEnabled: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,
@@ -2281,8 +2233,7 @@ describe("useElectronFolderLifecycle", () => {
         recursiveMode: false,
         setRecursiveMode: vi.fn(),
         setShowFilenames: vi.fn(),
-        renderLimitStep: 5,
-        setRenderLimitStep: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
         setSortKey: vi.fn(),
         setSortDir: vi.fn(),
         groupByFolders: true,
@@ -2329,8 +2280,7 @@ describe("useElectronFolderLifecycle", () => {
           recursiveMode,
           setRecursiveMode,
           setShowFilenames: vi.fn(),
-          renderLimitStep: 5,
-          setRenderLimitStep: vi.fn(),
+          setHoverAudioEnabled: vi.fn(),
           setSortKey: vi.fn(),
           setSortDir: vi.fn(),
           groupByFolders: true,

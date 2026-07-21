@@ -15,6 +15,7 @@ import {
   MetadataGenerationSection,
   MetadataTagsSection,
 } from "./MetadataContentSections";
+import { EraserIcon } from "../UiIcons";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
 const REVIEW_ACTIONS = [
@@ -50,11 +51,12 @@ function RatingStars({ value, isMixed, onSelect, onClear, disabled }) {
       </div>
       <button
         type="button"
-        className="metadata-panel__clear-rating"
+        className="metadata-panel__button metadata-panel__button--compact metadata-panel__clear-rating"
         onClick={() => !disabled && onClear?.()}
         disabled={disabled}
       >
-        Clear
+        <EraserIcon />
+        <span>Clear</span>
       </button>
     </div>
   );
@@ -198,7 +200,7 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
               <button
                 key={value}
                 type="button"
-                className={`metadata-panel__review-button metadata-panel__review-button--${value} ${
+                className={`metadata-panel__button metadata-panel__review-button metadata-panel__review-button--${value} ${
                   !reviewInfo.mixed && reviewInfo.value === value
                     ? "is-active"
                     : ""

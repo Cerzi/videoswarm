@@ -160,32 +160,6 @@
   gap: 0.3rem;
 }
 
-.metadata-docked-inspector__actions button {
-  min-height: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  color: rgba(255, 255, 255, 0.76);
-  padding: 0.28rem 0.5rem;
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.61rem;
-  font-weight: 650;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-
-.metadata-docked-inspector__actions button:hover {
-  border-color: rgba(116, 192, 252, 0.38);
-  background: rgba(116, 192, 252, 0.12);
-  color: #e7f5ff;
-}
-
-.metadata-docked-inspector__actions button:focus-visible {
-  outline: 2px solid rgba(116, 192, 252, 0.78);
-  outline-offset: 2px;
-}
-
 .metadata-docked-inspector__content {
   padding: 0.7rem;
 }
