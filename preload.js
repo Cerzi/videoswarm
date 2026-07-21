@@ -381,10 +381,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
           scope: payload?.scope,
           includeSidecars: payload?.includeSidecars === true,
         }),
-      start: async (planId) =>
+      start: async (planId, transferMode = "copy") =>
         ipcRenderer.invoke("review:copy-accepted:start", {
           planId: normalizeAcceptedCopyPlanId(planId),
           collisionPolicy: "skip",
+          transferMode: transferMode === "move" ? "move" : "copy",
         }),
       cancel: async (planId) =>
         ipcRenderer.invoke("review:copy-accepted:cancel", {

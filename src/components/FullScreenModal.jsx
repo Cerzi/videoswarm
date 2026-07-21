@@ -130,6 +130,37 @@ const getFocusableElements = (dialog) =>
 const renderSlot = (slot, context) =>
   typeof slot === "function" ? slot(context) : slot;
 
+export const isPointInsideContainedVideo = (event, element) => {
+  const width = Number(element?.videoWidth);
+  const height = Number(element?.videoHeight);
+  const rect = element?.getBoundingClientRect?.();
+  if (
+    !rect ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return true;
+  }
+  const scale = Math.min(rect.width / width, rect.height / height);
+  const renderedWidth = width * scale;
+  const renderedHeight = height * scale;
+  const left = rect.left + (rect.width - renderedWidth) / 2;
+  const top = rect.top + (rect.height - renderedHeight) / 2;
+  const x = Number(event?.clientX);
+  const y = Number(event?.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+  return (
+    x >= left &&
+    x <= left + renderedWidth &&
+    y >= top &&
+    y <= top + renderedHeight
+  );
+};
+
 const safeCloseDialog = (dialog) => {
   if (!dialog) return;
   try {
@@ -785,6 +816,23 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     [requestClose]
   );
 
+  const handleDismissAreaClick = useCallback(
+    (event) => {
+      if (event.target === event.currentTarget) requestClose("backdrop");
+    },
+    [requestClose]
+  );
+
+  const handleVideoClick = useCallback(
+    (event) => {
+      event.stopPropagation();
+      if (!isPointInsideContainedVideo(event, event.currentTarget)) {
+        requestClose("backdrop");
+      }
+    },
+    [requestClose]
+  );
+
   const handleNativeCancel = useCallback(
     (event) => {
       event.preventDefault();
@@ -926,7 +974,10 @@ const FullScreenModal = forwardRef(function FullScreenModal(
             </aside>
           ) : null}
 
-          <main className="fullscreen-review__stage">
+          <main
+            className="fullscreen-review__stage"
+            onClick={handleDismissAreaClick}
+          >
             <button
               type="button"
               className="fullscreen-review__nav fullscreen-review__nav--previous"
@@ -938,7 +989,10 @@ const FullScreenModal = forwardRef(function FullScreenModal(
               ←
             </button>
 
-            <div className="fullscreen-review__media-wrap">
+            <div
+              className="fullscreen-review__media-wrap"
+              onClick={handleDismissAreaClick}
+            >
               {isLoading ? (
                 <div className="fullscreen-review__loading" role="status">
                   <span className="fullscreen-review__spinner" aria-hidden="true" />
@@ -966,7 +1020,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
                 loop
                 controls
                 playsInline
-                onClick={(event) => event.stopPropagation()}
+                onClick={handleVideoClick}
                 onPlay={() => {
                   playbackIntentRef.current = true;
                 }}

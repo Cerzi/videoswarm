@@ -1279,12 +1279,12 @@ their stated evidence exists:
   masonry remain an optional UX enhancement. The implemented folder tree and
   group strip already provide navigation and visible grouping without changing
   layout geometry.
-- **Expanded review-result actions:** destructive Move Accepted with
-  cross-device recovery, metadata transfer for copied content, and streaming
-  reject processing above the current 2,000-local-reject safety bound remain
-  deferred. Copy Accepted—including optional exact sidecars, collision
-  preflight, exclusive no-overwrite writes, and bounded progress/cancellation—
-  is implemented; see [`review-workflow.md`](review-workflow.md).
+- **Expanded review-result actions:** metadata transfer for copied content and
+  streaming reject processing above the current 2,000-local-reject safety
+  bound remain deferred. Accepted Move/Copy—including optional exact sidecars,
+  collision preflight, exclusive no-overwrite writes, source identity checks,
+  and bounded progress/cancellation—is implemented; see
+  [`review-workflow.md`](review-workflow.md).
 - **Cross-platform packaged validation:** Linux source-production smoke
   exercises the security boundary and custom media ranges. In addition, CI and
   the release workflow install the generated Debian package, assert that

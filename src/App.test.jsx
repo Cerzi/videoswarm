@@ -410,6 +410,14 @@ vi.mock("./components/HeaderBar", () => ({
         </button>
         <button
           type="button"
+          aria-label="Review mode"
+          aria-pressed={Boolean(props.reviewModeEnabled)}
+          onClick={() => props.onReviewModeToggle?.()}
+        >
+          Review mode
+        </button>
+        <button
+          type="button"
           aria-label="Use Static + Hover playback"
           onClick={() => props.onPlaybackModeChange?.("static-hover")}
         >
@@ -884,6 +892,28 @@ describe("App hook composition", () => {
       hoverAudioEnabled: true,
     });
     expect(headerBarSpy).toHaveBeenCalled();
+  });
+
+  test("persists review mode and removes its hotkey handlers while disabled", async () => {
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+
+    render(<App />);
+
+    const toggle = screen.getByRole("button", { name: "Review mode" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      reviewModeEnabled: false,
+    });
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2]).toMatchObject({
+      onSetReviewState: null,
+      onSetRating: null,
+      onUndoReview: null,
+    });
   });
 
   test("opens and closes keyboard shortcut help from the header", async () => {
@@ -2275,8 +2305,10 @@ describe("App hook composition", () => {
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("videos");
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("records");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Copy 1 file" }));
-    await waitFor(() => expect(start).toHaveBeenCalledWith("copy-plan-app-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /Copy 1 file/ }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith("copy-plan-app-1", "copy")
+    );
     expect(await screen.findByText("Copy complete")).toBeInTheDocument();
 
     unmount();
@@ -2341,7 +2373,7 @@ describe("App hook composition", () => {
     const rendered = render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Process results" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
-    await screen.findByRole("button", { name: "Copy 1 file" });
+    await screen.findByRole("button", { name: /Copy 1 file/ });
 
     lifecycle = {
       ...lifecycle,

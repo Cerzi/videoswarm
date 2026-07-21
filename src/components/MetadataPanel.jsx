@@ -74,6 +74,7 @@ const MetadataPanel = forwardRef((
     onSetRating,
     onClearRating,
     onSetReviewState,
+    reviewModeEnabled = true,
     suggestionLimit,
     generationMetadataState = null,
     generationExpanded,
@@ -736,6 +737,7 @@ const MetadataPanel = forwardRef((
             onSetRating={onSetRating}
             onClearRating={onClearRating}
             onSetReviewState={onSetReviewState}
+            reviewModeEnabled={reviewModeEnabled}
           />
         </div>
       </div>

@@ -29,7 +29,11 @@ function ShortcutKeys({ shortcut }) {
   );
 }
 
-export default function KeyboardShortcutsDialog({ open, onClose }) {
+export default function KeyboardShortcutsDialog({
+  open,
+  onClose,
+  reviewModeEnabled = true,
+}) {
   const dialogRef = useRef(null);
 
   useEffect(() => {
@@ -114,7 +118,9 @@ export default function KeyboardShortcutsDialog({ open, onClose }) {
 
         <div className="shortcuts-dialog__body">
           <div className="shortcuts-dialog__grid">
-            {HOTKEY_SECTIONS.map((section) => (
+            {HOTKEY_SECTIONS.filter(
+              (section) => reviewModeEnabled || section.id !== "review"
+            ).map((section) => (
               <section className="shortcut-group" key={section.id}>
                 <div className="shortcut-group__heading">
                   <h3>{section.title}</h3>

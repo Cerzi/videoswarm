@@ -1137,6 +1137,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
   }
 
   async function copyPreparedPlan(plan) {
+    const transferMode = plan.transferMode === "move" ? "move" : "copy";
+    const moving = transferMode === "move";
     const failures = [...plan.preflightFailures];
     let failureCount = plan.preflightFailureCount;
     let missingCount = plan.missingCount || 0;
@@ -1212,6 +1214,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
               ACCEPTED_COPY_CODES.SOURCE_CHANGED
             );
           }
+          if (moving) {
+            await fsPromises.unlink(job.sourcePath);
+          }
           // The native copy may finish concurrently with cancellation. It is a
           // completed partial result and is intentionally not rolled back.
           if (job.kind === "sidecar") copiedSidecars += 1;
@@ -1273,10 +1278,13 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       generation: plan.context?.generation ?? null,
       code: cancelled ? "ACCEPTED_COPY_CANCELLED" : null,
       destinationLabel: plan.destinationLabel,
+      transferMode,
       totalMedia: plan.totalMedia,
       totalFiles: total,
       copiedCount: copiedMedia,
       copiedMedia,
+      movedCount: moving ? copiedMedia : 0,
+      movedMedia: moving ? copiedMedia : 0,
       sidecarCopiedCount: copiedSidecars,
       copiedSidecars,
       bytesCopied,
@@ -1324,6 +1332,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         ...prepareFailureResult(error, plan.context, plan.id),
         cancelled,
         destinationLabel: plan.destinationLabel,
+        transferMode: plan.transferMode === "move" ? "move" : "copy",
         totalMedia: plan.totalMedia || 0,
         totalFiles:
           (plan.jobs?.length || 0) +
@@ -1374,6 +1383,13 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         "Copy Accepted currently supports only skipping collisions"
       );
     }
+    const transferMode = request?.transferMode ?? "copy";
+    if (!['copy', 'move'].includes(transferMode)) {
+      return unavailableResult(
+        ACCEPTED_COPY_CODES.PLAN_INVALID,
+        "Accepted clip transfer mode must be copy or move"
+      );
+    }
     let planId;
     try {
       planId = normalizePlanId(request?.planId);
@@ -1404,6 +1420,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     if (plan.expiryTimer) clearTimeout(plan.expiryTimer);
     plan.expiryTimer = null;
     plan.state = "running";
+    plan.transferMode = transferMode;
     const operation = trackOperation(runStart(plan));
     activeCopy = operation;
     operation.then(

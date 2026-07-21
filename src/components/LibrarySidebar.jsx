@@ -25,6 +25,7 @@ const normalizeCount = (value) => {
 const RootCountSummary = memo(function RootCountSummary({
   root,
   state,
+  reviewModeEnabled = true,
 }) {
   const total = normalizeCount(state?.totalClips ?? root?.presentCount);
   const reviewed = normalizeCount(root?.reviewedCount);
@@ -36,9 +37,15 @@ const RootCountSummary = memo(function RootCountSummary({
 
   const summary = [
     total === null ? null : `${total.toLocaleString()} clips`,
-    remaining === null ? null : `${remaining.toLocaleString()} unreviewed`,
+    !reviewModeEnabled || remaining === null
+      ? null
+      : `${remaining.toLocaleString()} unreviewed`,
   ].filter(Boolean).join(" · ");
-  const countTooltip =
+  const countTooltip = !reviewModeEnabled
+    ? total === null
+      ? "Clip count unavailable"
+      : `${total.toLocaleString()} clips in root`
+    :
     `${total === null ? "Clip count unavailable" : `${total.toLocaleString()} clips in root`}; ${
       remaining === null
         ? "unreviewed count unavailable"
@@ -71,6 +78,8 @@ const FolderTreeRow = memo(function FolderTreeRow({
   onToggleExpanded,
   onSelectFolder,
   disabled,
+  sortDirection,
+  reviewModeEnabled = true,
 }) {
   const path = normalizeRelativePath(node?.path ?? node?.relativePath);
   const children = Array.isArray(node?.children) ? node.children : [];
@@ -81,6 +90,16 @@ const FolderTreeRow = memo(function FolderTreeRow({
   const reviewedCount = Math.max(0, Number(node?.reviewedCount) || 0);
   const videoCount = Math.max(0, Number(node?.videoCount) || 0);
   const missingCount = Math.max(0, Number(node?.missingCount) || 0);
+  const sortedChildren = useMemo(() => {
+    const direction = sortDirection === "desc" ? -1 : 1;
+    return [...children].sort((left, right) =>
+      String(left?.name || left?.path || "").localeCompare(
+        String(right?.name || right?.path || ""),
+        undefined,
+        { numeric: true, sensitivity: "base" }
+      ) * direction
+    );
+  }, [children, sortDirection]);
 
   return (
     <li
@@ -128,9 +147,15 @@ const FolderTreeRow = memo(function FolderTreeRow({
             </span>
             <span
               className="library-folder-tree__review-count"
-              title={`${reviewedCount} of ${videoCount} videos reviewed`}
+              title={
+                reviewModeEnabled
+                  ? `${reviewedCount} of ${videoCount} videos reviewed`
+                  : `${videoCount.toLocaleString()} videos in folder`
+              }
             >
-              {reviewedCount.toLocaleString()}/{videoCount.toLocaleString()}
+              {reviewModeEnabled
+                ? `${reviewedCount.toLocaleString()}/${videoCount.toLocaleString()}`
+                : videoCount.toLocaleString()}
             </span>
             {missingCount > 0 ? (
               <span
@@ -146,7 +171,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
 
       {expanded ? (
         <ul role="group" className="library-folder-tree__group">
-          {children.map((child) => (
+          {sortedChildren.map((child) => (
             <FolderTreeRow
               key={child?.path ?? child?.relativePath ?? child?.name}
               node={child}
@@ -156,6 +181,8 @@ const FolderTreeRow = memo(function FolderTreeRow({
               onToggleExpanded={onToggleExpanded}
               onSelectFolder={onSelectFolder}
               disabled={disabled}
+              sortDirection={sortDirection}
+              reviewModeEnabled={reviewModeEnabled}
             />
           ))}
         </ul>
@@ -181,6 +208,7 @@ export function LibrarySidebarContent({
   onDeleteSavedView,
   smartViewsEnabled = true,
   disabled = false,
+  reviewModeEnabled = true,
 }) {
   const roots = Array.isArray(tree) ? tree : tree ? [tree] : [];
   const expanded = normalizeExpandedPaths(expandedPaths);
@@ -188,18 +216,27 @@ export function LibrarySidebarContent({
   const currentRootPinned = Boolean(currentRoot?.pinned);
   const [isNamingView, setNamingView] = useState(false);
   const [viewName, setViewName] = useState("");
-  const [rootSortDirection, setRootSortDirection] = useState("asc");
+  const [folderSortDirection, setFolderSortDirection] = useState("asc");
   const sortedPinnedRoots = useMemo(() => {
-    const direction = rootSortDirection === "desc" ? -1 : 1;
     return [...pinnedRoots].sort((left, right) => {
       const byLabel = rootLabelOf(left).localeCompare(rootLabelOf(right), undefined, {
         numeric: true,
         sensitivity: "base",
       });
-      if (byLabel !== 0) return byLabel * direction;
-      return rootPathOf(left).localeCompare(rootPathOf(right)) * direction;
+      if (byLabel !== 0) return byLabel;
+      return rootPathOf(left).localeCompare(rootPathOf(right));
     });
-  }, [pinnedRoots, rootSortDirection]);
+  }, [pinnedRoots]);
+  const sortedRoots = useMemo(() => {
+    const direction = folderSortDirection === "desc" ? -1 : 1;
+    return [...roots].sort((left, right) =>
+      String(left?.name || left?.path || "").localeCompare(
+        String(right?.name || right?.path || ""),
+        undefined,
+        { numeric: true, sensitivity: "base" }
+      ) * direction
+    );
+  }, [folderSortDirection, roots]);
 
   const submitSavedView = async (event) => {
     event.preventDefault();
@@ -221,33 +258,6 @@ export function LibrarySidebarContent({
             <h2>Pinned roots</h2>
           </div>
           <div className="library-sidebar__root-actions">
-            {pinnedRoots.length > 1 ? (
-              <button
-                type="button"
-                className="library-sidebar__sort-roots"
-                onClick={() =>
-                  setRootSortDirection((direction) =>
-                    direction === "asc" ? "desc" : "asc"
-                  )
-                }
-                aria-label={
-                  rootSortDirection === "asc"
-                    ? "Pinned roots sorted A to Z; switch to Z to A"
-                    : "Pinned roots sorted Z to A; switch to A to Z"
-                }
-                title={
-                  rootSortDirection === "asc"
-                    ? "Name A–Z; click for Z–A"
-                    : "Name Z–A; click for A–Z"
-                }
-              >
-                {rootSortDirection === "asc" ? (
-                  <SortAscendingIcon />
-                ) : (
-                  <SortDescendingIcon />
-                )}
-              </button>
-            ) : null}
             {currentRootPath ? (
               <button
                 type="button"
@@ -299,6 +309,7 @@ export function LibrarySidebarContent({
                     <RootCountSummary
                       root={root}
                       state={rootCountState}
+                      reviewModeEnabled={reviewModeEnabled}
                     />
                   </div>
                   <button
@@ -317,7 +328,7 @@ export function LibrarySidebarContent({
             })}
           </ul>
         ) : (
-          <p className="library-sidebar__empty">Pin frequently reviewed roots here.</p>
+          <p className="library-sidebar__empty">Pin frequently used roots here.</p>
         )}
       </section>
 
@@ -397,7 +408,7 @@ export function LibrarySidebarContent({
             ))}
           </ul>
         ) : (
-          <p className="library-sidebar__empty">Save filters for repeat review passes.</p>
+          <p className="library-sidebar__empty">Save filters for repeat browsing setups.</p>
         )}
       </section>
 
@@ -407,11 +418,38 @@ export function LibrarySidebarContent({
             <span className="library-sidebar__eyebrow">Current collection</span>
             <h2>Folders</h2>
           </div>
+          {roots.length ? (
+            <button
+              type="button"
+              className="library-sidebar__sort-roots"
+              onClick={() =>
+                setFolderSortDirection((direction) =>
+                  direction === "asc" ? "desc" : "asc"
+                )
+              }
+              aria-label={
+                folderSortDirection === "asc"
+                  ? "Folders sorted A to Z; switch to Z to A"
+                  : "Folders sorted Z to A; switch to A to Z"
+              }
+              title={
+                folderSortDirection === "asc"
+                  ? "Folders A-Z; click for Z-A"
+                  : "Folders Z-A; click for A-Z"
+              }
+            >
+              {folderSortDirection === "asc" ? (
+                <SortAscendingIcon />
+              ) : (
+                <SortDescendingIcon />
+              )}
+            </button>
+          ) : null}
         </header>
 
         {roots.length ? (
           <ul className="library-folder-tree" role="tree" aria-label="Collection folders">
-            {roots.map((root) => (
+            {sortedRoots.map((root) => (
               <FolderTreeRow
                 key={root?.path ?? root?.relativePath ?? root?.name}
                 node={root}
@@ -421,6 +459,8 @@ export function LibrarySidebarContent({
                 onToggleExpanded={onToggleExpanded}
                 onSelectFolder={onSelectFolder}
                 disabled={disabled}
+                sortDirection={folderSortDirection}
+                reviewModeEnabled={reviewModeEnabled}
               />
             ))}
           </ul>

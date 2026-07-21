@@ -66,8 +66,8 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 - Recursive folder tree, breadcrumbs, **Current folder**, **Current subtree**,
   and **All descendants** scopes, plus `[`/`]` sibling-folder cycling.
-- Pinned library roots with compact A–Z/Z–A sorting and passive total/unreviewed
-  counts, plus reusable saved views for filters, sort, grouping, and scope.
+- Pinned library roots with passive total/unreviewed counts, a compact A–Z/Z–A
+  folder-tree sort, and reusable saved views for filters, sort, grouping, and scope.
 - Cancellable folder loading with live phase, progress, active path,
   elapsed-time, and working-set feedback.
 - Fullscreen review loupe with complete-order navigation, tagging/rating/review
@@ -85,11 +85,13 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   its rating but never its tags.
 - One-handed shortcuts, optional advance-after-marking, one-step coupled undo,
   and stable scope progress.
+- A profile-persistent review-mode toggle hides review UI, counts, actions, and
+  shortcuts when review workflow features are not wanted.
 - Persistent saved review positions with **Find Unreviewed** and **Resume saved
   view** across application restarts.
-- **Process Results** supports bounded parallel Reject trashing and
-  no-overwrite **Copy Accepted**, preserving relative folders and optionally
-  recognized adjacent JSON sidecars.
+- **Process Results** supports bounded parallel Reject trashing plus explicit
+  no-overwrite **Move** and **Copy** actions for accepted clips, preserving
+  relative folders and optionally recognized adjacent JSON sidecars.
 - Custom tags, bulk add/remove, ranked suggestions, five-star ratings, and
   profile-local SQLite persistence.
 - Lazy embedded ComfyUI/VHS API-graph extraction for supported prompt, negative
@@ -106,11 +108,13 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   when host watcher limits are exhausted.
 - Profile-local pinned roots, empty-directory records, folder counts, saved
   views, review positions, and compact generation metadata.
-- Recent folders, rich file facts, fingerprint-based metadata continuity, and
+- Recent folders, rich file facts including duration and frame rate,
+  fingerprint-based metadata continuity, and
   configurable application data location.
 - Sandboxed renderer, opaque local-media protocol, and main-process-authorized
   native file actions.
-- **Copy Accepted** never overwrites destinations or modifies originals.
+- Accepted-clip transfers never overwrite destinations. Copy keeps originals;
+  Move removes a source only after its exclusive destination copy succeeds.
 
 ### Live Drag Thumbnails
 
@@ -155,8 +159,8 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   `ffprobe`; exact adjacent JSON sidecars remain the fallback. Arbitrary custom
   nodes and visual-workflow-only composition may produce a transparent partial
   result rather than a guessed prompt.
-- **Copy Accepted** is copy-only, does not transfer Video Swarm metadata, and
-  never overwrites. Move Accepted remains deferred.
+- Accepted-clip Move/Copy does not transfer Video Swarm metadata and never
+  overwrites an existing destination.
 - Reject processing is limited to 2,000 local files per scoped batch.
 - The app is designed primarily for many short clips. Long, high-resolution,
   or uncapped workloads remain hardware-sensitive even though 1,000- and
@@ -190,7 +194,7 @@ Planned for upcoming versions:
 - A synchronized 2–4 clip comparison workspace
 - A packaged cross-platform embedded-metadata reader
 - Evidence-gated Linux motion sweep and further playback profiling
-- Optional Move Accepted and copied-metadata transfer
+- Copied-metadata transfer
 
 ---
 

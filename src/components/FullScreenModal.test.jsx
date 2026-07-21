@@ -421,6 +421,40 @@ describe("FullScreenModal media ownership", () => {
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
   });
 
+  it("dismisses letterboxed video space but keeps clicks on the picture", () => {
+    const onClose = vi.fn();
+    render(
+      <FullScreenModal
+        video={{ id: "letterbox", name: "letterbox.mp4", blobUrl: "blob:letterbox" }}
+        onClose={onClose}
+        onNavigate={vi.fn()}
+      />
+    );
+    const element = document.body.querySelector("video");
+    Object.defineProperty(element, "videoWidth", {
+      configurable: true,
+      value: 1600,
+    });
+    Object.defineProperty(element, "videoHeight", {
+      configurable: true,
+      value: 900,
+    });
+    element.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 400,
+      width: 400,
+      height: 400,
+    });
+
+    fireEvent.click(element, { clientX: 200, clientY: 200 });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(element, { clientX: 200, clientY: 20 });
+    expect(onClose).toHaveBeenCalledWith("backdrop");
+  });
+
   it("exposes idempotent releaseNow and preserves session audio only for navigation", () => {
     const scheduler = createMediaSlotScheduler({ maxExternalDecoders: 1 });
     const playerRef = createRef();

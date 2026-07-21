@@ -260,6 +260,7 @@ const defaultSettings = {
   playbackMode: "balanced",
   proxyPlaybackEnabled: false,
   reviewAutoAdvance: false,
+  reviewModeEnabled: true,
   fullscreenDetailsOpen: true,
   metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
@@ -1162,6 +1163,9 @@ async function createVideoFileObject(
 
     const isValidDimensions = (dims) =>
       dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0;
+    const hasVideoTiming = (dims) =>
+      (Number.isFinite(dims?.durationMs) && dims.durationMs > 0) ||
+      (Number.isFinite(dims?.frameRate) && dims.frameRate > 0);
 
     try {
       assertActive?.();
@@ -1207,11 +1211,26 @@ async function createVideoFileObject(
         }
       }
 
-      if (!isValidDimensions(dimensions) || typeof hasAudio !== "boolean") {
+      if (
+        !isValidDimensions(dimensions) ||
+        typeof hasAudio !== "boolean" ||
+        !hasVideoTiming(dimensions)
+      ) {
         const computed = await getVideoDimensions(filePath, stats);
         assertActive?.();
         if (isValidDimensions(computed)) {
-          if (!isValidDimensions(dimensions)) dimensions = computed;
+          dimensions = {
+            ...computed,
+            ...(isValidDimensions(dimensions) ? dimensions : {}),
+            durationMs:
+              Number.isFinite(dimensions?.durationMs) && dimensions.durationMs > 0
+                ? dimensions.durationMs
+                : computed.durationMs,
+            frameRate:
+              Number.isFinite(dimensions?.frameRate) && dimensions.frameRate > 0
+                ? dimensions.frameRate
+                : computed.frameRate,
+          };
           if (typeof computed.hasAudio === "boolean") {
             hasAudio = computed.hasAudio;
           }
@@ -1266,6 +1285,12 @@ async function createVideoFileObject(
             Number.isFinite(dimensions.aspectRatio) && dimensions.aspectRatio > 0
               ? dimensions.aspectRatio
               : dimensions.width / dimensions.height,
+          ...(Number.isFinite(dimensions.durationMs) && dimensions.durationMs > 0
+            ? { durationMs: dimensions.durationMs }
+            : {}),
+          ...(Number.isFinite(dimensions.frameRate) && dimensions.frameRate > 0
+            ? { frameRate: dimensions.frameRate }
+            : {}),
         }
         : null,
       aspectRatio:
@@ -1493,6 +1518,10 @@ function normaliseLoadedSettings(rawSettings) {
     playbackMode: normalizePlaybackMode(source.playbackMode),
     proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
     reviewAutoAdvance: source.reviewAutoAdvance === true,
+    reviewModeEnabled:
+      source.reviewModeEnabled === undefined
+        ? defaultSettings.reviewModeEnabled
+        : source.reviewModeEnabled === true,
     fullscreenDetailsOpen:
       source.fullscreenDetailsOpen === undefined
         ? defaultSettings.fullscreenDetailsOpen
@@ -4140,10 +4169,19 @@ ipcMain.handle("review:copy-accepted:start", async (event, payload = {}) => {
     minChars: 1,
     maxChars: 16,
   });
+  const transferMode = assertString(payload?.transferMode ?? "copy", {
+    name: "Accepted clip transfer mode",
+    minChars: 4,
+    maxChars: 4,
+  });
+  if (!['copy', 'move'].includes(transferMode)) {
+    throw new TypeError("Accepted clip transfer mode must be copy or move");
+  }
   return reviewCopyAcceptedCoordinator.start({
     owner: event.sender,
     planId,
     collisionPolicy,
+    transferMode,
   });
 });
 

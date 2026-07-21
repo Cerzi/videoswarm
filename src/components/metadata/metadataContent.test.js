@@ -18,7 +18,12 @@ describe("shared metadata content helpers", () => {
       name: "clip.mp4",
       dirname: "runs\\seed-1",
       createdMs: new Date("2025-01-02T03:04:05Z").getTime(),
-      dimensions: { width: 1280, height: 720 },
+      dimensions: {
+        width: 1280,
+        height: 720,
+        durationMs: 62_000,
+        frameRate: 29.97,
+      },
       size: 1234,
     };
 
@@ -31,14 +36,24 @@ describe("shared metadata content helpers", () => {
       filename: "clip.mp4",
       relativePath: "runs/seed-1/clip.mp4",
       resolution: "1280×720",
+      duration: "1:02",
+      frameRate: "29.97 fps",
       sizeBytes: 1234,
     });
-    expect(buildMetadataInfoLineItems(info)).toHaveLength(4);
+    expect(buildMetadataInfoLineItems(info)).toHaveLength(6);
     expect(
       buildMetadataInfoLineItems(info, { includeRelativePath: true }).map(
         ({ key }) => key
       )
-    ).toEqual(["filename", "relative-path", "resolution", "size", "created"]);
+    ).toEqual([
+      "filename",
+      "relative-path",
+      "resolution",
+      "frame-rate",
+      "duration",
+      "size",
+      "created",
+    ]);
   });
 
   it("derives shared/partial tags and bounded ranked suggestions", () => {

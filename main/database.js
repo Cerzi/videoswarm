@@ -609,7 +609,9 @@ function initDatabase(app, profilePath) {
       updated_at INTEGER NOT NULL,
       width INTEGER,
       height INTEGER,
-      has_audio INTEGER
+      has_audio INTEGER,
+      duration_ms REAL,
+      frame_rate REAL
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -657,6 +659,12 @@ function initDatabase(app, profilePath) {
     if (!legacyFileColumns.has('has_audio')) {
       db.exec('ALTER TABLE files ADD COLUMN has_audio INTEGER;');
     }
+    if (!legacyFileColumns.has('duration_ms')) {
+      db.exec('ALTER TABLE files ADD COLUMN duration_ms REAL;');
+    }
+    if (!legacyFileColumns.has('frame_rate')) {
+      db.exec('ALTER TABLE files ADD COLUMN frame_rate REAL;');
+    }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS library_roots (
@@ -679,6 +687,8 @@ function initDatabase(app, profilePath) {
         width INTEGER,
         height INTEGER,
         has_audio INTEGER,
+        duration_ms REAL,
+        frame_rate REAL,
         thumbnail_identity TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -846,6 +856,12 @@ function initDatabase(app, profilePath) {
     if (!mediaContentColumns.has('has_audio')) {
       db.exec('ALTER TABLE media_content ADD COLUMN has_audio INTEGER;');
     }
+    if (!mediaContentColumns.has('duration_ms')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN duration_ms REAL;');
+    }
+    if (!mediaContentColumns.has('frame_rate')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN frame_rate REAL;');
+    }
 
     const libraryRootColumns = new Set(
       db
@@ -999,9 +1015,11 @@ function initDatabase(app, profilePath) {
     const now = Date.now();
     db.prepare(`
       INSERT OR IGNORE INTO media_content (
-        fingerprint, size, created_ms, width, height, created_at, updated_at
+        fingerprint, size, created_ms, width, height, duration_ms, frame_rate,
+        created_at, updated_at
       )
-      SELECT fingerprint, size, created_ms, width, height, ?, ?
+      SELECT fingerprint, size, created_ms, width, height, duration_ms,
+        frame_rate, ?, ?
       FROM files;
     `).run(now, now);
 
@@ -1118,15 +1136,29 @@ function createMetadataStore(db) {
       if (!/duplicate column/i.test(error?.message || '')) throw error;
     }
   }
+  if (!columns.has('duration_ms')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN duration_ms REAL;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
+  if (!columns.has('frame_rate')) {
+    try {
+      db.exec('ALTER TABLE files ADD COLUMN frame_rate REAL;');
+    } catch (error) {
+      if (!/duplicate column/i.test(error?.message || '')) throw error;
+    }
+  }
 
   const fileUpsert = db.prepare(`
     INSERT INTO files (
       fingerprint, last_known_path, size, created_ms, updated_at, width, height,
-      has_audio
+      has_audio, duration_ms, frame_rate
     )
     VALUES (
       @fingerprint, @last_known_path, @size, @created_ms, @updated_at, @width,
-      @height, @has_audio
+      @height, @has_audio, @duration_ms, @frame_rate
     )
     ON CONFLICT(fingerprint) DO UPDATE SET
       last_known_path=excluded.last_known_path,
@@ -1135,17 +1167,19 @@ function createMetadataStore(db) {
       updated_at=excluded.updated_at,
       width=COALESCE(excluded.width, files.width),
       height=COALESCE(excluded.height, files.height),
-      has_audio=COALESCE(excluded.has_audio, files.has_audio);
+      has_audio=COALESCE(excluded.has_audio, files.has_audio),
+      duration_ms=COALESCE(excluded.duration_ms, files.duration_ms),
+      frame_rate=COALESCE(excluded.frame_rate, files.frame_rate);
   `);
 
   const mediaContentUpsert = db.prepare(`
     INSERT INTO media_content (
-      fingerprint, size, created_ms, width, height, has_audio, created_at,
-      updated_at
+      fingerprint, size, created_ms, width, height, has_audio, duration_ms,
+      frame_rate, created_at, updated_at
     )
     VALUES (
       @fingerprint, @size, @created_ms, @width, @height, @has_audio,
-      @created_at, @updated_at
+      @duration_ms, @frame_rate, @created_at, @updated_at
     )
     ON CONFLICT(fingerprint) DO UPDATE SET
       size=excluded.size,
@@ -1153,6 +1187,8 @@ function createMetadataStore(db) {
       width=COALESCE(excluded.width, media_content.width),
       height=COALESCE(excluded.height, media_content.height),
       has_audio=COALESCE(excluded.has_audio, media_content.has_audio),
+      duration_ms=COALESCE(excluded.duration_ms, media_content.duration_ms),
+      frame_rate=COALESCE(excluded.frame_rate, media_content.frame_rate),
       updated_at=excluded.updated_at;
   `);
   const mediaContentByFingerprint = db.prepare(`
@@ -1285,6 +1321,8 @@ function createMetadataStore(db) {
       mc.width AS content_width,
       mc.height AS content_height,
       mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1398,17 +1436,21 @@ function createMetadataStore(db) {
   `);
 
   const fileSelect = db.prepare(
-    'SELECT width, height, has_audio FROM files WHERE fingerprint = ?;'
+    'SELECT width, height, has_audio, duration_ms, frame_rate FROM files WHERE fingerprint = ?;'
   );
 
   const setDimensionsStmt = db.prepare(
     `UPDATE files
-     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio)
+     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio),
+         duration_ms = COALESCE(?, duration_ms),
+         frame_rate = COALESCE(?, frame_rate)
      WHERE fingerprint = ?;`
   );
   const setContentDimensionsStmt = db.prepare(
     `UPDATE media_content
-     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio), updated_at = ?
+     SET width = ?, height = ?, has_audio = COALESCE(?, has_audio),
+         duration_ms = COALESCE(?, duration_ms),
+         frame_rate = COALESCE(?, frame_rate), updated_at = ?
      WHERE fingerprint = ?;`
   );
 
@@ -2102,6 +2144,20 @@ function createMetadataStore(db) {
     return null;
   }
 
+  function normalizeDurationMs(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 && number <= 604_800_000
+      ? number
+      : null;
+  }
+
+  function normalizeFrameRate(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 && number <= 1000
+      ? number
+      : null;
+  }
+
   function writeFileRecord(
     fingerprint,
     filePath,
@@ -2122,6 +2178,8 @@ function createMetadataStore(db) {
       width: normalizeDimension(dimensions?.width),
       height: normalizeDimension(dimensions?.height),
       has_audio: normalizeHasAudio(dimensions?.hasAudio),
+      duration_ms: normalizeDurationMs(dimensions?.durationMs),
+      frame_rate: normalizeFrameRate(dimensions?.frameRate),
     });
     mediaContentUpsert.run({
       fingerprint,
@@ -2130,6 +2188,8 @@ function createMetadataStore(db) {
       width: normalizeDimension(dimensions?.width),
       height: normalizeDimension(dimensions?.height),
       has_audio: normalizeHasAudio(dimensions?.hasAudio),
+      duration_ms: normalizeDurationMs(dimensions?.durationMs),
+      frame_rate: normalizeFrameRate(dimensions?.frameRate),
       created_at: now,
       updated_at: now,
     });
@@ -2468,8 +2528,16 @@ function createMetadataStore(db) {
       .map((instance) => {
         const width = Number(instance.content_width || 0);
         const height = Number(instance.content_height || 0);
+        const durationMs = normalizeDurationMs(instance.content_duration_ms);
+        const frameRate = normalizeFrameRate(instance.content_frame_rate);
         const dimensions = width > 0 && height > 0
-          ? { width, height, aspectRatio: width / height }
+          ? {
+              width,
+              height,
+              aspectRatio: width / height,
+              ...(durationMs ? { durationMs } : {}),
+              ...(frameRate ? { frameRate } : {}),
+            }
           : null;
         return {
           instanceId: Number(instance.id),
@@ -3177,7 +3245,15 @@ function createMetadataStore(db) {
       const width = Number(dimRow.width) || 0;
       const height = Number(dimRow.height) || 0;
       if (width > 0 && height > 0) {
-        dimensions = { width, height, aspectRatio: width / height };
+        const durationMs = normalizeDurationMs(dimRow.duration_ms);
+        const frameRate = normalizeFrameRate(dimRow.frame_rate);
+        dimensions = {
+          width,
+          height,
+          aspectRatio: width / height,
+          ...(durationMs ? { durationMs } : {}),
+          ...(frameRate ? { frameRate } : {}),
+        };
       }
     }
     return {
@@ -3396,7 +3472,8 @@ function createMetadataStore(db) {
       const chunk = uniqueFingerprints.slice(offset, offset + chunkSize);
       const placeholders = chunk.map(() => '?').join(', ');
       const metadataRows = db.prepare(`
-        SELECT f.fingerprint, f.width, f.height, f.has_audio, r.value AS rating,
+        SELECT f.fingerprint, f.width, f.height, f.has_audio, f.duration_ms,
+          f.frame_rate, r.value AS rating,
           COALESCE(cr.state,
             CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
           ) AS review_state
@@ -3409,6 +3486,8 @@ function createMetadataStore(db) {
       metadataRows.forEach((row) => {
         const width = Number(row.width) || 0;
         const height = Number(row.height) || 0;
+        const durationMs = normalizeDurationMs(row.duration_ms);
+        const frameRate = normalizeFrameRate(row.frame_rate);
         result[row.fingerprint] = {
           tags: [],
           rating: row.rating ?? null,
@@ -3416,7 +3495,13 @@ function createMetadataStore(db) {
             ? row.review_state
             : 'unreviewed',
           dimensions: width > 0 && height > 0
-            ? { width, height, aspectRatio: width / height }
+            ? {
+                width,
+                height,
+                aspectRatio: width / height,
+                ...(durationMs ? { durationMs } : {}),
+                ...(frameRate ? { frameRate } : {}),
+              }
             : null,
           hasAudio: mapHasAudio(row.has_audio),
         };
@@ -3446,7 +3531,15 @@ function createMetadataStore(db) {
     const width = Number(row.width) || 0;
     const height = Number(row.height) || 0;
     if (width > 0 && height > 0) {
-      return { width, height, aspectRatio: width / height };
+      const durationMs = normalizeDurationMs(row.duration_ms);
+      const frameRate = normalizeFrameRate(row.frame_rate);
+      return {
+        width,
+        height,
+        aspectRatio: width / height,
+        ...(durationMs ? { durationMs } : {}),
+        ...(frameRate ? { frameRate } : {}),
+      };
     }
     return null;
   }
@@ -3463,12 +3556,23 @@ function createMetadataStore(db) {
     const height = normalizeDimension(dimensions?.height);
     if (!width || !height) return;
     const hasAudio = normalizeHasAudio(dimensions?.hasAudio);
+    const durationMs = normalizeDurationMs(dimensions?.durationMs);
+    const frameRate = normalizeFrameRate(dimensions?.frameRate);
     db.transaction(() => {
-      setDimensionsStmt.run(width, height, hasAudio, fingerprint);
+      setDimensionsStmt.run(
+        width,
+        height,
+        hasAudio,
+        durationMs,
+        frameRate,
+        fingerprint
+      );
       setContentDimensionsStmt.run(
         width,
         height,
         hasAudio,
+        durationMs,
+        frameRate,
         Date.now(),
         fingerprint
       );

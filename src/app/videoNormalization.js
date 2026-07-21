@@ -35,6 +35,8 @@ export const normalizeVideoFromMain = (video) => {
   const rawDimensions = video?.dimensions;
   const width = Number(rawDimensions?.width);
   const height = Number(rawDimensions?.height);
+  const durationMs = Number(rawDimensions?.durationMs);
+  const frameRate = Number(rawDimensions?.frameRate);
   const sanitizedDimensions =
     Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
       ? {
@@ -44,6 +46,8 @@ export const normalizeVideoFromMain = (video) => {
             Number.isFinite(rawDimensions?.aspectRatio) && rawDimensions.aspectRatio > 0
               ? rawDimensions.aspectRatio
               : width / height,
+          ...(Number.isFinite(durationMs) && durationMs > 0 ? { durationMs } : {}),
+          ...(Number.isFinite(frameRate) && frameRate > 0 ? { frameRate } : {}),
         }
       : null;
 
