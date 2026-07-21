@@ -1,10 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { normalizeVideoFromMain } from "../videoNormalization";
 import {
-  clampRenderLimitStep,
-  inferRenderLimitStepFromLegacy,
-} from "../../utils/renderLimit";
-import {
   EMPTY_SCAN_LOADING_STATUS,
   createScanLoadingStatus,
   getLoadingProgressPercent,
@@ -140,8 +136,7 @@ export function useElectronFolderLifecycle({
   recursiveMode,
   setRecursiveMode,
   setShowFilenames,
-  renderLimitStep: _renderLimitStep,
-  setRenderLimitStep,
+  setHoverAudioEnabled,
   setSortKey,
   setSortDir,
   groupByFolders: _groupByFolders,
@@ -190,7 +185,7 @@ export function useElectronFolderLifecycle({
   const setterRefs = useRef({
     setRecursiveMode,
     setShowFilenames,
-    setRenderLimitStep,
+    setHoverAudioEnabled,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -207,7 +202,7 @@ export function useElectronFolderLifecycle({
     setterRefs.current = {
       setRecursiveMode,
       setShowFilenames,
-      setRenderLimitStep,
+      setHoverAudioEnabled,
       setSortKey,
       setSortDir,
       setGroupByFolders,
@@ -222,7 +217,7 @@ export function useElectronFolderLifecycle({
   }, [
     setRecursiveMode,
     setShowFilenames,
-    setRenderLimitStep,
+    setHoverAudioEnabled,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -1055,7 +1050,7 @@ export function useElectronFolderLifecycle({
     const {
       setRecursiveMode: applyRecursiveMode,
       setShowFilenames: applyShowFilenames,
-      setRenderLimitStep: applyRenderLimitStep,
+      setHoverAudioEnabled: applyHoverAudioEnabled,
       setSortKey: applySortKey,
       setSortDir: applySortDir,
       setGroupByFolders: applyGroupByFolders,
@@ -1072,15 +1067,8 @@ export function useElectronFolderLifecycle({
       applyRecursiveMode(settings.recursiveMode);
     if (settings.showFilenames !== undefined)
       applyShowFilenames(settings.showFilenames);
-    if (settings.renderLimitStep !== undefined) {
-      applyRenderLimitStep(clampRenderLimitStep(settings.renderLimitStep));
-    } else if (settings.maxConcurrentPlaying !== undefined) {
-      applyRenderLimitStep(
-        clampRenderLimitStep(
-          inferRenderLimitStepFromLegacy(settings.maxConcurrentPlaying)
-        )
-      );
-    }
+    if (settings.hoverAudioEnabled !== undefined)
+      applyHoverAudioEnabled?.(settings.hoverAudioEnabled === true);
     if (settings.zoomLevel !== undefined)
       applyZoomLevelFromSettings(settings.zoomLevel);
     if (settings.sortKey) applySortKey(settings.sortKey);

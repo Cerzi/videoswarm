@@ -796,14 +796,12 @@ body {
   cursor: not-allowed;
 }
 
-.video-limit-control,
 .zoom-control {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.video-limit-control input[type="range"],
 .zoom-control input[type="range"] {
   accent-color: var(--color-accent);
 }

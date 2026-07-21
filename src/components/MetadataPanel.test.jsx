@@ -91,11 +91,12 @@ describe("MetadataPanel floating shell", () => {
       onDock,
     });
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Dock selection details in sidebar",
-      })
-    );
+    const dockButton = screen.getByRole("button", {
+      name: "Dock selection details in sidebar",
+    });
+    expect(dockButton).toHaveClass("metadata-panel__button", "metadata-panel__button--dock");
+    expect(dockButton.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(dockButton);
     expect(onDock).toHaveBeenCalledOnce();
 
     rerender(

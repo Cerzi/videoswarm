@@ -91,13 +91,6 @@ const baseAspectRatio = (video) => {
   return DEFAULT_ASPECT_RATIO;
 };
 
-const normalizeRenderLimit = (renderLimit, length) => {
-  if (renderLimit == null) return length;
-  const number = Number(renderLimit);
-  if (!Number.isFinite(number)) return length;
-  return Math.max(0, Math.min(length, Math.floor(number)));
-};
-
 function findSurvivingAnchor(previousLayout, nextLayout, scrollTop, viewportHeight) {
   if (!previousLayout?.positions?.length || !nextLayout?.positionsById?.size) {
     return null;
@@ -146,7 +139,6 @@ export function useMasonryLayout({
   gridRef,
   scrollContainerElement = null,
   gridElement = null,
-  renderLimit = null,
   pinnedIds = EMPTY_IDS,
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -301,10 +293,7 @@ export function useMasonryLayout({
     () => orderedVideos.map((video) => video.id),
     [orderedVideos]
   );
-  const layoutVideos = useMemo(
-    () => orderedVideos.slice(0, normalizeRenderLimit(renderLimit, orderedVideos.length)),
-    [orderedVideos, renderLimit]
-  );
+  const layoutVideos = orderedVideos;
 
   const signatureState = useMemo(() => {
     const signatures = new Map();

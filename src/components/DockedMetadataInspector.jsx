@@ -5,6 +5,7 @@ import {
   MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS,
 } from "./metadata/metadataContent";
 import MetadataInspectorContent from "./metadata/MetadataInspectorContent";
+import { FocusSelectionIcon, UndockPanelIcon } from "./UiIcons";
 
 export default function DockedMetadataInspector({
   selectionCount,
@@ -56,19 +57,24 @@ export default function DockedMetadataInspector({
           {typeof onFocusSelection === "function" ? (
             <button
               type="button"
+              className="metadata-panel__button metadata-panel__button--compact metadata-panel__button--focus"
               onClick={onFocusSelection}
+              aria-label="Focus selection in grid"
               title="Scroll to selected videos"
             >
-              Focus
+              <FocusSelectionIcon />
+              <span>Focus</span>
             </button>
           ) : null}
           <button
             type="button"
+            className="metadata-panel__button metadata-panel__button--compact metadata-panel__button--dock"
             onClick={onUndock}
             aria-label="Undock selection details"
             title="Return details to a floating inspector"
           >
-            Undock
+            <UndockPanelIcon />
+            <span>Undock</span>
           </button>
         </div>
       </header>

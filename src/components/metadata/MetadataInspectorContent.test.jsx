@@ -40,7 +40,10 @@ describe("MetadataInspectorContent", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Rate 5 stars" }));
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    const clear = screen.getByRole("button", { name: "Clear" });
+    expect(clear).toHaveClass("metadata-panel__button", "metadata-panel__clear-rating");
+    expect(clear.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(clear);
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     expect(onSetRating).toHaveBeenCalledWith(5);

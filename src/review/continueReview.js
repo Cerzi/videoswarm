@@ -6,10 +6,6 @@ import {
 } from "../library/folderModel";
 import { REVIEW_FILTERS, normalizeReviewFilter, normalizeReviewState } from "./reviewState";
 import { SortKey } from "../sorting/sorting";
-import {
-  RENDER_LIMIT_STEPS,
-  resolveRenderLimit,
-} from "../utils/renderLimit";
 
 export const REVIEW_CHECKPOINT_VIEW_VERSION = 1;
 export const REVIEW_SESSION_TAG_LIMIT = 100;
@@ -279,23 +275,6 @@ export function resolveContinueReviewCandidate(orderedVideos, checkpoint = {}) {
   }
 
   return emptyCandidateResult(context);
-}
-
-export function findSmallestRenderLimitStep(requiredCount, totalCount) {
-  const total = Math.max(0, Math.trunc(Number(totalCount) || 0));
-  const required = Math.max(0, Math.trunc(Number(requiredCount) || 0));
-  if (required <= 0 || total <= 0) return 0;
-
-  for (let step = 0; step <= RENDER_LIMIT_STEPS; step += 1) {
-    const limit = resolveRenderLimit(step, total);
-    if (limit === null || limit >= required) return step;
-  }
-  return RENDER_LIMIT_STEPS;
-}
-
-export function findRenderLimitStepForIndex(candidateIndex, totalCount) {
-  const index = Math.max(0, Math.trunc(Number(candidateIndex) || 0));
-  return findSmallestRenderLimitStep(index + 1, totalCount);
 }
 
 export function requiresRecursiveReviewCoverage(location, recursive) {

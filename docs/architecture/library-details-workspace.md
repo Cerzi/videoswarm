@@ -80,8 +80,8 @@ position**:
 
 - With no checkpoint, the toolbar says review is ready and offers **Find
   Unreviewed** as an optional way to save the current view and jump to a target.
-- Pinned roots offer **Review Unreviewed** before a checkpoint and **Resume
-  saved view** afterwards.
+- Pinned roots remain navigation rows and show passive total and unreviewed clip
+  counts. Review and resume actions live only in the review toolbar above.
 - A matching checkpoint is **Review position saved**; a remote one is **Resume
   point saved elsewhere**.
 - The one-item overflow menu is removed. **Clear resume point...** directly
@@ -135,7 +135,7 @@ settings IPC is sufficient; no database migration or new channel is added.
 - Hidden Library/Details panels perform no generation extraction.
 - The sidebar stores no video arrays, DOM nodes, decoded state, or unbounded
   tag/workflow data.
-- Tab changes do not alter masonry order, render limits, or scroll position.
+- Tab changes do not alter masonry order, virtual mounting, or scroll position.
 
 ## Verification checklist
 

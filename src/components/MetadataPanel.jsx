@@ -18,6 +18,7 @@ import {
   deriveSingleSelectionInfo,
 } from "./metadata/metadataContent";
 import MetadataInspectorContent from "./metadata/MetadataInspectorContent";
+import { DockPanelIcon, FocusSelectionIcon } from "./UiIcons";
 import "./MetadataPanel.css";
 
 const PANEL_MARGIN = 12;
@@ -681,23 +682,25 @@ const MetadataPanel = forwardRef((
             {typeof onDock === "function" ? (
               <button
                 type="button"
-                className="metadata-panel__dock"
+                className="metadata-panel__button metadata-panel__button--compact metadata-panel__button--dock"
                 onClick={onDock}
                 aria-label="Dock selection details in sidebar"
                 title="Dock details in sidebar"
               >
-                Dock
+                <DockPanelIcon />
+                <span>Dock</span>
               </button>
             ) : null}
             {showFocusButton && (
               <button
                 type="button"
-                className="metadata-panel__focus"
+                className="metadata-panel__button metadata-panel__button--compact metadata-panel__button--focus"
                 onClick={onFocusSelection}
                 aria-label="Focus selection in grid"
                 title="Scroll to selected videos"
               >
-                Focus
+                <FocusSelectionIcon />
+                <span>Focus</span>
               </button>
             )}
           </div>

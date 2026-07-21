@@ -28,12 +28,16 @@ const pinnedRoots = [
     rootPath: "/models/wan/outputs",
     label: "Wan outputs",
     pinned: true,
+    presentCount: 1500,
+    reviewedCount: 250,
   },
   {
     id: 2,
     rootPath: "/models/hunyuan/outputs",
     label: "Hunyuan outputs",
     pinned: true,
+    presentCount: 50,
+    reviewedCount: 8,
   },
 ];
 
@@ -94,73 +98,70 @@ describe("LibrarySidebar", () => {
     expect(onTogglePin).toHaveBeenCalledWith("/new/root", true);
   });
 
-  it("shows bounded review counts and Start/Continue actions for pinned roots", () => {
-    const onStartRootReview = vi.fn();
-    const onContinueRootReview = vi.fn();
+  it("shows passive total and unreviewed counts for pinned roots", () => {
     render(
       <LibrarySidebar
         pinnedRoots={pinnedRoots}
-        rootReviewStateByPath={{
+        rootCountStateByPath={{
           "/models/wan/outputs": {
-            action: "start",
+            totalClips: 1500,
             remainingUnreviewed: 1250,
             isUpdating: true,
           },
           "/models/hunyuan/outputs": {
-            action: "continue",
+            totalClips: 50,
             remainingUnreviewed: 42,
           },
         }}
-        onStartRootReview={onStartRootReview}
-        onContinueRootReview={onContinueRootReview}
       />
     );
 
-    const count = screen.getByText("1,250 unreviewed in root", { exact: false });
+    const count = screen.getByText(/1,500 clips.*1,250 unreviewed/);
     expect(count).toHaveTextContent("Updating…");
     expect(count).toHaveAttribute(
       "title",
-      expect.stringContaining("Reviewing duplicate content may reduce the count")
+      expect.stringContaining("reviewing duplicate content may reduce the unreviewed count")
     );
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Review Unreviewed Wan outputs, 1,250 unreviewed in root",
-      })
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Resume saved view Hunyuan outputs, 42 unreviewed in root",
-      })
-    );
-    expect(onStartRootReview).toHaveBeenCalledWith(
-      "/models/wan/outputs",
-      pinnedRoots[0]
-    );
-    expect(onContinueRootReview).toHaveBeenCalledWith(
-      "/models/hunyuan/outputs",
-      pinnedRoots[1]
-    );
+    expect(screen.queryByRole("button", { name: /Review Unreviewed/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Resume saved view/i })).toBeNull();
   });
 
-  it("shows authoritative completion without an inert review button", () => {
+  it("shows zero unreviewed without adding an inert review status control", () => {
     render(
       <LibrarySidebar
         pinnedRoots={[pinnedRoots[0]]}
-        rootReviewStateByPath={{
+        rootCountStateByPath={{
           "/models/wan/outputs": {
-            action: "complete",
+            totalClips: 1500,
             remainingUnreviewed: 0,
           },
         }}
       />
     );
 
-    expect(screen.getByText("0 unreviewed in root")).toBeVisible();
-    expect(
-      screen.getByRole("status", { name: "Wan outputs: Review complete" })
-    ).toBeVisible();
+    expect(screen.getByText(/1,500 clips.*0 unreviewed/)).toBeVisible();
     expect(screen.queryByRole("button", { name: /review Wan outputs/i })).toBeNull();
+  });
+
+  it("sorts pinned roots by name in either direction with one compact control", () => {
+    const { container } = render(<LibrarySidebar pinnedRoots={pinnedRoots} />);
+    const labels = () =>
+      Array.from(container.querySelectorAll(".library-root-list__name"), (node) =>
+        node.textContent
+      );
+
+    expect(labels()).toEqual(["Hunyuan outputs", "Wan outputs"]);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pinned roots sorted A to Z; switch to Z to A",
+      })
+    );
+    expect(labels()).toEqual(["Wan outputs", "Hunyuan outputs"]);
+    expect(
+      screen.getByRole("button", {
+        name: "Pinned roots sorted Z to A; switch to A to Z",
+      })
+    ).toBeVisible();
   });
 
   it("mounts only expanded branches and forwards controlled expansion", () => {

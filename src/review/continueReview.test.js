@@ -5,8 +5,6 @@ import {
   checkpointLocationMatches,
   createReviewCheckpointSignature,
   findNearestPresentDirectory,
-  findRenderLimitStepForIndex,
-  findSmallestRenderLimitStep,
   normalizeReviewAnchor,
   normalizeReviewCheckpoint,
   normalizeReviewSessionView,
@@ -294,14 +292,7 @@ describe("Continue Review candidate resolution", () => {
   });
 });
 
-describe("Continue Review render and scan guards", () => {
-  it("returns the smallest render step that includes the logical target", () => {
-    expect(findSmallestRenderLimitStep(1, 6_000)).toBe(0);
-    expect(findSmallestRenderLimitStep(101, 6_000)).toBe(1);
-    expect(findRenderLimitStepForIndex(5_999, 6_000)).toBe(10);
-    expect(findRenderLimitStepForIndex(0, 0)).toBe(0);
-  });
-
+describe("Continue Review scan guards", () => {
   it("requires recursive coverage except for the root Current folder scope", () => {
     expect(requiresRecursiveReviewCoverage(
       { directory: "", scope: "current-folder" },

@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { PlusIcon, RefreshIcon } from "../UiIcons";
 import {
   MAX_METADATA_SUGGESTION_TAGS,
   buildGenerationMetadataDiagnostics,
@@ -172,10 +173,13 @@ export function MetadataGenerationSection({
           {state.cached ? <span className="metadata-panel__badge">Cached</span> : null}
           <button
             type="button"
+            className="metadata-panel__button metadata-panel__button--compact"
             onClick={refresh}
             disabled={state.loading}
+            title="Re-read generation metadata"
           >
-            Re-read
+            <RefreshIcon />
+            <span>Re-read</span>
           </button>
         </div>
       </div>
@@ -403,10 +407,12 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
           />
           <button
             type="button"
+            className="metadata-panel__button metadata-panel__button--compact"
             onClick={submit}
             disabled={!hasSelection || !inputValue.trim()}
           >
-            Add
+            <PlusIcon />
+            <span>Add</span>
           </button>
         </div>
       </section>

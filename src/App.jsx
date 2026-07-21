@@ -57,12 +57,6 @@ import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
 import { ZOOM_MIN_INDEX, ZOOM_MAX_INDEX } from "./zoom/config";
-import {
-  RENDER_LIMIT_STEPS,
-  resolveRenderLimit,
-  clampRenderLimitStep,
-} from "./utils/renderLimit";
-
 import feature from "./config/featureFlags";
 import "./App.css";
 
@@ -113,7 +107,6 @@ import {
   buildReviewCheckpointDraft,
   checkpointLocationMatches,
   createReviewCheckpointSignature,
-  findRenderLimitStepForIndex,
   normalizeReviewCheckpoint,
   requiresRecursiveReviewCoverage,
   resolveContinueReviewCandidate,
@@ -160,15 +153,6 @@ const getKnownRemainingUnreviewed = (root) => {
   return Math.max(0, Math.floor(present - reviewed));
 };
 
-const waitForReviewViewSettlement = () =>
-  new Promise((resolve) => {
-    if (typeof requestAnimationFrame !== "function") {
-      setTimeout(resolve, 0);
-      return;
-    }
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  });
-
 const expandFolderAncestors = (previous, relativePath) => {
   const next = new Set(previous instanceof Set ? previous : [""]);
   next.add("");
@@ -198,7 +182,6 @@ function App() {
     useState(true);
   const [hoveredVideoId, setHoveredVideoId] = useState(null);
   const hoveredVideoIdRef = useRef(null);
-  const [renderLimitStep, setRenderLimitStep] = useState(RENDER_LIMIT_STEPS);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
   const [sortDir, setSortDir] = useState("asc");
@@ -465,8 +448,7 @@ function App() {
     recursiveMode,
     setRecursiveMode,
     setShowFilenames,
-    renderLimitStep,
-    setRenderLimitStep,
+    setHoverAudioEnabled,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -858,15 +840,6 @@ function App() {
     });
   }, []);
 
-  const totalVideoCount = videos.length;
-  const renderLimitValue = useMemo(
-    () => resolveRenderLimit(renderLimitStep, totalVideoCount),
-    [renderLimitStep, totalVideoCount]
-  );
-  const renderLimitLabel = useMemo(
-    () => (renderLimitValue === null ? "Max" : String(renderLimitValue)),
-    [renderLimitValue]
-  );
   const {
     orderedVideos,
     displayVideos,
@@ -897,29 +870,18 @@ function App() {
     gridRef,
     scrollContainerElement,
     gridElement,
-    renderLimit: renderLimitValue,
   });
   fullOrderedVideosRef.current = orderedVideos;
 
   const effectiveProgressiveCap = useMemo(() => {
-    const layoutLimit =
-      Number.isFinite(progressiveMaxVisibleNumber) &&
-      progressiveMaxVisibleNumber > 0
-        ? Math.floor(progressiveMaxVisibleNumber)
-        : null;
-    if (renderLimitValue === 0) return 0;
-    const userLimit =
-      renderLimitValue !== null &&
-      Number.isFinite(renderLimitValue) &&
-      renderLimitValue > 0
-        ? Math.floor(renderLimitValue)
-        : null;
-
-    if (layoutLimit == null && userLimit == null) return undefined;
-    if (layoutLimit == null) return userLimit ?? undefined;
-    if (userLimit == null) return layoutLimit;
-    return Math.min(layoutLimit, userLimit);
-  }, [progressiveMaxVisibleNumber, renderLimitValue]);
+    if (
+      !Number.isFinite(progressiveMaxVisibleNumber) ||
+      progressiveMaxVisibleNumber <= 0
+    ) {
+      return undefined;
+    }
+    return Math.floor(progressiveMaxVisibleNumber);
+  }, [progressiveMaxVisibleNumber]);
 
   const activationWindow = useMemo(
     () => ({
@@ -1007,7 +969,6 @@ function App() {
     setZoomLevel,
     orderedVideoCount: orderedVideos.length,
     recursiveMode,
-    renderLimitStep,
     showFilenames,
     setZoomClass,
     scheduleLayout,
@@ -2209,7 +2170,6 @@ function App() {
     activationTarget: activationWindow.target,
     activationWindowIds: activationWindow.ids,
     suspendEvictions: isLayoutTransitioning,
-    renderLimit: renderLimitValue,
     hoverAudioEnabled,
     mediaScheduler,
     playbackSuspended: Boolean(fullScreenVideo),
@@ -2447,7 +2407,6 @@ function App() {
     setRecursiveMode(next);
     window.electronAPI?.saveSettingsPartial?.({
       recursiveMode: next,
-      renderLimitStep,
       zoomLevel,
       showFilenames,
     });
@@ -2473,7 +2432,6 @@ function App() {
     currentDirectory,
     recursiveMode,
     reloadCurrentRoot,
-    renderLimitStep,
     reviewSessions.flush,
     showFilenames,
     zoomLevel,
@@ -2786,13 +2744,16 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({
       showFilenames: next,
       recursiveMode,
-      renderLimitStep,
       zoomLevel,
     });
-  }, [showFilenames, recursiveMode, renderLimitStep, zoomLevel]);
+  }, [showFilenames, recursiveMode, zoomLevel]);
 
   const toggleHoverAudio = useCallback(() => {
-    setHoverAudioEnabled((prev) => !prev);
+    setHoverAudioEnabled((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({ hoverAudioEnabled: next });
+      return next;
+    });
   }, []);
 
   const handlePlaybackModeChange = useCallback((value) => {
@@ -2825,20 +2786,6 @@ function App() {
     });
   }, []);
 
-  const handleRenderLimitStepChange = useCallback(
-    (step) => {
-      const clamped = clampRenderLimitStep(step);
-      setRenderLimitStep(clamped);
-      window.electronAPI?.saveSettingsPartial?.({
-        renderLimitStep: clamped,
-        recursiveMode,
-        zoomLevel,
-        showFilenames,
-      });
-    },
-    [recursiveMode, zoomLevel, showFilenames]
-  );
-
   const handleCloseFullScreen = useCallback(() => {
     cancelFullScreenFocus();
     const controller = fullScreenControllerRef.current;
@@ -2864,20 +2811,6 @@ function App() {
       );
       scrollContainerRef.current?.focus?.();
       return;
-    }
-
-    if (!displayVideos.some((video) => video.id === current.id)) {
-      const requiredStep = findRenderLimitStepForIndex(
-        currentIndex,
-        orderedVideos.length
-      );
-      if (requiredStep > renderLimitStep) {
-        handleRenderLimitStepChange(requiredStep);
-        notify(
-          "Expanded the grid just enough to return to the fullscreen clip",
-          "info"
-        );
-      }
     }
 
     scrollToId(current.id, { align: "center" });
@@ -2909,12 +2842,8 @@ function App() {
     }
   }, [
     cancelFullScreenFocus,
-    displayVideos,
-    handleRenderLimitStepChange,
     notify,
-    orderedVideos.length,
     releaseFullScreenNow,
-    renderLimitStep,
     scrollToId,
     selection.selectExactly,
   ]);
@@ -3210,10 +3139,9 @@ function App() {
         sortDir: dir,
         groupByFolders,
         randomSeed: seed,
-        renderLimitStep,
       });
     },
-    [groupByFolders, randomSeed, renderLimitStep]
+    [groupByFolders, randomSeed]
   );
 
   const toggleGroupByFolders = useCallback(() => {
@@ -3450,89 +3378,6 @@ function App() {
     return saveAndResolveReviewCheckpoint(draft, "move");
   }, [buildActiveReviewCheckpoint, saveAndResolveReviewCheckpoint]);
 
-  const handleStartRootReview = useCallback(
-    async (rootPath) => {
-      if (!rootPath) return null;
-      closeFullScreenRef.current?.();
-      const requestId = ++libraryOpenRequestRef.current;
-      try {
-        await reviewSessions.flush();
-        if (requestId !== libraryOpenRequestRef.current) return null;
-        cancelReviewResume();
-        const authorization =
-          await window.electronAPI?.library?.authorizeRoot?.(rootPath);
-        if (requestId !== libraryOpenRequestRef.current) return null;
-        if (authorization?.success === false) {
-          throw new Error(
-            authorization.error || "Could not authorize library root"
-          );
-        }
-        const authorizedRootPath = authorization?.rootPath || rootPath;
-        captureFolderViewState();
-        folderViewStateRef.current.setLocation(
-          authorizedRootPath,
-          "",
-          FolderScope.ALL_DESCENDANTS
-        );
-        restoredFolderViewKeyRef.current = null;
-        setFolderLocation({
-          rootPath: authorizedRootPath,
-          directory: "",
-          scope: FolderScope.ALL_DESCENDANTS,
-        });
-        setExpandedFolderPaths((previous) =>
-          expandFolderAncestors(previous, "")
-        );
-
-        if (activeRootPathRef.current !== authorizedRootPath) {
-          await handleElectronFolderSelection(authorizedRootPath);
-        }
-        await waitForReviewViewSettlement();
-        if (
-          requestId !== libraryOpenRequestRef.current ||
-          activeRootPathRef.current !== authorizedRootPath
-        ) {
-          return null;
-        }
-
-        const settled = reviewViewStateRef.current || {};
-        const draft = buildReviewCheckpointDraft({
-          rootPath: authorizedRootPath,
-          directory: "",
-          scope: FolderScope.ALL_DESCENDANTS,
-          view: {
-            version: 1,
-            filters: settled.filters,
-            sort: {
-              key: settled.sortKey,
-              dir: settled.sortDir,
-              groupByFolders: settled.groupByFolders,
-              randomSeed:
-                settled.sortKey === SortKey.RANDOM
-                  ? settled.randomSeed ?? 0
-                  : null,
-            },
-          },
-          anchor: null,
-        });
-        return saveAndResolveReviewCheckpoint(draft, "start");
-      } catch (error) {
-        if (requestId !== libraryOpenRequestRef.current) return null;
-        console.error("Failed to start root review:", error);
-        notify(error?.message || "Could not start review for that root", "error");
-        return null;
-      }
-    },
-    [
-      cancelReviewResume,
-      captureFolderViewState,
-      handleElectronFolderSelection,
-      notify,
-      reviewSessions.flush,
-      saveAndResolveReviewCheckpoint,
-    ]
-  );
-
   const handleForgetReviewSession = useCallback(async () => {
     const rootPath = activeRootPath || reviewSessions.checkpointRootPath;
     if (!rootPath) return;
@@ -3596,13 +3441,8 @@ function App() {
   ]);
 
   const handleShowReviewTarget = useCallback(() => {
-    const { candidateId, candidateIndex, token } = reviewResumeRef.current;
-    if (candidateId == null || candidateIndex < 0) return;
-    const nextStep = findRenderLimitStepForIndex(
-      candidateIndex,
-      orderedVideos.length
-    );
-    handleRenderLimitStepChange(nextStep);
+    const { candidateId, token } = reviewResumeRef.current;
+    if (candidateId == null) return;
     setReviewResume((previous) => ({
       ...previous,
       phase: "waiting-target",
@@ -3610,7 +3450,7 @@ function App() {
     }));
     scrollToId(candidateId, { align: "center" });
     reviewResumeTokenRef.current = token;
-  }, [handleRenderLimitStepChange, orderedVideos.length, scrollToId]);
+  }, [scrollToId]);
 
   const handleIndexSubfoldersForReview = useCallback(async () => {
     const checkpoint = reviewResumeRef.current.checkpoint;
@@ -3812,30 +3652,9 @@ function App() {
     );
     selection.selectExactly(candidate.candidateId);
 
-    const isInsideRenderCap = displayVideos.some(
-      (video) => video.id === candidate.candidateId
-    );
     const fallbackMessage = state.fallbackDirectory !== null
       ? ` Saved folder missing; using ${state.fallbackDirectory || "the library root"}.`
       : "";
-    if (!isInsideRenderCap) {
-      setReviewResume((previous) =>
-        previous.token === state.token
-          ? {
-              ...previous,
-              phase: "waiting-target",
-              scanId: activeScanId,
-              candidateId: candidate.candidateId,
-              candidateName: candidate.candidateName,
-              candidateIndex: candidate.candidateIndex,
-              wrapped: candidate.wrapped,
-              message: `Saved target ${candidate.candidateName} is outside the current render limit.${fallbackMessage}`,
-            }
-          : previous
-      );
-      return;
-    }
-
     if (
       state.phase === "provisional" &&
       authoritative &&
@@ -4188,7 +4007,7 @@ function App() {
     reviewSessions.isEngaged,
   ]);
 
-  const rootReviewStateByPath = useMemo(() => {
+  const rootCountStateByPath = useMemo(() => {
     const result = {};
     for (const root of pinnedRoots) {
       const rootPath = root?.rootPath;
@@ -4199,14 +4018,14 @@ function App() {
           (isLoadingFolder || isRefreshingFolder)) ||
           (root?.refreshState && root.refreshState !== "idle")
       );
-      const hasCheckpoint = reviewSessions.hasCheckpoint(rootPath);
-      let action = hasCheckpoint ? "continue" : "start";
-      if (remainingUnreviewed === 0 && !isUpdating) action = "complete";
+      const parsedTotal = Number(root?.presentCount);
       result[rootPath] = {
-        action,
+        totalClips:
+          root?.presentCount == null || !Number.isFinite(parsedTotal)
+            ? null
+            : Math.max(0, Math.floor(parsedTotal)),
         remainingUnreviewed,
         isUpdating,
-        disabled: reviewSessions.saving,
       };
     }
     return result;
@@ -4215,8 +4034,6 @@ function App() {
     isLoadingFolder,
     isRefreshingFolder,
     pinnedRoots,
-    reviewSessions.hasCheckpoint,
-    reviewSessions.saving,
     reviewSessions.summaryByRoot,
   ]);
 
@@ -4374,10 +4191,6 @@ function App() {
             workSuspended={workSuspended}
             isRefreshingFolder={isRefreshingFolder}
             onHotkeyHelp={() => setHotkeyHelpOpen(true)}
-            renderLimitStep={renderLimitStep}
-            renderLimitLabel={renderLimitLabel}
-            renderLimitMaxStep={RENDER_LIMIT_STEPS}
-            handleRenderLimitChange={handleRenderLimitStepChange}
             zoomLevel={zoomLevel}
             handleZoomChangeSafe={handleZoomChangeSafe}
             getMinimumZoomLevel={getMinimumZoomLevel}
@@ -4595,9 +4408,7 @@ function App() {
                   currentRoot={null}
                   onOpenRoot={handleOpenLibraryRoot}
                   onTogglePin={handleToggleLibraryPin}
-                  rootReviewStateByPath={rootReviewStateByPath}
-                  onStartRootReview={handleStartRootReview}
-                  onContinueRootReview={beginContinueReview}
+                  rootCountStateByPath={rootCountStateByPath}
                   savedViews={savedViews}
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
@@ -4648,9 +4459,7 @@ function App() {
                         currentRoot: catalogCurrentRoot || libraryRoot,
                         onOpenRoot: handleOpenLibraryRoot,
                         onTogglePin: handleToggleLibraryPin,
-                        rootReviewStateByPath,
-                        onStartRootReview: handleStartRootReview,
-                        onContinueRootReview: beginContinueReview,
+                        rootCountStateByPath,
                         savedViews,
                         onApplySavedView: handleApplySavedView,
                         onSaveCurrentView: handleSaveCurrentView,
@@ -4690,9 +4499,7 @@ function App() {
                       currentRoot={catalogCurrentRoot || libraryRoot}
                       onOpenRoot={handleOpenLibraryRoot}
                       onTogglePin={handleToggleLibraryPin}
-                      rootReviewStateByPath={rootReviewStateByPath}
-                      onStartRootReview={handleStartRootReview}
-                      onContinueRootReview={beginContinueReview}
+                      rootCountStateByPath={rootCountStateByPath}
                       savedViews={savedViews}
                       onApplySavedView={handleApplySavedView}
                       onSaveCurrentView={handleSaveCurrentView}

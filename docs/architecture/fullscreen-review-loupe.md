@@ -25,7 +25,7 @@ project gates have passed.
 1. Guarantee that fullscreen audio and decoder ownership stop synchronously
    before the grid resumes or collection ownership changes.
 2. Navigate the complete current filtered/sorted order independently of the
-   masonry render cap and mounted DOM.
+   mounted virtual masonry window.
 3. Make classification, rating, tagging, metadata inspection, and safe file
    utilities available without leaving the active clip.
 4. Prevent delayed metadata or native-action results from drifting to a newer
@@ -127,7 +127,7 @@ possible; otherwise it closes with feedback.
 
 ### Acceptance
 
-- Navigation reaches records beyond the render cap without mounting them.
+- Navigation reaches records outside the mounted virtual window.
 - Boundaries do not wrap and provide live feedback.
 - Same-ID records cannot cross root/profile/web ownership.
 - Removed and filtered current items follow the defined retention/fallback

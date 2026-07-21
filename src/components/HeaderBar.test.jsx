@@ -11,10 +11,6 @@ const baseProps = {
   toggleRecursive: vi.fn(),
   showFilenames: true,
   toggleFilenames: vi.fn(),
-  renderLimitStep: 2,
-  renderLimitLabel: "200",
-  renderLimitMaxStep: 10,
-  handleRenderLimitChange: vi.fn(),
   zoomLevel: 1,
   handleZoomChangeSafe: vi.fn(),
   getMinimumZoomLevel: vi.fn(() => 0),
@@ -46,14 +42,17 @@ const baseProps = {
 };
 
 describe("HeaderBar hover audio control", () => {
-  it("renders as icon toggle in right interaction cluster, not left checkbox text", () => {
+  it("renders beside the filename toggle in the right interaction cluster", () => {
     const { container } = render(<HeaderBar {...baseProps} />);
 
     const hoverAudioButton = screen.getByRole("button", {
-      name: "Play audio on hover",
+      name: "Player audio on hover",
     });
     expect(hoverAudioButton).toBeInTheDocument();
-    expect(hoverAudioButton).toHaveAttribute("title", "Play audio on hover");
+    expect(hoverAudioButton).toHaveAttribute("title", "Enable player audio on hover");
+    expect(hoverAudioButton.previousElementSibling).toBe(
+      screen.getByTitle("Show/hide filenames")
+    );
 
     const navLeft = container.querySelector(".nav-left");
     expect(navLeft).toBeTruthy();
@@ -70,7 +69,7 @@ describe("HeaderBar hover audio control", () => {
       />
     );
 
-    const button = screen.getByRole("button", { name: "Play audio on hover" });
+    const button = screen.getByRole("button", { name: "Player audio on hover" });
     expect(button).toHaveAttribute("aria-pressed", "false");
     expect(button.className).not.toContain("active");
 
@@ -85,7 +84,7 @@ describe("HeaderBar hover audio control", () => {
       />
     );
 
-    const activeButton = screen.getByRole("button", { name: "Play audio on hover" });
+    const activeButton = screen.getByRole("button", { name: "Player audio on hover" });
     expect(activeButton).toHaveAttribute("aria-pressed", "true");
     expect(activeButton.className).toContain("active");
   });
