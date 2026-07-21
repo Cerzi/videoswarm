@@ -3,7 +3,6 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { getSidecarCandidatePaths } = require("./sidecar-metadata");
 const {
   ACCEPTED_COPY_MAX_MEDIA,
   ACCEPTED_COPY_MAX_PATH_BYTES,
@@ -235,21 +234,21 @@ function publicErrorMessage(error, fallback = "Copy Accepted could not be comple
   return messages[error?.code] || fallback;
 }
 
-function sampleFailure(relativePath, kind, error) {
+function sampleFailure(relativePath, error) {
   return Object.freeze({
     relativePath:
       typeof relativePath === "string" ? relativePath.slice(0, 32_768) : "",
-    kind: kind === "sidecar" ? "sidecar" : "media",
+    kind: "media",
     code: safeErrorCode(error),
     message: publicErrorMessage(error),
   });
 }
 
-function sampleCollision(relativePath, kind, reason = "exists") {
+function sampleCollision(relativePath, reason = "exists") {
   return Object.freeze({
     relativePath:
       typeof relativePath === "string" ? relativePath.slice(0, 32_768) : "",
-    kind: kind === "sidecar" ? "sidecar" : "media",
+    kind: "media",
     reason: reason === "in-plan" ? "in-plan" : "exists",
   });
 }
@@ -479,7 +478,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       processed: Math.max(0, Number(snapshot.processed) || 0),
       total: Math.max(0, Number(snapshot.total) || 0),
       copiedMedia: Math.max(0, Number(snapshot.copiedMedia) || 0),
-      copiedSidecars: Math.max(0, Number(snapshot.copiedSidecars) || 0),
       skippedCollisions: Math.max(0, Number(snapshot.skippedCollisions) || 0),
       failedCount: Math.max(0, Number(snapshot.failedCount) || 0),
       bytesCopied: Math.max(0, Number(snapshot.bytesCopied) || 0),
@@ -641,14 +639,13 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         );
       }
       jobs.push({
-        kind: "media",
         sourcePath: record.sourcePath,
         relativePath: record.relativePath,
         identity,
         size: Number(mediaStats.size) || 0,
       });
     } catch (error) {
-      boundedPush(failures, sampleFailure(record.relativePath, "media", error));
+      boundedPush(failures, sampleFailure(record.relativePath, error));
       return {
         jobs,
         failures,
@@ -657,46 +654,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       };
     }
 
-    if (!plan.includeSidecars) {
-      return { jobs, failures, failureCount: 0, missingCount: 0 };
-    }
-
-    let failureCount = 0;
-    for (const candidate of getSidecarCandidatePaths(record.sourcePath, pathImpl)) {
-      assertPlanActive(plan, "preflight:sidecar");
-      let stats;
-      try {
-        stats = await fsPromises.lstat(candidate);
-      } catch (error) {
-        if (isMissingError(error)) continue;
-        failureCount += 1;
-        let relativePath = record.relativePath;
-        try {
-          relativePath = portablePathFromNative(plan.sourceRoot, candidate, pathImpl);
-        } catch {
-          // Retain the media-relative fallback without exposing the native path.
-        }
-        boundedPush(failures, sampleFailure(relativePath, "sidecar", error));
-        continue;
-      }
-      assertPlanActive(plan, "preflight:sidecar-stat");
-      let relativePath = record.relativePath;
-      try {
-        relativePath = portablePathFromNative(plan.sourceRoot, candidate, pathImpl);
-        const identity = fileIdentity(stats);
-        jobs.push({
-          kind: "sidecar",
-          sourcePath: pathImpl.resolve(candidate),
-          relativePath,
-          identity,
-          size: Number(stats.size) || 0,
-        });
-      } catch (error) {
-        failureCount += 1;
-        boundedPush(failures, sampleFailure(relativePath, "sidecar", error));
-      }
-    }
-    return { jobs, failures, failureCount, missingCount: 0 };
+    return { jobs, failures, failureCount: 0, missingCount: 0 };
   }
 
   async function buildPlanJobs(plan, records) {
@@ -740,7 +698,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       pathBytes += Buffer.byteLength(job.relativePath, "utf8");
       if (pathBytes > ACCEPTED_COPY_MAX_PATH_BYTES) {
         throw new AcceptedCopyError(
-          "Accepted-media and sidecar paths exceed the bounded plan budget",
+          "Accepted-media paths exceed the bounded plan budget",
           ACCEPTED_COPY_CODES.QUERY_TOO_LARGE
         );
       }
@@ -764,7 +722,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         collisionCount += 1;
         boundedPush(
           collisions,
-          sampleCollision(job.relativePath, job.kind, "in-plan")
+          sampleCollision(job.relativePath, "in-plan")
         );
       } else {
         byDestination.set(destinationKey, { sourceKey, job: completedJob });
@@ -789,7 +747,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             collisionCount += 1;
             boundedPush(
               collisions,
-              sampleCollision(job.relativePath, job.kind, "exists")
+              sampleCollision(job.relativePath, "exists")
             );
           } catch (error) {
             if (!isMissingError(error)) throw error;
@@ -797,7 +755,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         } catch (error) {
           job.invalid = true;
           failureCount += 1;
-          boundedPush(failures, sampleFailure(job.relativePath, job.kind, error));
+          boundedPush(failures, sampleFailure(job.relativePath, error));
         }
       },
       concurrency,
@@ -837,8 +795,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       const directory = scope === "all-descendants"
         ? ""
         : normalizeReviewExportDirectory(request?.directory ?? "");
-      const includeSidecars = request?.includeSidecars === true;
-
       context = captureContext({ owner, request });
       const planId = generateUniquePlanId();
       plan = {
@@ -849,7 +805,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         rootPath,
         directory,
         scope,
-        includeSidecars,
         state: "preparing",
         controller: new AbortController(),
         expiryTimer: null,
@@ -967,11 +922,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         totalBytes: prepared.totalBytes,
       }, true);
 
-      const sidecarCount = plan.jobs.reduce(
-        (count, job) =>
-          count + Number(job.kind === "sidecar" && !job.collision),
-        0
-      );
       const copyableCount = plan.jobs.reduce(
         (count, job) => count + Number(!job.collision),
         0
@@ -988,7 +938,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         totalMedia: plan.totalMedia,
         totalFiles:
           plan.jobs.length + plan.preflightFailureCount + plan.missingCount,
-        sidecarCount,
         copyableCount,
         canStart: copyableCount > 0,
         totalBytes: plan.totalBytes,
@@ -1145,7 +1094,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     const collisionSamples = [...plan.collisions];
     let skippedCollisions = plan.collisionCount;
     let copiedMedia = 0;
-    let copiedSidecars = 0;
     let bytesCopied = 0;
     let processed = plan.preflightFailureCount + (plan.missingCount || 0);
     const runnable = [];
@@ -1163,7 +1111,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       processed,
       total,
       copiedMedia,
-      copiedSidecars,
       skippedCollisions,
       failedCount: failureCount,
       bytesCopied,
@@ -1219,8 +1166,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           }
           // The native copy may finish concurrently with cancellation. It is a
           // completed partial result and is intentionally not rolled back.
-          if (job.kind === "sidecar") copiedSidecars += 1;
-          else copiedMedia += 1;
+          copiedMedia += 1;
           bytesCopied += Math.max(0, Number(job.size) || 0);
         } catch (error) {
           if (plan.controller.signal.aborted) throw error;
@@ -1228,24 +1174,20 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             skippedCollisions += 1;
             boundedPush(
               collisionSamples,
-              sampleCollision(job.relativePath, job.kind, "exists")
+              sampleCollision(job.relativePath, "exists")
             );
           } else {
-            if (
-              job.kind === "media" &&
-              isUnavailableMediaError(error)
-            ) {
+            if (isUnavailableMediaError(error)) {
               missingCount += 1;
             } else {
               failureCount += 1;
             }
             boundedPush(
               failures,
-              sampleFailure(job.relativePath, job.kind, error)
+              sampleFailure(job.relativePath, error)
             );
             logger?.warn?.("[copy-accepted] File copy failed", {
               code: safeErrorCode(error),
-              kind: job.kind,
             });
           }
         } finally {
@@ -1254,7 +1196,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             processed,
             total,
             copiedMedia,
-            copiedSidecars,
             skippedCollisions,
             failedCount: failureCount,
             bytesCopied,
@@ -1285,8 +1226,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       copiedMedia,
       movedCount: moving ? copiedMedia : 0,
       movedMedia: moving ? copiedMedia : 0,
-      sidecarCopiedCount: copiedSidecars,
-      copiedSidecars,
       bytesCopied,
       skippedCount: skippedCollisions,
       skippedCollisions,
@@ -1309,7 +1248,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       processed,
       total,
       copiedMedia,
-      copiedSidecars,
       skippedCollisions,
       failedCount: failureCount,
       bytesCopied,
@@ -1340,8 +1278,6 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           (plan.missingCount || 0),
         copiedCount: 0,
         copiedMedia: 0,
-        sidecarCopiedCount: 0,
-        copiedSidecars: 0,
         bytesCopied: 0,
         skippedCount: plan.collisionCount || 0,
         skippedCollisions: plan.collisionCount || 0,

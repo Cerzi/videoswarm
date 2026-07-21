@@ -119,7 +119,7 @@ export default function ReviewSessionControls({
                 ? `Find next Unreviewed — ${session.startActionContext}`
                 : "Find next Unreviewed"
             }
-            title="Optional: save this view and jump to the next Unreviewed clip. Review controls already work."
+            title="Save this folder scope, filters, and sort as a resume point, then jump to the next Unreviewed clip."
           >
             Find Unreviewed
           </button>

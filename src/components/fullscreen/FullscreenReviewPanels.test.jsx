@@ -5,6 +5,7 @@ import { ActionIds } from "../../hooks/actions/actions";
 import {
   FullscreenDetailsDock,
   FullscreenHeaderActions,
+  FullscreenHeaderContent,
   FullscreenReviewRail,
 } from "./FullscreenReviewPanels";
 
@@ -52,6 +53,26 @@ describe("FullscreenReviewPanels", () => {
     expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);
   });
 
+  it("keeps rating available while review mode controls and status are hidden", () => {
+    const onSetRating = vi.fn();
+    render(
+      <>
+        <FullscreenHeaderContent video={video} reviewModeEnabled={false} />
+        <FullscreenReviewRail
+          video={video}
+          reviewModeEnabled={false}
+          onSetRating={onSetRating}
+        />
+      </>
+    );
+
+    expect(screen.queryByText("Unreviewed")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept (A)" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rate 4 stars" }));
+    expect(onSetRating).toHaveBeenCalledWith(4);
+  });
+
   it("offers only non-destructive utilities and renders catalog help", () => {
     const onSurfaceChange = vi.fn();
     const onSafeAction = vi.fn();
@@ -80,6 +101,22 @@ describe("FullscreenReviewPanels", () => {
     expect(screen.getByRole("dialog", { name: "Fullscreen shortcuts" })).toBeTruthy();
     expect(screen.getByText("Review current clip")).toBeTruthy();
     expect(screen.getByText("Mute or enable audio")).toBeTruthy();
+  });
+
+  it("shows rating help without review-state help when review mode is off", () => {
+    render(
+      <FullscreenHeaderActions
+        video={video}
+        surface="help"
+        onSurfaceChange={vi.fn()}
+        onSafeAction={vi.fn()}
+        reviewModeEnabled={false}
+      />
+    );
+
+    expect(screen.getByText("Rate current clip")).toBeVisible();
+    expect(screen.getByText("Set star rating")).toBeVisible();
+    expect(screen.queryByText("Mark as Accept")).toBeNull();
   });
 
   it("reuses file, generation, and tag sections in the dock", () => {

@@ -1243,8 +1243,8 @@ universal limits.
     verification record.
 17. **Implemented** — Replace the deferred accepted-result placeholder with a
     main-owned Copy Accepted workflow. Authoritative SQLite scope reads,
-    native destination ownership, root-relative paths, optional exact
-    sidecars, collision preflight, exclusive no-overwrite writes, bounded
+    native destination ownership, root-relative paths, media-only transfer,
+    collision preflight, exclusive no-overwrite writes, bounded
     progress/cancellation, and lifecycle draining are verified in
     [`review-workflow.md`](review-workflow.md).
 
@@ -1281,9 +1281,9 @@ their stated evidence exists:
   layout geometry.
 - **Expanded review-result actions:** metadata transfer for copied content and
   streaming reject processing above the current 2,000-local-reject safety
-  bound remain deferred. Accepted Move/Copy—including optional exact sidecars,
-  collision preflight, exclusive no-overwrite writes, source identity checks,
-  and bounded progress/cancellation—is implemented; see
+  bound remain deferred. Accepted Move/Copy—including collision preflight,
+  exclusive no-overwrite writes, source identity checks, and bounded
+  progress/cancellation—is implemented; see
   [`review-workflow.md`](review-workflow.md).
 - **Cross-platform packaged validation:** Linux source-production smoke
   exercises the security boundary and custom media ranges. In addition, CI and

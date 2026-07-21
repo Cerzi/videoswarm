@@ -118,31 +118,45 @@ export default function KeyboardShortcutsDialog({
 
         <div className="shortcuts-dialog__body">
           <div className="shortcuts-dialog__grid">
-            {HOTKEY_SECTIONS.filter(
-              (section) => reviewModeEnabled || section.id !== "review"
-            ).map((section) => (
-              <section className="shortcut-group" key={section.id}>
-                <div className="shortcut-group__heading">
-                  <h3>{section.title}</h3>
-                  <p>{section.description}</p>
-                </div>
-                <dl className="shortcut-list">
-                  {section.shortcuts.map((shortcut) => (
-                    <div className="shortcut-row" key={shortcut.id}>
-                      <dt>
-                        <span className="shortcut-row__label">{shortcut.label}</span>
-                        {shortcut.detail && (
-                          <span className="shortcut-row__detail">{shortcut.detail}</span>
-                        )}
-                      </dt>
-                      <dd>
-                        <ShortcutKeys shortcut={shortcut} />
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            ))}
+            {HOTKEY_SECTIONS.map((section) => {
+              const shortcuts = reviewModeEnabled || section.id !== "review"
+                ? section.shortcuts
+                : section.shortcuts.filter(
+                    (shortcut) => ["rating", "clear-rating"].includes(shortcut.action)
+                  );
+              if (shortcuts.length === 0) return null;
+              return (
+                <section className="shortcut-group" key={section.id}>
+                  <div className="shortcut-group__heading">
+                    <h3>
+                      {!reviewModeEnabled && section.id === "review"
+                        ? "Rating"
+                        : section.title}
+                    </h3>
+                    <p>
+                      {!reviewModeEnabled && section.id === "review"
+                        ? "Rate selected clips without showing the review workflow."
+                        : section.description}
+                    </p>
+                  </div>
+                  <dl className="shortcut-list">
+                    {shortcuts.map((shortcut) => (
+                      <div className="shortcut-row" key={shortcut.id}>
+                        <dt>
+                          <span className="shortcut-row__label">{shortcut.label}</span>
+                          {shortcut.detail && (
+                            <span className="shortcut-row__detail">{shortcut.detail}</span>
+                          )}
+                        </dt>
+                        <dd>
+                          <ShortcutKeys shortcut={shortcut} />
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              );
+            })}
           </div>
         </div>
 

@@ -85,13 +85,13 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   its rating but never its tags.
 - One-handed shortcuts, optional advance-after-marking, one-step coupled undo,
   and stable scope progress.
-- A profile-persistent review-mode toggle hides review UI, counts, actions, and
-  shortcuts when review workflow features are not wanted.
+- A profile-persistent review-mode toggle hides review UI, counts, status
+  actions, and review-state shortcuts while leaving ratings available.
 - Persistent saved review positions with **Find Unreviewed** and **Resume saved
   view** across application restarts.
 - **Process Results** supports bounded parallel Reject trashing plus explicit
   no-overwrite **Move** and **Copy** actions for accepted clips, preserving
-  relative folders and optionally recognized adjacent JSON sidecars.
+  relative folders.
 - Custom tags, bulk add/remove, ranked suggestions, five-star ratings, and
   profile-local SQLite persistence.
 - Lazy embedded ComfyUI/VHS API-graph extraction for supported prompt, negative
