@@ -217,6 +217,11 @@ hardened Ubuntu installations may also block Chromium's unprivileged-user-
 namespace fallback. Video Swarm does not silently disable the production
 sandbox to work around that packaging conflict.
 
+If `apt` returns an error after it has configured Video Swarm, check the
+[Linux package troubleshooting guide](docs/troubleshooting/linux-deb-installation.md)
+before reinstalling. Apt can finish installing this package and then fail while
+retrying an unrelated pending kernel or DKMS transaction.
+
 ### Prerequisites
 - **Node.js 22.12.0 or later**
   > Note: Electron 43 requires Node 22.12.0+, and some dependencies such as `better-sqlite3@12`, `conf@14`, and `electron-store@10` require Node 20+.

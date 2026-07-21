@@ -218,7 +218,11 @@ jobs:
             - \`VideoSwarm-*-win-x64.exe\`: Installer (recommended)
             - \`VideoSwarm-*-win-x64-Portable.exe\`: Portable build (no installation)
           - **Linux**
-            - \`VideoSwarm-*-linux.deb\`: Install with your package manager
+            - \`VideoSwarm-*-linux.deb\`: On Debian/Ubuntu x64, install with
+              \`sudo apt install ./VideoSwarm-*-linux.deb\`, then launch
+              \`video-swarm\`
+            - Portable AppImages and production no-sandbox launches are not
+              supported
 
           ## Checksums (SHA256)
 

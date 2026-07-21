@@ -123,6 +123,34 @@ Expected current test behavior: the suite passes, but some tests print known Rea
   reliably provide that SUID helper configuration on hardened Ubuntu. The
   explicit `*:no-sandbox` commands are development-only escape hatches, not
   acceptable release defaults or package smoke assumptions.
+- The packaged launcher retains a warned `VIDEOSWARM_DISABLE_SANDBOX=1`
+  diagnostic escape hatch. It is not a supported normal launch, release
+  acceptance path, or user-facing remedy.
+- Apt can configure Video Swarm successfully and still exit nonzero while it
+  retries unrelated pending kernel or DKMS packages. Before changing the
+  package, verify dpkg status, the installed launcher, and `root:root 4755` as
+  described in `docs/troubleshooting/linux-deb-installation.md`.
+
+## Release Workflow
+
+- Keep the version in `package.json` and npm-generated `package-lock.json`
+  aligned with the release tag after removing its leading `v`.
+- Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow expects
+  exactly one Linux `.deb` and two Windows `.exe` files, installs and launches
+  the `.deb` sandboxed, generates checksums, and creates a **draft** GitHub
+  release. A maintainer must inspect and publish that draft.
+- Tags containing `-rc`, `-beta`, or `-alpha` create prereleases. GitHub does
+  not present a prerelease as the latest stable release; publish a stable tag
+  when the release candidate is promoted.
+- A manual `workflow_dispatch` builds artifacts but does not create a release,
+  because the release job is gated to `refs/tags/v*`.
+- When advancing the current release candidate, update versioned links and
+  placeholders in `README.md`, `.github/ISSUE_TEMPLATE/config.yml`, and
+  `.github/ISSUE_TEMPLATE/bug_report.yml`, together with the release feedback
+  tracker when applicable.
+- Markdown-only pushes intentionally skip `.github/workflows/ci.yml`; release
+  workflow changes do not. Do not interpret the absent docs-only CI run as a
+  skipped product validation before a tag.
 
 ## Coding Conventions
 
