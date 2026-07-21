@@ -569,10 +569,22 @@ function initDatabase(app, profilePath) {
   const dbPath = path.join(resolvedProfilePath, DB_FILE_NAME);
 
   function openDatabase() {
-    const db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    return db;
+    const openedDatabase = new Database(dbPath);
+    try {
+      openedDatabase.pragma('journal_mode = WAL');
+      openedDatabase.pragma('foreign_keys = ON');
+      return openedDatabase;
+    } catch (error) {
+      try {
+        openedDatabase.close();
+      } catch (closeError) {
+        console.warn(
+          '[database] Failed to close database after initialization error',
+          closeError
+        );
+      }
+      throw error;
+    }
   }
 
   let db;
