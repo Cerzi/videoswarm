@@ -45,9 +45,9 @@ document is now the architecture, behavior, and verification record for v1.
 - They do not create multiple named review passes for one root in v1.
 - They do not change the existing rating/review invariant: assigning a rating
   implies Reviewed, and resetting to Unreviewed clears the rating but not tags.
-- Checkpoint persistence does not own Copy Accepted, search indexing,
-  comparison, or new Linux playback scheduling. Copy Accepted is implemented
-  separately in [`review-workflow.md`](review-workflow.md).
+- Checkpoint persistence does not own Accepted Move/Copy, search indexing,
+  comparison, or new Linux playback scheduling. Accepted result transfer is
+  implemented separately in [`review-workflow.md`](review-workflow.md).
 
 ## Persisted model
 
@@ -616,9 +616,8 @@ unimplemented v1 behavior.
 
 ## Subsequent product order
 
-Continue Review and the non-destructive **Copy Accepted** workflow are now
-verified. Destructive Move and metadata transfer remain deferred. Subsequent
-product work proceeds in this order:
+Continue Review and Accepted **Move/Copy** are now verified. Metadata transfer
+remains deferred. Subsequent product work proceeds in this order:
 
 1. **Generation-aware search:** bounded background indexing of prompt, model,
    seed, sampler, source, and run metadata for filters, grouping, and smart

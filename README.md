@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/85845a4e-488d-4817-806c-a39bc290aabc
 - Review with one hand: `A` Accept, `S` Reviewed, `D` Reject, `F` Unreviewed,
   `1`–`5` rating, and `Z` undo.
 - Resume saved review positions, trash rejected clips in bounded batches, or
-  safely copy accepted clips to a new destination.
+  safely move or copy accepted clips to a new destination.
 - Double-click for the fullscreen review loupe; use `Q`/`E` or `←`/`→` to
   navigate, Space to play/pause, `M` for audio, and `I` for Details.
 - Inspect tags, ratings, audio presence, and supported embedded ComfyUI/VHS
