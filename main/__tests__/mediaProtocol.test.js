@@ -36,9 +36,14 @@ function createMediaFile(name = "clip.mp4", contents = "0123456789") {
   return filePath;
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const directory of temporaryDirectories) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    await fs.promises.rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 20,
+    });
   }
   temporaryDirectories.clear();
 });
