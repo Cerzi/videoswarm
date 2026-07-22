@@ -57,7 +57,7 @@ function trustedFixture(frameUrl = "file:///opt/videoswarm/dist-react/index.html
   const validator = createIpcTrustValidator({
     getMainWindow: () => win,
     allowedFrameUrls: ["file:///opt/videoswarm/dist-react/index.html"],
-    allowedOrigins: ["http://localhost:5173"],
+    allowedOrigins: ["http://localhost:6173"],
   });
   return { frame, sender, win, validator, event: { sender, senderFrame: frame } };
 }
@@ -85,13 +85,13 @@ describe("IPC sender trust", () => {
 
   it("allows a configured dev origin but not a lookalike origin", () => {
     expect(
-      isAllowedFrameUrl("http://localhost:5173/src/index.html?x=1", {
-        allowedOrigins: ["http://localhost:5173"],
+      isAllowedFrameUrl("http://localhost:6173/src/index.html?x=1", {
+        allowedOrigins: ["http://localhost:6173"],
       })
     ).toBe(true);
     expect(
-      isAllowedFrameUrl("http://localhost:5173.evil.test/index.html", {
-        allowedOrigins: ["http://localhost:5173"],
+      isAllowedFrameUrl("http://localhost:6173.evil.test/index.html", {
+        allowedOrigins: ["http://localhost:6173"],
       })
     ).toBe(false);
   });

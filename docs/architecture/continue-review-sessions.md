@@ -208,10 +208,8 @@ A checkpoint is created in either of these ways:
    undo, and failed mutations do not create a new session.
 2. **Explicit start:** **Find Unreviewed** captures the active directory,
    scope, validated view, and primary selection (when it belongs to the scope),
-   then resolves and focuses the next candidate. From an inactive pinned-root
-   row, **Review Unreviewed** first opens the root at All descendants, lets existing
-   renderer settings/in-process folder state settle, and saves that resulting
-   validated view.
+   then resolves and focuses the next candidate. For an inactive pinned root,
+   first open the navigation row, then use the review toolbar action.
 
 One root has one checkpoint. Starting in another folder/view for a root that
 already has a checkpoint uses the visible label **Save position here…** and the
@@ -324,15 +322,12 @@ keeps candidate resolution on the one existing filtered order.
 
 ### Library sidebar
 
-Each pinned-root row adds a compact instance count and action:
+Each pinned-root row stays a compact navigation and count surface:
 
 - `N unreviewed in root` while the root-wide aggregate is authoritative.
 - `N unreviewed in root · Updating…` while a scan/refresh is active.
-- **Review Unreviewed** when no checkpoint exists and work remains.
-- **Resume saved view** when a checkpoint exists and work remains.
-- **Review complete** when the authoritative root count is zero; if newly
-  indexed Unreviewed files appear, the retained checkpoint makes **Resume saved
-  view** actionable again.
+- Review and resume actions live only in the toolbar after the root is opened.
+- Pinned roots never expose a second review action.
 
 Counts are file instances, not unique fingerprints, and the tooltip states
 that reviewing duplicate content may reduce the count by more than one. The
@@ -348,6 +343,8 @@ rating controls remain usable regardless of checkpoint state:
   saves a resume point automatically, and optional **Find Unreviewed**.
 - With a matching root/directory/scope checkpoint: a **Review position saved**
   status and last-saved time, with direct **Clear resume point…**.
+- A matching checkpoint keeps **Find Unreviewed** available to restore its
+  saved view and jump from its saved position.
 - With a checkpoint elsewhere in the same root: **Resume** plus **Save position
   here…**.
 - During resume: **Restoring saved review…**, followed by the candidate name or

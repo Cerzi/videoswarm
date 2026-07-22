@@ -124,6 +124,23 @@ export default function ReviewSessionControls({
             Find Unreviewed
           </button>
         ) : null}
+        {mode === "active" ? (
+          <button
+            type="button"
+            className="review-session__primary"
+            disabled={disabled || typeof onContinue !== "function"}
+            onClick={() => onContinue?.()}
+            aria-label={
+              session.savedActionContext
+                ? `Find next Unreviewed from saved position \u2014 ${session.savedActionContext}`
+                : "Find next Unreviewed from saved position"
+            }
+            title="Restore the saved folder scope, filters, sort, and position, then jump to the next Unreviewed clip."
+          >
+            Find Unreviewed
+          </button>
+        ) : null}
+
 
         {mode === "elsewhere" ? (
           <>

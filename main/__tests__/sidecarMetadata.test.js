@@ -301,18 +301,18 @@ describe('bounded sidecar metadata service', () => {
     addInstance(instances, 2, 'two');
     const store = createFakeStore(instances);
     let releaseRead = null;
-    const fsPromises = {
-      open: async (...args) => {
-        const handle = await fs.promises.open(...args);
-        return {
-          stat: (...statArgs) => handle.stat(...statArgs),
-          read: () => new Promise((resolve) => {
-            releaseRead = () => resolve({ bytesRead: 0 });
-          }),
-          close: () => handle.close(),
-        };
-      },
+    const handle = {
+      stat: vi.fn(async () => ({
+        isFile: () => true,
+        size: 2,
+        mtimeMs: 1,
+      })),
+      read: vi.fn(() => new Promise((resolve) => {
+        releaseRead = () => resolve({ bytesRead: 0 });
+      })),
+      close: vi.fn(async () => {}),
     };
+    const fsPromises = { open: vi.fn(async () => handle) };
     const service = createSidecarMetadataService({
       fsPromises,
       limits: { concurrency: 1, maxPending: 1, timeoutMs: 10 },

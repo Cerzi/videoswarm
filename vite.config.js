@@ -37,7 +37,7 @@ export default defineConfig(({ command }) => ({
     }
   },
   server: {
-    port: 5173,
+    port: 6173,
     strictPort: true,
     watch: {
       ignored: [

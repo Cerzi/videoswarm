@@ -82,8 +82,8 @@ position**:
   Unreviewed** as an optional way to save the current view and jump to a target.
 - Pinned roots remain navigation rows and show passive total and unreviewed clip
   counts. Review and resume actions live only in the review toolbar above.
-- A matching checkpoint is **Review position saved**; a remote one is **Resume
-  point saved elsewhere**.
+- A matching checkpoint is **Review position saved** and keeps **Find
+  Unreviewed** available; a remote one is **Resume point saved elsewhere**.
 - The one-item overflow menu is removed. **Clear resume point...** directly
   opens the existing confirmation and never removes ratings, review states, or
   tags.

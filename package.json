@@ -1,6 +1,6 @@
 {
   "name": "video-swarm",
-  "version": "0.6.0-rc.3",
+  "version": "0.6.0-rc.4",
   "description": "Desktop application for viewing hundreds of videos simultaneously with advanced masonry layouts and real-time file system monitoring",
   "main": "main.js",
   "homepage": "https://github.com/Cerzi/videoswarm",
@@ -36,8 +36,8 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "dev:no-sandbox": "electron . --dev --no-sandbox",
-    "electron:dev": "concurrently \"npm run vite:dev\" \"wait-on http://localhost:5173 && electron . --dev\"",
-    "electron:dev:no-sandbox": "concurrently \"npm run vite:dev\" \"wait-on http://localhost:5173 && electron . --dev --no-sandbox\"",
+    "electron:dev": "concurrently \"npm run vite:dev\" \"wait-on http://localhost:6173 && electron . --dev\"",
+    "electron:dev:no-sandbox": "concurrently \"npm run vite:dev\" \"wait-on http://localhost:6173 && electron . --dev --no-sandbox\"",
     "electron:build": "npm run vite:build && electron-builder",
     "electron:dist": "npm run vite:build && electron-builder --publish=never",
     "electron:pack": "npm run vite:build && electron-builder --dir",

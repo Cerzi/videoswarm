@@ -87,8 +87,8 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   and stable scope progress.
 - A profile-persistent review-mode toggle hides review UI, counts, status
   actions, and review-state shortcuts while leaving ratings available.
-- Persistent saved review positions with **Find Unreviewed** and **Resume saved
-  view** across application restarts.
+- Persistent saved review positions restored from the review toolbar with
+  **Find Unreviewed** across application restarts.
 - **Process Results** supports bounded parallel Reject trashing plus explicit
   no-overwrite **Move** and **Copy** actions for accepted clips, preserving
   relative folders.
@@ -173,7 +173,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 ## Test the v0.6 Release Candidate
 
-[Download v0.6.0-rc.3](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.3)
+[Download v0.6.0-rc.4](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.4)
 for Windows, or install its `.deb` on Debian/Ubuntu, then follow the
 [RC feedback tracker](https://github.com/Cerzi/videoswarm/issues/80) for the
 priority test areas and stable-release gate. Close VideoSwarm before upgrading
@@ -272,7 +272,7 @@ preload.js             IPC bridge
 2. Open a folder and optionally pin it in the Library
 3. Choose a folder scope and playback mode for the current workload
 4. Review with `A`/`S`/`D`/`F`, ratings, tags, or the Details workspace
-5. Use **Find Unreviewed** or **Resume saved view** for a persistent review pass
+5. Use **Find Unreviewed** in the review toolbar for a persistent review pass
 6. Press `?` at any time for the current shortcut reference
 
 ## License
