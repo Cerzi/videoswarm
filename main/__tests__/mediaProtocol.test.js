@@ -227,9 +227,10 @@ describe("media protocol service", () => {
     });
     const response = await service.handle(new Request(createMediaInstanceUrl(5)));
     await response.body.cancel();
+    const canonicalFilePath = await fs.promises.realpath(filePath);
 
     expect(authorizePath).toHaveBeenCalledWith(
-      fs.realpathSync(filePath),
+      canonicalFilePath,
       expect.objectContaining({ instanceId: 5 })
     );
   });

@@ -243,6 +243,8 @@ describe("profile- and owner-scoped path authority", () => {
     fs.writeFileSync(outside, "outside");
     const authority = createPathAuthority();
 
+    const canonicalInside = await fs.promises.realpath(inside);
+    const canonicalRoot = await fs.promises.realpath(root);
     await authority.grantRoot({ ownerId: 1, scopeId: "profile-a", rootPath: root });
     await expect(
       authority.assertAuthorizedPath({
@@ -252,8 +254,8 @@ describe("profile- and owner-scoped path authority", () => {
         kind: "file",
       })
     ).resolves.toEqual({
-      path: fs.realpathSync(inside),
-      rootPath: fs.realpathSync(root),
+      path: canonicalInside,
+      rootPath: canonicalRoot,
     });
     await expect(
       authority.assertAuthorizedPath({
@@ -325,6 +327,7 @@ describe("profile- and owner-scoped path authority", () => {
 
     await authority.grantRoot({ ownerId: 1, scopeId: "one", rootPath: first });
     await authority.grantRoot({ ownerId: 1, scopeId: "one", rootPath: second });
+    const canonicalSecondFile = await fs.promises.realpath(secondFile);
 
     await expect(
       authority.assertAuthorizedPath({
@@ -339,7 +342,7 @@ describe("profile- and owner-scoped path authority", () => {
         scopeId: "one",
         targetPath: secondFile,
       })
-    ).resolves.toMatchObject({ path: fs.realpathSync(secondFile) });
+    ).resolves.toMatchObject({ path: canonicalSecondFile });
     expect(authority.snapshot()).toMatchObject({ roots: 1 });
     authority.dispose();
   });

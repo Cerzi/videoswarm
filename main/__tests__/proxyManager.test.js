@@ -225,7 +225,7 @@ describe("ProxyManager", () => {
       proxyPath: expect.stringMatching(/\.mp4$/),
     });
     await expect(manager.resolveProtocolProxy(cached.signature)).resolves.toEqual({
-      path: cached.proxyPath,
+      path: await fsPromises.realpath(cached.proxyPath),
       present: true,
       signature: cached.signature,
     });
