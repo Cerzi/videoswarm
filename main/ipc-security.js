@@ -468,16 +468,7 @@ function createPathAuthority(options = {}) {
     return canonicalRoot;
   }
 
-  async function assertAuthorizedPath({ ownerId, scopeId, targetPath, kind = null }) {
-    assertUsable();
-    const generation = revocationGeneration;
-    const authority = ownerRoots(ownerId, scopeId, false);
-    const { roots } = authority;
-    if (!roots?.size) {
-      throw new IpcSecurityError("No filesystem roots are authorized", "PATH_NOT_AUTHORIZED");
-    }
-    const canonicalTarget = await canonicalize(targetPath);
-    assertAuthorityCurrent(generation);
+  function assertAuthorityMapsCurrent(authority, roots) {
     const currentAuthority = ownerRoots(
       authority.ownerKey,
       authority.scopeKey,
@@ -492,24 +483,30 @@ function createPathAuthority(options = {}) {
         "PATH_NOT_AUTHORIZED"
       );
     }
+  }
+
+  async function authorizeCanonicalTarget({
+    authority,
+    roots,
+    generation,
+    canonicalTarget,
+    kind,
+  }) {
+    assertAuthorityCurrent(generation);
+    assertAuthorityMapsCurrent(authority, roots);
     const matchingRoot = [...roots.keys()].find((root) =>
       isPathInsideRoot(root, canonicalTarget, pathApi)
     );
     if (!matchingRoot) {
       throw new IpcSecurityError("Path is outside the authorized roots", "PATH_NOT_AUTHORIZED");
     }
+    const matchingRecord = roots.get(matchingRoot);
+    let stats = null;
     if (kind) {
-      const stats = await fsApi.stat(canonicalTarget);
+      stats = await fsApi.stat(canonicalTarget);
       assertAuthorityCurrent(generation);
-      const afterStatAuthority = ownerRoots(
-        authority.ownerKey,
-        authority.scopeKey,
-        false
-      );
-      if (
-        afterStatAuthority.owners !== authority.owners ||
-        afterStatAuthority.roots !== roots
-      ) {
+      assertAuthorityMapsCurrent(authority, roots);
+      if (roots.get(matchingRoot) !== matchingRecord) {
         throw new IpcSecurityError(
           "Filesystem authority changed during validation",
           "PATH_NOT_AUTHORIZED"
@@ -523,7 +520,57 @@ function createPathAuthority(options = {}) {
     const record = roots.get(matchingRoot);
     roots.delete(matchingRoot);
     roots.set(matchingRoot, record);
-    return { path: canonicalTarget, rootPath: matchingRoot };
+    return {
+      path: canonicalTarget,
+      rootPath: matchingRoot,
+      ...(stats ? { stats } : {}),
+    };
+  }
+
+  function captureAuthority(ownerId, scopeId) {
+    assertUsable();
+    const generation = revocationGeneration;
+    const authority = ownerRoots(ownerId, scopeId, false);
+    const { roots } = authority;
+    if (!roots?.size) {
+      throw new IpcSecurityError("No filesystem roots are authorized", "PATH_NOT_AUTHORIZED");
+    }
+    return { authority, roots, generation };
+  }
+
+  async function assertAuthorizedPath({ ownerId, scopeId, targetPath, kind = null }) {
+    const { authority, roots, generation } = captureAuthority(ownerId, scopeId);
+    const canonicalTarget = await canonicalize(targetPath);
+    const result = await authorizeCanonicalTarget({
+      authority,
+      roots,
+      generation,
+      canonicalTarget,
+      kind,
+    });
+    return { path: result.path, rootPath: result.rootPath };
+  }
+
+  /**
+   * Authorize a path already produced by fs.realpath inside trusted main-process
+   * code. Renderer-controlled callers must use assertAuthorizedPath so symlink
+   * and reparse-point targets are canonicalized before containment is checked.
+   */
+  async function assertAuthorizedCanonicalPath({
+    ownerId,
+    scopeId,
+    canonicalPath,
+    kind = null,
+  }) {
+    const { authority, roots, generation } = captureAuthority(ownerId, scopeId);
+    const canonicalTarget = pathApi.resolve(assertPathString(canonicalPath));
+    return authorizeCanonicalTarget({
+      authority,
+      roots,
+      generation,
+      canonicalTarget,
+      kind,
+    });
   }
 
   function revokeOwner(ownerId) {
@@ -570,6 +617,7 @@ function createPathAuthority(options = {}) {
   return {
     grantRoot,
     assertAuthorizedPath,
+    assertAuthorizedCanonicalPath,
     revokeOwner,
     revokeScope,
     snapshot,
