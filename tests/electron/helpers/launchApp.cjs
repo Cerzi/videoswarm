@@ -55,10 +55,21 @@ async function launchProductionApp({
     appShellDir,
   } = appWorkspace;
 
+  const windowsAppDataDir = path.join(homeDir, "AppData", "Roaming");
+  const windowsLocalAppDataDir = path.join(homeDir, "AppData", "Local");
+  if (process.platform === "win32") {
+    fs.mkdirSync(windowsAppDataDir, { recursive: true });
+    fs.mkdirSync(windowsLocalAppDataDir, { recursive: true });
+  }
+
   const env = {
     ...process.env,
     HOME: homeDir,
     USERPROFILE: homeDir,
+    ...(process.platform === "win32" ? {
+      APPDATA: windowsAppDataDir,
+      LOCALAPPDATA: windowsLocalAppDataDir,
+    } : {}),
     XDG_CACHE_HOME: cacheDir,
     XDG_CONFIG_HOME: configDir,
     VIDEOSWARM_E2E: "1",

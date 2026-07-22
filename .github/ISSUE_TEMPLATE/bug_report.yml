@@ -33,7 +33,7 @@ body:
     attributes:
       label: VideoSwarm version
       description: Copy the complete version, including any rc suffix.
-      placeholder: 0.6.0-rc.3
+      placeholder: 0.6.0-rc.4
     validations:
       required: true
 

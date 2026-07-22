@@ -5,6 +5,8 @@ import ReviewSessionControls from "./ReviewSessionControls";
 
 describe("ReviewSessionControls", () => {
   it("shows an active session, provisional refresh feedback, and a live target", () => {
+    const onContinue = vi.fn();
+
     render(
       <ReviewSessionControls
         session={{
@@ -12,8 +14,10 @@ describe("ReviewSessionControls", () => {
           savedAtLabel: "Saved 2 minutes ago",
           candidateName: "clip-0042.mp4",
           checkingForFiles: true,
+          savedActionContext: "Library root, 12 unreviewed in the root",
         }}
         onForget={vi.fn()}
+        onContinue={onContinue}
       />
     );
 
@@ -23,6 +27,15 @@ describe("ReviewSessionControls", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Review target: clip-0042.mp4"
     );
+    const findUnreviewed = screen.getByRole("button", {
+      name: /^Find next Unreviewed from saved position/,
+    });
+    expect(findUnreviewed).toHaveAttribute(
+      "title",
+      "Restore the saved folder scope, filters, sort, and position, then jump to the next Unreviewed clip."
+    );
+    fireEvent.click(findUnreviewed);
+    expect(onContinue).toHaveBeenCalledOnce();
   });
 
   it("continues an elsewhere session and confirms moving its saved position", async () => {

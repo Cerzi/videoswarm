@@ -165,8 +165,13 @@ test("continues a flushed review session after restart from the cached first gri
     ).toBeVisible();
     await observeFolderOpen(secondPage);
 
+    const librarySidebar = secondPage.getByRole("complementary", {
+      name: "Library and folders",
+    });
+    await librarySidebar.getByRole("button", { name: /^video-library / }).click();
+    await waitForVideoTotal(secondPage, FIXTURE_COUNT);
     const continueReview = secondPage.getByRole("button", {
-      name: /^Resume saved view video-library, /,
+      name: /^Find next Unreviewed from saved position/,
     });
     await expect(continueReview).toBeVisible();
     await continueReview.click();

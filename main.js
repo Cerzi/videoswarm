@@ -400,10 +400,10 @@ const PACKAGED_RENDERER_URL = pathToFileURL(
 function getDevRendererOrigin() {
   try {
     return new URL(
-      process.env.VITE_DEV_SERVER_URL || "http://localhost:5173"
+      process.env.VITE_DEV_SERVER_URL || "http://localhost:6173"
     ).origin;
   } catch {
-    return "http://localhost:5173";
+    return "http://localhost:6173";
   }
 }
 
@@ -2070,7 +2070,7 @@ async function createWindow() {
 
   if (isDev) {
     const devRendererUrl =
-      process.env.VITE_DEV_SERVER_URL || "http://localhost:5173";
+      process.env.VITE_DEV_SERVER_URL || "http://localhost:6173";
     console.log(
       `Development mode: Loading from Vite server at ${devRendererUrl}`
     );
