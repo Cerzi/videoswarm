@@ -300,6 +300,80 @@ describe("profile- and owner-scoped path authority", () => {
     ).rejects.toMatchObject({ code: "PATH_NOT_AUTHORIZED" });
   });
 
+  it("authorizes a trusted canonical path without resolving it again", async () => {
+    const root = temporaryDirectory();
+    const filePath = path.join(root, "clip.mp4");
+    fs.writeFileSync(filePath, "clip");
+    const canonicalFilePath = await fs.promises.realpath(filePath);
+    const realpath = vi.fn((candidate) => fs.promises.realpath(candidate));
+    const stat = vi.fn((candidate) => fs.promises.stat(candidate));
+    const authority = createPathAuthority({
+      fsApi: { ...fs.promises, realpath, stat },
+    });
+    await authority.grantRoot({
+      ownerId: 1,
+      scopeId: "profile",
+      rootPath: root,
+    });
+    realpath.mockClear();
+    stat.mockClear();
+
+    const result = await authority.assertAuthorizedCanonicalPath({
+      ownerId: 1,
+      scopeId: "profile",
+      canonicalPath: canonicalFilePath,
+      kind: "file",
+    });
+
+    expect(result).toEqual({
+      path: canonicalFilePath,
+      rootPath: await fs.promises.realpath(root),
+      stats: expect.objectContaining({ size: 4 }),
+    });
+    expect(realpath).not.toHaveBeenCalled();
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith(canonicalFilePath);
+    authority.dispose();
+  });
+
+  it("rejects canonical authorization revoked during its file stat", async () => {
+    const root = temporaryDirectory();
+    const filePath = path.join(root, "clip.mp4");
+    fs.writeFileSync(filePath, "clip");
+    const canonicalFilePath = await fs.promises.realpath(filePath);
+    const statGate = deferred();
+    let delayTarget = false;
+    const stat = vi.fn(async (candidate) => {
+      if (delayTarget && path.resolve(candidate) === path.resolve(filePath)) {
+        await statGate.promise;
+      }
+      return fs.promises.stat(candidate);
+    });
+    const authority = createPathAuthority({
+      fsApi: { ...fs.promises, stat },
+    });
+    await authority.grantRoot({
+      ownerId: 1,
+      scopeId: "profile",
+      rootPath: root,
+    });
+    stat.mockClear();
+    delayTarget = true;
+
+    const pending = authority.assertAuthorizedCanonicalPath({
+      ownerId: 1,
+      scopeId: "profile",
+      canonicalPath: canonicalFilePath,
+      kind: "file",
+    });
+    await vi.waitFor(() => expect(stat).toHaveBeenCalledTimes(1));
+    authority.revokeScope("profile");
+    statGate.resolve();
+
+    await expect(pending).rejects.toMatchObject({ code: "PATH_NOT_AUTHORIZED" });
+    authority.dispose();
+  });
+
   it("revokes owner and scope grants and releases all state on dispose", async () => {
     const root = temporaryDirectory();
     const authority = createPathAuthority();

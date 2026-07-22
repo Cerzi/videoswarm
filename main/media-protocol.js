@@ -445,11 +445,16 @@ function createMediaProtocolService(options = {}) {
 
       const canonicalPath = await fsApi.realpath(candidatePath);
       assertRequestCurrent(requestEpoch);
+      let authorization = null;
       if (typeof authorizePath === "function") {
-        await authorizePath(canonicalPath, { ...target, resolved, request });
+        authorization = await authorizePath(canonicalPath, {
+          ...target,
+          resolved,
+          request,
+        });
         assertRequestCurrent(requestEpoch);
       }
-      const stats = await fsApi.stat(canonicalPath);
+      const stats = authorization?.stats || await fsApi.stat(canonicalPath);
       assertRequestCurrent(requestEpoch);
       if (!stats?.isFile?.()) {
         throw new MediaProtocolError("Media instance is not a file", {

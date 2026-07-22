@@ -15,6 +15,7 @@ const {
   parseSingleByteRange,
   registerMediaScheme,
 } = require("../media-protocol");
+const { createPathAuthority } = require("../ipc-security");
 
 const temporaryDirectories = new Set();
 
@@ -238,6 +239,44 @@ describe("media protocol service", () => {
       canonicalFilePath,
       expect.objectContaining({ instanceId: 5 })
     );
+  });
+
+  it("canonicalizes and stats original media exactly once", async () => {
+    const filePath = createMediaFile();
+    const rootPath = path.dirname(filePath);
+    const canonicalFilePath = await fs.promises.realpath(filePath);
+    const realpath = vi.fn((candidate) => fs.promises.realpath(candidate));
+    const stat = vi.fn((candidate) => fs.promises.stat(candidate));
+    const fsApi = { ...fs.promises, realpath, stat };
+    const authority = createPathAuthority({ fsApi });
+    await authority.grantRoot({
+      ownerId: 9,
+      scopeId: "profile",
+      rootPath,
+    });
+    realpath.mockClear();
+    stat.mockClear();
+
+    const service = createMediaProtocolService({
+      resolveInstance: async () => ({ path: filePath, present: true }),
+      authorizePath: (candidate) =>
+        authority.assertAuthorizedCanonicalPath({
+          ownerId: 9,
+          scopeId: "profile",
+          canonicalPath: candidate,
+          kind: "file",
+        }),
+      fsApi,
+    });
+    const response = await service.handle(new Request(createMediaInstanceUrl(15)));
+
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("0123456789");
+    expect(realpath).toHaveBeenCalledTimes(1);
+    expect(realpath).toHaveBeenCalledWith(filePath);
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith(canonicalFilePath);
+    authority.dispose();
   });
 
   it("destroys an in-flight stream when the request is aborted", async () => {

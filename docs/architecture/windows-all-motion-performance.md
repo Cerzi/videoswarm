@@ -145,7 +145,7 @@ Acceptance criteria:
 
 ### P1. Remove redundant media-request filesystem validation
 
-Status: **In progress**
+Status: **Implemented** (2026-07-22; hardware measurement pending)
 
 The media service already resolves a canonical path before authorization. Its
 main-process authorization callback then canonicalizes and stats the same path
@@ -307,5 +307,4 @@ discard the Linux large-library gains. Windows recovery must remain bounded.
 | Date | Priority | Status | Evidence / result |
 | --- | --- | --- | --- |
 | 2026-07-22 | P0 | In progress | Manual same-system executable comparison confirms v0.5.2 is materially faster than v0.6 in All Motion on Windows; v0.6 remains materially faster on Linux. Detailed stage timings pending. |
-| 2026-07-22 | P1 | In progress | Redundant media-request canonicalization/stat path confirmed in source; implementation started. |
-
+| 2026-07-22 | P1 | Implemented | Original-media requests now reuse the trusted canonical-path authorization result and its validated file stat: one `realpath` and one `stat` per request, with no cache or scheduling change. Focused protocol/security tests prove the operation count and revocation-during-stat rejection; full Vitest, zero-warning lint, and the production renderer build pass. Windows and Linux hardware measurement remain under P0. |

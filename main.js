@@ -948,7 +948,7 @@ const mediaProtocolService = createMediaProtocolService({
       // ProxyManager resolves only the current generation's signature-derived
       // file and rejects cache-directory symlink escapes. It is an
       // application-owned path, not a renderer-selected library path.
-      return;
+      return null;
     }
     const sender = mainWindow?.webContents;
     if (!sender || sender.isDestroyed?.()) {
@@ -957,10 +957,10 @@ const mediaProtocolService = createMediaProtocolService({
       throw error;
     }
     try {
-      await pathAuthority.assertAuthorizedPath({
+      return await pathAuthority.assertAuthorizedCanonicalPath({
         ownerId: sender.id,
         scopeId: getAuthorityScopeId(),
-        targetPath: canonicalPath,
+        canonicalPath,
         kind: "file",
       });
     } catch (error) {
