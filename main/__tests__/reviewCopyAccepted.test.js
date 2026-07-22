@@ -16,8 +16,9 @@ const coordinators = [];
 
 async function temporaryDirectory(label) {
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), `${label}-`));
-  temporaryDirectories.push(directory);
-  return directory;
+  const canonicalDirectory = await fsp.realpath(directory);
+  temporaryDirectories.push(canonicalDirectory);
+  return canonicalDirectory;
 }
 
 async function writeFile(filePath, content) {
