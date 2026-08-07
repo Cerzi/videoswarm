@@ -262,6 +262,7 @@ const defaultSettings = {
   reviewAutoAdvance: false,
   reviewModeEnabled: true,
   fullscreenDetailsOpen: true,
+  fullscreenAudioEnabled: false,
   metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
@@ -1526,6 +1527,10 @@ function normaliseLoadedSettings(rawSettings) {
       source.fullscreenDetailsOpen === undefined
         ? defaultSettings.fullscreenDetailsOpen
         : source.fullscreenDetailsOpen === true,
+    fullscreenAudioEnabled:
+      source.fullscreenAudioEnabled === undefined
+        ? defaultSettings.fullscreenAudioEnabled
+        : source.fullscreenAudioEnabled === true,
     metadataInspectorMode: normalizeMetadataInspectorMode(
       source.metadataInspectorMode
     ),

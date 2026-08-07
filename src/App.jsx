@@ -175,6 +175,7 @@ function App() {
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
   const [reviewModeEnabled, setReviewModeEnabled] = useState(true);
   const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
+  const [fullscreenAudioEnabled, setFullscreenAudioEnabled] = useState(false);
   const [metadataInspectorMode, setMetadataInspectorMode] = useState("floating");
   const [workspaceSidebarTab, setWorkspaceSidebarTab] = useState("library");
   const [metadataGenerationExpanded, setMetadataGenerationExpanded] =
@@ -460,6 +461,7 @@ function App() {
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
+    setFullscreenAudioEnabled,
     setMetadataInspectorMode: applyMetadataInspectorModeFromSettings,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
@@ -2800,6 +2802,14 @@ function App() {
     });
   }, []);
 
+  const handleFullscreenAudioEnabledChange = useCallback((value) => {
+    const next = value === true;
+    setFullscreenAudioEnabled(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      fullscreenAudioEnabled: next,
+    });
+  }, []);
+
   const handleCloseFullScreen = useCallback(() => {
     cancelFullScreenFocus();
     const controller = fullScreenControllerRef.current;
@@ -4726,6 +4736,8 @@ function App() {
               onToggleDetails={() =>
                 handleFullscreenDetailsOpenChange(!fullscreenDetailsOpen)
               }
+              audioEnabled={fullscreenAudioEnabled}
+              onAudioEnabledChange={handleFullscreenAudioEnabledChange}
               detailsDock={
                 <FullscreenDetailsDock
                   video={fullScreenVideo}

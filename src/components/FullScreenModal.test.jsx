@@ -572,6 +572,75 @@ describe("FullScreenModal media ownership", () => {
     expect(element.muted).toBe(true);
   });
 
+  it("opens unmuted and restores the persisted audio preference after release", () => {
+    const scheduler = createMediaSlotScheduler({ maxExternalDecoders: 1 });
+    const playerRef = createRef();
+    const common = {
+      ref: playerRef,
+      video: {
+        id: "persisted-audio",
+        name: "persisted-audio.mp4",
+        fullPath: "/persisted-audio.mp4",
+        sourceUrl: "videoswarm-media://instance/94?v=1",
+        isElectronFile: true,
+      },
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      mediaScheduler: scheduler,
+      audioEnabled: true,
+    };
+    const rendered = render(<FullScreenModal {...common} />);
+    const element = document.body.querySelector("video");
+    expect(element.muted).toBe(false);
+    expect(screen.getByRole("button", { name: "Mute audio" })).toBeVisible();
+
+    // Work suspension must still leave the released element muted, then return
+    // to the persisted choice rather than to a hardcoded muted default.
+    rendered.rerender(<FullScreenModal {...common} workSuspended />);
+    expect(element.muted).toBe(true);
+    rendered.rerender(<FullScreenModal {...common} workSuspended={false} />);
+    expect(document.body.querySelector("video").muted).toBe(false);
+
+    act(() => playerRef.current.releaseNow());
+    expect(screen.getByRole("button", { name: "Mute audio" })).toBeVisible();
+  });
+
+  it("reports audio preference changes from the toggle and native controls", () => {
+    const onAudioEnabledChange = vi.fn();
+    const playerRef = createRef();
+    const common = {
+      ref: playerRef,
+      video: {
+        id: "audio-pref",
+        name: "audio-pref.mp4",
+        blobUrl: "blob:audio-pref",
+      },
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      onAudioEnabledChange,
+    };
+    render(<FullScreenModal {...common} />);
+    const element = document.body.querySelector("video");
+
+    fireEvent.click(screen.getByRole("button", { name: "Turn audio on" }));
+    expect(onAudioEnabledChange).toHaveBeenLastCalledWith(true);
+
+    act(() => {
+      element.muted = true;
+      fireEvent.volumeChange(element);
+    });
+    expect(onAudioEnabledChange).toHaveBeenLastCalledWith(false);
+    expect(onAudioEnabledChange).toHaveBeenCalledTimes(2);
+
+    // An unchanged volume event must not rewrite the persisted preference.
+    act(() => fireEvent.volumeChange(element));
+    expect(onAudioEnabledChange).toHaveBeenCalledTimes(2);
+
+    // Releasing restores the preference and must not report a user change.
+    act(() => playerRef.current.releaseNow());
+    expect(onAudioEnabledChange).toHaveBeenCalledTimes(2);
+  });
+
   it("does not restart media for metadata-only record replacement", () => {
     const scheduler = createMediaSlotScheduler({ maxExternalDecoders: 1 });
     const common = {

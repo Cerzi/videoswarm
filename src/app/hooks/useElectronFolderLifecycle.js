@@ -147,6 +147,7 @@ export function useElectronFolderLifecycle({
   setReviewAutoAdvance,
   setReviewModeEnabled,
   setFullscreenDetailsOpen,
+  setFullscreenAudioEnabled,
   setMetadataInspectorMode,
   setZoomLevelFromSettings,
   setVisibleVideos,
@@ -196,6 +197,7 @@ export function useElectronFolderLifecycle({
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
+    setFullscreenAudioEnabled,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
   });
@@ -214,6 +216,7 @@ export function useElectronFolderLifecycle({
       setReviewAutoAdvance,
       setReviewModeEnabled,
       setFullscreenDetailsOpen,
+      setFullscreenAudioEnabled,
       setMetadataInspectorMode,
       setZoomLevelFromSettings,
     };
@@ -230,6 +233,7 @@ export function useElectronFolderLifecycle({
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
+    setFullscreenAudioEnabled,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
   ]);
@@ -1064,6 +1068,7 @@ export function useElectronFolderLifecycle({
       setReviewAutoAdvance: applyReviewAutoAdvance,
       setReviewModeEnabled: applyReviewModeEnabled,
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
+      setFullscreenAudioEnabled: applyFullscreenAudioEnabled,
       setMetadataInspectorMode: applyMetadataInspectorMode,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
@@ -1096,6 +1101,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.fullscreenDetailsOpen !== undefined) {
       applyFullscreenDetailsOpen?.(settings.fullscreenDetailsOpen === true);
+    }
+    if (settings.fullscreenAudioEnabled !== undefined) {
+      applyFullscreenAudioEnabled?.(settings.fullscreenAudioEnabled === true);
     }
     if (settings.metadataInspectorMode !== undefined) {
       applyMetadataInspectorMode?.(

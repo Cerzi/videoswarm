@@ -2727,6 +2727,16 @@ describe("App hook composition", () => {
       .filter(([options]) => options.instanceId === 11)
       .at(-1)?.[0]).toMatchObject({ enabled: false });
 
+    act(() => lifecycleArgs.setFullscreenAudioEnabled(true));
+    expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].audioEnabled).toBe(true);
+    act(() =>
+      fullScreenModalSpy.mock.calls.at(-1)?.[0].onAudioEnabledChange(false)
+    );
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      fullscreenAudioEnabled: false,
+    });
+    expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].audioEnabled).toBe(false);
+
     await act(async () => {
       await lifecycleArgs.beforeExternalFolderSelection("/next");
     });
