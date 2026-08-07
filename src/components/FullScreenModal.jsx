@@ -220,6 +220,8 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     onOpenHelp,
     onShortcut,
     detailsOpen,
+    audioEnabled = false,
+    onAudioEnabledChange,
     transientOpen = false,
     onDismissTransient,
     inertTargetRef = null,
@@ -256,6 +258,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
 
   const callbackRef = useRef({});
   callbackRef.current = {
+    onAudioEnabledChange,
     onBoundary,
     onClose,
     onDismissTransient,
@@ -274,13 +277,15 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   videoRef.current = video;
   const workSuspendedRef = useRef(Boolean(workSuspended));
   workSuspendedRef.current = Boolean(workSuspended);
-  const mutedPreferenceRef = useRef(true);
+  const persistedAudioEnabledRef = useRef(Boolean(audioEnabled));
+  persistedAudioEnabledRef.current = Boolean(audioEnabled);
+  const mutedPreferenceRef = useRef(!audioEnabled);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState("");
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(!audioEnabled);
   const [retryRevision, setRetryRevision] = useState(0);
 
   const reactId = useId().replaceAll(":", "");
@@ -307,26 +312,32 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     ]
   );
 
-  const resetSessionAudio = useCallback(() => {
-    mutedPreferenceRef.current = true;
-    const element = mediaRef.current;
-    if (element) {
-      try {
-        element.muted = true;
-      } catch {}
-    }
-    setIsMuted(true);
+  // Teardown already leaves the released element muted. Restoring only the
+  // preference and its control state keeps that invariant intact while letting
+  // the next session start from the persisted choice, which the source-load
+  // effect applies to the element it actually plays.
+  const restoreAudioPreference = useCallback(() => {
+    const nextMuted = !persistedAudioEnabledRef.current;
+    mutedPreferenceRef.current = nextMuted;
+    setIsMuted(nextMuted);
   }, []);
 
   const releaseActiveSource = useCallback(
     ({ resetAudio = false } = {}) => {
       const release = activeReleaseRef.current;
       const released = typeof release === "function" ? release() : false;
-      if (resetAudio) resetSessionAudio();
+      if (resetAudio) restoreAudioPreference();
       return released;
     },
-    [resetSessionAudio]
+    [restoreAudioPreference]
   );
+
+  // A late settings load must not be overridden by the mount-time default, but
+  // a live session owns its own audio state until it is released.
+  useLayoutEffect(() => {
+    if (activeReleaseRef.current) return;
+    restoreAudioPreference();
+  }, [audioEnabled, restoreAudioPreference]);
 
   useImperativeHandle(
     forwardedRef,
@@ -404,6 +415,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     }
     setIsMuted(nextMuted);
     setNotice(nextMuted ? "Audio muted" : "Audio on");
+    callbackRef.current.onAudioEnabledChange?.(!nextMuted);
   }, []);
 
   const retryPlayback = useCallback(() => {
@@ -859,7 +871,10 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     const didChange = mutedPreferenceRef.current !== nextMuted;
     mutedPreferenceRef.current = nextMuted;
     setIsMuted(nextMuted);
-    if (didChange) setNotice(nextMuted ? "Audio muted" : "Audio on");
+    if (didChange) {
+      setNotice(nextMuted ? "Audio muted" : "Audio on");
+      callbackRef.current.onAudioEnabledChange?.(!nextMuted);
+    }
   }, []);
 
   if (!video || typeof document === "undefined") return null;

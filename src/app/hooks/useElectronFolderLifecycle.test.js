@@ -103,6 +103,7 @@ describe("useElectronFolderLifecycle", () => {
         reviewAutoAdvance: true,
         reviewModeEnabled: false,
         fullscreenDetailsOpen: false,
+        fullscreenAudioEnabled: true,
         metadataInspectorMode: "docked",
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
@@ -243,6 +244,7 @@ describe("useElectronFolderLifecycle", () => {
     const setReviewAutoAdvance = vi.fn();
     const setReviewModeEnabled = vi.fn();
     const setFullscreenDetailsOpen = vi.fn();
+    const setFullscreenAudioEnabled = vi.fn();
     const setMetadataInspectorMode = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
@@ -263,6 +265,7 @@ describe("useElectronFolderLifecycle", () => {
         setReviewAutoAdvance,
         setReviewModeEnabled,
         setFullscreenDetailsOpen,
+        setFullscreenAudioEnabled,
         setMetadataInspectorMode,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
@@ -287,6 +290,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(setReviewAutoAdvance).toHaveBeenCalledWith(true);
     expect(setReviewModeEnabled).toHaveBeenCalledWith(false);
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
+    expect(setFullscreenAudioEnabled).toHaveBeenCalledWith(true);
     expect(setMetadataInspectorMode).toHaveBeenCalledWith("docked");
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
   });
@@ -331,6 +335,18 @@ describe("useElectronFolderLifecycle", () => {
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("treats only a literal true fullscreen audio setting as enabled", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      fullscreenAudioEnabled: "true",
+    });
+    const setFullscreenAudioEnabled = vi.fn();
+
+    const { result } = renderDefaultLifecycle({ setFullscreenAudioEnabled });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setFullscreenAudioEnabled).toHaveBeenCalledWith(false);
   });
 
   it("allows only the docked metadata inspector mode", async () => {

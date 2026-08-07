@@ -73,9 +73,15 @@ A same-source logical transition settles from Loading using current ready
 state rather than waiting for an event that may not fire. All `play()` calls,
 including Space, handle rejected promises and report non-fatal feedback.
 
-Every fullscreen session begins muted. `M` toggles audio and the choice carries
-to subsequent clips in the same session only. Close, work suspension, or
-ownership loss resets the session audio preference to muted.
+Every fullscreen session begins from the persisted audio preference, which
+defaults to muted. `M` and the native player controls toggle audio, and the
+choice carries to subsequent clips, to later sessions, and across restarts.
+Close, work suspension, and ownership loss restore that preference rather than
+forcing muted; the released element itself is still left muted by teardown, and
+the preference is applied only to the element a new source actually loads into.
+Fullscreen audio is deliberately independent of grid hover audio: hover audio
+fires incidentally from pointer movement across the collection, so a silent grid
+with an audible loupe stays reachable.
 
 ### Acceptance
 
@@ -229,6 +235,12 @@ is saved as bounded profile setting `fullscreenDetailsOpen: boolean` through
 the existing settings normalization, load, and partial-save paths. Navigation
 preserves it; later sessions use the profile preference.
 
+Fullscreen audio persists the same way as bounded profile setting
+`fullscreenAudioEnabled: boolean`, defaulting to `false` so existing profiles
+keep opening muted until they choose otherwise. Only a literal `true` enables
+it. `hoverAudioEnabled` remains a separate grid setting and is never written by
+the fullscreen control.
+
 ### Safe actions
 
 The overflow menu delegates through the existing action coordinator and always
@@ -291,8 +303,9 @@ membership, and mutation results.
 
 Status: **Implemented**
 
-- Add `fullscreenDetailsOpen: true` to defaults and boolean normalization; use
-  existing settings IPC only. No database migration or new channel is needed.
+- Add `fullscreenDetailsOpen: true` and `fullscreenAudioEnabled: false` to
+  defaults and boolean normalization; use existing settings IPC only. No
+  database migration or new channel is needed.
 - Extend the fullscreen controller with owner/full-order inputs and the bounded
   model described above.
 - Expose `releaseNow()` through a narrow imperative player ref.
