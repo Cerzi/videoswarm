@@ -22,6 +22,7 @@ export default function DockedMetadataInspector({
   onClearRating,
   onSetReviewState,
   onFocusSelection,
+  onTransferSelection,
   onUndock,
   reviewModeEnabled = true,
 }) {
@@ -65,6 +66,19 @@ export default function DockedMetadataInspector({
             >
               <FocusSelectionIcon />
               <span>Focus</span>
+            </button>
+          ) : null}
+          {typeof onTransferSelection === "function" ? (
+            <button
+              type="button"
+              className="metadata-panel__button metadata-panel__button--compact"
+              onClick={() => onTransferSelection(selectedVideos)}
+              aria-label={`Move or copy ${count} selected clip${
+                count === 1 ? "" : "s"
+              }`}
+              title="Move or copy the selection to another folder"
+            >
+              <span>Move/Copy</span>
             </button>
           ) : null}
           <button

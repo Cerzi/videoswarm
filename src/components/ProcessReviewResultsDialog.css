@@ -308,9 +308,26 @@
   height: 0.9rem;
   margin-bottom: 0.15rem;
 }
+/* Move and Copy are two independent actions, not a choice between two modes.
+   Giving both a saturated fill made them read as a segmented control - and the
+   layout toggle immediately above genuinely is one, which taught the eye that
+   a filled button means "currently selected". So exactly one of these is
+   filled: Copy, the non-destructive default. Move stays outlined and only
+   commits to amber on hover or focus, which signals caution without ever
+   looking like the option already chosen. */
 .review-results-action .review-results-transfer-actions__move {
+  color: #f0a868;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(240, 168, 104, 0.55);
+}
+.review-results-action .review-results-transfer-actions__move:hover:not(:disabled),
+.review-results-action .review-results-transfer-actions__move:focus-visible:not(:disabled) {
   color: #fff;
   background: #a45109;
+  box-shadow: inset 0 0 0 1px #a45109;
+}
+.review-results-action .review-results-transfer-actions__move small {
+  opacity: 0.85;
 }
 .review-results-action .review-results-copy-actions__secondary {
   color: #d7dbde;
@@ -341,8 +358,15 @@
 }
 .review-results-layout {
   display: flex;
+  align-items: center;
   gap: 0.3rem;
   margin-top: 0.5rem;
+}
+.review-results-layout__caption {
+  margin-right: 0.2rem;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.4);
+  flex: none;
 }
 .review-results-layout__option {
   padding: 0.2rem 0.6rem;
