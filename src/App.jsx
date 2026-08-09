@@ -4656,7 +4656,7 @@ function App() {
                             generationExpanded={metadataGenerationExpanded}
                             onGenerationExpandedChange={setMetadataGenerationExpanded}
                             onFocusSelection={focusSelection}
-                onTransferSelection={handleRequestTransfer}
+                            onTransferSelection={handleRequestTransfer}
                             onUndock={handleUndockMetadataPanel}
                           />
                         ) : null

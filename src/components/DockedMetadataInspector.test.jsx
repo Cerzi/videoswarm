@@ -49,4 +49,35 @@ describe("DockedMetadataInspector", () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("offers Move/Copy for the selection in the docked pane", () => {
+    const onTransferSelection = vi.fn();
+    const second = { ...video, id: "clip-b", name: "clip-b.mp4" };
+    render(
+      <DockedMetadataInspector
+        selectionCount={2}
+        selectedVideos={[video, second]}
+        onTransferSelection={onTransferSelection}
+        onUndock={vi.fn()}
+      />
+    );
+
+    const transfer = screen.getByRole("button", {
+      name: "Move or copy 2 selected clips",
+    });
+    fireEvent.click(transfer);
+    // The docked pane hands over the same selection the floating one does.
+    expect(onTransferSelection).toHaveBeenCalledWith([video, second]);
+  });
+
+  it("omits Move/Copy when no transfer handler is supplied", () => {
+    render(
+      <DockedMetadataInspector
+        selectionCount={1}
+        selectedVideos={[video]}
+        onUndock={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole("button", { name: /Move or copy/i })).toBeNull();
+  });
 });

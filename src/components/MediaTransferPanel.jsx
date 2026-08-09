@@ -92,11 +92,14 @@ export default function MediaTransferPanel({
         </button>
       </div>
 
+      {/* Captioned like the Recent row so the settings above the fold read as
+          settings, and the two large buttons below read as the actions. */}
       <div
         className="review-results-layout"
         role="group"
         aria-label="Destination folder layout"
       >
+        <span className="review-results-layout__caption">Layout</span>
         {LAYOUT_OPTIONS.map((option) => (
           <button
             key={option.value}
