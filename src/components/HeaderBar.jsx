@@ -314,6 +314,18 @@ export default function HeaderBar({
             >
               Created ↓
             </option>
+            <option
+              value="resolution-asc"
+              title="Clips whose dimensions have not been read yet sort first."
+            >
+              Resolution ↑
+            </option>
+            <option
+              value="resolution-desc"
+              title="Clips whose dimensions have not been read yet sort last."
+            >
+              Resolution ↓
+            </option>
             <option value="random">Random</option>
           </select>
 

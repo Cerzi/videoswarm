@@ -1,6 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import {
   createDefaultFilters,
+  formatMegapixelLabel,
+  sanitizeMegapixels,
+  videoMegapixels,
   normalizeTagList,
   sanitizeMinRating,
   sanitizeExactRating,
@@ -17,6 +20,8 @@ describe("filtersUtils", () => {
       minRating: null,
       exactRating: null,
       reviewFilter: "any",
+      minMegapixels: null,
+      maxMegapixels: null,
     });
   });
 
@@ -61,5 +66,33 @@ describe("filtersUtils", () => {
 
     rerender({ value: { ...filters, minRating: null, exactRating: 5 } });
     expect(result.current).toBe(3);
+  });
+
+  describe("resolution", () => {
+    it("reads megapixels from either dimension shape", () => {
+      expect(videoMegapixels({ dimensions: { width: 1000, height: 1000 } })).toBe(1);
+      expect(videoMegapixels({ width: 2000, height: 1000 })).toBe(2);
+    });
+
+    it("reports unmeasured or degenerate clips as unknown", () => {
+      expect(videoMegapixels({})).toBeNull();
+      expect(videoMegapixels({ dimensions: { width: 0, height: 1080 } })).toBeNull();
+      expect(videoMegapixels({ width: "wide", height: 1080 })).toBeNull();
+    });
+
+    it("sanitizes a bound and rejects nonsense", () => {
+      expect(sanitizeMegapixels(1.5)).toBe(1.5);
+      expect(sanitizeMegapixels("2")).toBe(2);
+      expect(sanitizeMegapixels(0)).toBeNull();
+      expect(sanitizeMegapixels(-1)).toBeNull();
+      expect(sanitizeMegapixels("nope")).toBeNull();
+      expect(sanitizeMegapixels(99_999)).toBe(1000);
+    });
+
+    it("labels a bound in the direction it applies", () => {
+      expect(formatMegapixelLabel(1, "max")).toBe("\u2264 1 MP");
+      expect(formatMegapixelLabel(2, "min")).toBe("\u2265 2 MP");
+      expect(formatMegapixelLabel(null, "max")).toBeNull();
+    });
   });
 });

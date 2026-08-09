@@ -5,7 +5,11 @@ export function parseSortValue(value) {
     return { sortKey: SortKey.RANDOM, sortDir: 'asc' };
   }
   const [key, dir] = value.split('-');
-  const sortKey = key === 'created' ? SortKey.CREATED : SortKey.NAME;
+  const sortKey = key === 'created'
+    ? SortKey.CREATED
+    : key === 'resolution'
+      ? SortKey.RESOLUTION
+      : SortKey.NAME;
   const sortDir = dir === 'desc' ? 'desc' : 'asc';
   return { sortKey, sortDir };
 }

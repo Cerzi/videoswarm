@@ -42,6 +42,8 @@ describe('review checkpoint wire validation', () => {
         minRating: 5,
         exactRating: 2,
         reviewFilter: 'PICK',
+        maxMegapixels: 1,
+        minMegapixels: 'nonsense',
       },
       sort: {
         key: 'created',
@@ -61,6 +63,10 @@ describe('review checkpoint wire validation', () => {
         minRating: null,
         exactRating: 2,
         reviewFilter: 'pick',
+        // A resolution bound round-trips; an unparseable one becomes null
+        // rather than travelling as-is.
+        minMegapixels: null,
+        maxMegapixels: 1,
       },
       sort: {
         key: 'created',

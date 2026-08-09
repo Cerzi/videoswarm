@@ -9,7 +9,7 @@ const REVIEW_FILTERS = new Set([
   'pick',
   'reject',
 ]);
-const REVIEW_SORT_KEYS = new Set(['name', 'created', 'random']);
+const REVIEW_SORT_KEYS = new Set(['name', 'created', 'resolution', 'random']);
 const FOLDER_SCOPE_MODES = new Set([
   'all-descendants',
   'current-folder',
@@ -53,6 +53,15 @@ function normalizeRating(value, { minimum = 0 } = {}) {
   }
   if (!Number.isFinite(number)) return null;
   return Math.max(minimum, Math.min(5, Math.round(number)));
+}
+
+// Saved views must round-trip a resolution bound, and the value crosses the
+// IPC boundary, so it is clamped to a sane range rather than trusted.
+function normalizeMegapixels(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(1000, Math.round(number * 100) / 100);
 }
 
 function normalizeRandomSeed(value) {
@@ -121,6 +130,8 @@ function normalizeReviewViewDefinition(
       minRating: normalizeRating(filtersInput.minRating, { minimum: 1 }),
       exactRating: normalizeRating(filtersInput.exactRating),
       reviewFilter,
+      minMegapixels: normalizeMegapixels(filtersInput.minMegapixels),
+      maxMegapixels: normalizeMegapixels(filtersInput.maxMegapixels),
     },
     sort: {
       key: sortKey,

@@ -1,5 +1,9 @@
 import { FolderScope, normalizeFolderScope, normalizeRelativePath } from "./folderModel";
-import { createDefaultFilters, normalizeTagList } from "../app/filters/filtersUtils";
+import {
+  createDefaultFilters,
+  normalizeTagList,
+  sanitizeMegapixels,
+} from "../app/filters/filtersUtils";
 import { normalizeReviewFilter } from "../review/reviewState";
 
 export const DEFAULT_FOLDER_VIEW_CACHE_LIMIT = 128;
@@ -24,6 +28,8 @@ const normalizeFilters = (filters) => ({
   exactRating:
     filters?.exactRating == null ? null : Math.max(0, Math.min(5, Math.round(Number(filters.exactRating)) || 0)),
   reviewFilter: normalizeReviewFilter(filters?.reviewFilter),
+  minMegapixels: sanitizeMegapixels(filters?.minMegapixels),
+  maxMegapixels: sanitizeMegapixels(filters?.maxMegapixels),
 });
 
 const normalizeSnapshot = (snapshot = {}) => ({

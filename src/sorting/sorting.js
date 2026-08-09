@@ -1,7 +1,18 @@
 export const SortKey = {
   NAME: "name",
   CREATED: "created",
+  RESOLUTION: "resolution",
   RANDOM: "random",
+};
+
+// Unmeasured clips sort as zero so they gather at one end rather than
+// interleaving unpredictably with real values.
+const pixelCount = (video) => {
+  const width = Number(video?.dimensions?.width ?? video?.width);
+  const height = Number(video?.dimensions?.height ?? video?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return 0;
+  if (width <= 0 || height <= 0) return 0;
+  return width * height;
 };
 
 export function mulberry32(a) {
@@ -35,6 +46,14 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
   const dir = sortDir === "desc" ? -1 : 1;
   if (sortKey === SortKey.CREATED) {
     return (a, b) => ((a.createdMs || 0) - (b.createdMs || 0)) * dir;
+  }
+  if (sortKey === SortKey.RESOLUTION) {
+    return (a, b) => {
+      const delta = pixelCount(a) - pixelCount(b);
+      if (delta !== 0) return delta * dir;
+      // Equal-resolution clips keep a stable, meaningful order.
+      return (a.name || "").localeCompare(b.name || "") * dir;
+    };
   }
   if (sortKey === SortKey.RANDOM) {
     return (a, b) => {
