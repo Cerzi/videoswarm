@@ -199,6 +199,8 @@ function App() {
   const [transferLayout, setTransferLayout] = useState("structured");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState([]);
+  const [libraryTags, setLibraryTags] = useState([]);
+  const [tagRefreshToken, setTagRefreshToken] = useState(0);
   const [fullscreenTransientSurface, setFullscreenTransientSurface] =
     useState(null);
   const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
@@ -433,6 +435,8 @@ function App() {
     setVideos,
     activeRootPath,
     libraryRoot,
+    tagCollection,
+    openTagCollection,
     directorySummaries,
     isLoadingFolder,
     isRefreshingFolder,
@@ -595,6 +599,7 @@ function App() {
         : null,
     [
       activeRootPath,
+      tagCollection,
       catalogDirectories,
       filteredVideos,
       rootDisplayName,
@@ -1254,7 +1259,13 @@ function App() {
   const reviewOwnershipKey = useMemo(
     () => JSON.stringify([
       reviewProfileEpoch,
-      activeRootPath ? `root:${activeRootPath}` : `web:${webCollectionEpoch}`,
+      activeRootPath
+        ? `root:${activeRootPath}`
+        : tagCollection
+          // Includes the load stamp so a refresh is a new collection and any
+          // per-clip work owned by the previous snapshot is discarded.
+          ? `tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
+          : `web:${webCollectionEpoch}`,
       currentDirectory,
       folderScope,
     ]),
@@ -1268,12 +1279,12 @@ function App() {
   );
 
   const {
-    handleAddTags,
-    handleRemoveTag,
+    handleAddTags: applyAddTags,
+    handleRemoveTag: applyRemoveTag,
     handleSetRating,
     handleSetReviewState,
     handleRestoreReviewMetadata,
-    handleApplyExistingTag,
+    handleApplyExistingTag: applyExistingTag,
     refreshTagList,
   } = useMetadataActions({
     selectedFingerprints,
@@ -1282,6 +1293,38 @@ function App() {
     notify,
     ownershipKey: reviewOwnershipKey,
   });
+
+  // Tag membership is what a tag view and the tag catalog are made of, so every
+  // successful tag mutation invalidates both. Wrapping here keeps every existing
+  // call site unchanged.
+  const markTagsChanged = useCallback(
+    () => setTagRefreshToken((token) => token + 1),
+    []
+  );
+  const handleAddTags = useCallback(
+    async (...args) => {
+      const result = await applyAddTags(...args);
+      markTagsChanged();
+      return result;
+    },
+    [applyAddTags, markTagsChanged]
+  );
+  const handleRemoveTag = useCallback(
+    async (...args) => {
+      const result = await applyRemoveTag(...args);
+      markTagsChanged();
+      return result;
+    },
+    [applyRemoveTag, markTagsChanged]
+  );
+  const handleApplyExistingTag = useCallback(
+    async (...args) => {
+      const result = await applyExistingTag(...args);
+      markTagsChanged();
+      return result;
+    },
+    [applyExistingTag, markTagsChanged]
+  );
 
   const reviewSessions = useReviewSessions({
     activeRootPath,
@@ -1897,6 +1940,88 @@ function App() {
     },
     [activeRootPath]
   );
+
+  // A tag view is a snapshot, not a watched collection: watching every root a
+  // tag can span is exactly the cost the bounded watcher design avoids. It is
+  // re-read on open, on explicit refresh, and after an in-app tag edit, because
+  // otherwise untagging a clip would leave it sitting in a view defined by that
+  // tag.
+  const loadTagCollection = useCallback(
+    async (tags) => {
+      const requested = (Array.isArray(tags) ? tags : [])
+        .map((tag) => (tag ?? "").toString().trim())
+        .filter(Boolean);
+      if (!requested.length) return false;
+      const snapshot = window.electronAPI?.library?.taggedSnapshot;
+      if (typeof snapshot !== "function") {
+        notify("Tag views are unavailable", "error");
+        return false;
+      }
+      try {
+        const result = await snapshot(requested);
+        const records = Array.isArray(result?.records) ? result.records : [];
+        openTagCollection({
+          tags: requested,
+          records,
+          truncated: Boolean(result?.truncated),
+        });
+        if (result?.truncated) {
+          notify(
+            `Showing the first ${Number(
+              result.recordLimit || records.length
+            ).toLocaleString()} tagged clips`,
+            "info"
+          );
+        } else if (!records.length) {
+          notify("No clips carry that tag", "info");
+        }
+        return true;
+      } catch (error) {
+        console.error("Failed to load tag view:", error);
+        notify("Could not load the tag view", "error");
+        return false;
+      }
+    },
+    [notify, openTagCollection]
+  );
+
+  const refreshTagCollection = useCallback(() => {
+    if (!tagCollection?.tags?.length) return false;
+    return loadTagCollection(tagCollection.tags);
+  }, [loadTagCollection, tagCollection]);
+
+  const handleListLibraryTags = useCallback(async () => {
+    const list = window.electronAPI?.library?.listTags;
+    if (typeof list !== "function") return [];
+    try {
+      const result = await list();
+      return Array.isArray(result?.tags) ? result.tags : [];
+    } catch (error) {
+      console.error("Failed to list tags:", error);
+      return [];
+    }
+  }, []);
+
+  const refreshTagCatalog = useCallback(async () => {
+    setLibraryTags(await handleListLibraryTags());
+  }, [handleListLibraryTags]);
+
+  // The catalog is what the sidebar offers, so it has to track tag edits and
+  // profile changes. An open tag view re-reads too, since untagging a visible
+  // clip should remove it rather than leave it in a view it no longer matches.
+  useEffect(() => {
+    refreshTagCatalog();
+  }, [refreshTagCatalog, reviewProfileEpoch, tagRefreshToken]);
+
+  const tagViewRefreshRef = useRef(refreshTagCollection);
+  tagViewRefreshRef.current = refreshTagCollection;
+  const seenTagRefreshRef = useRef(tagRefreshToken);
+  useEffect(() => {
+    // Only an actual edit re-reads the view; mounting must not re-query.
+    if (seenTagRefreshRef.current === tagRefreshToken) return;
+    seenTagRefreshRef.current = tagRefreshToken;
+    tagViewRefreshRef.current?.();
+  }, [tagRefreshToken]);
 
   const handleListTransferDestinations = useCallback(async () => {
     const list = window.electronAPI?.review?.copyAccepted?.listDestinations;
@@ -4580,6 +4705,10 @@ function App() {
                   onTogglePin={handleToggleLibraryPin}
                   rootCountStateByPath={rootCountStateByPath}
                   savedViews={savedViews}
+                  libraryTags={libraryTags}
+                  activeTagView={tagCollection}
+                  onOpenTagView={loadTagCollection}
+                  onRefreshTagView={refreshTagCollection}
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
                   onDeleteSavedView={handleDeleteSavedView}
@@ -4675,6 +4804,10 @@ function App() {
                       onTogglePin={handleToggleLibraryPin}
                       rootCountStateByPath={rootCountStateByPath}
                       savedViews={savedViews}
+                  libraryTags={libraryTags}
+                  activeTagView={tagCollection}
+                  onOpenTagView={loadTagCollection}
+                  onRefreshTagView={refreshTagCollection}
                       onApplySavedView={handleApplySavedView}
                       onSaveCurrentView={handleSaveCurrentView}
                       onDeleteSavedView={handleDeleteSavedView}

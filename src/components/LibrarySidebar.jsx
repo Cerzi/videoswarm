@@ -221,6 +221,10 @@ export function LibrarySidebarContent({
   onTogglePin,
   rootCountStateByPath = null,
   savedViews = [],
+  libraryTags = [],
+  activeTagView = null,
+  onOpenTagView,
+  onRefreshTagView,
   onApplySavedView,
   onSaveCurrentView,
   onDeleteSavedView,
@@ -343,6 +347,65 @@ export function LibrarySidebarContent({
           </ul>
         ) : (
           <p className="library-sidebar__empty">Pin frequently used roots here.</p>
+        )}
+      </section>
+
+      <section className="library-sidebar__section library-sidebar__section--tags">
+        <header className="library-sidebar__section-header">
+          <div>
+            <span className="library-sidebar__eyebrow">Across every root</span>
+            <h2>Tags</h2>
+          </div>
+          {activeTagView ? (
+            <button
+              type="button"
+              className="library-sidebar__add-view"
+              onClick={() => onRefreshTagView?.()}
+              aria-label="Refresh the tag view"
+              disabled={disabled}
+              title="This view is a snapshot. Refresh to re-read the library."
+            >
+              ⟳
+            </button>
+          ) : null}
+        </header>
+
+        {activeTagView ? (
+          <p className="library-sidebar__tag-active" role="status">
+            Viewing {activeTagView.tags.map((tag) => `#${tag}`).join(" + ")}
+            {activeTagView.truncated ? " (partial)" : ""}
+          </p>
+        ) : null}
+
+        {libraryTags.length ? (
+          <ul className="library-tag-list">
+            {libraryTags.map((tag) => {
+              const isActive = activeTagView?.tags?.includes(tag.name);
+              return (
+                <li key={tag.name}>
+                  <button
+                    type="button"
+                    className={`library-tag-list__apply${
+                      isActive ? " is-active" : ""
+                    }`}
+                    onClick={() => onOpenTagView?.([tag.name])}
+                    disabled={disabled}
+                    aria-pressed={Boolean(isActive)}
+                    title={`Show every clip tagged #${tag.name}, from every root`}
+                  >
+                    <span className="library-tag-list__name">#{tag.name}</span>
+                    <span className="library-tag-list__count">
+                      {tag.instanceCount.toLocaleString()}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="library-sidebar__empty">
+            Tag some clips to browse them across roots.
+          </p>
         )}
       </section>
 

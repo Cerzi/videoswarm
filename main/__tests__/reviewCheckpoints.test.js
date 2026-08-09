@@ -105,6 +105,8 @@ maybeDescribe('profile-local review checkpoints', () => {
           minRating: 3,
           exactRating: null,
           reviewFilter: 'unreviewed',
+          minMegapixels: null,
+          maxMegapixels: null,
         },
         sort: {
           key: 'created',
