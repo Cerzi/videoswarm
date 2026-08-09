@@ -323,6 +323,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return await ipcRenderer.invoke("copy-last-frame-from-file", filePath);
   },
 
+  copyFrameAtTime: async (filePath, atSeconds) => {
+    return await ipcRenderer.invoke("copy-frame-at-time", {
+      filePath,
+      atSeconds,
+    });
+  },
+
 
 
   metadata: {

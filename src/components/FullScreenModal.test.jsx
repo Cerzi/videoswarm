@@ -421,6 +421,181 @@ describe("FullScreenModal media ownership", () => {
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
   });
 
+  describe("frame picker", () => {
+    // jsdom has no media pipeline, so currentTime is modelled as a plain value
+    // and a seek is acknowledged the way a decoder would acknowledge it.
+    function installFakeTimeline(element, { duration = 4 } = {}) {
+      let currentTime = 0;
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        get: () => duration,
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        get: () => currentTime,
+        set: (value) => {
+          currentTime = Number(value) || 0;
+          queueMicrotask(() => fireEvent.seeked(element));
+        },
+      });
+      return {
+        get time() {
+          return currentTime;
+        },
+      };
+    }
+
+    const frameVideo = {
+      id: "frames",
+      name: "frames.mp4",
+      blobUrl: "blob:frames",
+      dimensions: { width: 640, height: 360, frameRate: 25 },
+    };
+
+    it("steps one frame per press and reports a one-based position", async () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      const element = document.body.querySelector("video");
+      const timeline = installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      // 4s at 25fps is 100 frames.
+      expect(screen.getByText("1 / 100")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "." });
+      });
+      expect(screen.getByText("2 / 100")).toBeInTheDocument();
+      expect(pauseSpy).toHaveBeenCalled();
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "." });
+      });
+      expect(screen.getByText("3 / 100")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "," });
+      });
+      expect(screen.getByText("2 / 100")).toBeInTheDocument();
+      // Mid-frame seeking keeps the position unambiguous.
+      expect(timeline.time).toBeGreaterThan(1 / 25);
+      expect(timeline.time).toBeLessThan(2 / 25);
+    });
+
+    it("clamps at the first frame instead of wrapping", async () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "," });
+      });
+      expect(screen.getByText("1 / 100")).toBeInTheDocument();
+      expect(screen.getByText("At the first frame")).toBeInTheDocument();
+    });
+
+    it("copies the displayed frame using the element's own position", async () => {
+      const onCopyFrame = vi.fn().mockResolvedValue(true);
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+          onCopyFrame={onCopyFrame}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "." });
+      });
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "c" });
+      });
+
+      expect(onCopyFrame).toHaveBeenCalledTimes(1);
+      const payload = onCopyFrame.mock.calls[0][0];
+      expect(payload.video).toMatchObject({ id: "frames" });
+      expect(payload.frameIndex).toBe(1);
+      expect(payload.atSeconds).toBeCloseTo(1.5 / 25, 6);
+      expect(typeof payload.captureCanvasFrame).toBe("function");
+      expect(screen.getByText("Frame copied")).toBeInTheDocument();
+    });
+
+    it("reports a failed copy without claiming success", async () => {
+      const onCopyFrame = vi.fn().mockResolvedValue({ success: false });
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+          onCopyFrame={onCopyFrame}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "c" });
+      });
+      expect(screen.getByText("Could not copy the frame")).toBeInTheDocument();
+    });
+
+    it("does not step or copy while work is suspended", async () => {
+      const onCopyFrame = vi.fn();
+      const common = {
+        video: frameVideo,
+        onClose: vi.fn(),
+        onNavigate: vi.fn(),
+        onCopyFrame,
+      };
+      const rendered = render(<FullScreenModal {...common} />);
+      const element = document.body.querySelector("video");
+      const timeline = installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      rendered.rerender(<FullScreenModal {...common} workSuspended />);
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "." });
+        fireEvent.keyDown(document, { key: "c" });
+      });
+
+      expect(timeline.time).toBe(0);
+      expect(onCopyFrame).not.toHaveBeenCalled();
+    });
+
+    it("omits the copy control when no handler is supplied", () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      expect(
+        screen.queryByRole("button", { name: "Copy current frame" })
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Next frame" })
+      ).toBeInTheDocument();
+    });
+  });
+
   it("dismisses letterboxed video space but keeps clicks on the picture", () => {
     const onClose = vi.fn();
     render(

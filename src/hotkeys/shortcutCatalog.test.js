@@ -1,5 +1,6 @@
 import {
   FULLSCREEN_COMMANDS,
+  FULLSCREEN_FRAME_SHORTCUTS,
   FULLSCREEN_NAVIGATION_SHORTCUTS,
   FULLSCREEN_PLAYER_SHORTCUTS,
   FULLSCREEN_SHORTCUTS,
@@ -60,17 +61,24 @@ describe("fullscreen review loupe shortcut catalog", () => {
       "fullscreen-mute",
       "fullscreen-details",
     ]);
+    expect(FULLSCREEN_FRAME_SHORTCUTS.map(({ id }) => id)).toEqual([
+      "fullscreen-frame-back",
+      "fullscreen-frame-forward",
+      "fullscreen-copy-frame",
+    ]);
     expect(FULLSCREEN_SHORTCUTS).toEqual([
       ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+      ...FULLSCREEN_FRAME_SHORTCUTS,
       ...REVIEW_SHORTCUTS,
       ...FULLSCREEN_PLAYER_SHORTCUTS.slice(-2),
     ]);
     expect(FULLSCREEN_SHORTCUT_HELP_SECTIONS.map(({ id }) => id)).toEqual([
       "fullscreen-navigation",
+      "fullscreen-frame",
       "fullscreen-review",
       "fullscreen-utility",
     ]);
-    expect(FULLSCREEN_SHORTCUT_HELP_SECTIONS[1].shortcuts).toBe(
+    expect(FULLSCREEN_SHORTCUT_HELP_SECTIONS[2].shortcuts).toBe(
       REVIEW_SHORTCUTS
     );
 
@@ -89,6 +97,9 @@ describe("fullscreen review loupe shortcut catalog", () => {
     ["Spacebar", FULLSCREEN_COMMANDS.PLAYBACK, undefined],
     ["M", FULLSCREEN_COMMANDS.MUTE, undefined],
     ["i", FULLSCREEN_COMMANDS.DETAILS, undefined],
+    [",", FULLSCREEN_COMMANDS.FRAME_BACK, undefined],
+    [".", FULLSCREEN_COMMANDS.FRAME_FORWARD, undefined],
+    ["C", FULLSCREEN_COMMANDS.COPY_FRAME, undefined],
     ["a", FULLSCREEN_COMMANDS.REVIEW_STATE, "pick"],
     ["R", FULLSCREEN_COMMANDS.REVIEW_STATE, "reviewed"],
     ["d", FULLSCREEN_COMMANDS.REVIEW_STATE, "reject"],

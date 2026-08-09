@@ -3333,6 +3333,47 @@ ipcMain.handle("copy-last-frame-from-file", async (event, filePath) => {
   }
 });
 
+// Same audited extractor and clipboard path as the last-frame action, aimed at
+// a chosen position instead of the end. The renderer supplies only a timestamp;
+// the file itself is still resolved through the usual path authorization.
+ipcMain.handle("copy-frame-at-time", async (event, payload = {}) => {
+  assertPlainObject(payload, "frame capture request");
+  let context = null;
+  let ownerContext = null;
+  try {
+    const atSeconds = Number(payload?.atSeconds);
+    if (!Number.isFinite(atSeconds) || atSeconds < 0 || atSeconds > 86_400) {
+      return { success: false, error: "INVALID_TIMESTAMP" };
+    }
+    context = captureProfileGenerationContext();
+    const authorized = await assertRendererPath(event, payload?.filePath, "file");
+    const ownerId = registerNativeWorkOwner(event.sender);
+    ownerContext = nativeOwnerLifecycle.capture(event.sender);
+    const buffer = await lastFrameCaptureService.capture(authorized.path, {
+      ownerId,
+      atSeconds,
+    });
+    assertProfileGenerationContextActive(context);
+    nativeOwnerLifecycle.assertActive(ownerContext);
+    if (event.sender?.isDestroyed?.()) {
+      return { success: false, error: "OWNER_CANCELLED" };
+    }
+
+    const image = nativeImage.createFromBuffer(buffer);
+    if (!image || image.isEmpty()) {
+      return { success: false, error: "EMPTY_IMAGE" };
+    }
+    clipboard.writeImage(image);
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to copy frame with ffmpeg:", error);
+    return {
+      success: false,
+      error: error?.code || error?.message || "FRAME_CAPTURE_FAILED",
+    };
+  }
+});
+
 ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   assertPlainObject(payload, "trash confirmation");
   if (!trashAdmissionOpen) {

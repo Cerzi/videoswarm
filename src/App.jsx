@@ -1816,6 +1816,54 @@ function App() {
     window.electronAPI?.saveSettingsPartial?.({ transferLayout: next });
   }, []);
 
+  // The packaged extractor reads the source file directly, so it yields the
+  // frame at full source resolution rather than whatever the player decoded to
+  // fit the window. The canvas path is the fallback for web clips and for
+  // systems without a usable ffmpeg.
+  const handleCopyFullscreenFrame = useCallback(
+    async ({ video, atSeconds, captureCanvasFrame }) => {
+      const electronAPI = window.electronAPI;
+      if (video?.isElectronFile && video?.fullPath && electronAPI?.copyFrameAtTime) {
+        try {
+          const result = await electronAPI.copyFrameAtTime(
+            video.fullPath,
+            atSeconds
+          );
+          if (result?.success) {
+            notify("Frame copied to clipboard", "success");
+            return true;
+          }
+        } catch (error) {
+          console.warn("[frame] Native frame copy failed", error);
+        }
+      }
+
+      try {
+        const captured = await captureCanvasFrame?.();
+        if (!captured) throw new Error("No frame is available to copy");
+        if (electronAPI?.copyImageToClipboard) {
+          const result = await electronAPI.copyImageToClipboard(captured.dataUrl);
+          if (result?.success === false) {
+            throw new Error(result?.error || "Clipboard copy failed");
+          }
+        } else if (navigator?.clipboard?.write && window?.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": captured.blob }),
+          ]);
+        } else {
+          throw new Error("Clipboard image copy is not supported");
+        }
+        notify("Frame copied to clipboard", "success");
+        return true;
+      } catch (error) {
+        console.error("Failed to copy frame:", error);
+        notify("Failed to copy the frame", "error");
+        return false;
+      }
+    },
+    [notify]
+  );
+
   const handleListTransferDestinations = useCallback(async () => {
     const list = window.electronAPI?.review?.copyAccepted?.listDestinations;
     if (typeof list !== "function") return [];
@@ -4780,6 +4828,7 @@ function App() {
               }
               audioEnabled={fullscreenAudioEnabled}
               onAudioEnabledChange={handleFullscreenAudioEnabledChange}
+              onCopyFrame={handleCopyFullscreenFrame}
               detailsDock={
                 <FullscreenDetailsDock
                   video={fullScreenVideo}
