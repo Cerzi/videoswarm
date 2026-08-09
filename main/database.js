@@ -37,6 +37,14 @@ const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
 // Absences the user caused on purpose. Anything else stays unexplained and is
 // reported as missing, which is the state worth drawing attention to.
 const MISSING_REASONS = new Set(['trashed', 'moved']);
+// A library view can span every root, so its bounds are its own rather than
+// borrowed from the per-root cached grid.
+const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
+  maxTags: 16,
+  maxRecords: 20_000,
+  maxPathBytes: 16 * 1024 * 1024,
+  maxCatalogTags: 2_000,
+});
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
@@ -1380,6 +1388,60 @@ function createMetadataStore(db) {
       AND fi.is_present != 0
       AND (? != 0 OR instr(fi.relative_path, '/') = 0)
     ORDER BY fi.relative_path COLLATE NOCASE
+    LIMIT ?;
+  `);
+  // The library-wide projection is deliberately the cached-grid projection with
+  // the root predicate swapped for a tag join, so a clip looks identical however
+  // it was reached. Directory presence is checked too: a retired directory's
+  // instances must not reappear just because they carry a tag.
+  const taggedInstancesAcrossRoots = db.prepare(`
+    SELECT fi.*,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE fi.is_present != 0
+      AND d.is_present != 0
+      AND fi.fingerprint IS NOT NULL
+      -- tags.name is declared COLLATE NOCASE, so matching and DISTINCT are
+      -- already case-insensitive without restating it here. Counting the
+      -- distinct matches and requiring the full tag count is what makes a
+      -- multi-tag view an intersection rather than a union.
+      AND (
+        SELECT COUNT(DISTINCT t.name)
+        FROM file_tags ft
+        INNER JOIN tags t ON t.id = ft.tag_id
+        WHERE ft.fingerprint = fi.fingerprint
+          AND t.name IN (SELECT value FROM json_each(@tag_names))
+      ) = @tag_count
+    ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
+    LIMIT @limit;
+  `);
+  // Counts present instances rather than content rows: the number a user needs
+  // is how many clips they would actually see, not how many contents exist.
+  const tagCatalogWithCounts = db.prepare(`
+    SELECT t.name AS name, COUNT(fi.id) AS instance_count
+    FROM tags t
+    INNER JOIN file_tags ft ON ft.tag_id = t.id
+    INNER JOIN file_instances fi ON fi.fingerprint = ft.fingerprint
+    INNER JOIN directories d ON d.id = fi.directory_id
+    WHERE fi.is_present != 0 AND d.is_present != 0
+    GROUP BY t.id
+    HAVING instance_count > 0
+    ORDER BY t.name COLLATE NOCASE
     LIMIT ?;
   `);
   const cachedFileTagsForRoot = db.prepare(`
@@ -2804,6 +2866,132 @@ function createMetadataStore(db) {
     };
   }
 
+  /**
+   * Every present instance carrying all of the named tags, across every indexed
+   * root in the profile.
+   *
+   * This is a point-in-time read, not a watched collection: watching every
+   * contributing root at once is exactly the cost the bounded watcher design
+   * avoids, and the cached-grid path already establishes that a SQLite-derived
+   * collection is a snapshot. Records carry their owning root so the renderer
+   * can group and authorize without a second lookup.
+   */
+  function getTaggedLibrarySnapshot(options = {}) {
+    assertOperationActive(options.assertActive);
+    const tagNames = [
+      ...new Set(
+        (Array.isArray(options.tagNames) ? options.tagNames : [])
+          .map((tag) => (tag ?? '').toString().trim())
+          .filter(Boolean)
+          .map((tag) => tag.toLowerCase())
+      ),
+    ];
+    if (tagNames.length === 0) {
+      throw new TypeError('At least one tag is required');
+    }
+    if (tagNames.length > LIBRARY_TAG_VIEW_LIMITS.maxTags) {
+      throw new RangeError(
+        `A tag view is limited to ${LIBRARY_TAG_VIEW_LIMITS.maxTags} tags`
+      );
+    }
+
+    const maxRecords = normalizeAcceptedExportReadLimit(
+      options.maxRecords,
+      LIBRARY_TAG_VIEW_LIMITS.maxRecords,
+      'Tag view record limit'
+    );
+    const maxPathBytes = normalizeAcceptedExportReadLimit(
+      options.maxPathBytes,
+      LIBRARY_TAG_VIEW_LIMITS.maxPathBytes,
+      'Tag view path-byte limit'
+    );
+
+    const rows = taggedInstancesAcrossRoots.all({
+      tag_names: JSON.stringify(tagNames),
+      tag_count: tagNames.length,
+      limit: maxRecords + 1,
+    });
+    assertOperationActive(options.assertActive);
+    // One row beyond the cap proves truncation without materializing the rest.
+    const truncated = rows.length > maxRecords;
+    const kept = truncated ? rows.slice(0, maxRecords) : rows;
+
+    const tagsByFingerprint = new Map();
+    let pathBytes = 0;
+    const records = kept.map((instance, index) => {
+      if ((index & 255) === 255) assertOperationActive(options.assertActive);
+      pathBytes += Buffer.byteLength(String(instance.absolute_path || ''), 'utf8');
+      if (pathBytes > maxPathBytes) {
+        throw new RangeError('Tag view paths exceed the bounded query budget');
+      }
+      const width = Number(instance.content_width || 0);
+      const height = Number(instance.content_height || 0);
+      const durationMs = normalizeDurationMs(instance.content_duration_ms);
+      const frameRate = normalizeFrameRate(instance.content_frame_rate);
+      if (!tagsByFingerprint.has(instance.fingerprint)) {
+        tagsByFingerprint.set(
+          instance.fingerprint,
+          tagsForFingerprint.all(instance.fingerprint).map((row) => row.name)
+        );
+      }
+      return {
+        instanceId: Number(instance.id),
+        rootPath: instance.owner_root_path,
+        relativePath: instance.relative_path,
+        absolutePath: instance.absolute_path,
+        size: Number(instance.size || 0),
+        mtimeMs: Number(instance.mtime_ms || 0),
+        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
+        fingerprint: instance.fingerprint || null,
+        tags: tagsByFingerprint.get(instance.fingerprint) || [],
+        rating:
+          instance.rating_value !== null &&
+          instance.rating_value !== undefined &&
+          Number.isFinite(Number(instance.rating_value))
+            ? Number(instance.rating_value)
+            : null,
+        reviewState: REVIEW_STATES.has(instance.review_state)
+          ? instance.review_state
+          : 'unreviewed',
+        dimensions:
+          width > 0 && height > 0
+            ? {
+                width,
+                height,
+                aspectRatio: width / height,
+                ...(durationMs ? { durationMs } : {}),
+                ...(frameRate ? { frameRate } : {}),
+              }
+            : null,
+        hasAudio: mapHasAudio(instance.content_has_audio),
+      };
+    });
+    assertOperationActive(options.assertActive);
+
+    return {
+      tags: tagNames,
+      records,
+      // Reported rather than hidden: a silently clipped library reads as a
+      // wrong answer instead of a bounded one.
+      truncated,
+      recordLimit: maxRecords,
+      rootPaths: [...new Set(records.map((record) => record.rootPath))],
+    };
+  }
+
+  function listTagCatalog(options = {}) {
+    assertOperationActive(options.assertActive);
+    const limit = normalizeAcceptedExportReadLimit(
+      options.limit,
+      LIBRARY_TAG_VIEW_LIMITS.maxCatalogTags,
+      'Tag catalog limit'
+    );
+    return tagCatalogWithCounts.all(limit).map((row) => ({
+      name: row.name,
+      instanceCount: Number(row.instance_count || 0),
+    }));
+  }
+
   function normalizeAcceptedExportReadLimit(value, hardLimit, label) {
     const candidate = value === undefined ? hardLimit : Number(value);
     if (
@@ -4189,6 +4377,8 @@ function createMetadataStore(db) {
     getCachedLibrarySnapshot,
     getAcceptedExportSnapshot,
     getSelectionExportSnapshot,
+    getTaggedLibrarySnapshot,
+    listTagCatalog,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,
