@@ -95,6 +95,31 @@ export const resolveFrameStep = ({
   };
 };
 
+// Press-and-hold repeat. The OS key-repeat stream is deliberately not used as
+// the clock: its delay and rate are a user setting tuned for typing, and its
+// events arrive whether or not the decoder has finished the previous seek. The
+// caller instead drives repeats from each completed step and asks for the next
+// gap here, so a hold ramps from single frames into a scrub the way a video
+// editor's jog does while the decoder still sets the real ceiling.
+const FRAME_HOLD_DELAY_MS = 400;
+const FRAME_REPEAT_START_MS = 140;
+const FRAME_REPEAT_MIN_MS = 30;
+const FRAME_REPEAT_RAMP = 0.82;
+
+/**
+ * Gap before the next step of a held key, given how many repeats have already
+ * run. Zero repeats means the key was only tapped, so the wait is the longer
+ * hold threshold: a tap must never turn into a scrub.
+ */
+export const frameHoldDelay = (repeats) => {
+  const completed = Math.max(0, Math.floor(Number(repeats) || 0));
+  if (completed === 0) return FRAME_HOLD_DELAY_MS;
+  return Math.max(
+    FRAME_REPEAT_MIN_MS,
+    Math.round(FRAME_REPEAT_START_MS * FRAME_REPEAT_RAMP ** (completed - 1))
+  );
+};
+
 /** Display string for the frame readout, e.g. "12 / 121" or "12". */
 export const formatFramePosition = (index, total) => {
   const position = Math.max(0, Math.floor(Number(index) || 0)) + 1;

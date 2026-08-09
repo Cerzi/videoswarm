@@ -96,6 +96,10 @@ Reviewed, Reject, or rating action selects and centres the next clip in the
 pre-mutation visual order. Resetting to Unreviewed, clearing a rating,
 multi-selection changes, failed writes, and undo do not advance.
 
+The fullscreen loupe deliberately departs from this on rating alone: there the
+clip stays put so it can be rated and classified in one visit. See
+`fullscreen-review-loupe.md`.
+
 The successor is captured before mutation so an active Unreviewed filter
 cannot erase navigation context. Other instances sharing the affected
 fingerprint are skipped because the content-keyed mutation updates them too.

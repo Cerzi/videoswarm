@@ -3123,17 +3123,17 @@ function App() {
       }
       fullScreenUndoTargetRef.current = target;
       setFullscreenCanUndo(true);
-      if (reviewAutoAdvance && rating != null && Number(rating) > 0) {
-        advanceFullscreenAfterMutation(target);
-      }
+      // A rating marks an unreviewed clip as reviewed as a side effect, but it
+      // is not the act of marking that "advance after marking" describes:
+      // advancing here would carry the clip away before it could also be
+      // accepted or rejected, making rate-then-decide impossible. Only an
+      // explicit review state advances.
       return true;
     },
     [
-      advanceFullscreenAfterMutation,
       captureFullscreenTarget,
       isFullscreenTargetCurrent,
       notify,
-      reviewAutoAdvance,
       reviewWorkflow.applyRating,
       scheduleEngagedFullscreenCheckpoint,
     ]

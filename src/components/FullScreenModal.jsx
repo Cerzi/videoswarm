@@ -18,6 +18,7 @@ import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
 import {
   formatFramePosition,
   frameCountFor,
+  frameHoldDelay,
   frameIndexAt,
   resolveFrameRate,
   resolveFrameStep,
@@ -28,6 +29,10 @@ const LOAD_TIMEOUT_MS = 15_000;
 // A backward step decodes from the preceding keyframe, so it is far slower
 // than a forward one. This only bounds a wedged seek; it is not a budget.
 const SEEK_TIMEOUT_MS = 4_000;
+// How long a newly held key waits on a seek that is still settling.
+const SETTLE_POLL_MS = 16;
+// The media element is deliberately absent: it refuses focus so that Chromium's
+// native controls cannot capture the keyboard. See `handleMediaFocus`.
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -35,8 +40,12 @@ const FOCUSABLE_SELECTOR = [
   "select:not([disabled])",
   "textarea:not([disabled])",
   "[tabindex]:not([tabindex='-1'])",
-  "video[controls]",
 ].join(",");
+
+const monotonicNow = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
 
 let fullscreenOwnerSequence = 0;
 let webObjectSequence = 0;
@@ -304,6 +313,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const [isStepping, setIsStepping] = useState(false);
   const [isCopyingFrame, setIsCopyingFrame] = useState(false);
   const steppingRef = useRef(false);
+  const frameHoldRef = useRef(null);
 
   const reactId = useId().replaceAll(":", "");
   const titleId = `fullscreen-review-title-${reactId}`;
@@ -511,6 +521,77 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   );
 
   /**
+   * End a held step. Called with no argument this always ends the hold; a
+   * released key passes what it knows about itself so that letting go of one
+   * frame key cannot cancel a hold the other key has already taken over.
+   */
+  const stopFrameHold = useCallback((released = null) => {
+    const hold = frameHoldRef.current;
+    if (!hold) return false;
+    if (released) {
+      const sameKey = Boolean(
+        released.code && hold.code && released.code === hold.code
+      );
+      const sameDirection =
+        released.direction != null && released.direction === hold.direction;
+      if (!sameKey && !sameDirection) return false;
+    }
+    frameHoldRef.current = null;
+    if (hold.timeoutId !== null) clearTimeout(hold.timeoutId);
+    return true;
+  }, []);
+
+  /**
+   * Press-and-hold scrubbing. Each repeat is scheduled from the step that
+   * precedes it rather than from the operating system's key-repeat stream, so
+   * a held key can never queue seeks faster than the decoder retires them, and
+   * the gap shrinks with every repeat until a hold reads as a scrub. A step
+   * that reports no movement means the clip ended, which ends the hold instead
+   * of spinning against the clamp.
+   */
+  const startFrameHold = useCallback(
+    (direction, code = null) => {
+      stopFrameHold();
+      const hold = { direction, code, repeats: 0, timeoutId: null };
+      frameHoldRef.current = hold;
+
+      const advance = async () => {
+        // Reversing direction mid-seek would otherwise be dropped as a
+        // concurrent step and the press would do nothing at all. Waiting for
+        // the seek in flight costs a frame of latency and cannot outlive it:
+        // stepping always clears itself, at worst on its own timeout.
+        if (steppingRef.current) {
+          hold.timeoutId = setTimeout(() => {
+            hold.timeoutId = null;
+            void advance();
+          }, SETTLE_POLL_MS);
+          return;
+        }
+        const startedAt = monotonicNow();
+        const stepped = await stepFrame(direction);
+        if (frameHoldRef.current !== hold) return;
+        if (!stepped) {
+          frameHoldRef.current = null;
+          return;
+        }
+        const delay = frameHoldDelay(hold.repeats);
+        // The very first gap is the hold threshold, which is measured from the
+        // press so that a tap stays a tap; later gaps absorb the seek that has
+        // just completed so the ramp keeps its intended cadence.
+        const spent = hold.repeats === 0 ? 0 : monotonicNow() - startedAt;
+        hold.repeats += 1;
+        hold.timeoutId = setTimeout(() => {
+          hold.timeoutId = null;
+          void advance();
+        }, Math.max(0, delay - spent));
+      };
+
+      void advance();
+    },
+    [stepFrame, stopFrameHold]
+  );
+
+  /**
    * Draw the frame currently on screen. The modal owns this element, so the
    * capture stays inside that ownership rather than handing the element out;
    * callers receive only the resulting image. No seek or decoder lease is
@@ -580,16 +661,18 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     (reason = "close") => {
       if (closeRequestedRef.current) return false;
       closeRequestedRef.current = true;
+      stopFrameHold();
       releaseActiveSource({ resetAudio: true });
       safeCloseDialog(dialogRef.current);
       callbackRef.current.onClose?.(reason);
       return true;
     },
-    [releaseActiveSource]
+    [releaseActiveSource, stopFrameHold]
   );
 
   const requestNavigate = useCallback(
     (direction) => {
+      stopFrameHold();
       const allowed =
         direction === "next" ? canNavigateNext !== false : canNavigatePrevious !== false;
       if (!allowed) {
@@ -603,7 +686,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       // leaving this stable media identity blank.
       return callbackRef.current.onNavigate?.(direction) !== false;
     },
-    [canNavigateNext, canNavigatePrevious]
+    [canNavigateNext, canNavigatePrevious, stopFrameHold]
   );
 
   // Owner replacement is a session boundary even if a caller accidentally
@@ -925,8 +1008,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
         case FULLSCREEN_COMMANDS.FRAME_FORWARD: {
           event.preventDefault();
           event.stopPropagation();
-          void stepFrame(
-            binding.command === FULLSCREEN_COMMANDS.FRAME_BACK ? -1 : 1
+          startFrameHold(
+            binding.command === FULLSCREEN_COMMANDS.FRAME_BACK ? -1 : 1,
+            event.code || null
           );
           return;
         }
@@ -968,28 +1052,59 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       }
     };
 
-    // Chromium's native video controls can also react to Space on keyup.
-    // Consume that half of the gesture so one press produces one toggle.
     const handleKeyUp = (event) => {
-      if (isEditableTarget(event.target)) return;
       const binding = resolveFullscreenShortcut(event);
+
+      // Released before anything else, and without the editable-target guard:
+      // a hold that outlives its key would keep scrubbing on its own. Physical
+      // key identity is preferred over the printable one because a modifier
+      // pressed mid-hold changes `key` but never `code`.
+      const releasedDirection =
+        binding?.command === FULLSCREEN_COMMANDS.FRAME_BACK
+          ? -1
+          : binding?.command === FULLSCREEN_COMMANDS.FRAME_FORWARD
+            ? 1
+            : null;
+      stopFrameHold({
+        direction: releasedDirection,
+        code: event.code || null,
+      });
+
+      if (isEditableTarget(event.target)) return;
+      // Chromium's native video controls can also react to Space on keyup.
+      // Consume that half of the gesture so one press produces one toggle.
       if (binding?.command !== FULLSCREEN_COMMANDS.PLAYBACK) return;
       if (preservesNativeSpaceActivation(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
     };
 
+    // A key released while the window is in the background never reports a
+    // keyup here, so the hold has to end with the interaction that owns it.
+    const handleInterrupt = () => {
+      stopFrameHold();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") stopFrameHold();
+    };
+
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("blur", handleInterrupt);
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("keyup", handleKeyUp, true);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("blur", handleInterrupt);
+      stopFrameHold();
     };
   }, [
     copyCurrentFrame,
     handleEscape,
     requestNavigate,
-    stepFrame,
+    startFrameHold,
+    stopFrameHold,
     toggleAudio,
     togglePlayback,
     video ? true : false,
@@ -1030,6 +1145,53 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const setMediaElement = useCallback((element) => {
     mediaRef.current = element;
     if (element) element.muted = true;
+  }, []);
+
+  /**
+   * The step buttons hold exactly like the frame keys do. The press itself
+   * takes the first step, so the click that follows it must not take a second
+   * one — only an activation with no click count behind it (keyboard, or a
+   * programmatic `click()`) still steps here.
+   */
+  const beginStepGesture = useCallback(
+    (event, direction) => {
+      if (event.button != null && event.button !== 0) return;
+      startFrameHold(direction);
+    },
+    [startFrameHold]
+  );
+
+  const endStepGesture = useCallback(() => {
+    stopFrameHold();
+  }, [stopFrameHold]);
+
+  const stepFromActivation = useCallback(
+    (event, direction) => {
+      if (event.detail !== 0) return;
+      void stepFrame(direction);
+    },
+    [stepFrame]
+  );
+
+  /**
+   * Refuse focus on the media element. Clicking one of Chromium's native
+   * controls moves focus into the element's shadow DOM, and while it sits
+   * there key events are consumed by the controls before they reach the
+   * document at all — every loupe shortcut would silently stop working until
+   * something else was clicked. Handing focus straight back to the dialog
+   * costs nothing: the controls stay fully usable by pointer, and the keyboard
+   * interface is the shortcut catalog, not the shadow DOM's own tab stops.
+   */
+  const handleMediaFocus = useCallback(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || document.activeElement !== mediaRef.current) return;
+    try {
+      dialog.focus({ preventScroll: true });
+    } catch {
+      try {
+        dialog.focus();
+      } catch {}
+    }
   }, []);
 
   const handleVolumeChange = useCallback((event) => {
@@ -1125,10 +1287,17 @@ const FullScreenModal = forwardRef(function FullScreenModal(
               <button
                 type="button"
                 className="fullscreen-review__button fullscreen-review__button--step"
-                onClick={() => void stepFrame(-1)}
-                disabled={isStepping || !videoLoaded}
+                onPointerDown={(event) => beginStepGesture(event, -1)}
+                onPointerUp={endStepGesture}
+                onPointerLeave={endStepGesture}
+                onPointerCancel={endStepGesture}
+                onClick={(event) => stepFromActivation(event, -1)}
+                // Deliberately not disabled while a step is in flight: a hold
+                // retires several a second and would strobe the control.
+                // `stepFrame` already drops a request it cannot serve.
+                disabled={!videoLoaded}
                 aria-label="Previous frame"
-                title="Previous frame (,)"
+                title="Previous frame (,) — hold to scrub"
               >
                 ‹
               </button>
@@ -1142,10 +1311,14 @@ const FullScreenModal = forwardRef(function FullScreenModal(
               <button
                 type="button"
                 className="fullscreen-review__button fullscreen-review__button--step"
-                onClick={() => void stepFrame(1)}
-                disabled={isStepping || !videoLoaded}
+                onPointerDown={(event) => beginStepGesture(event, 1)}
+                onPointerUp={endStepGesture}
+                onPointerLeave={endStepGesture}
+                onPointerCancel={endStepGesture}
+                onClick={(event) => stepFromActivation(event, 1)}
+                disabled={!videoLoaded}
                 aria-label="Next frame"
-                title="Next frame (.)"
+                title="Next frame (.) — hold to scrub"
               >
                 ›
               </button>
@@ -1254,6 +1427,8 @@ const FullScreenModal = forwardRef(function FullScreenModal(
                 loop
                 controls
                 playsInline
+                tabIndex={-1}
+                onFocus={handleMediaFocus}
                 onClick={handleVideoClick}
                 onPlay={() => {
                   playbackIntentRef.current = true;

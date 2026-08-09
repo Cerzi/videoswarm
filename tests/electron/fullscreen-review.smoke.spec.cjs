@@ -200,6 +200,9 @@ test("fullscreen review releases media and preserves review context across navig
     await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
       false
     );
+    // Focus is refused: while it sits on the media element, Chromium's native
+    // controls consume keys before they ever reach the document, which
+    // silently kills every loupe shortcut. It has to land back in the dialog.
     await playbackVideo.focus();
     await expect
       .poll(() =>
@@ -207,6 +210,9 @@ test("fullscreen review releases media and preserves review context across navig
           const style = getComputedStyle(video);
           return {
             focused: document.activeElement === video,
+            focusInDialog: Boolean(
+              document.activeElement?.closest?.(".fullscreen-review")
+            ),
             borderTopWidth: style.borderTopWidth,
             outlineStyle: style.outlineStyle,
             outlineWidth: style.outlineWidth,
@@ -215,7 +221,8 @@ test("fullscreen review releases media and preserves review context across navig
         })
       )
       .toEqual({
-        focused: true,
+        focused: false,
+        focusInDialog: true,
         borderTopWidth: "0px",
         outlineStyle: "none",
         outlineWidth: "0px",
@@ -225,6 +232,18 @@ test("fullscreen review releases media and preserves review context across navig
     await expect.poll(() => playbackVideo.evaluate((video) => video.paused)).toBe(
       true
     );
+
+    // The frame keys have to work from wherever the refused focus landed.
+    const framePosition = modal.locator(".fullscreen-review__frame-position");
+    await playbackVideo.evaluate((video) => {
+      video.currentTime = 0;
+    });
+    await expect(framePosition).toHaveText("1 / 3");
+    await page.keyboard.press("Period");
+    await expect(framePosition).toHaveText("2 / 3");
+    await page.keyboard.press("Comma");
+    await expect(framePosition).toHaveText("1 / 3");
+
     await playbackVideo.evaluate((video) => {
       video.dispatchEvent(new Event("canplay"));
     });

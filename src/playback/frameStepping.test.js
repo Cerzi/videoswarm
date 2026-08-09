@@ -3,6 +3,7 @@ import {
   FALLBACK_FRAME_RATE,
   formatFramePosition,
   frameCountFor,
+  frameHoldDelay,
   frameIndexAt,
   frameStartTime,
   lastFrameIndexFor,
@@ -108,6 +109,32 @@ describe("frame stepping arithmetic", () => {
       direction: 1,
     });
     expect(step.index).toBe(1);
+  });
+
+  it("waits out a tap before repeating, then accelerates to a floor", () => {
+    const threshold = frameHoldDelay(0);
+    // A tap must never turn into a scrub, so the first gap is the longest one.
+    expect(threshold).toBeGreaterThanOrEqual(300);
+    expect(frameHoldDelay(1)).toBeLessThan(threshold);
+
+    const gaps = Array.from({ length: 40 }, (_, index) =>
+      frameHoldDelay(index + 1)
+    );
+    for (let index = 1; index < gaps.length; index += 1) {
+      expect(gaps[index]).toBeLessThanOrEqual(gaps[index - 1]);
+    }
+    // It settles at a sustainable rate rather than converging on zero.
+    expect(gaps.at(-1)).toBeGreaterThan(0);
+    expect(gaps.at(-1)).toBeLessThan(gaps[0]);
+    expect(gaps.at(-1)).toBe(frameHoldDelay(1_000));
+
+    // A hold reaches its top rate quickly enough to feel like scrubbing.
+    const toTopSpeed = gaps.findIndex((gap) => gap === gaps.at(-1)) + 1;
+    expect(toTopSpeed).toBeLessThanOrEqual(15);
+
+    expect(frameHoldDelay(-3)).toBe(threshold);
+    expect(frameHoldDelay(Number.NaN)).toBe(threshold);
+    expect(frameHoldDelay(undefined)).toBe(threshold);
   });
 
   it("formats a one-based readout and omits an unknown total", () => {
