@@ -65,6 +65,23 @@ describe("LastFrameCaptureService", () => {
         "force_original_aspect_ratio=decrease:force_divisible_by=2"
     );
     expect(createFfmpegLastFrameArgs("clip.mp4")).toContain("-nostdin");
+    // Without a timestamp the extractor still means "the final frame".
+    expect(createFfmpegLastFrameArgs("clip.mp4")).toContain("-sseof");
+
+    // A timestamp switches to input seeking, which ffmpeg decodes accurately.
+    const seeked = createFfmpegLastFrameArgs("clip.mp4", 1.5);
+    expect(seeked).not.toContain("-sseof");
+    expect(seeked.slice(seeked.indexOf("-ss"), seeked.indexOf("-ss") + 2)).toEqual([
+      "-ss",
+      "1.500",
+    ]);
+    // The seek must precede the input for input-side seeking to apply.
+    expect(seeked.indexOf("-ss")).toBeLessThan(seeked.indexOf("-i"));
+    // Small offsets must not reach ffmpeg in exponential notation.
+    expect(createFfmpegLastFrameArgs("clip.mp4", 0.0000001)).toContain("0.000");
+    expect(() => createFfmpegLastFrameArgs("clip.mp4", -1)).toThrow(
+      /non-negative/
+    );
   });
 
   it("rejects empty output and delegates cancellation and shutdown", async () => {

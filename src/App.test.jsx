@@ -2659,6 +2659,82 @@ describe("App hook composition", () => {
     consoleSpy.mockRestore();
   });
 
+  test("copies a fullscreen frame natively and falls back to the canvas", async () => {
+    const video = {
+      id: "clip-1",
+      instanceId: 11,
+      fingerprint: "fp-1",
+      name: "one.mp4",
+      isElectronFile: true,
+      fullPath: "/collection/one.mp4",
+      reviewState: "unreviewed",
+      tags: [],
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [video],
+      activeRootPath: "/collection",
+      libraryRoot: { rootPath: "/collection", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [video],
+      filteredVideoIds: new Set([video.id]),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: [video],
+      displayVideos: [video],
+      orderedIds: [video.id],
+      orderForRange: [video.id],
+    });
+    useFullScreenModalMock.mockReturnValue({
+      isOpen: true,
+      currentVideo: video,
+      fullScreenVideo: video,
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 1,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: false,
+      collectionOwnerKey: "profile:/collection",
+      sessionToken: "fullscreen-session",
+      close: vi.fn(),
+    });
+    const copyFrameAtTime = vi.fn().mockResolvedValue({ success: true });
+    const copyImageToClipboard = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI = { copyFrameAtTime, copyImageToClipboard };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+
+    const onCopyFrame = fullScreenModalSpy.mock.calls.at(-1)?.[0]?.onCopyFrame;
+    const captureCanvasFrame = vi.fn().mockResolvedValue({
+      blob: new Blob(),
+      dataUrl: "data:image/png;base64,AAAA",
+    });
+
+    let copied;
+    await act(async () => {
+      copied = await onCopyFrame({ video, atSeconds: 1.24, captureCanvasFrame });
+    });
+    expect(copied).toBe(true);
+    expect(copyFrameAtTime).toHaveBeenCalledWith("/collection/one.mp4", 1.24);
+    // The native extractor read the source file, so no canvas work was needed.
+    expect(captureCanvasFrame).not.toHaveBeenCalled();
+
+    // Without a usable ffmpeg the displayed frame is still copyable.
+    copyFrameAtTime.mockResolvedValueOnce({ success: false, error: "ENOENT" });
+    await act(async () => {
+      copied = await onCopyFrame({ video, atSeconds: 1.24, captureCanvasFrame });
+    });
+    expect(copied).toBe(true);
+    expect(captureCanvasFrame).toHaveBeenCalledTimes(1);
+    expect(copyImageToClipboard).toHaveBeenCalledWith("data:image/png;base64,AAAA");
+  });
+
   test("persists the fullscreen dock preference and releases before ownership work", async () => {
     const video = {
       id: "clip-1",

@@ -118,6 +118,9 @@ export const FULLSCREEN_COMMANDS = Object.freeze({
   RATING: "rating",
   CLEAR_RATING: "clear-rating",
   UNDO: "undo",
+  FRAME_BACK: "frame-back",
+  FRAME_FORWARD: "frame-forward",
+  COPY_FRAME: "copy-frame",
   HELP: "help",
   CLOSE: "close",
 });
@@ -160,6 +163,32 @@ export const FULLSCREEN_NAVIGATION_SHORTCUTS = Object.freeze([
   }),
 ]);
 
+// Arrow keys already move between clips, so frame stepping uses the comma and
+// period convention shared by video editors rather than overloading them.
+export const FULLSCREEN_FRAME_SHORTCUTS = Object.freeze([
+  freezeShortcut({
+    id: "fullscreen-frame-back",
+    keys: [","],
+    label: "Previous frame",
+    detail: "Pauses playback and steps one frame back.",
+    command: FULLSCREEN_COMMANDS.FRAME_BACK,
+  }),
+  freezeShortcut({
+    id: "fullscreen-frame-forward",
+    keys: ["."],
+    label: "Next frame",
+    detail: "Pauses playback and steps one frame forward.",
+    command: FULLSCREEN_COMMANDS.FRAME_FORWARD,
+  }),
+  freezeShortcut({
+    id: "fullscreen-copy-frame",
+    keys: ["C"],
+    label: "Copy current frame",
+    detail: "Copies the displayed frame to the clipboard at full resolution.",
+    command: FULLSCREEN_COMMANDS.COPY_FRAME,
+  }),
+]);
+
 export const FULLSCREEN_UTILITY_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "fullscreen-help",
@@ -178,6 +207,7 @@ export const FULLSCREEN_UTILITY_SHORTCUTS = Object.freeze([
 
 export const FULLSCREEN_PLAYER_SHORTCUTS = Object.freeze([
   ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...FULLSCREEN_FRAME_SHORTCUTS,
   ...FULLSCREEN_UTILITY_SHORTCUTS,
 ]);
 
@@ -185,6 +215,7 @@ export const FULLSCREEN_PLAYER_SHORTCUTS = Object.freeze([
 // with the grid workflow so aliases and rating semantics cannot drift.
 export const FULLSCREEN_SHORTCUTS = Object.freeze([
   ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...FULLSCREEN_FRAME_SHORTCUTS,
   ...REVIEW_SHORTCUTS,
   ...FULLSCREEN_UTILITY_SHORTCUTS,
 ]);
@@ -194,6 +225,11 @@ export const FULLSCREEN_SHORTCUT_HELP_SECTIONS = Object.freeze([
     id: "fullscreen-navigation",
     title: "Playback and navigation",
     shortcuts: FULLSCREEN_NAVIGATION_SHORTCUTS,
+  }),
+  Object.freeze({
+    id: "fullscreen-frame",
+    title: "Frame picking",
+    shortcuts: FULLSCREEN_FRAME_SHORTCUTS,
   }),
   Object.freeze({
     id: "fullscreen-review",
@@ -225,6 +261,7 @@ const fullscreenBindings = [];
 
 for (const shortcut of [
   ...FULLSCREEN_NAVIGATION_SHORTCUTS,
+  ...FULLSCREEN_FRAME_SHORTCUTS,
   ...FULLSCREEN_UTILITY_SHORTCUTS,
 ]) {
   const bindings = shortcut.bindings || shortcut.keys;

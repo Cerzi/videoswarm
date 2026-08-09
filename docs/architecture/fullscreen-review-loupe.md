@@ -255,6 +255,36 @@ passes the active fullscreen instance explicitly:
 
 Trash is intentionally absent.
 
+### Frame picker
+
+Status: **Implemented**
+
+Stepping targets the middle of the intended frame rather than its boundary,
+because `index / fps` sits exactly between two frames and floating-point error
+would otherwise decide which one the decoder presents. The arithmetic lives in
+`src/playback/frameStepping.js` so it can be tested without a media pipeline; a
+sixty-step regression proves repeated stepping does not drift by a frame.
+
+Frame rate comes from probed metadata and falls back to 24fps when a clip was
+never probed, which is a better answer than refusing to step. Stepping pauses
+first, drops concurrent requests instead of queueing them so a held key cannot
+outrun the decoder's seeks, and clamps at both ends rather than wrapping — the
+element loops during playback, but a picker that jumped from the last frame to
+the first would lose the user's place. Backward steps decode from the preceding
+keyframe and are therefore slower than forward ones; a bounded seek timeout only
+guards a wedged seek and is not a budget.
+
+The position readout updates from `timeupdate`, `seeked`, and `pause` rather
+than from a per-frame callback, so it costs no per-frame render.
+
+Copying a frame prefers the packaged extractor, which reads the source file at
+its own resolution instead of whatever the player decoded to fit the window.
+Only a timestamp crosses the boundary; the file is still resolved through the
+usual path authorization. Web clips and hosts without a usable `ffmpeg` fall
+back to drawing the displayed frame, which the modal performs itself so its
+element is never handed out. Clipboard delivery is the only destination; writing
+frames to disk is not implemented.
+
 ## 5. Keyboard and accessibility
 
 Status: **Implemented**
@@ -267,6 +297,8 @@ catalog:
 | --- | --- |
 | Previous / Next | Left / Right, `Q` / `E` |
 | Play / pause | Space |
+| Previous / next frame | `,` / `.` |
+| Copy current frame | `C` |
 | Mute / audio | `M` |
 | Details | `I` |
 | Accept / Reviewed / Reject / Unreviewed | `A` / `S` / `D` / `F` plus existing aliases |

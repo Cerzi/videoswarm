@@ -15,9 +15,19 @@ import {
   resolveFullscreenShortcut,
 } from "../hotkeys/shortcutCatalog";
 import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
+import {
+  formatFramePosition,
+  frameCountFor,
+  frameIndexAt,
+  resolveFrameRate,
+  resolveFrameStep,
+} from "../playback/frameStepping";
 import "./FullScreenModal.css";
 
 const LOAD_TIMEOUT_MS = 15_000;
+// A backward step decodes from the preceding keyframe, so it is far slower
+// than a forward one. This only bounds a wedged seek; it is not a budget.
+const SEEK_TIMEOUT_MS = 4_000;
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -219,6 +229,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     onToggleDetails,
     onOpenHelp,
     onShortcut,
+    onCopyFrame,
     detailsOpen,
     audioEnabled = false,
     onAudioEnabledChange,
@@ -261,6 +272,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     onAudioEnabledChange,
     onBoundary,
     onClose,
+    onCopyFrame,
     onDismissTransient,
     onNavigate,
     onOpenHelp,
@@ -287,6 +299,11 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [isMuted, setIsMuted] = useState(!audioEnabled);
   const [retryRevision, setRetryRevision] = useState(0);
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [frameCount, setFrameCount] = useState(0);
+  const [isStepping, setIsStepping] = useState(false);
+  const [isCopyingFrame, setIsCopyingFrame] = useState(false);
+  const steppingRef = useRef(false);
 
   const reactId = useId().replaceAll(":", "");
   const titleId = `fullscreen-review-title-${reactId}`;
@@ -417,6 +434,137 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     setNotice(nextMuted ? "Audio muted" : "Audio on");
     callbackRef.current.onAudioEnabledChange?.(!nextMuted);
   }, []);
+
+  const frameRate = useMemo(
+    () => resolveFrameRate(video?.dimensions?.frameRate ?? video?.frameRate),
+    [video?.dimensions?.frameRate, video?.frameRate]
+  );
+  const frameRateRef = useRef(frameRate);
+  frameRateRef.current = frameRate;
+
+  const syncFramePosition = useCallback((element = mediaRef.current) => {
+    if (!element) return;
+    const fps = frameRateRef.current;
+    setFrameIndex(frameIndexAt(element.currentTime, fps));
+    setFrameCount(frameCountFor(element.duration, fps));
+  }, []);
+
+  /**
+   * Step exactly one frame. Playback is stopped first because stepping while
+   * decoding races the next presented frame, and concurrent steps are dropped
+   * rather than queued so a held key cannot outrun the decoder's seeks.
+   */
+  const stepFrame = useCallback(
+    async (direction) => {
+      if (workSuspendedRef.current || steppingRef.current) return false;
+      const element = mediaRef.current;
+      if (!element || !activeReleaseRef.current) return false;
+
+      playbackIntentRef.current = false;
+      try {
+        element.pause();
+      } catch {}
+
+      const step = resolveFrameStep({
+        currentTime: element.currentTime,
+        duration: element.duration,
+        frameRate: frameRateRef.current,
+        direction,
+      });
+      if (!step) {
+        setNotice(direction < 0 ? "At the first frame" : "At the last frame");
+        syncFramePosition(element);
+        return false;
+      }
+
+      steppingRef.current = true;
+      setIsStepping(true);
+      const release = activeReleaseRef.current;
+      try {
+        await new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            element.removeEventListener("seeked", finish);
+            resolve();
+          };
+          const timeoutId = setTimeout(finish, SEEK_TIMEOUT_MS);
+          element.addEventListener("seeked", finish);
+          try {
+            element.currentTime = step.time;
+          } catch {
+            finish();
+          }
+        });
+        // The source can be replaced or released while a seek is in flight.
+        if (activeReleaseRef.current !== release) return false;
+        syncFramePosition(element);
+        return true;
+      } finally {
+        steppingRef.current = false;
+        setIsStepping(false);
+      }
+    },
+    [syncFramePosition]
+  );
+
+  /**
+   * Draw the frame currently on screen. The modal owns this element, so the
+   * capture stays inside that ownership rather than handing the element out;
+   * callers receive only the resulting image. No seek or decoder lease is
+   * needed because the frame is already decoded and displayed.
+   */
+  const captureCanvasFrame = useCallback(async () => {
+    const element = mediaRef.current;
+    if (!element) return null;
+    const width = Number(element.videoWidth) || 0;
+    const height = Number(element.videoHeight) || 0;
+    if (!width || !height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(element, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/png");
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((result) => resolve(result), "image/png");
+    });
+    if (!blob) return null;
+    return { blob, dataUrl, width, height };
+  }, []);
+
+  const copyCurrentFrame = useCallback(async () => {
+    if (workSuspendedRef.current || steppingRef.current) return false;
+    const element = mediaRef.current;
+    const current = videoRef.current;
+    if (!element || !current) return false;
+    const handler = callbackRef.current.onCopyFrame;
+    if (typeof handler !== "function") return false;
+
+    setIsCopyingFrame(true);
+    setNotice("Copying frame…");
+    try {
+      // The element's own position is authoritative: the readout can lag a
+      // frame behind a seek that is still settling.
+      const result = await handler({
+        video: current,
+        atSeconds: Number(element.currentTime) || 0,
+        frameIndex: frameIndexAt(element.currentTime, frameRateRef.current),
+        captureCanvasFrame,
+      });
+      const failed = result === false || result?.success === false;
+      setNotice(failed ? "Could not copy the frame" : "Frame copied");
+      return !failed;
+    } catch {
+      setNotice("Could not copy the frame");
+      return false;
+    } finally {
+      setIsCopyingFrame(false);
+    }
+  }, [captureCanvasFrame]);
 
   const retryPlayback = useCallback(() => {
     releaseActiveSource({ resetAudio: false });
@@ -570,6 +718,8 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     setError(null);
     setNotice("");
     setVideoLoaded(false);
+    setFrameIndex(0);
+    setFrameCount(0);
     playbackIntentRef.current = true;
 
     element.addEventListener("canplay", handlePlayable);
@@ -771,6 +921,22 @@ const FullScreenModal = forwardRef(function FullScreenModal(
           event.stopPropagation();
           toggleAudio();
           return;
+        case FULLSCREEN_COMMANDS.FRAME_BACK:
+        case FULLSCREEN_COMMANDS.FRAME_FORWARD: {
+          event.preventDefault();
+          event.stopPropagation();
+          void stepFrame(
+            binding.command === FULLSCREEN_COMMANDS.FRAME_BACK ? -1 : 1
+          );
+          return;
+        }
+        case FULLSCREEN_COMMANDS.COPY_FRAME: {
+          if (!callbackRef.current.onCopyFrame) break;
+          event.preventDefault();
+          event.stopPropagation();
+          void copyCurrentFrame();
+          return;
+        }
         case FULLSCREEN_COMMANDS.DETAILS:
           if (callbackRef.current.onToggleDetails) {
             event.preventDefault();
@@ -819,7 +985,15 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("keyup", handleKeyUp, true);
     };
-  }, [handleEscape, requestNavigate, toggleAudio, togglePlayback, video ? true : false]);
+  }, [
+    copyCurrentFrame,
+    handleEscape,
+    requestNavigate,
+    stepFrame,
+    toggleAudio,
+    togglePlayback,
+    video ? true : false,
+  ]);
 
   const handleBackdropClick = useCallback(
     (event) => {
@@ -943,6 +1117,51 @@ const FullScreenModal = forwardRef(function FullScreenModal(
             {progressContent}
           </div>
           <div className="fullscreen-review__header-actions">
+            <div
+              className="fullscreen-review__frames"
+              role="group"
+              aria-label="Frame picker"
+            >
+              <button
+                type="button"
+                className="fullscreen-review__button fullscreen-review__button--step"
+                onClick={() => void stepFrame(-1)}
+                disabled={isStepping || !videoLoaded}
+                aria-label="Previous frame"
+                title="Previous frame (,)"
+              >
+                ‹
+              </button>
+              <span
+                className="fullscreen-review__frame-position"
+                aria-live="off"
+                title={`Frame ${formatFramePosition(frameIndex, frameCount)} at ${frameRate.toFixed(2)} fps`}
+              >
+                {formatFramePosition(frameIndex, frameCount)}
+              </span>
+              <button
+                type="button"
+                className="fullscreen-review__button fullscreen-review__button--step"
+                onClick={() => void stepFrame(1)}
+                disabled={isStepping || !videoLoaded}
+                aria-label="Next frame"
+                title="Next frame (.)"
+              >
+                ›
+              </button>
+              {onCopyFrame ? (
+                <button
+                  type="button"
+                  className="fullscreen-review__button"
+                  onClick={() => void copyCurrentFrame()}
+                  disabled={isCopyingFrame || isStepping || !videoLoaded}
+                  aria-label="Copy current frame"
+                  title="Copy current frame (C)"
+                >
+                  {isCopyingFrame ? "Copying…" : "Copy frame"}
+                </button>
+              ) : null}
+            </div>
             <button
               type="button"
               className="fullscreen-review__button"
@@ -1041,7 +1260,14 @@ const FullScreenModal = forwardRef(function FullScreenModal(
                 }}
                 onPause={() => {
                   playbackIntentRef.current = false;
+                  syncFramePosition();
                 }}
+                // timeupdate fires a few times a second rather than per frame,
+                // which is enough for a readout and costs no per-frame render.
+                // Native scrubbing lands on seeked, and stepping syncs itself.
+                onTimeUpdate={() => syncFramePosition()}
+                onSeeked={() => syncFramePosition()}
+                onLoadedMetadata={() => syncFramePosition()}
                 onVolumeChange={handleVolumeChange}
               />
 

@@ -103,6 +103,36 @@
   outline: 2px solid transparent;
 }
 
+.fullscreen-review__frames {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+  margin-right: 4px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.fullscreen-review__button--step {
+  width: 30px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.fullscreen-review__frame-position {
+  min-width: 4.5rem;
+  padding: 0 2px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #c5cfdb;
+}
+
+.fullscreen-review__button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .fullscreen-review__button--close {
   width: 38px;
   padding: 0;
