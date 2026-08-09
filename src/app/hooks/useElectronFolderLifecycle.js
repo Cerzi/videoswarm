@@ -164,6 +164,8 @@ export function useElectronFolderLifecycle({
 }) {
   const [videos, setVideos] = useState([]);
   const [activeRootPath, setActiveRootPath] = useState(null);
+  // Non-null while a tag-scoped, rootless collection is on screen.
+  const [tagCollection, setTagCollection] = useState(null);
   const [libraryRoot, setLibraryRoot] = useState(null);
   const [directorySummaries, setDirectorySummaries] = useState([]);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
@@ -526,6 +528,7 @@ export function useElectronFolderLifecycle({
         if (!isCurrentScan()) return;
 
         setActiveRootPath(folderPath);
+        setTagCollection(null);
         setLibraryRoot({
           rootPath: folderPath,
           refreshState: "scanning",
@@ -728,6 +731,7 @@ export function useElectronFolderLifecycle({
                 totalRecordCount: totalCachedRecordCount,
               });
               setActiveRootPath(cachedResult.root?.rootPath || folderPath);
+              setTagCollection(null);
               setLibraryRoot(
                 cachedResult.root || {
                   rootPath: folderPath,
@@ -914,6 +918,7 @@ export function useElectronFolderLifecycle({
           totalRecordCount: completedFileCount,
         });
         setActiveRootPath(nextRoot.rootPath || folderPath);
+        setTagCollection(null);
         setLibraryRoot(nextRoot);
         setDirectorySummaries(nextDirectories);
 
@@ -1028,6 +1033,37 @@ export function useElectronFolderLifecycle({
     }
   }, [handleElectronFolderSelection]);
 
+  /**
+   * Adopt a tag-scoped collection that belongs to no single root.
+   *
+   * This mirrors the web-file path deliberately: both are collections the
+   * catalog did not scan into existence, so both clear the active root, its
+   * tree and its cached hydration rather than leaving stale folder chrome
+   * pointing at somewhere the visible clips may not live.
+   */
+  const openTagCollection = useCallback(
+    ({ tags = [], records = [], truncated = false } = {}) => {
+      cancelActiveFolderScan(false);
+      retainedFolderScanRef.current = null;
+      collectionOwnerScanIdRef.current = null;
+      setVideos(Array.isArray(records) ? records : []);
+      setActiveScanId(null);
+      setActiveRootPath(null);
+      setLibraryRoot(null);
+      setDirectorySummaries([]);
+      setCachedHydration(emptyCachedHydration());
+      resetDerivedVideoState();
+      setTagCollection({
+        tags: [...tags],
+        truncated: Boolean(truncated),
+        // Distinguishes one snapshot from the next so collection ownership
+        // changes on refresh and stale per-clip work is discarded.
+        loadedAt: Date.now(),
+      });
+    },
+    [cancelActiveFolderScan, resetDerivedVideoState]
+  );
+
   const handleWebFileSelection = useCallback(
     (event) => {
       cancelActiveFolderScan(false);
@@ -1049,6 +1085,7 @@ export function useElectronFolderLifecycle({
       setVideos(list);
       setActiveScanId(null);
       setActiveRootPath(null);
+      setTagCollection(null);
       setLibraryRoot(null);
       setDirectorySummaries([]);
       setCachedHydration(emptyCachedHydration());
@@ -1390,5 +1427,7 @@ export function useElectronFolderLifecycle({
     reloadCurrentRoot,
     handleFolderSelect,
     handleWebFileSelection,
+    tagCollection,
+    openTagCollection,
   };
 }

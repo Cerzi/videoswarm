@@ -673,3 +673,48 @@
     width: 230px;
   }
 }
+
+/* A tag view spans roots, so its entries are listed as tags rather than as
+   anything folder-shaped. Counts are present instances, not content rows. */
+.library-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.library-tag-list__apply {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.library-tag-list__apply:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.library-tag-list__apply.is-active {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.16);
+  color: #fff;
+}
+.library-tag-list__apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.library-tag-list__count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.library-sidebar__tag-active {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.55);
+}

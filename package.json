@@ -52,7 +52,7 @@
     "lint": "eslint . --max-warnings=0",
     "test": "vitest",
     "test:electron": "node scripts/run-electron-vitest.cjs",
-    "test:electron-abi": "node scripts/run-electron-vitest.cjs run main/__tests__/databaseProfiles.test.js main/__tests__/metadataTags.test.js main/__tests__/libraryIndex.test.js main/__tests__/reviewLibrary.test.js main/__tests__/reviewCheckpoints.test.js main/__tests__/acceptedExportDatabase.test.js",
+    "test:electron-abi": "node scripts/run-electron-vitest.cjs run main/__tests__/databaseProfiles.test.js main/__tests__/metadataTags.test.js main/__tests__/libraryIndex.test.js main/__tests__/reviewLibrary.test.js main/__tests__/reviewCheckpoints.test.js main/__tests__/acceptedExportDatabase.test.js main/__tests__/libraryTagViews.test.js",
     "test:coverage": "node scripts/run-electron-vitest.cjs run --coverage",
     "test:electron-smoke": "playwright test --config=playwright.electron.config.cjs",
     "profile:linux": "node scripts/performance/linux-soak.cjs",
