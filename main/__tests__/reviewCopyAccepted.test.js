@@ -229,6 +229,139 @@ describe("Copy Accepted native coordinator", () => {
     expect(showDirectoryPicker).not.toHaveBeenCalled();
   });
 
+
+  it("transfers a selection spanning two roots and authorizes each", async () => {
+    const alphaRoot = await temporaryDirectory("multi-alpha");
+    const betaRoot = await temporaryDirectory("multi-beta");
+    const destinationPath = await temporaryDirectory("multi-destination");
+    await writeFile(path.join(alphaRoot, "batch", "one.mp4"), "alpha-one");
+    await writeFile(path.join(betaRoot, "batch", "two.mp4"), "beta-two");
+    const alphaRecord = {
+      ...(await recordFor(alphaRoot, "batch/one.mp4")),
+      rootPath: alphaRoot,
+    };
+    const betaRecord = {
+      ...(await recordFor(betaRoot, "batch/two.mp4")),
+      rootPath: betaRoot,
+    };
+    const authorizeRoot = vi.fn(async ({ rootPath }) => ({ path: rootPath }));
+    const { owner, dependencies } = harness({
+      rootPath: alphaRoot,
+      destinationPath,
+      queryAcceptedInstances: vi.fn(async () => ({
+        records: [alphaRecord, betaRecord],
+        rootPaths: [alphaRoot, betaRoot],
+      })),
+    });
+    dependencies.authorizeRoot = authorizeRoot;
+    const multiRootCoordinator = createReviewCopyAcceptedCoordinator({
+      ...dependencies,
+      authorizeRoot,
+    });
+    coordinators.push(multiRootCoordinator);
+
+    // No rootPath at all: this is what a rootless tag view sends.
+    const plan = await multiRootCoordinator.prepare({
+      owner,
+      directory: "",
+      scope: "all-descendants",
+      instanceIds: [alphaRecord.instanceId, betaRecord.instanceId],
+      layout: "flat",
+    });
+
+    expect(plan.success).toBe(true);
+    expect(plan.copyableCount).toBe(2);
+    // Each contributing root is a separate grant, not implied by the first.
+    const authorized = authorizeRoot.mock.calls.map((call) => call[0].rootPath);
+    expect(authorized).toEqual(expect.arrayContaining([alphaRoot, betaRoot]));
+
+    const result = await multiRootCoordinator.start({
+      owner,
+      planId: plan.planId,
+      collisionPolicy: "skip",
+      transferMode: "copy",
+    });
+    expect(result.success).toBe(true);
+    expect(result.copiedCount).toBe(2);
+    expect((await fsp.readdir(destinationPath)).sort()).toEqual([
+      "one.mp4",
+      "two.mp4",
+    ]);
+  });
+
+  it("refuses a destination inside any contributing root", async () => {
+    const alphaRoot = await temporaryDirectory("inside-alpha");
+    const betaRoot = await temporaryDirectory("inside-beta");
+    await writeFile(path.join(alphaRoot, "one.mp4"), "alpha-one");
+    await writeFile(path.join(betaRoot, "two.mp4"), "beta-two");
+    const alphaRecord = {
+      ...(await recordFor(alphaRoot, "one.mp4")),
+      rootPath: alphaRoot,
+    };
+    const betaRecord = {
+      ...(await recordFor(betaRoot, "two.mp4")),
+      rootPath: betaRoot,
+    };
+    // The destination sits inside the *second* root, which a single-root check
+    // would have missed entirely.
+    const destinationPath = path.join(betaRoot, "gathered");
+    await fsp.mkdir(destinationPath, { recursive: true });
+    const { owner, dependencies } = harness({
+      rootPath: alphaRoot,
+      destinationPath,
+      queryAcceptedInstances: vi.fn(async () => ({
+        records: [alphaRecord, betaRecord],
+      })),
+    });
+    const multiRootCoordinator = createReviewCopyAcceptedCoordinator({
+      ...dependencies,
+      authorizeRoot: vi.fn(async ({ rootPath }) => ({ path: rootPath })),
+    });
+    coordinators.push(multiRootCoordinator);
+
+    const plan = await multiRootCoordinator.prepare({
+      owner,
+      directory: "",
+      scope: "all-descendants",
+      instanceIds: [alphaRecord.instanceId, betaRecord.instanceId],
+    });
+
+    expect(plan.success).toBe(false);
+    expect(plan.code).toBe(ACCEPTED_COPY_CODES.DESTINATION_INSIDE_ROOT);
+  });
+
+  it("rejects a source that is outside the root the catalog named", async () => {
+    const alphaRoot = await temporaryDirectory("mismatch-alpha");
+    const betaRoot = await temporaryDirectory("mismatch-beta");
+    const destinationPath = await temporaryDirectory("mismatch-destination");
+    await writeFile(path.join(alphaRoot, "one.mp4"), "alpha-one");
+    const record = {
+      ...(await recordFor(alphaRoot, "one.mp4")),
+      // Claims to belong to beta while physically living under alpha.
+      rootPath: betaRoot,
+    };
+    const { owner, dependencies } = harness({
+      rootPath: alphaRoot,
+      destinationPath,
+      queryAcceptedInstances: vi.fn(async () => ({ records: [record] })),
+    });
+    const multiRootCoordinator = createReviewCopyAcceptedCoordinator({
+      ...dependencies,
+      authorizeRoot: vi.fn(async ({ rootPath }) => ({ path: rootPath })),
+    });
+    coordinators.push(multiRootCoordinator);
+
+    const plan = await multiRootCoordinator.prepare({
+      owner,
+      directory: "",
+      scope: "all-descendants",
+      instanceIds: [record.instanceId],
+    });
+
+    expect(plan.success).toBe(false);
+    expect(plan.code).toBe(ACCEPTED_COPY_CODES.SOURCE_INVALID);
+  });
+
   it("writes flat layout basenames and reports same-name collisions", async () => {
     const rootPath = await temporaryDirectory("flat-root");
     const destinationPath = await temporaryDirectory("flat-destination");

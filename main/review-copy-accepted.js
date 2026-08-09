@@ -354,9 +354,24 @@ function normalizeQueryResult(result) {
   return records;
 }
 
-function normalizeAcceptedRecords(records, sourceRoot, pathImpl) {
+/**
+ * `resolveSourceRoot` returns the authorized root a record must live under.
+ * A selection can span roots, so containment and the relative-path identity
+ * check are made against each record's own root rather than against one shared
+ * root that would silently accept a file from somewhere else.
+ */
+function normalizeAcceptedRecords(records, resolveSourceRoot, pathImpl) {
   let pathBytes = 0;
   return records.map((record) => {
+    const sourceRoot = typeof resolveSourceRoot === "function"
+      ? resolveSourceRoot(record)
+      : resolveSourceRoot;
+    if (!sourceRoot) {
+      throw new AcceptedCopyError(
+        "An accepted-media source has no authorized library root",
+        ACCEPTED_COPY_CODES.SOURCE_INVALID
+      );
+    }
     const relativePath = normalizeReviewExportRelativePath(record?.relativePath);
     const sourcePath = normalizeRootPath(record?.absolutePath, pathImpl);
     if (!isPathInside(sourceRoot, sourcePath, pathImpl)) {
@@ -914,11 +929,16 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           ACCEPTED_COPY_CODES.PLAN_INVALID
         );
       }
-      const rootPath = normalizeRootPath(request?.rootPath, pathImpl);
       // A selection names exact rows, so it carries no scope of its own and
-      // must not be held to the review export's tree-coverage requirement.
+      // must not be held to the review export's tree-coverage requirement. It
+      // may also span roots, or come from a rootless collection with no active
+      // root at all, so its source roots are derived from the resolved rows
+      // rather than supplied.
       const instanceIds = normalizeSelectionInstanceIds(request?.instanceIds);
       const selectionDriven = instanceIds !== null;
+      const rootPath = selectionDriven && !request?.rootPath
+        ? null
+        : normalizeRootPath(request?.rootPath, pathImpl);
       const scope = selectionDriven
         ? "all-descendants"
         : normalizeReviewExportScope(request?.scope);
@@ -946,30 +966,85 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       plans.set(planId, plan);
       assertPlanActive(plan, "captured");
 
-      const authorized = await authorizeRoot({
-        owner,
-        context,
-        rootPath,
-        request,
-      });
-      assertPlanActive(plan, "authorized");
-      const authorizedPath = resolveAuthorizedRoot(authorized, pathImpl);
-      const canonicalSource = await canonicalDirectory(
-        authorizedPath,
-        plan,
-        "source-root"
-      );
-      plan.sourceRoot = canonicalSource.path;
+      // Every contributing root is authorized and canonicalized. A selection
+      // gathered from a library-wide view can touch several, and each one is a
+      // separate grant rather than something implied by the first.
+      const authorizeSourceRoot = async (candidate, label) => {
+        const authorized = await authorizeRoot({
+          owner,
+          context,
+          rootPath: candidate,
+          request,
+        });
+        assertPlanActive(plan, label);
+        return (
+          await canonicalDirectory(
+            resolveAuthorizedRoot(authorized, pathImpl),
+            plan,
+            label
+          )
+        ).path;
+      };
 
-      const initialRoot = await getRoot({
-        owner,
-        context,
-        rootPath: plan.sourceRoot,
-        request,
-      });
-      assertPlanActive(plan, "root-loaded");
-      if (!selectionDriven) {
-        assertReviewExportCoverage(initialRoot, directory, scope);
+      let initialRoot = null;
+      let selectionRecords = null;
+      // Records name their root as the catalog stores it; containment must be
+      // checked against the canonical form the grant actually resolved to.
+      plan.sourceRootByRawPath = new Map();
+      if (rootPath) {
+        plan.sourceRoot = await authorizeSourceRoot(rootPath, "source-root");
+        plan.sourceRoots = [plan.sourceRoot];
+        plan.sourceRootByRawPath.set(rootPath, plan.sourceRoot);
+        initialRoot = await getRoot({
+          owner,
+          context,
+          rootPath: plan.sourceRoot,
+          request,
+        });
+        assertPlanActive(plan, "root-loaded");
+        if (!selectionDriven) {
+          assertReviewExportCoverage(initialRoot, directory, scope);
+        }
+      }
+
+      if (selectionDriven && !rootPath) {
+        // Resolve the rows first: their owning roots are the only thing that
+        // says which grants and containment checks this transfer needs.
+        const resolved = await queryAcceptedInstances({
+          owner,
+          context,
+          root: null,
+          rootPath: null,
+          directory,
+          scope,
+          instanceIds,
+          limit: ACCEPTED_COPY_MAX_MEDIA + 1,
+          maxRecords: ACCEPTED_COPY_MAX_MEDIA,
+          maxPathBytes: ACCEPTED_COPY_MAX_PATH_BYTES,
+          assertActive: () => assertPlanActive(plan, "selection-query"),
+        });
+        assertPlanActive(plan, "selection-resolved");
+        selectionRecords = resolved;
+        const contributing = [
+          ...new Set(
+            (Array.isArray(resolved?.records) ? resolved.records : [])
+              .map((record) => record?.rootPath)
+              .filter(Boolean)
+          ),
+        ];
+        if (contributing.length === 0) {
+          throw new AcceptedCopyError(
+            "None of the selected clips are still available to transfer",
+            ACCEPTED_COPY_CODES.PLAN_INVALID
+          );
+        }
+        plan.sourceRoots = [];
+        for (const candidate of contributing) {
+          const canonical = await authorizeSourceRoot(candidate, "source-root");
+          plan.sourceRootByRawPath.set(candidate, canonical);
+          plan.sourceRoots.push(canonical);
+        }
+        plan.sourceRoot = plan.sourceRoots[0];
       }
 
       // Re-running preflight for an existing plan (a layout change) must not
@@ -1021,7 +1096,15 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         plan,
         "destination"
       );
-      if (isPathInside(plan.sourceRoot, destination.path, pathImpl)) {
+      // Checked against every contributing root, not just the first: writing a
+      // multi-root gather back inside any of its own sources would make the
+      // transfer its own input.
+      if (
+        (plan.sourceRoots || [plan.sourceRoot]).some(
+          (sourceRoot) =>
+            sourceRoot && isPathInside(sourceRoot, destination.path, pathImpl)
+        )
+      ) {
         throw new AcceptedCopyError(
           "Choose a destination outside the source library",
           ACCEPTED_COPY_CODES.DESTINATION_INSIDE_ROOT
@@ -1032,7 +1115,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       plan.destinationIdentity = destination.identity;
       plan.destinationLabel = pathImpl.basename(destination.path) || "Destination";
 
-      const queryResult = await queryAcceptedInstances({
+      // Reuse the rows already resolved to discover the source roots rather
+      // than reading them a second time.
+      const queryResult = selectionRecords || await queryAcceptedInstances({
         owner,
         context,
         root: initialRoot,
@@ -1058,7 +1143,10 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         : 0;
       const records = normalizeAcceptedRecords(
         normalizeQueryResult(queryResult),
-        plan.sourceRoot,
+        (record) =>
+          record?.rootPath
+            ? plan.sourceRootByRawPath?.get(record.rootPath) || null
+            : plan.sourceRoot,
         pathImpl
       );
 

@@ -214,7 +214,7 @@ if (!database || databaseLoadError) {
           }).records
         ).toHaveLength(0);
 
-        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+        const snapshot = store.getSelectionExportSnapshot({
           instanceIds: [indexed[0].instance.id, indexed[2].instance.id],
         });
 
@@ -232,7 +232,7 @@ if (!database || databaseLoadError) {
         const indexed = await indexAndComplete([clip, removed]);
         store.markFileMissing(removed.filePath, { rootPath });
 
-        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+        const snapshot = store.getSelectionExportSnapshot({
           instanceIds: [
             indexed[0].instance.id,
             indexed[1].instance.id,
@@ -246,7 +246,7 @@ if (!database || databaseLoadError) {
         expect(snapshot.unavailableCount).toBe(2);
       });
 
-      it('ignores instances belonging to another root', async () => {
+      it('resolves instances from more than one root', async () => {
         const clip = createFile('mine.mp4');
         const indexed = await indexAndComplete([clip]);
 
@@ -259,13 +259,18 @@ if (!database || databaseLoadError) {
           entries: [{ filePath: otherPath, stats: fs.statSync(otherPath) }],
         });
 
-        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+        const snapshot = store.getSelectionExportSnapshot({
           instanceIds: [indexed[0].instance.id, otherIndexed.instance.id],
         });
 
-        expect(snapshot.records).toHaveLength(1);
-        expect(snapshot.records[0].relativePath).toBe('mine.mp4');
-        expect(snapshot.unavailableCount).toBe(1);
+        // A selection gathered from a library-wide view spans roots, so both
+        // resolve and each record names the root it came from.
+        expect(snapshot.records).toHaveLength(2);
+        expect(snapshot.unavailableCount).toBe(0);
+        expect(snapshot.rootPaths.sort()).toEqual([otherRoot, rootPath].sort());
+        expect(
+          snapshot.records.map((record) => record.rootPath).sort()
+        ).toEqual([otherRoot, rootPath].sort());
       });
 
       it('rejects an empty or malformed selection', async () => {
@@ -273,17 +278,17 @@ if (!database || databaseLoadError) {
         await indexAndComplete([clip]);
 
         expect(() =>
-          store.getSelectionExportSnapshot(rootPath, { instanceIds: [] })
+          store.getSelectionExportSnapshot({ instanceIds: [] })
         ).toThrowError(
           expect.objectContaining({ code: 'SELECTION_EXPORT_EMPTY' })
         );
         expect(() =>
-          store.getSelectionExportSnapshot(rootPath, { instanceIds: [0] })
+          store.getSelectionExportSnapshot({ instanceIds: [0] })
         ).toThrowError(
           expect.objectContaining({ code: 'SELECTION_EXPORT_INVALID_ID' })
         );
         expect(() =>
-          store.getSelectionExportSnapshot(rootPath, {
+          store.getSelectionExportSnapshot({
             instanceIds: ['not-an-id'],
           })
         ).toThrowError(
@@ -301,7 +306,7 @@ if (!database || databaseLoadError) {
         const instanceIds = indexed.map((entry) => entry.instance.id);
 
         expect(() =>
-          store.getSelectionExportSnapshot(rootPath, {
+          store.getSelectionExportSnapshot({
             instanceIds,
             maxRecords: 2,
           })
@@ -309,7 +314,7 @@ if (!database || databaseLoadError) {
           expect.objectContaining({ code: 'ACCEPTED_COPY_TOO_MANY_MEDIA' })
         );
         expect(() =>
-          store.getSelectionExportSnapshot(rootPath, {
+          store.getSelectionExportSnapshot({
             instanceIds,
             maxPathBytes: 8,
           })
