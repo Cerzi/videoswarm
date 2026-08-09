@@ -4178,7 +4178,7 @@ const reviewCopyAcceptedCoordinator =
       // An explicit selection resolves rows by id; otherwise the review state
       // is still the only thing that decides what gets transferred.
       Array.isArray(instanceIds)
-        ? context.metadataStore.getSelectionExportSnapshot(rootPath, {
+        ? context.metadataStore.getSelectionExportSnapshot({
             instanceIds,
             maxRecords: Math.min(
               ACCEPTED_COPY_MAX_MEDIA,

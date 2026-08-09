@@ -1924,7 +1924,9 @@ function App() {
       }
       setAcceptedCopyProgress(null);
       const result = await prepare({
-        rootPath: activeRootPath,
+        // Omitted on purpose: a selection can span roots, or come from a
+        // rootless tag view, so the host derives the roots from the rows.
+        rootPath: null,
         directory: "",
         scope: "all-descendants",
         instanceIds,
@@ -1938,7 +1940,7 @@ function App() {
       }
       return result;
     },
-    [activeRootPath]
+    []
   );
 
   // A tag view is a snapshot, not a watched collection: watching every root a
