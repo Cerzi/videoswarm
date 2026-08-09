@@ -190,3 +190,43 @@ describe("sorting module", () => {
     expect(withGrouping).not.toEqual(withoutGrouping);
   });
 });
+
+describe("resolution sort", () => {
+  const clip = (name, width, height) => ({
+    id: name,
+    name,
+    ...(width ? { dimensions: { width, height } } : {}),
+  });
+
+  it("orders by pixel count and breaks ties by name", () => {
+    const videos = [
+      clip("big.mp4", 1920, 1080),
+      clip("small.mp4", 640, 360),
+      clip("mid-b.mp4", 1280, 720),
+      clip("mid-a.mp4", 1280, 720),
+    ];
+    const ascending = [...videos].sort(
+      buildComparator({ sortKey: SortKey.RESOLUTION, sortDir: "asc" })
+    );
+    expect(ascending.map((video) => video.name)).toEqual([
+      "small.mp4",
+      "mid-a.mp4",
+      "mid-b.mp4",
+      "big.mp4",
+    ]);
+  });
+
+  it("keeps unmeasured clips together at the low end", () => {
+    const videos = [
+      clip("measured.mp4", 1920, 1080),
+      clip("unknown.mp4"),
+      clip("draft.mp4", 640, 360),
+    ];
+    const ascending = [...videos].sort(
+      buildComparator({ sortKey: SortKey.RESOLUTION, sortDir: "asc" })
+    );
+    // Unknown counts as zero pixels, so it never interleaves with real values.
+    expect(ascending[0].name).toBe("unknown.mp4");
+    expect(ascending.at(-1).name).toBe("measured.mp4");
+  });
+});

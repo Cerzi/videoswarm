@@ -4,6 +4,8 @@ import {
   normalizeTagList,
   sanitizeMinRating,
   sanitizeExactRating,
+  sanitizeMegapixels,
+  videoMegapixels,
   formatRatingLabel,
   useFiltersActiveCount,
 } from "../filters/filtersUtils";
@@ -22,6 +24,8 @@ const normalizeFiltersDraft = (draft, prev) => {
   const minRatingRaw = resolveValue(draft?.minRating, prev.minRating);
   const exactRatingRaw = resolveValue(draft?.exactRating, prev.exactRating);
   const reviewFilterRaw = resolveValue(draft?.reviewFilter, prev.reviewFilter);
+  const minMegapixelsRaw = resolveValue(draft?.minMegapixels, prev.minMegapixels);
+  const maxMegapixelsRaw = resolveValue(draft?.maxMegapixels, prev.maxMegapixels);
 
   return {
     includeTags: normalizeTagList(includeTagsRaw),
@@ -29,6 +33,8 @@ const normalizeFiltersDraft = (draft, prev) => {
     minRating: sanitizeMinRating(minRatingRaw),
     exactRating: sanitizeExactRating(exactRatingRaw),
     reviewFilter: normalizeReviewFilter(reviewFilterRaw),
+    minMegapixels: sanitizeMegapixels(minMegapixelsRaw),
+    maxMegapixels: sanitizeMegapixels(maxMegapixelsRaw),
   };
 };
 
@@ -54,6 +60,8 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     const minRating = sanitizeMinRating(filters.minRating);
     const exactRating = sanitizeExactRating(filters.exactRating);
     const reviewFilter = normalizeReviewFilter(filters.reviewFilter);
+    const minMegapixels = sanitizeMegapixels(filters.minMegapixels);
+    const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -67,6 +75,8 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
       !excludeSet &&
       minRating === null &&
       exactRating === null &&
+      minMegapixels === null &&
+      maxMegapixels === null &&
       reviewFilter === REVIEW_FILTERS.ANY
     ) {
       return videos;
@@ -95,6 +105,15 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
 
       if (!matchesReviewFilter(video.reviewState, reviewFilter)) {
         return false;
+      }
+
+      if (minMegapixels !== null || maxMegapixels !== null) {
+        // A clip that has never been measured cannot be shown to satisfy a
+        // resolution bound, so it is excluded rather than assumed to pass.
+        const megapixels = videoMegapixels(video);
+        if (megapixels === null) return false;
+        if (minMegapixels !== null && megapixels < minMegapixels) return false;
+        if (maxMegapixels !== null && megapixels > maxMegapixels) return false;
       }
 
       const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;

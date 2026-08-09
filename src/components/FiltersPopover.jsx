@@ -3,6 +3,7 @@ import {
   REVIEW_FILTERS,
   normalizeReviewFilter,
 } from "../review/reviewState";
+import { sanitizeMegapixels } from "../app/filters/filtersUtils";
 import "./FiltersPopover.css";
 
 const MIN_RATING_OPTIONS = [
@@ -24,6 +25,21 @@ const EXACT_RATING_OPTIONS = [
 ];
 
 const MAX_DEFAULT_TAGS = 10;
+
+// Draft generations cluster well below a megapixel, finished ones above, so a
+// short threshold list answers "which of these came out small" directly.
+const RESOLUTION_OPTIONS = [
+  { value: null, label: "Any" },
+  { value: 0.5, label: "\u2264 0.5 MP" },
+  { value: 1, label: "\u2264 1 MP" },
+  { value: 2, label: "\u2264 2 MP" },
+];
+const RESOLUTION_MIN_OPTIONS = [
+  { value: null, label: "Any" },
+  { value: 1, label: "\u2265 1 MP" },
+  { value: 2, label: "\u2265 2 MP" },
+  { value: 4, label: "\u2265 4 MP" },
+];
 
 const REVIEW_OPTIONS = [
   { value: REVIEW_FILTERS.ANY, label: "Any" },
@@ -67,6 +83,8 @@ const FiltersPopover = forwardRef(
     const exactRating =
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
     const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
+    const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
+    const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
 
     const [tagQuery, setTagQuery] = useState("");
 
@@ -367,6 +385,48 @@ const FiltersPopover = forwardRef(
               })}
             </div>
           </div>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Resolution</header>
+          <div className="filters-rating-row" role="group" aria-label="Maximum resolution">
+            {RESOLUTION_OPTIONS.map(({ value, label }) => (
+              <button
+                key={`max-${label}`}
+                type="button"
+                className={`filters-pill ${
+                  maxMegapixels === value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={maxMegapixels === value}
+                onClick={() =>
+                  onChange((prev) => ({ ...prev, maxMegapixels: value }))
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="filters-rating-row" role="group" aria-label="Minimum resolution">
+            {RESOLUTION_MIN_OPTIONS.map(({ value, label }) => (
+              <button
+                key={`min-${label}`}
+                type="button"
+                className={`filters-pill ${
+                  minMegapixels === value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={minMegapixels === value}
+                onClick={() =>
+                  onChange((prev) => ({ ...prev, minMegapixels: value }))
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="filters-empty-hint">
+            Clips whose dimensions have not been read yet are hidden while a
+            resolution filter is active.
+          </span>
         </section>
 
         {reviewModeEnabled ? (
