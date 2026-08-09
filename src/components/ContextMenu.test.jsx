@@ -200,7 +200,7 @@ describe('ContextMenu', () => {
     );
 
     const rootMenu = screen.getByRole('menu', { name: /Actions for Video a/i });
-    expect(rootMenu).toHaveStyle({ left: '212px', top: '40px' });
+    expect(rootMenu).toHaveStyle({ left: '212px', top: '8px' });
 
     const copyMenu = openSubmenu(/Copy$/i);
     expect(copyMenu).toHaveStyle({ left: '8px' });
@@ -270,9 +270,9 @@ describe('ContextMenu', () => {
       side: 'left',
       rect: expect.objectContaining({
         x: 212,
-        y: 40,
+        y: 8,
         left: 212,
-        top: 40,
+        top: 8,
         right: 492,
         width: 280,
       }),
@@ -311,7 +311,7 @@ describe('ContextMenu', () => {
     expect(onPlacementChange).toHaveBeenCalledWith({
       contextId: 'a',
       side: 'right',
-      rect: expect.objectContaining({ left: 20, top: 20, right: 300 }),
+      rect: expect.objectContaining({ left: 20, top: 8, right: 300 }),
     });
   });
 

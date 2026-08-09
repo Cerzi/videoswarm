@@ -258,6 +258,11 @@ const ContextMenu = ({
         ],
       },
       {
+        id: 'transfer-files',
+        label: `📁 ${menuLabel('transfer-files')}`,
+        action: 'transfer-files',
+      },
+      {
         id: 'file-properties',
         label: `📊 ${menuLabel('file-properties')}`,
         action: 'file-properties',

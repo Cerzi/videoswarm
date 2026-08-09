@@ -178,6 +178,57 @@ describe("Copy Accepted native coordinator", () => {
     expect(result.destinationLabel).toBe(path.basename(destinationPath));
   });
 
+  it("prepares from an explicit selection without a review scope", async () => {
+    const rootPath = await temporaryDirectory("selection-root");
+    const destinationPath = await temporaryDirectory("selection-destination");
+    await writeFile(path.join(rootPath, "batch", "one.mp4"), "one");
+    const queryAcceptedInstances = vi.fn(async () => ({
+      root: completeRoot(rootPath),
+      records: [await recordFor(rootPath, "batch/one.mp4")],
+      requestedCount: 2,
+      unavailableCount: 1,
+    }));
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      queryAcceptedInstances,
+    });
+
+    const plan = await coordinator.prepare(
+      prepareRequest(owner, rootPath, { instanceIds: [11, 12] })
+    );
+
+    expect(plan.success).toBe(true);
+    expect(queryAcceptedInstances).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceIds: [11, 12] })
+    );
+    expect(plan.copyableCount).toBe(1);
+    // The id that no longer resolves is reported the same way a source that
+    // disappears during preflight would be.
+    expect(plan.missingCount).toBe(1);
+  });
+
+  it("rejects a malformed or oversized selection before any native work", async () => {
+    const rootPath = await temporaryDirectory("bad-selection-root");
+    const destinationPath = await temporaryDirectory("bad-selection-destination");
+    await writeFile(path.join(rootPath, "clip.mp4"), "clip");
+    const showDirectoryPicker = vi.fn(async () => ({ canceled: true }));
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      records: [await recordFor(rootPath, "clip.mp4")],
+      showDirectoryPicker,
+    });
+
+    for (const instanceIds of [[], [0], ["nope"], [1.5]]) {
+      const result = await coordinator.prepare(
+        prepareRequest(owner, rootPath, { instanceIds })
+      );
+      expect(result.success).toBe(false);
+    }
+    expect(showDirectoryPicker).not.toHaveBeenCalled();
+  });
+
   it("writes flat layout basenames and reports same-name collisions", async () => {
     const rootPath = await temporaryDirectory("flat-root");
     const destinationPath = await temporaryDirectory("flat-destination");

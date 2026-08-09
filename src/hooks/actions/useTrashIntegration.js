@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 export default function useTrashIntegration({
   electronAPI,
   notify,
+  onRequestTransfer,
   confirm,
   preTrashCleanup,
   postConfirmRecovery,
@@ -131,5 +132,6 @@ export default function useTrashIntegration({
     mediaScheduler,
     workSuspended,
     onItemsRemoved,
+    onRequestTransfer,
   };
 }

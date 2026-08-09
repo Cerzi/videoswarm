@@ -71,6 +71,15 @@ export const actionPolicies = {
     whenContextWithMulti: TargetPolicy.CONTEXT_ONLY,
     enabledForToolbar: (count) => count === 1,
   },
+
+  // Opens the bounded transfer dialog rather than moving anything directly:
+  // a destination, preflight and an explicit Move or Copy still come first.
+  'transfer-files': {
+    id: 'transfer-files',
+    label: 'Move or Copy to…',
+    whenContextWithMulti: TargetPolicy.ALL_SELECTED,
+    enabledForToolbar: (count) => count >= 1,
+  },
 };
 
 // Simple helpers you can import in UI

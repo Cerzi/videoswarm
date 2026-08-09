@@ -26,6 +26,7 @@ import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
+import TransferSelectionDialog from "./components/TransferSelectionDialog";
 import {
   FullscreenDetailsDock,
   FullscreenHeaderActions,
@@ -196,6 +197,8 @@ function App() {
   const [acceptedCopyProgress, setAcceptedCopyProgress] = useState(null);
   const [trashProgress, setTrashProgress] = useState(null);
   const [transferLayout, setTransferLayout] = useState("structured");
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferSelection, setTransferSelection] = useState([]);
   const [fullscreenTransientSurface, setFullscreenTransientSurface] =
     useState(null);
   const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
@@ -1753,9 +1756,15 @@ function App() {
     [scheduleAnimationFrame]
   );
 
+  const handleRequestTransfer = useCallback((videos) => {
+    setTransferSelection(Array.isArray(videos) ? videos : []);
+    setTransferDialogOpen(true);
+  }, []);
+
   const deps = useTrashIntegration({
     electronAPI: window.electronAPI,
     notify,
+    onRequestTransfer: handleRequestTransfer,
     confirm: window.confirm,
     preTrashCleanup,
     postConfirmRecovery,
@@ -1862,6 +1871,31 @@ function App() {
       }
     },
     [notify]
+  );
+
+  const handlePrepareSelectionTransfer = useCallback(
+    async ({ instanceIds, destinationPath, layout, reusePlanId }) => {
+      const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
+      if (typeof prepare !== "function") {
+        throw new Error("Transfers are unavailable");
+      }
+      setAcceptedCopyProgress(null);
+      const result = await prepare({
+        rootPath: activeRootPath,
+        directory: "",
+        scope: "all-descendants",
+        instanceIds,
+        destinationPath:
+          typeof destinationPath === "string" ? destinationPath : null,
+        layout: layout === "flat" ? "flat" : "structured",
+        reusePlanId: typeof reusePlanId === "string" ? reusePlanId : null,
+      });
+      if (result?.success === false) {
+        throw new Error(result.error || "The transfer could not be prepared");
+      }
+      return result;
+    },
+    [activeRootPath]
   );
 
   const handleListTransferDestinations = useCallback(async () => {
@@ -4410,6 +4444,18 @@ function App() {
             acceptedCopyProgress={acceptedCopyProgress}
             trashProgress={trashProgress}
           />
+          <TransferSelectionDialog
+            open={transferDialogOpen}
+            videos={transferSelection}
+            onClose={() => setTransferDialogOpen(false)}
+            onPrepareTransfer={handlePrepareSelectionTransfer}
+            onStartTransfer={handleStartAcceptedCopy}
+            onCancelTransfer={handleCancelAcceptedCopy}
+            onListTransferDestinations={handleListTransferDestinations}
+            transferLayout={transferLayout}
+            onTransferLayoutChange={handleTransferLayoutChange}
+            transferProgress={acceptedCopyProgress}
+          />
           <DataLocationDialog
             open={isDataLocationOpen}
             onClose={() => setDataLocationOpen(false)}
@@ -4610,6 +4656,7 @@ function App() {
                             generationExpanded={metadataGenerationExpanded}
                             onGenerationExpandedChange={setMetadataGenerationExpanded}
                             onFocusSelection={focusSelection}
+                onTransferSelection={handleRequestTransfer}
                             onUndock={handleUndockMetadataPanel}
                           />
                         ) : null
@@ -4769,6 +4816,7 @@ function App() {
                 onGenerationExpandedChange={setMetadataGenerationExpanded}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
+                onTransferSelection={handleRequestTransfer}
                 onDock={activeRootPath ? handleDockMetadataPanel : undefined}
                 />
               ) : null}

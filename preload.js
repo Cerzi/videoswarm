@@ -393,6 +393,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
           rootPath: payload?.rootPath,
           directory: payload?.directory ?? "",
           scope: payload?.scope,
+          instanceIds: Array.isArray(payload?.instanceIds)
+            ? payload.instanceIds
+            : null,
           destinationPath:
             typeof payload?.destinationPath === "string"
               ? payload.destinationPath

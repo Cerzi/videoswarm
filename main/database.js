@@ -1442,6 +1442,21 @@ function createMetadataStore(db) {
       `),
     ])
   );
+  // Transfers driven by an explicit selection name rows, not paths. Resolving
+  // those ids here keeps the renderer from asserting what a row contains: an id
+  // that is unknown, absent, or outside the named root simply yields no row.
+  const selectionExportRecordQuery = db.prepare(`
+    SELECT fi.id, fi.absolute_path, fi.relative_path, fi.size,
+      fi.mtime_ms, fi.fingerprint
+    FROM json_each(@instance_ids) requested
+    INNER JOIN file_instances fi ON fi.id = requested.value
+    INNER JOIN directories d ON d.id = fi.directory_id
+    WHERE fi.root_id = @root_id
+      AND fi.is_present != 0
+      AND d.is_present != 0
+    ORDER BY fi.relative_path COLLATE BINARY, fi.id
+    LIMIT @limit;
+  `);
   const fileInstancesByAbsolutePath = db.prepare(`
     SELECT * FROM file_instances WHERE absolute_path = ?;
   `);
@@ -2846,18 +2861,101 @@ function createMetadataStore(db) {
       ACCEPTED_COPY_MAX_PATH_BYTES,
       'Accepted copy path-byte limit'
     );
-    const queryParameters = {
-      root_id: row.id,
-      directory,
-      limit: maxRecords + 1,
+    const records = collectExportRecords(
+      acceptedExportRecordQueries[scope].iterate({
+        root_id: row.id,
+        directory,
+        limit: maxRecords + 1,
+      }),
+      { maxRecords, maxPathBytes, assertActive: options.assertActive }
+    );
+    return { root, directory, scope, records };
+  }
+
+  /**
+   * Snapshot an explicit set of file instances for transfer. Unlike the review
+   * export this imposes no scope or coverage requirement, because the caller
+   * has named exact rows rather than a region of the tree. Ids that no longer
+   * resolve inside this root are reported as unavailable rather than failing
+   * the whole request; the transfer already knows how to skip those.
+   */
+  function getSelectionExportSnapshot(rootPath, options = {}) {
+    assertOperationActive(options.assertActive);
+    const normalizedRoot = normalizeRootPath(rootPath);
+    const row = rootByPath.get(normalizedRoot);
+    if (!row) {
+      throw new ReviewExportError(
+        `Library root has not been indexed: ${normalizedRoot}`,
+        'REVIEW_EXPORT_ROOT_MISSING'
+      );
+    }
+    const requestedIds = [
+      ...new Set(
+        (Array.isArray(options.instanceIds) ? options.instanceIds : []).map(
+          (value) => {
+            const id = Number(value);
+            if (!Number.isSafeInteger(id) || id <= 0) {
+              throw new ReviewExportError(
+                'Every selected instance id must be a positive integer',
+                'SELECTION_EXPORT_INVALID_ID'
+              );
+            }
+            return id;
+          }
+        )
+      ),
+    ];
+    if (requestedIds.length === 0) {
+      throw new ReviewExportError(
+        'Select at least one clip to transfer',
+        'SELECTION_EXPORT_EMPTY'
+      );
+    }
+
+    const maxRecords = normalizeAcceptedExportReadLimit(
+      options.maxRecords,
+      ACCEPTED_COPY_MAX_MEDIA,
+      'Selection transfer media limit'
+    );
+    const maxPathBytes = normalizeAcceptedExportReadLimit(
+      options.maxPathBytes,
+      ACCEPTED_COPY_MAX_PATH_BYTES,
+      'Selection transfer path-byte limit'
+    );
+    if (requestedIds.length > maxRecords) {
+      throw new ReviewExportError(
+        `A transfer is limited to ${maxRecords.toLocaleString()} media files per operation`,
+        'ACCEPTED_COPY_TOO_MANY_MEDIA'
+      );
+    }
+
+    const records = collectExportRecords(
+      selectionExportRecordQuery.iterate({
+        root_id: row.id,
+        instance_ids: JSON.stringify(requestedIds),
+        limit: maxRecords + 1,
+      }),
+      { maxRecords, maxPathBytes, assertActive: options.assertActive }
+    );
+    return {
+      root: mapRootRow(row),
+      directory: '',
+      scope: 'all-descendants',
+      records,
+      requestedCount: requestedIds.length,
+      unavailableCount: Math.max(0, requestedIds.length - records.length),
     };
+  }
+
+  function collectExportRecords(
+    iterator,
+    { maxRecords, maxPathBytes, assertActive } = {}
+  ) {
     const records = [];
     let pathBytes = 0;
     let recordCount = 0;
 
-    for (const instance of acceptedExportRecordQueries[scope].iterate(
-      queryParameters
-    )) {
+    for (const instance of iterator) {
       recordCount += 1;
       if (recordCount > maxRecords) {
         throw new ReviewExportError(
@@ -2866,7 +2964,7 @@ function createMetadataStore(db) {
         );
       }
       if ((recordCount & 255) === 0) {
-        assertOperationActive(options.assertActive);
+        assertOperationActive(assertActive);
       }
 
       const absolutePath = String(instance.absolute_path || '');
@@ -2879,18 +2977,17 @@ function createMetadataStore(db) {
           'ACCEPTED_COPY_PATHS_TOO_LARGE'
         );
       }
-      const record = {
+      records.push({
         instanceId: Number(instance.id),
         absolutePath,
         relativePath,
         fingerprint: instance.fingerprint || null,
         size: Number(instance.size || 0),
         mtimeMs: Number(instance.mtime_ms || 0),
-      };
-      records.push(record);
+      });
     }
-    assertOperationActive(options.assertActive);
-    return { root, directory, scope, records };
+    assertOperationActive(assertActive);
+    return records;
   }
 
   function getFileInstanceById(instanceId) {
@@ -4091,6 +4188,7 @@ function createMetadataStore(db) {
     getLibraryTree,
     getCachedLibrarySnapshot,
     getAcceptedExportSnapshot,
+    getSelectionExportSnapshot,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,

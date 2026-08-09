@@ -199,5 +199,124 @@ if (!database || databaseLoadError) {
         code: 'ACCEPTED_COPY_PATHS_TOO_LARGE',
       }));
     });
+
+    describe('selection snapshots', () => {
+      it('resolves named instances regardless of review state', async () => {
+        const first = createFile('batch/first.mp4');
+        const second = createFile('batch/second.mp4');
+        const third = createFile('other/third.mp4');
+        const indexed = await indexAndComplete([first, second, third]);
+        // Nothing is Accepted; an explicit selection must not care.
+        expect(
+          store.getAcceptedExportSnapshot(rootPath, {
+            directory: '',
+            scope: 'all-descendants',
+          }).records
+        ).toHaveLength(0);
+
+        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+          instanceIds: [indexed[0].instance.id, indexed[2].instance.id],
+        });
+
+        expect(snapshot.records.map((record) => record.relativePath)).toEqual([
+          'batch/first.mp4',
+          'other/third.mp4',
+        ]);
+        expect(snapshot.requestedCount).toBe(2);
+        expect(snapshot.unavailableCount).toBe(0);
+      });
+
+      it('reports ids that no longer resolve instead of failing', async () => {
+        const clip = createFile('kept.mp4');
+        const removed = createFile('gone.mp4');
+        const indexed = await indexAndComplete([clip, removed]);
+        store.markFileMissing(removed.filePath, { rootPath });
+
+        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+          instanceIds: [
+            indexed[0].instance.id,
+            indexed[1].instance.id,
+            9_999_999,
+          ],
+        });
+
+        expect(snapshot.records).toHaveLength(1);
+        expect(snapshot.records[0].relativePath).toBe('kept.mp4');
+        // One absent instance plus one id that was never real.
+        expect(snapshot.unavailableCount).toBe(2);
+      });
+
+      it('ignores instances belonging to another root', async () => {
+        const clip = createFile('mine.mp4');
+        const indexed = await indexAndComplete([clip]);
+
+        const otherRoot = path.join(tempDir, 'other-library');
+        fs.mkdirSync(otherRoot, { recursive: true });
+        const otherPath = path.join(otherRoot, 'theirs.mp4');
+        fs.writeFileSync(otherPath, 'theirs');
+        const [otherIndexed] = await store.indexFiles({
+          rootPath: otherRoot,
+          entries: [{ filePath: otherPath, stats: fs.statSync(otherPath) }],
+        });
+
+        const snapshot = store.getSelectionExportSnapshot(rootPath, {
+          instanceIds: [indexed[0].instance.id, otherIndexed.instance.id],
+        });
+
+        expect(snapshot.records).toHaveLength(1);
+        expect(snapshot.records[0].relativePath).toBe('mine.mp4');
+        expect(snapshot.unavailableCount).toBe(1);
+      });
+
+      it('rejects an empty or malformed selection', async () => {
+        const clip = createFile('clip.mp4');
+        await indexAndComplete([clip]);
+
+        expect(() =>
+          store.getSelectionExportSnapshot(rootPath, { instanceIds: [] })
+        ).toThrowError(
+          expect.objectContaining({ code: 'SELECTION_EXPORT_EMPTY' })
+        );
+        expect(() =>
+          store.getSelectionExportSnapshot(rootPath, { instanceIds: [0] })
+        ).toThrowError(
+          expect.objectContaining({ code: 'SELECTION_EXPORT_INVALID_ID' })
+        );
+        expect(() =>
+          store.getSelectionExportSnapshot(rootPath, {
+            instanceIds: ['not-an-id'],
+          })
+        ).toThrowError(
+          expect.objectContaining({ code: 'SELECTION_EXPORT_INVALID_ID' })
+        );
+      });
+
+      it('bounds a selection the same way as a review export', async () => {
+        const entries = [
+          createFile('a.mp4'),
+          createFile('b.mp4'),
+          createFile('c.mp4'),
+        ];
+        const indexed = await indexAndComplete(entries);
+        const instanceIds = indexed.map((entry) => entry.instance.id);
+
+        expect(() =>
+          store.getSelectionExportSnapshot(rootPath, {
+            instanceIds,
+            maxRecords: 2,
+          })
+        ).toThrowError(
+          expect.objectContaining({ code: 'ACCEPTED_COPY_TOO_MANY_MEDIA' })
+        );
+        expect(() =>
+          store.getSelectionExportSnapshot(rootPath, {
+            instanceIds,
+            maxPathBytes: 8,
+          })
+        ).toThrowError(
+          expect.objectContaining({ code: 'ACCEPTED_COPY_PATHS_TOO_LARGE' })
+        );
+      });
+    });
   });
 }

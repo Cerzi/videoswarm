@@ -81,6 +81,7 @@ const MetadataPanel = forwardRef((
     onGenerationExpandedChange,
     focusToken,
     onFocusSelection,
+    onTransferSelection,
     onDock,
     selectionKey,
     anchorId,
@@ -704,6 +705,20 @@ const MetadataPanel = forwardRef((
                 <span>Focus</span>
               </button>
             )}
+            {typeof onTransferSelection === "function" &&
+            derivedSelectionCount > 0 ? (
+              <button
+                type="button"
+                className="metadata-panel__button metadata-panel__button--compact"
+                onClick={() => onTransferSelection(selectedVideos)}
+                aria-label={`Move or copy ${derivedSelectionCount} selected clip${
+                  derivedSelectionCount === 1 ? "" : "s"
+                }`}
+                title="Move or copy the selection to another folder"
+              >
+                <span>Move/Copy</span>
+              </button>
+            ) : null}
           </div>
           <button
             type="button"

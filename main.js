@@ -78,6 +78,7 @@ const {
   assertPlainObject,
   assertPngDataUrlDimensions,
   assertString,
+  assertInstanceIdArray,
   assertStringArray,
   createIpcTrustValidator,
   createPathAuthority,
@@ -4169,11 +4170,27 @@ const reviewCopyAcceptedCoordinator =
       rootPath,
       directory,
       scope,
+      instanceIds,
       maxRecords,
       maxPathBytes,
       assertActive,
     }) =>
-      context.metadataStore.getAcceptedExportSnapshot(rootPath, {
+      // An explicit selection resolves rows by id; otherwise the review state
+      // is still the only thing that decides what gets transferred.
+      Array.isArray(instanceIds)
+        ? context.metadataStore.getSelectionExportSnapshot(rootPath, {
+            instanceIds,
+            maxRecords: Math.min(
+              ACCEPTED_COPY_MAX_MEDIA,
+              Math.max(1, Number(maxRecords) || ACCEPTED_COPY_MAX_MEDIA)
+            ),
+            maxPathBytes: Math.min(
+              ACCEPTED_COPY_MAX_PATH_BYTES,
+              Math.max(1, Number(maxPathBytes) || ACCEPTED_COPY_MAX_PATH_BYTES)
+            ),
+            assertActive,
+          })
+        : context.metadataStore.getAcceptedExportSnapshot(rootPath, {
         directory,
         scope,
         maxRecords: Math.min(
@@ -4299,11 +4316,22 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
         minChars: 8,
         maxChars: 128,
       });
+  // Naming rows is not the same as asserting what they contain: the ids are
+  // bounded here and resolved against the catalog in the main process, so a
+  // renderer still cannot introduce a path of its own choosing.
+  const instanceIds = payload?.instanceIds === undefined ||
+    payload?.instanceIds === null
+    ? null
+    : assertInstanceIdArray(payload.instanceIds, {
+        name: "transfer selection",
+        maxEntries: ACCEPTED_COPY_MAX_MEDIA,
+      });
   return reviewCopyAcceptedCoordinator.prepare({
     owner: event.sender,
     rootPath: requestedRoot,
     directory,
     scope,
+    instanceIds,
     destinationPath,
     layout,
     reusePlanId,

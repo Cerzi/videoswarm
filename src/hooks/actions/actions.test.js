@@ -639,4 +639,38 @@ describe("actionRegistry → COPY_LAST_FRAME", () => {
       notify.mock.calls.some((call) => /failed to copy last frame/i.test(call[0]))
     ).toBe(true);
   });
+
+  it("opens the transfer dialog only for indexed local clips", async () => {
+    const notify = vi.fn();
+    const onRequestTransfer = vi.fn();
+    const run = (videos) =>
+      actionRegistry[ActionIds.TRANSFER_FILES](videos, {
+        notify,
+        onRequestTransfer,
+      });
+
+    await run([
+      { id: "a", instanceId: 7, isElectronFile: true, name: "a.mp4" },
+      { id: "b", isElectronFile: false, name: "web.mp4" },
+    ]);
+    // The dialog receives the whole selection so it can report the exclusions.
+    expect(onRequestTransfer).toHaveBeenCalledTimes(1);
+    expect(onRequestTransfer.mock.calls[0][0]).toHaveLength(2);
+
+    onRequestTransfer.mockClear();
+    await run([{ id: "b", isElectronFile: false, name: "web.mp4" }]);
+    expect(onRequestTransfer).not.toHaveBeenCalled();
+    expect(
+      notify.mock.calls.some((call) => /indexed local clips/i.test(call[0]))
+    ).toBe(true);
+
+    onRequestTransfer.mockClear();
+    await actionRegistry[ActionIds.TRANSFER_FILES](
+      [{ id: "a", instanceId: 7, isElectronFile: true }],
+      { notify }
+    );
+    expect(
+      notify.mock.calls.some((call) => /transfers are unavailable/i.test(call[0]))
+    ).toBe(true);
+  });
 });

@@ -15,6 +15,7 @@ export const ActionIds = {
     SHOW_IN_FOLDER: 'show-in-folder',
     FILE_PROPERTIES: 'file-properties',
     MOVE_TO_TRASH: 'move-to-trash',
+    TRANSFER_FILES: 'transfer-files',
 };
 
 let frameCaptureSequence = 0;
@@ -355,6 +356,26 @@ export const actionRegistry = {
         // Delegate a proper modal to UI if you have one
         if (showProperties) showProperties(videos);
         else notify(`Properties: ${videos.map(v => v.name).join(', ')}`, 'info');
+    },
+
+    [ActionIds.TRANSFER_FILES]: async (videos, { notify, onRequestTransfer }) => {
+        if (typeof onRequestTransfer !== 'function') {
+          notify('Transfers are unavailable', 'error');
+          return;
+        }
+        // Only indexed local clips can be named to the catalog by id; the
+        // dialog reports the rest rather than pretending they were included.
+        const transferable = videos.filter(
+          (video) =>
+            video?.isElectronFile &&
+            Number.isSafeInteger(Number(video.instanceId)) &&
+            Number(video.instanceId) > 0
+        );
+        if (!transferable.length) {
+          notify('Select indexed local clips to move or copy', 'error');
+          return;
+        }
+        onRequestTransfer(videos);
     },
 
     [ActionIds.MOVE_TO_TRASH]: async (
