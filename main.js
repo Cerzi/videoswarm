@@ -4227,6 +4227,38 @@ ipcMain.handle("library:list-roots", async (_event, options = {}) => {
   }));
 });
 
+ipcMain.handle("library:list-tags", async (_event, options = {}) => {
+  assertPlainObject(options, "tag catalog options");
+  return runLibraryCatalogOperation((metadataStore) => ({
+    tags: metadataStore.listTagCatalog(),
+  }));
+});
+
+// A tag view spans roots, so it returns instances from several at once. Each
+// record still names its owning root, and playback authorization continues to
+// happen per root through the existing on-demand regrant rather than being
+// implied by appearing in a view.
+ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
+  assertPlainObject(payload, "tag view request");
+  const tagNames = assertStringArray(payload?.tags, {
+    name: "tag view tags",
+    minEntries: 1,
+    maxEntries: 16,
+    item: { minChars: 1, maxChars: IPC_LIMITS.maxShortStringChars, trim: true },
+    dedupe: true,
+  });
+  return runLibraryCatalogOperation((metadataStore) => {
+    const snapshot = metadataStore.getTaggedLibrarySnapshot({ tagNames });
+    return {
+      tags: snapshot.tags,
+      records: snapshot.records,
+      truncated: snapshot.truncated,
+      recordLimit: snapshot.recordLimit,
+      rootPaths: snapshot.rootPaths,
+    };
+  });
+});
+
 // Catalog listing is intentionally not itself an unbounded authority grant.
 // When the user opens an indexed root, grant that exact database-known root
 // on demand and let the bounded LRU retain the roots that are actually used.
