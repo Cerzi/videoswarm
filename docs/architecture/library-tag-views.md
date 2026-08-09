@@ -1,6 +1,6 @@
 # Library-wide Tag Views
 
-Status: **Unimplemented — specification**
+Status: **Implemented**
 Last updated: 2026-08-09
 
 ## Summary
@@ -34,7 +34,7 @@ smart views — naming, saving, applying, deleting — is untouched.
 
 ## 1. The query
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 `getCachedLibrarySnapshot(rootPath)` already builds the complete renderer
 collection — instance id, paths, size, mtime, created time, fingerprint, tags,
@@ -62,7 +62,7 @@ inventing a second one.
 
 ## 2. Snapshot, not a live collection
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 A library-wide view is a **snapshot with an explicit refresh**, not a watched
 collection.
@@ -91,7 +91,7 @@ collection is a point-in-time read.
 
 ## 3. A collection without a root
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 The renderer already models a rootless collection: `collectionOwnerKey` is
 `root:${activeRootPath}` or `web:${webCollectionEpoch}` for drag-dropped files.
@@ -123,7 +123,7 @@ existing indexed-root regrant path.
 
 ## 4. Transferring a cross-root selection
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 This is a real gap the feature exposes rather than creates. Selection transfer
 resolves instance ids with `WHERE fi.root_id = @root_id`, so a selection
@@ -131,8 +131,14 @@ spanning roots currently reports the other roots' clips as unavailable. It
 degrades honestly, but gathering scattered clips and sending them somewhere is
 exactly what a library view is for, so honest failure is not good enough.
 
-The selection is grouped by owning root and planned per root, and the dialog
-reports the combined totals. Layout keeps its meaning per root: **structured**
+One plan spans the roots rather than one plan per root: the planner already
+worked on root-relative records, so the change is that the coordinator derives
+its source roots from the resolved rows, authorizes each as a separate grant,
+and refuses a destination inside *any* of them. A selection now carries no root
+at all — a rootless tag view has none to send — so the rows are resolved first
+and the roots follow from them. Containment and the relative-path identity check
+are made against each record's own root, so a record claiming a root it does not
+physically live under is rejected rather than accepted by a neighbour's grant. Layout keeps its meaning per root: **structured**
 recreates each clip's path relative to *its own* root, and **flat** is unchanged
 and becomes the more useful default for a multi-root gather.
 

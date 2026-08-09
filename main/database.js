@@ -1509,14 +1509,14 @@ function createMetadataStore(db) {
   // that is unknown, absent, or outside the named root simply yields no row.
   const selectionExportRecordQuery = db.prepare(`
     SELECT fi.id, fi.absolute_path, fi.relative_path, fi.size,
-      fi.mtime_ms, fi.fingerprint
+      fi.mtime_ms, fi.fingerprint, lr.root_path AS owner_root_path
     FROM json_each(@instance_ids) requested
     INNER JOIN file_instances fi ON fi.id = requested.value
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
     INNER JOIN directories d ON d.id = fi.directory_id
-    WHERE fi.root_id = @root_id
-      AND fi.is_present != 0
+    WHERE fi.is_present != 0
       AND d.is_present != 0
-    ORDER BY fi.relative_path COLLATE BINARY, fi.id
+    ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE BINARY, fi.id
     LIMIT @limit;
   `);
   const fileInstancesByAbsolutePath = db.prepare(`
@@ -3067,16 +3067,8 @@ function createMetadataStore(db) {
    * resolve inside this root are reported as unavailable rather than failing
    * the whole request; the transfer already knows how to skip those.
    */
-  function getSelectionExportSnapshot(rootPath, options = {}) {
+  function getSelectionExportSnapshot(options = {}) {
     assertOperationActive(options.assertActive);
-    const normalizedRoot = normalizeRootPath(rootPath);
-    const row = rootByPath.get(normalizedRoot);
-    if (!row) {
-      throw new ReviewExportError(
-        `Library root has not been indexed: ${normalizedRoot}`,
-        'REVIEW_EXPORT_ROOT_MISSING'
-      );
-    }
     const requestedIds = [
       ...new Set(
         (Array.isArray(options.instanceIds) ? options.instanceIds : []).map(
@@ -3119,19 +3111,20 @@ function createMetadataStore(db) {
 
     const records = collectExportRecords(
       selectionExportRecordQuery.iterate({
-        root_id: row.id,
         instance_ids: JSON.stringify(requestedIds),
         limit: maxRecords + 1,
       }),
       { maxRecords, maxPathBytes, assertActive: options.assertActive }
     );
     return {
-      root: mapRootRow(row),
       directory: '',
       scope: 'all-descendants',
       records,
       requestedCount: requestedIds.length,
       unavailableCount: Math.max(0, requestedIds.length - records.length),
+      // Every root the selection actually touches. The transfer authorizes and
+      // containment-checks each of these rather than assuming one source root.
+      rootPaths: [...new Set(records.map((record) => record.rootPath))],
     };
   }
 
@@ -3167,6 +3160,7 @@ function createMetadataStore(db) {
       }
       records.push({
         instanceId: Number(instance.id),
+        rootPath: instance.owner_root_path || null,
         absolutePath,
         relativePath,
         fingerprint: instance.fingerprint || null,
