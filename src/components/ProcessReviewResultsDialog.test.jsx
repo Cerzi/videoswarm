@@ -74,6 +74,119 @@ describe("ProcessReviewResultsDialog", () => {
     expect(props.onTrashRejects).toHaveBeenCalledWith([videos[2]]);
   });
 
+  it("shows reject trashing progress while the operation runs", async () => {
+    const pending = deferred();
+    const props = dialogProps({
+      onTrashRejects: vi.fn(() => pending.promise),
+    });
+    const { rerender } = render(<ProcessReviewResultsDialog {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move 1 to Bin" }));
+    await waitFor(() =>
+      expect(props.onTrashRejects).toHaveBeenCalledTimes(1)
+    );
+
+    rerender(
+      <ProcessReviewResultsDialog
+        {...props}
+        trashProgress={{
+          operationId: 1,
+          processed: 40,
+          total: 120,
+          moved: 39,
+          failed: 1,
+          finished: false,
+        }}
+      />
+    );
+
+    const bar = screen.getByRole("progressbar", {
+      name: "Reject processing progress",
+    });
+    expect(bar).toHaveAttribute("aria-valuenow", "40");
+    expect(bar).toHaveAttribute("aria-valuemax", "120");
+    expect(screen.getByText(/Moved 40 of 120 files to Bin/)).toBeInTheDocument();
+    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+
+    await act(async () => {
+      pending.resolve(undefined);
+      await pending.promise;
+    });
+
+    // The bar belongs to the running action and must not linger after it.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("progressbar", { name: "Reject processing progress" })
+      ).toBeNull()
+    );
+  });
+
+  it("reuses a recent destination without opening the native picker", async () => {
+    const props = dialogProps({
+      onListTransferDestinations: vi.fn().mockResolvedValue([
+        { path: "/exports/keepers", label: "keepers" },
+        { path: "/archive/2026", label: "2026" },
+      ]),
+    });
+    render(<ProcessReviewResultsDialog {...props} />);
+
+    const recent = await screen.findByRole("button", { name: "keepers" });
+    expect(recent).toHaveAttribute("title", "/exports/keepers");
+    fireEvent.click(recent);
+
+    await waitFor(() =>
+      expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith(
+        "/exports/keepers",
+        "structured",
+        null
+      )
+    );
+  });
+
+  it("re-runs preflight against the same destination when layout changes", async () => {
+    const onTransferLayoutChange = vi.fn();
+    const props = dialogProps({ onTransferLayoutChange });
+    const { rerender } = render(<ProcessReviewResultsDialog {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Copy 1 file/ })).toBeEnabled()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Flat" }));
+    expect(onTransferLayoutChange).toHaveBeenCalledWith("flat");
+
+    // The prepared plan id is handed back so the chosen folder is reused
+    // instead of reopening the native picker.
+    await waitFor(() =>
+      expect(props.onPrepareAcceptedCopy).toHaveBeenLastCalledWith(
+        null,
+        "flat",
+        "copy-plan-1"
+      )
+    );
+
+    rerender(
+      <ProcessReviewResultsDialog {...props} transferLayout="flat" />
+    );
+    expect(screen.getByRole("button", { name: "Flat" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("omits the recent list when no destination has been used yet", async () => {
+    const props = dialogProps({
+      onListTransferDestinations: vi.fn().mockResolvedValue([]),
+    });
+    render(<ProcessReviewResultsDialog {...props} />);
+
+    await waitFor(() =>
+      expect(props.onListTransferDestinations).toHaveBeenCalled()
+    );
+    expect(screen.queryByText("Recent")).toBeNull();
+  });
+
   it("disables result actions until the supplied scope is ready", () => {
     const props = dialogProps({
       processingReady: false,
@@ -132,7 +245,12 @@ describe("ProcessReviewResultsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
 
     await waitFor(() => {
-      expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith();
+      // A null destination means "open the native picker" rather than reuse.
+      expect(props.onPrepareAcceptedCopy).toHaveBeenCalledWith(
+        null,
+        "structured",
+        null
+      );
       expect(screen.getByRole("button", { name: /Copy 1 file/ })).toBeEnabled();
     });
     expect(

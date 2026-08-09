@@ -910,11 +910,20 @@ harnesses are now **Implemented** in Sections 1 and 8.
 8. **Implemented** — Add database, cancellation, copied-instance, recursive
    reconciliation, watcher-session, and polling-baseline regressions.
 
-The following adjacent work remains **Unimplemented**:
+Content identity is fingerprint `v2`, which excludes creation time so ordinary
+byte-identical copies remain distinct instances while sharing one content row
+and its metadata. Legacy `v1` rows migrate lazily and only on exact proof that
+the bytes are unchanged; see the deferred-research section for the migration
+and merge rules.
 
-- Fingerprint format `v1` includes creation time. Ordinary byte-identical
-  copies are safely represented as distinct instances but may occupy distinct
-  content rows; a versioned content-digest migration is deferred.
+A deliberate removal is distinguished from an unexplained one. `file_instances`
+carries a `missing_reason`, set to `trashed` or `moved` by the action that
+caused it, and directory aggregates count those separately from `missing_count`
+so the sidebar does not report intentional processing as reference loss. The
+row is always retained, because retaining it is what keeps the content's review
+state, rating, and tags reachable. A watcher that observes the unlink first
+records no reason; the action may later explain that absence but may never
+relabel one that is already explained.
 
 Watcher aggregate maintenance is now **Implemented** as a bounded, debounced,
 serialized refresh lane. A deterministic 1,000-event burst regression verifies
@@ -1264,10 +1273,17 @@ The core large-library architecture in Sections 1-9 is closed and implemented.
 The items below are deliberately deferred research or platform-validation
 work, not unfinished parent deliverables. They should be reopened only when
 their stated evidence exists:
-- **Versioned content identity:** fingerprint `v1` includes creation time, so
-  byte-identical copies may occupy distinct content rows. A creation-time-free
-  content digest needs an explicit schema/data migration and compatibility
-  period; it is not a safe opportunistic rewrite.
+- **Versioned content identity:** now **Implemented** as fingerprint `v2`. The
+  digest no longer absorbs creation time, so byte-identical copies share one
+  content row and inherit its review state, rating, and tags. Migration is
+  lazy and exact rather than a bulk rewrite: indexing computes both digests
+  from one read, and a stored `v1` row is re-keyed onto `v2` only when the
+  recomputed legacy digest still matches, which is proof the bytes are
+  unchanged. A genuinely edited file therefore never inherits the previous
+  content's decisions. Because two `v1` rows can collapse onto one `v2` row,
+  the re-key merges instead of overwriting: review state and rating resolve by
+  recency, tags become a union. Unchanged files are re-read once on the first
+  scan after upgrade; that cost is the compatibility period.
 - **Causal adaptive derating:** automatic playback reduction remains
   unimplemented because current whole-app telemetry cannot attribute pressure
   specifically to decoding. Balanced and Adaptive Motion retain stable
@@ -1280,11 +1296,12 @@ their stated evidence exists:
   masonry remain an optional UX enhancement. The implemented folder tree and
   group strip already provide navigation and visible grouping without changing
   layout geometry.
-- **Expanded review-result actions:** metadata transfer for copied content and
-  streaming reject processing above the current 2,000-local-reject safety
-  bound remain deferred. Accepted Move/Copy—including collision preflight,
-  exclusive no-overwrite writes, source identity checks, and bounded
-  progress/cancellation—is implemented; see
+- **Expanded review-result actions:** streaming reject processing above the
+  current 2,000-local-reject safety bound remains deferred. Accepted Move/Copy—
+  including collision preflight, exclusive no-overwrite writes, source identity
+  checks, flat/structured layout, reusable destinations, and bounded
+  progress/cancellation—is implemented, and metadata now follows copied content
+  through fingerprint `v2` rather than needing a separate transfer step; see
   [`review-workflow.md`](review-workflow.md).
 - **Cross-platform packaged validation:** Linux source-production smoke
   exercises the security boundary and custom media ranges. In addition, CI and

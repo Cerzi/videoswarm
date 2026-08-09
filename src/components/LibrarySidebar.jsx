@@ -110,6 +110,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
   const reviewedCount = Math.max(0, Number(node?.reviewedCount) || 0);
   const videoCount = Math.max(0, Number(node?.videoCount) || 0);
   const missingCount = Math.max(0, Number(node?.missingCount) || 0);
+  const removedCount = Math.max(0, Number(node?.removedCount) || 0);
 
   return (
     <li
@@ -173,6 +174,14 @@ const FolderTreeRow = memo(function FolderTreeRow({
                 title={`${missingCount} indexed video${missingCount === 1 ? " is" : "s are"} missing`}
               >
                 {missingCount.toLocaleString()} missing
+              </span>
+            ) : null}
+            {removedCount > 0 ? (
+              <span
+                className="library-folder-tree__removed-count"
+                title={`${removedCount} indexed video${removedCount === 1 ? " was" : "s were"} moved or sent to Bin from here. Ratings, tags, and review decisions are kept.`}
+              >
+                {removedCount.toLocaleString()} removed
               </span>
             ) : null}
           </span>

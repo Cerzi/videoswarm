@@ -339,6 +339,84 @@
 .review-results-dialog__progress--copy span {
   background: linear-gradient(90deg, #3b82f6, var(--color-accent));
 }
+.review-results-layout {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.review-results-layout__option {
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+}
+.review-results-layout__option.is-active {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.16);
+  color: #fff;
+}
+.review-results-layout__option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.review-results-recent-destinations {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+}
+.review-results-recent-destinations > span {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.4);
+  flex: none;
+}
+.review-results-recent-destinations ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.review-results-recent-destinations button {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-results-recent-destinations button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.review-results-recent-destinations button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.review-results-trash-progress {
+  margin-top: 0.6rem;
+}
+.review-results-trash-progress p {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+}
+.review-results-dialog__progress--trash span {
+  background: linear-gradient(90deg, #f08c8c, #e03131);
+}
+
 .review-results-copy-running > button {
   display: block;
   margin-left: auto;

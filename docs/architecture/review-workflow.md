@@ -208,19 +208,57 @@ bounded detailed failure list remains visible through aggregate counts.
 
 Copy never changes source files. Move changes only source files whose exclusive
 destination copy and post-copy identity check succeeded; the normal watcher
-reconciles those removals with the library index. Neither operation changes
-review/rating/tag metadata, automatically registers the destination as a
-library, or transfers profile metadata. Profile changes, owner
+reconciles those removals with the library index, and the coordinator reports
+each removed source to the catalog in bounded batches so the transfer is
+recorded as a deliberate removal rather than a file that went missing. Neither
+operation changes review/rating/tag metadata or automatically registers the
+destination as a library. Metadata is not copied to the destination either;
+under content-digest v2 an indexed destination simply resolves to the same
+content identity and therefore already carries the same review state, rating,
+and tags. Profile changes, owner
 destruction, source-root invalidation, application shutdown, and relaunch first
 cancel the job and then drain its bounded in-flight work. Stale progress and
 completion events are ignored by owner, profile generation, and job token.
+
+## Transfer destinations and layout
+
+Status: **Implemented**
+
+The destination picker reopens at the last prepared destination instead of a
+fixed Documents path, and the transfer dialog offers a bounded profile-local
+list of recently used destinations. That list is host-owned: the renderer may
+name a destination, but the coordinator honours it only when it matches an entry
+the host itself recorded, and an unrecognised path silently falls back to the
+native picker rather than failing. Only a destination that survived
+canonicalisation and preflight is recorded.
+
+Transfer layout is a profile setting. **Keep folders** (the default) recreates
+each clip's path relative to its library root; **Flat** writes basenames
+directly into the destination. Flat therefore makes same-named clips from
+different source folders collide, which is reported through the existing
+in-plan and on-disk collision preflight rather than resolved by overwriting.
+Changing the layout re-runs preflight because destination paths change; the
+already-chosen folder is reused through the superseded plan's id, so the path
+never crosses into the renderer.
+
+## Reject processing progress
+
+Status: **Implemented**
+
+Trashing is one platform call per file and cannot be made fast — on Linux each
+item is a D-Bus round trip to the desktop portal, which largely serialises, so
+the bounded worker pool hides latency rather than multiplying throughput.
+Progress is therefore reported instead of promised away: `bulk-move-to-trash`
+emits throttled per-item events carrying processed, total, moved, and failed
+counts plus a terminal event. Events are ordered by an operation id so a
+superseded run cannot rewind a newer one's bar, are bound to the same
+owner/profile as the operation, and a reporting fault can never abort or alter
+destructive work already under way.
 
 ## Deferred work
 
 Status: **Unimplemented**
 
-- Metadata transfer for copied content. Fingerprint v1 includes creation time,
-  so a copied instance cannot yet be promised the same content identity.
 - Result sets above 2,000 rejects without narrowing folder scope. A future
   main-owned streaming job would need bounded progress and cancellation while
   retaining the native confirmation and identity-binding guarantees.

@@ -18,6 +18,7 @@ const ACCEPTED_COPY_MAX_PLANS = 8;
 const ACCEPTED_COPY_PLAN_TTL_MS = 10 * 60 * 1000;
 const ACCEPTED_COPY_MAX_SAMPLES = 100;
 const ACCEPTED_COPY_PROGRESS_INTERVAL_MS = 100;
+const REMOVED_SOURCE_FLUSH_SIZE = 256;
 
 const ACCEPTED_COPY_CODES = Object.freeze({
   BUSY: "ACCEPTED_COPY_BUSY",
@@ -132,12 +133,30 @@ function portablePathFromNative(rootPath, filePath, pathImpl = path) {
   );
 }
 
-function destinationForRelative(destinationRoot, relativePath, pathImpl = path) {
+function normalizeTransferLayout(value) {
+  return value === "flat" ? "flat" : "structured";
+}
+
+/**
+ * Structured keeps each clip's path relative to its library root, so the source
+ * folder tree is recreated under the destination. Flat drops that tree and
+ * writes basenames directly, which makes same-named clips from different source
+ * folders collide - deliberately, so the existing preflight reports them
+ * instead of one silently overwriting another.
+ */
+function destinationForRelative(
+  destinationRoot,
+  relativePath,
+  pathImpl = path,
+  layout = "structured"
+) {
   const normalized = normalizeReviewExportRelativePath(relativePath);
-  const destination = pathImpl.resolve(
-    destinationRoot,
-    ...normalized.split("/")
-  );
+  const segments = normalized.split("/");
+  const targetSegments =
+    normalizeTransferLayout(layout) === "flat"
+      ? [segments[segments.length - 1]]
+      : segments;
+  const destination = pathImpl.resolve(destinationRoot, ...targetSegments);
   if (!isPathInside(destinationRoot, destination, pathImpl)) {
     throw new AcceptedCopyError(
       "A copy target escapes the selected destination",
@@ -383,6 +402,22 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
   const emitProgress = typeof options.emitProgress === "function"
     ? options.emitProgress
     : () => {};
+  // A Move deletes its sources. The catalog is told which ones, and why, so a
+  // deliberate transfer is not later reported as files that went missing.
+  const onSourcesRemoved = typeof options.onSourcesRemoved === "function"
+    ? options.onSourcesRemoved
+    : () => {};
+  // Destination reuse is host-owned on both sides: the host decides which
+  // paths are offered back, and the host records new ones after a successful
+  // preflight. Neither is inferred from renderer input.
+  const listReusableDestinations =
+    typeof options.listReusableDestinations === "function"
+      ? options.listReusableDestinations
+      : () => [];
+  const onDestinationPrepared =
+    typeof options.onDestinationPrepared === "function"
+      ? options.onDestinationPrepared
+      : () => {};
   const fsPromises = options.fsPromises || fs.promises;
   const pathImpl = options.pathImpl || path;
   const logger = options.logger || null;
@@ -705,7 +740,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       const destinationPath = destinationForRelative(
         plan.destinationRoot,
         job.relativePath,
-        pathImpl
+        pathImpl,
+        plan.layout
       );
       const destinationKey = platformPathKey(destinationPath, caseInsensitivePaths);
       // Destination case sensitivity may differ from the source volume (for
@@ -779,6 +815,58 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     };
   }
 
+  /**
+   * Turn a renderer-named destination into a usable path only when the host's
+   * own record of previously used destinations contains it. An unknown path is
+   * ignored rather than rejected, so the flow simply falls back to the native
+   * picker instead of failing.
+   */
+  async function resolveReusableDestination({
+    owner,
+    context,
+    requestedDestination,
+  }) {
+    if (typeof requestedDestination !== "string" || !requestedDestination.trim()) {
+      return null;
+    }
+    const requested = pathImpl.resolve(requestedDestination.trim());
+    let known = [];
+    try {
+      known = (await listReusableDestinations({ owner, context })) || [];
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(known)) return null;
+    const match = known.find(
+      (candidate) =>
+        typeof candidate === "string" &&
+        pathImpl.resolve(candidate) === requested
+    );
+    return match ? requested : null;
+  }
+
+  /**
+   * Read the destination from a prepared plan that this request replaces, then
+   * retire it. Ownership is required, so one renderer cannot inherit another's
+   * destination, and the path never crosses the process boundary.
+   */
+  function takeSupersededDestination(reusePlanId, owner) {
+    if (typeof reusePlanId !== "string" || !reusePlanId) return null;
+    const previous = plans.get(reusePlanId);
+    if (
+      !previous ||
+      previous.owner !== owner ||
+      previous.state !== "prepared" ||
+      typeof previous.destinationRoot !== "string" ||
+      !previous.destinationRoot
+    ) {
+      return null;
+    }
+    const destinationRoot = previous.destinationRoot;
+    disposePlan(previous);
+    return destinationRoot;
+  }
+
   async function runPrepare(request = {}) {
     let context = null;
     let plan = null;
@@ -838,17 +926,39 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       assertPlanActive(plan, "root-loaded");
       assertReviewExportCoverage(initialRoot, directory, scope);
 
-      const pickerResult = await showDirectoryPicker({
-        owner,
-        context,
-        root: initialRoot,
-        rootPath: plan.sourceRoot,
-        directory,
-        scope,
-        request,
-      });
-      assertPlanActive(plan, "picker-closed");
-      const selectedDirectory = resolvePickedDirectory(pickerResult);
+      // Re-running preflight for an existing plan (a layout change) must not
+      // make the user pick the same folder again. The path is read from the
+      // superseded plan inside the host, so it is never handed to the renderer.
+      let selectedDirectory = takeSupersededDestination(
+        request?.reusePlanId,
+        owner
+      );
+
+      // A destination the renderer names is only honoured when the host
+      // recognises it as one this profile already used. Authority for which
+      // paths are reusable stays outside the renderer; the shortcut just skips
+      // re-navigating to somewhere the user has already chosen before.
+      if (!selectedDirectory) {
+        selectedDirectory = await resolveReusableDestination({
+          owner,
+          context,
+          requestedDestination: request?.destinationPath ?? null,
+        });
+      }
+      assertPlanActive(plan, "destination-resolved");
+      if (!selectedDirectory) {
+        const pickerResult = await showDirectoryPicker({
+          owner,
+          context,
+          root: initialRoot,
+          rootPath: plan.sourceRoot,
+          directory,
+          scope,
+          request,
+        });
+        assertPlanActive(plan, "picker-closed");
+        selectedDirectory = resolvePickedDirectory(pickerResult);
+      }
       if (!selectedDirectory) {
         disposePlan(plan);
         return {
@@ -872,6 +982,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         );
       }
       plan.destinationRoot = destination.path;
+      plan.layout = normalizeTransferLayout(request?.layout);
       plan.destinationIdentity = destination.identity;
       plan.destinationLabel = pathImpl.basename(destination.path) || "Destination";
 
@@ -922,6 +1033,20 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         totalBytes: prepared.totalBytes,
       }, true);
 
+      // Only a destination that survived canonicalisation and preflight is
+      // worth offering again, so it is recorded here rather than at selection.
+      try {
+        onDestinationPrepared({
+          owner,
+          context,
+          destinationPath: plan.destinationRoot,
+        });
+      } catch (error) {
+        logger?.warn?.("[copy-accepted] Failed to record destination", {
+          code: safeErrorCode(error),
+        });
+      }
+
       const copyableCount = plan.jobs.reduce(
         (count, job) => count + Number(!job.collision),
         0
@@ -934,6 +1059,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         generation: context?.generation ?? null,
         expiresAt: plan.expiresAt,
         destinationLabel: plan.destinationLabel,
+        layout: plan.layout,
         mediaCount: plan.totalMedia,
         totalMedia: plan.totalMedia,
         totalFiles:
@@ -1096,6 +1222,23 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     let copiedMedia = 0;
     let bytesCopied = 0;
     let processed = plan.preflightFailureCount + (plan.missingCount || 0);
+    // Reporting removals in bounded batches keeps a large Move from holding
+    // every source path in memory, and keeps a cancelled run's completed
+    // transfers recorded rather than lost.
+    const removedSources = [];
+    const flushRemovedSources = (activePlan) => {
+      if (removedSources.length === 0) return;
+      const batch = removedSources.splice(0, removedSources.length);
+      try {
+        onSourcesRemoved({ plan: activePlan, paths: batch, reason: "moved" });
+      } catch (error) {
+        // The filesystem outcome stays authoritative; a catalog hiccup must not
+        // fail a transfer that already happened.
+        logger?.warn?.("[copy-accepted] Failed to record moved sources", {
+          code: safeErrorCode(error),
+        });
+      }
+    };
     const runnable = [];
     for (const job of plan.jobs) {
       if (job.collision) {
@@ -1163,6 +1306,10 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           }
           if (moving) {
             await fsPromises.unlink(job.sourcePath);
+            removedSources.push(job.sourcePath);
+            if (removedSources.length >= REMOVED_SOURCE_FLUSH_SIZE) {
+              flushRemovedSources(plan);
+            }
           }
           // The native copy may finish concurrently with cancellation. It is a
           // completed partial result and is intentionally not rolled back.
@@ -1209,6 +1356,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     ).catch((error) => {
       if (!plan.controller.signal.aborted) throw error;
     });
+
+    flushRemovedSources(plan);
 
     const cancelled = plan.controller.signal.aborted;
     const result = {
@@ -1491,4 +1640,5 @@ module.exports = {
   destinationForRelative,
   isPathInside,
   mapBounded,
+  normalizeTransferLayout,
 };

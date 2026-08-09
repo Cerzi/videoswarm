@@ -159,9 +159,13 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   `ffprobe`; exact adjacent JSON sidecars remain the fallback. Arbitrary custom
   nodes and visual-workflow-only composition may produce a transparent partial
   result rather than a guessed prompt.
-- Accepted-clip Move/Copy does not transfer Video Swarm metadata and never
-  overwrites an existing destination.
-- Reject processing is limited to 2,000 local files per scoped batch.
+- Accepted-clip Move/Copy never overwrites an existing destination. Ratings,
+  tags, and review decisions follow the clip's content, so they reappear if the
+  destination is also an indexed library; they are not written into the files
+  themselves.
+- Reject processing is limited to 2,000 local files per scoped batch, and
+  deleting a large reject set is bounded by the desktop trash service rather
+  than by Video Swarm, so it reports progress instead of running instantly.
 - The app is designed primarily for many short clips. Long, high-resolution,
   or uncapped workloads remain hardware-sensitive even though 1,000- and
   6,000-item library gates are covered.
@@ -194,7 +198,7 @@ Planned for upcoming versions:
 - A synchronized 2–4 clip comparison workspace
 - A packaged cross-platform embedded-metadata reader
 - Evidence-gated Linux motion sweep and further playback profiling
-- Copied-metadata transfer
+- Streaming reject processing above the 2,000-file scoped batch limit
 
 ---
 

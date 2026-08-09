@@ -153,9 +153,13 @@ export default function ProcessReviewResultsDialog({
   onClose,
   onTrashRejects,
   onPrepareAcceptedCopy,
+  onListTransferDestinations,
+  transferLayout = "structured",
+  onTransferLayoutChange,
   onStartAcceptedCopy,
   onCancelAcceptedCopy,
   acceptedCopyProgress = null,
+  trashProgress = null,
 }) {
   const backdropRef = useRef(null);
   const dialogRef = useRef(null);
@@ -174,6 +178,7 @@ export default function ProcessReviewResultsDialog({
   const [copyPhase, setCopyPhase] = useState(COPY_PHASES.IDLE);
   const [copyPlan, setCopyPlan] = useState(null);
   const [copyResult, setCopyResult] = useState(null);
+  const [recentDestinations, setRecentDestinations] = useState([]);
   const [transferMode, setTransferMode] = useState("copy");
   const summary = useMemo(() => summarizeReviewScope(videos), [videos]);
   const copyBusy = [
@@ -252,6 +257,33 @@ export default function ProcessReviewResultsDialog({
     abandonActivePlan();
     onCloseRef.current?.();
   };
+
+  // Reload on every open so a destination recorded by the previous transfer,
+  // or by another window, is offered without reopening the app.
+  useEffect(() => {
+    if (!open || typeof onListTransferDestinations !== "function") {
+      setRecentDestinations([]);
+      return undefined;
+    }
+    let cancelled = false;
+    Promise.resolve(onListTransferDestinations())
+      .then((destinations) => {
+        if (cancelled) return;
+        setRecentDestinations(
+          Array.isArray(destinations)
+            ? destinations.filter(
+                (entry) => entry && typeof entry.path === "string"
+              )
+            : []
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setRecentDestinations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, onListTransferDestinations, copyResult]);
 
   useEffect(() => {
     if (!open) {
@@ -347,7 +379,11 @@ export default function ProcessReviewResultsDialog({
     }
   };
 
-  const prepareAcceptedCopy = async () => {
+  const prepareAcceptedCopy = async (
+    destinationPath = null,
+    layout = transferLayout,
+    reusePlanId = null
+  ) => {
     if (!canPrepareCopy || copyOperationRef.current) return;
     copyOperationRef.current = true;
     actionBusyRef.current = true;
@@ -358,7 +394,11 @@ export default function ProcessReviewResultsDialog({
     setCopyResult(null);
     setActionError("");
     try {
-      const response = await onPrepareAcceptedCopy();
+      const response = await onPrepareAcceptedCopy(
+        destinationPath,
+        layout,
+        reusePlanId
+      );
       const plan = normalizeCopyPlan(response);
       if (!openRef.current || copyRequestRef.current !== requestId) {
         if (plan?.planId) requestPlanCancellation(plan.planId);
@@ -385,7 +425,10 @@ export default function ProcessReviewResultsDialog({
     }
   };
 
-  const chooseAcceptedDestination = async () => {
+  const chooseAcceptedDestination = async (
+    destinationPath = null,
+    layout = transferLayout
+  ) => {
     if (!canPrepareCopy || copyOperationRef.current) return;
     const previousPlanId = activePlanIdRef.current;
     if (previousPlanId) {
@@ -396,7 +439,22 @@ export default function ProcessReviewResultsDialog({
     setCopyPlan(null);
     setCopyResult(null);
     setCopyPhase(COPY_PHASES.IDLE);
-    await prepareAcceptedCopy();
+    await prepareAcceptedCopy(destinationPath, layout);
+  };
+
+  // Layout changes the destination paths, so collisions have to be recomputed.
+  // The already-chosen folder is reused via the plan id rather than making the
+  // user pick it again.
+  const changeTransferLayout = async (nextLayout) => {
+    const layout = nextLayout === "flat" ? "flat" : "structured";
+    if (layout === transferLayout) return;
+    onTransferLayoutChange?.(layout);
+    if (!copyPlan || copyPhase !== COPY_PHASES.READY) return;
+    if (!canPrepareCopy || copyOperationRef.current) return;
+    const reusePlanId = activePlanIdRef.current;
+    activePlanIdRef.current = null;
+    cancelRequestedPlanIdRef.current = null;
+    await prepareAcceptedCopy(null, layout, reusePlanId);
   };
 
   const startAcceptedCopy = async (requestedMode) => {
@@ -502,6 +560,13 @@ export default function ProcessReviewResultsDialog({
       : fallbackProgressTotal
   );
   const progressValue = Math.min(progressCompleted, progressTotal);
+
+  const trashTotal = boundedCount(trashProgress?.total);
+  const trashFailed = boundedCount(trashProgress?.failed);
+  const trashProcessed = Math.min(
+    boundedCount(trashProgress?.processed),
+    trashTotal
+  );
 
   const terminalHasIssues = Boolean(
     copyResult &&
@@ -626,6 +691,30 @@ export default function ProcessReviewResultsDialog({
                   ? "Processing…"
                   : `Move ${summary.trashableRejectCount.toLocaleString()} to Bin`}
               </button>
+              {pendingAction === "trash" && trashTotal > 0 && (
+                <div className="review-results-trash-progress">
+                  <p aria-live="polite">
+                    {`Moved ${trashProcessed.toLocaleString()} of ${trashTotal.toLocaleString()} ${
+                      trashTotal === 1 ? "file" : "files"
+                    } to Bin…`}
+                    {trashFailed > 0
+                      ? ` · ${trashFailed.toLocaleString()} failed`
+                      : ""}
+                  </p>
+                  <div
+                    className="review-results-dialog__progress review-results-dialog__progress--trash"
+                    role="progressbar"
+                    aria-label="Reject processing progress"
+                    aria-valuemin={0}
+                    aria-valuemax={trashTotal}
+                    aria-valuenow={trashProcessed}
+                  >
+                    <span
+                      style={{ width: `${(trashProcessed / trashTotal) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </article>
 
             <article className="review-results-action review-results-action--copy">
@@ -648,7 +737,7 @@ export default function ProcessReviewResultsDialog({
                   type="button"
                   className="review-results-copy-actions__secondary"
                   disabled={!canPrepareCopy || copyBusy}
-                  onClick={chooseAcceptedDestination}
+                  onClick={() => chooseAcceptedDestination()}
                 >
                   {copyPhase === COPY_PHASES.PREPARING
                     ? "Checking destination…"
@@ -657,6 +746,63 @@ export default function ProcessReviewResultsDialog({
                       : "Choose destination…"}
                 </button>
               </div>
+
+              <div
+                className="review-results-layout"
+                role="group"
+                aria-label="Destination folder layout"
+              >
+                {[
+                  {
+                    value: "structured",
+                    label: "Keep folders",
+                    hint: "Recreate each clip's folder path from the library root.",
+                  },
+                  {
+                    value: "flat",
+                    label: "Flat",
+                    hint: "Write every clip straight into the destination. Same-named clips are reported as collisions.",
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={
+                      transferLayout === option.value
+                        ? "review-results-layout__option is-active"
+                        : "review-results-layout__option"
+                    }
+                    aria-pressed={transferLayout === option.value}
+                    title={option.hint}
+                    disabled={!canPrepareCopy || copyBusy}
+                    onClick={() => changeTransferLayout(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              {recentDestinations.length > 0 && (
+                <div className="review-results-recent-destinations">
+                  <span id="recent-destinations-label">Recent</span>
+                  <ul aria-labelledby="recent-destinations-label">
+                    {recentDestinations.map((destination) => (
+                      <li key={destination.path}>
+                        <button
+                          type="button"
+                          disabled={!canPrepareCopy || copyBusy}
+                          title={destination.path}
+                          onClick={() =>
+                            chooseAcceptedDestination(destination.path)
+                          }
+                        >
+                          {destination.label || destination.path}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {[COPY_PHASES.IDLE, COPY_PHASES.PREPARING].includes(copyPhase) && (
                 <div className="review-results-transfer-actions">

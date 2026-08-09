@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { BoundedAsyncCache } = require('./bounded-async-cache');
-const { computeFingerprint } = require('./fingerprint');
+const { computeFingerprint, isLegacyFingerprint } = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
 const {
   ACCEPTED_COPY_MAX_MEDIA,
@@ -34,6 +34,9 @@ let currentProfilePath = null;
 const DB_FILE_NAME = 'videoswarm-meta.db';
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
 const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
+// Absences the user caused on purpose. Anything else stays unexplained and is
+// reported as missing, which is the state worth drawing attention to.
+const MISSING_REASONS = new Set(['trashed', 'moved']);
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
@@ -718,10 +721,12 @@ function initDatabase(app, profilePath) {
         direct_instance_count INTEGER NOT NULL DEFAULT 0,
         direct_present_count INTEGER NOT NULL DEFAULT 0,
         direct_missing_count INTEGER NOT NULL DEFAULT 0,
+        direct_removed_count INTEGER NOT NULL DEFAULT 0,
         direct_reviewed_count INTEGER NOT NULL DEFAULT 0,
         instance_count INTEGER NOT NULL DEFAULT 0,
         present_count INTEGER NOT NULL DEFAULT 0,
         missing_count INTEGER NOT NULL DEFAULT 0,
+        removed_count INTEGER NOT NULL DEFAULT 0,
         reviewed_count INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL,
         UNIQUE(root_id, relative_path),
@@ -741,6 +746,7 @@ function initDatabase(app, profilePath) {
         first_seen_at INTEGER NOT NULL,
         last_seen_at INTEGER NOT NULL,
         missing_since INTEGER,
+        missing_reason TEXT,
         UNIQUE(root_id, relative_path),
         FOREIGN KEY (root_id) REFERENCES library_roots(id) ON DELETE CASCADE,
         FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE CASCADE,
@@ -903,6 +909,31 @@ function initDatabase(app, profilePath) {
     }
     if (!directoryColumns.has('missing_since')) {
       db.exec('ALTER TABLE directories ADD COLUMN missing_since INTEGER;');
+    }
+    // A file the user deliberately trashed or moved is absent for a known
+    // reason. Counting it as "missing" alongside genuinely lost files reads as
+    // accidental reference loss, so removals are aggregated separately. The
+    // instance row itself is always retained: it is what keeps the content's
+    // review state, rating, and tags reachable.
+    if (!directoryColumns.has('direct_removed_count')) {
+      db.exec(
+        'ALTER TABLE directories ADD COLUMN direct_removed_count INTEGER NOT NULL DEFAULT 0;'
+      );
+    }
+    if (!directoryColumns.has('removed_count')) {
+      db.exec(
+        'ALTER TABLE directories ADD COLUMN removed_count INTEGER NOT NULL DEFAULT 0;'
+      );
+    }
+
+    const fileInstanceColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(file_instances);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!fileInstanceColumns.has('missing_reason')) {
+      db.exec('ALTER TABLE file_instances ADD COLUMN missing_reason TEXT;');
     }
 
     // Generation metadata began as a sidecar-only cache. Keep those columns
@@ -1268,10 +1299,12 @@ function createMetadataStore(db) {
     SET direct_instance_count = @direct_instance_count,
         direct_present_count = @direct_present_count,
         direct_missing_count = @direct_missing_count,
+        direct_removed_count = @direct_removed_count,
         direct_reviewed_count = @direct_reviewed_count,
         instance_count = @instance_count,
         present_count = @present_count,
         missing_count = @missing_count,
+        removed_count = @removed_count,
         reviewed_count = @reviewed_count,
         updated_at = @updated_at
     WHERE id = @id;
@@ -1415,8 +1448,17 @@ function createMetadataStore(db) {
   const markInstanceMissingById = db.prepare(`
     UPDATE file_instances
     SET is_present = 0,
-        missing_since = COALESCE(missing_since, ?)
-    WHERE id = ? AND is_present != 0;
+        missing_since = COALESCE(missing_since, @now),
+        missing_reason = COALESCE(@reason, missing_reason)
+    WHERE id = @id AND is_present != 0;
+  `);
+  // A watcher can observe the unlink before the action that caused it finishes
+  // reporting. Recording the reason afterwards must still work, but it may only
+  // explain an absence that has none - never relabel one.
+  const explainInstanceRemovalById = db.prepare(`
+    UPDATE file_instances
+    SET missing_reason = @reason
+    WHERE id = @id AND is_present = 0 AND missing_reason IS NULL;
   `);
   const presentInstancesForFingerprint = db.prepare(`
     SELECT root_id, relative_path FROM file_instances
@@ -1501,6 +1543,104 @@ function createMetadataStore(db) {
   `);
 
   const deleteRatingStmt = db.prepare(`DELETE FROM ratings WHERE fingerprint = ?;`);
+
+  // Fingerprint re-key statements. Foreign keys are enforced, and neither
+  // `files` nor `media_content` declares ON UPDATE, so a parent key cannot be
+  // rewritten in place while children reference it. Every move therefore
+  // creates the destination parent, repoints children, and only then drops the
+  // source parent. Metadata is merged rather than overwritten because two v1
+  // rows (the same bytes copied at different times) legitimately collapse into
+  // one v2 row.
+  const rekeyMediaContent = db.prepare(`
+    INSERT INTO media_content (
+      fingerprint, size, created_ms, width, height, has_audio, duration_ms,
+      frame_rate, created_at, updated_at
+    )
+    SELECT @to, size, created_ms, width, height, has_audio, duration_ms,
+      frame_rate, created_at, updated_at
+    FROM media_content WHERE fingerprint = @from
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      created_ms=MIN(
+        COALESCE(media_content.created_ms, excluded.created_ms),
+        COALESCE(excluded.created_ms, media_content.created_ms)
+      ),
+      width=COALESCE(media_content.width, excluded.width),
+      height=COALESCE(media_content.height, excluded.height),
+      has_audio=COALESCE(media_content.has_audio, excluded.has_audio),
+      duration_ms=COALESCE(media_content.duration_ms, excluded.duration_ms),
+      frame_rate=COALESCE(media_content.frame_rate, excluded.frame_rate),
+      updated_at=MAX(media_content.updated_at, excluded.updated_at);
+  `);
+  const rekeyFileRecord = db.prepare(`
+    INSERT INTO files (
+      fingerprint, last_known_path, size, created_ms, updated_at, width, height,
+      has_audio, duration_ms, frame_rate
+    )
+    SELECT @to, last_known_path, size, created_ms, updated_at, width, height,
+      has_audio, duration_ms, frame_rate
+    FROM files WHERE fingerprint = @from
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      last_known_path=CASE
+        WHEN excluded.updated_at >= files.updated_at THEN excluded.last_known_path
+        ELSE files.last_known_path
+      END,
+      width=COALESCE(files.width, excluded.width),
+      height=COALESCE(files.height, excluded.height),
+      has_audio=COALESCE(files.has_audio, excluded.has_audio),
+      duration_ms=COALESCE(files.duration_ms, excluded.duration_ms),
+      frame_rate=COALESCE(files.frame_rate, excluded.frame_rate),
+      updated_at=MAX(files.updated_at, excluded.updated_at);
+  `);
+  const rekeyContentReview = db.prepare(`
+    INSERT INTO content_review (fingerprint, state, updated_at)
+    SELECT @to, state, updated_at FROM content_review WHERE fingerprint = @from
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      -- Ties are resolved in favour of the row being merged in. Two decisions
+      -- can share a millisecond, and "the later one processed wins" is both
+      -- deterministic and the closest match to the user's last action.
+      state=CASE
+        WHEN excluded.updated_at >= content_review.updated_at THEN excluded.state
+        ELSE content_review.state
+      END,
+      updated_at=MAX(content_review.updated_at, excluded.updated_at);
+  `);
+  const rekeyRating = db.prepare(`
+    INSERT INTO ratings (fingerprint, value, updated_at)
+    SELECT @to, value, updated_at FROM ratings WHERE fingerprint = @from
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      value=CASE
+        WHEN excluded.updated_at >= ratings.updated_at THEN excluded.value
+        ELSE ratings.value
+      END,
+      updated_at=MAX(ratings.updated_at, excluded.updated_at);
+  `);
+  const rekeyTagLinks = db.prepare(`
+    INSERT OR IGNORE INTO file_tags (fingerprint, tag_id, added_at)
+    SELECT @to, tag_id, added_at FROM file_tags WHERE fingerprint = @from;
+  `);
+  const rekeyInstanceFingerprints = db.prepare(`
+    UPDATE file_instances SET fingerprint = @to WHERE fingerprint = @from;
+  `);
+  const rekeyCheckpointAnchors = db.prepare(`
+    UPDATE review_checkpoints
+    SET anchor_fingerprint = @to
+    WHERE anchor_fingerprint = @from;
+  `);
+  const deleteContentReviewStmt = db.prepare(
+    'DELETE FROM content_review WHERE fingerprint = ?;'
+  );
+  const deleteTagLinksStmt = db.prepare(
+    'DELETE FROM file_tags WHERE fingerprint = ?;'
+  );
+  const deleteMediaContentStmt = db.prepare(
+    'DELETE FROM media_content WHERE fingerprint = ?;'
+  );
+  const deleteFileRecordStmt = db.prepare(
+    'DELETE FROM files WHERE fingerprint = ?;'
+  );
+  const fileRecordByFingerprint = db.prepare(
+    'SELECT fingerprint FROM files WHERE fingerprint = ?;'
+  );
 
   const getReviewState = db.prepare(`
     SELECT state FROM content_review WHERE fingerprint = ?;
@@ -1817,10 +1957,12 @@ function createMetadataStore(db) {
       directInstanceCount: Number(row.direct_instance_count || 0),
       directPresentCount: Number(row.direct_present_count || 0),
       directMissingCount: Number(row.direct_missing_count || 0),
+      directRemovedCount: Number(row.direct_removed_count || 0),
       directReviewedCount: Number(row.direct_reviewed_count || 0),
       instanceCount: Number(row.instance_count || 0),
       presentCount: Number(row.present_count || 0),
       missingCount: Number(row.missing_count || 0),
+      removedCount: Number(row.removed_count || 0),
       reviewedCount: Number(row.reviewed_count || 0),
       updatedAt: row.updated_at,
     };
@@ -1845,6 +1987,9 @@ function createMetadataStore(db) {
       firstSeenAt: row.first_seen_at,
       lastSeenAt: row.last_seen_at,
       missingSince: row.missing_since ?? null,
+      missingReason: MISSING_REASONS.has(row.missing_reason)
+        ? row.missing_reason
+        : null,
     };
   }
 
@@ -2117,6 +2262,7 @@ function createMetadataStore(db) {
     assertOperationActive(assertActive);
     return {
       fingerprint: result.fingerprint,
+      legacyFingerprint: result.legacyFingerprint,
       createdMs: result.createdMs,
     };
   }
@@ -2168,6 +2314,48 @@ function createMetadataStore(db) {
     return Number.isFinite(number) && number > 0 && number <= 1000
       ? number
       : null;
+  }
+
+  /**
+   * Move every fingerprint-keyed row from one content identity to another.
+   *
+   * This exists for the v1 -> v2 content-digest migration, where the caller has
+   * already proved the bytes are unchanged by recomputing the legacy digest.
+   * It is deliberately merge-shaped: distinct v1 rows for the same bytes
+   * collapse into one v2 row, so review state and ratings resolve by recency
+   * and tags become a union rather than one side silently winning.
+   *
+   * Must be called inside a transaction; it performs several dependent writes.
+   */
+  function rekeyContentFingerprint(fromFingerprint, toFingerprint) {
+    if (
+      typeof fromFingerprint !== 'string' ||
+      typeof toFingerprint !== 'string' ||
+      !fromFingerprint ||
+      !toFingerprint ||
+      fromFingerprint === toFingerprint
+    ) {
+      return false;
+    }
+    // Nothing to carry across: let the ordinary index path create the row.
+    if (!fileRecordByFingerprint.get(fromFingerprint)) return false;
+
+    const parameters = { from: fromFingerprint, to: toFingerprint };
+    rekeyMediaContent.run(parameters);
+    rekeyFileRecord.run(parameters);
+    rekeyContentReview.run(parameters);
+    rekeyRating.run(parameters);
+    rekeyTagLinks.run(parameters);
+    rekeyInstanceFingerprints.run(parameters);
+    rekeyCheckpointAnchors.run(parameters);
+    // Children no longer reference the source, so dropping it cannot cascade
+    // into the metadata that was just carried over.
+    deleteContentReviewStmt.run(fromFingerprint);
+    deleteRatingStmt.run(fromFingerprint);
+    deleteTagLinksStmt.run(fromFingerprint);
+    deleteMediaContentStmt.run(fromFingerprint);
+    deleteFileRecordStmt.run(fromFingerprint);
+    return true;
   }
 
   function writeFileRecord(
@@ -2302,10 +2490,12 @@ function createMetadataStore(db) {
       directInstanceCount: Number(rootDirectory?.direct_instance_count || 0),
       directPresentCount: Number(rootDirectory?.direct_present_count || 0),
       directMissingCount: Number(rootDirectory?.direct_missing_count || 0),
+      directRemovedCount: Number(rootDirectory?.direct_removed_count || 0),
       directReviewedCount: Number(rootDirectory?.direct_reviewed_count || 0),
       instanceCount: Number(rootDirectory?.instance_count || 0),
       presentCount: Number(rootDirectory?.present_count || 0),
       missingCount: Number(rootDirectory?.missing_count || 0),
+      removedCount: Number(rootDirectory?.removed_count || 0),
       reviewedCount: Number(rootDirectory?.reviewed_count || 0),
     };
   }
@@ -2429,10 +2619,12 @@ function createMetadataStore(db) {
         direct_instance_count: 0,
         direct_present_count: 0,
         direct_missing_count: 0,
+        direct_removed_count: 0,
         direct_reviewed_count: 0,
         instance_count: 0,
         present_count: 0,
         missing_count: 0,
+        removed_count: 0,
         reviewed_count: 0,
       });
     });
@@ -2442,13 +2634,18 @@ function createMetadataStore(db) {
       const ancestors = getDirectoryAncestorPaths(directPath);
       const present = Boolean(instance.is_present);
       const reviewed = present && Boolean(instance.reviewed);
+      // Deliberate removals are absent for a reason the user already knows
+      // about, so they are counted apart from files that simply disappeared.
+      const removed = !present && Boolean(instance.missing_reason);
+      const missing = !present && !removed;
 
       ancestors.forEach((directoryPath) => {
         const value = counts.get(directoryPath);
         if (!value) return;
         value.instance_count += 1;
         value.present_count += present ? 1 : 0;
-        value.missing_count += present ? 0 : 1;
+        value.missing_count += missing ? 1 : 0;
+        value.removed_count += removed ? 1 : 0;
         value.reviewed_count += reviewed ? 1 : 0;
       });
 
@@ -2456,7 +2653,8 @@ function createMetadataStore(db) {
       if (direct) {
         direct.direct_instance_count += 1;
         direct.direct_present_count += present ? 1 : 0;
-        direct.direct_missing_count += present ? 0 : 1;
+        direct.direct_missing_count += missing ? 1 : 0;
+        direct.direct_removed_count += removed ? 1 : 0;
         direct.direct_reviewed_count += reviewed ? 1 : 0;
       }
     });
@@ -3123,7 +3321,12 @@ function createMetadataStore(db) {
     let markedDirectoriesMissing = 0;
     const txn = db.transaction(() => {
       missingCandidates.forEach((instance) => {
-        markedMissing += markInstanceMissingById.run(now, instance.id).changes;
+        // Scan reconciliation cannot explain why a file vanished.
+        markedMissing += markInstanceMissingById.run({
+          now,
+          id: instance.id,
+          reason: null,
+        }).changes;
       });
       missingDirectoryCandidates.forEach((directory) => {
         markedDirectoriesMissing += markDirectoryMissingById.run(
@@ -3173,7 +3376,12 @@ function createMetadataStore(db) {
     const affectedRootIds = new Set();
     db.transaction(() => {
       rows.forEach((row) => {
-        markedMissing += markInstanceMissingById.run(now, row.id).changes;
+        // Watcher-observed removals arrive without a cause of their own.
+        markedMissing += markInstanceMissingById.run({
+          now,
+          id: row.id,
+          reason: null,
+        }).changes;
         affectedRootIds.add(row.root_id);
       });
     })();
@@ -3188,11 +3396,22 @@ function createMetadataStore(db) {
     return { markedMissing, instances };
   }
 
-  function markFilesMissing(filePaths, { assertActive } = {}) {
+  function normalizeMissingReason(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string' || !MISSING_REASONS.has(value)) {
+      throw new TypeError(
+        `Missing reason must be one of: ${[...MISSING_REASONS].join(', ')}`
+      );
+    }
+    return value;
+  }
+
+  function markFilesMissing(filePaths, { assertActive, reason = null } = {}) {
     assertOperationActive(assertActive);
     if (!Array.isArray(filePaths)) {
       throw new TypeError('File paths must be an array');
     }
+    const normalizedReason = normalizeMissingReason(reason);
     const normalizedPaths = [...new Set(filePaths.map((filePath) => {
       if (typeof filePath !== 'string' || !filePath.trim()) {
         throw new TypeError('Every missing file path must be a non-empty string');
@@ -3202,7 +3421,11 @@ function createMetadataStore(db) {
     const rowsById = new Map();
     normalizedPaths.forEach((absolutePath, index) => {
       fileInstancesByAbsolutePath.all(absolutePath).forEach((row) => {
-        if (Boolean(row.is_present)) rowsById.set(Number(row.id), row);
+        // With a known cause, an instance the watcher already retired still
+        // needs explaining, so absent rows are collected too.
+        if (Boolean(row.is_present) || normalizedReason) {
+          rowsById.set(Number(row.id), row);
+        }
       });
       if ((index & 255) === 255) assertOperationActive(assertActive);
     });
@@ -3212,11 +3435,26 @@ function createMetadataStore(db) {
     const affectedRootIds = new Set();
     const now = Date.now();
     let markedMissing = 0;
+    let explainedRemovals = 0;
     db.transaction(() => {
       rows.forEach((row) => {
-        const changed = markInstanceMissingById.run(now, row.id).changes;
+        const changed = markInstanceMissingById.run({
+          now,
+          id: row.id,
+          reason: normalizedReason,
+        }).changes;
         markedMissing += changed;
-        if (changed > 0) affectedRootIds.add(Number(row.root_id));
+        let explained = 0;
+        if (changed === 0 && normalizedReason) {
+          explained = explainInstanceRemovalById.run({
+            id: row.id,
+            reason: normalizedReason,
+          }).changes;
+          explainedRemovals += explained;
+        }
+        if (changed > 0 || explained > 0) {
+          affectedRootIds.add(Number(row.root_id));
+        }
       });
     })();
 
@@ -3228,6 +3466,7 @@ function createMetadataStore(db) {
     ));
     return {
       markedMissing,
+      explainedRemovals,
       affectedRootCount: affectedRootIds.size,
       instances,
     };
@@ -3332,7 +3571,10 @@ function createMetadataStore(db) {
 
       let fingerprintResult;
       let reusedPersistedFingerprint = false;
-      if (canReuse) {
+      // A legacy row must be re-read once so its content digest can be
+      // recomputed; reusing it would pin the file on v1 forever and keep its
+      // metadata unreachable from copies. Everything else still short-circuits.
+      if (canReuse && !isLegacyFingerprint(existingInstance.fingerprint)) {
         const content = mediaContentByFingerprint.get(existingInstance.fingerprint);
         if (content) {
           fingerprintResult = {
@@ -3359,6 +3601,8 @@ function createMetadataStore(db) {
         fingerprint: fingerprintResult.fingerprint,
         createdMs: fingerprintResult.createdMs,
         fingerprintReused: reusedPersistedFingerprint,
+        previousFingerprint: existingInstance?.fingerprint || null,
+        legacyFingerprint: fingerprintResult.legacyFingerprint || null,
       };
       preparedEntries[index] = prepared;
 
@@ -3403,6 +3647,19 @@ function createMetadataStore(db) {
     const instanceRows = [];
     const txn = db.transaction(() => {
       preparedEntries.forEach((entry) => {
+        // Carry v1 metadata forward only when the recomputed legacy digest
+        // still matches what was stored. That equality is exact proof the
+        // bytes are unchanged, so a genuinely edited file is never allowed to
+        // inherit the previous content's review state, rating, or tags.
+        if (
+          entry.previousFingerprint &&
+          entry.legacyFingerprint &&
+          entry.previousFingerprint !== entry.fingerprint &&
+          isLegacyFingerprint(entry.previousFingerprint) &&
+          entry.previousFingerprint === entry.legacyFingerprint
+        ) {
+          rekeyContentFingerprint(entry.previousFingerprint, entry.fingerprint);
+        }
         writeFileRecord(
           entry.fingerprint,
           entry.filePath,

@@ -7,7 +7,11 @@ const DEFAULT_MAX_TRASH_CONFIRMATION_GRANTS = 64;
 // Electron exposes only a single-item trash primitive. A small worker pool
 // avoids paying the platform/portal startup latency serially for every clip,
 // while keeping native destructive work bounded.
-const DEFAULT_TRASH_OPERATION_CONCURRENCY = process.platform === "linux" ? 8 : 4;
+// Linux routes each item through the desktop portal over D-Bus, which the
+// portal largely serialises, so extra workers hide round-trip latency rather
+// than multiplying throughput. Deleting a large reject set stays slow for that
+// reason; progress reporting, not concurrency, is what makes it bearable.
+const DEFAULT_TRASH_OPERATION_CONCURRENCY = process.platform === "linux" ? 12 : 4;
 const DEFAULT_TRASH_PREFLIGHT_CONCURRENCY = 16;
 const MAX_TRASH_CONCURRENCY = 32;
 const TRASH_CONFIRMATION_TOKEN_BYTES = 32;
@@ -420,6 +424,7 @@ async function trashAuthorizedPaths({
   authorizePath,
   maxItems = DEFAULT_MAX_TRASH_ITEMS,
   concurrency = DEFAULT_TRASH_OPERATION_CONCURRENCY,
+  onProgress,
   logger = console,
 } = {}) {
   if (!Array.isArray(paths) || paths.length === 0 || paths.length > maxItems) {
@@ -456,6 +461,30 @@ async function trashAuthorizedPaths({
     work.push({ candidate, index });
   });
 
+  // Each item is one platform trash call, so per-item completion is the only
+  // honest unit of progress available; the total is the deduplicated work.
+  const reportProgress = typeof onProgress === "function" ? onProgress : null;
+  const total = work.length;
+  let completed = 0;
+  let movedCount = 0;
+  let failedCount = 0;
+  const notify = (finished = false) => {
+    if (!reportProgress) return;
+    try {
+      reportProgress({
+        processed: completed,
+        total,
+        moved: movedCount,
+        failed: failedCount,
+        finished,
+      });
+    } catch {
+      // Progress is advisory. A reporting fault must never abort or alter a
+      // destructive operation that is already under way.
+    }
+  };
+
+  notify();
   await mapTrashWorkBounded(work, async ({ candidate, index }) => {
     try {
       const authorized = await authorizePath(candidate);
@@ -470,6 +499,7 @@ async function trashAuthorizedPaths({
       }
       await nativeMove;
       outcomes[index] = { type: "moved", value: candidate };
+      movedCount += 1;
     } catch (error) {
       const message = error?.message || String(error);
       logger?.warn?.("[trash] Failed to move item", { message });
@@ -477,8 +507,13 @@ async function trashAuthorizedPaths({
         type: "failed",
         value: { path: candidate, error: message },
       };
+      failedCount += 1;
+    } finally {
+      completed += 1;
+      notify();
     }
   }, operationConcurrency);
+  notify(true);
 
   const moved = [];
   const failed = [];

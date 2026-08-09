@@ -282,6 +282,33 @@ describe("LibrarySidebar", () => {
     expect(screen.getByTitle("missing-run")).toHaveTextContent("2 missing");
   });
 
+  it("reports deliberate removals separately from missing files", () => {
+    const tree = buildFolderTree({
+      directorySummaries: [
+        { relativePath: "", name: "outputs" },
+        {
+          relativePath: "processed",
+          name: "processed",
+          missingCount: 0,
+          removedCount: 12,
+        },
+        {
+          relativePath: "lost",
+          name: "lost",
+          missingCount: 3,
+          removedCount: 0,
+        },
+      ],
+    });
+    render(<LibrarySidebar tree={tree} expandedPaths={new Set([""])} />);
+
+    // A folder the user emptied on purpose must not read as reference loss.
+    const processed = screen.getByTitle("processed");
+    expect(processed).toHaveTextContent("12 removed");
+    expect(processed).not.toHaveTextContent("missing");
+    expect(screen.getByTitle("lost")).toHaveTextContent("3 missing");
+  });
+
   it("saves, applies, and deletes smart views", async () => {
     const onSaveCurrentView = vi.fn().mockResolvedValue({ id: 2 });
     const onApplySavedView = vi.fn();

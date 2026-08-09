@@ -55,6 +55,9 @@ function harness({
   fsPromises = fsp,
   assertActive = vi.fn(),
   showDirectoryPicker,
+  listReusableDestinations,
+  onDestinationPrepared,
+  onSourcesRemoved,
   queryAcceptedInstances,
   maxPlans,
   now,
@@ -83,6 +86,11 @@ function harness({
       records,
     })),
     emitProgress: vi.fn(({ payload }) => progress.push(payload)),
+    ...(listReusableDestinations === undefined
+      ? {}
+      : { listReusableDestinations }),
+    ...(onDestinationPrepared === undefined ? {} : { onDestinationPrepared }),
+    ...(onSourcesRemoved === undefined ? {} : { onSourcesRemoved }),
     fsPromises,
     createPlanId: () => `copyplan${String(++planSequence).padStart(4, "0")}`,
     progressIntervalMs: 0,
@@ -115,6 +123,124 @@ afterEach(async () => {
 });
 
 describe("Copy Accepted native coordinator", () => {
+  it("reuses a host-recorded destination without showing the picker", async () => {
+    const rootPath = await temporaryDirectory("reuse-root");
+    const destinationPath = await temporaryDirectory("reuse-destination");
+    await writeFile(path.join(rootPath, "clip.mp4"), "reusable");
+    const showDirectoryPicker = vi.fn(async () => ({ canceled: true }));
+    const onDestinationPrepared = vi.fn();
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      records: [await recordFor(rootPath, "clip.mp4")],
+      showDirectoryPicker,
+      listReusableDestinations: vi.fn(async () => [destinationPath]),
+      onDestinationPrepared,
+    });
+
+    const result = await coordinator.prepare(
+      prepareRequest(owner, rootPath, { destinationPath })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.cancelled).toBe(false);
+    expect(showDirectoryPicker).not.toHaveBeenCalled();
+    expect(onDestinationPrepared).toHaveBeenCalledWith(
+      expect.objectContaining({ destinationPath })
+    );
+  });
+
+  it("falls back to the picker when the destination is not host-recorded", async () => {
+    const rootPath = await temporaryDirectory("unknown-root");
+    const destinationPath = await temporaryDirectory("unknown-destination");
+    await writeFile(path.join(rootPath, "clip.mp4"), "unknown");
+    const showDirectoryPicker = vi.fn(async () => ({
+      canceled: false,
+      filePaths: [destinationPath],
+    }));
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      records: [await recordFor(rootPath, "clip.mp4")],
+      showDirectoryPicker,
+      // The renderer names somewhere the host has never recorded.
+      listReusableDestinations: vi.fn(async () => []),
+    });
+
+    const result = await coordinator.prepare(
+      prepareRequest(owner, rootPath, {
+        destinationPath: path.join(destinationPath, "not-approved"),
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(showDirectoryPicker).toHaveBeenCalledTimes(1);
+    expect(result.destinationLabel).toBe(path.basename(destinationPath));
+  });
+
+  it("writes flat layout basenames and reports same-name collisions", async () => {
+    const rootPath = await temporaryDirectory("flat-root");
+    const destinationPath = await temporaryDirectory("flat-destination");
+    await writeFile(path.join(rootPath, "batch-a", "clip.mp4"), "first");
+    await writeFile(path.join(rootPath, "batch-b", "clip.mp4"), "second");
+    await writeFile(path.join(rootPath, "batch-b", "other.mp4"), "unique");
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      records: [
+        await recordFor(rootPath, "batch-a/clip.mp4"),
+        await recordFor(rootPath, "batch-b/clip.mp4"),
+        await recordFor(rootPath, "batch-b/other.mp4"),
+      ],
+    });
+
+    const plan = await coordinator.prepare(
+      prepareRequest(owner, rootPath, { layout: "flat" })
+    );
+    expect(plan.success).toBe(true);
+    expect(plan.layout).toBe("flat");
+    // Two sources share a basename once the folder tree is dropped.
+    expect(plan.collisionCount).toBe(1);
+    expect(plan.copyableCount).toBe(2);
+
+    const result = await coordinator.start({
+      owner,
+      planId: plan.planId,
+      collisionPolicy: "skip",
+      transferMode: "copy",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.copiedCount).toBe(2);
+    const written = (await fsp.readdir(destinationPath)).sort();
+    expect(written).toEqual(["clip.mp4", "other.mp4"]);
+  });
+
+  it("keeps the root-relative tree under the structured default", async () => {
+    const rootPath = await temporaryDirectory("structured-root");
+    const destinationPath = await temporaryDirectory("structured-destination");
+    await writeFile(path.join(rootPath, "batch-a", "deep", "clip.mp4"), "nested");
+    const { coordinator, owner } = harness({
+      rootPath,
+      destinationPath,
+      records: [await recordFor(rootPath, "batch-a/deep/clip.mp4")],
+    });
+
+    const plan = await coordinator.prepare(prepareRequest(owner, rootPath));
+    expect(plan.layout).toBe("structured");
+    const result = await coordinator.start({
+      owner,
+      planId: plan.planId,
+      collisionPolicy: "skip",
+      transferMode: "copy",
+    });
+
+    expect(result.success).toBe(true);
+    await expect(
+      fsp.stat(path.join(destinationPath, "batch-a", "deep", "clip.mp4"))
+    ).resolves.toBeTruthy();
+  });
+
   it("prepares and copies accepted media without adjacent metadata files", async () => {
     const rootPath = await temporaryDirectory("copy-accepted-root");
     const destinationPath = await temporaryDirectory("copy-accepted-output");

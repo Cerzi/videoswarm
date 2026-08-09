@@ -613,8 +613,9 @@ unimplemented v1 behavior.
 
 ## Subsequent product order
 
-Continue Review and Accepted **Move/Copy** are now verified. Metadata transfer
-remains deferred. Subsequent product work proceeds in this order:
+Continue Review and Accepted **Move/Copy** are now verified. Metadata follows
+copied content through fingerprint `v2` rather than a separate transfer step.
+Subsequent product work proceeds in this order:
 
 1. **Generation-aware search:** bounded background indexing of prompt, model,
    seed, sampler, source, and run metadata for filters, grouping, and smart
