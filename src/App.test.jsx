@@ -3041,6 +3041,97 @@ describe("App hook composition", () => {
     expect(selectionMock.selectExactly).toHaveBeenCalledWith("clip-original");
   });
 
+  test("rates without advancing so a clip can be rated and marked together", async () => {
+    const videos = [
+      {
+        id: "clip-rated",
+        instanceId: 51,
+        fingerprint: "fp-rated",
+        name: "rated.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+      {
+        id: "clip-after",
+        instanceId: 52,
+        fingerprint: "fp-after",
+        name: "after.mp4",
+        reviewState: "unreviewed",
+        tags: [],
+      },
+    ];
+    selectionMock.selected = new Set([videos[0].id]);
+    selectionMock.size = 1;
+    selectionMock.anchorId = videos[0].id;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/rating-root",
+      libraryRoot: { rootPath: "/rating-root", recursive: true },
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+      filteredVideoIds: new Set(videos.map((video) => video.id)),
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+    });
+    const controller = {
+      currentVideo: videos[0],
+      fullScreenVideo: videos[0],
+      currentIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 2,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: true,
+      collectionOwnerKey: "profile:/rating-root",
+      sessionToken: "rating-session",
+      close: vi.fn(),
+      navigateFullScreen: vi.fn(),
+      peekNavigation: vi.fn(),
+      sourceRemoved: vi.fn(),
+      goToFullScreen: vi.fn(),
+    };
+    useFullScreenModalMock.mockReturnValue(controller);
+    metadataActionsReturn.handleSetRating.mockResolvedValue({
+      success: true,
+      updates: { "fp-rated": { rating: 4, reviewState: "reviewed" } },
+    });
+    metadataActionsReturn.handleSetReviewState.mockResolvedValue({
+      success: true,
+      updates: { "fp-rated": { reviewState: "pick" } },
+    });
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    const lifecycleArgs = useElectronLifecycleMock.mock.calls.at(-1)?.[0];
+    act(() => lifecycleArgs.setReviewAutoAdvance(true));
+
+    await act(async () => {
+      await fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props.onSetRating(4);
+    });
+    // The rating marks the clip reviewed on its own, but marking it is not what
+    // "advance after marking" means: the clip has to stay put long enough to
+    // also be accepted or rejected.
+    expect(metadataActionsReturn.handleSetRating).toHaveBeenCalled();
+    expect(controller.goToFullScreen).not.toHaveBeenCalled();
+    expect(controller.navigateFullScreen).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await fullScreenModalSpy.mock.calls
+        .at(-1)?.[0]
+        .reviewRail.props.onSetReviewState("pick");
+    });
+    expect(controller.goToFullScreen).toHaveBeenCalledWith("clip-after");
+  });
+
   test("releases the active player before a watched fullscreen source is removed", async () => {
     const videos = [
       {

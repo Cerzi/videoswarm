@@ -177,7 +177,10 @@ export function FullscreenReviewRail({
           />
           <span>
             Advance after marking
-            <small>Skip duplicate instances of the marked content</small>
+            <small>
+              Skip duplicate instances of the marked content. Ratings never
+              advance.
+            </small>
           </span>
         </label>
       ) : null}

@@ -38,8 +38,9 @@ project gates have passed.
 - Do not reparent or borrow a grid `VideoCard` media node.
 - Do not prefetch adjacent media or retain a second collection snapshot.
 - Do not add Trash, Move, or other destructive file actions.
-- Do not add a filmstrip, playback-speed control, frame stepping, A/B loops,
-  comparison, customizable shortcuts, or a rotating playback cohort.
+- Do not add a filmstrip, playback-speed control, A/B loops, comparison,
+  customizable shortcuts, or a rotating playback cohort. Frame stepping was
+  since taken on deliberately and is specified under the frame picker.
 - Do not create a review resume point merely by opening or navigating.
 
 ## 1. Media and decoder ownership
@@ -149,12 +150,17 @@ these explicit targets rather than resolving the renderer's later selection.
 A completion whose owner or session token is stale has no navigation or UI
 effect.
 
-Successful Accept, Reviewed, Reject, and positive rating actions obey the
-profile-local **Advance after marking** setting. Failures remain on the current
-clip. Automatic advance does not wrap and skips other instances sharing the
-affected fingerprint; manual navigation still includes duplicates. Resetting
-to Unreviewed clears rating but not tags, as defined by the review workflow.
-Undo returns to the affected clip if that instance still exists.
+Successful Accept, Reviewed, and Reject actions obey the profile-local
+**Advance after marking** setting. Rating does not advance here, unlike the
+grid: a rating marks an unreviewed clip as reviewed as a side effect, but that
+side effect is not the act of marking the setting describes, and advancing on
+it would carry the clip away before it could also be accepted or rejected —
+rating and classifying the same clip would be impossible. Tagging never
+advanced. Failures remain on the current clip. Automatic advance does not wrap
+and skips other instances sharing the affected fingerprint; manual navigation
+still includes duplicates. Resetting to Unreviewed clears rating but not tags,
+as defined by the review workflow. Undo returns to the affected clip if that
+instance still exists.
 
 Fullscreen navigation updates an already-engaged review resume point through
 its existing debounce. Opening and navigation alone never create a resume
@@ -274,6 +280,28 @@ the first would lose the user's place. Backward steps decode from the preceding
 keyframe and are therefore slower than forward ones; a bounded seek timeout only
 guards a wedged seek and is not a budget.
 
+Holding a frame key scrubs. The operating system's key-repeat stream is
+deliberately not the clock: its delay and rate are a typing preference, and its
+events arrive whether or not the decoder has finished the previous seek, so
+repeats are ignored and the modal schedules its own. Each repeat is scheduled
+from the step before it, which makes the decoder the real ceiling — a hold can
+never queue seeks faster than they retire. The gap comes from
+`frameHoldDelay` in `src/playback/frameStepping.js`: the first one is a long
+threshold so a tap can never become a scrub, and later ones ramp down to a
+floor. A step that reports no movement means the clip ended, which ends the hold
+instead of spinning against the clamp. A hold also ends when its key is released
+(matched by physical key, since a modifier pressed mid-hold changes the
+printable one), when the window loses focus or is hidden, and when the clip is
+navigated away or closed. Because a hold retires several steps a second, the
+step buttons are not disabled while one is in flight; they would strobe, and
+stepping already drops a request it cannot serve.
+
+The step buttons hold on the same engine, starting on pointer press and ending
+on release, on leaving the button, and on a cancelled pointer. The press itself
+takes the first step, so the click that follows it must not take a second one:
+only an activation carrying no click count — a keyboard press, or a
+programmatic `click()` — steps from the click handler.
+
 The position readout updates from `timeupdate`, `seeked`, and `pause` rather
 than from a per-frame callback, so it costs no per-frame render.
 
@@ -308,8 +336,18 @@ catalog:
 | Close | Escape |
 
 Inputs, editable content, selects, and hotkey-exempt surfaces ignore these
-shortcuts. Review and navigation ignore key repeat. Escape first closes a
+shortcuts. Review and navigation ignore key repeat; the frame keys drive their
+own repeat instead, described under the frame picker. Escape first closes a
 transient actions menu or help surface, then closes fullscreen.
+
+The media element refuses focus and is not a tab stop. Clicking one of
+Chromium's native controls otherwise moves focus into the element's shadow DOM,
+and while focus sits there the controls consume key events before they reach
+the document at all — every shortcut above silently stops working until
+something else is clicked, with nothing in the DOM to explain why. Focus is
+handed straight back to the dialog. The controls remain fully usable by
+pointer, including click-to-seek and dragging the timeline; the keyboard
+interface is this catalog, not the shadow DOM's own tab stops.
 
 Media readiness is settled once per source generation. A later `canplay`
 event cannot restart a clip that the user paused. Space is intercepted in the

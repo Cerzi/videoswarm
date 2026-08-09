@@ -487,6 +487,297 @@ describe("FullScreenModal media ownership", () => {
       expect(timeline.time).toBeLessThan(2 / 25);
     });
 
+    // Reads the readout's one-based position without depending on the total.
+    const currentFrame = () =>
+      Number(
+        document.body
+          .querySelector(".fullscreen-review__frame-position")
+          .textContent.split("/")[0]
+          .trim()
+      );
+
+    it("ramps a held key into a scrub and stops the moment it is released", async () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <FullScreenModal
+            video={frameVideo}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        );
+        const element = document.body.querySelector("video");
+        installFakeTimeline(element, { duration: 600 });
+        act(() => fireEvent.loadedMetadata(element));
+
+        await act(async () => {
+          fireEvent.keyDown(document, { key: ".", code: "Period" });
+        });
+        expect(currentFrame()).toBe(2);
+
+        // A tap is one frame: nothing else moves until the hold threshold.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(399);
+        });
+        expect(currentFrame()).toBe(2);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(currentFrame()).toBe(3);
+
+        const startedRepeating = currentFrame();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+        const firstBurst = currentFrame() - startedRepeating;
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        const settled = currentFrame();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+        const laterBurst = currentFrame() - settled;
+        expect(firstBurst).toBeGreaterThan(0);
+        expect(laterBurst).toBeGreaterThan(firstBurst);
+
+        const released = currentFrame();
+        fireEvent.keyUp(document, { key: ".", code: "Period" });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5_000);
+        });
+        expect(currentFrame()).toBe(released);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps a hold running when an unrelated key is released", async () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <FullScreenModal
+            video={frameVideo}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        );
+        const element = document.body.querySelector("video");
+        installFakeTimeline(element, { duration: 600 });
+        act(() => fireEvent.loadedMetadata(element));
+
+        await act(async () => {
+          fireEvent.keyDown(document, { key: ".", code: "Period" });
+        });
+        // Releasing the opposite frame key, or a modifier, belongs to a
+        // different gesture and must not cancel this one.
+        fireEvent.keyUp(document, { key: ",", code: "Comma" });
+        fireEvent.keyUp(document, { key: "Shift", code: "ShiftLeft" });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+        expect(currentFrame()).toBeGreaterThan(3);
+
+        // A modifier pressed mid-hold changes the printable key but not the
+        // physical one, so the release still has to land.
+        const held = currentFrame();
+        fireEvent.keyUp(document, { key: ">", code: "Period" });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        expect(currentFrame()).toBe(held);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("holds the step buttons without double-stepping the press", async () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <FullScreenModal
+            video={frameVideo}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        );
+        const element = document.body.querySelector("video");
+        installFakeTimeline(element, { duration: 600 });
+        act(() => {
+          fireEvent.loadedData(element);
+          fireEvent.loadedMetadata(element);
+        });
+        const forward = screen.getByRole("button", { name: "Next frame" });
+        expect(forward).toBeEnabled();
+
+        // A press and its click are one gesture, so they are one frame.
+        await act(async () => {
+          fireEvent.pointerDown(forward, { button: 0 });
+        });
+        expect(currentFrame()).toBe(2);
+        await act(async () => {
+          fireEvent.pointerUp(forward, { button: 0 });
+          fireEvent.click(forward, { detail: 1 });
+        });
+        expect(currentFrame()).toBe(2);
+
+        // Holding the button scrubs, and releasing it stops.
+        await act(async () => {
+          fireEvent.pointerDown(forward, { button: 0 });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_500);
+        });
+        const scrubbed = currentFrame();
+        expect(scrubbed).toBeGreaterThan(10);
+
+        await act(async () => {
+          fireEvent.pointerUp(forward, { button: 0 });
+          fireEvent.click(forward, { detail: 1 });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5_000);
+        });
+        expect(currentFrame()).toBe(scrubbed);
+
+        // Dragging off the button ends the hold too.
+        await act(async () => {
+          fireEvent.pointerDown(forward, { button: 0 });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+        const abandoned = currentFrame();
+        await act(async () => {
+          fireEvent.pointerLeave(forward);
+          await vi.advanceTimersByTimeAsync(5_000);
+        });
+        expect(currentFrame()).toBe(abandoned);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still steps once when a step button is activated from the keyboard", async () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => {
+        fireEvent.loadedData(element);
+        fireEvent.loadedMetadata(element);
+      });
+
+      // Keyboard activation reports no click count and never sends a pointer
+      // press, so the click itself has to do the stepping.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Next frame" }), {
+          detail: 0,
+        });
+      });
+      expect(currentFrame()).toBe(2);
+    });
+
+    it("reverses direction even while the previous seek is settling", async () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      const element = document.body.querySelector("video");
+      // Acknowledge seeks on a macrotask so a reversal lands mid-flight.
+      let settle = null;
+      let currentTime = 0;
+      Object.defineProperty(element, "duration", {
+        configurable: true,
+        get: () => 4,
+      });
+      Object.defineProperty(element, "currentTime", {
+        configurable: true,
+        get: () => currentTime,
+        set: (value) => {
+          currentTime = Number(value) || 0;
+          settle = () => fireEvent.seeked(element);
+        },
+      });
+      act(() => fireEvent.loadedMetadata(element));
+
+      await act(async () => {
+        fireEvent.keyDown(document, { key: ".", code: "Period" });
+      });
+      expect(currentFrame()).toBe(1);
+      await act(async () => {
+        // The reversal arrives before the forward step is acknowledged.
+        fireEvent.keyDown(document, { key: ",", code: "Comma" });
+        settle();
+      });
+      expect(currentFrame()).toBe(2);
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        settle();
+      });
+      expect(currentFrame()).toBe(1);
+    });
+
+    it("ends a hold at the clip boundary instead of spinning", async () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <FullScreenModal
+            video={frameVideo}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        );
+        const element = document.body.querySelector("video");
+        installFakeTimeline(element);
+        act(() => fireEvent.loadedMetadata(element));
+
+        await act(async () => {
+          fireEvent.keyDown(document, { key: ",", code: "Comma" });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10_000);
+        });
+        expect(currentFrame()).toBe(1);
+        expect(screen.getByText("At the first frame")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("refuses focus so the native controls cannot capture the keyboard", async () => {
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      act(() => element.focus());
+      expect(document.activeElement).not.toBe(element);
+      expect(document.activeElement).toBe(screen.getByRole("dialog"));
+
+      // The shortcut still reaches the modal from wherever focus landed.
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "." });
+      });
+      expect(currentFrame()).toBe(2);
+    });
+
     it("clamps at the first frame instead of wrapping", async () => {
       render(
         <FullScreenModal
