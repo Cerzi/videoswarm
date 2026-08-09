@@ -1,7 +1,51 @@
 # ComfyUI Re-queue (Promotion)
 
-Status: **Unimplemented — experimental design only**
+Status: **Rejected — not building this in Video Swarm**
 Last updated: 2026-08-09
+
+## Outcome
+
+This was specified and then rejected. Re-queueing stays in the standalone
+`comfy-requeue` CLI. The analysis below is retained because it is still the
+best record of how the mechanism behaves, but its conclusion was wrong.
+
+The deciding argument is one this document originally under-weighted: **a
+six-hour supervised batch is daemon-shaped, and Video Swarm is a GUI you
+close.** Its entire lifecycle is built around profile switches, window close
+and coordinated shutdown draining native work. Keeping a long batch alive
+across that would fight the application's own architecture, and a terminal is
+simply a better host for it.
+
+Supporting reasons:
+
+- The CLI already works, stdlib-only, with real batches behind it.
+- Outbound HTTP would be a cost paid by every user, including the ones who
+  never touch ComfyUI, in an application that deliberately has no network
+  capability at all today.
+- A per-workflow preset editor is a large surface for something a CLI flag
+  expresses in one line, for a user who already knows their own graph.
+
+### What Video Swarm does instead
+
+The two tools split cleanly: **Video Swarm chooses, the CLI runs.**
+
+1. Filter by resolution to find the clips that came out at draft settings.
+   This was the one genuine gap and is now implemented; see
+   `minMegapixels` / `maxMegapixels` in `src/app/filters/filtersUtils.js` and
+   the `resolution` sort key.
+2. Tag and save a view if the worklist should persist.
+3. Copy the selection into a watched folder with the existing transfer flow.
+   Recent destinations make that one click after the first time.
+4. The CLI queues whatever appears there.
+
+Pairing source to result needs no database: the CLI's `--save-to` preserves
+the filename stem, so the two clips sort adjacent by name and the folder tree
+keeps the sets distinct. A durable content-keyed link would only earn its
+keep once files are reorganised often enough to break stem matching.
+
+Keep the watched folder outside any indexed root. Under fingerprint v2 a copy
+shares content identity with its original, so an indexed watch folder would
+show the copies as second instances of the same content.
 
 ## Summary
 
