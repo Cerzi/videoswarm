@@ -120,6 +120,7 @@ function makeNode(relativePath, summary = null, rootName = "") {
     directReviewedCount: asCount(summary?.directReviewedCount),
     reviewedCount: asCount(summary?.reviewedCount),
     missingCount: asCount(summary?.missingCount),
+    removedCount: asCount(summary?.removedCount),
   };
 }
 
@@ -137,6 +138,7 @@ function ensureNode(nodes, relativePath, summary, rootName) {
     node.directReviewedCount = asCount(summary.directReviewedCount);
     node.reviewedCount = asCount(summary.reviewedCount);
     node.missingCount = asCount(summary.missingCount);
+    node.removedCount = asCount(summary.removedCount);
   }
 
   let ancestor = path;

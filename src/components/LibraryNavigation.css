@@ -621,13 +621,20 @@
 
 .library-folder-tree__match-count,
 .library-folder-tree__review-count,
-.library-folder-tree__missing-count {
+.library-folder-tree__missing-count,
+.library-folder-tree__removed-count {
   border-radius: 999px;
   padding: 0.1rem 0.32rem;
 }
 
 .library-folder-tree__missing-count {
   color: #ffa8a8;
+}
+
+/* A deliberate removal is bookkeeping, not a problem, so it stays quiet
+   alongside the alarm colour reserved for files that vanished on their own. */
+.library-folder-tree__removed-count {
+  color: rgba(255, 255, 255, 0.38);
 }
 
 .library-folder-tree__match-count {

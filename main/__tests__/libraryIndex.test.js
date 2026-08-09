@@ -612,6 +612,66 @@ if (!database || databaseLoadError) {
       });
     });
 
+    it('counts a deliberate removal apart from an unexplained one', async () => {
+      const removed = createFile('mixed/removed.mp4', 'removed-on-purpose');
+      const vanished = createFile('mixed/vanished.mp4', 'vanished-somehow');
+      await store.indexFiles({ rootPath, entries: [removed, vanished] });
+
+      const result = store.markFilesMissing([removed.filePath], {
+        reason: 'trashed',
+      });
+      expect(result.markedMissing).toBe(1);
+      expect(result.instances[0].missingReason).toBe('trashed');
+
+      store.markFileMissing(vanished.filePath, { rootPath });
+
+      const directory = store
+        .getDirectorySummaries(rootPath)
+        .find((entry) => entry.relativePath === 'mixed');
+      expect(directory).toMatchObject({
+        directPresentCount: 0,
+        directMissingCount: 1,
+        directRemovedCount: 1,
+      });
+    });
+
+    it('explains a removal the watcher already recorded without relabelling it', async () => {
+      const entry = createFile('race/moved.mp4', 'moved-during-transfer');
+      await store.indexFile({ rootPath, ...entry });
+
+      // The watcher usually wins this race; the transfer reports afterwards.
+      store.markFileMissing(entry.filePath, { rootPath });
+      let directory = store
+        .getDirectorySummaries(rootPath)
+        .find((summary) => summary.relativePath === 'race');
+      expect(directory).toMatchObject({ directMissingCount: 1, directRemovedCount: 0 });
+
+      const explained = store.markFilesMissing([entry.filePath], {
+        reason: 'moved',
+      });
+      expect(explained.markedMissing).toBe(0);
+      expect(explained.explainedRemovals).toBe(1);
+      directory = store
+        .getDirectorySummaries(rootPath)
+        .find((summary) => summary.relativePath === 'race');
+      expect(directory).toMatchObject({ directMissingCount: 0, directRemovedCount: 1 });
+
+      // An established reason is never overwritten by a later, different one.
+      const relabelled = store.markFilesMissing([entry.filePath], {
+        reason: 'trashed',
+      });
+      expect(relabelled.explainedRemovals).toBe(0);
+      expect(relabelled.instances[0].missingReason).toBe('moved');
+    });
+
+    it('rejects an unknown missing reason', async () => {
+      const entry = createFile('reasons/file.mp4', 'reason-check');
+      await store.indexFile({ rootPath, ...entry });
+      expect(() =>
+        store.markFilesMissing([entry.filePath], { reason: 'because' })
+      ).toThrow(/Missing reason must be one of/);
+    });
+
     it('marks a native batch missing atomically and refreshes each affected root once', async () => {
       const first = createFile('batch/first.mp4', 'first');
       const secondRoot = path.join(tempDir, 'second-library');
@@ -704,6 +764,183 @@ if (!database || databaseLoadError) {
       expect(deferredDirectory).toMatchObject({
         directPresentCount: 0,
         directMissingCount: 1,
+      });
+    });
+
+    describe('content-digest identity', () => {
+      const { computeFingerprint } = require('../fingerprint');
+
+      function openProfileDatabase() {
+        return new BetterSqlite(path.join(tempDir, 'videoswarm-meta.db'));
+      }
+
+      // Rewrite an indexed row back onto its v1 identity so the next index pass
+      // exercises the real upgrade path instead of a synthetic fixture.
+      function demoteToLegacyFingerprint(currentFingerprint, legacyFingerprint) {
+        const raw = openProfileDatabase();
+        try {
+          raw.pragma('foreign_keys = OFF');
+          raw.transaction(() => {
+            for (const table of ['media_content', 'files']) {
+              raw
+                .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
+                .run(legacyFingerprint, currentFingerprint);
+            }
+            for (const table of ['content_review', 'ratings', 'file_tags']) {
+              raw
+                .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
+                .run(legacyFingerprint, currentFingerprint);
+            }
+            raw
+              .prepare(
+                'UPDATE file_instances SET fingerprint = ? WHERE fingerprint = ?;'
+              )
+              .run(legacyFingerprint, currentFingerprint);
+          })();
+        } finally {
+          raw.close();
+        }
+      }
+
+      it('gives a copied file the same content identity and metadata', async () => {
+        const original = createFile('original.mp4', 'shared-content-payload');
+        const [indexed] = await store.indexFiles({
+          rootPath,
+          entries: [original],
+        });
+        store.setReviewState([indexed.fingerprint], 'pick');
+        store.setRating([indexed.fingerprint], 4);
+        store.assignTags([indexed.fingerprint], ['keeper']);
+
+        // A copy is a distinct inode with its own creation time. Under v1 that
+        // produced a second content row with no review state at all.
+        const copy = createFile('nested/copy.mp4', 'shared-content-payload');
+        const [copyIndexed] = await store.indexFiles({
+          rootPath,
+          entries: [copy],
+        });
+
+        expect(copyIndexed.fingerprint).toBe(indexed.fingerprint);
+        expect(copyIndexed.reviewState).toBe('pick');
+        expect(copyIndexed.rating).toBe(4);
+        expect(copyIndexed.tags).toContain('keeper');
+        // Distinct files remain distinct instances of that one content row.
+        expect(copyIndexed.instance.id).not.toBe(indexed.instance.id);
+      });
+
+      it('carries v1 metadata onto the v2 identity when bytes are unchanged', async () => {
+        const entry = createFile('legacy.mp4', 'legacy-content-payload');
+        const [indexed] = await store.indexFiles({ rootPath, entries: [entry] });
+        store.setReviewState([indexed.fingerprint], 'pick');
+        store.setRating([indexed.fingerprint], 5);
+        store.assignTags([indexed.fingerprint], ['legacy-tag']);
+
+        const { fingerprint, legacyFingerprint } = await computeFingerprint(
+          entry.filePath
+        );
+        expect(indexed.fingerprint).toBe(fingerprint);
+        expect(legacyFingerprint.startsWith('v1-')).toBe(true);
+        demoteToLegacyFingerprint(fingerprint, legacyFingerprint);
+
+        const [remigrated] = await store.indexFiles({
+          rootPath,
+          entries: [{ filePath: entry.filePath, stats: entry.stats }],
+        });
+
+        expect(remigrated.fingerprint).toBe(fingerprint);
+        expect(remigrated.reviewState).toBe('pick');
+        expect(remigrated.rating).toBe(5);
+        expect(remigrated.tags).toContain('legacy-tag');
+
+        const raw = openProfileDatabase();
+        try {
+          const leftovers = raw
+            .prepare('SELECT COUNT(*) AS count FROM files WHERE fingerprint = ?;')
+            .get(legacyFingerprint);
+          expect(leftovers.count).toBe(0);
+          const orphanReviews = raw
+            .prepare(
+              `SELECT COUNT(*) AS count FROM content_review
+               WHERE fingerprint NOT IN (SELECT fingerprint FROM media_content);`
+            )
+            .get();
+          expect(orphanReviews.count).toBe(0);
+        } finally {
+          raw.close();
+        }
+      });
+
+      it('refuses to inherit v1 metadata when the bytes changed', async () => {
+        const entry = createFile('edited.mp4', 'first-content-payload');
+        const [indexed] = await store.indexFiles({ rootPath, entries: [entry] });
+        store.setReviewState([indexed.fingerprint], 'pick');
+        store.setRating([indexed.fingerprint], 3);
+
+        const { fingerprint, legacyFingerprint } = await computeFingerprint(
+          entry.filePath
+        );
+        demoteToLegacyFingerprint(fingerprint, legacyFingerprint);
+
+        // The stored legacy digest no longer describes these bytes, so the
+        // re-key guard must reject it rather than transplant a stale decision.
+        const rewritten = createFile('edited.mp4', 'totally-different-payload');
+        const [reindexed] = await store.indexFiles({
+          rootPath,
+          entries: [rewritten],
+        });
+
+        expect(reindexed.fingerprint).not.toBe(fingerprint);
+        expect(reindexed.reviewState).toBe('unreviewed');
+        expect(reindexed.rating).toBeNull();
+      });
+
+      it('merges two legacy rows that collapse onto one content identity', async () => {
+        const first = createFile('dup-a.mp4', 'duplicate-content-payload');
+        const [firstIndexed] = await store.indexFiles({
+          rootPath,
+          entries: [first],
+        });
+        const firstLegacy = await computeFingerprint(first.filePath);
+        store.setReviewState([firstIndexed.fingerprint], 'reject');
+        store.setRating([firstIndexed.fingerprint], 1);
+        store.assignTags([firstIndexed.fingerprint], ['from-first']);
+        demoteToLegacyFingerprint(
+          firstIndexed.fingerprint,
+          firstLegacy.legacyFingerprint
+        );
+
+        const second = createFile('dup-b.mp4', 'duplicate-content-payload');
+        const [secondIndexed] = await store.indexFiles({
+          rootPath,
+          entries: [second],
+        });
+        const secondLegacy = await computeFingerprint(second.filePath);
+        store.setReviewState([secondIndexed.fingerprint], 'pick');
+        store.setRating([secondIndexed.fingerprint], 5);
+        store.assignTags([secondIndexed.fingerprint], ['from-second']);
+        demoteToLegacyFingerprint(
+          secondIndexed.fingerprint,
+          secondLegacy.legacyFingerprint
+        );
+        expect(firstLegacy.legacyFingerprint).not.toBe(
+          secondLegacy.legacyFingerprint
+        );
+
+        const merged = await store.indexFiles({
+          rootPath,
+          entries: [
+            { filePath: first.filePath, stats: first.stats },
+            { filePath: second.filePath, stats: second.stats },
+          ],
+        });
+
+        expect(merged[0].fingerprint).toBe(merged[1].fingerprint);
+        // Tags union across both legacy rows; the later decision wins.
+        expect(merged[1].tags).toEqual(
+          expect.arrayContaining(['from-first', 'from-second'])
+        );
+        expect(merged[1].reviewState).toBe('pick');
+        expect(merged[1].rating).toBe(5);
       });
     });
   });

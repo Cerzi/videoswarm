@@ -194,6 +194,8 @@ function App() {
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
   const [acceptedCopyProgress, setAcceptedCopyProgress] = useState(null);
+  const [trashProgress, setTrashProgress] = useState(null);
+  const [transferLayout, setTransferLayout] = useState("structured");
   const [fullscreenTransientSurface, setFullscreenTransientSurface] =
     useState(null);
   const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
@@ -462,6 +464,7 @@ function App() {
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setTransferLayout,
     setMetadataInspectorMode: applyMetadataInspectorModeFromSettings,
     setZoomLevelFromSettings: (value) =>
       applyZoomFromSettingsRef.current?.(value),
@@ -513,6 +516,7 @@ function App() {
   useEffect(() => {
     setProcessResultsOpen(false);
     setAcceptedCopyProgress(null);
+    setTrashProgress(null);
   }, [activeRootPath]);
 
   useEffect(() => {
@@ -521,6 +525,23 @@ function App() {
     return subscribe((progress) => {
       if (!progress || typeof progress !== "object") return;
       setAcceptedCopyProgress(progress);
+    });
+  }, []);
+
+  useEffect(() => {
+    const subscribe = window.electronAPI?.onTrashProgress;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((progress) => {
+      if (!progress || typeof progress !== "object") return;
+      setTrashProgress((previous) => {
+        // A late event from a superseded operation must not reopen or rewind
+        // the bar for the run the user is actually watching.
+        const incoming = Number(progress.operationId) || 0;
+        if (previous && incoming < (Number(previous.operationId) || 0)) {
+          return previous;
+        }
+        return progress;
+      });
     });
   }, []);
 
@@ -1766,7 +1787,7 @@ function App() {
   );
 
   const handlePrepareAcceptedCopy = useCallback(
-    async () => {
+    async (destinationPath = null, layout = "structured", reusePlanId = null) => {
       const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
       if (typeof prepare !== "function") {
         throw new Error("Copy Accepted is unavailable");
@@ -1776,6 +1797,10 @@ function App() {
         rootPath: activeRootPath,
         directory: currentDirectory,
         scope: folderScope,
+        destinationPath:
+          typeof destinationPath === "string" ? destinationPath : null,
+        layout: layout === "flat" ? "flat" : "structured",
+        reusePlanId: typeof reusePlanId === "string" ? reusePlanId : null,
       });
       if (result?.success === false) {
         throw new Error(result.error || "Accepted-copy preflight failed");
@@ -1784,6 +1809,19 @@ function App() {
     },
     [activeRootPath, currentDirectory, folderScope]
   );
+
+  const handleTransferLayoutChange = useCallback((value) => {
+    const next = value === "flat" ? "flat" : "structured";
+    setTransferLayout(next);
+    window.electronAPI?.saveSettingsPartial?.({ transferLayout: next });
+  }, []);
+
+  const handleListTransferDestinations = useCallback(async () => {
+    const list = window.electronAPI?.review?.copyAccepted?.listDestinations;
+    if (typeof list !== "function") return [];
+    const result = await list();
+    return Array.isArray(result?.destinations) ? result.destinations : [];
+  }, []);
 
   const handleStartAcceptedCopy = useCallback(
     async (planId, requestedMode = "copy") => {
@@ -4316,9 +4354,13 @@ function App() {
             onClose={() => setProcessResultsOpen(false)}
             onTrashRejects={handleTrashReviewRejects}
             onPrepareAcceptedCopy={handlePrepareAcceptedCopy}
+            onListTransferDestinations={handleListTransferDestinations}
+            transferLayout={transferLayout}
+            onTransferLayoutChange={handleTransferLayoutChange}
             onStartAcceptedCopy={handleStartAcceptedCopy}
             onCancelAcceptedCopy={handleCancelAcceptedCopy}
             acceptedCopyProgress={acceptedCopyProgress}
+            trashProgress={trashProgress}
           />
           <DataLocationDialog
             open={isDataLocationOpen}

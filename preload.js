@@ -282,6 +282,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     });
   },
 
+  onTrashProgress: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("trash-progress", handler);
+    return () => ipcRenderer.removeListener("trash-progress", handler);
+  },
+
   confirmMoveToTrash: async (payload) => {
     const result = await ipcRenderer.invoke("confirm-move-to-trash", payload);
     if (result && typeof result === "object") return result;
@@ -379,7 +386,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
           rootPath: payload?.rootPath,
           directory: payload?.directory ?? "",
           scope: payload?.scope,
+          destinationPath:
+            typeof payload?.destinationPath === "string"
+              ? payload.destinationPath
+              : null,
+          layout: payload?.layout === "flat" ? "flat" : "structured",
+          reusePlanId:
+            typeof payload?.reusePlanId === "string"
+              ? payload.reusePlanId
+              : null,
         }),
+      listDestinations: async () =>
+        ipcRenderer.invoke("review:transfer-destinations"),
       start: async (planId, transferMode = "copy") =>
         ipcRenderer.invoke("review:copy-accepted:start", {
           planId: normalizeAcceptedCopyPlanId(planId),

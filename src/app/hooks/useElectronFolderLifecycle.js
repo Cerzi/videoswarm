@@ -148,6 +148,7 @@ export function useElectronFolderLifecycle({
   setReviewModeEnabled,
   setFullscreenDetailsOpen,
   setFullscreenAudioEnabled,
+  setTransferLayout,
   setMetadataInspectorMode,
   setZoomLevelFromSettings,
   setVisibleVideos,
@@ -198,6 +199,7 @@ export function useElectronFolderLifecycle({
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
   });
@@ -217,6 +219,7 @@ export function useElectronFolderLifecycle({
       setReviewModeEnabled,
       setFullscreenDetailsOpen,
       setFullscreenAudioEnabled,
+      setTransferLayout,
       setMetadataInspectorMode,
       setZoomLevelFromSettings,
     };
@@ -234,6 +237,7 @@ export function useElectronFolderLifecycle({
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
   ]);
@@ -1069,6 +1073,7 @@ export function useElectronFolderLifecycle({
       setReviewModeEnabled: applyReviewModeEnabled,
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
       setFullscreenAudioEnabled: applyFullscreenAudioEnabled,
+      setTransferLayout: applyTransferLayout,
       setMetadataInspectorMode: applyMetadataInspectorMode,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
     } = setterRefs.current;
@@ -1104,6 +1109,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.fullscreenAudioEnabled !== undefined) {
       applyFullscreenAudioEnabled?.(settings.fullscreenAudioEnabled === true);
+    }
+    if (settings.transferLayout !== undefined) {
+      applyTransferLayout?.(settings.transferLayout === "flat" ? "flat" : "structured");
     }
     if (settings.metadataInspectorMode !== undefined) {
       applyMetadataInspectorMode?.(

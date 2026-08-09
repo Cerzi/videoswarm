@@ -128,6 +128,58 @@ describe("authorized trash service", () => {
     });
   });
 
+  it("reports monotonic progress and a terminal event for every item", async () => {
+    const shell = {
+      trashItem: vi.fn(async (target) => {
+        if (target.endsWith("second.mp4")) throw new Error("locked");
+      }),
+    };
+    const events = [];
+
+    const result = await trashAuthorizedPaths({
+      paths: ["/library/first.mp4", "/library/second.mp4", "/library/third.mp4"],
+      shell,
+      authorizePath: async (filePath) => ({ path: filePath }),
+      concurrency: 1,
+      onProgress: (progress) => events.push({ ...progress }),
+    });
+
+    expect(result.moved).toHaveLength(2);
+    expect(result.failed).toHaveLength(1);
+    // One leading event, one per item, and one explicit terminal event.
+    expect(events).toHaveLength(5);
+    expect(events[0]).toMatchObject({ processed: 0, total: 3, finished: false });
+    expect(events.map((event) => event.processed)).toEqual([0, 1, 2, 3, 3]);
+    const terminal = events.at(-1);
+    expect(terminal).toMatchObject({
+      processed: 3,
+      total: 3,
+      moved: 2,
+      failed: 1,
+      finished: true,
+    });
+  });
+
+  it("completes the trash operation even when progress reporting throws", async () => {
+    const shell = { trashItem: vi.fn(async () => {}) };
+
+    const result = await trashAuthorizedPaths({
+      paths: ["/library/only.mp4"],
+      shell,
+      authorizePath: async (filePath) => ({ path: filePath }),
+      onProgress: () => {
+        throw new Error("renderer went away");
+      },
+    });
+
+    expect(result).toEqual({
+      success: true,
+      moved: ["/library/only.mp4"],
+      failed: [],
+    });
+    expect(shell.trashItem).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects empty, oversized, and unbounded calls before touching the shell", async () => {
     const shell = { trashItem: vi.fn() };
     const authorizePath = vi.fn();

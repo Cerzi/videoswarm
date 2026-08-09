@@ -173,6 +173,11 @@ describe("preload native-work bridge", () => {
         rootPath: "/library/root",
         directory: "batch/one",
         scope: "current-folder",
+        // Absent reuse hints are normalised rather than forwarded as
+        // undefined, so the bounded main-side validator sees a stable shape.
+        destinationPath: null,
+        layout: "structured",
+        reusePlanId: null,
       }
     );
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(

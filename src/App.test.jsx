@@ -2315,6 +2315,10 @@ describe("App hook composition", () => {
       rootPath: "/outputs",
       directory: "",
       scope: "all-descendants",
+      // Scope stays authoritative; these only say "no reuse, keep folders".
+      destinationPath: null,
+      layout: "structured",
+      reusePlanId: null,
     }));
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("videos");
     expect(prepare.mock.calls[0][0]).not.toHaveProperty("records");

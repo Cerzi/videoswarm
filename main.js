@@ -263,6 +263,8 @@ const defaultSettings = {
   reviewModeEnabled: true,
   fullscreenDetailsOpen: true,
   fullscreenAudioEnabled: false,
+  recentTransferDestinations: [],
+  transferLayout: "structured",
   metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
@@ -477,6 +479,59 @@ const ipcMain = Object.freeze({
 
 const pathAuthority = createPathAuthority();
 const trashConfirmationStore = createTrashConfirmationStore();
+const TRASH_PROGRESS_INTERVAL_MS = 100;
+let trashOperationSequence = 0;
+
+const TRANSFER_LAYOUTS = new Set(["structured", "flat"]);
+const MAX_RECENT_TRANSFER_DESTINATIONS = 8;
+
+// Recent destinations are persisted so a transfer can start where the last one
+// ended instead of at Documents every time. The list is also the allowlist the
+// renderer's reuse shortcut is checked against, so it stays strictly bounded
+// and holds only absolute, canonical-looking paths.
+function normalizeRecentTransferDestinations(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const normalized = [];
+  for (const candidate of value) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (
+      !trimmed ||
+      trimmed.length > IPC_LIMITS.maxPathChars ||
+      trimmed.includes("\0") ||
+      !path.isAbsolute(trimmed)
+    ) {
+      continue;
+    }
+    const resolved = path.resolve(trimmed);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    normalized.push(resolved);
+    if (normalized.length >= MAX_RECENT_TRANSFER_DESTINATIONS) break;
+  }
+  return normalized;
+}
+
+function getRecentTransferDestinations() {
+  return normalizeRecentTransferDestinations(
+    currentSettings?.recentTransferDestinations
+  );
+}
+
+function rememberTransferDestination(destinationPath) {
+  const normalized = normalizeRecentTransferDestinations([destinationPath]);
+  if (!normalized.length) return;
+  const next = normalizeRecentTransferDestinations([
+    normalized[0],
+    ...getRecentTransferDestinations(),
+  ]);
+  saveSettingsPartial({ recentTransferDestinations: next }).catch((error) => {
+    console.warn("[transfer] Failed to persist recent destination", {
+      message: error?.message || String(error),
+    });
+  });
+}
 const activeTrashOperations = new Set();
 let trashAdmissionOpen = true;
 
@@ -1531,6 +1586,12 @@ function normaliseLoadedSettings(rawSettings) {
       source.fullscreenAudioEnabled === undefined
         ? defaultSettings.fullscreenAudioEnabled
         : source.fullscreenAudioEnabled === true,
+    recentTransferDestinations: normalizeRecentTransferDestinations(
+      source.recentTransferDestinations
+    ),
+    transferLayout: TRANSFER_LAYOUTS.has(source.transferLayout)
+      ? source.transferLayout
+      : defaultSettings.transferLayout,
     metadataInspectorMode: normalizeMetadataInspectorMode(
       source.metadataInspectorMode
     ),
@@ -4029,6 +4090,16 @@ const reviewCopyAcceptedCoordinator =
         throw new ProfileOperationInvalidatedError();
       }
     },
+    onSourcesRemoved: ({ plan, paths, reason }) => {
+      const context = plan?.context;
+      if (!context?.metadataStore || !Array.isArray(paths) || !paths.length) {
+        return;
+      }
+      context.metadataStore.markFilesMissing(paths, {
+        assertActive: () => assertMetadataContextActive(context),
+        reason,
+      });
+    },
     authorizeRoot: ({ owner, rootPath }) =>
       assertRendererPath({ sender: owner }, rootPath, "directory"),
     getRoot: ({ context, rootPath }) =>
@@ -4038,13 +4109,20 @@ const reviewCopyAcceptedCoordinator =
       if (!win || win.isDestroyed() || owner.isDestroyed?.()) {
         throw new ProfileOperationInvalidatedError();
       }
+      // Reopening at the last destination is the difference between one click
+      // and re-navigating a deep tree on every transfer. Documents is only the
+      // first-run fallback.
+      const [lastDestination] = getRecentTransferDestinations();
       return dialog.showOpenDialog(win, {
-        title: "Copy accepted clips",
+        title: "Transfer accepted clips",
         buttonLabel: "Choose destination",
-        defaultPath: app.getPath("documents"),
+        defaultPath: lastDestination || app.getPath("documents"),
         properties: ["openDirectory", "createDirectory"],
       });
     },
+    listReusableDestinations: () => getRecentTransferDestinations(),
+    onDestinationPrepared: ({ destinationPath }) =>
+      rememberTransferDestination(destinationPath),
     queryAcceptedInstances: ({
       context,
       rootPath,
@@ -4149,13 +4227,54 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
       maxChars: 32,
     })
   );
+  // Optional. The coordinator only honours it if it matches a destination this
+  // profile already recorded, so an arbitrary renderer path cannot skip the
+  // native picker.
+  const destinationPath = payload?.destinationPath === undefined ||
+    payload?.destinationPath === null
+    ? null
+    : assertString(payload.destinationPath, {
+        name: "Copy Accepted destination",
+        minChars: 1,
+        maxChars: IPC_LIMITS.maxPathChars,
+        trim: true,
+      });
+  const layout = payload?.layout === undefined
+    ? "structured"
+    : assertString(payload.layout, {
+        name: "Accepted clip transfer layout",
+        minChars: 4,
+        maxChars: 10,
+        trim: true,
+      });
+  if (!TRANSFER_LAYOUTS.has(layout)) {
+    throw new TypeError("Accepted clip transfer layout must be structured or flat");
+  }
+  const reusePlanId = payload?.reusePlanId === undefined ||
+    payload?.reusePlanId === null
+    ? null
+    : assertString(payload.reusePlanId, {
+        name: "Copy Accepted reuse plan id",
+        minChars: 8,
+        maxChars: 128,
+      });
   return reviewCopyAcceptedCoordinator.prepare({
     owner: event.sender,
     rootPath: requestedRoot,
     directory,
     scope,
+    destinationPath,
+    layout,
+    reusePlanId,
   });
 });
+
+ipcMain.handle("review:transfer-destinations", async () => ({
+  destinations: getRecentTransferDestinations().map((destinationPath) => ({
+    path: destinationPath,
+    label: path.basename(destinationPath) || destinationPath,
+  })),
+}));
 
 ipcMain.handle("review:copy-accepted:start", async (event, payload = {}) => {
   assertPlainObject(payload, "Copy Accepted start request");
@@ -4612,6 +4731,42 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
     generation: context.generation,
     paths: [...canonicalByRequestedPath.values()],
   });
+  // Trashing is one platform call per file and cannot be made fast, so the
+  // renderer is told how far along it is. Events are throttled, ordered by an
+  // operation id so a superseded run cannot overwrite a newer one's bar, and
+  // bounded to the same owner/profile the operation itself is bound to.
+  const trashOperationId = ++trashOperationSequence;
+  let lastTrashProgressAt = 0;
+  const sendTrashProgress = (progress) => {
+    const finished = Boolean(progress?.finished);
+    const at = Date.now();
+    if (!finished && at - lastTrashProgressAt < TRASH_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+    lastTrashProgressAt = at;
+    if (
+      requester.isDestroyed?.() ||
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      mainWindow.webContents !== requester
+    ) {
+      return;
+    }
+    try {
+      assertMetadataContextActive(context);
+    } catch {
+      return;
+    }
+    requester.send("trash-progress", {
+      operationId: trashOperationId,
+      processed: Number(progress?.processed) || 0,
+      total: Number(progress?.total) || 0,
+      moved: Number(progress?.moved) || 0,
+      failed: Number(progress?.failed) || 0,
+      finished,
+    });
+  };
+
   const operation = (async () => {
     await mapTrashWorkBounded(
       canonicalTrashPaths,
@@ -4629,6 +4784,7 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
       authorizePath: async (filePath) => ({
         path: canonicalByRequestedPath.get(filePath),
       }),
+      onProgress: sendTrashProgress,
       logger: console,
     });
     const canonicalMovedPaths = [...new Set(
@@ -4640,7 +4796,12 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
       try {
         const catalogResult = context.metadataStore.markFilesMissing(
           canonicalMovedPaths,
-          { assertActive: () => assertMetadataContextActive(context) }
+          {
+            assertActive: () => assertMetadataContextActive(context),
+            // The user asked for these to go, so the catalog records why
+            // rather than reporting them as unexplained reference loss.
+            reason: "trashed",
+          }
         );
         result.catalogReconciled = true;
         result.catalogMarkedMissing = catalogResult.markedMissing;
