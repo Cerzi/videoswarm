@@ -68,6 +68,42 @@ function normalizePlanId(value) {
   return value;
 }
 
+/**
+ * Returns null when the request is not selection-driven, so the caller can
+ * distinguish "transfer the review scope" from "transfer these rows". An
+ * explicitly empty list is an error rather than a silent whole-scope transfer.
+ */
+function normalizeSelectionInstanceIds(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new AcceptedCopyError(
+      "Selected instance ids must be an array",
+      ACCEPTED_COPY_CODES.PLAN_INVALID
+    );
+  }
+  const ids = [
+    ...new Set(
+      value.map((entry) => {
+        const id = Number(entry);
+        if (!Number.isSafeInteger(id) || id <= 0) {
+          throw new AcceptedCopyError(
+            "Every selected instance id must be a positive integer",
+            ACCEPTED_COPY_CODES.PLAN_INVALID
+          );
+        }
+        return id;
+      })
+    ),
+  ];
+  if (ids.length === 0 || ids.length > ACCEPTED_COPY_MAX_MEDIA) {
+    throw new AcceptedCopyError(
+      `A transfer selection must name 1-${ACCEPTED_COPY_MAX_MEDIA} clips`,
+      ACCEPTED_COPY_CODES.PLAN_INVALID
+    );
+  }
+  return ids;
+}
+
 function normalizeRootPath(value, pathImpl = path) {
   if (
     typeof value !== "string" ||
@@ -879,8 +915,14 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         );
       }
       const rootPath = normalizeRootPath(request?.rootPath, pathImpl);
-      const scope = normalizeReviewExportScope(request?.scope);
-      const directory = scope === "all-descendants"
+      // A selection names exact rows, so it carries no scope of its own and
+      // must not be held to the review export's tree-coverage requirement.
+      const instanceIds = normalizeSelectionInstanceIds(request?.instanceIds);
+      const selectionDriven = instanceIds !== null;
+      const scope = selectionDriven
+        ? "all-descendants"
+        : normalizeReviewExportScope(request?.scope);
+      const directory = selectionDriven || scope === "all-descendants"
         ? ""
         : normalizeReviewExportDirectory(request?.directory ?? "");
       context = captureContext({ owner, request });
@@ -893,6 +935,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         rootPath,
         directory,
         scope,
+        instanceIds,
+        selectionDriven,
         state: "preparing",
         controller: new AbortController(),
         expiryTimer: null,
@@ -924,7 +968,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         request,
       });
       assertPlanActive(plan, "root-loaded");
-      assertReviewExportCoverage(initialRoot, directory, scope);
+      if (!selectionDriven) {
+        assertReviewExportCoverage(initialRoot, directory, scope);
+      }
 
       // Re-running preflight for an existing plan (a layout change) must not
       // make the user pick the same folder again. The path is read from the
@@ -993,6 +1039,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         rootPath: plan.sourceRoot,
         directory,
         scope,
+        instanceIds,
         limit: ACCEPTED_COPY_MAX_MEDIA + 1,
         maxRecords: ACCEPTED_COPY_MAX_MEDIA,
         maxPathBytes: ACCEPTED_COPY_MAX_PATH_BYTES,
@@ -1000,7 +1047,15 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       });
       assertPlanActive(plan, "query-complete");
       const liveRoot = queryResult?.root || initialRoot;
-      assertReviewExportCoverage(liveRoot, directory, scope);
+      if (!selectionDriven) {
+        assertReviewExportCoverage(liveRoot, directory, scope);
+      }
+      // Rows the selection named that no longer resolve are the same kind of
+      // outcome as a source that vanishes during preflight, so they are
+      // reported through the existing unavailable count rather than a new one.
+      const unresolvedSelection = selectionDriven
+        ? Math.max(0, Number(queryResult?.unavailableCount) || 0)
+        : 0;
       const records = normalizeAcceptedRecords(
         normalizeQueryResult(queryResult),
         plan.sourceRoot,
@@ -1016,7 +1071,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       plan.jobs = prepared.jobs;
       plan.preflightFailures = prepared.failures;
       plan.preflightFailureCount = prepared.failureCount;
-      plan.missingCount = prepared.missingCount;
+      plan.missingCount = prepared.missingCount + unresolvedSelection;
       plan.collisions = prepared.collisions;
       plan.collisionCount = prepared.collisionCount;
       plan.totalBytes = prepared.totalBytes;

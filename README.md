@@ -159,6 +159,9 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   `ffprobe`; exact adjacent JSON sidecars remain the fallback. Arbitrary custom
   nodes and visual-workflow-only composition may produce a transparent partial
   result rather than a guessed prompt.
+- Move/Copy is available for any selection from the context menu or the
+  selection inspector, but only for indexed local clips; anything else in the
+  selection is reported as excluded.
 - Accepted-clip Move/Copy never overwrites an existing destination. Ratings,
   tags, and review decisions follow the clip's content, so they reappear if the
   destination is also an indexed library; they are not written into the files

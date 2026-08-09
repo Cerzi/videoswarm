@@ -175,6 +175,8 @@ describe("preload native-work bridge", () => {
         scope: "current-folder",
         // Absent reuse hints are normalised rather than forwarded as
         // undefined, so the bounded main-side validator sees a stable shape.
+        // A null selection means "use the review scope" rather than "no rows".
+        instanceIds: null,
         destinationPath: null,
         layout: "structured",
         reusePlanId: null,

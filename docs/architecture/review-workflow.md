@@ -220,6 +220,35 @@ destruction, source-root invalidation, application shutdown, and relaunch first
 cancel the job and then drain its bounded in-flight work. Stale progress and
 completion events are ignored by owner, profile generation, and job token.
 
+## Transferring an arbitrary selection
+
+Status: **Implemented**
+
+Move/Copy is not review-only. The same coordinator, bounds, preflight,
+no-overwrite writes, identity checks, progress and cancellation also serve a
+transfer of whatever is selected, reached from the grid context menu and from a
+button in the selection inspector where the count is already shown. The
+navigation bar deliberately has no entry point: it is scoped to location, not
+selection, so a control there would be disabled whenever nothing is selected.
+
+The only difference is which rows are chosen. The review flow joins
+`content_review.state = 'pick'`; a selection resolves a bounded list of
+**instance ids** instead. Ids are safe to accept from the renderer in a way
+paths are not — they only select rows the main process already owns, so an id
+that is unknown, absent, or outside the named root resolves to nothing rather
+than to somewhere new. Those unresolved ids are folded into the same
+"missing or changed and will be skipped" count that a source vanishing during
+preflight produces.
+
+Clips with no catalog instance — web files, or anything not yet indexed —
+cannot be named this way and are reported as excluded rather than silently
+dropped. A selection transfer imposes no scope-coverage requirement, because it
+names exact rows rather than a region of the tree.
+
+Destination, layout, collision reporting, progress and outcome rendering live
+in one shared panel and hook used by both flows, so their wording and
+cancellation semantics cannot drift apart.
+
 ## Transfer destinations and layout
 
 Status: **Implemented**

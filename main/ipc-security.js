@@ -302,6 +302,37 @@ function assertStringArray(value, options = {}) {
   return dedupe ? [...new Set(result)] : result;
 }
 
+/**
+ * Bounded list of catalog row ids. Ids are safe to accept from a renderer in a
+ * way paths are not: they only select rows the main process already owns, so
+ * an unknown or stale id resolves to nothing rather than to somewhere new.
+ */
+function assertInstanceIdArray(value, options = {}) {
+  const {
+    name = "instance ids",
+    minEntries = 1,
+    maxEntries = IPC_LIMITS.maxArrayEntries,
+  } = options;
+  if (
+    !Array.isArray(value) ||
+    value.length < minEntries ||
+    value.length > maxEntries
+  ) {
+    throw new IpcSecurityError(
+      `${name} is outside the allowed bounds`,
+      "INVALID_PAYLOAD"
+    );
+  }
+  const result = value.map((entry, index) =>
+    assertInteger(entry, {
+      name: `${name}[${index}]`,
+      min: 1,
+      max: Number.MAX_SAFE_INTEGER,
+    })
+  );
+  return [...new Set(result)];
+}
+
 function assertPngDataUrlDimensions(value, options = {}) {
   const maxWidth = options.maxWidth ?? CLIPBOARD_IMAGE_LIMITS.maxWidth;
   const maxHeight = options.maxHeight ?? CLIPBOARD_IMAGE_LIMITS.maxHeight;
@@ -550,6 +581,7 @@ module.exports = {
   IPC_LIMITS,
   IpcSecurityError,
   assertBoolean,
+  assertInstanceIdArray,
   assertInteger,
   assertPathString,
   assertPayloadSize,
