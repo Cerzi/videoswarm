@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   createCachedLibraryResponse,
+  createTaggedLibraryFiles,
 } = require("../cached-library-snapshot");
 
 describe("cached library snapshot", () => {
@@ -171,5 +172,82 @@ describe("cached library snapshot", () => {
     expect(response.files[0]).not.toHaveProperty("tags");
     expect(response.files[0]).not.toHaveProperty("rating");
     expect(response.files[0]).not.toHaveProperty("reviewState");
+  });
+});
+
+// A tag view is the one collection whose rows arrive from several roots at
+// once, and the one that shipped adopting the raw catalog projection. These
+// pin the shape it must hand the renderer, because a record the grid cannot
+// key or play looks exactly like an empty library.
+describe("tagged library files", () => {
+  const rootA = path.resolve("/library-a");
+  const rootB = path.resolve("/library-b");
+
+  const taggedRecords = [
+    {
+      instanceId: 11,
+      rootPath: rootA,
+      relativePath: path.join("2026-08-09", "clip.mp4"),
+      absolutePath: path.join(rootA, "2026-08-09", "clip.mp4"),
+      size: 2048,
+      mtimeMs: 2_000,
+      createdMs: 1_000,
+      fingerprint: "fp-11",
+      tags: ["keeper"],
+      rating: 4,
+      reviewState: "pick",
+      hasAudio: true,
+      dimensions: { width: 640, height: 360 },
+    },
+    {
+      instanceId: 12,
+      rootPath: rootB,
+      relativePath: path.join("2026-08-09", "clip.mp4"),
+      absolutePath: path.join(rootB, "2026-08-09", "clip.mp4"),
+      size: 4096,
+      mtimeMs: 3_000,
+      createdMs: 3_000,
+      fingerprint: "fp-12",
+      tags: ["keeper"],
+    },
+  ];
+
+  it("gives the grid the same record shape a folder view does", () => {
+    const [file] = createTaggedLibraryFiles(taggedRecords, { generation: 9 });
+
+    expect(file).toMatchObject({
+      id: path.join(rootA, "2026-08-09", "clip.mp4"),
+      instanceId: 11,
+      name: "clip.mp4",
+      relativePath: path.join("2026-08-09", "clip.mp4"),
+      dirname: "2026-08-09",
+      isElectronFile: true,
+      fingerprint: "fp-11",
+      tags: ["keeper"],
+      rating: 4,
+      reviewState: "pick",
+      hasAudio: true,
+    });
+    // Without these the collection loads and then renders nothing: no key to
+    // identify a clip by, and no URL to play it from.
+    expect(file.sourceUrl).toBe("videoswarm-media://instance/11?v=2048-2000&g=9");
+    expect(file.dateModified).toBeInstanceOf(Date);
+    expect(file.dateModified.getTime()).toBe(2_000);
+  });
+
+  it("resolves each record against its own root", () => {
+    const files = createTaggedLibraryFiles(taggedRecords, { generation: 9 });
+
+    expect(files.map((file) => file.rootPath)).toEqual([rootA, rootB]);
+    // Same relative path under two roots stays two distinct clips.
+    expect(files[0].id).not.toBe(files[1].id);
+    expect(files[0].relativePath).toBe(files[1].relativePath);
+  });
+
+  it("drops a record that names no root rather than resolving it somewhere", () => {
+    expect(
+      createTaggedLibraryFiles([{ ...taggedRecords[0], rootPath: undefined }])
+    ).toEqual([]);
+    expect(createTaggedLibraryFiles(null)).toEqual([]);
   });
 });

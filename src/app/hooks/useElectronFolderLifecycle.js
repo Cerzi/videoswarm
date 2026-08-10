@@ -1046,7 +1046,14 @@ export function useElectronFolderLifecycle({
       cancelActiveFolderScan(false);
       retainedFolderScanRef.current = null;
       collectionOwnerScanIdRef.current = null;
-      setVideos(Array.isArray(records) ? records : []);
+      // Every other collection normalizes what main sends before the grid sees
+      // it, and this one is no exception: the sort comparator reads `basename`,
+      // which only normalization derives from `name`.
+      setVideos(
+        (Array.isArray(records) ? records : []).map((record) =>
+          normalizeVideoFromMain(record)
+        )
+      );
       setActiveScanId(null);
       setActiveRootPath(null);
       setLibraryRoot(null);

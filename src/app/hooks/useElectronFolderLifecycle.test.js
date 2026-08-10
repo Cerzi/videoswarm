@@ -3,6 +3,7 @@ import {
   CACHED_FIRST_GRID_LIMIT,
   useElectronFolderLifecycle,
 } from "./useElectronFolderLifecycle";
+import { SortKey, buildComparator, groupAndSort } from "../../sorting/sorting";
 
 function createSetStateMock() {
   let current = new Set();
@@ -2290,6 +2291,101 @@ describe("useElectronFolderLifecycle", () => {
     expect(setLoadedVideosMock.setter).toHaveBeenCalled();
     expect(setLoadingVideosMock.setter).toHaveBeenCalled();
     expect(setActualPlayingMock.setter).toHaveBeenCalled();
+  });
+
+  // A tag view is the only collection that belongs to no root, so the chrome
+  // that describes a root has to be cleared rather than left pointing at a
+  // folder the visible clips may not live in.
+  it("adopts a rootless tag collection and clears the folder it came from", async () => {
+    const { result } = renderHook(() =>
+      useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+      })
+    );
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+
+    const records = [
+      {
+        id: "/roots/a/2026-08-09/clip.mp4",
+        instanceId: 11,
+        rootPath: "/roots/a",
+        sourceUrl: "videoswarm-media://instance/11?v=2048-2000&g=1",
+        name: "clip.mp4",
+        relativePath: "2026-08-09/clip.mp4",
+        dirname: "2026-08-09",
+        size: 2048,
+        dateModified: new Date(2_000),
+        isElectronFile: true,
+        tags: ["keeper"],
+      },
+      {
+        id: "/roots/b/2026-08-09/clip.mp4",
+        instanceId: 12,
+        rootPath: "/roots/b",
+        sourceUrl: "videoswarm-media://instance/12?v=4096-3000&g=1",
+        name: "clip.mp4",
+        relativePath: "2026-08-09/clip.mp4",
+        dirname: "2026-08-09",
+        size: 4096,
+        dateModified: new Date(3_000),
+        isElectronFile: true,
+        tags: ["keeper"],
+      },
+    ];
+
+    act(() => {
+      result.current.openTagCollection({
+        tags: ["keeper"],
+        matchMode: "all",
+        records,
+      });
+    });
+
+    expect(result.current.videos).toHaveLength(2);
+    // Clips from two roots coexist, which is the whole point of the view.
+    expect(result.current.videos.map((video) => video.rootPath)).toEqual([
+      "/roots/a",
+      "/roots/b",
+    ]);
+    expect(result.current.activeRootPath).toBeNull();
+    expect(result.current.libraryRoot).toBeNull();
+    expect(result.current.directorySummaries).toEqual([]);
+    expect(result.current.tagCollection).toMatchObject({
+      tags: ["keeper"],
+      matchMode: "all",
+      truncated: false,
+    });
+
+    // The name comparator dereferences `basename`, which only normalization
+    // derives from `name`. Adopting records raw threw here and took the whole
+    // renderer down with it.
+    expect(result.current.videos.map((video) => video.basename)).toEqual([
+      "clip.mp4",
+      "clip.mp4",
+    ]);
+    expect(() =>
+      groupAndSort(result.current.videos, {
+        groupByFolders: true,
+        comparator: buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" }),
+      })
+    ).not.toThrow();
   });
 
   it("passes the recursive flag when starting folder watch", async () => {

@@ -83,7 +83,33 @@ function createCachedLibraryResponse(
   };
 }
 
+/**
+ * Map a cross-root tag snapshot into renderer video records.
+ *
+ * A tag view reaches the same rows a folder view does, so it has to hand the
+ * grid the same shape. The catalog projection it is built from is not that
+ * shape: it carries no `id`, no `sourceUrl` and no `name`, so adopting it
+ * directly produced a collection that could neither be keyed, played, nor
+ * labelled.
+ *
+ * Each record resolves against its own root rather than one shared root, and
+ * keeps that root on the object: relative paths from different roots collide,
+ * so anything grouping or labelling by path needs the pair to stay distinct.
+ */
+function createTaggedLibraryFiles(records, options = {}) {
+  if (!Array.isArray(records)) return [];
+  return records
+    .map((record) => {
+      const rootPath = record?.rootPath;
+      if (typeof rootPath !== "string" || !rootPath) return null;
+      const file = createCachedVideoFileObject(record, rootPath, options);
+      return file ? { ...file, rootPath } : null;
+    })
+    .filter(Boolean);
+}
+
 module.exports = {
   createCachedLibraryResponse,
   createCachedVideoFileObject,
+  createTaggedLibraryFiles,
 };

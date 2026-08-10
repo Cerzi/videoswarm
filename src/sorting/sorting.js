@@ -70,13 +70,23 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
     }) * dir;
 }
 
+// A folder view has one root, so a relative dirname identifies a folder on its
+// own. A library-wide tag view spans roots, where two roots can each hold a
+// "2026-08-09" folder that is not the same folder, so the owning root joins the
+// key. Records from a single root carry no rootPath and keep their old
+// grouping exactly. NUL joins the parts because it is the one byte a path
+// cannot contain, so no pair can spell another pair's key.
+function folderGroupKey(item) {
+  return `${item?.rootPath || ""}\u0000${item?.dirname || ""}`;
+}
+
 export function groupAndSort(items, { groupByFolders, comparator }) {
   if (!groupByFolders) {
     return [...items].sort(comparator);
   }
   const groups = new Map();
   items.forEach((item) => {
-    const key = item.dirname || "";
+    const key = folderGroupKey(item);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   });
