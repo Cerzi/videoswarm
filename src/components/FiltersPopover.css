@@ -246,3 +246,10 @@
 .filters-library-status .filters-empty-hint {
   margin: 0;
 }
+
+.filters-tag-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
+}

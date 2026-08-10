@@ -124,6 +124,7 @@ export default function HeaderBar({
   hasOpenFolder = false,
   onFiltersToggle,
   filtersActiveCount = 0,
+  onFiltersClear,
   filtersAreOpen = false,
   filtersButtonRef,
   hoverAudioEnabled = false,
@@ -367,9 +368,33 @@ export default function HeaderBar({
               <FilterIcon />
               <span className="filters-button-label">Filters</span>
               {filtersActiveCount > 0 && (
-                <span className="filters-button-badge">{filtersActiveCount}</span>
+                <span className="filters-button-badge" aria-hidden="true">
+                  {filtersActiveCount}
+                </span>
               )}
             </button>
+            {/* Overlays the badge rather than sitting beside it, so revealing a
+                way to clear filters never reflows the toolbar. The count stays
+                readable at rest and becomes the clear target on hover or focus. */}
+            {filtersActiveCount > 0 && (
+              <button
+                type="button"
+                className="filters-button-clear"
+                onClick={onFiltersClear}
+                disabled={isLoadingFolder}
+                aria-label={`Clear ${filtersActiveCount} active filter${
+                  filtersActiveCount === 1 ? "" : "s"
+                }`}
+                title="Clear all filters"
+              >
+                <span className="filters-button-clear__count" aria-hidden="true">
+                  {filtersActiveCount}
+                </span>
+                <span className="filters-button-clear__icon" aria-hidden="true">
+                  ×
+                </span>
+              </button>
+            )}
           </div>
 
           <button

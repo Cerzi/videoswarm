@@ -1576,3 +1576,50 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* Sits exactly on top of the count badge. Reserving no space of its own means
+   filters becoming active never shifts the surrounding toolbar controls. */
+.filters-button-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  min-width: 1.45rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #051805;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.filters-button-clear > span {
+  grid-area: 1 / 1;
+}
+.filters-button-clear__icon {
+  opacity: 0;
+  font-size: 0.95rem;
+}
+.filters-button-clear:hover .filters-button-clear__count,
+.filters-button-clear:focus-visible .filters-button-clear__count {
+  opacity: 0;
+}
+.filters-button-clear:hover .filters-button-clear__icon,
+.filters-button-clear:focus-visible .filters-button-clear__icon {
+  opacity: 1;
+}
+.filters-button-clear:hover,
+.filters-button-clear:focus-visible {
+  background: #e03131;
+  color: #fff;
+  outline: 2px solid transparent;
+}
+.filters-button-clear:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

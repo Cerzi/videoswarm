@@ -3,6 +3,7 @@ import {
   createDefaultFilters,
   normalizeTagList,
   sanitizeMegapixels,
+  normalizeIncludeTagsMode,
 } from "../app/filters/filtersUtils";
 import { normalizeReviewFilter } from "../review/reviewState";
 
@@ -28,6 +29,7 @@ const normalizeFilters = (filters) => ({
   exactRating:
     filters?.exactRating == null ? null : Math.max(0, Math.min(5, Math.round(Number(filters.exactRating)) || 0)),
   reviewFilter: normalizeReviewFilter(filters?.reviewFilter),
+  includeTagsMode: normalizeIncludeTagsMode(filters?.includeTagsMode),
   minMegapixels: sanitizeMegapixels(filters?.minMegapixels),
   maxMegapixels: sanitizeMegapixels(filters?.maxMegapixels),
 });

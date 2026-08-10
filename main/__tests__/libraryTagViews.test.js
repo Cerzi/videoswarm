@@ -164,6 +164,32 @@ if (!database || databaseLoadError) {
       expect(complete.truncated).toBe(false);
     });
 
+    it('unions tags in any mode and intersects them by default', async () => {
+      const both = await indexInto('alpha', 'both.mp4', 'both');
+      const oneOnly = await indexInto('beta', 'one.mp4', 'one');
+      const neither = await indexInto('beta', 'other.mp4', 'other');
+      store.assignTags([both.indexed.fingerprint], ['keeper', 'hero']);
+      store.assignTags([oneOnly.indexed.fingerprint], ['keeper']);
+      store.assignTags([neither.indexed.fingerprint], ['unrelated']);
+
+      const all = store.getTaggedLibrarySnapshot({
+        tagNames: ['keeper', 'hero'],
+      });
+      expect(all.matchMode).toBe('all');
+      expect(all.records.map((record) => record.relativePath)).toEqual([
+        'both.mp4',
+      ]);
+
+      const any = store.getTaggedLibrarySnapshot({
+        tagNames: ['keeper', 'hero'],
+        matchMode: 'any',
+      });
+      expect(any.matchMode).toBe('any');
+      expect(
+        any.records.map((record) => record.relativePath).sort()
+      ).toEqual(['both.mp4', 'one.mp4']);
+    });
+
     it('treats an empty tag set as no tag constraint', async () => {
       const tagged = await indexInto('alpha', 'a.mp4', 'a');
       await indexInto('beta', 'b.mp4', 'b');

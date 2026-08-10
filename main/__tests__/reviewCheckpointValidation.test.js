@@ -63,6 +63,9 @@ describe('review checkpoint wire validation', () => {
         minRating: null,
         exactRating: 2,
         reviewFilter: 'pick',
+        // Defaults to the intersection, so existing saved views keep meaning
+        // exactly what they meant before the mode existed.
+        includeTagsMode: 'all',
         // A resolution bound round-trips; an unparseable one becomes null
         // rather than travelling as-is.
         minMegapixels: null,

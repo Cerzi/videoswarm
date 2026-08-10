@@ -1419,13 +1419,16 @@ function createMetadataStore(db) {
       -- already case-insensitive without restating it here. Counting the
       -- distinct matches and requiring the full tag count is what makes a
       -- multi-tag view an intersection rather than a union.
+      -- @required_matches is the tag count for "all" and 1 for "any", so one
+      -- statement serves both without a second prepared query. At zero tags it
+      -- is zero, which matches every row - the no-constraint case.
       AND (
         SELECT COUNT(DISTINCT t.name)
         FROM file_tags ft
         INNER JOIN tags t ON t.id = ft.tag_id
         WHERE ft.fingerprint = fi.fingerprint
           AND t.name IN (SELECT value FROM json_each(@tag_names))
-      ) = @tag_count
+      ) >= @required_matches
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
@@ -2890,9 +2893,11 @@ function createMetadataStore(db) {
       'Tag view path-byte limit'
     );
 
+    const matchMode = options.matchMode === 'any' ? 'any' : 'all';
     const rows = taggedInstancesAcrossRoots.all({
       tag_names: JSON.stringify(tagNames),
-      tag_count: tagNames.length,
+      required_matches:
+        tagNames.length === 0 ? 0 : matchMode === 'any' ? 1 : tagNames.length,
       limit: maxRecords + 1,
     });
     assertOperationActive(options.assertActive);
@@ -2954,6 +2959,7 @@ function createMetadataStore(db) {
 
     return {
       tags: tagNames,
+      matchMode,
       records,
       // Reported rather than hidden: a silently clipped library reads as a
       // wrong answer instead of a bounded one.
