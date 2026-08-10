@@ -92,3 +92,22 @@ describe("review export scope", () => {
     )).toThrow(expect.objectContaining({ code: "REVIEW_EXPORT_INCOMPLETE_INDEX" }));
   });
 });
+
+describe("accepted transfer root requirement", () => {
+  const { acceptedTransferRequiresRoot } = require("../review-export-scope");
+
+  it("requires a root for a review-scoped transfer", () => {
+    expect(acceptedTransferRequiresRoot({ scope: "all-descendants" })).toBe(true);
+    expect(acceptedTransferRequiresRoot({})).toBe(true);
+    expect(acceptedTransferRequiresRoot({ instanceIds: null })).toBe(true);
+    expect(acceptedTransferRequiresRoot({ instanceIds: undefined })).toBe(true);
+  });
+
+  it("does not require a root once the request names rows", () => {
+    // A rootless library search has no root to send; the rows carry their own.
+    expect(acceptedTransferRequiresRoot({ instanceIds: [1, 2] })).toBe(false);
+    // Even an empty array is a selection-shaped request and is rejected later
+    // by the coordinator's own bounds, not by demanding a root here.
+    expect(acceptedTransferRequiresRoot({ instanceIds: [] })).toBe(false);
+  });
+});
