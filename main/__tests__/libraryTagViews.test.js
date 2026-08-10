@@ -164,13 +164,22 @@ if (!database || databaseLoadError) {
       expect(complete.truncated).toBe(false);
     });
 
-    it('rejects an empty or oversized tag set', async () => {
+    it('treats an empty tag set as no tag constraint', async () => {
+      const tagged = await indexInto('alpha', 'a.mp4', 'a');
+      await indexInto('beta', 'b.mp4', 'b');
+      store.assignTags([tagged.indexed.fingerprint], ['keeper']);
+
+      // "Entire library" with no tag selected means everything, which is what
+      // the count predicate already yields at zero.
+      const everything = store.getTaggedLibrarySnapshot({ tagNames: [] });
+      expect(everything.records).toHaveLength(2);
+      expect(everything.rootPaths).toHaveLength(2);
+    });
+
+    it('rejects an oversized tag set', async () => {
       const entry = await indexInto('alpha', 'a.mp4', 'a');
       store.assignTags([entry.indexed.fingerprint], ['keeper']);
 
-      expect(() => store.getTaggedLibrarySnapshot({ tagNames: [] })).toThrow(
-        /At least one tag/
-      );
       expect(() =>
         store.getTaggedLibrarySnapshot({
           tagNames: Array.from({ length: 17 }, (_, index) => `tag-${index}`),
@@ -178,23 +187,5 @@ if (!database || databaseLoadError) {
       ).toThrow(/limited to 16 tags/);
     });
 
-    it('lists tags with the number of clips a user would actually see', async () => {
-      const kept = await indexInto('alpha', 'kept.mp4', 'kept');
-      const gone = await indexInto('beta', 'gone.mp4', 'gone');
-      store.assignTags([kept.indexed.fingerprint], ['keeper', 'hero']);
-      store.assignTags([gone.indexed.fingerprint], ['keeper']);
-
-      expect(store.listTagCatalog()).toEqual([
-        { name: 'hero', instanceCount: 1 },
-        { name: 'keeper', instanceCount: 2 },
-      ]);
-
-      store.markFilesMissing([gone.filePath], { reason: 'moved' });
-      // A removed clip stops counting even though its tag row is retained.
-      expect(store.listTagCatalog()).toEqual([
-        { name: 'hero', instanceCount: 1 },
-        { name: 'keeper', instanceCount: 1 },
-      ]);
-    });
   });
 }

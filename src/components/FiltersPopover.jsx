@@ -74,6 +74,12 @@ const FiltersPopover = forwardRef(
       onClose,
       style,
       reviewModeEnabled = true,
+      librarySearchScope = "folder",
+      onSearchScopeChange,
+      onRefreshLibrary,
+      canReturnToFolder = true,
+      libraryResultCount = null,
+      libraryTruncated = false,
     },
     ref
   ) => {
@@ -83,6 +89,7 @@ const FiltersPopover = forwardRef(
     const exactRating =
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
     const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
+    const searchScope = librarySearchScope === "library" ? "library" : "folder";
     const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
     const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
 
@@ -385,6 +392,61 @@ const FiltersPopover = forwardRef(
               })}
             </div>
           </div>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Search</header>
+          <div className="filters-rating-row" role="group" aria-label="Search scope">
+            {[
+              {
+                value: "folder",
+                label: "This folder",
+                hint: "Filter the collection that is currently open.",
+              },
+              {
+                value: "library",
+                label: "Entire library",
+                hint: "Search every indexed root. Tags below narrow the query itself.",
+              },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`filters-pill ${
+                  searchScope === option.value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={searchScope === option.value}
+                title={option.hint}
+                disabled={
+                  typeof onSearchScopeChange !== "function" ||
+                  (option.value === "folder" && !canReturnToFolder)
+                }
+                onClick={() => onSearchScopeChange?.(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {searchScope === "library" ? (
+            <div className="filters-library-status">
+              <span className="filters-empty-hint">
+                {libraryResultCount === null
+                  ? "Searching the library…"
+                  : `${libraryResultCount.toLocaleString()} clip${
+                      libraryResultCount === 1 ? "" : "s"
+                    } from every root${libraryTruncated ? " (partial)" : ""}`}
+                {" · a snapshot, not live"}
+              </span>
+              <button
+                type="button"
+                className="filters-pill"
+                onClick={() => onRefreshLibrary?.()}
+                disabled={typeof onRefreshLibrary !== "function"}
+              >
+                Refresh
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="filters-section">

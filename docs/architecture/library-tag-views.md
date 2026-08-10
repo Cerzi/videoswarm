@@ -51,8 +51,9 @@ inventing a second one.
 - The result is bounded by an explicit record cap and an aggregate path-byte
   budget, in the same style as the accepted-export snapshot, and reports when it
   truncated rather than silently returning a partial library.
-- A tag catalog with per-tag present-instance counts backs the entry point, so a
-  user picks from what exists rather than typing a guess.
+- An empty tag set means *no tag constraint*, so a library search with nothing
+  selected returns everything within the bound. No separate tag catalog is
+  needed: the filter panel already lists profile-wide tags with usage counts.
 
 ### Acceptance
 
@@ -88,6 +89,29 @@ collection is a point-in-time read.
 - Removing a tag from a visible clip removes it from the view without a manual
   refresh.
 - A stale entry whose file has vanished fails gracefully as a missing source.
+
+## 2a. Where the scope lives
+
+Status: **Implemented**
+
+The entry point is a **scope control in the existing filter panel**, not a
+separate tag browser.
+
+The first attempt added a tag list to the sidebar. That was wrong twice over: it
+duplicated a control the filter panel already provides — a search box, a bounded
+"Popular tags (top 10)" list, per-tag usage counts and Include/Exclude per tag —
+and it was unbounded, so a profile with many tags pushed pinned roots and smart
+views out of view. It also contradicted this document, which had already said
+this is one axis rather than a new browsing mode.
+
+So the only thing genuinely missing was the axis itself: **Search: This folder /
+Entire library**, placed above the filters it governs. Tags narrow the library
+query itself; everything else in the panel narrows the loaded collection, exactly
+as in a folder. Leaving a library search returns to the folder it was entered
+from, and the control is disabled when there is none to return to.
+
+The snapshot caveat and the result count sit next to that control, with the
+refresh, rather than as permanent chrome elsewhere.
 
 ## 3. A collection without a root
 
