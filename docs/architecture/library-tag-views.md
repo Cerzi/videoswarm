@@ -45,9 +45,11 @@ inventing a second one.
 
 - Only `is_present` instances in present directories are returned, matching the
   cached-grid predicate. Deliberate removals and missing files stay out.
-- Tag matching is by name, case-insensitively, against the profile's tag table.
-  Multiple tags mean *all of them* (intersection), consistent with how the
-  existing include-tags filter already behaves.
+- Tag matching is by name, case-insensitively, against the profile's tag table,
+  and honours the include-tags match mode: **All** intersects, **Any** unions.
+  One statement serves both by requiring `>= n` matches, where `n` is the tag
+  count for All and 1 for Any — and 0 when no tags are selected, which is the
+  no-constraint case.
 - The result is bounded by an explicit record cap and an aggregate path-byte
   budget, in the same style as the accepted-export snapshot, and reports when it
   truncated rather than silently returning a partial library.
@@ -112,6 +114,28 @@ from, and the control is disabled when there is none to return to.
 
 The snapshot caveat and the result count sit next to that control, with the
 refresh, rather than as permanent chrome elsewhere.
+
+## 2b. Boolean tag matching without a query language
+
+Status: **Implemented**
+
+Include was an intersection and Exclude a negation, so `A AND B NOT C` was
+expressible and `A OR B` was not.
+
+Rather than a query syntax or nested condition groups, the include group gains a
+two-value **Match: All / Any**. Combined with Exclude, which continues to mean
+"none of these", that covers the ordinary questions at the cost of one control
+and no new concepts. It is also the convention users of comparable photo and
+media managers already know.
+
+This deliberately stops short of arbitrary boolean expressions: `(A OR B) AND C`
+is not expressible in one pass. That case is rare enough that a parser, its
+error states and its discoverability problem are not worth paying for, and a
+saved view covers the recurring instances of it.
+
+The mode defaults to **All**, so every existing saved view and folder view state
+means exactly what it meant before the mode existed. The mode is not itself a
+filter and does not count toward the active-filter badge.
 
 ## 3. A collection without a root
 

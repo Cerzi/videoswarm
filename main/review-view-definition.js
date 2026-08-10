@@ -130,6 +130,7 @@ function normalizeReviewViewDefinition(
       minRating: normalizeRating(filtersInput.minRating, { minimum: 1 }),
       exactRating: normalizeRating(filtersInput.exactRating),
       reviewFilter,
+      includeTagsMode: filtersInput.includeTagsMode === 'any' ? 'any' : 'all',
       minMegapixels: normalizeMegapixels(filtersInput.minMegapixels),
       maxMegapixels: normalizeMegapixels(filtersInput.maxMegapixels),
     },

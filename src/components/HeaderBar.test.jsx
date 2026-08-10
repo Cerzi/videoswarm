@@ -163,3 +163,43 @@ describe("HeaderBar keyboard help and background refresh", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Refreshing index");
   });
 });
+
+describe("HeaderBar filter clearing", () => {
+  it("offers no clear control until a filter is set", () => {
+    render(<HeaderBar {...baseProps} filtersActiveCount={0} />);
+    expect(screen.queryByRole("button", { name: /Clear .* filter/i })).toBeNull();
+  });
+
+  it("clears filters without opening the popover", () => {
+    const onFiltersClear = vi.fn();
+    const onFiltersToggle = vi.fn();
+    render(
+      <HeaderBar
+        {...baseProps}
+        onFiltersToggle={onFiltersToggle}
+        onFiltersClear={onFiltersClear}
+        filtersActiveCount={3}
+      />
+    );
+
+    const clear = screen.getByRole("button", { name: "Clear 3 active filters" });
+    fireEvent.click(clear);
+    expect(onFiltersClear).toHaveBeenCalledTimes(1);
+    // It is a sibling of the filters button, not nested inside it, so opening
+    // the popover is not a side effect of clearing.
+    expect(onFiltersToggle).not.toHaveBeenCalled();
+  });
+
+  it("singularises the label for one active filter", () => {
+    render(
+      <HeaderBar
+        {...baseProps}
+        onFiltersClear={vi.fn()}
+        filtersActiveCount={1}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "Clear 1 active filter" })
+    ).toBeInTheDocument();
+  });
+});

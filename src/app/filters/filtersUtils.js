@@ -7,9 +7,15 @@ export const createDefaultFilters = () => ({
   minRating: null,
   exactRating: null,
   reviewFilter: REVIEW_FILTERS.ANY,
+  includeTagsMode: "all",
   minMegapixels: null,
   maxMegapixels: null,
 });
+
+// "all" is an intersection, "any" a union. Exclusion stays separate and always
+// means "none of these", so the two controls compose without a query language.
+export const normalizeIncludeTagsMode = (value) =>
+  value === "any" ? "any" : "all";
 
 // Thresholds rather than a free number: the useful question is "which of these
 // came out at draft settings", and a short list of round values answers it

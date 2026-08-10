@@ -1042,7 +1042,7 @@ export function useElectronFolderLifecycle({
    * pointing at somewhere the visible clips may not live.
    */
   const openTagCollection = useCallback(
-    ({ tags = [], records = [], truncated = false } = {}) => {
+    ({ tags = [], matchMode = "all", records = [], truncated = false } = {}) => {
       cancelActiveFolderScan(false);
       retainedFolderScanRef.current = null;
       collectionOwnerScanIdRef.current = null;
@@ -1055,6 +1055,7 @@ export function useElectronFolderLifecycle({
       resetDerivedVideoState();
       setTagCollection({
         tags: [...tags],
+        matchMode: matchMode === "any" ? "any" : "all",
         truncated: Boolean(truncated),
         // Distinguishes one snapshot from the next so collection ownership
         // changes on refresh and stale per-clip work is discarded.

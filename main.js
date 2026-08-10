@@ -4240,8 +4240,12 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     item: { minChars: 1, maxChars: IPC_LIMITS.maxShortStringChars, trim: true },
     dedupe: true,
   });
+  const matchMode = payload?.matchMode === "any" ? "any" : "all";
   return runLibraryCatalogOperation((metadataStore) => {
-    const snapshot = metadataStore.getTaggedLibrarySnapshot({ tagNames });
+    const snapshot = metadataStore.getTaggedLibrarySnapshot({
+      tagNames,
+      matchMode,
+    });
     return {
       tags: snapshot.tags,
       records: snapshot.records,

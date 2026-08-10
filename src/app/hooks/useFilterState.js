@@ -6,6 +6,7 @@ import {
   sanitizeExactRating,
   sanitizeMegapixels,
   videoMegapixels,
+  normalizeIncludeTagsMode,
   formatRatingLabel,
   useFiltersActiveCount,
 } from "../filters/filtersUtils";
@@ -33,6 +34,9 @@ const normalizeFiltersDraft = (draft, prev) => {
     minRating: sanitizeMinRating(minRatingRaw),
     exactRating: sanitizeExactRating(exactRatingRaw),
     reviewFilter: normalizeReviewFilter(reviewFilterRaw),
+    includeTagsMode: normalizeIncludeTagsMode(
+      resolveValue(draft?.includeTagsMode, prev.includeTagsMode)
+    ),
     minMegapixels: sanitizeMegapixels(minMegapixelsRaw),
     maxMegapixels: sanitizeMegapixels(maxMegapixelsRaw),
   };
@@ -60,6 +64,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     const minRating = sanitizeMinRating(filters.minRating);
     const exactRating = sanitizeExactRating(filters.exactRating);
     const reviewFilter = normalizeReviewFilter(filters.reviewFilter);
+    const includeTagsMode = normalizeIncludeTagsMode(filters.includeTagsMode);
     const minMegapixels = sanitizeMegapixels(filters.minMegapixels);
     const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
 
@@ -88,9 +93,20 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
         : [];
 
       if (includeSet) {
-        for (const tag of includeSet) {
-          if (!tagList.includes(tag)) {
-            return false;
+        if (includeTagsMode === "any") {
+          let matched = false;
+          for (const tag of includeSet) {
+            if (tagList.includes(tag)) {
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) return false;
+        } else {
+          for (const tag of includeSet) {
+            if (!tagList.includes(tag)) {
+              return false;
+            }
           }
         }
       }

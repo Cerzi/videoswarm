@@ -20,6 +20,7 @@ describe("filtersUtils", () => {
       minRating: null,
       exactRating: null,
       reviewFilter: "any",
+      includeTagsMode: "all",
       minMegapixels: null,
       maxMegapixels: null,
     });

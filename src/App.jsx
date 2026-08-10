@@ -1953,21 +1953,22 @@ function App() {
   // otherwise untagging a clip would leave it sitting in a view defined by that
   // tag.
   const loadTagCollection = useCallback(
-    async (tags) => {
+    async (tags, matchMode = "all") => {
       const requested = (Array.isArray(tags) ? tags : [])
         .map((tag) => (tag ?? "").toString().trim())
         .filter(Boolean);
-      if (!requested.length) return false;
+
       const snapshot = window.electronAPI?.library?.taggedSnapshot;
       if (typeof snapshot !== "function") {
         notify("Tag views are unavailable", "error");
         return false;
       }
       try {
-        const result = await snapshot(requested);
+        const result = await snapshot(requested, matchMode);
         const records = Array.isArray(result?.records) ? result.records : [];
         openTagCollection({
           tags: requested,
+          matchMode,
           records,
           truncated: Boolean(result?.truncated),
         });
@@ -1992,8 +1993,8 @@ function App() {
   );
 
   const refreshTagCollection = useCallback(() => {
-    if (!tagCollection?.tags?.length) return false;
-    return loadTagCollection(tagCollection.tags);
+    if (!tagCollection) return false;
+    return loadTagCollection(tagCollection.tags, tagCollection.matchMode);
   }, [loadTagCollection, tagCollection]);
 
   const tagViewRefreshRef = useRef(refreshTagCollection);
@@ -2014,7 +2015,7 @@ function App() {
         // Remember where this was entered from before the root is cleared.
         folderScopeReturnRef.current = activeRootPath || null;
         setLibrarySearchScope("library");
-        await loadTagCollection(filters.includeTags);
+        await loadTagCollection(filters.includeTags, filters.includeTagsMode);
         return;
       }
       setLibrarySearchScope("folder");
@@ -2029,7 +2030,9 @@ function App() {
 
   // Tags narrow the library query itself rather than only the loaded grid, so
   // changing them while searching the library re-runs the read.
-  const includeTagsKey = filters.includeTags.join("\u0000");
+  const includeTagsKey = `${filters.includeTagsMode}:${filters.includeTags.join(
+    "\u0000"
+  )}`;
   const lastLibraryTagsRef = useRef(includeTagsKey);
   useEffect(() => {
     if (librarySearchScope !== "library") {
@@ -2038,8 +2041,14 @@ function App() {
     }
     if (lastLibraryTagsRef.current === includeTagsKey) return;
     lastLibraryTagsRef.current = includeTagsKey;
-    loadTagCollection(filters.includeTags);
-  }, [filters.includeTags, includeTagsKey, librarySearchScope, loadTagCollection]);
+    loadTagCollection(filters.includeTags, filters.includeTagsMode);
+  }, [
+    filters.includeTags,
+    filters.includeTagsMode,
+    includeTagsKey,
+    librarySearchScope,
+    loadTagCollection,
+  ]);
 
   const handleListTransferDestinations = useCallback(async () => {
     const list = window.electronAPI?.review?.copyAccepted?.listDestinations;
@@ -4501,6 +4510,7 @@ function App() {
             hasOpenFolder={Boolean(activeRootPath) || videos.length > 0}
             onFiltersToggle={() => setFiltersOpen((open) => !open)}
             filtersActiveCount={filtersActiveCount}
+            onFiltersClear={resetFilters}
             filtersAreOpen={isFiltersOpen}
             filtersButtonRef={filtersButtonRef}
           />

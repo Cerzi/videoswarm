@@ -90,6 +90,7 @@ const FiltersPopover = forwardRef(
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
     const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
     const searchScope = librarySearchScope === "library" ? "library" : "folder";
+    const includeTagsMode = filters?.includeTagsMode === "any" ? "any" : "all";
     const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
     const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
 
@@ -245,6 +246,35 @@ const FiltersPopover = forwardRef(
 
         <section className="filters-section">
           <header className="filters-section__title">Tags</header>
+          {/* Two words rather than a query language. Combined with Exclude,
+              which always means "none of these", this covers the ordinary
+              questions without nesting conditions or parsing an expression. */}
+          <div
+            className="filters-tag-mode"
+            role="group"
+            aria-label="Match included tags"
+          >
+            <span className="filters-chip-group__label">Match</span>
+            {[
+              { value: "all", label: "All", hint: "Clips carrying every included tag." },
+              { value: "any", label: "Any", hint: "Clips carrying at least one included tag." },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`filters-pill ${
+                  includeTagsMode === option.value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={includeTagsMode === option.value}
+                title={option.hint}
+                onClick={() =>
+                  onChange((prev) => ({ ...prev, includeTagsMode: option.value }))
+                }
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <div className="filters-chip-group">
             <span className="filters-chip-group__label">Include</span>
             <div className="filters-chip-group__chips">

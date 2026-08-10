@@ -362,9 +362,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   library: {
-    taggedSnapshot: async (tags) =>
+    taggedSnapshot: async (tags, matchMode) =>
       ipcRenderer.invoke("library:tagged-snapshot", {
         tags: Array.isArray(tags) ? tags : [],
+        matchMode: matchMode === "any" ? "any" : "all",
       }),
     listRoots: async (options = {}) =>
       ipcRenderer.invoke("library:list-roots", options),

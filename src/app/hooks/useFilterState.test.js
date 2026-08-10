@@ -113,3 +113,65 @@ describe("useFilterState resolution filters", () => {
     expect(result.current.filtersActiveCount).toBe(2);
   });
 });
+
+describe("useFilterState tag match mode", () => {
+  const clips = [
+    { id: "both", tags: ["wan", "hero"], reviewState: "unreviewed" },
+    { id: "wan-only", tags: ["wan"], reviewState: "unreviewed" },
+    { id: "hero-only", tags: ["hero"], reviewState: "unreviewed" },
+    { id: "neither", tags: ["other"], reviewState: "unreviewed" },
+  ];
+  const renderFilters = () =>
+    renderHook(() =>
+      useFilterState({
+        videos: clips,
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+      })
+    );
+
+  it("intersects included tags by default", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ includeTags: ["wan", "hero"] }));
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual([
+      "both",
+    ]);
+  });
+
+  it("unions included tags in any mode", () => {
+    const { result } = renderFilters();
+    act(() =>
+      result.current.updateFilters({
+        includeTags: ["wan", "hero"],
+        includeTagsMode: "any",
+      })
+    );
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual([
+      "both",
+      "wan-only",
+      "hero-only",
+    ]);
+  });
+
+  it("keeps exclusion meaning none of these in either mode", () => {
+    const { result } = renderFilters();
+    act(() =>
+      result.current.updateFilters({
+        includeTags: ["wan", "hero"],
+        includeTagsMode: "any",
+        excludeTags: ["hero"],
+      })
+    );
+    // Union of the includes, minus anything carrying an excluded tag.
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual([
+      "wan-only",
+    ]);
+  });
+
+  it("does not count the mode itself as an active filter", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ includeTagsMode: "any" }));
+    expect(result.current.filtersActiveCount).toBe(0);
+    expect(result.current.filteredVideos).toHaveLength(4);
+  });
+});
