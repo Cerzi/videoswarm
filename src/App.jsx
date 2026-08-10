@@ -1959,6 +1959,22 @@ function App() {
         .map((tag) => (tag ?? "").toString().trim())
         .filter(Boolean);
 
+      // A library search is defined by its tags, so with none there is no
+      // question to ask. Asking it anyway reads every clip in the profile into
+      // the grid up to the record cap, which is a bound to hit rather than a
+      // result to want. The scope control refuses this too; this is the guard
+      // behind it, and it also covers removing the last tag while a library
+      // search is open.
+      if (!requested.length) {
+        openTagCollection({
+          tags: [],
+          matchMode,
+          records: [],
+          truncated: false,
+        });
+        return true;
+      }
+
       const snapshot = window.electronAPI?.library?.taggedSnapshot;
       if (typeof snapshot !== "function") {
         notify("Tag views are unavailable", "error");
@@ -2034,6 +2050,11 @@ function App() {
     },
     [activeRootPath, filters.includeTags, librarySearchScope, loadTagCollection]
   );
+
+  // A library search holding no tags is waiting for one, not looking at an
+  // empty collection, and the grid has to say the difference.
+  const isEmptyLibrarySearch =
+    librarySearchScope === "library" && filters.includeTags.length === 0;
 
   // Tags narrow the library query itself rather than only the loaded grid, so
   // changing them while searching the library re-runs the read.
@@ -4876,7 +4897,9 @@ function App() {
                     {orderedVideos.length === 0 && !isLoadingFolder && (
                       <div className="collection-empty-state" role="status">
                         <h3>
-                          {videos.length === 0
+                          {isEmptyLibrarySearch
+                            ? "Include a tag to search the library"
+                            : videos.length === 0
                             ? "No videos in this collection"
                             : filteredVideos.length === 0
                             ? "No videos match the active filters"

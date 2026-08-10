@@ -104,11 +104,14 @@ const useFullScreenModalMock = vi.fn(createFullscreenControllerMock);
 const useHotkeysMock = vi.fn();
 
 const electronVideos = [{ id: "video-1" }];
+const openTagCollectionMock = vi.fn();
 const electronLifecycleReturn = {
   videos: electronVideos,
   setVideos: vi.fn(),
   activeRootPath: null,
   libraryRoot: null,
+  tagCollection: null,
+  openTagCollection: openTagCollectionMock,
   directorySummaries: [],
   isLoadingFolder: false,
   isRefreshingFolder: false,
@@ -311,6 +314,7 @@ const useVideoCollectionMock = vi.fn(() => ({
   onCardHoverAudioEnd: vi.fn(),
 }));
 const headerBarSpy = vi.fn();
+const filtersPopoverSpy = vi.fn();
 const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
 const metadataPanelSpy = vi.fn();
@@ -453,7 +457,10 @@ vi.mock("./components/FiltersPopover", async () => {
   const ReactModule = await vi.importActual("react");
   return {
     __esModule: true,
-    default: ReactModule.default.forwardRef(() => null),
+    default: ReactModule.default.forwardRef((props) => {
+      filtersPopoverSpy(props);
+      return null;
+    }),
   };
 });
 vi.mock("./components/DebugSummary", () => ({
@@ -3253,5 +3260,65 @@ describe("App hook composition", () => {
     expect(masonryReturn.scrollToId).toHaveBeenCalledWith(current.id, {
       align: "center",
     });
+  });
+});
+
+// The scope control gates this in the UI, but the guard behind it is what stops
+// a library-wide read with no tag to constrain it - including the case the
+// control cannot cover, where the last tag is removed mid-search.
+describe("library search scope", () => {
+  const openFiltersWith = (includeTags) => ({
+    ...filterStateReturn,
+    isFiltersOpen: true,
+    filters: {
+      ...filterStateReturn.filters,
+      includeTags,
+      includeTagsMode: "all",
+    },
+  });
+
+  const renderWithTags = async (includeTags) => {
+    useFilterStateMock.mockImplementation(() => openFiltersWith(includeTags));
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const view = render(<App />);
+    return { view, props: () => filtersPopoverSpy.mock.calls.at(-1)?.[0] };
+  };
+
+  test("refuses a library search that has no tag to search for", async () => {
+    const taggedSnapshot = vi.fn(async () => ({
+      success: true,
+      records: [],
+      truncated: false,
+    }));
+    window.electronAPI = { library: { taggedSnapshot } };
+
+    const { props } = await renderWithTags([]);
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+
+    // Reading every clip in the profile is what this used to do, and the
+    // record cap then reported itself truncated as if that were an answer.
+    expect(taggedSnapshot).not.toHaveBeenCalled();
+    expect(openTagCollectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: [], records: [], truncated: false })
+    );
+  });
+
+  test("runs the search once a tag constrains it", async () => {
+    const taggedSnapshot = vi.fn(async () => ({
+      success: true,
+      records: [],
+      truncated: false,
+    }));
+    window.electronAPI = { library: { taggedSnapshot } };
+
+    const { props } = await renderWithTags(["keeper"]);
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+
+    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all");
   });
 });

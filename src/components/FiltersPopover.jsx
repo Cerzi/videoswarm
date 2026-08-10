@@ -90,6 +90,7 @@ const FiltersPopover = forwardRef(
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
     const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
     const searchScope = librarySearchScope === "library" ? "library" : "folder";
+    const canSearchLibrary = includeTags.length > 0;
     const includeTagsMode = filters?.includeTagsMode === "any" ? "any" : "all";
     const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
     const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
@@ -436,7 +437,9 @@ const FiltersPopover = forwardRef(
               {
                 value: "library",
                 label: "Entire library",
-                hint: "Search every indexed root. Tags below narrow the query itself.",
+                hint: canSearchLibrary
+                  ? "Search every indexed root. The tags above narrow the query itself."
+                  : "Include at least one tag above to search every root.",
               },
             ].map((option) => (
               <button
@@ -449,7 +452,13 @@ const FiltersPopover = forwardRef(
                 title={option.hint}
                 disabled={
                   typeof onSearchScopeChange !== "function" ||
-                  (option.value === "folder" && !canReturnToFolder)
+                  (option.value === "folder" && !canReturnToFolder) ||
+                  // A library search is defined by its tags. Offering it with
+                  // none selected offers to read the whole library into the
+                  // grid, which is a bound to hit rather than a thing to want.
+                  (option.value === "library" &&
+                    searchScope !== "library" &&
+                    !canSearchLibrary)
                 }
                 onClick={() => onSearchScopeChange?.(option.value)}
               >
@@ -460,22 +469,33 @@ const FiltersPopover = forwardRef(
           {searchScope === "library" ? (
             <div className="filters-library-status">
               <span className="filters-empty-hint">
-                {libraryResultCount === null
-                  ? "Searching the library…"
-                  : `${libraryResultCount.toLocaleString()} clip${
-                      libraryResultCount === 1 ? "" : "s"
-                    } from every root${libraryTruncated ? " (partial)" : ""}`}
-                {" · a snapshot, not live"}
+                {!canSearchLibrary
+                  ? "Include a tag above to search every root."
+                  : libraryResultCount === null
+                    ? "Searching the library…"
+                    : `${libraryResultCount.toLocaleString()} clip${
+                        libraryResultCount === 1 ? "" : "s"
+                      } from every root${
+                        libraryTruncated ? " (partial)" : ""
+                      } · a snapshot, not live`}
               </span>
               <button
                 type="button"
                 className="filters-pill"
                 onClick={() => onRefreshLibrary?.()}
-                disabled={typeof onRefreshLibrary !== "function"}
+                disabled={
+                  !canSearchLibrary || typeof onRefreshLibrary !== "function"
+                }
               >
                 Refresh
               </button>
             </div>
+          ) : !canSearchLibrary ? (
+            // A disabled control that does not say why is a dead end, and the
+            // reason is one line.
+            <span className="filters-empty-hint">
+              Include a tag above to search every root.
+            </span>
           ) : null}
         </section>
 
