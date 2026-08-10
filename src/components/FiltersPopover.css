@@ -233,3 +233,16 @@
     top: 4.5rem;
   }
 }
+
+/* Scope sits above the filters it governs, and states plainly that a library
+   search is a point-in-time read rather than something that tracks changes. */
+.filters-library-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+.filters-library-status .filters-empty-hint {
+  margin: 0;
+}

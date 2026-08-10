@@ -199,8 +199,12 @@ function App() {
   const [transferLayout, setTransferLayout] = useState("structured");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState([]);
-  const [libraryTags, setLibraryTags] = useState([]);
   const [tagRefreshToken, setTagRefreshToken] = useState(0);
+  const [librarySearchScope, setLibrarySearchScope] = useState("folder");
+  // Remembered so leaving a library search returns to where it was entered
+  // from, rather than to an empty app.
+  const folderScopeReturnRef = useRef(null);
+  const openLibraryRootRef = useRef(null);
   const [fullscreenTransientSurface, setFullscreenTransientSurface] =
     useState(null);
   const [fullscreenCanUndo, setFullscreenCanUndo] = useState(false);
@@ -1992,29 +1996,6 @@ function App() {
     return loadTagCollection(tagCollection.tags);
   }, [loadTagCollection, tagCollection]);
 
-  const handleListLibraryTags = useCallback(async () => {
-    const list = window.electronAPI?.library?.listTags;
-    if (typeof list !== "function") return [];
-    try {
-      const result = await list();
-      return Array.isArray(result?.tags) ? result.tags : [];
-    } catch (error) {
-      console.error("Failed to list tags:", error);
-      return [];
-    }
-  }, []);
-
-  const refreshTagCatalog = useCallback(async () => {
-    setLibraryTags(await handleListLibraryTags());
-  }, [handleListLibraryTags]);
-
-  // The catalog is what the sidebar offers, so it has to track tag edits and
-  // profile changes. An open tag view re-reads too, since untagging a visible
-  // clip should remove it rather than leave it in a view it no longer matches.
-  useEffect(() => {
-    refreshTagCatalog();
-  }, [refreshTagCatalog, reviewProfileEpoch, tagRefreshToken]);
-
   const tagViewRefreshRef = useRef(refreshTagCollection);
   tagViewRefreshRef.current = refreshTagCollection;
   const seenTagRefreshRef = useRef(tagRefreshToken);
@@ -2024,6 +2005,41 @@ function App() {
     seenTagRefreshRef.current = tagRefreshToken;
     tagViewRefreshRef.current?.();
   }, [tagRefreshToken]);
+
+  const handleSearchScopeChange = useCallback(
+    async (nextScope) => {
+      const scope = nextScope === "library" ? "library" : "folder";
+      if (scope === librarySearchScope) return;
+      if (scope === "library") {
+        // Remember where this was entered from before the root is cleared.
+        folderScopeReturnRef.current = activeRootPath || null;
+        setLibrarySearchScope("library");
+        await loadTagCollection(filters.includeTags);
+        return;
+      }
+      setLibrarySearchScope("folder");
+      const returnTo = folderScopeReturnRef.current;
+      folderScopeReturnRef.current = null;
+      // Read through a ref: the folder opener is declared much later in this
+      // component, so naming it as a dependency here would be a use-before-init.
+      if (returnTo) await openLibraryRootRef.current?.(returnTo);
+    },
+    [activeRootPath, filters.includeTags, librarySearchScope, loadTagCollection]
+  );
+
+  // Tags narrow the library query itself rather than only the loaded grid, so
+  // changing them while searching the library re-runs the read.
+  const includeTagsKey = filters.includeTags.join("\u0000");
+  const lastLibraryTagsRef = useRef(includeTagsKey);
+  useEffect(() => {
+    if (librarySearchScope !== "library") {
+      lastLibraryTagsRef.current = includeTagsKey;
+      return;
+    }
+    if (lastLibraryTagsRef.current === includeTagsKey) return;
+    lastLibraryTagsRef.current = includeTagsKey;
+    loadTagCollection(filters.includeTags);
+  }, [filters.includeTags, includeTagsKey, librarySearchScope, loadTagCollection]);
 
   const handleListTransferDestinations = useCallback(async () => {
     const list = window.electronAPI?.review?.copyAccepted?.listDestinations;
@@ -2860,6 +2876,7 @@ function App() {
       reviewSessions.flush,
     ]
   );
+  openLibraryRootRef.current = handleOpenLibraryRoot;
 
   const handleToggleLibraryPin = useCallback(
     async (rootPath, pinned) => {
@@ -4544,6 +4561,14 @@ function App() {
               onChange={updateFilters}
               onReset={resetFilters}
               onClose={() => setFiltersOpen(false)}
+              librarySearchScope={librarySearchScope}
+              onSearchScopeChange={handleSearchScopeChange}
+              onRefreshLibrary={refreshTagCollection}
+              canReturnToFolder={Boolean(
+                activeRootPath || folderScopeReturnRef.current
+              )}
+              libraryResultCount={tagCollection ? videos.length : null}
+              libraryTruncated={Boolean(tagCollection?.truncated)}
             />
           )}
 
@@ -4707,10 +4732,7 @@ function App() {
                   onTogglePin={handleToggleLibraryPin}
                   rootCountStateByPath={rootCountStateByPath}
                   savedViews={savedViews}
-                  libraryTags={libraryTags}
-                  activeTagView={tagCollection}
-                  onOpenTagView={loadTagCollection}
-                  onRefreshTagView={refreshTagCollection}
+
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
                   onDeleteSavedView={handleDeleteSavedView}
@@ -4806,10 +4828,6 @@ function App() {
                       onTogglePin={handleToggleLibraryPin}
                       rootCountStateByPath={rootCountStateByPath}
                       savedViews={savedViews}
-                  libraryTags={libraryTags}
-                  activeTagView={tagCollection}
-                  onOpenTagView={loadTagCollection}
-                  onRefreshTagView={refreshTagCollection}
                       onApplySavedView={handleApplySavedView}
                       onSaveCurrentView={handleSaveCurrentView}
                       onDeleteSavedView={handleDeleteSavedView}

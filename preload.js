@@ -362,7 +362,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   library: {
-    listTags: async () => ipcRenderer.invoke("library:list-tags"),
     taggedSnapshot: async (tags) =>
       ipcRenderer.invoke("library:tagged-snapshot", {
         tags: Array.isArray(tags) ? tags : [],

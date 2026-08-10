@@ -43,7 +43,6 @@ const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
   maxTags: 16,
   maxRecords: 20_000,
   maxPathBytes: 16 * 1024 * 1024,
-  maxCatalogTags: 2_000,
 });
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
@@ -1429,20 +1428,6 @@ function createMetadataStore(db) {
       ) = @tag_count
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
-  `);
-  // Counts present instances rather than content rows: the number a user needs
-  // is how many clips they would actually see, not how many contents exist.
-  const tagCatalogWithCounts = db.prepare(`
-    SELECT t.name AS name, COUNT(fi.id) AS instance_count
-    FROM tags t
-    INNER JOIN file_tags ft ON ft.tag_id = t.id
-    INNER JOIN file_instances fi ON fi.fingerprint = ft.fingerprint
-    INNER JOIN directories d ON d.id = fi.directory_id
-    WHERE fi.is_present != 0 AND d.is_present != 0
-    GROUP BY t.id
-    HAVING instance_count > 0
-    ORDER BY t.name COLLATE NOCASE
-    LIMIT ?;
   `);
   const cachedFileTagsForRoot = db.prepare(`
     SELECT DISTINCT fi.fingerprint, t.name
@@ -2886,9 +2871,8 @@ function createMetadataStore(db) {
           .map((tag) => tag.toLowerCase())
       ),
     ];
-    if (tagNames.length === 0) {
-      throw new TypeError('At least one tag is required');
-    }
+    // An empty tag set is not an error: it means "no tag constraint", and the
+    // COUNT(...) = @tag_count predicate already matches every row at zero.
     if (tagNames.length > LIBRARY_TAG_VIEW_LIMITS.maxTags) {
       throw new RangeError(
         `A tag view is limited to ${LIBRARY_TAG_VIEW_LIMITS.maxTags} tags`
@@ -2977,19 +2961,6 @@ function createMetadataStore(db) {
       recordLimit: maxRecords,
       rootPaths: [...new Set(records.map((record) => record.rootPath))],
     };
-  }
-
-  function listTagCatalog(options = {}) {
-    assertOperationActive(options.assertActive);
-    const limit = normalizeAcceptedExportReadLimit(
-      options.limit,
-      LIBRARY_TAG_VIEW_LIMITS.maxCatalogTags,
-      'Tag catalog limit'
-    );
-    return tagCatalogWithCounts.all(limit).map((row) => ({
-      name: row.name,
-      instanceCount: Number(row.instance_count || 0),
-    }));
   }
 
   function normalizeAcceptedExportReadLimit(value, hardLimit, label) {
@@ -4372,7 +4343,6 @@ function createMetadataStore(db) {
     getAcceptedExportSnapshot,
     getSelectionExportSnapshot,
     getTaggedLibrarySnapshot,
-    listTagCatalog,
     getFileInstances,
     getFileInstanceById,
     getGenerationMetadata,
