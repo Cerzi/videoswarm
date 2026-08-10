@@ -53,15 +53,36 @@ inventing a second one.
 - The result is bounded by an explicit record cap and an aggregate path-byte
   budget, in the same style as the accepted-export snapshot, and reports when it
   truncated rather than silently returning a partial library.
-- An empty tag set means *no tag constraint*, so a library search with nothing
-  selected returns everything within the bound. No separate tag catalog is
-  needed: the filter panel already lists profile-wide tags with usage counts.
+- An empty tag set means *no tag constraint* at the store level, so the query
+  itself still answers "everything within the bound". **The UI does not ask
+  it.** See below. No separate tag catalog is needed: the filter panel already
+  lists profile-wide tags with usage counts.
+
+### A library search needs a tag
+
+This originally read "a library search with nothing selected returns everything
+within the bound", and shipping it showed that to be wrong. On a 24k-clip
+profile, flipping the scope control immediately read 20,000 records — the
+record cap — and reported itself truncated. A bound being hit is not a result
+anyone asked for, and the one gesture that reaches it was a single toggle.
+
+So the scope control is unavailable until at least one include tag is selected,
+and states why rather than only dimming: a disabled control that does not
+explain itself is a dead end. Removing the last tag while a search is open
+cannot be prevented by the control, so the guard also lives behind it — the
+view empties and asks for a tag instead of falling back to reading everything.
+
+The store keeps the unconstrained capability. The gate belongs at the point of
+user intent, not in the query: the store answers questions, and the UI decides
+which ones are worth asking.
 
 ### Acceptance
 
 - A tagged clip is returned regardless of which indexed root holds it.
 - A clip whose instance is absent, or whose directory is absent, is not returned.
 - Exceeding the record or byte bound is reported, not truncated silently.
+- No user gesture issues a library query with no tags, and the control that
+  would says why it is unavailable.
 
 ## 2. Snapshot, not a live collection
 
