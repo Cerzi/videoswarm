@@ -111,6 +111,7 @@ const {
 } = require("./main/ipc-trash");
 const {
   ACCEPTED_COPY_MAX_MEDIA,
+  acceptedTransferRequiresRoot,
   ACCEPTED_COPY_MAX_PATH_BYTES,
   normalizeReviewExportDirectory,
   normalizeReviewExportScope,
@@ -4300,7 +4301,14 @@ ipcMain.handle("library:get-tree", async (_event, payload = {}) => {
 
 ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
   assertPlainObject(payload, "Copy Accepted request");
-  const requestedRoot = normalizeLibraryIpcRootPath(payload);
+  // A selection names rows and derives its roots from them, so it legitimately
+  // arrives with no root at all - a rootless library search has none to send.
+  // Only a review-scoped request must name one.
+  const requestedRoot =
+    !acceptedTransferRequiresRoot(payload) &&
+    (payload?.rootPath === undefined || payload?.rootPath === null)
+      ? null
+      : normalizeLibraryIpcRootPath(payload);
   const directory = normalizeReviewExportDirectory(
     assertString(payload?.directory ?? "", {
       name: "Copy Accepted directory",

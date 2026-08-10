@@ -33,6 +33,12 @@ describe("review main-process integration", () => {
     expect(handlers).toContain('ipcMain.handle("review:copy-accepted:start"');
     expect(handlers).toContain('ipcMain.handle("review:copy-accepted:cancel"');
     expect(handlers).toContain("normalizeReviewExportScope");
+    // The root must be conditional. Normalizing it unconditionally rejected
+    // every selection transfer, which the coordinator itself already allowed.
+    expect(handlers).toContain("acceptedTransferRequiresRoot(payload)");
+    expect(handlers).not.toMatch(
+      /const requestedRoot = normalizeLibraryIpcRootPath\(payload\);/
+    );
     expect(handlers).not.toContain("payload.records");
     expect(handlers).not.toContain("payload.videos");
   });

@@ -109,7 +109,24 @@ function assertReviewExportCoverage(root, directory, scope) {
   );
 }
 
+/**
+ * Whether an accepted-transfer request must name a library root.
+ *
+ * A review-scoped transfer is defined by a root plus a scope, so it must. A
+ * selection is defined by the rows it names and derives its roots from them,
+ * so it must not be required to send one - a rootless library search has none.
+ *
+ * This is a separate predicate because getting it wrong is invisible until
+ * runtime: the coordinator accepted a missing root while the IPC validator in
+ * front of it still rejected one, and no test executed that handler.
+ */
+function acceptedTransferRequiresRoot(payload) {
+  const instanceIds = payload?.instanceIds;
+  return instanceIds === undefined || instanceIds === null;
+}
+
 module.exports = {
+  acceptedTransferRequiresRoot,
   ACCEPTED_COPY_MAX_MEDIA,
   ACCEPTED_COPY_MAX_PATH_BYTES,
   REVIEW_EXPORT_SCOPES,
