@@ -146,6 +146,27 @@ describe("sorting module", () => {
     expect(result.map((i) => i.id)).toEqual(["a1", "a2", "b1", "b2"]);
   });
 
+  // A library-wide tag view is the only collection that mixes roots, and two
+  // roots dated the same day is the ordinary case, not a contrived one.
+  it("keeps same-named folders from different roots apart", () => {
+    const items = [
+      { ...makeItem("b-late", "z", "2026-08-09", 0), rootPath: "/roots/b" },
+      { ...makeItem("a-early", "a", "2026-08-09", 0), rootPath: "/roots/a" },
+      { ...makeItem("b-early", "a", "2026-08-09", 0), rootPath: "/roots/b" },
+      { ...makeItem("a-late", "z", "2026-08-09", 0), rootPath: "/roots/a" },
+    ];
+    const comp = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const result = groupAndSort(items, { groupByFolders: true, comparator: comp });
+    // Interleaving the two roots would mean the grid claimed one folder where
+    // there are two.
+    expect(result.map((i) => i.id)).toEqual([
+      "a-early",
+      "a-late",
+      "b-early",
+      "b-late",
+    ]);
+  });
+
   it("places root folder group first", () => {
     const items = [
       makeItem("root2", "b", "", 0),

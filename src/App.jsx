@@ -70,6 +70,7 @@ import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
 import { useSavedViews } from "./app/hooks/useSavedViews";
+import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
 import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
 import usePlaybackCapabilities from "./app/hooks/usePlaybackCapabilities";
@@ -1965,6 +1966,12 @@ function App() {
       }
       try {
         const result = await snapshot(requested, matchMode);
+        // A refused read is not an empty library. Reporting "no clips" for a
+        // search that never ran sends the user hunting for missing tags
+        // instead of telling them the search itself failed.
+        if (result?.success === false) {
+          throw new Error(result.error || "The library could not be searched");
+        }
         const records = Array.isArray(result?.records) ? result.records : [];
         openTagCollection({
           tags: requested,
@@ -1980,7 +1987,7 @@ function App() {
             "info"
           );
         } else if (!records.length) {
-          notify("No clips carry that tag", "info");
+          notify(emptyTagSearchMessage(requested, matchMode), "info");
         }
         return true;
       } catch (error) {

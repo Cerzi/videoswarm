@@ -69,6 +69,7 @@ const {
 const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
+const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
 const {
   IPC_LIMITS,
   assertBoolean,
@@ -4242,19 +4243,14 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     dedupe: true,
   });
   const matchMode = payload?.matchMode === "any" ? "any" : "all";
-  return runLibraryCatalogOperation((metadataStore) => {
-    const snapshot = metadataStore.getTaggedLibrarySnapshot({
+  return runLibraryCatalogOperation((metadataStore, context) =>
+    buildTaggedSnapshotResponse(metadataStore, {
       tagNames,
       matchMode,
-    });
-    return {
-      tags: snapshot.tags,
-      records: snapshot.records,
-      truncated: snapshot.truncated,
-      recordLimit: snapshot.recordLimit,
-      rootPaths: snapshot.rootPaths,
-    };
-  });
+      generation: context.generation,
+      assertActive: () => assertMetadataContextActive(context),
+    })
+  );
 });
 
 // Catalog listing is intentionally not itself an unbounded authority grant.

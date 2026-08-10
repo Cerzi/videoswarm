@@ -1,7 +1,7 @@
 # Library-wide Tag Views
 
 Status: **Implemented**
-Last updated: 2026-08-09
+Last updated: 2026-08-11
 
 ## Summary
 
@@ -163,11 +163,36 @@ Playback requires no change. The media protocol resolves instances by id, which
 is root-independent; each contributing root is granted on demand through the
 existing indexed-root regrant path.
 
+### The collection is a collection, not a query result
+
+"Adds a third kind" is a constraint, not just a description, and the first
+implementation broke it in a way worth recording because it is easy to repeat.
+
+A tag view reaches its rows through a different query, but what it hands the
+renderer has to be what every other collection hands the renderer. Two steps in
+that pipeline were skipped:
+
+- The IPC handler returned the **catalog projection** rather than mapping it
+  through the record builder the cached path uses. Those rows carry no `id`,
+  no `sourceUrl` and no `name`.
+- `openTagCollection` adopted the rows **without `normalizeVideoFromMain`**,
+  which every other ingest path applies and which is the only thing that
+  derives `basename` from `name`.
+
+Neither failed loudly. The grid had nothing to key or play, and the name
+comparator dereferenced the missing `basename` and took the renderer down. A
+collection that spans roots differs from a folder collection in exactly one
+way — each record names its own root — and in no other.
+
 ### Acceptance
 
 - No root-scoped control renders as active in a library view.
 - Rating, review and tag edits work identically to a folder view.
 - Playback works for clips from several roots in one collection.
+- A tag view's records carry everything a folder view's records carry, and
+  sorting a mixed-root collection by name does not throw.
+- Two roots holding the same relative folder path stay two groups.
+- A search that fails is reported as a failure, not as an empty library.
 
 ## 4. Transferring a cross-root selection
 
