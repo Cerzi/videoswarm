@@ -368,21 +368,36 @@
   color: rgba(255, 255, 255, 0.4);
   flex: none;
 }
-.review-results-layout__option {
+/* Scoped under the action on purpose. `.review-results-action button` above is
+   a class plus a type, which outweighs a lone class, so it was painting these
+   pills with the primary action fill - and winning their border, radius and
+   height too. The result was a segmented control where the option you had NOT
+   chosen was solid green, in the same green as the Copy button beneath it, and
+   the one you had chosen was a 16%-alpha wash. It read exactly backwards.
+   Selected is now the filled one, in blue rather than the action green so a
+   setting never looks like the button that performs the transfer. */
+.review-results-action .review-results-layout__option {
+  min-height: 0;
   padding: 0.2rem 0.6rem;
   font-size: 0.72rem;
+  font-weight: 600;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.6);
   cursor: pointer;
 }
-.review-results-layout__option.is-active {
-  border-color: rgba(59, 130, 246, 0.55);
-  background: rgba(59, 130, 246, 0.16);
+.review-results-action .review-results-layout__option:hover:not(:disabled),
+.review-results-action .review-results-layout__option:focus-visible:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
-.review-results-layout__option:disabled {
+.review-results-action .review-results-layout__option.is-active {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  color: #fff;
+}
+.review-results-action .review-results-layout__option:disabled {
   opacity: 0.45;
   cursor: default;
 }
