@@ -56,6 +56,40 @@ describe("shared metadata content helpers", () => {
     ]);
   });
 
+  // The scan attaches a toLocaleDateString string alongside the real
+  // timestamp. Preferring the string meant re-parsing a localized display
+  // value: "04/08/2026" is 4 August here and the Date constructor reads it
+  // month-first as 8 April, and it carries no time, so the clock read
+  // midnight for every clip in the library.
+  it("reads the created date from the timestamp, not the formatted string", () => {
+    const createdMs = new Date("2026-08-04T00:34:53").getTime();
+    const info = deriveSingleSelectionInfo(
+      [
+        {
+          name: "clip.mp4",
+          createdMs,
+          metadata: { dateCreatedFormatted: "04/08/2026" },
+        },
+      ],
+      1
+    );
+
+    const shown = new Date(info.created);
+    expect(shown.getFullYear()).toBe(2026);
+    expect(shown.getMonth()).toBe(7); // August, not April
+    expect(shown.getDate()).toBe(4);
+    // The real clock time survives instead of collapsing to midnight.
+    expect(info.created).toMatch(/00:34:53/);
+  });
+
+  it("still shows a formatted date when no timestamp came with the record", () => {
+    const info = deriveSingleSelectionInfo(
+      [{ name: "clip.mp4", metadata: { dateCreatedFormatted: "04/08/2026" } }],
+      1
+    );
+    expect(info.created).toBe("04/08/2026");
+  });
+
   it("derives shared/partial tags and bounded ranked suggestions", () => {
     expect(
       deriveMetadataTagSummary(
