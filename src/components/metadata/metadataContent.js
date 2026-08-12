@@ -146,8 +146,13 @@ export const deriveSingleSelectionInfo = (
   const video = selectedVideos[0];
   if (!video) return null;
 
+  // Never parse dateCreatedFormatted. It is a display string built with
+  // toLocaleDateString, so "04/08/2026" means 4 August here and the Date
+  // constructor reads it month-first as 8 April - and it carries no time at
+  // all, which is why the clock read 00:00:00. The record already holds the
+  // real epoch value, so the timestamp is preferred and the formatted string
+  // survives only as a literal fallback below.
   const createdDate =
-    parseDate(video?.metadata?.dateCreatedFormatted) ||
     parseDate(video?.createdMs) ||
     parseDate(video?.dateCreated) ||
     parseDate(video?.metadata?.dateCreated);
