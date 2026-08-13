@@ -1,7 +1,7 @@
 # Library-wide Tag Views
 
-Status: **Implemented**
-Last updated: 2026-08-11
+Status: **Implemented**, apart from smart-view scope — see Implementation order
+Last updated: 2026-08-12
 
 ## Summary
 
@@ -173,8 +173,10 @@ rather than left to render something misleading:
 - **Folder tree, breadcrumbs and folder scope** are hidden. There is no single
   tree the results belong to.
 - **Continue Review is unavailable.** Review checkpoints are keyed by `root_id`,
-  so a library view has no checkpoint to resume; the control states why rather
-  than silently doing nothing.
+  so a library view has no checkpoint to resume. The control *should* state why
+  rather than silently doing nothing, and currently does not: the behaviour is
+  right and the explanation is missing. Tracked in
+  [`../outstanding-work.md`](../outstanding-work.md).
 - **Grouping by folder** groups by the owning root, since relative paths from
   different roots can collide.
 - Review, rating and tagging all continue to work: they are content-keyed and
@@ -257,12 +259,17 @@ a collision exactly like any other rather than resolved by ordering.
 
 ## Implementation order
 
-1. Cross-root tagged snapshot and tag catalog in the metadata store, bounded and
-   reported, with focused database coverage.
-2. Bounded IPC and preload exposure.
-3. Rootless collection wiring, neutralized root chrome, refresh control.
-4. Smart-view scope, defaulting to folder so existing saved views are unchanged.
-5. Per-root transfer planning.
+1. ~~Cross-root tagged snapshot and tag catalog in the metadata store, bounded
+   and reported, with focused database coverage.~~ Done.
+2. ~~Bounded IPC and preload exposure.~~ Done.
+3. ~~Rootless collection wiring, neutralized root chrome, refresh control.~~
+   Done, apart from the Continue Review explanation in Section 3.
+4. **Smart-view scope, defaulting to folder so existing saved views are
+   unchanged. Not built** — `saved_views` still carries no scope axis, so the
+   "one axis" promised at the top of this document only reaches the live filter
+   panel, never a saved recipe. Tracked in
+   [`../outstanding-work.md`](../outstanding-work.md).
+5. ~~Per-root transfer planning.~~ Done.
 
 ## References
 
