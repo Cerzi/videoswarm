@@ -74,12 +74,25 @@ describe("shared metadata content helpers", () => {
       1
     );
 
-    const shown = new Date(info.created);
-    expect(shown.getFullYear()).toBe(2026);
-    expect(shown.getMonth()).toBe(7); // August, not April
-    expect(shown.getDate()).toBe(4);
-    // The real clock time survives instead of collapsing to midnight.
-    expect(info.created).toMatch(/00:34:53/);
+    // Asserted against the same instant formatted the same way, rather than
+    // against one locale's rendering of it. The first version of this test
+    // matched /00:34:53/ and failed on CI, which runs en-US and writes that
+    // instant as "12:34:53 AM" — a green suite here and a red one there, for
+    // a value that was correct in both.
+    const format = (date) =>
+      new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(date);
+
+    expect(info.created).toBe(format(new Date(createdMs)));
+    // The regression, stated as the value it used to produce: "04/08/2026"
+    // parsed month-first is 8 April at midnight, in any locale.
+    expect(info.created).not.toBe(format(new Date("04/08/2026")));
   });
 
   it("still shows a formatted date when no timestamp came with the record", () => {
