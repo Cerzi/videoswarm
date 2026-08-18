@@ -28,7 +28,7 @@ A successful installation reports:
 
 The Debian-normalized package version may contain `~rc` even though the
 downloaded filename and application version use `-rc`; for example,
-`0.6.0~rc.4` and `0.6.0-rc.4` identify the same release candidate.
+`0.6.0~rc.5` and `0.6.0-rc.5` identify the same release candidate.
 
 If those checks pass, launch the installed application with:
 

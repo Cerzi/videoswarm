@@ -64,8 +64,12 @@ missing. **Correct the Section 3 bullet or implement it; do not leave both.**
 
 ## 4. Unverified by a human
 
-Everything below is built, tested and shipped in `0.6.0-rc.4`, but nobody has
-confirmed it feels right:
+Everything below ships in `0.6.0-rc.5` and is built and tested, but nobody has
+confirmed it feels right. **This is the reason rc.5 exists rather than a stable
+`v0.6.0`:** every one of these was exercised by a human for the first time in
+the days before the release, and every one of them had a defect that a
+1,165-test suite had passed. Treat rc.5 as the first genuine soak of this
+feature set.
 
 - **Transfer affordances.** Copy is the filled primary, Move is outlined amber
   until hover, and the layout toggle fills the option actually selected. The
@@ -98,10 +102,10 @@ confirmed it feels right:
   the inverted layout toggle it reported the unselected pill as correctly
   unstyled while a real browser painted it solid green. Any assertion about what
   a control actually looks like belongs in the Playwright suite.
-- **Version is still `0.6.0-rc.4`.** Several user-facing features landed after
-  the `v0.6.0` release notes were written: library-wide tag search, cross-root
-  transfers, arbitrary-selection transfers, the fullscreen frame picker,
-  resolution filtering. The notes need updating before a release.
+- **`v0.6.0` is not cut yet, deliberately.** rc.5 carries 21 commits of
+  user-facing work that was never in any earlier release candidate, including
+  the content-identity change. Promote to stable only after rc.5 has been used
+  in earnest — see Section 4 for why.
 
 ## 6. Local branches that were not pushed
 

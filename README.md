@@ -180,7 +180,7 @@ Traditional file browsers show static thumbnails and provide limited ways to com
 
 ## Test the v0.6 Release Candidate
 
-[Download v0.6.0-rc.4](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.4)
+[Download v0.6.0-rc.5](https://github.com/Cerzi/videoswarm/releases/tag/v0.6.0-rc.5)
 for Windows, or install its `.deb` on Debian/Ubuntu, then follow the
 [RC feedback tracker](https://github.com/Cerzi/videoswarm/issues/80) for the
 priority test areas and stable-release gate. Close VideoSwarm before upgrading
