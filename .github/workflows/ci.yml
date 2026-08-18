@@ -54,6 +54,14 @@ jobs:
             libxkbcommon0 \
             libxss1
 
+      # The suite is mostly Electron, which npm ci already provides, but the
+      # transfer-affordance specs render the real stylesheet in a browser to
+      # check what a control actually paints. jsdom cannot answer that: it does
+      # not implement specificity, and reported an inverted segmented control as
+      # correctly styled. That check needs a browser Playwright fetches separately.
+      - name: Install Playwright Chromium for stylesheet checks
+        run: npx playwright install chromium
+
       - name: Electron production smoke test
         run: xvfb-run -a npm run test:electron-smoke
 
