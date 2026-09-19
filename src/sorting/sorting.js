@@ -2,6 +2,7 @@ export const SortKey = {
   NAME: "name",
   CREATED: "created",
   RESOLUTION: "resolution",
+  RATING: "rating",
   RANDOM: "random",
 };
 
@@ -14,6 +15,15 @@ const pixelCount = (video) => {
   if (width <= 0 || height <= 0) return 0;
   return width * height;
 };
+
+const compareNameAsc = (a, b) =>
+  (a.basename || a.name || "").localeCompare(b.basename || b.name || "", undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+
+const compareCreatedDesc = (a, b) =>
+  (b.createdMs || 0) - (a.createdMs || 0);
 
 export function mulberry32(a) {
   return function () {
@@ -55,6 +65,17 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
       return (a.name || "").localeCompare(b.name || "") * dir;
     };
   }
+  if (sortKey === SortKey.RATING) {
+    return (a, b) => {
+      const ra = Number(a.rating ?? -1);
+      const rb = Number(b.rating ?? -1);
+      const ratingDelta = (ra - rb) * dir;
+      if (ratingDelta !== 0) return ratingDelta;
+      const createdDelta = compareCreatedDesc(a, b);
+      if (createdDelta !== 0) return createdDelta;
+      return compareNameAsc(a, b);
+    };
+  }
   if (sortKey === SortKey.RANDOM) {
     return (a, b) => {
       const ra = randomOrderMap?.[a.id] ?? 0;
@@ -62,12 +83,51 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
       return (ra - rb) * dir;
     };
   }
-  // default NAME
-  return (a, b) =>
-    a.basename.localeCompare(b.basename, undefined, {
-      numeric: true,
-      sensitivity: "base",
-    }) * dir;
+  // default NAME — true multi-key alphanumeric sort.
+  // Splits each name into alternating text/number segments and compares them
+  // pairwise, so "clip_1.2_pass3" < "clip_1.10_pass1" (segment 2: 2 < 10).
+  return (a, b) => {
+    const tokensA = tokenize(a.basename);
+    const tokensB = tokenize(b.basename);
+    const len = Math.max(tokensA.length, tokensB.length);
+    for (let i = 0; i < len; i++) {
+      const tA = tokensA[i];
+      const tB = tokensB[i];
+      // One string exhausted → shorter name sorts first.
+      if (tA === undefined) return -dir;
+      if (tB === undefined) return dir;
+      // Both numbers → compare as floats.
+      if (typeof tA === "number" && typeof tB === "number") {
+        const diff = tA - tB;
+        if (diff !== 0) return diff * dir;
+      } else {
+        // Both text or mixed → use localeCompare+numeric. Mixed values can
+        // happen when one filename starts with digits and the other starts with
+        // text, so coerce before using the string API.
+        const cmp = String(tA).localeCompare(String(tB), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (cmp !== 0) return cmp * dir;
+      }
+    }
+    return 0;
+  };
+}
+
+export function tokenize(str) {
+  // Split into alternating text/number segments for multi-key comparison.
+  // ["clip", 1.2, "_pass", 3] → compare pairwise: text vs text, number vs number.
+  if (!str) return [];
+  const tokens = [];
+  const parts = str.split(/(\d+(?:\.\d+)?)/);
+  for (const part of parts) {
+    if (part === "") continue;
+    // Try parsing as a number (int or float).
+    const num = Number(part);
+    tokens.push(Number.isFinite(num) && part !== "" ? num : part);
+  }
+  return tokens;
 }
 
 // A folder view has one root, so a relative dirname identifies a folder on its
