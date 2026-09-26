@@ -361,6 +361,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
   },
 
+  generationVersions: {
+    // Pass `{ instanceIds }` for the open collection or `{ library: true }`.
+    index: async (scope = {}) =>
+      ipcRenderer.invoke(
+        "generation-versions:index",
+        scope?.library === true
+          ? { library: true }
+          : { instanceIds: Array.isArray(scope?.instanceIds) ? scope.instanceIds : [] }
+      ),
+    cancel: async () => ipcRenderer.invoke("generation-versions:cancel"),
+    summaries: async (keys) =>
+      ipcRenderer.invoke("generation-versions:summaries", {
+        keys: Array.isArray(keys) ? keys : [],
+      }),
+    siblings: async (instanceId) =>
+      ipcRenderer.invoke("generation-versions:siblings", { instanceId }),
+    onProgress: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("generation-versions:progress", handler);
+      return () =>
+        ipcRenderer.removeListener("generation-versions:progress", handler);
+    },
+  },
+
   library: {
     taggedSnapshot: async (tags, matchMode) =>
       ipcRenderer.invoke("library:tagged-snapshot", {

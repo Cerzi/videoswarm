@@ -178,7 +178,7 @@ following the fixture rule in `embedded-generation-metadata.md`.
 
 ## 2. Reading the tag cheaply
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-26)
 
 The prototype paid about 34 ms per file to spawn `ffprobe`. A folder of 3,000
 clips would occupy the single probe lane for close to two minutes, and the
@@ -218,7 +218,8 @@ that `embedded-generation-metadata.md` lists as unresolved portability work.
 
 ## 3. Storage
 
-Status: **Unimplemented**
+Status: **Implemented and Verified**, including the Electron-ABI suite
+(2026-09-26)
 
 The key is a property of content, so it lives on `media_content`, next to the
 technical metadata it resembles:
@@ -254,7 +255,9 @@ untouched so a later request retries it.
 
 ## 4. Background indexing
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** for the main-process job, IPC, lifecycle
+and renderer trigger (2026-09-26). The *Finding versions…* status line is part
+of Section 6 and is recorded there.
 
 Grouping needs keys for a whole collection, and a key needs a file read. The
 decision is that **keys are computed after the collection is on screen, in
@@ -269,8 +272,11 @@ bounded background batches, and never on the folder-open path.**
   algorithm. A record with a fingerprint and no `generationKeyChecked` is
   pending.
 - **Trigger.** The renderer starts one index request after the collection
-  settles — never while a scan is still running — for the pending records'
-  instance ids, capped at 20,000 per request. A later settle picks up the rest,
+  settles — never while a scan is still running, and 750 ms after the last
+  change — for the pending records' instance ids, capped at 20,000 per
+  request. The job first republishes any keys already stored for those
+  instances, so a record that predates a write catches up without a file
+  read. A later settle picks up the rest,
   so larger collections are covered in successive requests. New pending
   records from the watcher re-trigger after a short debounce; a fingerprint
   that was already attempted in this collection is not requested again, so a
@@ -498,6 +504,39 @@ possible future cross-check, nothing more.
 - 26 focused tests in `main/__tests__/generationKey.test.js` over nine reduced
   real fixtures and synthetic edge cases pass; the full suite (1,191 tests),
   zero-warning lint and the Vite build pass.
+
+### 2026-09-26 — Slice 2: tag reader, storage and background indexing
+
+- `main/container-tags.js` reads `udta/meta` `keys`+`ilst` and `©cmt` items
+  in-process, reusing the dimension parser's bounded `moov` walk (now
+  `iterateMp4MoovPayloads`) and the probe's tag recognition (now
+  `selectEmbeddedPayload`). It opens files with `O_NOFOLLOW` where available
+  and refuses a file whose size or modification time no longer matches.
+- On 900 random real H3 outputs the in-process path averaged **0.78 ms per
+  file** including hashing, against about 34 ms for the ffprobe prototype;
+  872 keyed, 28 had no `prompt` tag, and 40 of 40 spot checks produced the
+  same key as the ffprobe path.
+- `media_content` gains `generation_key` and `generation_key_version` with a
+  partial index; fingerprint rekeying carries them. Every record builder
+  (streamed scan patches, watcher records, the cached snapshot and tag views)
+  now states the key; records from `createVideoFileObject` always state it,
+  so a merge can never keep a key that belonged to a file's earlier content.
+- `main/generation-key-indexer.js` runs one job per renderer, latest wins,
+  pages candidates 256 at a time, writes and publishes in batches of 64 or
+  every 250 ms, and drains with the generation-metadata service on profile
+  change and shutdown. `generation-versions:index`, `:cancel`, `:summaries`
+  and `:siblings` are exposed through `window.electronAPI.generationVersions`.
+- `useGenerationVersionIndex` triggers indexing after the collection settles
+  and applies results by fingerprint, returning the same array when a batch
+  changes nothing.
+- An end-to-end run of the real store and indexer over the eight real fixture
+  files under Electron's Node keyed all eight in 8 ms and produced the three
+  expected groups, with the draft ordered below its two re-renders.
+- Verification: new focused suites for the key, tag reader, indexer, store
+  (Electron ABI), preload bridge, main wiring, snapshot wire shape,
+  normalization and renderer hook; `npm test -- --run` (1,226 tests),
+  `npm run test:electron-abi` (78 tests), zero-warning lint, the Vite build,
+  `node --check` and `git diff --check` pass.
 
 ## References
 

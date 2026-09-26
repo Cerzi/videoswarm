@@ -232,60 +232,79 @@ async function extractMp4Dimensions(filePath, knownSize = null) {
     const fileSize = Number.isSafeInteger(statSize) && statSize > 0
       ? statSize
       : Number((await handle.stat()).size || 0);
-    const maxMoovBytes = 8 * 1024 * 1024;
-    const maxTopLevelAtoms = 16_384;
-    let position = 0;
-    let visitedAtoms = 0;
-
-    // Walk only top-level atom headers and seek over media payloads. Generated
-    // MP4s commonly put `moov` after a very large `mdat`; scanning the first
-    // several megabytes would both miss that metadata and multiply I/O across
-    // large libraries.
-    while (position + 8 <= fileSize && visitedAtoms < maxTopLevelAtoms) {
-      visitedAtoms += 1;
-      const header = await readHandleRange(handle, 16, position);
-      if (header.length < 8) break;
-      const atomType = header.toString("ascii", 4, 8);
-      const size32 = header.readUInt32BE(0);
-      let atomSize = size32;
-      let headerSize = 8;
-      if (size32 === 1) {
-        if (header.length < 16) break;
-        const atomSizeBig =
-          (BigInt(header.readUInt32BE(8)) << 32n) |
-          BigInt(header.readUInt32BE(12));
-        if (atomSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) break;
-        atomSize = Number(atomSizeBig);
-        headerSize = 16;
-      } else if (size32 === 0) {
-        atomSize = fileSize - position;
-      }
-      if (
-        !Number.isSafeInteger(atomSize) ||
-        atomSize < headerSize ||
-        position + atomSize > fileSize
-      ) {
-        break;
-      }
-
-      if (atomType === "moov") {
-        const payloadLength = atomSize - headerSize;
-        if (payloadLength > maxMoovBytes) return null;
-        const moovBuffer = await readHandleRange(
-          handle,
-          payloadLength,
-          position + headerSize
-        );
-        if (moovBuffer.length !== payloadLength) return null;
-        const dims = parseMp4Moov(moovBuffer);
-        if (dims && dims.width > 0 && dims.height > 0) return dims;
-      }
-
-      position += atomSize;
+    for await (const moovBuffer of iterateMp4MoovPayloads(handle, fileSize)) {
+      if (!moovBuffer) return null;
+      const dims = parseMp4Moov(moovBuffer);
+      if (dims && dims.width > 0 && dims.height > 0) return dims;
     }
     return null;
   } finally {
     await handle.close();
+  }
+}
+
+const MP4_MAX_MOOV_BYTES = 8 * 1024 * 1024;
+const MP4_MAX_TOP_LEVEL_ATOMS = 16_384;
+
+// Yields each top-level `moov` payload, or a single null when one exceeds
+// the bound. Only atom headers are read on the way, so media payloads are
+// seeked over rather than scanned.
+async function* iterateMp4MoovPayloads(handle, fileSize, options = {}) {
+  const maxMoovBytes = options.maxMoovBytes ?? MP4_MAX_MOOV_BYTES;
+  const maxTopLevelAtoms = options.maxTopLevelAtoms ?? MP4_MAX_TOP_LEVEL_ATOMS;
+  let position = 0;
+  let visitedAtoms = 0;
+
+  // Walk only top-level atom headers and seek over media payloads. Generated
+  // MP4s commonly put `moov` after a very large `mdat`; scanning the first
+  // several megabytes would both miss that metadata and multiply I/O across
+  // large libraries.
+  while (position + 8 <= fileSize && visitedAtoms < maxTopLevelAtoms) {
+    visitedAtoms += 1;
+    const header = await readHandleRange(handle, 16, position);
+    if (header.length < 8) break;
+    const atomType = header.toString("ascii", 4, 8);
+    const size32 = header.readUInt32BE(0);
+    let atomSize = size32;
+    let headerSize = 8;
+    if (size32 === 1) {
+      if (header.length < 16) break;
+      const atomSizeBig =
+        (BigInt(header.readUInt32BE(8)) << 32n) |
+        BigInt(header.readUInt32BE(12));
+      if (atomSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) break;
+      atomSize = Number(atomSizeBig);
+      headerSize = 16;
+    } else if (size32 === 0) {
+      atomSize = fileSize - position;
+    }
+    if (
+      !Number.isSafeInteger(atomSize) ||
+      atomSize < headerSize ||
+      position + atomSize > fileSize
+    ) {
+      break;
+    }
+
+    if (atomType === "moov") {
+      const payloadLength = atomSize - headerSize;
+      if (payloadLength > maxMoovBytes) {
+        yield null;
+        return;
+      }
+      const moovBuffer = await readHandleRange(
+        handle,
+        payloadLength,
+        position + headerSize
+      );
+      if (moovBuffer.length !== payloadLength) {
+        yield null;
+        return;
+      }
+      yield moovBuffer;
+    }
+
+    position += atomSize;
   }
 }
 
@@ -603,6 +622,8 @@ module.exports = {
   clearVideoDimensionsCache,
   getVideoDimensions,
   getVideoDimensionsCacheSnapshot,
+  iterateMp4MoovPayloads,
+  readAtom,
   __internals: {
     cacheKey,
     parseTkhd,

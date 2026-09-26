@@ -26,6 +26,10 @@ const {
   normalizeCheckpointView,
 } = require('./review-checkpoint');
 const profileManager = require('./profile-manager');
+const {
+  GENERATION_KEY_VERSION,
+  isGenerationKey,
+} = require('./generation-key');
 
 let dbInstance = null;
 let metadataStoreInstance = null;
@@ -34,6 +38,16 @@ let currentProfilePath = null;
 const DB_FILE_NAME = 'videoswarm-meta.db';
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
 const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
+
+// Record fields for a content's generation key. A key from an older
+// algorithm version is not "checked": it is due for re-evaluation, and the
+// renderer treats it as pending rather than grouping with it.
+function mapGenerationKeyFields(generationKey, generationKeyVersion) {
+  if (Number(generationKeyVersion) !== GENERATION_KEY_VERSION) return {};
+  return isGenerationKey(generationKey)
+    ? { generationKey, generationKeyChecked: true }
+    : { generationKeyChecked: true };
+}
 // Absences the user caused on purpose. Anything else stays unexplained and is
 // reported as missing, which is the state worth drawing attention to.
 const MISSING_REASONS = new Set(['trashed', 'moved']);
@@ -43,6 +57,16 @@ const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
   maxTags: 16,
   maxRecords: 20_000,
   maxPathBytes: 16 * 1024 * 1024,
+});
+// Generation versions read and summarize content keys in bounded pages; the
+// renderer asks for at most this many keys or instances at a time.
+const GENERATION_VERSION_LIMITS = Object.freeze({
+  maxCandidatePage: 256,
+  maxRequestedInstances: 20_000,
+  maxSummaryKeys: 4096,
+  maxWriteBatch: 256,
+  maxSiblingVersions: 32,
+  maxSiblingRows: 512,
 });
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
@@ -887,6 +911,22 @@ function initDatabase(app, profilePath) {
     if (!mediaContentColumns.has('frame_rate')) {
       db.exec('ALTER TABLE media_content ADD COLUMN frame_rate REAL;');
     }
+    // Generation versions: the derived key only, never the graph it came
+    // from. A NULL version means not yet evaluated; a version with a NULL key
+    // means evaluated and not keyable.
+    if (!mediaContentColumns.has('generation_key')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN generation_key TEXT;');
+    }
+    if (!mediaContentColumns.has('generation_key_version')) {
+      db.exec(
+        'ALTER TABLE media_content ADD COLUMN generation_key_version INTEGER;'
+      );
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_media_content_generation_key
+        ON media_content(generation_key)
+        WHERE generation_key IS NOT NULL;
+    `);
 
     const libraryRootColumns = new Set(
       db
@@ -1375,6 +1415,8 @@ function createMetadataStore(db) {
       mc.has_audio AS content_has_audio,
       mc.duration_ms AS content_duration_ms,
       mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1402,6 +1444,8 @@ function createMetadataStore(db) {
       mc.has_audio AS content_has_audio,
       mc.duration_ms AS content_duration_ms,
       mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1619,10 +1663,10 @@ function createMetadataStore(db) {
   const rekeyMediaContent = db.prepare(`
     INSERT INTO media_content (
       fingerprint, size, created_ms, width, height, has_audio, duration_ms,
-      frame_rate, created_at, updated_at
+      frame_rate, generation_key, generation_key_version, created_at, updated_at
     )
     SELECT @to, size, created_ms, width, height, has_audio, duration_ms,
-      frame_rate, created_at, updated_at
+      frame_rate, generation_key, generation_key_version, created_at, updated_at
     FROM media_content WHERE fingerprint = @from
     ON CONFLICT(fingerprint) DO UPDATE SET
       created_ms=MIN(
@@ -1634,6 +1678,15 @@ function createMetadataStore(db) {
       has_audio=COALESCE(media_content.has_audio, excluded.has_audio),
       duration_ms=COALESCE(media_content.duration_ms, excluded.duration_ms),
       frame_rate=COALESCE(media_content.frame_rate, excluded.frame_rate),
+      generation_key=CASE
+        WHEN media_content.generation_key_version IS NULL
+          THEN excluded.generation_key
+        ELSE media_content.generation_key
+      END,
+      generation_key_version=COALESCE(
+        media_content.generation_key_version,
+        excluded.generation_key_version
+      ),
       updated_at=MAX(media_content.updated_at, excluded.updated_at);
   `);
   const rekeyFileRecord = db.prepare(`
@@ -2835,6 +2888,10 @@ function createMetadataStore(db) {
             : 'unreviewed',
           dimensions,
           hasAudio: mapHasAudio(instance.content_has_audio),
+          ...mapGenerationKeyFields(
+            instance.content_generation_key,
+            instance.content_generation_key_version
+          ),
         };
       });
     assertOperationActive(options.assertActive);
@@ -2953,6 +3010,10 @@ function createMetadataStore(db) {
               }
             : null,
         hasAudio: mapHasAudio(instance.content_has_audio),
+        ...mapGenerationKeyFields(
+          instance.content_generation_key,
+          instance.content_generation_key_version
+        ),
       };
     });
     assertOperationActive(options.assertActive);
@@ -3931,6 +3992,9 @@ function createMetadataStore(db) {
     const metadata = getMetadataForFingerprints(
       preparedEntries.map((entry) => entry.fingerprint)
     );
+    const generationKeys = getGenerationKeyFields(
+      preparedEntries.map((entry) => entry.fingerprint)
+    );
     return preparedEntries.map((entry, index) => ({
       filePath: entry.filePath,
       fingerprint: entry.fingerprint,
@@ -3941,6 +4005,7 @@ function createMetadataStore(db) {
         dimensions: null,
         hasAudio: null,
       }),
+      ...(generationKeys.get(entry.fingerprint) || {}),
       fingerprintReused: entry.fingerprintReused,
       instance: mapFileInstanceRow(instanceRows[index]),
     }));
@@ -3985,6 +4050,7 @@ function createMetadataStore(db) {
     return {
       fingerprint,
       ...mapMetadataRow(fingerprint),
+      ...(getGenerationKeyFields([fingerprint]).get(fingerprint) || {}),
     };
   }
 
@@ -4102,6 +4168,322 @@ function createMetadataStore(db) {
         fingerprint
       );
     })();
+  }
+
+  // --- Generation versions ------------------------------------------------
+  // See docs/architecture/generation-versions.md. Only derived keys are
+  // stored; the graphs they come from never reach SQLite.
+
+  const generationKeysForFingerprints = db.prepare(`
+    SELECT fingerprint, generation_key, generation_key_version
+    FROM media_content
+    WHERE fingerprint IN (SELECT value FROM json_each(@fingerprints));
+  `);
+  // Candidates are present instances in present directories whose content
+  // has not been evaluated under the current key version. Pages advance by
+  // instance id, so a transient failure is retried by a later request rather
+  // than looped on within this one.
+  const generationKeyCandidates = db.prepare(`
+    SELECT fi.id AS instance_id, fi.fingerprint, fi.absolute_path, fi.size,
+      fi.mtime_ms, lr.root_path
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    WHERE fi.is_present != 0
+      AND d.is_present != 0
+      AND fi.id > @after_id
+      AND (
+        mc.generation_key_version IS NULL
+        OR mc.generation_key_version != @version
+      )
+      AND (
+        @instance_ids IS NULL
+        OR fi.id IN (SELECT value FROM json_each(@instance_ids))
+      )
+    ORDER BY fi.id
+    LIMIT @limit;
+  `);
+  const generationKeyCandidateCount = db.prepare(`
+    SELECT COUNT(DISTINCT fi.fingerprint) AS pending
+    FROM file_instances fi
+    INNER JOIN directories d ON d.id = fi.directory_id
+    INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    WHERE fi.is_present != 0
+      AND d.is_present != 0
+      AND (
+        mc.generation_key_version IS NULL
+        OR mc.generation_key_version != @version
+      )
+      AND (
+        @instance_ids IS NULL
+        OR fi.id IN (SELECT value FROM json_each(@instance_ids))
+      );
+  `);
+  const evaluatedGenerationKeysForInstances = db.prepare(`
+    SELECT DISTINCT mc.fingerprint, mc.generation_key
+    FROM file_instances fi
+    INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    WHERE fi.id IN (SELECT value FROM json_each(@instance_ids))
+      AND mc.generation_key_version = @version;
+  `);
+  const setGenerationKeyStmt = db.prepare(`
+    UPDATE media_content
+    SET generation_key = @generation_key,
+      generation_key_version = @version,
+      updated_at = @updated_at
+    WHERE fingerprint = @fingerprint;
+  `);
+  // A version is a content, not an instance, and it counts only while some
+  // instance of it is present in a present directory.
+  const generationVersionSummaries = db.prepare(`
+    SELECT mc.generation_key,
+      COUNT(*) AS version_count,
+      MAX(COALESCE(mc.width, 0) * COALESCE(mc.height, 0)) AS max_pixels
+    FROM media_content mc
+    WHERE mc.generation_key IN (SELECT value FROM json_each(@keys))
+      AND mc.generation_key_version = @version
+      AND EXISTS (
+        SELECT 1
+        FROM file_instances fi
+        INNER JOIN directories d ON d.id = fi.directory_id
+        WHERE fi.fingerprint = mc.fingerprint
+          AND fi.is_present != 0
+          AND d.is_present != 0
+      )
+    GROUP BY mc.generation_key;
+  `);
+  const generationKeyForInstance = db.prepare(`
+    SELECT fi.fingerprint, mc.generation_key, mc.generation_key_version
+    FROM file_instances fi
+    INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    WHERE fi.id = ?;
+  `);
+  const generationVersionSiblingRows = db.prepare(`
+    SELECT mc.fingerprint, mc.width, mc.height, mc.duration_ms,
+      fi.id AS instance_id, fi.relative_path, fi.mtime_ms,
+      lr.root_path
+    FROM media_content mc
+    INNER JOIN file_instances fi ON fi.fingerprint = mc.fingerprint
+    INNER JOIN directories d ON d.id = fi.directory_id
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    WHERE mc.generation_key = @generation_key
+      AND mc.generation_key_version = @version
+      AND fi.is_present != 0
+      AND d.is_present != 0
+    ORDER BY mc.fingerprint, fi.id
+    LIMIT @limit;
+  `);
+
+  function normalizeInstanceIdList(instanceIds) {
+    if (instanceIds === null || instanceIds === undefined) return null;
+    if (!Array.isArray(instanceIds)) {
+      throw new TypeError('Instance ids must be an array');
+    }
+    const ids = [...new Set(instanceIds)].filter(
+      (id) => Number.isSafeInteger(id) && id > 0
+    );
+    if (ids.length > GENERATION_VERSION_LIMITS.maxRequestedInstances) {
+      throw new RangeError(
+        `At most ${GENERATION_VERSION_LIMITS.maxRequestedInstances} instances can be requested`
+      );
+    }
+    return JSON.stringify(ids);
+  }
+
+  function getGenerationKeyFields(fingerprints) {
+    const unique = [...new Set((fingerprints || []).filter(Boolean))];
+    const result = new Map();
+    if (unique.length === 0) return result;
+    generationKeysForFingerprints
+      .all({ fingerprints: JSON.stringify(unique) })
+      .forEach((row) => {
+        result.set(
+          row.fingerprint,
+          mapGenerationKeyFields(row.generation_key, row.generation_key_version)
+        );
+      });
+    return result;
+  }
+
+  function listGenerationKeyCandidates(options = {}) {
+    const afterId = Number(options.afterInstanceId ?? 0);
+    const limit = Number(options.limit ?? GENERATION_VERSION_LIMITS.maxCandidatePage);
+    if (!Number.isSafeInteger(afterId) || afterId < 0) {
+      throw new RangeError('Candidate cursor must be a non-negative integer');
+    }
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > GENERATION_VERSION_LIMITS.maxCandidatePage
+    ) {
+      throw new RangeError('Candidate page size is out of range');
+    }
+    return generationKeyCandidates
+      .all({
+        after_id: afterId,
+        version: GENERATION_KEY_VERSION,
+        instance_ids: normalizeInstanceIdList(options.instanceIds),
+        limit,
+      })
+      .map((row) => ({
+        instanceId: Number(row.instance_id),
+        fingerprint: row.fingerprint,
+        absolutePath: row.absolute_path,
+        rootPath: row.root_path,
+        size: Number(row.size || 0),
+        mtimeMs: Number(row.mtime_ms || 0),
+      }));
+  }
+
+  // Already-evaluated content among the named instances, so a renderer whose
+  // records predate a write can catch up without re-reading any file.
+  function listEvaluatedGenerationKeys(instanceIds) {
+    const ids = normalizeInstanceIdList(instanceIds);
+    if (ids === null) return [];
+    return evaluatedGenerationKeysForInstances
+      .all({ instance_ids: ids, version: GENERATION_KEY_VERSION })
+      .map((row) => ({
+        fingerprint: row.fingerprint,
+        generationKey: isGenerationKey(row.generation_key) ? row.generation_key : null,
+      }));
+  }
+
+  function countGenerationKeyCandidates(options = {}) {
+    const row = generationKeyCandidateCount.get({
+      version: GENERATION_KEY_VERSION,
+      instance_ids: normalizeInstanceIdList(options.instanceIds),
+    });
+    return Number(row?.pending || 0);
+  }
+
+  // `entries` are `{ fingerprint, generationKey }` where a null key records a
+  // definitive "not keyable". Invalid keys are refused rather than stored.
+  function setGenerationKeys(entries, options = {}) {
+    if (!Array.isArray(entries)) throw new TypeError('Entries must be an array');
+    if (entries.length > GENERATION_VERSION_LIMITS.maxWriteBatch) {
+      throw new RangeError('Too many generation keys in one write');
+    }
+    const normalized = entries.map((entry) => {
+      const fingerprint = entry?.fingerprint;
+      const generationKey = entry?.generationKey ?? null;
+      if (typeof fingerprint !== 'string' || !fingerprint) {
+        throw new TypeError('A fingerprint is required');
+      }
+      if (generationKey !== null && !isGenerationKey(generationKey)) {
+        throw new TypeError('Invalid generation key');
+      }
+      return { fingerprint, generationKey };
+    });
+    assertOperationActive(options.assertActive);
+    const updatedAt = Date.now();
+    let updated = 0;
+    db.transaction(() => {
+      normalized.forEach((entry) => {
+        updated += setGenerationKeyStmt.run({
+          fingerprint: entry.fingerprint,
+          generation_key: entry.generationKey,
+          version: GENERATION_KEY_VERSION,
+          updated_at: updatedAt,
+        }).changes;
+      });
+    })();
+    return updated;
+  }
+
+  function getGenerationVersionSummaries(keys) {
+    if (!Array.isArray(keys)) throw new TypeError('Keys must be an array');
+    const unique = [...new Set(keys.filter(isGenerationKey))];
+    if (unique.length > GENERATION_VERSION_LIMITS.maxSummaryKeys) {
+      throw new RangeError('Too many generation keys in one summary request');
+    }
+    const summaries = {};
+    if (unique.length === 0) return summaries;
+    generationVersionSummaries
+      .all({ keys: JSON.stringify(unique), version: GENERATION_KEY_VERSION })
+      .forEach((row) => {
+        summaries[row.generation_key] = {
+          versionCount: Number(row.version_count || 0),
+          maxPixels: Number(row.max_pixels || 0),
+        };
+      });
+    return summaries;
+  }
+
+  // Siblings are grouped by content; the representative instance of the
+  // requested content is the requested instance itself.
+  function getGenerationVersionSiblings(instanceId) {
+    if (!Number.isSafeInteger(instanceId) || instanceId < 1) {
+      throw new TypeError('A valid instance id is required');
+    }
+    const self = generationKeyForInstance.get(instanceId);
+    const selfFields = self
+      ? mapGenerationKeyFields(self.generation_key, self.generation_key_version)
+      : {};
+    if (!selfFields.generationKey) {
+      return {
+        generationKey: null,
+        checked: Boolean(selfFields.generationKeyChecked),
+        versions: [],
+        truncated: false,
+      };
+    }
+    const rows = generationVersionSiblingRows.all({
+      generation_key: selfFields.generationKey,
+      version: GENERATION_KEY_VERSION,
+      limit: GENERATION_VERSION_LIMITS.maxSiblingRows + 1,
+    });
+    const rowsTruncated = rows.length > GENERATION_VERSION_LIMITS.maxSiblingRows;
+    const byFingerprint = new Map();
+    rows.slice(0, GENERATION_VERSION_LIMITS.maxSiblingRows).forEach((row) => {
+      const width = Number(row.width || 0);
+      const height = Number(row.height || 0);
+      const existing = byFingerprint.get(row.fingerprint);
+      const isRequested = Number(row.instance_id) === instanceId;
+      if (existing) {
+        existing.instanceCount += 1;
+        existing.mtimeMs = Math.max(existing.mtimeMs, Number(row.mtime_ms || 0));
+        if (isRequested) {
+          existing.instanceId = instanceId;
+          existing.relativePath = row.relative_path;
+          existing.rootPath = row.root_path;
+        }
+        return;
+      }
+      byFingerprint.set(row.fingerprint, {
+        fingerprint: row.fingerprint,
+        instanceId: Number(row.instance_id),
+        rootPath: row.root_path,
+        relativePath: row.relative_path,
+        width: width > 0 && height > 0 ? width : null,
+        height: width > 0 && height > 0 ? height : null,
+        durationMs: normalizeDurationMs(row.duration_ms),
+        mtimeMs: Number(row.mtime_ms || 0),
+        instanceCount: 1,
+        isSelf: row.fingerprint === self.fingerprint,
+      });
+    });
+    const pixels = (version) => (version.width || 0) * (version.height || 0);
+    const ordered = [...byFingerprint.values()].sort(
+      (a, b) =>
+        pixels(b) - pixels(a) ||
+        (b.durationMs || 0) - (a.durationMs || 0) ||
+        b.mtimeMs - a.mtimeMs ||
+        (a.fingerprint < b.fingerprint ? -1 : 1)
+    );
+    let versions = ordered.slice(0, GENERATION_VERSION_LIMITS.maxSiblingVersions);
+    if (!versions.some((version) => version.isSelf)) {
+      const selfVersion = ordered.find((version) => version.isSelf);
+      if (selfVersion) versions = [...versions.slice(0, -1), selfVersion];
+    }
+    return {
+      generationKey: selfFields.generationKey,
+      checked: true,
+      versions,
+      truncated:
+        rowsTruncated ||
+        ordered.length > GENERATION_VERSION_LIMITS.maxSiblingVersions,
+    };
   }
 
   function listTags() {
@@ -4373,6 +4755,13 @@ function createMetadataStore(db) {
     getDimensions,
     getHasAudio,
     setDimensions,
+    getGenerationKeyFields,
+    listGenerationKeyCandidates,
+    countGenerationKeyCandidates,
+    listEvaluatedGenerationKeys,
+    setGenerationKeys,
+    getGenerationVersionSummaries,
+    getGenerationVersionSiblings,
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,
@@ -4416,6 +4805,7 @@ module.exports = {
   FINGERPRINT_CACHE_MAX_ENTRIES,
   FINGERPRINT_CACHE_MAX_IN_FLIGHT,
   GENERATION_METADATA_LIMITS,
+  GENERATION_VERSION_LIMITS,
   initMetadataStore,
   getMetadataStore,
   resetDatabase,
