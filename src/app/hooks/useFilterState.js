@@ -15,6 +15,11 @@ import {
   matchesReviewFilter,
   normalizeReviewFilter,
 } from "../../review/reviewState";
+import {
+  VERSION_FILTERS,
+  matchesVersionFilter,
+  normalizeVersionFilter,
+} from "../filters/generationVersions";
 
 const resolveValue = (value, fallback) =>
   value === undefined ? fallback : value;
@@ -39,10 +44,18 @@ const normalizeFiltersDraft = (draft, prev) => {
     ),
     minMegapixels: sanitizeMegapixels(minMegapixelsRaw),
     maxMegapixels: sanitizeMegapixels(maxMegapixelsRaw),
+    versionFilter: normalizeVersionFilter(
+      resolveValue(draft?.versionFilter, prev.versionFilter)
+    ),
   };
 };
 
-export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) {
+export function useFilterState({
+  videos,
+  filtersButtonRef,
+  filtersPopoverRef,
+  generationVersionIndex = null,
+}) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
@@ -67,6 +80,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     const includeTagsMode = normalizeIncludeTagsMode(filters.includeTagsMode);
     const minMegapixels = sanitizeMegapixels(filters.minMegapixels);
     const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
+    const versionFilter = normalizeVersionFilter(filters.versionFilter);
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -82,7 +96,8 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
       exactRating === null &&
       minMegapixels === null &&
       maxMegapixels === null &&
-      reviewFilter === REVIEW_FILTERS.ANY
+      reviewFilter === REVIEW_FILTERS.ANY &&
+      versionFilter === VERSION_FILTERS.ANY
     ) {
       return videos;
     }
@@ -132,6 +147,13 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
         if (maxMegapixels !== null && megapixels > maxMegapixels) return false;
       }
 
+      if (
+        versionFilter !== VERSION_FILTERS.ANY &&
+        !matchesVersionFilter(generationVersionIndex?.get(video.id), versionFilter)
+      ) {
+        return false;
+      }
+
       const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
 
       if (exactRating !== null) {
@@ -144,7 +166,7 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
 
       return true;
     });
-  }, [videos, filters]);
+  }, [videos, filters, generationVersionIndex]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),
@@ -183,6 +205,10 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
 
   const clearReviewFilter = useCallback(() => {
     updateFilters((prev) => ({ ...prev, reviewFilter: REVIEW_FILTERS.ANY }));
+  }, [updateFilters]);
+
+  const clearVersionFilter = useCallback(() => {
+    updateFilters((prev) => ({ ...prev, versionFilter: VERSION_FILTERS.ANY }));
   }, [updateFilters]);
 
   const ratingSummary = useMemo(() => {
@@ -257,5 +283,6 @@ export function useFilterState({ videos, filtersButtonRef, filtersPopoverRef }) 
     clearMinRatingFilter,
     clearExactRatingFilter,
     clearReviewFilter,
+    clearVersionFilter,
   };
 }

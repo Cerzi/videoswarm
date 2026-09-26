@@ -44,6 +44,7 @@ describe('review checkpoint wire validation', () => {
         reviewFilter: 'PICK',
         maxMegapixels: 1,
         minMegapixels: 'nonsense',
+        versionFilter: 'best',
       },
       sort: {
         key: 'created',
@@ -70,6 +71,8 @@ describe('review checkpoint wire validation', () => {
         // rather than travelling as-is.
         minMegapixels: null,
         maxMegapixels: 1,
+        // Generation-version filter round-trips; an unknown value is "any".
+        versionFilter: 'best',
       },
       sort: {
         key: 'created',

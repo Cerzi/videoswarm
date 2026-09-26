@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { REVIEW_FILTERS, normalizeReviewFilter } from "../../review/reviewState";
+import { VERSION_FILTERS, normalizeVersionFilter } from "./generationVersions";
 
 export const createDefaultFilters = () => ({
   includeTags: [],
@@ -10,6 +11,7 @@ export const createDefaultFilters = () => ({
   includeTagsMode: "all",
   minMegapixels: null,
   maxMegapixels: null,
+  versionFilter: VERSION_FILTERS.ANY,
 });
 
 // "all" is an intersection, "any" a union. Exclusion stays separate and always
@@ -104,7 +106,14 @@ export const useFiltersActiveCount = (filters) =>
     const resolutionCount =
       (sanitizeMegapixels(filters.minMegapixels) !== null ? 1 : 0) +
       (sanitizeMegapixels(filters.maxMegapixels) !== null ? 1 : 0);
+    const versionCount =
+      normalizeVersionFilter(filters.versionFilter) === VERSION_FILTERS.ANY ? 0 : 1;
     return (
-      includeCount + excludeCount + ratingCount + reviewCount + resolutionCount
+      includeCount +
+      excludeCount +
+      ratingCount +
+      reviewCount +
+      resolutionCount +
+      versionCount
     );
   }, [filters]);

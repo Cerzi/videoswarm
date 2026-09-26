@@ -97,6 +97,12 @@ import {
 } from "./library/folderModel";
 import { FolderViewStateCache, makeFolderViewKey } from "./library/folderViewState";
 import useGenerationVersionIndex from "./app/hooks/useGenerationVersionIndex";
+import useGenerationVersionSummaries from "./app/hooks/useGenerationVersionSummaries";
+import {
+  VERSION_FILTER_LABELS,
+  buildGenerationVersionIndex,
+  normalizeVersionFilter,
+} from "./app/filters/generationVersions";
 import {
   REVIEW_FILTERS,
   REVIEW_STATES,
@@ -558,6 +564,29 @@ function App() {
     });
   }, []);
 
+  // Generation versions are keyed per collection rather than per folder view:
+  // navigating subfolders inside one root must not restart indexing.
+  const generationCollectionKey = activeRootPath
+    ? `${reviewProfileEpoch}:root:${activeRootPath}`
+    : tagCollection
+      ? `${reviewProfileEpoch}:tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
+      : null;
+  const {
+    summaries: generationVersionSummaries,
+    refresh: refreshGenerationVersionSummaries,
+  } = useGenerationVersionSummaries(videos);
+  const generationIndex = useGenerationVersionIndex({
+    videos,
+    setVideos,
+    collectionKey: generationCollectionKey,
+    busy: isLoadingFolder || isRefreshingFolder,
+    onBatch: refreshGenerationVersionSummaries,
+  });
+  const generationVersionIndex = useMemo(
+    () => buildGenerationVersionIndex(videos, generationVersionSummaries),
+    [videos, generationVersionSummaries]
+  );
+
   const {
     filters,
     setFiltersOpen,
@@ -570,10 +599,12 @@ function App() {
     handleRemoveIncludeFilter,
     handleRemoveExcludeFilter,
     clearReviewFilter,
+    clearVersionFilter,
   } = useFilterState({
     videos,
     filtersButtonRef,
     filtersPopoverRef,
+    generationVersionIndex,
   });
   reviewViewStateRef.current = {
     filters,
@@ -1047,6 +1078,44 @@ function App() {
     [videos]
   );
   const allVideoIds = useMemo(() => new Set(allVideosById.keys()), [allVideosById]);
+
+  // Sibling versions are named by catalog instance id; resolve them to clips
+  // in this collection and say why one cannot be revealed.
+  const videoIdByInstanceId = useMemo(() => {
+    const map = new Map();
+    videos.forEach((video) => {
+      if (video?.instanceId) map.set(video.instanceId, video.id);
+    });
+    return map;
+  }, [videos]);
+  const resolveVersionTarget = useCallback(
+    (instanceId) => {
+      const id = videoIdByInstanceId.get(instanceId);
+      if (!id) return "elsewhere";
+      return videosById.has(id) ? "available" : "filtered";
+    },
+    [videoIdByInstanceId, videosById]
+  );
+  const gridGenerationVersions = useMemo(
+    () => ({
+      index: generationVersionIndex,
+      resolveTarget: resolveVersionTarget,
+      onSelect: (instanceId) => {
+        const id = videoIdByInstanceId.get(instanceId);
+        if (!id || !videosById.has(id)) return;
+        selection.selectExactly(id);
+        scrollToId(id, { align: "center" });
+      },
+    }),
+    [
+      generationVersionIndex,
+      resolveVersionTarget,
+      scrollToId,
+      selection.selectExactly,
+      videoIdByInstanceId,
+      videosById,
+    ]
+  );
   const getById = useCallback((id) => videosById.get(id), [videosById]);
 
   useEffect(() => {
@@ -1284,19 +1353,6 @@ function App() {
     ]
   );
 
-  // Generation versions are keyed per collection rather than per folder view:
-  // navigating subfolders inside one root must not restart indexing.
-  const generationCollectionKey = activeRootPath
-    ? `${reviewProfileEpoch}:root:${activeRootPath}`
-    : tagCollection
-      ? `${reviewProfileEpoch}:tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
-      : null;
-  useGenerationVersionIndex({
-    videos,
-    setVideos,
-    collectionKey: generationCollectionKey,
-    busy: isLoadingFolder || isRefreshingFolder,
-  });
 
   const {
     handleAddTags: applyAddTags,
@@ -2248,6 +2304,23 @@ function App() {
     collectionOwnerKey: fullscreenCollectionOwnerKey,
     orderedVideos,
   });
+  const fullscreenGenerationVersions = useMemo(
+    () => ({
+      ...gridGenerationVersions,
+      onSelect: (instanceId) => {
+        const id = videoIdByInstanceId.get(instanceId);
+        if (!id || !videosById.has(id)) return;
+        if (fullscreenController.goTo(id)) selection.selectExactly(id);
+      },
+    }),
+    [
+      fullscreenController.goTo,
+      gridGenerationVersions,
+      selection.selectExactly,
+      videoIdByInstanceId,
+      videosById,
+    ]
+  );
   const controllerVideo = fullscreenController.fullScreenVideo;
   const fullScreenVideo = controllerVideo
     ? allVideosById.get(controllerVideo.id) || controllerVideo
@@ -2953,6 +3026,12 @@ function App() {
           minRating: filters.minRating ?? null,
           exactRating: filters.exactRating ?? null,
           reviewFilter: filters.reviewFilter || REVIEW_FILTERS.ANY,
+          // A worklist that loses its resolution bound on save is a different
+          // list, so every filter the panel offers is saved.
+          includeTagsMode: filters.includeTagsMode === "any" ? "any" : "all",
+          minMegapixels: filters.minMegapixels ?? null,
+          maxMegapixels: filters.maxMegapixels ?? null,
+          versionFilter: normalizeVersionFilter(filters.versionFilter),
         },
         sort: {
           key: sortKey,
@@ -4622,6 +4701,13 @@ function App() {
               )}
               libraryResultCount={tagCollection ? videos.length : null}
               libraryTruncated={Boolean(tagCollection?.truncated)}
+              versionIndexStatus={generationIndex.status}
+              versionPendingCount={generationIndex.pendingCount}
+              onFindVersionsInLibrary={
+                window.electronAPI?.generationVersions
+                  ? generationIndex.indexLibrary
+                  : undefined
+              }
             />
           )}
 
@@ -4751,6 +4837,23 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {normalizeVersionFilter(filters.versionFilter) !== "any" && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Versions</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--review"
+                      onClick={clearVersionFilter}
+                      title="Clear version filter"
+                    >
+                      {VERSION_FILTER_LABELS[normalizeVersionFilter(filters.versionFilter)]}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -4861,6 +4964,7 @@ function App() {
                             generationMetadataState={generationMetadataState}
                             generationExpanded={metadataGenerationExpanded}
                             onGenerationExpandedChange={setMetadataGenerationExpanded}
+                            generationVersions={gridGenerationVersions}
                             onFocusSelection={focusSelection}
                             onTransferSelection={handleRequestTransfer}
                             onUndock={handleUndockMetadataPanel}
@@ -4980,6 +5084,12 @@ function App() {
                               onHover={handleVideoHover}
                               hoverAudioEnabled={hoverAudioEnabled}
                               reviewModeEnabled={reviewModeEnabled}
+                              versionCount={
+                                generationVersionIndex.get(video.id)?.versionCount || 0
+                              }
+                              versionSuperseded={
+                                generationVersionIndex.get(video.id)?.superseded === true
+                              }
                               isHoverAudioActive={
                                 hoverAudioEnabled &&
                                 videoCollection.activeHoverAudioId === video.id
@@ -5022,6 +5132,7 @@ function App() {
                 generationMetadataState={generationMetadataState}
                 generationExpanded={metadataGenerationExpanded}
                 onGenerationExpandedChange={setMetadataGenerationExpanded}
+                generationVersions={gridGenerationVersions}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
                 onTransferSelection={handleRequestTransfer}
@@ -5092,6 +5203,7 @@ function App() {
                   generationMetadataState={fullscreenGenerationMetadataState}
                   generationExpanded={fullscreenGenerationExpanded}
                   onGenerationExpandedChange={setFullscreenGenerationExpanded}
+                  generationVersions={fullscreenGenerationVersions}
                   onAddTags={handleFullscreenAddTags}
                   onRemoveTag={handleFullscreenRemoveTag}
                   onApplyTag={handleFullscreenApplyTag}

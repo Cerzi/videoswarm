@@ -1018,6 +1018,32 @@ body {
   pointer-events: none;
 }
 
+/* Generation versions sit under the review pill, top-left. A superseded clip
+   is muted: a higher-resolution version of it exists elsewhere. */
+.video-item-versions {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #f1f3f5;
+  padding: 2px 7px;
+  font-size: 0.62rem;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.video-item-versions.with-review {
+  top: 30px;
+}
+
+.video-item-versions--superseded {
+  color: rgba(255, 255, 255, 0.55);
+  border-style: dashed;
+}
+
 .video-item-review--pick {
   background: rgba(28, 87, 48, 0.82);
   color: #d3f9d8;

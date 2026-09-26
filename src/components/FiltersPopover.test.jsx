@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import FiltersPopover from "./FiltersPopover";
 
 describe("FiltersPopover review filters", () => {
@@ -157,3 +157,59 @@ describe("FiltersPopover search scope", () => {
     expect(screen.getByRole("button", { name: "This folder" })).toBeDisabled();
   });
 });
+
+describe("FiltersPopover generation versions", () => {
+  const filters = {
+    includeTags: [],
+    excludeTags: [],
+    minRating: null,
+    exactRating: null,
+    reviewFilter: "any",
+    versionFilter: "any",
+  };
+
+  it("selects a version filter without touching the others", () => {
+    let current = { ...filters, maxMegapixels: 0.5 };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    render(
+      <FiltersPopover filters={current} onChange={onChange} onReset={vi.fn()} onClose={vi.fn()} />
+    );
+    const group = within(screen.getByRole("group", { name: "Generation versions" }));
+    expect(group.getByRole("button", { name: "Any" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(group.getByRole("button", { name: "Best version" }));
+    expect(current).toMatchObject({ versionFilter: "best", maxMegapixels: 0.5 });
+  });
+
+  it("states that results are provisional while keys are pending", () => {
+    const onFind = vi.fn();
+    const { rerender } = render(
+      <FiltersPopover
+        filters={filters}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        versionPendingCount={1204}
+        onFindVersionsInLibrary={onFind}
+      />
+    );
+    expect(screen.getByText(/Finding versions… 1,204 clips left/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search library" }));
+    expect(onFind).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <FiltersPopover
+        filters={filters}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        versionIndexStatus={{ running: true, scope: "library", processed: 10, total: 50 }}
+        onFindVersionsInLibrary={onFind}
+      />
+    );
+    expect(screen.getByText(/across the library… 10 of 50/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Search library" }).disabled).toBe(true);
+  });
+});
+

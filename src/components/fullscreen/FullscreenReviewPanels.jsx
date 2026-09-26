@@ -19,6 +19,7 @@ import {
   deriveSingleSelectionInfo,
 } from "../metadata/metadataContent";
 import "./FullscreenReviewPanels.css";
+import MetadataVersionsSection from "../metadata/MetadataVersionsSection";
 
 const RATINGS = [1, 2, 3, 4, 5];
 const REVIEW_ACTIONS = [
@@ -342,6 +343,7 @@ export function FullscreenDetailsDock({
   generationMetadataState,
   generationExpanded,
   onGenerationExpandedChange,
+  generationVersions = null,
   onAddTags,
   onRemoveTag,
   onApplyTag,
@@ -364,6 +366,7 @@ export function FullscreenDetailsDock({
         expanded={generationExpanded}
         onExpandedChange={onGenerationExpandedChange}
       />
+      <MetadataVersionsSection video={video} generationVersions={generationVersions} />
       <MetadataTagsSection
         selectedVideos={[video]}
         selectionCount={1}

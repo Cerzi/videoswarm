@@ -64,6 +64,9 @@ function normalizeMegapixels(value) {
   return Math.min(1000, Math.round(number * 100) / 100);
 }
 
+// Generation-version filter; see docs/architecture/generation-versions.md.
+const VERSION_FILTERS = new Set(['any', 'superseded', 'best']);
+
 function normalizeRandomSeed(value) {
   if (value === null || value === undefined || value === '') return null;
   let number;
@@ -133,6 +136,9 @@ function normalizeReviewViewDefinition(
       includeTagsMode: filtersInput.includeTagsMode === 'any' ? 'any' : 'all',
       minMegapixels: normalizeMegapixels(filtersInput.minMegapixels),
       maxMegapixels: normalizeMegapixels(filtersInput.maxMegapixels),
+      versionFilter: VERSION_FILTERS.has(filtersInput.versionFilter)
+        ? filtersInput.versionFilter
+        : 'any',
     },
     sort: {
       key: sortKey,

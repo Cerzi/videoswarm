@@ -737,3 +737,62 @@ body.metadata-panel-drag-active {
     animation: none;
   }
 }
+
+/* Generation versions: a dense list in version order. Clips that cannot be
+   revealed from here say why instead of looking like dead buttons. */
+.metadata-panel__versions-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metadata-panel__versions-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.3rem 0.45rem;
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 0.67rem;
+  text-align: left;
+}
+
+.metadata-panel__versions-item.is-self {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.metadata-panel__versions-item--button {
+  cursor: pointer;
+}
+
+.metadata-panel__versions-item--button:hover,
+.metadata-panel__versions-item--button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.metadata-panel__versions-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.metadata-panel__versions-location {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.5);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-panel__versions-note {
+  color: rgba(255, 255, 255, 0.42);
+  font-style: italic;
+}

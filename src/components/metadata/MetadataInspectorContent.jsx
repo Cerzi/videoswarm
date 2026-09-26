@@ -15,6 +15,7 @@ import {
   MetadataGenerationSection,
   MetadataTagsSection,
 } from "./MetadataContentSections";
+import MetadataVersionsSection from "./MetadataVersionsSection";
 import { EraserIcon } from "../UiIcons";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -80,6 +81,7 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
     onClearRating,
     onSetReviewState,
     reviewModeEnabled = true,
+    generationVersions = null,
   },
   inputRef
 ) {
@@ -147,6 +149,14 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
           state={generationMetadataState}
           expanded={generationExpanded}
           onExpandedChange={onGenerationExpandedChange}
+        />
+      ) : null}
+
+      {derivedSelectionCount === 1 ? (
+        <MetadataVersionsSection
+          video={selectedVideos[0]}
+          active={active}
+          generationVersions={generationVersions}
         />
       ) : null}
 

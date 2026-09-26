@@ -79,6 +79,7 @@ const MetadataPanel = forwardRef((
     generationMetadataState = null,
     generationExpanded,
     onGenerationExpandedChange,
+    generationVersions = null,
     focusToken,
     onFocusSelection,
     onTransferSelection,
@@ -746,6 +747,7 @@ const MetadataPanel = forwardRef((
             generationMetadataState={generationMetadataState}
             generationExpanded={generationExpanded}
             onGenerationExpandedChange={onGenerationExpandedChange}
+            generationVersions={generationVersions}
             onAddTag={onAddTag}
             onRemoveTag={onRemoveTag}
             onApplyTagToSelection={onApplyTagToSelection}
