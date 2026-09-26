@@ -63,6 +63,7 @@ function harness({
   now,
   planTtlMs,
   caseInsensitivePaths,
+  platform,
 } = {}) {
   const owner = { id: 42 };
   const root = completeRoot(rootPath);
@@ -99,6 +100,7 @@ function harness({
     ...(now === undefined ? {} : { now }),
     ...(planTtlMs === undefined ? {} : { planTtlMs }),
     ...(caseInsensitivePaths === undefined ? {} : { caseInsensitivePaths }),
+    ...(platform === undefined ? {} : { platform }),
   };
   const coordinator = createReviewCopyAcceptedCoordinator(dependencies);
   coordinators.push(coordinator);
@@ -629,6 +631,179 @@ describe("Copy Accepted native coordinator", () => {
       "utf8"
     )).resolves.toBe("move-video");
     await expect(fsp.stat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  describe("link mode", () => {
+    const start = (test, planId) =>
+      test.coordinator.start({
+        owner: test.owner,
+        planId,
+        collisionPolicy: "skip",
+        transferMode: "link",
+      });
+
+    it.skipIf(process.platform === "win32")(
+      "links clips to their originals without copying or touching sources",
+      async () => {
+        const rootPath = await temporaryDirectory("link-root");
+        const destinationPath = await temporaryDirectory("link-output");
+        const sourcePath = await writeFile(path.join(rootPath, "batch", "draft.mp4"), "draft");
+        await writeFile(path.join(destinationPath, "batch", "taken.mp4"), "existing");
+        await writeFile(path.join(rootPath, "batch", "taken.mp4"), "source");
+        const test = harness({
+          rootPath,
+          destinationPath,
+          records: [
+            await recordFor(rootPath, "batch/draft.mp4"),
+            await recordFor(rootPath, "batch/taken.mp4"),
+          ],
+        });
+        const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+        const result = await start(test, prepared.planId);
+
+        expect(result).toMatchObject({
+          success: true,
+          transferMode: "link",
+          copiedCount: 1,
+          linkedCount: 1,
+          movedCount: 0,
+          bytesCopied: 0,
+          skippedCount: 1,
+        });
+        const linkPath = path.join(destinationPath, "batch", "draft.mp4");
+        expect((await fsp.lstat(linkPath)).isSymbolicLink()).toBe(true);
+        expect(await fsp.readlink(linkPath)).toBe(sourcePath);
+        await expect(fsp.readFile(sourcePath, "utf8")).resolves.toBe("draft");
+        await expect(
+          fsp.readFile(path.join(destinationPath, "batch", "taken.mp4"), "utf8")
+        ).resolves.toBe("existing");
+        expect(test.progress.at(-1)).toMatchObject({ phase: "complete", bytesCopied: 0 });
+      }
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "treats an entry appearing at the destination as a skipped collision",
+      async () => {
+        const rootPath = await temporaryDirectory("link-race-root");
+        const destinationPath = await temporaryDirectory("link-race-output");
+        await writeFile(path.join(rootPath, "clip.mp4"), "source");
+        const test = harness({
+          rootPath,
+          destinationPath,
+          records: [await recordFor(rootPath, "clip.mp4")],
+        });
+        const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+        await writeFile(path.join(destinationPath, "clip.mp4"), "raced");
+        const result = await start(test, prepared.planId);
+        expect(result).toMatchObject({ linkedCount: 0, skippedCount: 1 });
+        await expect(fsp.readFile(path.join(destinationPath, "clip.mp4"), "utf8")).resolves.toBe("raced");
+      }
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "removes only the link it made when the source changes during linking",
+      async () => {
+        const rootPath = await temporaryDirectory("link-change-root");
+        const destinationPath = await temporaryDirectory("link-change-output");
+        const sourcePath = await writeFile(path.join(rootPath, "clip.mp4"), "source");
+        let changed = false;
+        const fsPromises = {
+          ...fsp,
+          symlink: async (...args) => {
+            await fsp.symlink(...args);
+            await fsp.writeFile(sourcePath, "rewritten while linking");
+            changed = true;
+          },
+        };
+        const test = harness({
+          rootPath,
+          destinationPath,
+          records: [await recordFor(rootPath, "clip.mp4")],
+          fsPromises,
+        });
+        const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+        const result = await start(test, prepared.planId);
+        expect(changed).toBe(true);
+        expect(result).toMatchObject({ linkedCount: 0, missingCount: 1 });
+        await expect(fsp.lstat(path.join(destinationPath, "clip.mp4"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        await expect(fsp.readFile(sourcePath, "utf8")).resolves.toBe("rewritten while linking");
+      }
+    );
+
+    it("reports Windows symlink permission once, with its remedy, and stops trying", async () => {
+      const rootPath = await temporaryDirectory("link-eperm-root");
+      const destinationPath = await temporaryDirectory("link-eperm-output");
+      const names = ["a.mp4", "b.mp4", "c.mp4", "d.mp4"];
+      for (const name of names) await writeFile(path.join(rootPath, name), name);
+      const symlink = vi.fn(async () => {
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      });
+      const test = harness({
+        rootPath,
+        destinationPath,
+        records: await Promise.all(names.map((name) => recordFor(rootPath, name))),
+        fsPromises: { ...fsp, symlink },
+        platform: "win32",
+      });
+      const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+      const result = await start(test, prepared.planId);
+
+      expect(result).toMatchObject({
+        success: false,
+        linkedCount: 0,
+        failedCount: 4,
+        symlinkUnsupported: true,
+      });
+      // Two workers may each have been mid-attempt when the first failed.
+      expect(symlink.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(result.failureSamples).toHaveLength(1);
+      expect(result.failureSamples[0]).toMatchObject({
+        code: "ACCEPTED_COPY_SYMLINK_UNSUPPORTED",
+        message: expect.stringMatching(/Developer Mode/),
+      });
+      for (const name of names) {
+        await expect(fsp.readFile(path.join(rootPath, name), "utf8")).resolves.toBe(name);
+      }
+    });
+
+    it("explains an unsupported destination on other platforms", async () => {
+      const rootPath = await temporaryDirectory("link-enotsup-root");
+      const destinationPath = await temporaryDirectory("link-enotsup-output");
+      await writeFile(path.join(rootPath, "clip.mp4"), "source");
+      const test = harness({
+        rootPath,
+        destinationPath,
+        records: [await recordFor(rootPath, "clip.mp4")],
+        fsPromises: {
+          ...fsp,
+          symlink: async () => {
+            throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+          },
+        },
+        platform: "linux",
+      });
+      const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+      const result = await start(test, prepared.planId);
+      expect(result.failureSamples[0].message).toBe("The destination does not support symbolic links.");
+    });
+
+    it("refuses link mode when the filesystem API cannot link", async () => {
+      const rootPath = await temporaryDirectory("link-api-root");
+      const destinationPath = await temporaryDirectory("link-api-output");
+      await writeFile(path.join(rootPath, "clip.mp4"), "source");
+      const { symlink: _symlink, ...withoutSymlink } = fsp;
+      const test = harness({
+        rootPath,
+        destinationPath,
+        records: [await recordFor(rootPath, "clip.mp4")],
+        fsPromises: withoutSymlink,
+      });
+      const prepared = await test.coordinator.prepare(prepareRequest(test.owner, rootPath));
+      const result = await start(test, prepared.planId);
+      expect(result).toMatchObject({ success: false, code: "ACCEPTED_COPY_PLAN_INVALID" });
+    });
   });
 
   it("uses exclusive creation when a collision appears after preflight", async () => {

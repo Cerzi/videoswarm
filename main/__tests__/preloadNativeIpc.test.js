@@ -244,6 +244,16 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("forwards link transfers and coerces unknown modes to copy", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.review.copyAccepted.start("native-plan-1", "link");
+    await api.review.copyAccepted.start("native-plan-1", "hardlink");
+    expect(ipcRenderer.invoke.mock.calls.map(([, payload]) => payload.transferMode)).toEqual([
+      "link",
+      "copy",
+    ]);
+  });
+
   it("exposes bounded nested review-session persistence operations", async () => {
     const { api, ipcRenderer } = loadPreload();
     const view = {

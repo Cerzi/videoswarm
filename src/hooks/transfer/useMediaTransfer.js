@@ -84,13 +84,13 @@ export const normalizeCopyPlan = (value) => {
   };
 };
 
+export const normalizeTransferMode = (value) =>
+  value === "move" || value === "link" ? value : "copy";
+
 export const normalizeCopyResult = (value, fallbackTransferMode = "copy") => {
   const result = value && typeof value === "object" ? value : {};
   return {
-    transferMode:
-      result.transferMode === "move" || fallbackTransferMode === "move"
-        ? "move"
-        : "copy",
+    transferMode: normalizeTransferMode(result.transferMode ?? fallbackTransferMode),
     cancelled: Boolean(result.cancelled || result.canceled),
     copiedCount: boundedCount(
       result.copiedCount ?? result.copiedMedia ?? result.copied
@@ -331,7 +331,7 @@ export function useMediaTransfer({
     }
     operationRef.current = true;
     busyRef.current = true;
-    const nextTransferMode = requestedMode === "move" ? "move" : "copy";
+    const nextTransferMode = normalizeTransferMode(requestedMode);
     setTransferMode(nextTransferMode);
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;

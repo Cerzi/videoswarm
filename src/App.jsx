@@ -2163,8 +2163,14 @@ function App() {
         throw new Error("Copy Accepted is unavailable");
       }
       setAcceptedCopyProgress(null);
-      const transferMode = requestedMode === "move" ? "move" : "copy";
-      const actionLabel = transferMode === "move" ? "Move" : "Copy";
+      const transferMode =
+        requestedMode === "move" || requestedMode === "link" ? requestedMode : "copy";
+      const words = {
+        copy: ["Copy", "Copied", "copied"],
+        move: ["Move", "Moved", "moved"],
+        link: ["Link", "Linked", "linked"],
+      }[transferMode];
+      const actionLabel = words[0];
       const result = await start(planId, transferMode);
       const copiedMedia = Number(
         result?.copiedCount ?? result?.copiedMedia ?? 0
@@ -2186,7 +2192,9 @@ function App() {
         missing === 0
       ) {
         notify(
-          `${transferMode === "move" ? "Moved" : "Copied"} ${copiedMedia.toLocaleString()} accepted clip(s)`,
+          // Shared by the review flow and a plain selection, so it does not say
+          // "accepted".
+          `${words[1]} ${copiedMedia.toLocaleString()} clip(s)`,
           "success"
         );
       } else if (
@@ -2196,7 +2204,7 @@ function App() {
         missing > 0
       ) {
         notify(
-          `${actionLabel} finished with issues: ${copiedMedia.toLocaleString()} clip(s) ${transferMode === "move" ? "moved" : "copied"}, ${skipped.toLocaleString()} skipped, ${(failed + missing).toLocaleString()} unavailable or failed`,
+          `${actionLabel} finished with issues: ${copiedMedia.toLocaleString()} clip(s) ${words[2]}, ${skipped.toLocaleString()} skipped, ${(failed + missing).toLocaleString()} unavailable or failed`,
           "warning"
         );
       }

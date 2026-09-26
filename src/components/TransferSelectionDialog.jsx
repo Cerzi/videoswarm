@@ -144,7 +144,7 @@ export default function TransferSelectionDialog({
         <header className="review-results-dialog__header">
           <div className="review-results-dialog__mark" aria-hidden="true">→</div>
           <div className="review-results-dialog__heading">
-            <h2 id="transfer-selection-title">Move or copy clips</h2>
+            <h2 id="transfer-selection-title">Move, copy or link clips</h2>
             <p id="transfer-selection-description">
               {count.toLocaleString()} selected clip{count === 1 ? "" : "s"}
             </p>

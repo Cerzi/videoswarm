@@ -38,6 +38,8 @@ const ACCEPTED_COPY_CODES = Object.freeze({
   SOURCE_CHANGED_CLEANUP_FAILED:
     "ACCEPTED_COPY_SOURCE_CHANGED_CLEANUP_FAILED",
   SOURCE_INVALID: "ACCEPTED_COPY_SOURCE_INVALID",
+  SYMLINK_UNSUPPORTED: "ACCEPTED_COPY_SYMLINK_UNSUPPORTED",
+  LINK_MISMATCH: "ACCEPTED_COPY_LINK_MISMATCH",
 });
 
 class AcceptedCopyError extends Error {
@@ -275,7 +277,7 @@ function publicErrorMessage(error, fallback = "Copy Accepted could not be comple
     return error.message;
   }
   const messages = {
-    EACCES: "Permission was denied while copying the file.",
+    EACCES: "Permission was denied while transferring the file.",
     EEXIST: "A destination file already exists.",
     EIO: "The filesystem reported an input/output error.",
     EMFILE: "Too many files are open. Try the operation again.",
@@ -283,10 +285,34 @@ function publicErrorMessage(error, fallback = "Copy Accepted could not be comple
     ENOENT: "A source file or destination folder is no longer present.",
     ENOSPC: "The destination does not have enough free space.",
     ENOTDIR: "Part of the selected path is not a directory.",
-    EPERM: "Permission was denied while copying the file.",
+    EPERM: "Permission was denied while transferring the file.",
     EROFS: "The selected destination is read-only.",
   };
   return messages[error?.code] || fallback;
+}
+
+// Transfer modes: Copy and Move write bytes; Link creates a symbolic link to
+// the source and writes none. See docs/architecture/generation-versions.md,
+// Section 7.
+const TRANSFER_MODES = Object.freeze(["copy", "move", "link"]);
+
+function normalizeTransferMode(value) {
+  return TRANSFER_MODES.includes(value) ? value : "copy";
+}
+
+// Creating a symbolic link fails the same way for every file when the
+// platform or filesystem does not allow it, so the first such failure is
+// reported once with its remedy and ends the batch.
+function symlinkUnsupportedError(error, platform = process.platform) {
+  if (error?.code !== "EPERM" && error?.code !== "ENOTSUP" && error?.code !== "EOPNOTSUPP") {
+    return null;
+  }
+  return new AcceptedCopyError(
+    platform === "win32"
+      ? "Windows only allows symbolic links with Developer Mode enabled or when running as administrator."
+      : "The destination does not support symbolic links.",
+    ACCEPTED_COPY_CODES.SYMLINK_UNSUPPORTED
+  );
 }
 
 function sampleFailure(relativePath, error) {
@@ -494,6 +520,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
   const copyFileExclusiveFlag = options.copyFileExclusiveFlag === undefined
     ? fs.constants.COPYFILE_EXCL
     : options.copyFileExclusiveFlag;
+  const platform = options.platform || process.platform;
 
   for (const method of [
     "copyFile",
@@ -1354,9 +1381,59 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     }
   }
 
+  // Windows may report an absolute link target in its `\\?\` long-path form.
+  async function linkPointsAt(job) {
+    const target = String(await fsPromises.readlink(job.destinationPath));
+    return target.replace(/^\\\\\?\\/u, "") === job.sourcePath;
+  }
+
+  // A link is removed only while it is still the link this transfer made.
+  async function removeCreatedLink(job) {
+    try {
+      const current = await fsPromises.lstat(job.destinationPath);
+      if (
+        !current.isSymbolicLink() ||
+        !(await linkPointsAt(job))
+      ) {
+        throw new AcceptedCopyError(
+          "The new link changed before it could be removed",
+          ACCEPTED_COPY_CODES.SOURCE_CHANGED_CLEANUP_FAILED
+        );
+      }
+      await fsPromises.unlink(job.destinationPath);
+    } catch (error) {
+      if (isMissingError(error)) return;
+      if (error?.code === ACCEPTED_COPY_CODES.SOURCE_CHANGED_CLEANUP_FAILED) {
+        throw error;
+      }
+      throw new AcceptedCopyError(
+        "The source changed and the new link could not be removed",
+        ACCEPTED_COPY_CODES.SOURCE_CHANGED_CLEANUP_FAILED
+      );
+    }
+  }
+
+  async function linkJob(job) {
+    await fsPromises.symlink(job.sourcePath, job.destinationPath, "file");
+    const linkStats = await fsPromises.lstat(job.destinationPath);
+    if (
+      !linkStats.isSymbolicLink() ||
+      !(await linkPointsAt(job))
+    ) {
+      // Something else now occupies the destination; it is not ours to remove.
+      throw new AcceptedCopyError(
+        "The destination changed while the link was being created",
+        ACCEPTED_COPY_CODES.LINK_MISMATCH
+      );
+    }
+  }
+
   async function copyPreparedPlan(plan) {
-    const transferMode = plan.transferMode === "move" ? "move" : "copy";
+    const transferMode = normalizeTransferMode(plan.transferMode);
     const moving = transferMode === "move";
+    const linking = transferMode === "link";
+    let linkUnsupported = null;
+    let linkUnsupportedSampled = false;
     const failures = [...plan.preflightFailures];
     let failureCount = plan.preflightFailureCount;
     let missingCount = plan.missingCount || 0;
@@ -1426,13 +1503,25 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             pathImpl.dirname(job.destinationPath)
           );
           assertPlanActive(plan, "copy:before-file");
-          await fsPromises.copyFile(
-            job.sourcePath,
-            job.destinationPath,
-            copyFileExclusiveFlag
-          );
-          const destinationStats = await fsPromises.lstat(job.destinationPath);
-          const copiedDestinationIdentity = fileIdentity(destinationStats);
+          let copiedDestinationIdentity = null;
+          if (linking) {
+            if (linkUnsupported) throw linkUnsupported;
+            try {
+              await linkJob(job);
+            } catch (error) {
+              const unsupported = symlinkUnsupportedError(error, platform);
+              if (unsupported) linkUnsupported = unsupported;
+              throw unsupported || error;
+            }
+          } else {
+            await fsPromises.copyFile(
+              job.sourcePath,
+              job.destinationPath,
+              copyFileExclusiveFlag
+            );
+            const destinationStats = await fsPromises.lstat(job.destinationPath);
+            copiedDestinationIdentity = fileIdentity(destinationStats);
+          }
           let sourceStable = false;
           try {
             const copiedSourceStats = await fsPromises.lstat(job.sourcePath);
@@ -1441,7 +1530,11 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             sourceStable = false;
           }
           if (!sourceStable) {
-            await removeUnstableDestination(job, copiedDestinationIdentity);
+            if (linking) {
+              await removeCreatedLink(job);
+            } else {
+              await removeUnstableDestination(job, copiedDestinationIdentity);
+            }
             throw new AcceptedCopyError(
               "A copy source changed while it was being copied",
               ACCEPTED_COPY_CODES.SOURCE_CHANGED
@@ -1457,7 +1550,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           // The native copy may finish concurrently with cancellation. It is a
           // completed partial result and is intentionally not rolled back.
           copiedMedia += 1;
-          bytesCopied += Math.max(0, Number(job.size) || 0);
+          if (!linking) bytesCopied += Math.max(0, Number(job.size) || 0);
         } catch (error) {
           if (plan.controller.signal.aborted) throw error;
           if (error?.code === "EEXIST") {
@@ -1472,10 +1565,17 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             } else {
               failureCount += 1;
             }
-            boundedPush(
-              failures,
-              sampleFailure(job.relativePath, error)
-            );
+            // Once links are known to be unsupported, the one explanation
+            // stands for every remaining clip rather than repeating.
+            const repeatedUnsupported =
+              error === linkUnsupported && linkUnsupportedSampled;
+            if (error === linkUnsupported) linkUnsupportedSampled = true;
+            if (!repeatedUnsupported) {
+              boundedPush(
+                failures,
+                sampleFailure(job.relativePath, error)
+              );
+            }
             logger?.warn?.("[copy-accepted] File copy failed", {
               code: safeErrorCode(error),
             });
@@ -1518,6 +1618,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       copiedMedia,
       movedCount: moving ? copiedMedia : 0,
       movedMedia: moving ? copiedMedia : 0,
+      linkedCount: linking ? copiedMedia : 0,
+      linkedMedia: linking ? copiedMedia : 0,
+      symlinkUnsupported: Boolean(linkUnsupported),
       bytesCopied,
       skippedCount: skippedCollisions,
       skippedCollisions,
@@ -1562,7 +1665,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         ...prepareFailureResult(error, plan.context, plan.id),
         cancelled,
         destinationLabel: plan.destinationLabel,
-        transferMode: plan.transferMode === "move" ? "move" : "copy",
+        transferMode: normalizeTransferMode(plan.transferMode),
         totalMedia: plan.totalMedia || 0,
         totalFiles:
           (plan.jobs?.length || 0) +
@@ -1612,10 +1715,20 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       );
     }
     const transferMode = request?.transferMode ?? "copy";
-    if (!['copy', 'move'].includes(transferMode)) {
+    if (!TRANSFER_MODES.includes(transferMode)) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.PLAN_INVALID,
-        "Accepted clip transfer mode must be copy or move"
+        "Accepted clip transfer mode must be copy, move or link"
+      );
+    }
+    if (
+      transferMode === "link" &&
+      (typeof fsPromises.symlink !== "function" ||
+        typeof fsPromises.readlink !== "function")
+    ) {
+      return unavailableResult(
+        ACCEPTED_COPY_CODES.PLAN_INVALID,
+        "Linking is unavailable"
       );
     }
     let planId;
@@ -1778,6 +1891,7 @@ module.exports = {
   ACCEPTED_COPY_MAX_PLANS,
   ACCEPTED_COPY_MAX_SAMPLES,
   ACCEPTED_COPY_PLAN_TTL_MS,
+  TRANSFER_MODES,
   AcceptedCopyError,
   createReviewCopyAcceptedCoordinator,
   destinationForRelative,

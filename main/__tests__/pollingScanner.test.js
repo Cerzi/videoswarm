@@ -45,6 +45,24 @@ describe("pollFolderForChanges", () => {
       ...overrides,
     });
 
+  it.skipIf(process.platform === "win32")(
+    "does not report symbolic links to files or folders inside the root",
+    async () => {
+      const outside = path.join(tempDir, "outside");
+      fs.mkdirSync(outside);
+      fs.writeFileSync(path.join(outside, "target.mp4"), "content");
+      fs.writeFileSync(path.join(rootPath, "real.mp4"), "content");
+      fs.symlinkSync(path.join(outside, "target.mp4"), path.join(rootPath, "link.mp4"));
+      fs.symlinkSync(outside, path.join(rootPath, "linked-folder"));
+
+      await run({ pollingState: { initialized: true, lastFiles: new Map() } });
+
+      expect(createVideoFileObject.mock.calls.map(([filePath]) => path.basename(filePath))).toEqual([
+        "real.mp4",
+      ]);
+    }
+  );
+
   it("reconciles a persisted removal on the first poll", async () => {
     const missingPath = path.join(rootPath, "gone.mp4");
     metadataStore.getFileInstances.mockReturnValue([

@@ -441,7 +441,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.invoke("review:copy-accepted:start", {
           planId: normalizeAcceptedCopyPlanId(planId),
           collisionPolicy: "skip",
-          transferMode: transferMode === "move" ? "move" : "copy",
+          transferMode:
+          transferMode === "move" || transferMode === "link" ? transferMode : "copy",
         }),
       cancel: async (planId) =>
         ipcRenderer.invoke("review:copy-accepted:cancel", {
