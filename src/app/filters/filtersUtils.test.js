@@ -23,6 +23,7 @@ describe("filtersUtils", () => {
       includeTagsMode: "all",
       minMegapixels: null,
       maxMegapixels: null,
+      versionFilter: "any",
     });
   });
 

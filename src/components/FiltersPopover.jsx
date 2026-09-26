@@ -4,6 +4,11 @@ import {
   normalizeReviewFilter,
 } from "../review/reviewState";
 import { sanitizeMegapixels } from "../app/filters/filtersUtils";
+import {
+  VERSION_FILTERS,
+  VERSION_FILTER_LABELS,
+  normalizeVersionFilter,
+} from "../app/filters/generationVersions";
 import "./FiltersPopover.css";
 
 const MIN_RATING_OPTIONS = [
@@ -40,6 +45,29 @@ const RESOLUTION_MIN_OPTIONS = [
   { value: 2, label: "\u2265 2 MP" },
   { value: 4, label: "\u2265 4 MP" },
 ];
+
+const VERSION_OPTIONS = [
+  VERSION_FILTERS.ANY,
+  VERSION_FILTERS.SUPERSEDED,
+  VERSION_FILTERS.BEST,
+].map((value) => ({ value, label: VERSION_FILTER_LABELS[value] }));
+
+// One line saying what the version filters can currently see, because while
+// keys are still being read the answer is provisional.
+function describeVersionIndexStatus(status, pendingCount) {
+  if (status?.running && status.scope === "library") {
+    return `Finding versions across the library… ${Number(
+      status.processed || 0
+    ).toLocaleString()} of ${Number(status.total || 0).toLocaleString()}`;
+  }
+  if (pendingCount > 0) {
+    return `Finding versions… ${pendingCount.toLocaleString()} clip${
+      pendingCount === 1 ? "" : "s"
+    } left. Results are provisional until then.`;
+  }
+  if (status?.failed) return "Versions could not be read for this collection.";
+  return "Versions are matched across every indexed folder.";
+}
 
 const REVIEW_OPTIONS = [
   { value: REVIEW_FILTERS.ANY, label: "Any" },
@@ -80,6 +108,9 @@ const FiltersPopover = forwardRef(
       canReturnToFolder = true,
       libraryResultCount = null,
       libraryTruncated = false,
+      versionIndexStatus = null,
+      versionPendingCount = 0,
+      onFindVersionsInLibrary,
     },
     ref
   ) => {
@@ -94,6 +125,9 @@ const FiltersPopover = forwardRef(
     const includeTagsMode = filters?.includeTagsMode === "any" ? "any" : "all";
     const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
     const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
+    const versionFilter = normalizeVersionFilter(filters?.versionFilter);
+    const libraryVersionSearchRunning =
+      versionIndexStatus?.running === true && versionIndexStatus.scope === "library";
 
     const [tagQuery, setTagQuery] = useState("");
 
@@ -539,6 +573,48 @@ const FiltersPopover = forwardRef(
             Clips whose dimensions have not been read yet are hidden while a
             resolution filter is active.
           </span>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Versions</header>
+          <div className="filters-rating-row" role="group" aria-label="Generation versions">
+            {VERSION_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                className={`filters-pill ${
+                  versionFilter === value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={versionFilter === value}
+                onClick={() =>
+                  onChange((prev) => ({ ...prev, versionFilter: value }))
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="filters-empty-hint">
+            Versions are re-renders, upscales and sweeps of one generation.
+            Best version with a maximum resolution lists drafts not yet
+            re-rendered.
+          </span>
+          <div className="filters-library-status">
+            <span className="filters-empty-hint" role="status">
+              {describeVersionIndexStatus(versionIndexStatus, versionPendingCount)}
+            </span>
+            {typeof onFindVersionsInLibrary === "function" ? (
+              <button
+                type="button"
+                className="filters-pill"
+                onClick={() => onFindVersionsInLibrary()}
+                disabled={libraryVersionSearchRunning}
+                title="Read generation keys for every indexed clip, including folders that are not open"
+              >
+                Search library
+              </button>
+            ) : null}
+          </div>
         </section>
 
         {reviewModeEnabled ? (

@@ -15,6 +15,32 @@ const singleVideo = {
 };
 
 describe("MetadataInspectorContent", () => {
+  it("shows generation versions for a single clip that has several", () => {
+    window.electronAPI = { generationVersions: { siblings: vi.fn(() => new Promise(() => {})) } };
+    const generationVersions = {
+      index: new Map([[singleVideo.id, { versionCount: 3, superseded: false }]]),
+    };
+    const { rerender } = render(
+      <MetadataInspectorContent
+        selectionCount={1}
+        selectedVideos={[singleVideo]}
+        selectionKey="clip-one"
+        generationVersions={generationVersions}
+      />
+    );
+    expect(screen.getByText("Versions")).toBeVisible();
+    rerender(
+      <MetadataInspectorContent
+        selectionCount={2}
+        selectedVideos={[singleVideo, { ...singleVideo, id: "clip-two" }]}
+        selectionKey="two"
+        generationVersions={generationVersions}
+      />
+    );
+    expect(screen.queryByText("Versions")).toBeNull();
+    delete window.electronAPI;
+  });
+
   it("renders the extracted details body and forwards rating and review actions", () => {
     const onSetRating = vi.fn();
     const onClearRating = vi.fn();

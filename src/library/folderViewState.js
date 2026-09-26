@@ -6,6 +6,7 @@ import {
   normalizeIncludeTagsMode,
 } from "../app/filters/filtersUtils";
 import { normalizeReviewFilter } from "../review/reviewState";
+import { normalizeVersionFilter } from "../app/filters/generationVersions";
 
 export const DEFAULT_FOLDER_VIEW_CACHE_LIMIT = 128;
 export const MAX_RESTORED_SELECTION_IDS = 500;
@@ -32,6 +33,7 @@ const normalizeFilters = (filters) => ({
   includeTagsMode: normalizeIncludeTagsMode(filters?.includeTagsMode),
   minMegapixels: sanitizeMegapixels(filters?.minMegapixels),
   maxMegapixels: sanitizeMegapixels(filters?.maxMegapixels),
+  versionFilter: normalizeVersionFilter(filters?.versionFilter),
 });
 
 const normalizeSnapshot = (snapshot = {}) => ({

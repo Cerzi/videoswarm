@@ -15,6 +15,7 @@ export default function DockedMetadataInspector({
   generationMetadataState = null,
   generationExpanded,
   onGenerationExpandedChange,
+  generationVersions = null,
   onAddTag,
   onRemoveTag,
   onApplyTagToSelection,
@@ -108,6 +109,7 @@ export default function DockedMetadataInspector({
           generationMetadataState={generationMetadataState}
           generationExpanded={generationExpanded}
           onGenerationExpandedChange={onGenerationExpandedChange}
+          generationVersions={generationVersions}
           onAddTag={onAddTag}
           onRemoveTag={onRemoveTag}
           onApplyTagToSelection={onApplyTagToSelection}

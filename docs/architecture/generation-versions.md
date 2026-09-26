@@ -326,7 +326,7 @@ bounded background batches, and never on the folder-open path.**
 
 ## 5. Grouping, badges and the details panel
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-26)
 
 **Groups are library-wide.** A draft in one folder and its re-render in
 another are versions of each other whichever folder is open. The renderer
@@ -341,7 +341,8 @@ time, each descending. Unknown dimensions or duration sort as zero. No
 producer is special-cased.
 
 - **Badge.** A card whose group has two or more versions shows a compact
-  "N versions" pill, marked when a higher-resolution version exists. The card
+  "N versions" pill at the top left (below the review pill when both show),
+  drawn muted and dashed when a higher-resolution version exists. The card
   receives primitives only, so the memoized card re-renders only when its own
   group changes.
 - **Details panel.** For a single selected clip with a key, a *Versions*
@@ -364,7 +365,7 @@ producer is special-cased.
 
 ## 6. Filters
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-26)
 
 A new `versionFilter` joins the filter state: `any` (default), `superseded`
 (**Has a higher-resolution version**) and `best` (**Best version**).
@@ -537,6 +538,34 @@ possible future cross-check, nothing more.
   normalization and renderer hook; `npm test -- --run` (1,226 tests),
   `npm run test:electron-abi` (78 tests), zero-warning lint, the Vite build,
   `node --check` and `git diff --check` pass.
+
+### 2026-09-26 — Slice 3: grouping, badges, details and filters
+
+- `src/app/filters/generationVersions.js` builds the per-clip index from the
+  collection and the library summary; `useGenerationVersionSummaries` reads
+  summaries in chunks of 4,096 keys, debounced, and re-reads when the key set
+  changes or an indexing batch lands.
+- `versionFilter` joins the filter state, the active-filter count, the summary
+  chips, the folder-view cache and saved views. The saved-view builder in
+  `App.jsx` also stopped dropping `includeTagsMode`, `minMegapixels` and
+  `maxMegapixels`; the main-process normalizer already accepted them.
+- The Filters popover gains a Versions section with the three values, the
+  worklist hint, the provisional-results status line and **Search library**.
+- `MetadataVersionsSection` appears in the floating inspector, the docked
+  details workspace and the fullscreen details dock. Clips outside the view
+  say whether they are filtered out or in a folder that is not open.
+- Run in the real app (isolated profile, headless Electron, copies of the
+  real fixture clips): six cards showed "3 versions" and AnimateDiff none;
+  the draft and the 1664×928 re-render were marked superseded by the
+  1920×1080 re-render; *Best version* left the best re-render, the three
+  same-resolution sweep clips and AnimateDiff; the draft's details listed
+  its three versions in order and clicking the best one selected it. The
+  same run showed the Generation panel reporting "no supported fields" for
+  these clips, the unreliability this design avoids.
+- Verification: focused suites for the index, filter integration, popover,
+  card badge, details section, inspector threading and summaries hook;
+  `npm test -- --run` (1,246 tests), zero-warning lint and the Vite build
+  pass.
 
 ## References
 

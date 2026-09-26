@@ -115,6 +115,10 @@ const VideoCard = memo(function VideoCard({
   proxyPlaybackEnabled = false,
   showFilenames = true,
   reviewModeEnabled = true,
+  // Generation versions: primitives only, so the memoized card re-renders
+  // only when its own group changes.
+  versionCount = 0,
+  versionSuperseded = false,
 
   // limits & callbacks (owned by parent/orchestrator)
   canLoadVideo,           // (id, options?) => boolean
@@ -1544,6 +1548,21 @@ const VideoCard = memo(function VideoCard({
           title={`Review state: ${reviewStateLabel(reviewState)}`}
         >
           {reviewStateLabel(reviewState)}
+        </div>
+      )}
+
+      {versionCount >= 2 && (
+        <div
+          className={`video-item-versions${
+            versionSuperseded ? " video-item-versions--superseded" : ""
+          }${hasReviewBadge ? " with-review" : ""}`}
+          title={
+            versionSuperseded
+              ? `${versionCount} versions of this generation · a higher-resolution version exists`
+              : `${versionCount} versions of this generation · no higher-resolution version exists`
+          }
+        >
+          {versionCount} versions
         </div>
       )}
 
