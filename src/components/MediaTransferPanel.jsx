@@ -1,6 +1,6 @@
 import React from "react";
 import { COPY_PHASES } from "../hooks/transfer/useMediaTransfer";
-import { CopyIcon, MoveIcon } from "./UiIcons";
+import { CopyIcon, LinkIcon, MoveIcon } from "./UiIcons";
 
 const LAYOUT_OPTIONS = [
   {
@@ -14,6 +14,19 @@ const LAYOUT_OPTIONS = [
     hint: "Write every clip straight into the destination. Same-named clips are reported as collisions.",
   },
 ];
+
+// Words for each transfer mode, so progress and results never say "copied"
+// about files that were moved or linked.
+export const TRANSFER_MODE_WORDS = Object.freeze({
+  copy: { verb: "Copy", present: "Copying", past: "copied" },
+  move: { verb: "Move", present: "Moving", past: "moved" },
+  link: { verb: "Link", present: "Linking", past: "linked" },
+});
+
+const modeWords = (mode) => TRANSFER_MODE_WORDS[mode] || TRANSFER_MODE_WORDS.copy;
+
+const isWindows = () =>
+  typeof window !== "undefined" && window.electronAPI?.platform === "win32";
 
 const formatBytes = (value) => {
   const bytes = Number(value);
@@ -153,6 +166,16 @@ export default function MediaTransferPanel({
           </button>
           <button
             type="button"
+            className="review-results-transfer-actions__link"
+            aria-label={`Link ${itemLabel}; choose a destination first`}
+            disabled
+          >
+            <LinkIcon aria-hidden="true" />
+            <span>Link</span>
+            <small>Point to originals</small>
+          </button>
+          <button
+            type="button"
             aria-label={`Copy ${itemLabel}; choose a destination first`}
             disabled
           >
@@ -227,6 +250,17 @@ export default function MediaTransferPanel({
               <small>Remove originals</small>
             </button>
             <button
+              type="button"
+              className="review-results-transfer-actions__link"
+              aria-label={`Link ${plan.copyableCount.toLocaleString()} file${plan.copyableCount === 1 ? "" : "s"}; point to originals`}
+              disabled={!plan.canStart}
+              onClick={() => start("link")}
+            >
+              <LinkIcon aria-hidden="true" />
+              <span>Link</span>
+              <small>Point to originals</small>
+            </button>
+            <button
               ref={primaryActionRef}
               type="button"
               aria-label={`Copy ${plan.copyableCount.toLocaleString()} file${plan.copyableCount === 1 ? "" : "s"}; keep originals`}
@@ -238,6 +272,13 @@ export default function MediaTransferPanel({
               <small>Keep originals</small>
             </button>
           </div>
+          <p className="review-results-transfer-note">
+            Link creates symbolic links to the originals and copies nothing.
+            Links inside an indexed folder are not shown in the library.
+            {isWindows()
+              ? " On Windows, links need Developer Mode or administrator rights."
+              : ""}
+          </p>
         </div>
       )}
 
@@ -251,7 +292,7 @@ export default function MediaTransferPanel({
             <strong>
               {phase === COPY_PHASES.CANCELLING
                 ? "Finishing the current file…"
-                : `${transferMode === "move" ? "Moving" : "Copying"} ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} ${progressTotal === 1 ? "file" : "files"}…`}
+                : `${modeWords(transferMode).present} ${progressValue.toLocaleString()} of ${progressTotal.toLocaleString()} ${progressTotal === 1 ? "file" : "files"}…`}
             </strong>
             <span>{plan?.destinationLabel}</span>
           </div>
@@ -286,17 +327,17 @@ export default function MediaTransferPanel({
         >
           <strong>
             {result.cancelled
-              ? `${result.transferMode === "move" ? "Move" : "Copy"} cancelled`
+              ? `${modeWords(result.transferMode).verb} cancelled`
               : result.error && result.copiedCount === 0
-                ? `${result.transferMode === "move" ? "Move" : "Copy"} could not be completed`
+                ? `${modeWords(result.transferMode).verb} could not be completed`
               : terminalHasIssues
-                ? `${result.transferMode === "move" ? "Move" : "Copy"} finished with issues`
-                : `${result.transferMode === "move" ? "Move" : "Copy"} complete`}
+                ? `${modeWords(result.transferMode).verb} finished with issues`
+                : `${modeWords(result.transferMode).verb} complete`}
           </strong>
           {result.error && <p>{result.error}</p>}
           <p>
             {result.copiedCount.toLocaleString()} media file
-            {result.copiedCount === 1 ? "" : "s"} {result.transferMode === "move" ? "moved" : "copied"}
+            {result.copiedCount === 1 ? "" : "s"} {modeWords(result.transferMode).past}
             {result.skippedCount > 0
               ? ` · ${result.skippedCount.toLocaleString()} existing skipped`
               : ""}

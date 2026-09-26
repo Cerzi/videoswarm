@@ -3,7 +3,7 @@
 Status: **Embedded API-graph extraction implemented and verified for core
 ComfyUI and the fixture-backed WanVideoWrapper slice; bounded follow-up work
 remains explicit below**
-Last updated: 2026-07-20
+Last updated: 2026-09-27
 
 ## Summary
 
@@ -580,6 +580,21 @@ A packaged Electron smoke fixture and cross-platform reader verification remain
   Electron-ABI SQLite tests, plus zero-warning ESLint, the Vite production
   build, main/preload/module syntax checks, and `git diff --check`. The Vite
   build retains its pre-existing CJS API and chunk-size notices.
+
+### 2026-09-27 — Shared tag recognition and an in-process ISO-BMFF reader
+
+- Generation versions (see [`generation-versions.md`](generation-versions.md))
+  read the same embedded `prompt` payload but never use this resolver. To
+  share recognition, the direct-tag and comment-envelope logic of
+  `parseFfprobeMetadataOutput` is now `selectEmbeddedPayload` in
+  `main/embedded-metadata-probe.js`; ffprobe output behaves exactly as before.
+- `main/container-tags.js` reads the same tags from MP4/MOV `udta/meta`
+  in-process in under a millisecond per file. The Generation panel still uses
+  ffprobe; adopting the in-process reader for ISO-BMFF files would move part
+  of Section 2's deferred portability work forward, and is left for a
+  separate change.
+- The API prompt contains Python `NaN`, which this panel's parser rejects;
+  tracked in [`../outstanding-work.md`](../outstanding-work.md).
 
 ### Remaining implementation work
 

@@ -1,6 +1,6 @@
 # Outstanding Work
 
-Last updated: 2026-08-12
+Last updated: 2026-09-27
 
 Written at a machine change, so it is a handover rather than a roadmap: what is
 genuinely unfinished, what is finished but unverified by a human, and where the
@@ -16,23 +16,41 @@ Matches `docs/architecture/`:
 - **Unimplemented** means at least one acceptance criterion is still open.
 - **Deferred** means deliberately out of scope until stated evidence exists.
 
-## 1. Variant grouping is specified and unbuilt
+## 1. Variant grouping — superseded and built as generation versions
+
+Status: **Implemented** — see
+[`architecture/generation-versions.md`](architecture/generation-versions.md)
+
+The earlier `variant-grouping.md` spec built its key from the Generation
+panel's graph resolver, which is exactly the part that is unreliable. It was
+replaced by a graph-free key (seeds with one link hop, four-word texts, input
+media) and built end to end, together with link transfer.
+
+**Branch caveat.** `claude/variant-grouping` is based on a pre-rebase tip and
+its only content is the superseded doc. This file previously said that doc was
+also on `main`; it never was. Delete the branch rather than merging it.
+
+## 1a. The Generation panel cannot parse ComfyUI's NaN
 
 Status: **Unimplemented**
 
-`docs/architecture/variant-grouping.md` is an accepted specification with
-nothing behind it. It groups re-renders of the same shot, which content identity
-correctly refuses to merge because their bytes differ.
+ComfyUI writes Python's non-standard `NaN` into the API prompt
+(`is_changed: [NaN]` on several nodes), and strict `JSON.parse` rejects the
+whole payload. Every real H3 and V2V fixture used for generation versions
+carries it, and in the real app the Generation panel reports "no supported
+fields could be resolved" for those clips. `main/generation-key.js` retries
+with non-finite tokens replaced by `null` outside strings;
+`main/comfy-generation-parser.js` has no equivalent. This is a likely cause
+of much of the panel's unreliability and a small, testable fix.
 
-The design was agreed with the `comfy-requeue` session and validated there on
-~90 real files. Read the doc's Section 3 before starting: hashing the API-format
-prompt is the obvious implementation and it does not work, because bypassing a
-node deletes it from the prompt.
+## 1b. An empty non-recursive folder reports a failed scan
 
-**Branch caveat.** `claude/variant-grouping` is based on a pre-rebase tip, so it
-points at commits no longer in `main`'s history. Its only content is the design
-doc, which is also on `main`. Rebase it or delete it and start fresh; do not
-merge it as-is.
+Status: **Unimplemented**
+
+Opening a folder whose clips are all in subfolders, with *Subfolders* off,
+logs "The folder record stream did not complete" in the renderer instead of
+showing an empty folder. Reproduced on commit `9ea5884`, before any
+generation-versions change. Not investigated further.
 
 ## 2. Smart views cannot be library-scoped
 
@@ -80,6 +98,11 @@ feature set.
 - **Requiring a tag before a library search.** The scope control is disabled
   until an include tag is selected. Reasonable on a 24k-clip profile, possibly
   annoying on a small one.
+- **Generation versions and Link** (after rc.5). Driven headless in the real
+  app on copies of real clips, not yet used by a person: whether the badge
+  earns its place on every card, whether *Best version* is the right name for
+  "no higher-resolution version exists", and whether **Transfer** is findable
+  as the new name of the Move/Copy button.
 
 ## 5. Smaller known gaps
 
@@ -87,6 +110,10 @@ feature set.
   `main.js` and read by nothing. Its sibling `dateCreatedFormatted` caused a
   real bug by being parsed back into a `Date`; this one is merely wasted bytes
   on every scanned record.
+- **The Playwright CSS spec now covers Link but has not run with it.** The
+  transfer-affordance spec needs Playwright's own Chromium, which was not
+  installed on the machine that added the Link button; the same checks were
+  run inside Electron instead.
 - **The Playwright suite is not in the standard gate.** `npm test`,
   `test:electron-abi`, lint, `node --check` and `vite build` are what runs
   routinely. `test:electron-smoke` — which now includes the transfer-affordance
@@ -126,7 +153,8 @@ The backup refs (`backup/main-before-squash`, `backup/pre-filter-20250810`,
 
 ## References
 
-- Accepted but unbuilt spec: [`architecture/variant-grouping.md`](architecture/variant-grouping.md)
+- Generation versions and link transfer:
+  [`architecture/generation-versions.md`](architecture/generation-versions.md)
 - Scope, matching and the tag-view record contract:
   [`architecture/library-tag-views.md`](architecture/library-tag-views.md)
 - Why re-queueing stays external: [`architecture/comfy-requeue.md`](architecture/comfy-requeue.md)

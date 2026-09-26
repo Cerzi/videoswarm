@@ -656,6 +656,7 @@ async function assertRendererPath(event, targetPath, kind = null) {
 
 // ===== Watcher integration =====
 const { createFolderWatcher } = require("./main/watcher");
+const { withSymlinkGuard } = require("./main/symlink-guard");
 
 function getActiveProfileId() {
   try {
@@ -1423,7 +1424,8 @@ async function scanFolderForChanges(folderPath, options = {}) {
 // Instantiate watcher (single instance, logic in ./main/watcher.js)
 const folderWatcher = createFolderWatcher({
   isVideoFile,
-  createVideoFileObject,
+  // Links are never indexed; the directory and polling scans skip them too.
+  createVideoFileObject: withSymlinkGuard(createVideoFileObject),
   scanFolderForChanges,
   onDirectoryAggregatesDirty: ({ rootPath, profileId, generation }) =>
     directoryAggregateBatcher.markDirty({ rootPath, profileId, generation }),
@@ -4412,8 +4414,8 @@ ipcMain.handle("review:copy-accepted:start", async (event, payload = {}) => {
     minChars: 4,
     maxChars: 4,
   });
-  if (!['copy', 'move'].includes(transferMode)) {
-    throw new TypeError("Accepted clip transfer mode must be copy or move");
+  if (!['copy', 'move', 'link'].includes(transferMode)) {
+    throw new TypeError("Accepted clip transfer mode must be copy, move or link");
   }
   return reviewCopyAcceptedCoordinator.start({
     owner: event.sender,

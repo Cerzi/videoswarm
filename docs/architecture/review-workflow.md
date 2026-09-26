@@ -274,6 +274,40 @@ Changing the layout re-runs preflight because destination paths change; the
 already-chosen folder is reused through the superseded plan's id, so the path
 never crosses into the renderer.
 
+## Transfer as links
+
+Status: **Implemented** (2026-09-27)
+
+A third action, **Link**, sits between Move and Copy. It uses the same prepared
+plan — destination, layout, containment, collision preflight and bounds are
+unchanged — and replaces the per-file copy with `fs.symlink(source,
+destination, "file")` to the source's canonical absolute path. The use case is
+handing clips to another tool's watched folder without duplicating them or
+moving them out of their organised folders.
+
+- `symlink` fails with `EEXIST` on any existing entry, so collisions keep the
+  skip semantics and nothing is ever replaced.
+- After creation the destination must be a link that reads back to exactly the
+  source path (a Windows `\\?\` long-path prefix is ignored). If the source
+  changed meanwhile, the link is removed only while it is still the link just
+  made; a destination that turned into something else is reported and left
+  alone. Sources are never modified.
+- No bytes are written, so results say *linked* and report no byte count.
+- Windows needs Developer Mode or elevation for symbolic links, and some
+  filesystems refuse them anywhere. The first `EPERM`, `ENOTSUP` or
+  `EOPNOTSUPP` is reported once with its remedy (**Windows only allows symbolic
+  links with Developer Mode enabled or when running as administrator.** / **The
+  destination does not support symbolic links.**), and the remaining clips are
+  counted as failed without further attempts. The option stays visible on
+  Windows with that caveat in the panel, because Developer Mode makes it work.
+- Library scans never index symbolic links, so links placed inside an indexed
+  folder do not appear in the library; the panel says so. See
+  [`generation-versions.md`](generation-versions.md), Section 7.
+
+Copy remains the one filled action; Link is outlined in a neutral blue like
+Move's outline, so neither reads as the already-chosen option. The entry points
+are labelled **Transfer** / *Move, Copy or Link to…*.
+
 ## Reject processing progress
 
 Status: **Implemented**
@@ -315,7 +349,8 @@ Status: **Unimplemented**
   only, native path ownership,
   relative-tree preservation, no overwrite, bounded preflight/job/progress,
   cancellation, and partial results. Copy preserves sources; Move removes only
-  sources whose destination copy and identity verification succeeded. Neither
+  sources whose destination copy and identity verification succeeded; Link
+  creates verified symbolic links and never alters or removes a source. No
   action mutates profile metadata.
 
 ## Implementation and verification record

@@ -45,6 +45,7 @@ function panelMarkup(css) {
   </li></ul></div>
   <div class="review-results-transfer-actions">
     <button class="review-results-transfer-actions__move" id="action-move">Move</button>
+    <button class="review-results-transfer-actions__link" id="action-link">Link</button>
     <button id="action-copy">Copy</button>
   </div>
 </article></body></html>`;
@@ -88,5 +89,11 @@ test.describe("transfer panel affordances", () => {
     page,
   }) => {
     expect(await fillOf(page, "action-move")).toBe(TRANSPARENT);
+  });
+
+  test("keeps Link outlined too, so Copy stays the only filled action", async ({
+    page,
+  }) => {
+    expect(await fillOf(page, "action-link")).toBe(TRANSPARENT);
   });
 });

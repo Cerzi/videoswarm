@@ -284,7 +284,7 @@
 }
 .review-results-transfer-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.55rem;
   margin-top: 0.75rem;
 }
@@ -328,6 +328,26 @@
 }
 .review-results-action .review-results-transfer-actions__move small {
   opacity: 0.85;
+}
+/* Link is a third independent action, outlined like Move so Copy stays the
+   one filled button. It leaves the originals in place, so it takes a calm
+   neutral blue rather than Move's caution amber. */
+.review-results-action .review-results-transfer-actions__link {
+  color: #a5c8ff;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(165, 200, 255, 0.5);
+}
+.review-results-action .review-results-transfer-actions__link:hover:not(:disabled),
+.review-results-action .review-results-transfer-actions__link:focus-visible:not(:disabled) {
+  color: #fff;
+  background: #2f5ea8;
+  box-shadow: inset 0 0 0 1px #2f5ea8;
+}
+.review-results-transfer-note {
+  margin: 0.45rem 0 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.7rem;
+  line-height: 1.4;
 }
 .review-results-action .review-results-copy-actions__secondary {
   color: #d7dbde;
@@ -504,7 +524,7 @@
   .review-results-action button { width: 100%; }
   .review-results-copy-plan__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-results-destination { align-items: stretch; flex-direction: column; }
-  .review-results-transfer-actions { grid-template-columns: 1fr 1fr; }
+  .review-results-transfer-actions { grid-template-columns: 1fr; }
   .review-results-copy-actions { flex-direction: column-reverse; }
   .review-results-copy-running__status { display: grid; gap: 0.2rem; }
   .review-results-dialog__footer span { display: none; }

@@ -1,8 +1,8 @@
 # Generation Versions and Link Transfer
 
-Status: **Unimplemented — accepted design; slices below are recorded as they
-land**
-Last updated: 2026-09-26
+Status: **Implemented and Verified** — all seven sections; deferred items
+below
+Last updated: 2026-09-27
 
 ## Summary
 
@@ -396,9 +396,9 @@ A new `versionFilter` joins the filter state: `any` (default), `superseded`
 
 ## 7. Transfer as links
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-27)
 
-The transfer panel gains **Link** beside Copy and Move. It uses the same
+The transfer panel gains **Link** between Move and Copy. It uses the same
 prepared plan: destination, layout, collision detection, root containment and
 bounds are unchanged. Only the per-file operation differs.
 
@@ -414,13 +414,18 @@ bounds are unchanged. Only the per-file operation differs.
 - **Reporting.** Results say *linked*, not *copied*; no byte count is shown,
   because none is written.
 - **Windows.** Creating symbolic links needs Developer Mode or elevation.
-  The option is shown on every platform; on Windows it carries that caveat, and
-  an `EPERM` from `symlink` is reported as a named failure —
-  **Windows only allows symbolic links with Developer Mode enabled or when
-  running as administrator** — rather than the generic permission message.
-  Because the first link fails the same way as every other, the transfer stops
-  at the first such failure instead of repeating it for every clip.
-- **macOS and Linux** need no privilege.
+  The option is shown on every platform, because Developer Mode makes it work;
+  on Windows the panel states the caveat, and an `EPERM` from `symlink` is
+  reported as a named failure — **Windows only allows symbolic links with
+  Developer Mode enabled or when running as administrator** — rather than the
+  generic permission message.
+- **Unsupported destinations.** macOS and Linux need no privilege, but some
+  filesystems (FAT, exFAT, some network shares) refuse links. `EPERM`,
+  `ENOTSUP` or `EOPNOTSUPP` there reads **The destination does not support
+  symbolic links.**
+- Either way the first link fails exactly as every other would, so after the
+  first such failure no further link is attempted: the remaining clips are
+  counted as failed under the one explanation rather than repeating it.
 
 ### Symbolic links inside a library root
 
@@ -431,7 +436,8 @@ review and dangerous to Move or trash. This was already the behavior of the
 directory scan and the polling scanner, which both classify entries with
 `Dirent.isFile()`/`isDirectory()` and therefore skip links; it is now also true
 of the chokidar watcher, which could previously surface a link added while a
-folder was open until the next rescan hid it again.
+folder was open until the next rescan hid it again. `main/symlink-guard.js`
+wraps the record builder the watcher uses.
 
 The consequence is stated in the panel: links placed inside a library root do
 not appear in it. The transfer planner already refuses a destination inside
@@ -477,10 +483,11 @@ possible future cross-check, nothing more.
 
 ## Implementation order
 
-1. Key function and fixtures.
-2. In-process tag reader, schema, record delivery and background indexer.
-3. Library summaries, badges, details section and filters.
-4. Link transfer and the watcher symlink guard.
+1. ~~Key function and fixtures.~~ Done.
+2. ~~In-process tag reader, schema, record delivery and background indexer.~~
+   Done.
+3. ~~Library summaries, badges, details section and filters.~~ Done.
+4. ~~Link transfer and the watcher symlink guard.~~ Done.
 
 ## Implementation notes and decisions
 
@@ -566,6 +573,35 @@ possible future cross-check, nothing more.
   card badge, details section, inspector threading and summaries hook;
   `npm test -- --run` (1,246 tests), zero-warning lint and the Vite build
   pass.
+
+### 2026-09-27 — Slice 4: link transfer and the watcher guard
+
+- `main/review-copy-accepted.js` accepts `link` alongside `copy` and `move`
+  at the coordinator, IPC and preload boundaries. Linking verifies the new
+  link's target, removes only its own link when the source changes, writes no
+  bytes, and stops attempting after the first unsupported-link failure with a
+  platform-specific explanation reported once.
+- The panel gains an outlined **Link · Point to originals** action and a note
+  that links copy nothing and are not shown inside indexed folders, plus the
+  Windows caveat on Windows. Progress, results and toasts use the mode's own
+  words. Entry points are now **Transfer** and *Move, Copy or Link to…*; the
+  shared success toast no longer calls a plain selection "accepted".
+- `main/symlink-guard.js` keeps the native watcher from indexing links.
+- Run in the real app (isolated profile, headless Electron): linking a
+  selected clip into an `inbox` folder produced exactly one symbolic link to
+  the source and left the source unchanged; a symlink and a copy dropped into
+  the open folder while it was watched produced a card for the copy only. In
+  Electron's renderer the real stylesheet fills Copy alone, with Move and Link
+  transparent in a three-column row.
+- The slice 3 commit left one Electron-ABI assertion stale
+  (`reviewCheckpoints.test.js` did not expect the new `versionFilter` key);
+  slice 3 was verified with the standard suite only. It is corrected here.
+- Verification: new coordinator, preload, dialog, guard and polling-scanner
+  cases; `npm test -- --run` (1,257 tests), `npm run test:electron-abi`
+  (78 tests), zero-warning lint, the Vite build, `node --check` and
+  `git diff --check` pass. The Playwright affordance spec was extended with
+  the Link button but could not run here: its own Chromium build is not
+  installed on this machine. The equivalent check was made inside Electron.
 
 ## References
 

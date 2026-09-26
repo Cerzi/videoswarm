@@ -108,6 +108,7 @@ maybeDescribe('profile-local review checkpoints', () => {
           includeTagsMode: 'all',
           minMegapixels: null,
           maxMegapixels: null,
+          versionFilter: 'any',
         },
         sort: {
           key: 'created',

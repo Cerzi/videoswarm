@@ -305,6 +305,44 @@ describe("ProcessReviewResultsDialog", () => {
     expect(screen.getByText(/1 media file copied/i)).toBeInTheDocument();
   });
 
+  it("links clips to their originals and reports them as linked", async () => {
+    const props = dialogProps({
+      onStartAcceptedCopy: vi.fn().mockResolvedValue({
+        success: true,
+        transferMode: "link",
+        copiedCount: 2,
+        linkedCount: 2,
+      }),
+    });
+    render(<ProcessReviewResultsDialog {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Link accepted clips; choose a destination first/i })
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+    const link = await screen.findByRole("button", { name: /Link 1 file; point to originals/i });
+    expect(screen.getByText(/Links inside an indexed folder are not shown/)).toBeInTheDocument();
+    expect(screen.queryByText(/Developer Mode/)).toBeNull();
+    fireEvent.click(link);
+
+    expect(props.onStartAcceptedCopy).toHaveBeenCalledWith("copy-plan-1", "link");
+    expect(await screen.findByRole("status")).toHaveTextContent("Link complete");
+    expect(screen.getByText(/2 media files linked/i)).toBeInTheDocument();
+  });
+
+  it("warns about symbolic link rights on Windows", async () => {
+    const previous = window.electronAPI;
+    window.electronAPI = { ...(previous || {}), platform: "win32" };
+    try {
+      render(<ProcessReviewResultsDialog {...dialogProps()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Choose destination…" }));
+      expect(await screen.findByText(/Developer Mode or administrator rights/)).toBeInTheDocument();
+    } finally {
+      if (previous === undefined) delete window.electronAPI;
+      else window.electronAPI = previous;
+    }
+  });
+
   it("starts an explicit move only after a destination is locked in", async () => {
     const props = dialogProps({
       onStartAcceptedCopy: vi.fn().mockResolvedValue({

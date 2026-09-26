@@ -73,10 +73,10 @@ export const actionPolicies = {
   },
 
   // Opens the bounded transfer dialog rather than moving anything directly:
-  // a destination, preflight and an explicit Move or Copy still come first.
+  // a destination, preflight and an explicit Move, Copy or Link still come first.
   'transfer-files': {
     id: 'transfer-files',
-    label: 'Move or Copy to…',
+    label: 'Move, Copy or Link to…',
     whenContextWithMulti: TargetPolicy.ALL_SELECTED,
     enabledForToolbar: (count) => count >= 1,
   },

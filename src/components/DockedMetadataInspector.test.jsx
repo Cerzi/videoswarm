@@ -63,7 +63,7 @@ describe("DockedMetadataInspector", () => {
     );
 
     const transfer = screen.getByRole("button", {
-      name: "Move or copy 2 selected clips",
+      name: "Move, copy or link 2 selected clips",
     });
     fireEvent.click(transfer);
     // The docked pane hands over the same selection the floating one does.
@@ -78,6 +78,6 @@ describe("DockedMetadataInspector", () => {
         onUndock={vi.fn()}
       />
     );
-    expect(screen.queryByRole("button", { name: /Move or copy/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Move, copy or link/i })).toBeNull();
   });
 });

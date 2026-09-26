@@ -1,7 +1,7 @@
 # ComfyUI Re-queue (Promotion)
 
 Status: **Rejected — not building this in Video Swarm**
-Last updated: 2026-08-09
+Last updated: 2026-09-27
 
 ## Outcome
 
@@ -46,6 +46,34 @@ keep once files are reorganised often enough to break stem matching.
 Keep the watched folder outside any indexed root. Under fingerprint v2 a copy
 shares content identity with its original, so an indexed watch folder would
 show the copies as second instances of the same content.
+
+### Update, 2026-09-27: links in, finals beside drafts
+
+The split holds and both halves have moved.
+
+- **The CLI** now accepts symbolic links in its inbox and saves each final
+  next to its draft, rather than into a separate output tree.
+- **Video Swarm** added the two producer-neutral features that are its half
+  of the split, specified in
+  [`generation-versions.md`](generation-versions.md):
+  - **Generation versions** group a draft with its re-renders (and any other
+    version set: upscales, sweeps, A/B tests) by a graph-free key over seeds,
+    long prompt text and input media, library-wide. *Best version* plus a
+    maximum resolution is the "drafts not yet re-rendered" worklist, and a
+    draft drops out of it as soon as its final is indexed — wherever the final
+    was saved, so stem matching is no longer what pairs them.
+  - **Transfer as links** hands the selection to the inbox as symbolic links,
+    so nothing is duplicated and nothing leaves its organised folder.
+
+  So step 3 above becomes *Link* rather than *Copy*. Links inside an indexed
+  root are never indexed, so the earlier advice still applies for a different
+  reason: keep the inbox outside indexed roots, or its links simply will not
+  show.
+
+Video Swarm still does not read the CLI's `requeue` tag
+(`source_stamp`, `source_seed`, `source_path`, `source_prompt`,
+`source_workflow`). The generic key already groups those pairs, and grouping
+must work for pipelines that write no such tag.
 
 ## Summary
 

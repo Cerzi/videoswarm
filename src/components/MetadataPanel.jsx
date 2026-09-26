@@ -712,12 +712,12 @@ const MetadataPanel = forwardRef((
                 type="button"
                 className="metadata-panel__button metadata-panel__button--compact"
                 onClick={() => onTransferSelection(selectedVideos)}
-                aria-label={`Move or copy ${derivedSelectionCount} selected clip${
+                aria-label={`Move, copy or link ${derivedSelectionCount} selected clip${
                   derivedSelectionCount === 1 ? "" : "s"
                 }`}
-                title="Move or copy the selection to another folder"
+                title="Move, copy or link the selection into another folder"
               >
-                <span>Move/Copy</span>
+                <span>Transfer</span>
               </button>
             ) : null}
           </div>
