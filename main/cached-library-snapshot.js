@@ -55,6 +55,10 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
     file.hasAudio = record.hasAudio;
   }
   if (dimensions) file.dimensions = dimensions;
+  if (typeof record.generationKey === "string" && record.generationKey) {
+    file.generationKey = record.generationKey;
+  }
+  if (record.generationKeyChecked === true) file.generationKeyChecked = true;
   return file;
 }
 

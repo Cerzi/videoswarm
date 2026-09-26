@@ -52,6 +52,11 @@ const {
   createGenerationRequestIdentity,
 } = require("./main/generation-request");
 const generationMetadataService = createGenerationMetadataService();
+const {
+  createGenerationKeyIndexer,
+} = require("./main/generation-key-indexer");
+const generationKeyIndexer = createGenerationKeyIndexer();
+const { isGenerationKey } = require("./main/generation-key");
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
@@ -962,6 +967,7 @@ function invalidateNativeWorkOwner(sender) {
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
+  generationKeyIndexer.cancelOwner(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   return true;
@@ -988,6 +994,7 @@ function disposeNativeWorkOwner(sender) {
   const ownerId = sender.id;
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
+  generationKeyIndexer.cancelOwner(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   pathAuthority.revokeOwner(ownerId);
@@ -1219,6 +1226,8 @@ async function createVideoFileObject(
     let dimensions = null;
     let hasAudio = null;
     let instanceId = null;
+    let generationKey = null;
+    let generationKeyChecked = false;
 
     const isValidDimensions = (dims) =>
       dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0;
@@ -1257,6 +1266,9 @@ async function createVideoFileObject(
 
       hasAudio =
         typeof info?.hasAudio === "boolean" ? info.hasAudio : null;
+      generationKey =
+        typeof info?.generationKey === "string" ? info.generationKey : null;
+      generationKeyChecked = info?.generationKeyChecked === true;
 
       if (isValidDimensions(info?.dimensions)) {
         dimensions = info.dimensions;
@@ -1335,6 +1347,10 @@ async function createVideoFileObject(
       rating,
       reviewState,
       hasAudio,
+      // Always stated, so a merge can never keep a key that belonged to the
+      // content this path held before it was rewritten.
+      generationKey,
+      generationKeyChecked,
       enrichmentState: "ready",
       dimensions: dimensions
         ? {
@@ -1867,6 +1883,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
   await generationMetadataService.cancelAllAndDrain(
     "Profile changed during generation metadata parsing"
   );
+  await generationKeyIndexer.cancelAllAndDrain();
   lastFrameCaptureService.cancelAll("Profile changed during frame capture");
   mediaProtocolService.cancelActiveStreams();
   await Promise.all([
@@ -4780,6 +4797,78 @@ ipcMain.handle("metadata:cancel-generation", async (event, payload = {}) => {
   }, "GENERATION_METADATA_ERROR");
 });
 
+// Generation versions: see docs/architecture/generation-versions.md. The
+// renderer names catalog rows only; it never sends a path and receives only
+// fingerprints, keys and catalogued locations.
+const GENERATION_VERSION_INDEX_MAX_INSTANCES = 20_000;
+const GENERATION_VERSION_SUMMARY_MAX_KEYS = 4096;
+
+ipcMain.handle("generation-versions:index", async (event, payload = {}) => {
+  assertPlainObject(payload, "generation version index request");
+  const library = payload?.library === true;
+  const instanceIds = library
+    ? null
+    : assertInstanceIdArray(payload?.instanceIds, {
+        name: "generation version instances",
+        maxEntries: GENERATION_VERSION_INDEX_MAX_INSTANCES,
+      });
+  const sender = event.sender;
+  return runMetadataContextOperation((metadataStore, context) => {
+    registerNativeWorkOwner(sender);
+    const started = generationKeyIndexer.start(sender.id, {
+      context: {
+        metadataStore,
+        assertActive: () => assertMetadataContextActive(context),
+      },
+      scope: library ? { library: true } : { instanceIds },
+      publish: (progress) => {
+        if (sender.isDestroyed?.()) return;
+        sender.send("generation-versions:progress", {
+          ...progress,
+          profileId: context.profileId,
+          generation: context.generation,
+        });
+      },
+    });
+    return started;
+  }, "GENERATION_VERSION_INDEX_ERROR");
+});
+
+ipcMain.handle("generation-versions:cancel", async (event) => ({
+  success: true,
+  cancelled: generationKeyIndexer.cancelOwner(event.sender.id),
+}));
+
+ipcMain.handle("generation-versions:summaries", async (_event, payload = {}) => {
+  assertPlainObject(payload, "generation version summary request");
+  const keys = assertStringArray(payload?.keys, {
+    name: "generation keys",
+    minEntries: 0,
+    maxEntries: GENERATION_VERSION_SUMMARY_MAX_KEYS,
+    item: { minChars: 36, maxChars: 36 },
+    dedupe: true,
+  }).filter(isGenerationKey);
+  return runMetadataContextOperation(
+    (metadataStore) => ({
+      summaries: metadataStore.getGenerationVersionSummaries(keys),
+    }),
+    "GENERATION_VERSION_SUMMARY_ERROR"
+  );
+});
+
+ipcMain.handle("generation-versions:siblings", async (_event, payload = {}) => {
+  assertPlainObject(payload, "generation version siblings request");
+  const instanceId = assertInteger(payload?.instanceId, {
+    name: "generation version instance",
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  return runMetadataContextOperation(
+    (metadataStore) => metadataStore.getGenerationVersionSiblings(instanceId),
+    "GENERATION_VERSION_SIBLINGS_ERROR"
+  );
+});
+
 ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {
   try {
     const store = getMetadataStore();
@@ -5144,10 +5233,12 @@ async function performNativeShutdown() {
   const generationMetadataDrain = generationMetadataService.cancelAllAndDrain(
     "Application shutdown requested"
   );
+  const generationKeyDrain = generationKeyIndexer.cancelAllAndDrain();
   lastFrameCaptureService.cancelAll("Application shutdown requested");
   mediaProtocolService.cancelActiveStreams();
   const flushFailures = await settleShutdownTasks("flush", {
     generationMetadata: () => generationMetadataDrain,
+    generationKeys: () => generationKeyDrain,
     directoryAggregates: () => flushDirectoryAggregates(),
     settings: () => settingsWriter.flush(),
   });
@@ -5173,6 +5264,7 @@ async function performNativeShutdown() {
   await settleShutdownTasks("dispose", {
     folderWatcher: () => folderWatcher.dispose(),
     generationMetadata: () => generationMetadataService.shutdown(),
+    generationKeys: () => generationKeyIndexer.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),
     proxyManager: () => proxyManager.shutdown(),
     thumbnailCache: () => thumbnailCache.shutdown(),

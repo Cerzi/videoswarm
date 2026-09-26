@@ -174,7 +174,14 @@ function parseFfprobeMetadataOutput(output, options = {}) {
     );
   }
 
-  const containers = collectTagContainers(parsed, limits);
+  return selectEmbeddedPayload(collectTagContainers(parsed, limits), limits);
+}
+
+// Tag recognition shared by the ffprobe path and in-process container
+// readers: `containers` is a list of `{ tags, scope, streamIndex }`, ordered
+// by priority, where `tags` maps a tag name to its string value.
+function selectEmbeddedPayload(containers, options = {}) {
+  const limits = { ...EMBEDDED_METADATA_PROBE_LIMITS, ...options };
   const { direct, envelopes } = collectRecognizedTags(containers, limits);
   const payload = {};
   const sources = {};
@@ -369,4 +376,5 @@ module.exports = {
   createEmbeddedMetadataProbe,
   createFfprobeMetadataArgs,
   parseFfprobeMetadataOutput,
+  selectEmbeddedPayload,
 };

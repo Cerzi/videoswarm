@@ -9,6 +9,29 @@ const {
 } = require("../cached-library-snapshot");
 
 describe("cached library snapshot", () => {
+  it("carries generation key state and nothing when it is absent", () => {
+    const rootPath = path.resolve("/library");
+    const key = `gk1-${"c".repeat(32)}`;
+    const response = createCachedLibraryResponse(
+      {
+        root: { rootPath },
+        directories: [],
+        records: [
+          { instanceId: 1, absolutePath: path.join(rootPath, "a.mp4"), generationKey: key, generationKeyChecked: true },
+          { instanceId: 2, absolutePath: path.join(rootPath, "b.mp4"), generationKeyChecked: true },
+          { instanceId: 3, absolutePath: path.join(rootPath, "c.mp4") },
+        ],
+      },
+      rootPath,
+      "scan-1",
+      { generation: 1 }
+    );
+    expect(response.files[0]).toMatchObject({ generationKey: key, generationKeyChecked: true });
+    expect(response.files[1].generationKeyChecked).toBe(true);
+    expect(response.files[1]).not.toHaveProperty("generationKey");
+    expect(response.files[2]).not.toHaveProperty("generationKeyChecked");
+  });
+
   it("maps catalog rows into a compact renderer cache shape", () => {
     const rootPath = path.resolve("/library");
     const response = createCachedLibraryResponse(

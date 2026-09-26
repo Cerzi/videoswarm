@@ -141,6 +141,38 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("exposes generation-version indexing with ids or library scope only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.generationVersions.index({ instanceIds: [1, 2], rootPath: "/nope" });
+    await api.generationVersions.index({ library: true, instanceIds: [3] });
+    await api.generationVersions.index({ instanceIds: "bad" });
+    await api.generationVersions.cancel();
+    await api.generationVersions.summaries(["gk1-x"]);
+    await api.generationVersions.summaries(null);
+    await api.generationVersions.siblings(7);
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["generation-versions:index", { instanceIds: [1, 2] }],
+      ["generation-versions:index", { library: true }],
+      ["generation-versions:index", { instanceIds: [] }],
+      ["generation-versions:cancel"],
+      ["generation-versions:summaries", { keys: ["gk1-x"] }],
+      ["generation-versions:summaries", { keys: [] }],
+      ["generation-versions:siblings", { instanceId: 7 }],
+    ]);
+
+    const callback = vi.fn();
+    const unsubscribe = api.generationVersions.onProgress(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("generation-versions:progress");
+    handler({}, { jobId: "gk-1" });
+    expect(callback).toHaveBeenCalledWith({ jobId: "gk-1" });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "generation-versions:progress",
+      handler
+    );
+  });
+
   it("authorizes an indexed library root on demand", async () => {
     const { api, ipcRenderer } = loadPreload();
 

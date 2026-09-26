@@ -71,4 +71,17 @@ describe("normalizeVideoFromMain", () => {
       aspectRatio: 640 / 360,
     });
   });
+
+  it("keeps valid generation keys and never invents key fields", () => {
+    const key = `gk1-${"f".repeat(32)}`;
+    expect(
+      normalizeVideoFromMain({ id: "a", generationKey: key, generationKeyChecked: true })
+    ).toMatchObject({ generationKey: key, generationKeyChecked: true });
+    expect(
+      normalizeVideoFromMain({ id: "a", generationKey: "prompt text", generationKeyChecked: "yes" })
+    ).toMatchObject({ generationKey: null, generationKeyChecked: false });
+    const silent = normalizeVideoFromMain({ id: "a" });
+    expect(silent).not.toHaveProperty("generationKey");
+    expect(silent).not.toHaveProperty("generationKeyChecked");
+  });
 });

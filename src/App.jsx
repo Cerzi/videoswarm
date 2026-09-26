@@ -96,6 +96,7 @@ import {
   normalizeRelativePath,
 } from "./library/folderModel";
 import { FolderViewStateCache, makeFolderViewKey } from "./library/folderViewState";
+import useGenerationVersionIndex from "./app/hooks/useGenerationVersionIndex";
 import {
   REVIEW_FILTERS,
   REVIEW_STATES,
@@ -1282,6 +1283,20 @@ function App() {
       webCollectionEpoch,
     ]
   );
+
+  // Generation versions are keyed per collection rather than per folder view:
+  // navigating subfolders inside one root must not restart indexing.
+  const generationCollectionKey = activeRootPath
+    ? `${reviewProfileEpoch}:root:${activeRootPath}`
+    : tagCollection
+      ? `${reviewProfileEpoch}:tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
+      : null;
+  useGenerationVersionIndex({
+    videos,
+    setVideos,
+    collectionKey: generationCollectionKey,
+    busy: isLoadingFolder || isRefreshingFolder,
+  });
 
   const {
     handleAddTags: applyAddTags,

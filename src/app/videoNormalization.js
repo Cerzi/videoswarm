@@ -1,5 +1,7 @@
 import { normalizeReviewState } from "../review/reviewState";
 
+const GENERATION_KEY_PATTERN = /^gk\d+-[0-9a-f]{32}$/;
+
 export const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
   const fullPath =
@@ -59,7 +61,7 @@ export const normalizeVideoFromMain = (video) => {
   const hasAudio =
     typeof video.hasAudio === "boolean" ? video.hasAudio : null;
 
-  return {
+  const normalized = {
     ...video,
     fullPath,
     basename,
@@ -71,4 +73,17 @@ export const normalizeVideoFromMain = (video) => {
     aspectRatio,
     hasAudio,
   };
+  // Generation-key fields are only rewritten when the incoming record states
+  // them, so a record that says nothing never erases a key already known.
+  if ("generationKey" in video) {
+    normalized.generationKey =
+      typeof video.generationKey === "string" &&
+      GENERATION_KEY_PATTERN.test(video.generationKey)
+        ? video.generationKey
+        : null;
+  }
+  if ("generationKeyChecked" in video) {
+    normalized.generationKeyChecked = video.generationKeyChecked === true;
+  }
+  return normalized;
 };
