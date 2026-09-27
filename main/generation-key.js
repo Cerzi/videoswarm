@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 
 // A deliberately dumb identity for "versions of the same generation". It
 // never traces the graph: it collects seeds, long free text and input media
@@ -61,47 +62,13 @@ function reviveNumber(key, value, context) {
   return value;
 }
 
-// Python's json module writes NaN and Infinity, which ComfyUI emits in fields
-// such as `is_changed`. Outside string literals they become null; nothing the
-// key reads is ever non-finite.
-function replaceNonFiniteTokens(source) {
-  let output = "";
-  let start = 0;
-  let index = 0;
-  while (index < source.length) {
-    const current = source[index];
-    if (current === '"') {
-      index += 1;
-      while (index < source.length && source[index] !== '"') {
-        index += source[index] === "\\" ? 2 : 1;
-      }
-      index += 1;
-      continue;
-    }
-    const token = source.startsWith("NaN", index)
-      ? "NaN"
-      : source.startsWith("-Infinity", index)
-        ? "-Infinity"
-        : source.startsWith("Infinity", index)
-          ? "Infinity"
-          : null;
-    if (token) {
-      output += `${source.slice(start, index)}null`;
-      index += token.length;
-      start = index;
-      continue;
-    }
-    index += 1;
-  }
-  return output + source.slice(start);
-}
-
+// Strict first; Python NaN/Infinity only on retry (see json-non-finite.js).
 function parseJson(source) {
   try {
     return JSON.parse(source, reviveNumber);
   } catch (error) {
     if (error instanceof KeyAbandoned) throw error;
-    return JSON.parse(replaceNonFiniteTokens(source), reviveNumber);
+    return JSON.parse(replaceNonFiniteJsonTokens(source), reviveNumber);
   }
 }
 

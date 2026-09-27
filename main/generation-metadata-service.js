@@ -11,7 +11,9 @@ const {
   parseComfyGenerationPayload,
 } = require("./comfy-generation-parser");
 
-const GENERATION_METADATA_PARSER_VERSION = 3;
+// 4: API prompts carrying Python NaN/Infinity parse instead of failing, which
+// can change a clip's result from a sidecar fallback to its embedded graph.
+const GENERATION_METADATA_PARSER_VERSION = 4;
 const GENERATION_METADATA_SERVICE_LIMITS = Object.freeze({
   concurrency: 2,
   maxPending: 64,
