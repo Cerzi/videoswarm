@@ -100,9 +100,9 @@ A further finding while building this: ComfyUI writes Python's non-standard
 `NaN` into the API prompt (`is_changed: [NaN]` on several core nodes). Strict
 `JSON.parse` rejects the whole payload. The key parser retries with `NaN` and
 `Infinity` replaced by `null` outside string literals. The Generation panel's
-parser has no such handling today, which is a plausible cause of some of its
-failures; it is tracked in [`../outstanding-work.md`](../outstanding-work.md)
-rather than fixed here.
+parser had no such handling, which was one cause of its failures on these
+clips; it now shares the helper (`main/json-non-finite.js`), see
+[`embedded-generation-metadata.md`](embedded-generation-metadata.md).
 
 ## 1. The generation key
 

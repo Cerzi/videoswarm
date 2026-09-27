@@ -593,8 +593,32 @@ A packaged Electron smoke fixture and cross-platform reader verification remain
   ffprobe; adopting the in-process reader for ISO-BMFF files would move part
   of Section 2's deferred portability work forward, and is left for a
   separate change.
-- The API prompt contains Python `NaN`, which this panel's parser rejects;
-  tracked in [`../outstanding-work.md`](../outstanding-work.md).
+- The API prompt contains Python `NaN`, which this panel's parser rejected;
+  fixed the same day, see below.
+
+### 2026-09-27 — Python NaN and Infinity in API prompts
+
+- ComfyUI writes `NaN` (for example `is_changed: [NaN]`), and strict
+  `JSON.parse` rejected every such payload with `COMFY_INVALID_JSON`, so
+  real H3 and V2V outputs fell through to "no supported fields". Strict
+  parsing still runs first; on failure `parseBoundedJson` retries with
+  `NaN`, `Infinity` and `-Infinity` replaced by `null` outside string
+  literals. The replacement runs before `quoteUnsafeJsonIntegers`, whose
+  number scanner would otherwise read the sign of `-Infinity` as a number.
+  Prompt text that says "NaN" is never altered. The helper is shared with the
+  generation-version key in `main/json-non-finite.js`, and adjacent API-graph
+  sidecars go through the same path.
+- Parser cache version 4 invalidates results cached by version 3, including a
+  sidecar fallback that was only chosen because the embedded graph failed to
+  parse.
+- Tests: the helper; a reduced real H3 fixture parsing identically to its
+  `null`-valued twin; composition with an exact 64-bit seed and prompt text
+  containing the tokens; malformed payloads still rejected; and the service
+  replacing a stale version-3 sidecar result with the embedded graph.
+  `npm test -- --run` (1,264 tests), `npm run test:electron-abi` (78),
+  zero-warning lint and the Vite build pass. In the real app a real H3 draft
+  now shows *Embedded · Partial* with model, VAE, sampler and scheduler; its
+  prompt and seed remain unresolved for want of MiniMax adapters.
 
 ### Remaining implementation work
 

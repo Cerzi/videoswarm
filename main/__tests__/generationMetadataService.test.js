@@ -2,9 +2,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
+const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
 const {
   GENERATION_METADATA_PARSER_VERSION,
   buildPersistenceInput,
@@ -743,6 +745,45 @@ describe("generation metadata coordinator", () => {
       metadata: { positivePrompt: "fixture positive prompt" },
     });
     expect(probe.probe).toHaveBeenCalledOnce();
+  });
+
+  it("reads an embedded prompt that carries Python NaN instead of failing it", async () => {
+    // A cached sidecar fallback from the previous parser version must not keep
+    // winning once the embedded graph is readable.
+    const stats = fs.statSync(mediaPath);
+    const store = createStore(mediaPath);
+    store.setStored(53, {
+      parserVersion: GENERATION_METADATA_PARSER_VERSION - 1,
+      sourceKind: "sidecar",
+      sourceFormat: "json",
+      sourceLabel: "Adjacent sidecar",
+      mediaSize: stats.size,
+      mediaMtimeMs: stats.mtimeMs,
+      prompt: "stale sidecar prompt",
+      extractionStatus: "found",
+      quality: "partial",
+      provenance: { readerAvailable: true, readerStatus: "found" },
+    });
+    const withNaN = fs.readFileSync(
+      path.join(__dirname_, "fixtures", "generation-key", "draft-rerender-1.prompt.txt"),
+      "utf8"
+    );
+    const probe = createProbe({
+      probe: vi.fn(async () => probeResult({ payload: { prompt: withNaN } })),
+    });
+
+    const result = await service({ probe }).getMetadata({
+      instanceId: 53,
+      metadataStore: store,
+    });
+
+    expect(result.cached).toBe(false);
+    expect(result.metadata.sourceKind).toBe("embedded");
+    expect(result.metadata.models.length).toBeGreaterThan(0);
+    expect(result.metadata.prompt).not.toBe("stale sidecar prompt");
+    expect(
+      (result.metadata.diagnostics || []).map((entry) => entry.code)
+    ).not.toContain("COMFY_INVALID_JSON");
   });
 
   it("retries embedded probing after a transient cached sidecar fallback", async () => {

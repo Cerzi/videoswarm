@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'module';
 
@@ -595,5 +598,60 @@ describe('ComfyUI generation graph parsing', () => {
     expect(() => parseComfyGenerationPayload({ prompt: wide }, {
       limits: { maxJsonNodes: 1 },
     })).toThrowError(expect.objectContaining({ code: 'COMFY_JSON_NODE_LIMIT' }));
+  });
+
+  describe('Python non-finite tokens', () => {
+    const fixture = (name) => fs.readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        'fixtures',
+        'generation-key',
+        `${name}.prompt.txt`
+      ),
+      'utf8'
+    );
+
+    it('parses a real ComfyUI prompt carrying NaN exactly as its null-valued twin', () => {
+      // Reduced from a real H3 output: several nodes carry `is_changed: [NaN]`.
+      const withNaN = fixture('draft-rerender-1');
+      expect(withNaN).toContain('[NaN]');
+      expect(() => JSON.parse(withNaN)).toThrow();
+      const options = { fileName: 'clip.mp4', origin: { kind: 'embedded' } };
+
+      const analysis = parseComfyGenerationPayload(withNaN, options);
+      const twin = parseComfyGenerationPayload(withNaN.replaceAll('[NaN]', '[null]'), options);
+      expect(analysis).toEqual(twin);
+      expect(analysis.models.length).toBeGreaterThan(0);
+    });
+
+    it('composes with exact 64-bit seeds and leaves prompt text untouched', () => {
+      const graph = coreGraph({ positive: 'NaN glitch art, -Infinity mirror, Infinity pool' });
+      graph[8].is_changed = '__NAN_LIST__';
+      graph[9].extra = '__NEG_INF__';
+      const clean = JSON.stringify(graph).replace(
+        '"seed":"900719925474099312345"',
+        '"seed":900719925474099312345'
+      );
+      const python = clean
+        .replace('"__NAN_LIST__"', '[NaN, Infinity]')
+        .replace('"__NEG_INF__"', '-Infinity');
+      const twin = clean
+        .replace('"__NAN_LIST__"', '[null, null]')
+        .replace('"__NEG_INF__"', 'null');
+
+      const analysis = parseComfyGenerationPayload(python, { fileName: 'clip.mp4' });
+      expect(analysis).toEqual(parseComfyGenerationPayload(twin, { fileName: 'clip.mp4' }));
+      expect(analysis.seed).toBe('900719925474099312345');
+      expect(analysis.prompt).toBe('NaN glitch art, -Infinity mirror, Infinity pool');
+    });
+
+    it('still rejects payloads that are malformed for other reasons', () => {
+      expect(() => parseComfyGenerationPayload('{"1": NaN,', {})).toThrowError(
+        expect.objectContaining({ code: 'COMFY_INVALID_JSON' })
+      );
+      expect(() => parseComfyGenerationPayload('{"1": nan}', {})).toThrowError(
+        expect.objectContaining({ code: 'COMFY_INVALID_JSON' })
+      );
+    });
   });
 });

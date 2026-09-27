@@ -32,16 +32,22 @@ also on `main`; it never was. Delete the branch rather than merging it.
 
 ## 1a. The Generation panel cannot parse ComfyUI's NaN
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-09-27)
 
 ComfyUI writes Python's non-standard `NaN` into the API prompt
-(`is_changed: [NaN]` on several nodes), and strict `JSON.parse` rejects the
-whole payload. Every real H3 and V2V fixture used for generation versions
-carries it, and in the real app the Generation panel reports "no supported
-fields could be resolved" for those clips. `main/generation-key.js` retries
-with non-finite tokens replaced by `null` outside strings;
-`main/comfy-generation-parser.js` has no equivalent. This is a likely cause
-of much of the panel's unreliability and a small, testable fix.
+(`is_changed: [NaN]` on several nodes), and strict `JSON.parse` rejected the
+whole payload, so the panel reported "no supported fields could be resolved".
+`main/comfy-generation-parser.js` now retries with the shared
+`main/json-non-finite.js` helper, and the parser cache version is 4. A real
+H3 draft now shows *Embedded · Partial* with its model, VAE, sampler and
+scheduler.
+
+What this does **not** fix, and is still open: the positive prompt and seed
+of MiniMax H3 graphs stay unresolved, because the prompt lives in a
+`MiniMaxH3Ref2VAComposer` and the seed arrives through `RandomNoise`, neither
+of which has an adapter; and the V2V hybrid graph reports `OUTPUT_NOT_FOUND`
+because its custom save node is not a recognized output. Those are resolver
+coverage gaps, not parsing failures.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 

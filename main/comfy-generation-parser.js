@@ -1,4 +1,5 @@
 const path = require('path');
+const { replaceNonFiniteJsonTokens } = require('./json-non-finite');
 
 const DEFAULT_COMFY_GENERATION_LIMITS = Object.freeze({
   maxBytes: 2 * 1024 * 1024,
@@ -245,11 +246,22 @@ function parseBoundedJson(text, limits) {
   let parsed;
   try {
     parsed = JSON.parse(quoteUnsafeJsonIntegers(source));
-  } catch (error) {
-    throw new ComfyGenerationParserError(
-      'COMFY_INVALID_JSON',
-      `Generation metadata is not valid JSON: ${error?.message || error}`
-    );
+  } catch (strictError) {
+    // ComfyUI writes Python's NaN/Infinity into API prompts. Non-finite
+    // tokens are replaced before unsafe integers are quoted, because the
+    // integer scanner would otherwise read the sign of -Infinity as a number.
+    try {
+      parsed = JSON.parse(
+        quoteUnsafeJsonIntegers(replaceNonFiniteJsonTokens(source))
+      );
+    } catch {
+      throw new ComfyGenerationParserError(
+        'COMFY_INVALID_JSON',
+        `Generation metadata is not valid JSON: ${
+          strictError?.message || strictError
+        }`
+      );
+    }
   }
   inspectBoundedShape(parsed, limits);
   return parsed;
