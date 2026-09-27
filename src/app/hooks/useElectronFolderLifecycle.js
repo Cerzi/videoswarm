@@ -471,7 +471,10 @@ export function useElectronFolderLifecycle({
         id: `directory-scan-${Date.now()}-${++directoryScanSequence}`,
         cancelled: false,
         lastProgressSequence: -1,
-        lastRecordSequence: -1,
+        // Main numbers record batches from 1 and reports the last one it sent
+        // as recordSequence, so 0 means "none were sent" - an empty scan, which
+        // must not wait for a batch that can never arrive.
+        lastRecordSequence: 0,
         recordsById: new Map(),
         authoritativeIds: new Set(),
         authoritativeRemovedIds: new Set(),
