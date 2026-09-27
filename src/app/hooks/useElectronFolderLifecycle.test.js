@@ -1384,6 +1384,42 @@ describe("useElectronFolderLifecycle", () => {
     });
   });
 
+  it("finishes a streamed scan that found nothing without waiting for records", async () => {
+    // Main numbers record batches from 1, so a scan that sent none reports
+    // recordSequence 0 - for example a non-recursive open of a folder whose
+    // clips are all in subfolders. That is an empty folder, not a failure.
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      window.electronAPI.readDirectory.mockImplementationOnce(async (_path, _recursive, scanId) => ({
+        streamed: true,
+        scanId,
+        recordSequence: 0,
+        fileCount: 0,
+        root: { rootPath: "/only-subfolders", refreshState: "idle" },
+        directories: [],
+      }));
+      const { result } = renderDefaultLifecycle();
+
+      await act(async () => {
+        const loadPromise = result.current.handleElectronFolderSelection("/only-subfolders");
+        // Before the fix this waited out the 5 s record-sequence timeout.
+        await vi.advanceTimersByTimeAsync(100);
+        await loadPromise;
+      });
+
+      expect(result.current.isLoadingFolder).toBe(false);
+      expect(result.current.videos).toEqual([]);
+      expect(errors).not.toHaveBeenCalledWith(
+        "Error reading directory:",
+        expect.anything()
+      );
+    } finally {
+      errors.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("renders streamed enumeration records before enrichment and final completion", async () => {
     let resolveScan;
     window.electronAPI.readDirectory.mockImplementationOnce(

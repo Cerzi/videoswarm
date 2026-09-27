@@ -51,12 +51,18 @@ coverage gaps, not parsing failures.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-09-27)
 
 Opening a folder whose clips are all in subfolders, with *Subfolders* off,
-logs "The folder record stream did not complete" in the renderer instead of
-showing an empty folder. Reproduced on commit `9ea5884`, before any
-generation-versions change. Not investigated further.
+logged "The folder record stream did not complete" after a five-second wait
+instead of showing an empty folder. It predated generation versions.
+
+Main numbers streamed record batches from 1 and returns the last number sent
+as `recordSequence`, so a scan that sent nothing returns 0. The renderer
+started each scan's `lastRecordSequence` at -1 and therefore waited for a
+batch 0 that never exists. It now starts at 0. A hook regression test covers
+the empty streamed scan, and the original case was rerun in the real app
+(isolated profile, headless) without the error.
 
 ## 2. Smart views cannot be library-scoped
 
