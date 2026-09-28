@@ -599,6 +599,7 @@ function App() {
     filteredVideos,
     filtersActiveCount,
     ratingSummary,
+    resolutionSummary,
     handleRemoveIncludeFilter,
     handleRemoveExcludeFilter,
     clearReviewFilter,
@@ -4867,6 +4868,26 @@ function App() {
                       {ratingSummary.label}
                       <span className="filters-summary__chip-remove">×</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {resolutionSummary?.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Resolution</span>
+                  <div className="filters-summary__chips">
+                    {resolutionSummary.map((chip) => (
+                      <button
+                        key={chip.key}
+                        type="button"
+                        className="filters-summary__chip filters-summary__chip--rating"
+                        onClick={chip.onClear}
+                        title="Clear this resolution bound"
+                      >
+                        {chip.label}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}

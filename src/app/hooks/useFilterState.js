@@ -211,6 +211,28 @@ export function useFilterState({
     updateFilters((prev) => ({ ...prev, versionFilter: VERSION_FILTERS.ANY }));
   }, [updateFilters]);
 
+  // One chip per resolution bound, as the Filters badge counts them.
+  const resolutionSummary = useMemo(() => {
+    const chips = [];
+    const min = sanitizeMegapixels(filters.minMegapixels);
+    const max = sanitizeMegapixels(filters.maxMegapixels);
+    if (min !== null) {
+      chips.push({
+        key: "min",
+        label: `≥ ${min} MP`,
+        onClear: () => updateFilters((prev) => ({ ...prev, minMegapixels: null })),
+      });
+    }
+    if (max !== null) {
+      chips.push({
+        key: "max",
+        label: `≤ ${max} MP`,
+        onClear: () => updateFilters((prev) => ({ ...prev, maxMegapixels: null })),
+      });
+    }
+    return chips;
+  }, [filters.minMegapixels, filters.maxMegapixels, updateFilters]);
+
   const ratingSummary = useMemo(() => {
     if (filters.exactRating !== null && filters.exactRating !== undefined) {
       const label = formatRatingLabel(filters.exactRating, "exact");
@@ -278,6 +300,7 @@ export function useFilterState({
     filteredVideoIds,
     filtersActiveCount,
     ratingSummary,
+    resolutionSummary,
     handleRemoveIncludeFilter,
     handleRemoveExcludeFilter,
     clearMinRatingFilter,
