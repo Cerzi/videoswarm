@@ -472,6 +472,41 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("library:delete-saved-view", { id }),
   },
 
+  sequences: {
+    list: async () => ipcRenderer.invoke("sequences:list"),
+    snapshot: async (id, options = {}) =>
+      ipcRenderer.invoke("sequences:snapshot", {
+        id,
+        preferredRootPath:
+          typeof options?.preferredRootPath === "string"
+            ? options.preferredRootPath
+            : null,
+      }),
+    create: async (name) => ipcRenderer.invoke("sequences:create", { name }),
+    rename: async (id, name) =>
+      ipcRenderer.invoke("sequences:rename", { id, name }),
+    remove: async (id) => ipcRenderer.invoke("sequences:delete", { id }),
+    append: async (id, fingerprints = []) =>
+      ipcRenderer.invoke("sequences:append", {
+        id,
+        fingerprints: Array.isArray(fingerprints)
+          ? fingerprints
+          : [fingerprints],
+      }),
+    removeEntries: async (id, entryIds = []) =>
+      ipcRenderer.invoke("sequences:remove-entries", {
+        id,
+        entryIds: Array.isArray(entryIds) ? entryIds : [entryIds],
+      }),
+    reorder: async (id, entryIds = []) =>
+      ipcRenderer.invoke("sequences:reorder", {
+        id,
+        entryIds: Array.isArray(entryIds) ? entryIds : [entryIds],
+      }),
+    moveEntry: async (id, entryId, position) =>
+      ipcRenderer.invoke("sequences:move-entry", { id, entryId, position }),
+  },
+
   review: {
     copyAccepted: {
       prepare: async (payload = {}) =>
