@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   METADATA_INSPECTOR_MODES,
+  METADATA_INSPECTOR_REVISION,
   normalizeMetadataInspectorMode,
+  resolveMetadataInspectorMode,
 } = require("../metadata-inspector-settings");
 
 describe("metadata inspector profile settings", () => {
@@ -17,9 +19,27 @@ describe("metadata inspector profile settings", () => {
     );
   });
 
-  it("defaults malformed values to the bounded floating mode", () => {
-    expect(normalizeMetadataInspectorMode("window")).toBe("floating");
-    expect(normalizeMetadataInspectorMode(true)).toBe("floating");
-    expect(normalizeMetadataInspectorMode(null)).toBe("floating");
+  it("defaults malformed values to the docked default", () => {
+    expect(normalizeMetadataInspectorMode("window")).toBe("docked");
+    expect(normalizeMetadataInspectorMode(true)).toBe("docked");
+    expect(normalizeMetadataInspectorMode(null)).toBe("docked");
+  });
+
+  it("docks settings written before the docked default, once", () => {
+    expect(resolveMetadataInspectorMode({ metadataInspectorMode: "floating" })).toBe("docked");
+    expect(resolveMetadataInspectorMode({})).toBe("docked");
+    expect(resolveMetadataInspectorMode(null)).toBe("docked");
+    expect(
+      resolveMetadataInspectorMode({
+        metadataInspectorMode: "floating",
+        metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
+      })
+    ).toBe("floating");
+    expect(
+      resolveMetadataInspectorMode({
+        metadataInspectorMode: "docked",
+        metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
+      })
+    ).toBe("docked");
   });
 });

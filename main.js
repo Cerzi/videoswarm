@@ -119,7 +119,8 @@ const { normalizeZoomLevel } = require("./main/zoom-settings");
 const { REVIEW_SORT_KEYS } = require("./main/review-view-definition");
 const {
   METADATA_INSPECTOR_MODES,
-  normalizeMetadataInspectorMode,
+  METADATA_INSPECTOR_REVISION,
+  resolveMetadataInspectorMode,
 } = require("./main/metadata-inspector-settings");
 const {
   createDirectoryAggregateBatcher,
@@ -288,7 +289,8 @@ const defaultSettings = {
   fullscreenAudioEnabled: false,
   recentTransferDestinations: [],
   transferLayout: "structured",
-  metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
+  metadataInspectorMode: METADATA_INSPECTOR_MODES.DOCKED,
+  metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   hoverAudioEnabled: false,
@@ -1750,9 +1752,8 @@ function normaliseLoadedSettings(rawSettings) {
     transferLayout: TRANSFER_LAYOUTS.has(source.transferLayout)
       ? source.transferLayout
       : defaultSettings.transferLayout,
-    metadataInspectorMode: normalizeMetadataInspectorMode(
-      source.metadataInspectorMode
-    ),
+    metadataInspectorMode: resolveMetadataInspectorMode(source),
+    metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
     zoomLevel: normalizeZoomLevel(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
       defaultSettings.zoomLevel
@@ -3296,6 +3297,7 @@ ipcMain.handle("save-settings", async (_event, settings) => {
     {
       ...withoutComfyConnection(settings),
       comfyConnection: normalizeComfyConnection(currentSettings?.comfyConnection),
+      metadataInspectorRevision: currentSettings?.metadataInspectorRevision,
     },
     context.profileId
   );

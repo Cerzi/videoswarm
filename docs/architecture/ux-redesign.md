@@ -130,8 +130,19 @@ squeezing any of them. **Awaiting the user's answer**; it is the last slice.
    The re-render engine's own settings will be one more entry in
    `PREFERENCE_SECTIONS`. The native Profiles and Options › Data Location
    menus stay.
-5. **Details docked by default (D1), then the activity rail (D7).** Status:
-   **Unimplemented**
+5. **Details docked by default (D1), then the activity rail (D7).**
+   - **5a, D1.** Status: **Implemented**, **Verified** (2026-09-28). New
+     profiles start docked. Existing settings hold "floating" only because
+     it was the old default, so `metadataInspectorRevision` moves them to
+     docked once; undocking after that sticks. Docked Details behaves
+     like the floating panel did:
+     - a new selection brings the Details tab forward;
+     - choosing Library dismisses it for that selection only;
+     - a hidden sidebar is never forced open;
+     - loading the saved mode no longer switches to Details, so the
+       Library shows at launch.
+   - **5b, D7.** Status: **Unimplemented**. Waiting for the user's answer
+     on the activity rail.
 
 Each slice lands as its own commit(s) with focused tests, the repository
 gates, and a check in the real app at 1024, 1280 and 1440 px.
