@@ -157,6 +157,11 @@ a real library on 2026-09-26:
   took V2V clips from unkeyed to keyed. The remaining misses were seedless
   processing workflows. Grouped V2V runs shared the same input video.
 
+On 2026-09-28 the key was also checked against the re-render tool's current
+output: all fifteen finals found beside their drafts keyed identically to
+them, including a `_nopost_` final whose RTX and RIFE nodes had been bypassed
+out of the graph.
+
 The committed fixtures are reduced copies of four real sets: a draft with two
 re-renders (seed reached through `RandomNoise → Seed (rgthree)`), a
 three-clip settings sweep, a V2V pair keyed through a `PrimitiveInt` hop with
@@ -340,6 +345,16 @@ version.
 time, each descending. Unknown dimensions or duration sort as zero. No
 producer is special-cased.
 
+**Known limitation: post-processing inflates pixel counts.** Pixel count is
+the *output* resolution, not the resolution the generation ran at. A draft
+upscaled on the way out can out-pixel a final rendered without that step. On
+2026-09-28 one real pair did exactly this: a draft upscaled by RTX Video Super
+Resolution to 1088×1920 (2.09 MP) and its `_nopost_` final at 928×1664
+(1.54 MP), so the draft reads as the best version and the final as
+superseded. The fourteen other real pairs checked that day ordered correctly.
+Choosing a better ordering signal is open for design, not settled here; see
+*Validation* below.
+
 - **Badge.** A card whose group has two or more versions shows a compact
   "N versions" pill at the top left (below the review pill when both show),
   drawn muted and dashed when a higher-resolution version exists. The card
@@ -382,7 +397,11 @@ A new `versionFilter` joins the filter state: `any` (default), `superseded`
   external re-render tool; when its results are indexed, the drafts drop out
   of the list.
 - The filter counts toward the active-filter badge, has a summary chip, and is
-  saved with smart views. Saved views previously dropped the resolution bounds
+  saved with smart views. A saved view applies to whichever collection is
+  open, including a library-wide tag search, but it cannot yet *reopen* a tag
+  search by itself: smart views have no library scope (item 2 of
+  [`../outstanding-work.md`](../outstanding-work.md)). Until that lands, a
+  library-wide worklist is a tag search plus a saved view applied to it. Saved views previously dropped the resolution bounds
   and the include-tags match mode; they now keep them, because a worklist that
   loses its resolution bound on save is a different list.
 
@@ -457,11 +476,17 @@ and simply does not show the links.
 ## Prior art: the `requeue` tag
 
 The user's standalone `comfy-requeue` tool writes a `requeue` tag into the
-finals it produces, carrying `source_stamp`, `source_seed`, `source_path` and
-the draft's `source_prompt`/`source_workflow`. It is an exact, producer-written
-link from a final to its draft.
+finals it produces, carrying `source_seed`, `source_path` and the draft's
+`source_prompt`/`source_workflow`; a final matches its draft when the draft's
+embedded `prompt` equals the tag's `source_prompt`. It is an exact,
+producer-written link from a final to its draft. The tool also keeps its own
+history in `~/.local/share/comfy-requeue/requeued.jsonl` (final, draft,
+settings, render time), and names each final after its draft's whole name,
+beside it: `213533_00001_.mp4` → `213533_00001_final_1.5mp_35st_00001_.mp4`,
+or `…_nopost_…` when rendered without its RTX and RIFE post-processing.
 
-Video Swarm **does not read it.** The generic key already groups those pairs
+Video Swarm **reads none of this** — not the tag, not the history file, and
+not the filenames. The generic key already groups those pairs
 — the tool reruns the same prompt at the same seed — and depending on one
 tool's private tag would make grouping work for one user's pipeline and not for
 anyone else's. It is recorded here as evidence that the pairs exist, and as a

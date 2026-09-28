@@ -52,7 +52,11 @@ show the copies as second instances of the same content.
 The split holds and both halves have moved.
 
 - **The CLI** now accepts symbolic links in its inbox and saves each final
-  next to its draft, rather than into a separate output tree.
+  next to its draft, under the draft's whole name:
+  `213533_00001_.mp4` → `213533_00001_final_1.5mp_35st_00001_.mp4`, or
+  `…_nopost_…` for a final rendered without RTX and RIFE post-processing. It
+  keeps its own history in `~/.local/share/comfy-requeue/requeued.jsonl`
+  (final path, draft, settings, render time).
 - **Video Swarm** added the two producer-neutral features that are its half
   of the split, specified in
   [`generation-versions.md`](generation-versions.md):
@@ -61,7 +65,10 @@ The split holds and both halves have moved.
     long prompt text and input media, library-wide. *Best version* plus a
     maximum resolution is the "drafts not yet re-rendered" worklist, and a
     draft drops out of it as soon as its final is indexed — wherever the final
-    was saved, so stem matching is no longer what pairs them.
+    was saved, so filename matching is not what pairs them. All fifteen real
+    draft/final pairs checked on 2026-09-28 keyed together. One `_nopost_`
+    final has fewer pixels than its RTX-upscaled draft and therefore reads as
+    superseded; see "Known limitation" in `generation-versions.md`.
   - **Transfer as links** hands the selection to the inbox as symbolic links,
     so nothing is duplicated and nothing leaves its organised folder.
 
@@ -70,9 +77,10 @@ The split holds and both halves have moved.
   reason: keep the inbox outside indexed roots, or its links simply will not
   show.
 
-Video Swarm still does not read the CLI's `requeue` tag
-(`source_stamp`, `source_seed`, `source_path`, `source_prompt`,
-`source_workflow`). The generic key already groups those pairs, and grouping
+Video Swarm still does not read the CLI's `requeue` tag (`source_seed`,
+`source_path`, `source_prompt`, `source_workflow`; a final matches its draft
+when the draft's embedded `prompt` equals `source_prompt`), its history file,
+or its filenames. The generic key already groups those pairs, and grouping
 must work for pipelines that write no such tag.
 
 ## Summary
