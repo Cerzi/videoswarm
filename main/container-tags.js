@@ -19,8 +19,10 @@ const CONTAINER_TAG_LIMITS = Object.freeze({
 });
 
 // Only these are decoded; everything else, including the large visual
-// `workflow` graph, is skipped without being turned into a string.
+// `workflow` graph, is skipped without being turned into a string unless a
+// caller asks for it (`includeWorkflow`).
 const WANTED_TAGS = new Set(["prompt", "comment", "description"]);
+const WANTED_TAGS_WITH_WORKFLOW = new Set([...WANTED_TAGS, "workflow"]);
 const FOURCC_TAGS = new Map([
   ["©cmt", "comment"],
   ["©des", "description"],
@@ -102,13 +104,14 @@ function tagNameForItem(itemAtom, keys) {
 }
 
 function readMetaTags(meta, tags, budget, limits) {
+  const wanted = limits.includeWorkflow ? WANTED_TAGS_WITH_WORKFLOW : WANTED_TAGS;
   const children = metaChildren(meta);
   const keys = readKeys(findChild(children, "keys", limits), limits);
   const ilst = findChild(children, "ilst", limits);
   if (!ilst) return;
   for (const item of childAtoms(ilst.data, limits)) {
     const name = tagNameForItem(item, keys);
-    if (!name || !WANTED_TAGS.has(name) || tags[name] !== undefined) continue;
+    if (!name || !wanted.has(name) || tags[name] !== undefined) continue;
     const value = readDataValue(item, limits);
     if (value === null) continue;
     budget.used += Buffer.byteLength(value, "utf8");
