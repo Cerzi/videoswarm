@@ -172,11 +172,13 @@ rather than left to render something misleading:
 
 - **Folder tree, breadcrumbs and folder scope** are hidden. There is no single
   tree the results belong to.
-- **Continue Review is unavailable.** Review checkpoints are keyed by `root_id`,
-  so a library view has no checkpoint to resume. The control *should* state why
-  rather than silently doing nothing, and currently does not: the behaviour is
-  right and the explanation is missing. Tracked in
-  [`../outstanding-work.md`](../outstanding-work.md).
+- **Continue Review is unavailable, and says why.** Review checkpoints are
+  keyed by `root_id`, so a library view has no checkpoint to resume. The review
+  toolbar still shows (reviewing and rating work here), and its resume area
+  reads "No resume point in a library view — resume points belong to a folder"
+  with nothing to press. Process results is disabled with its own reason: it
+  works on an opened folder. (Before 2026-09-28 the whole toolbar was hidden
+  in a library view, so nothing explained the missing resume point.)
 - **Grouping by folder** groups by the owning root, since relative paths from
   different roots can collide.
 - Review, rating and tagging all continue to work: they are content-keyed and

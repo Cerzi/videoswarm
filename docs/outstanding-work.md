@@ -106,15 +106,12 @@ meaning exactly what it meant before.
 
 ## 3. Continue Review does not explain itself in a library view
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-09-28)
 
-`library-tag-views.md` Section 3 is marked Implemented and claims the control
-"states why rather than silently doing nothing". It does not. There is no
-wiring between `tagCollection` and the review-resume affordance.
-
-Review checkpoints are keyed by `root_id`, so a rootless collection genuinely
-has no checkpoint to resume — the behavior is correct, only the explanation is
-missing. **Correct the Section 3 bullet or implement it; do not leave both.**
+A library view now shows the review toolbar, whose resume area says there is
+no resume point because resume points belong to a folder; Process results is
+disabled with a reason. Previously the toolbar was hidden entirely there.
+`library-tag-views.md` Section 3 describes it.
 
 ## 4. Unverified by a human
 
@@ -134,6 +131,9 @@ feature set.
 - **Requiring a tag before a library search.** The scope control is disabled
   until an include tag is selected. Reasonable on a 24k-clip profile, possibly
   annoying on a small one.
+- **The review toolbar in a library view** (after rc.5). It used to be hidden
+  there; it now shows, with a line explaining there is no resume point. Check
+  it reads as helpful rather than as clutter.
 - **Generation versions and Link** (after rc.5). Driven headless in the real
   app on copies of real clips, not yet used by a person: whether the badge
   earns its place on every card, whether *Best version* is the right name for

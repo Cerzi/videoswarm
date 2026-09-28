@@ -939,6 +939,28 @@ describe("App hook composition", () => {
     expect(screen.queryByLabelText("Review workflow")).toBeNull();
   });
 
+  test("keeps review in a library view and says why there is no resume point", async () => {
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      activeRootPath: null,
+      tagCollection: { tags: ["keeper"], matchMode: "all", loadedAt: 1, truncated: false },
+    }));
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+
+    render(<App />);
+
+    expect(screen.getByLabelText("Review workflow")).toBeVisible();
+    expect(screen.getByText("No resume point in a library view", { selector: "strong" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Find next Unreviewed/ })).toBeNull();
+    const processResults = screen.getByRole("button", { name: "Process results" });
+    expect(processResults).toBeDisabled();
+    expect(processResults).toHaveAttribute(
+      "title",
+      "Open a folder to process review results; a library view spans several."
+    );
+  });
+
   test("opens and closes keyboard shortcut help from the header", async () => {
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
