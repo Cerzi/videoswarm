@@ -796,6 +796,67 @@ describe("App hook composition", () => {
     );
   });
 
+  test("re-opening a library root starts at the top of the grid", async () => {
+    const videos = [
+      { id: "video-a", name: "a.mp4", fingerprint: "fingerprint-a" },
+      { id: "video-b", name: "b.mp4", fingerprint: "fingerprint-b" },
+    ];
+    const handleElectronFolderSelection = vi.fn().mockResolvedValue(undefined);
+    let isLoadingFolder = false;
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", recursive: true },
+      isLoadingFolder,
+      handleElectronFolderSelection,
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    useLibraryCatalogMock.mockImplementation(() => ({
+      pinnedRoots: [{ id: 1, rootPath: "/outputs", label: "outputs" }],
+      currentRoot: null,
+      directories: [],
+      setPinned: setLibraryRootPinnedMock,
+    }));
+    const authorizeRoot = vi.fn().mockResolvedValue({
+      success: true,
+      rootPath: "/outputs",
+    });
+    window.electronAPI = { library: { authorizeRoot } };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+
+    // The initial restore writes scrollTop on a later animation frame; let it
+    // land before scrolling so the reopen is what moves the viewport.
+    const settleFrames = () =>
+      act(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve))
+          )
+      );
+    await settleFrames();
+    const viewport = document.querySelector(".content-region__viewport");
+    viewport.scrollTop = 240;
+
+    fireEvent.click(document.querySelector(".library-root-list__open"));
+    await waitFor(() =>
+      expect(handleElectronFolderSelection).toHaveBeenCalledWith("/outputs")
+    );
+
+    isLoadingFolder = true;
+    act(() => rendered.rerender(<App />));
+    isLoadingFolder = false;
+    act(() => rendered.rerender(<App />));
+
+    await waitFor(() => expect(viewport.scrollTop).toBe(0));
+  });
+
   test("propagates minimized-window suspension through all expensive work", async () => {
     useWindowWorkSuspensionMock.mockReturnValue({
       isSuspended: true,

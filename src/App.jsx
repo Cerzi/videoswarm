@@ -25,6 +25,8 @@ import DataLocationDialog from "./components/DataLocationDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
+import SequencePanel from "./components/SequencePanel";
+import { orderSelectedFingerprints } from "./sorting/selectionOrder";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
 import TransferSelectionDialog from "./components/TransferSelectionDialog";
 import {
@@ -69,6 +71,7 @@ import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
+import { useSequences } from "./app/hooks/useSequences";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
@@ -520,6 +523,11 @@ function App() {
     createSavedView,
     deleteSavedView,
   } = useSavedViews();
+
+  const [isSequencePanelOpen, setIsSequencePanelOpen] = useState(false);
+  const [sequencePlayback, setSequencePlayback] = useState(null);
+  const pendingSequenceOpenRef = useRef(null);
+  const sequences = useSequences({ preferredRootPath: activeRootPath });
 
   const currentDirectory =
     folderLocation.rootPath === activeRootPath
@@ -1192,6 +1200,11 @@ function App() {
   const resolveMetadataContainerRect = useCallback(
     () => contentRegionRef.current?.getBoundingClientRect?.() || null,
     []
+  );
+
+  const selectedFingerprintsInSortOrder = useMemo(
+    () => orderSelectedFingerprints(orderedVideos, selection.selected),
+    [orderedVideos, selection.selected]
   );
 
   const selectedFingerprints = useMemo(() => {
@@ -2233,9 +2246,55 @@ function App() {
     return cancel(planId);
   }, []);
 
+  /**
+   * Append clips to the active sequence, creating one if there is none.
+   *
+   * Auto-naming rather than prompting keeps the context menu a single click.
+   * The name is easy to change in the panel, and a wrong name costs nothing.
+   */
+  const handleAddToSequence = useCallback(
+    async (fingerprints) => {
+      const list = (
+        Array.isArray(fingerprints) ? fingerprints : [fingerprints]
+      ).filter(Boolean);
+      if (!list.length) {
+        notify("These clips are not indexed yet", "warning");
+        return;
+      }
+      setIsSequencePanelOpen(true);
+      try {
+        let sequenceId = sequences.activeSequenceId;
+        if (!sequenceId) {
+          const taken = new Set(
+            sequences.sequences.map((entry) => entry.name.toLowerCase())
+          );
+          let ordinal = sequences.sequences.length + 1;
+          while (taken.has(`sequence ${ordinal}`)) ordinal += 1;
+          const created = await sequences.createSequence(`Sequence ${ordinal}`);
+          sequenceId = created?.id ?? null;
+        }
+        if (!sequenceId) return;
+        await sequences.appendFingerprints(list, sequenceId);
+        notify(
+          list.length === 1
+            ? "Added 1 clip to the sequence"
+            : `Added ${list.length} clips to the sequence`,
+          "success"
+        );
+      } catch (error) {
+        notify(error?.message || "Could not add these clips", "error");
+      }
+    },
+    [notify, sequences]
+  );
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
+      if (actionId === "sequence:add") {
+        handleAddToSequence(contextMetadataFingerprints);
+        return;
+      }
       if (actionId === "metadata:open") {
         const contextId = contextMenu.contextId;
         const useContextTarget =
@@ -2308,6 +2367,7 @@ function App() {
       openMetadataPanel,
       metadataAnchorId,
       contextMetadataFingerprints,
+      handleAddToSequence,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
       reviewModeEnabled,
@@ -2320,11 +2380,28 @@ function App() {
     ]
   );
 
+  const sequencePlaybackVideos = useMemo(
+    () =>
+      (sequences.activeSequence?.entries || [])
+        .map((entry) => entry.video)
+        .filter(Boolean),
+    [sequences.activeSequence]
+  );
+  const isSequenceSession = Boolean(sequencePlayback);
+
   // Fullscreen is a bounded controller over the complete visual order. The
   // modal owns its media element separately from the virtualized grid.
+  //
+  // A sequence session swaps the controller's inputs rather than adding a
+  // second controller: it is one more ordered array with its own owner key, the
+  // same shape a rootless tag collection already takes. Replacing the owner key
+  // is a session boundary, so an open grid session is torn down properly rather
+  // than silently adopting a different collection.
   const fullscreenController = useFullScreenModal({
-    collectionOwnerKey: fullscreenCollectionOwnerKey,
-    orderedVideos,
+    collectionOwnerKey: isSequenceSession
+      ? `sequence:${sequencePlayback.sequenceId}`
+      : fullscreenCollectionOwnerKey,
+    orderedVideos: isSequenceSession ? sequencePlaybackVideos : orderedVideos,
   });
   const fullscreenGenerationVersions = useMemo(
     () => ({
@@ -2999,13 +3076,22 @@ function App() {
         const authorizedRootPath = authorization?.rootPath || rootPath;
         captureFolderViewState();
         const saved = folderViewStateRef.current.getLocation(authorizedRootPath);
+        const savedDirectory = saved?.directory || "";
+        const savedScope = saved?.scope || FolderScope.ALL_DESCENDANTS;
+        // Opening a root from the library or recent list always starts at the
+        // top; only in-root folder navigation restores a scroll offset.
+        folderViewStateRef.current.resetScroll(
+          authorizedRootPath,
+          savedDirectory,
+          savedScope
+        );
         setFolderLocation({
           rootPath: authorizedRootPath,
-          directory: saved?.directory || "",
-          scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
+          directory: savedDirectory,
+          scope: savedScope,
         });
         setExpandedFolderPaths((previous) =>
-          expandFolderAncestors(previous, saved?.directory || "")
+          expandFolderAncestors(previous, savedDirectory)
         );
         restoredFolderViewKeyRef.current = null;
         await handleElectronFolderSelection(authorizedRootPath);
@@ -3247,8 +3333,46 @@ function App() {
     });
   }, []);
 
+  /**
+   * Start a sequence session in the loupe.
+   *
+   * The open is deferred to an effect because the controller for the sequence
+   * order does not exist until the session state has rendered; opening inline
+   * would ask the grid's controller for a clip it does not have.
+   */
+  const handlePlaySequence = useCallback(
+    (entry = null) => {
+      const sequence = sequences.activeSequence;
+      if (!sequence) return;
+      const playable = sequence.entries
+        .map((item) => item.video)
+        .filter(Boolean);
+      if (!playable.length) {
+        notify("This sequence has no playable clips", "warning");
+        return;
+      }
+      if (sequence.missingCount > 0) {
+        notify(
+          `Playing ${playable.length} of ${sequence.entries.length} clips; ${sequence.missingCount} are missing`,
+          "warning"
+        );
+      }
+      pendingSequenceOpenRef.current = entry?.video || playable[0];
+      setSequencePlayback({ sequenceId: sequence.id, name: sequence.name });
+    },
+    [notify, sequences.activeSequence]
+  );
+
+  useEffect(() => {
+    if (!sequencePlayback) return;
+    const target = pendingSequenceOpenRef.current;
+    pendingSequenceOpenRef.current = null;
+    if (target) openFullScreen(target);
+  }, [openFullScreen, sequencePlayback]);
+
   const handleCloseFullScreen = useCallback(() => {
     cancelFullScreenFocus();
+    setSequencePlayback(null);
     const controller = fullScreenControllerRef.current;
     const current = controller?.currentVideo || null;
     const currentIndex = controller?.currentViewIndex ?? -1;
@@ -5196,6 +5320,26 @@ function App() {
                 onDock={activeRootPath ? handleDockMetadataPanel : undefined}
                 />
               ) : null}
+              {isSequencePanelOpen && (
+                <SequencePanel
+                  sequences={sequences.sequences}
+                  activeSequence={sequences.activeSequence}
+                  activeSequenceId={sequences.activeSequenceId}
+                  error={sequences.error}
+                  selectedCount={selection.size}
+                  onSelectSequence={sequences.selectSequence}
+                  onCreateSequence={sequences.createSequence}
+                  onRenameSequence={sequences.renameSequence}
+                  onDeleteSequence={sequences.deleteSequence}
+                  onAddSelection={() =>
+                    handleAddToSequence(selectedFingerprintsInSortOrder)
+                  }
+                  onRemoveEntries={sequences.removeEntries}
+                  onMoveEntry={sequences.moveEntry}
+                  onPlaySequence={handlePlaySequence}
+                  onClose={() => setIsSequencePanelOpen(false)}
+                />
+              )}
             </div>
           )}
 
@@ -5208,9 +5352,14 @@ function App() {
               showFilenames={showFilenames}
               mediaScheduler={mediaScheduler}
               workSuspended={workSuspended}
-              collectionOwnerKey={fullscreenCollectionOwnerKey}
+              collectionOwnerKey={
+                isSequenceSession
+                  ? `sequence:${sequencePlayback.sequenceId}`
+                  : fullscreenCollectionOwnerKey
+              }
               canNavigatePrevious={fullscreenController.hasPrevious}
               canNavigateNext={fullscreenController.hasNext}
+              advanceOnEnd={isSequenceSession}
               positionLabel={fullscreenPositionLabel}
               dialogLabel={fullScreenVideo.name || "Fullscreen review"}
               headerContent={

@@ -485,3 +485,75 @@ describe("preload native-work bridge", () => {
   });
 
 });
+
+describe("preload sequences bridge", () => {
+  it("invokes each sequence channel with a normalized payload", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.list();
+    await api.sequences.create("Act one");
+    await api.sequences.rename(3, "Act two");
+    await api.sequences.remove(3);
+    await api.sequences.snapshot(3, { preferredRootPath: "/library" });
+    await api.sequences.moveEntry(3, 9, 0);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:list");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:create", {
+      name: "Act one",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:rename", {
+      id: 3,
+      name: "Act two",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:delete", {
+      id: 3,
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:snapshot", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:move-entry", {
+      id: 3,
+      entryId: 9,
+      position: 0,
+    });
+  });
+
+  it("passes list arguments through as arrays without collapsing repeats", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    // A story may return to a shot, so a repeated fingerprint is meaningful.
+    await api.sequences.append(1, ["fp-a", "fp-b", "fp-a"]);
+    await api.sequences.append(1, "fp-c");
+    await api.sequences.removeEntries(1, 7);
+    await api.sequences.reorder(1, [2, 1]);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:append", {
+      id: 1,
+      fingerprints: ["fp-a", "fp-b", "fp-a"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:append", {
+      id: 1,
+      fingerprints: ["fp-c"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:remove-entries", {
+      id: 1,
+      entryIds: [7],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:reorder", {
+      id: 1,
+      entryIds: [2, 1],
+    });
+  });
+
+  it("nulls a missing preferred root rather than forwarding undefined", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.snapshot(4);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:snapshot", {
+      id: 4,
+      preferredRootPath: null,
+    });
+  });
+});
