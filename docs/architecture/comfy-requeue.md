@@ -1,10 +1,17 @@
 # ComfyUI Re-queue (Promotion)
 
-Status: **Rejected — not building this in Video Swarm.** A new proposal,
-built on recipes learned from examples rather than per-workflow code, is in
-[`comfy-queue-integration.md`](comfy-queue-integration.md) and awaits the
-user's decisions.
+Status: **Rejected — not building this in Video Swarm.** Superseded by
+[`comfy-queue-integration.md`](comfy-queue-integration.md), built on recipes
+learned from examples rather than per-workflow code, which the user accepted
+on 2026-09-28.
 Last updated: 2026-09-28
+
+> **Amended 2026-09-28 — network stance.** The user decided that Video Swarm
+> may connect to ComfyUI: opt-in, off by default, **loopback addresses only,
+> never the internet**. The "no network capability" reasoning below, and the
+> default-address rule in Section 1 that let a non-loopback address be opted
+> into, are superseded by that decision; see
+> [`comfy-queue-integration.md`](comfy-queue-integration.md), Decisions.
 
 ## Outcome
 

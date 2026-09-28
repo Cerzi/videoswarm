@@ -497,6 +497,13 @@ the column is added later with the current check.
   suite `generationMetadataQuality.test.js`; `npm test -- --run`,
   `npm run test:electron-abi`, zero-warning lint and the Vite build.
 
+### 2026-09-28 — Shared with the recipe learner
+
+- `readComfyGraph` (socket typing, pass-through and primitive resolution
+  without the panel's roles) and `isSavingNode` are exported for
+  `main/comfy-recipe.js`, so a re-render recipe and the Generation panel agree
+  on what a switch or primitive carries. The panel's results are unchanged.
+
 ## References
 
 - Current parser, evidence levels and bounds:
