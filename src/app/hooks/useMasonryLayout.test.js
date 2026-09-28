@@ -297,6 +297,59 @@ describe("useMasonryLayout virtual layout", () => {
     queryAll.mockRestore();
   });
 
+  it("stays at the top while a folder streams in out of sorted order", () => {
+    const videos = makeVideos(600);
+    // The scan's first batch sorts last under Name ↓, so its top card moves
+    // far down once the rest arrives.
+    const firstBatch = videos.slice(0, 50);
+    const rendered = renderLayout({
+      videos: firstBatch,
+      filteredVideos: firstBatch,
+      sortDir: "desc",
+    });
+    expect(rendered.scrollElement.scrollTop).toBe(0);
+
+    act(() => {
+      rendered.rerender({ ...rendered.props, videos, filteredVideos: videos, sortDir: "desc" });
+      flushFrames();
+    });
+
+    expect(rendered.scrollElement.scrollTop).toBe(0);
+    expect(rendered.result.current.orderForRange[0]).toBe("clip-599");
+  });
+
+  it("stays at the top when the sort order changes there", () => {
+    const videos = makeVideos(600);
+    const rendered = renderLayout({ videos, filteredVideos: videos });
+
+    act(() => {
+      rendered.rerender({ ...rendered.props, sortDir: "desc" });
+      flushFrames();
+    });
+
+    expect(rendered.scrollElement.scrollTop).toBe(0);
+  });
+
+  it("keeps a scrolled view on its card while more of the folder streams in", () => {
+    const videos = makeVideos(600);
+    const firstBatch = videos.slice(300);
+    const rendered = renderLayout({ videos: firstBatch, filteredVideos: firstBatch });
+    act(() => {
+      rendered.result.current.scrollToId("clip-400", { align: "start" });
+      flushFrames();
+    });
+    const before = rendered.result.current.getPositionById("clip-400").y - rendered.scrollElement.scrollTop;
+
+    act(() => {
+      rendered.rerender({ ...rendered.props, videos, filteredVideos: videos });
+      flushFrames();
+    });
+
+    const after = rendered.result.current.getPositionById("clip-400").y - rendered.scrollElement.scrollTop;
+    expect(rendered.scrollElement.scrollTop).toBeGreaterThan(0);
+    expect(after).toBeCloseTo(before, 5);
+  });
+
   it("attaches scrolling and observer root when the conditional grid mounts later", () => {
     const videos = makeVideos(500);
     const scrollContainerRef = { current: null };
