@@ -72,6 +72,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
   - `thumb-cache.js`, `drag-icon.js`, `videoDimensions.js`, `fingerprint.js`, `data-location-manager.js`: native-side support modules.
   - `comfy-generation-parser.js`, `comfy-payload.js`: the Generation panel's socket-type reader of embedded ComfyUI graphs, and the bounded payload decoding it uses (see `docs/architecture/generation-type-flow.md`).
   - `generation-key.js`, `container-tags.js`, `generation-key-indexer.js`: graph-free generation-version keys, the in-process MP4/MOV tag reader and the bounded background indexer (see `docs/architecture/generation-versions.md`).
+  - `comfy-recipe.js`, `comfy-graph-json.js`: re-render recipes learned from draft/final example pairs (learn, match, apply; pure, no network) and exact 64-bit graph JSON (see `docs/architecture/comfy-queue-integration.md`).
 - `src/App.jsx`: top-level renderer orchestration and state wiring.
 - `src/components/`: React UI components. `VideoCard/` contains the most sensitive playback/DOM handling.
 - `src/hooks/video-collection/`: progressive rendering, playback orchestration, and resource/memory limits.
