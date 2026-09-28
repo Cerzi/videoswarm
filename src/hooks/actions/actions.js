@@ -5,6 +5,7 @@
  */
 
 import { getOpaqueMediaSource, getWebMediaSource } from "../../utils/mediaSource";
+import { trashName } from '../../platform/fileManagerTerms';
 
 export const ActionIds = {
     OPEN_EXTERNAL: 'open-external',
@@ -13,7 +14,6 @@ export const ActionIds = {
     COPY_RELATIVE_PATH: 'copy-relative-path',
     COPY_LAST_FRAME: 'copy-last-frame',
     SHOW_IN_FOLDER: 'show-in-folder',
-    FILE_PROPERTIES: 'file-properties',
     MOVE_TO_TRASH: 'move-to-trash',
     TRANSFER_FILES: 'transfer-files',
 };
@@ -352,12 +352,6 @@ export const actionRegistry = {
         }
     },
 
-    [ActionIds.FILE_PROPERTIES]: async (videos, { /* electronAPI, */ notify, showProperties }) => {
-        // Delegate a proper modal to UI if you have one
-        if (showProperties) showProperties(videos);
-        else notify(`Properties: ${videos.map(v => v.name).join(', ')}`, 'info');
-    },
-
     [ActionIds.TRANSFER_FILES]: async (videos, { notify, onRequestTransfer }) => {
         if (typeof onRequestTransfer !== 'function') {
           notify('Transfers are unavailable', 'error');
@@ -411,8 +405,8 @@ export const actionRegistry = {
           : (() => {
               const fn = typeof confirm === 'function' ? confirm : window?.confirm;
               const message = candidates.length === 1
-                ? (sampleName ? `Move "${sampleName}" to Recycle Bin?` : 'Move this item to Recycle Bin?')
-                : `Move ${candidates.length} item(s) to Recycle Bin?`;
+                ? (sampleName ? `Move "${sampleName}" to the ${trashName()}?` : `Move this item to the ${trashName()}?`)
+                : `Move ${candidates.length} item(s) to the ${trashName()}?`;
               const confirmed = typeof fn === 'function' ? fn(message) : true;
               postConfirmRecovery?.({ cancelled: !confirmed, lastFocusedSelector: null });
               return { confirmed: !!confirmed, lastFocusedSelector: null };
@@ -493,12 +487,12 @@ export const actionRegistry = {
           const movedCount = moved.size;
           const failedCount = finalFailed.length;
           if (movedCount && !failedCount) {
-            notify(`Moved ${movedCount} item(s) to Recycle Bin`, 'success');
+            notify(`Moved ${movedCount} item(s) to the ${trashName()}`, 'success');
           } else if (movedCount && failedCount) {
             notify(`Moved ${movedCount}, ${failedCount} failed (in use)`, 'warning');
             console.warn('[trash] failed entries:', finalFailed);
           } else {
-            notify('Failed to move items to Recycle Bin', 'error');
+            notify(`Failed to move items to the ${trashName()}`, 'error');
             console.warn('[trash] bulk failure:', result);
           }
 

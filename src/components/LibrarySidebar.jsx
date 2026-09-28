@@ -2,6 +2,7 @@ import React, { memo, useMemo, useState } from "react";
 import { normalizeRelativePath } from "../library/folderModel";
 import { SortAscendingIcon, SortDescendingIcon } from "./UiIcons";
 import "./LibraryNavigation.css";
+import { trashName } from "../platform/fileManagerTerms";
 
 const normalizeExpandedPaths = (paths) =>
   paths instanceof Set ? paths : new Set(paths || []);
@@ -179,7 +180,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
             {removedCount > 0 ? (
               <span
                 className="library-folder-tree__removed-count"
-                title={`${removedCount} indexed video${removedCount === 1 ? " was" : "s were"} moved or sent to Bin from here. Ratings, tags, and review decisions are kept.`}
+                title={`${removedCount} indexed video${removedCount === 1 ? " was" : "s were"} moved or sent to the ${trashName()} from here. Ratings, tags, and review decisions are kept.`}
               >
                 {removedCount.toLocaleString()} removed
               </span>

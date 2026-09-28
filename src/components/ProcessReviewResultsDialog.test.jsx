@@ -68,7 +68,7 @@ describe("ProcessReviewResultsDialog", () => {
         name: /Copy accepted clips; choose a destination first/i,
       })
     ).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Move 1 to Bin" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move 1 to the Trash" }));
 
     await waitFor(() => expect(props.onTrashRejects).toHaveBeenCalledTimes(1));
     expect(props.onTrashRejects).toHaveBeenCalledWith([videos[2]]);
@@ -81,7 +81,7 @@ describe("ProcessReviewResultsDialog", () => {
     });
     const { rerender } = render(<ProcessReviewResultsDialog {...props} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Move 1 to Bin" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move 1 to the Trash" }));
     await waitFor(() =>
       expect(props.onTrashRejects).toHaveBeenCalledTimes(1)
     );
@@ -105,7 +105,7 @@ describe("ProcessReviewResultsDialog", () => {
     });
     expect(bar).toHaveAttribute("aria-valuenow", "40");
     expect(bar).toHaveAttribute("aria-valuemax", "120");
-    expect(screen.getByText(/Moved 40 of 120 files to Bin/)).toBeInTheDocument();
+    expect(screen.getByText(/Moved 40 of 120 files to the Trash/)).toBeInTheDocument();
     expect(screen.getByText(/1 failed/)).toBeInTheDocument();
 
     await act(async () => {
@@ -195,7 +195,7 @@ describe("ProcessReviewResultsDialog", () => {
     render(<ProcessReviewResultsDialog {...props} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Indexing is still in progress.");
-    expect(screen.getByRole("button", { name: "Move 1 to Bin" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move 1 to the Trash" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Choose destination…" })).toBeDisabled();
   });
 
@@ -224,7 +224,7 @@ describe("ProcessReviewResultsDialog", () => {
     );
 
     expect(screen.getByText(/safety limit is 2,000/i)).toBeInTheDocument();
-    const button = screen.getByRole("button", { name: "Move 2,001 to Bin" });
+    const button = screen.getByRole("button", { name: "Move 2,001 to the Trash" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(onTrashRejects).not.toHaveBeenCalled();

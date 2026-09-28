@@ -9,6 +9,7 @@ import {
   useMediaTransfer,
 } from "../hooks/transfer/useMediaTransfer";
 import "./ProcessReviewResultsDialog.css";
+import { trashName } from "../platform/fileManagerTerms";
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -283,7 +284,7 @@ export default function ProcessReviewResultsDialog({
           {summary.nonLocalRejectCount > 0 && (
             <p className="review-results-dialog__notice">
               {summary.nonLocalRejectCount.toLocaleString()} rejected file
-              {summary.nonLocalRejectCount === 1 ? " is" : "s are"} not a local Electron file and cannot be moved to Bin.
+              {summary.nonLocalRejectCount === 1 ? " is" : "s are"} not a local file and cannot be moved to the {trashName()}.
             </p>
           )}
           {actionError && (
@@ -295,7 +296,7 @@ export default function ProcessReviewResultsDialog({
           <div className="review-results-dialog__actions">
             <article className="review-results-action review-results-action--danger">
               <div>
-                <h3>Move rejects to Bin</h3>
+                <h3>Move rejects to the {trashName()}</h3>
                 <p>
                   Process only rejected files in this folder scope. A native confirmation appears
                   before anything is moved.
@@ -308,14 +309,14 @@ export default function ProcessReviewResultsDialog({
               >
                 {pendingAction === "trash"
                   ? "Processing…"
-                  : `Move ${summary.trashableRejectCount.toLocaleString()} to Bin`}
+                  : `Move ${summary.trashableRejectCount.toLocaleString()} to the ${trashName()}`}
               </button>
               {pendingAction === "trash" && trashTotal > 0 && (
                 <div className="review-results-trash-progress">
                   <p aria-live="polite">
                     {`Moved ${trashProcessed.toLocaleString()} of ${trashTotal.toLocaleString()} ${
                       trashTotal === 1 ? "file" : "files"
-                    } to Bin…`}
+                    } to the ${trashName()}…`}
                     {trashFailed > 0
                       ? ` · ${trashFailed.toLocaleString()} failed`
                       : ""}

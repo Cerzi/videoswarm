@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
+import { trashName } from '../../platform/fileManagerTerms';
 
 export default function useTrashIntegration({
   electronAPI,
@@ -71,10 +72,10 @@ export default function useTrashIntegration({
 
     const buildMessage = () => {
       if (count === 1) {
-        if (sampleName) return `Move "${sampleName}" to Recycle Bin?`;
-        return "Move this item to Recycle Bin?";
+        if (sampleName) return `Move "${sampleName}" to the ${trashName()}?`;
+        return `Move this item to the ${trashName()}?`;
       }
-      return `Move ${count} item(s) to Recycle Bin?`;
+      return `Move ${count} item(s) to the ${trashName()}?`;
     };
 
     const fallbackConfirm = () => {

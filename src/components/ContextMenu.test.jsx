@@ -68,9 +68,10 @@ describe('ContextMenu', () => {
 
     expect(screen.getByText('3 items selected')).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Open.*this item/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Show in Explorer.*this item/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Properties.*this item/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Move to Recycle Bin.*3 selected/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Show in File Manager.*this item/i })).toBeInTheDocument();
+    // Properties only ever showed a toast; Open details shows a clip's properties.
+    expect(screen.queryByRole('menuitem', { name: /Properties/i })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /Move to Trash.*3 selected/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Open details/i })).toBeInTheDocument();
 
     openSubmenu(/Copy$/i);
@@ -164,13 +165,13 @@ describe('ContextMenu', () => {
       />
     );
 
-    for (const name of [/^.*Open$/i, /Show in Explorer/i, /Move to Recycle Bin/i]) {
+    for (const name of [/^.*Open$/i, /Show in File Manager/i, /Move to Trash/i]) {
       expect(screen.getByRole('menuitem', { name })).toHaveAttribute(
         'aria-disabled',
         'true'
       );
     }
-    expect(screen.getByRole('menuitem', { name: /Show in Explorer/i })).toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: /Show in File Manager/i })).toHaveAttribute(
       'title',
       'Desktop integration is unavailable'
     );
@@ -200,7 +201,8 @@ describe('ContextMenu', () => {
     );
 
     const rootMenu = screen.getByRole('menu', { name: /Actions for Video a/i });
-    expect(rootMenu).toHaveStyle({ left: '212px', top: '8px' });
+    // Bottom-clamped: 400 - 8 margin - the menu's estimated 352 px.
+    expect(rootMenu).toHaveStyle({ left: '212px', top: '40px' });
 
     const copyMenu = openSubmenu(/Copy$/i);
     expect(copyMenu).toHaveStyle({ left: '8px' });
@@ -270,9 +272,9 @@ describe('ContextMenu', () => {
       side: 'left',
       rect: expect.objectContaining({
         x: 212,
-        y: 8,
+        y: 40,
         left: 212,
-        top: 8,
+        top: 40,
         right: 492,
         width: 280,
       }),
@@ -311,7 +313,7 @@ describe('ContextMenu', () => {
     expect(onPlacementChange).toHaveBeenCalledWith({
       contextId: 'a',
       side: 'right',
-      rect: expect.objectContaining({ left: 20, top: 8, right: 300 }),
+      rect: expect.objectContaining({ left: 20, top: 20, right: 300 }),
     });
   });
 
