@@ -142,10 +142,11 @@ feature set.
 
 ## 5. Smaller known gaps
 
-- **`dateModifiedFormatted` is dead payload.** Generated per record in
-  `main.js` and read by nothing. Its sibling `dateCreatedFormatted` caused a
-  real bug by being parsed back into a `Date`; this one is merely wasted bytes
-  on every scanned record.
+Fixed on 2026-09-28: the dead `dateModifiedFormatted` field is no longer
+built for every scanned record, and lint and Vitest now ignore `.claude/**`,
+so running the gate from the repository root no longer walks into agent
+worktrees' built bundles.
+
 - **The Playwright CSS spec now covers Link but has not run with it.** The
   transfer-affordance spec needs Playwright's own Chromium, which was not
   installed on the machine that added the Link button; the same checks were
@@ -155,12 +156,6 @@ feature set.
   routinely. `test:electron-smoke` — which now includes the transfer-affordance
   CSS checks — has to be run deliberately, so a cascade regression would not be
   caught by the usual gate.
-- **Lint and test globs reach into `.claude/worktrees/`.** Worktrees live
-  inside the repository, so running `npx eslint .` from the root lints every
-  worktree's built `dist-react` bundle and fails with thousands of errors in
-  minified vendor code. Run the gate from inside a worktree, or scope the paths
-  (`npx eslint src main main.js preload.js scripts tests`). Nothing is actually
-  wrong when this happens.
 - **jsdom cannot verify CSS.** It does not implement specificity. Asked about
   the inverted layout toggle it reported the unselected pill as correctly
   unstyled while a real browser painted it solid green. Any assertion about what
