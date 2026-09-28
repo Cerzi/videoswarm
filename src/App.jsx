@@ -686,7 +686,9 @@ function App() {
       (!libraryRoot?.refreshState || libraryRoot.refreshState === "idle") &&
       reviewScopeHasAuthoritativeCoverage
   );
-  const reviewProcessingReason = isRefreshingFolder
+  const reviewProcessingReason = !activeRootPath && tagCollection
+    ? "Open a folder to process review results; a library view spans several."
+    : isRefreshingFolder
     ? "Wait for the indexed folder refresh to finish."
     : isLoadingFolder
       ? "Wait for folder loading to finish."
@@ -4468,6 +4470,20 @@ function App() {
   ]);
 
   const reviewSessionModel = useMemo(() => {
+    // A library view spans several roots, and resume points are saved per
+    // root, so there is nothing to resume here. Say so rather than showing
+    // nothing: reviewing and rating still work.
+    if (!activeRootPath && tagCollection) {
+      return {
+        mode: "unavailable",
+        reason:
+          "Resume points belong to a folder. Open one of this view's folders to save or resume one.",
+        savedAtLabel: "",
+        message: "",
+        candidateName: "",
+        disabled: false,
+      };
+    }
     const checkpoint =
       reviewResume.rootPath === activeRootPath && reviewResume.checkpoint
         ? reviewResume.checkpoint
@@ -4558,6 +4574,7 @@ function App() {
     reviewScopeLabel,
     reviewWorkflow.progress.unreviewed,
     rootDisplayName,
+    tagCollection,
     reviewSessions.checkpoint,
     reviewSessions.hasCheckpoint,
     reviewSessions.saving,
@@ -4668,7 +4685,7 @@ function App() {
             />
           )}
 
-          {activeRootPath && reviewModeEnabled && (
+          {(activeRootPath || tagCollection) && reviewModeEnabled && (
             <ReviewToolbar
               progress={reviewWorkflow.progress}
               selectedCount={selection.size}

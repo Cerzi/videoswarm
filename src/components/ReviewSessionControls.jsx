@@ -10,6 +10,7 @@ const SESSION_MODES = new Set([
   "complete",
   "complete-view",
   "index-required",
+  "unavailable",
 ]);
 
 const modeOf = (session) =>
@@ -31,6 +32,8 @@ const primaryStatusFor = (mode) => {
       return "Subfolder index required";
     case "elsewhere":
       return "Resume point saved elsewhere";
+    case "unavailable":
+      return "No resume point in a library view";
     default:
       return "Ready to review";
   }
@@ -54,7 +57,7 @@ export default function ReviewSessionControls({
 
   const mode = modeOf(session);
   const status = primaryStatusFor(mode);
-  const hasCheckpoint = mode !== "none";
+  const hasCheckpoint = mode !== "none" && mode !== "unavailable";
   const isRestoring = mode === "restoring";
 
   useEffect(() => {
@@ -105,6 +108,7 @@ export default function ReviewSessionControls({
           {mode === "none" ? (
             <span>Marks work now; your first review or rating saves this position.</span>
           ) : null}
+          {mode === "unavailable" && session.reason ? <span>{session.reason}</span> : null}
         </span>
       </div>
 

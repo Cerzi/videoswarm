@@ -165,4 +165,23 @@ describe("ReviewSessionControls", () => {
     }));
     expect(onContinue).toHaveBeenCalledOnce();
   });
+  it("says why a library view has no resume point, with nothing to press", () => {
+    render(
+      <ReviewSessionControls
+        session={{
+          mode: "unavailable",
+          reason: "Resume points belong to a folder. Open one of this view's folders to save or resume one.",
+        }}
+        onStart={vi.fn()}
+        onContinue={vi.fn()}
+        onForget={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("No resume point in a library view", { selector: "strong" })).toBeVisible();
+    expect(
+      screen.getByText("Resume points belong to a folder. Open one of this view's folders to save or resume one.")
+    ).toBeVisible();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
 });
