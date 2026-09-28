@@ -181,9 +181,9 @@ waits for that. Not merged into `main`.
 
 ## 5b. Feature bloat: a UX pass, audited
 
-Status: **Audited** (2026-09-28); awaiting the user's decisions — see the
-audit page, https://claude.ai/artifact/MgNRWMjGDcVKyzJeBStmsu (private to the
-user)
+Status: **Decided** (2026-09-28); the redesign is in progress — see
+[`architecture/ux-redesign.md`](architecture/ux-redesign.md) and the audit
+page, https://claude.ai/artifact/MgNRWMjGDcVKyzJeBStmsu (private to the user)
 
 The audit also found plain bugs, **fixed on 2026-09-28**: the header, review
 bar, fullscreen review rail and docked Details header now wrap instead of
