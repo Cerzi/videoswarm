@@ -54,6 +54,7 @@ import useReviewSessions from "./hooks/review/useReviewSessions";
 
 import { SortKey } from "./sorting/sorting.js";
 import { describeSort, parseSortValue, formatSortValue } from "./sorting/sortOption.js";
+import { showToast } from "./app/toastStack";
 
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
@@ -1304,30 +1305,7 @@ function App() {
 
   // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {
-    const colors = {
-      error: "#ff4444",
-      success: "#4CAF50",
-      warning: "#ff9800",
-      info: "#007acc",
-    };
-    const icons = { error: "❌", success: "✅", warning: "⚠️", info: "ℹ️" };
-    const el = document.createElement("div");
-    el.style.cssText = `
-      position: fixed; top: 80px; right: 20px;
-      background: ${colors[type] || colors.info};
-      color: white; padding: 12px 16px; border-radius: 8px; z-index: 10001;
-      font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
-      animation: slideInFromRight 0.2s ease-out;
-    `;
-    el.setAttribute("role", type === "error" ? "alert" : "status");
-    el.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
-    el.setAttribute("aria-atomic", "true");
-    el.textContent = `${icons[type] || icons.info} ${message}`;
-    document.body.appendChild(el);
-    setTimeout(() => {
-      if (document.body.contains(el)) document.body.removeChild(el);
-    }, 3000);
+    showToast(message, type);
   }, []);
 
   const reviewOwnershipKey = useMemo(

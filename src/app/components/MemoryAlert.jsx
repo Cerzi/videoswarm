@@ -1,11 +1,16 @@
+import React from "react";
+
 function MemoryAlert({ memStatus }) {
   if (!memStatus || !memStatus.isNearLimit) return null;
   return (
     <div
       style={{
+        // Bottom-right, clear of the toast stack, and never in the way of
+        // the controls underneath.
         position: "fixed",
-        top: "80px",
+        bottom: "20px",
         right: "20px",
+        pointerEvents: "none",
         background: "rgba(255, 107, 107, 0.95)",
         color: "white",
         padding: "1rem",
