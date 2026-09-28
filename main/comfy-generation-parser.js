@@ -403,6 +403,23 @@ function createReader({ nodes, types, limits }) {
   return { inputRefs, linkType, passThroughInput, resolve, upstream, inputsWhere, consumes };
 }
 
+// The same socket typing and pass-through rules, without the Generation
+// panel's roles: the re-render recipe learner (main/comfy-recipe.js) reads
+// graphs with this, so both agree on what a switch or primitive carries.
+function readComfyGraph(graph, workflow = null, limits = DEFAULT_COMFY_GENERATION_LIMITS) {
+  const nodes = indexGraph(graph, limits);
+  const types = createTypeMap(isUiWorkflow(workflow) ? workflow : null, nodes);
+  return { nodes, types, reader: createReader({ nodes, types, limits }) };
+}
+
+// A node that saves media: it takes IMAGE, VIDEO or AUDIO and names a file.
+function isSavingNode(node, reader) {
+  return (
+    reader.consumes(node, (type) => type === 'IMAGE' || type === 'VIDEO' || type === 'AUDIO') &&
+    [...OUTPUT_EXACT_NAMES, ...OUTPUT_PREFIX_NAMES].some((name) => typeof node.inputs[name] === 'string')
+  );
+}
+
 // --- Section 3: roles ---------------------------------------------------------
 
 function selectOutput(nodes, reader, fileName, limits) {
@@ -969,10 +986,14 @@ module.exports = {
   DEFAULT_COMFY_GENERATION_LIMITS,
   ComfyGenerationParserError,
   INPUT_NAME_TYPES,
+  OUTPUT_EXACT_NAMES,
+  OUTPUT_PREFIX_NAMES,
   findComfyApiGraph,
   isComfyApiGraph,
   isSamplerStage,
+  isSavingNode,
   parseBoundedJson,
   parseComfyGenerationPayload,
   quoteUnsafeJsonIntegers,
+  readComfyGraph,
 };
