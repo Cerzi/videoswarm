@@ -15,7 +15,7 @@ import MetadataPanel from "./components/MetadataPanel";
 import TopBar from "./components/TopBar";
 import FiltersPopover from "./components/FiltersPopover";
 import LibrarySidebar from "./components/LibrarySidebar";
-import WorkspaceSidebar from "./components/WorkspaceSidebar";
+import WorkspaceSidebar, { buildWorkspacePanels } from "./components/WorkspaceSidebar";
 import DockedMetadataInspector from "./components/DockedMetadataInspector";
 import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
@@ -1334,6 +1334,16 @@ function App() {
       }
     },
     [metadataInspectorMode, metadataSelectionKey, selection.size]
+  );
+
+  // The rail's icons open their panel; the open panel's icon collapses the
+  // sidebar (WorkspaceSidebar calls onCollapse for that).
+  const handleSidebarPanelSelect = useCallback(
+    (panel) => {
+      setLibrarySidebarOpen(true);
+      handleWorkspaceSidebarTabChange(panel);
+    },
+    [handleWorkspaceSidebarTabChange]
   );
 
   const sortStatus = useMemo(
@@ -4668,9 +4678,6 @@ function App() {
             recursive={recursiveMode}
             onRecursiveChange={handleRecursiveChange}
             isRefreshingFolder={isRefreshingFolder}
-            showSidebarToggle={Boolean(activeRootPath)}
-            sidebarOpen={isLibrarySidebarOpen}
-            onSidebarToggle={setLibrarySidebarOpen}
             onFiltersToggle={() => setFiltersOpen((open) => !open)}
             filtersActiveCount={filtersActiveCount}
             onFiltersClear={resetFilters}
@@ -5012,13 +5019,16 @@ function App() {
           ) : (
             <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
-                {activeRootPath && isLibrarySidebarOpen && (
-                  metadataInspectorMode === "docked" ? (
-                    <WorkspaceSidebar
-                      activeTab={workspaceSidebarTab}
-                      onTabChange={handleWorkspaceSidebarTabChange}
-                      selectionCount={selection.size}
-                      libraryProps={{
+                {activeRootPath && (
+                  <WorkspaceSidebar
+                    open={isLibrarySidebarOpen}
+                    activePanel={workspaceSidebarTab}
+                    onSelectPanel={handleSidebarPanelSelect}
+                    onCollapse={() => setLibrarySidebarOpen(false)}
+                    panels={buildWorkspacePanels({
+                      detailsDocked: metadataInspectorMode === "docked",
+                      selectionCount: selection.size,
+                      libraryProps: {
                         tree: folderTree,
                         currentPath: currentDirectory,
                         expandedPaths: expandedFolderPaths,
@@ -5035,52 +5045,31 @@ function App() {
                         onDeleteSavedView: handleDeleteSavedView,
                         disabled: isLoadingFolder,
                         reviewModeEnabled,
-                      }}
-                      detailsContent={
-                        selection.size > 0 ? (
-                          <DockedMetadataInspector
-                            selectionKey={metadataSelectionKey}
-                            selectionCount={selection.size}
-                            selectedVideos={selectedVideos}
-                            availableTags={availableTags}
-                            onAddTag={handleAddTags}
-                            onRemoveTag={handleRemoveTag}
-                            onApplyTagToSelection={handleApplyExistingTag}
-                            onSetRating={reviewWorkflow.applyRating}
-                            onClearRating={() => reviewWorkflow.applyRating(null)}
-                            onSetReviewState={reviewWorkflow.applyReviewState}
-                            reviewModeEnabled={reviewModeEnabled}
-                            generationMetadataState={generationMetadataState}
-                            generationExpanded={metadataGenerationExpanded}
-                            onGenerationExpandedChange={setMetadataGenerationExpanded}
-                            generationVersions={gridGenerationVersions}
-                            onFocusSelection={focusSelection}
-                            onTransferSelection={handleRequestTransfer}
-                            onUndock={handleUndockMetadataPanel}
-                          />
-                        ) : null
-                      }
-                    />
-                  ) : (
-                    <LibrarySidebar
-                      tree={folderTree}
-                      currentPath={currentDirectory}
-                      expandedPaths={expandedFolderPaths}
-                      onToggleExpanded={handleFolderExpandedToggle}
-                      onSelectFolder={handleFolderNavigate}
-                      pinnedRoots={pinnedRoots}
-                      currentRoot={catalogCurrentRoot || libraryRoot}
-                      onOpenRoot={handleOpenLibraryRoot}
-                      onTogglePin={handleToggleLibraryPin}
-                      rootCountStateByPath={rootCountStateByPath}
-                      savedViews={savedViews}
-                      onApplySavedView={handleApplySavedView}
-                      onSaveCurrentView={handleSaveCurrentView}
-                      onDeleteSavedView={handleDeleteSavedView}
-                      disabled={isLoadingFolder}
-                      reviewModeEnabled={reviewModeEnabled}
-                    />
-                  )
+                      },
+                      detailsContent: selection.size > 0 ? (
+                        <DockedMetadataInspector
+                          selectionKey={metadataSelectionKey}
+                          selectionCount={selection.size}
+                          selectedVideos={selectedVideos}
+                          availableTags={availableTags}
+                          onAddTag={handleAddTags}
+                          onRemoveTag={handleRemoveTag}
+                          onApplyTagToSelection={handleApplyExistingTag}
+                          onSetRating={reviewWorkflow.applyRating}
+                          onClearRating={() => reviewWorkflow.applyRating(null)}
+                          onSetReviewState={reviewWorkflow.applyReviewState}
+                          reviewModeEnabled={reviewModeEnabled}
+                          generationMetadataState={generationMetadataState}
+                          generationExpanded={metadataGenerationExpanded}
+                          onGenerationExpandedChange={setMetadataGenerationExpanded}
+                          generationVersions={gridGenerationVersions}
+                          onFocusSelection={focusSelection}
+                          onTransferSelection={handleRequestTransfer}
+                          onUndock={handleUndockMetadataPanel}
+                        />
+                      ) : null,
+                    })}
+                  />
                 )}
 
                 <div className="content-region__gallery" ref={galleryRef}>

@@ -1302,12 +1302,18 @@ describe("App hook composition", () => {
     select("follow-b");
     await waitFor(() => expect(detailsTab()).toHaveAttribute("aria-selected", "true"));
 
-    // A hidden sidebar stays hidden.
+    // A sidebar collapsed to the rail stays collapsed.
     fireEvent.click(libraryTab());
     select(null);
-    act(() => topBarSpy.mock.calls.at(-1)?.[0].onSidebarToggle(false));
+    fireEvent.click(libraryTab());
+    expect(screen.queryByRole("tabpanel")).toBeNull();
     select("follow-a");
-    expect(screen.queryByRole("tab", { name: /Details/ })).toBeNull();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(detailsTab()).toHaveAttribute("aria-selected", "false");
+
+    // Its rail icon brings it back.
+    fireEvent.click(detailsTab());
+    expect(screen.getByRole("tabpanel", { name: /Details/ })).toBeVisible();
   });
 
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
@@ -1353,7 +1359,7 @@ describe("App hook composition", () => {
       metadataInspectorMode: "docked",
     });
     expect(
-      screen.getByRole("complementary", { name: "Library and clip details" })
+      screen.getByRole("complementary", { name: "Sidebar" })
     ).toBeVisible();
     expect(screen.getByRole("tab", { name: /Details/ })).toHaveAttribute(
       "aria-selected",
@@ -1401,9 +1407,9 @@ describe("App hook composition", () => {
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenLastCalledWith({
       metadataInspectorMode: "floating",
     });
-    expect(
-      screen.queryByRole("complementary", { name: "Library and clip details" })
-    ).toBeNull();
+    // Floating Details leaves the rail; the Library stays.
+    expect(screen.queryByRole("tab", { name: /Details/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Library" })).toBeInTheDocument();
     expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
       isOpen: true,
       selectedVideos: [video],

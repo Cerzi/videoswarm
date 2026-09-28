@@ -84,7 +84,7 @@ icons on the sidebar's outer edge, one per feature, each with a hover label
 and an optional badge ("3 rendering"). Clicking one shows that panel at the
 sidebar's full width; clicking the active one collapses the sidebar, so the
 rail also replaces the ☰ toggle. It scales to six or eight features without
-squeezing any of them. **Awaiting the user's answer**; it is the last slice.
+squeezing any of them. **Accepted** by the user (2026-09-28).
 
 ## Slices
 
@@ -141,8 +141,22 @@ squeezing any of them. **Awaiting the user's answer**; it is the last slice.
      - a hidden sidebar is never forced open;
      - loading the saved mode no longer switches to Details, so the
        Library shows at launch.
-   - **5b, D7.** Status: **Unimplemented**. Waiting for the user's answer
-     on the activity rail.
+   - **5b, D7.** Status: **Implemented**, **Verified** (2026-09-28).
+     `WorkspaceSidebar` is now a 44 px rail plus one panel. It is fed by
+     `buildWorkspacePanels`, and a new feature is one more entry there.
+     - The rail holds Library, and Details while it is docked, with a
+       selection-count badge.
+     - Clicking an icon opens its panel; clicking the open one collapses
+       the sidebar to the rail. This replaces the top bar's ☰.
+     - The rail is shown whenever a folder is open, in both Details modes.
+     - Arrow keys move along the rail and Enter opens, so browsing it
+       never opens or collapses anything.
+     - Both panels stay mounted while the sidebar is open.
+     - Below 820 px the panel lies over the grid and the rail stays in the
+       layout.
+     - Found while checking at 800 px: the top bar treats a folder name
+       squeezed under 80 px as overflow, so controls fold into ⋯ rather
+       than the name vanishing.
 
 Each slice lands as its own commit(s) with focused tests, the repository
 gates, and a check in the real app at 1024, 1280 and 1440 px.

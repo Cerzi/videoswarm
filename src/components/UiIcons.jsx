@@ -146,3 +146,22 @@ export function MoveIcon(props) {
     </Icon>
   );
 }
+
+export function LibraryIcon(props) {
+  return (
+    <Icon {...props}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      <path d="M3 11h18" />
+    </Icon>
+  );
+}
+
+export function DetailsIcon(props) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </Icon>
+  );
+}
