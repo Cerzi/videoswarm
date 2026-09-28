@@ -4332,7 +4332,8 @@ const reviewCopyAcceptedCoordinator =
       // first-run fallback.
       const [lastDestination] = getRecentTransferDestinations();
       return dialog.showOpenDialog(win, {
-        title: "Transfer accepted clips",
+        // Shared by Process results and a transfer of any selection.
+        title: "Choose where to transfer the clips",
         buttonLabel: "Choose destination",
         defaultPath: lastDestination || app.getPath("documents"),
         properties: ["openDirectory", "createDirectory"],
