@@ -26,6 +26,7 @@ const {
   normalizeCheckpointView,
 } = require('./review-checkpoint');
 const profileManager = require('./profile-manager');
+const { createComfyQueueStore } = require('./comfy-queue-store');
 const {
   GENERATION_KEY_VERSION,
   isGenerationKey,
@@ -1232,6 +1233,8 @@ function initDatabase(app, profilePath) {
 }
 
 function createMetadataStore(db) {
+  // Re-render recipes, queue and finals share the profile's database.
+  const comfyQueue = createComfyQueueStore(db);
   const columns = new Set(
     db
       .prepare('PRAGMA table_info(files);')
@@ -4799,6 +4802,7 @@ function createMetadataStore(db) {
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,
+    comfyQueue,
   };
 }
 

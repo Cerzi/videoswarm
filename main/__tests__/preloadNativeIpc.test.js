@@ -173,6 +173,56 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("exposes the re-render queue with paths, ids and settings only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.comfyQueue.getConnection();
+    await api.comfyQueue.setConnection({ enabled: "yes", url: "http://127.0.0.1:8188", outputDir: 5, extra: 1 });
+    await api.comfyQueue.testConnection();
+    await api.comfyQueue.testConnection("http://localhost:8188");
+    await api.comfyQueue.recipes.list();
+    await api.comfyQueue.recipes.get(3);
+    await api.comfyQueue.recipes.delete(3);
+    await api.comfyQueue.recipes.learn({ name: "Q", examples: [{ finalPath: "/o/f.mp4", graph: {} }, { finalPath: "/o/g.mp4", draftPath: "/o/d.mp4" }] });
+    await api.comfyQueue.add({ recipeId: 3, clips: [{ fullPath: "/o/d.mp4", prompt: {} }], settings: { s: 1 } });
+    await api.comfyQueue.list();
+    await api.comfyQueue.history();
+    await api.comfyQueue.history(20);
+    await api.comfyQueue.start();
+    await api.comfyQueue.stop();
+    await api.comfyQueue.setOrder("last-added");
+    await api.comfyQueue.retry(4);
+    await api.comfyQueue.renderAgain(4);
+    await api.comfyQueue.remove(4);
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["comfy:connection:get"],
+      ["comfy:connection:set", { enabled: false, url: "http://127.0.0.1:8188", outputDir: null }],
+      ["comfy:connection:test", {}],
+      ["comfy:connection:test", { url: "http://localhost:8188" }],
+      ["comfy:recipes:list"],
+      ["comfy:recipes:get", { id: 3 }],
+      ["comfy:recipes:delete", { id: 3 }],
+      ["comfy:recipes:learn", { name: "Q", examples: [{ finalPath: "/o/f.mp4", draftPath: null }, { finalPath: "/o/g.mp4", draftPath: "/o/d.mp4" }] }],
+      ["comfy:queue:add", { recipeId: 3, clips: [{ fullPath: "/o/d.mp4" }], settings: { s: 1 }, choices: {} }],
+      ["comfy:queue:list"],
+      ["comfy:queue:history", {}],
+      ["comfy:queue:history", { limit: 20 }],
+      ["comfy:queue:start"],
+      ["comfy:queue:stop"],
+      ["comfy:queue:order", { order: "last-added" }],
+      ["comfy:queue:retry", { id: 4 }],
+      ["comfy:queue:render-again", { id: 4 }],
+      ["comfy:queue:remove", { id: 4 }],
+    ]);
+    const callback = vi.fn();
+    const unsubscribe = api.comfyQueue.onChanged(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("comfy-queue:changed");
+    handler({}, { type: "changed", reason: "done" });
+    expect(callback).toHaveBeenCalledWith({ type: "changed", reason: "done" });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith("comfy-queue:changed", handler);
+  });
+
   it("authorizes an indexed library root on demand", async () => {
     const { api, ipcRenderer } = loadPreload();
 
