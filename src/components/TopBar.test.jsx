@@ -149,6 +149,17 @@ describe("TopBar", () => {
     expect(screen.queryByRole("link", { name: /Donate/ })).toBeNull();
   });
 
+  it("offers Preferences in ⋯ once the app provides it", () => {
+    const props = baseProps();
+    const { rerender } = render(<TopBar {...props} />);
+    expect(within(openMenu("More")).queryByRole("menuitem", { name: /Preferences/ })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    const onOpenPreferences = vi.fn();
+    rerender(<TopBar {...props} onOpenPreferences={onOpenPreferences} />);
+    fireEvent.click(within(openMenu("More")).getByRole("menuitem", { name: /Preferences…/ }));
+    expect(onOpenPreferences).toHaveBeenCalled();
+  });
+
   it("moves folded controls into ⋯ instead of dropping them", () => {
     const props = baseProps();
     render(<TopBar {...props} initialFolded={["zoom", "sort", "scope", "subfolders", "siblings"]} />);

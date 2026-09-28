@@ -338,6 +338,12 @@ const APPLICATION_SHORTCUTS = Object.freeze([
     detail: "Uses the native folder picker.",
   }),
   freezeShortcut({
+    id: "open-preferences",
+    keys: ["Ctrl / ⌘", ","],
+    label: "Open Preferences",
+    detail: "Playback, profiles, data location and ComfyUI.",
+  }),
+  freezeShortcut({
     id: "cancel-folder-scan",
     keys: ["Esc"],
     label: "Cancel folder loading",

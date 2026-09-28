@@ -4,8 +4,8 @@ import { FolderScope } from "../library/folderModel";
 import { SortKey } from "../sorting/sorting.js";
 import { ZOOM_LEVEL_STEP, ZOOM_MAX_INDEX } from "../zoom/config.js";
 import { clampZoomIndex, getTileWidthForZoomLevel } from "../zoom/utils.js";
-import { PLAYBACK_MODES, normalizePlaybackMode } from "../playback/playbackPolicy";
-import { MODE_DESCRIPTIONS } from "../playback/playbackModeDescriptions";
+import { normalizePlaybackMode } from "../playback/playbackPolicy";
+import { MODE_DESCRIPTIONS, PLAYBACK_MODE_OPTIONS } from "../playback/playbackModeDescriptions";
 import { supportContent } from "../config/supportContent";
 import "./TopBar.css";
 
@@ -32,13 +32,6 @@ const SCOPE_OPTIONS = Object.freeze([
   { value: FolderScope.ALL_DESCENDANTS, label: "All descendants" },
   { value: FolderScope.CURRENT_FOLDER, label: "Current folder" },
   { value: FolderScope.CURRENT_SUBTREE, label: "Current subtree" },
-]);
-
-const PLAYBACK_OPTIONS = Object.freeze([
-  { value: PLAYBACK_MODES.BALANCED, label: "Balanced" },
-  { value: PLAYBACK_MODES.ADAPTIVE_MOTION, label: "Adaptive Motion (safety capped)" },
-  { value: PLAYBACK_MODES.ALL_MOTION, label: "All Motion (uncapped)" },
-  { value: PLAYBACK_MODES.STATIC_HOVER, label: "Static + Hover" },
 ]);
 
 const siblingLabel = (value) =>
@@ -220,7 +213,7 @@ export default function TopBar({
     },
     { type: "separator", id: "sep-playback" },
     { type: "heading", id: "playback-heading", label: "Playback" },
-    ...PLAYBACK_OPTIONS.map((option) => ({
+    ...PLAYBACK_MODE_OPTIONS.map((option) => ({
       type: "radio",
       id: `playback-${option.value}`,
       label: option.label,

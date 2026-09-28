@@ -109,7 +109,27 @@ squeezing any of them. **Awaiting the user's answer**; it is the last slice.
    zoom folds at 1024, and sort at 900. Nothing is ever offscreen.
    The browser-only folder picker (`<input webkitdirectory>`, shown only
    outside Electron) is dropped, because the app is desktop-only.
-4. **Preferences (D8).** Status: **Unimplemented**
+4. **Preferences (D8).** Status: **Implemented**, **Verified** (2026-09-28).
+   `preferences/PreferencesDialog`, opened from ⋯ › Preferences… or
+   Options › Preferences… (Ctrl+,, a native menu accelerator like Ctrl+O).
+   It has four sections:
+   - **Playback**: the four modes with their explanations, proxies (says
+     when FFmpeg is missing), hover audio and playback details. The same
+     settings as View, which keeps the one-click toggles.
+   - **Profiles**: switch, rename the active profile, create and switch,
+     and delete, which keeps main's native confirmation.
+   - **Data location**: the path in use, and "Change data location…",
+     which opens the existing dialog on top. Escape closes only that
+     dialog.
+   - **ComfyUI**: the opt-in connection, meaning the switch, the address,
+     the output folder with Browse…, a read-only Test connection, and
+     Save, all through the validated `comfy:connection:*` IPC. Browse
+     uses a new `comfy:connection:choose-output-dir`, which grants
+     nothing.
+
+   The re-render engine's own settings will be one more entry in
+   `PREFERENCE_SECTIONS`. The native Profiles and Options › Data Location
+   menus stay.
 5. **Details docked by default (D1), then the activity rail (D7).** Status:
    **Unimplemented**
 

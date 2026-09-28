@@ -184,6 +184,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("folder-selected", handler);
   },
 
+  onOpenPreferences: (callback) => {
+    const handler = () => {
+      callback();
+    };
+    ipcRenderer.on("ui:open-preferences", handler);
+    return () => ipcRenderer.removeListener("ui:open-preferences", handler);
+  },
+
   onOpenAbout: (callback) => {
     const handler = () => {
       callback();
@@ -395,6 +403,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         url: typeof url === "string" ? url : undefined,
         outputDir: typeof outputDir === "string" ? outputDir : null,
       }),
+    chooseOutputDir: async () =>
+      ipcRenderer.invoke("comfy:connection:choose-output-dir"),
     testConnection: async (url) =>
       ipcRenderer.invoke(
         "comfy:connection:test",
