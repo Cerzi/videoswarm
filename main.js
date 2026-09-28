@@ -116,6 +116,7 @@ const {
   readSettingsFileBounded,
 } = require("./main/settings-writer");
 const { normalizeZoomLevel } = require("./main/zoom-settings");
+const { REVIEW_SORT_KEYS } = require("./main/review-view-definition");
 const {
   METADATA_INSPECTOR_MODES,
   normalizeMetadataInspectorMode,
@@ -1711,7 +1712,8 @@ function normaliseLoadedSettings(rawSettings) {
   };
   const hasZoom = Object.prototype.hasOwnProperty.call(source, "zoomLevel") &&
     source.zoomLevel !== null && source.zoomLevel !== undefined;
-  const sortKey = ["name", "created", "random"].includes(source.sortKey)
+  // The same keys smart views accept, so a sort added there is kept here too.
+  const sortKey = REVIEW_SORT_KEYS.has(source.sortKey)
     ? source.sortKey
     : defaultSettings.sortKey;
   const randomSeed = source.randomSeed !== null &&

@@ -53,7 +53,7 @@ import useReviewWorkflow from "./hooks/review/useReviewWorkflow";
 import useReviewSessions from "./hooks/review/useReviewSessions";
 
 import { SortKey } from "./sorting/sorting.js";
-import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
+import { describeSort, parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
@@ -1296,17 +1296,10 @@ function App() {
     selection.size,
   ]);
 
-  const sortStatus = useMemo(() => {
-    const keyLabels = {
-      [SortKey.NAME]: "Name",
-      [SortKey.CREATED]: "Created",
-      [SortKey.RANDOM]: "Random",
-    };
-    const arrow =
-      sortKey === SortKey.RANDOM ? "" : sortDir === "asc" ? "↑" : "↓";
-    const base = `Sorted by ${keyLabels[sortKey]}${arrow ? ` ${arrow}` : ""}`;
-    return groupByFolders ? `${base} • Grouped by folders` : base;
-  }, [sortKey, sortDir, groupByFolders]);
+  const sortStatus = useMemo(
+    () => describeSort(sortKey, sortDir, groupByFolders),
+    [sortKey, sortDir, groupByFolders]
+  );
 
   // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {

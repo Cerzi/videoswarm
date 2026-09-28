@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SortKey } from '../sorting.js';
-import { parseSortValue, formatSortValue } from '../sortOption.js';
+import { describeSort, parseSortValue, formatSortValue } from '../sortOption.js';
 
 describe('sort option helpers', () => {
   const cases = [
@@ -19,5 +19,16 @@ describe('sort option helpers', () => {
     it(`formats ${value}`, () => {
       expect(formatSortValue(key, dir)).toBe(value);
     });
+  });
+});
+
+describe('describeSort', () => {
+  it('names every sort key, so none reads as undefined', () => {
+    for (const key of Object.values(SortKey)) {
+      expect(describeSort(key, 'asc', false)).not.toMatch(/undefined/);
+    }
+    expect(describeSort(SortKey.RESOLUTION, 'desc', false)).toBe('Sorted by Resolution ↓');
+    expect(describeSort(SortKey.RANDOM, 'desc', true)).toBe('Sorted by Random • Grouped by folders');
+    expect(describeSort(SortKey.NAME, 'asc', true)).toBe('Sorted by Name ↑ • Grouped by folders');
   });
 });
