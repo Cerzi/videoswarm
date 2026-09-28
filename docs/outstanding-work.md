@@ -177,6 +177,30 @@ last active 2026-09-01) was moved unchanged out of the main checkout onto
 `src/library/folderViewState.js`, all of which have moved since, so **rebase
 it onto `main` before continuing it.**
 
+## 5b. Feature bloat: a UX pass once re-rendering lands
+
+Status: **Unimplemented** — requested by the user on 2026-09-28, to start
+once the re-render work (1c) is finished
+
+The app has grown a feature at a time (review mode, saved and smart views,
+generation versions, the Generation panel, transfers, and now re-rendering),
+and each added its own entry points. Do one deliberate UX pass over the
+whole app rather than another feature:
+
+- Map how every feature is presented today: menus, toolbar, sidebar tabs,
+  context menus, popovers, hotkeys (`src/hotkeys/shortcutCatalog.js`).
+- Decide which features are core daily work and keep those one step away;
+  move niche ones behind a clear secondary place instead of the main surface.
+- Rework the flow between them for the common paths (open a folder, review,
+  filter, transfer, re-render), not screen by screen.
+- Review the fundamental UI itself (layout, density, typography,
+  consistency between panels) for improvements, keeping it a dense working
+  tool.
+
+Phase 3 of re-rendering (its Queue and Finished tabs, recipe screen and
+badges) should be designed with this pass in mind rather than adding another
+top-level surface first.
+
 ## 6. Local branches that were not pushed
 
 Roughly thirty local branches under `codex/*`, `feature/*` and various
