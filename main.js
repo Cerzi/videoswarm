@@ -292,6 +292,8 @@ const defaultSettings = {
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   hoverAudioEnabled: false,
+  // The status line's playback diagnostics, off unless asked for.
+  playbackDetailsVisible: false,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1759,6 +1761,7 @@ function normaliseLoadedSettings(rawSettings) {
       source.showFilenames === undefined
         ? defaultSettings.showFilenames
         : Boolean(source.showFilenames),
+    playbackDetailsVisible: source.playbackDetailsVisible === true,
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled
