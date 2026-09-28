@@ -219,15 +219,19 @@ describe('ComfyUI generation graph parsing', () => {
       prompt: 'fixture positive prompt',
       seed: '424242424242',
       model: 'fixture-low.safetensors',
-      sampler: 'WanVideoSampler',
+      // WanVideoSampler has no sampler_name input; the class name is not a
+      // sampler and is no longer reported as one.
+      sampler: null,
       sourceImage: 'fixture-input.png',
     });
     expect(result.promptFragments).toEqual([
+      // The positive prompt reaches the text encoder through a primitive, so
+      // it is graph-derived; the negative sits on the encoder itself.
       expect.objectContaining({
         role: 'positive',
         nodeId: '3',
         field: 'value',
-        confidence: 'exact',
+        confidence: 'derived',
       }),
       expect.objectContaining({
         role: 'negative',
@@ -243,7 +247,7 @@ describe('ComfyUI generation graph parsing', () => {
         seed: '12345678901234567890',
         steps: 11,
         cfg: null,
-        sampler: 'WanVideoSampler',
+        sampler: null,
         scheduler: 'fixture-schedule',
         denoise: 0.84,
         startStep: 0,
@@ -316,26 +320,30 @@ describe('ComfyUI generation graph parsing', () => {
     expect(JSON.stringify(result)).not.toContain('fixture-disconnected');
   });
 
-  it('does not guess a Wan prompt from an unregistered runtime string node', () => {
+  it('reads a single value feeding the text encoder as graph-derived, whatever its class', () => {
+    // By socket type a node holding one string and nothing else is a value
+    // holder like PrimitiveStringMultiline. Its text reaches the encoder
+    // unchanged, so it is shown as the prompt with graph-derived evidence -
+    // the shipped allow-list parser withheld it because it did not know the
+    // class.
     const graph = wanVideoWrapperGraph();
     graph[3] = {
       class_type: 'UnknownPromptBuilder',
-      inputs: { value: 'tempting but not proven runtime text' },
+      inputs: { value: 'text held by an unfamiliar node' },
     };
 
     const result = parseComfyGenerationPayload(graph, {
       fileName: 'fixture-output_00001.mp4',
     });
 
-    expect(result.positivePrompt).toBeNull();
-    expect(result.negativePrompt).toBe('fixture negative prompt');
-    expect(result.origin.resolution).toBe('partial');
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: 'UNRESOLVED_DYNAMIC_PROMPT',
-      nodeId: '2',
+    expect(result.positivePrompt).toBe('text held by an unfamiliar node');
+    expect(result.promptFragments[0]).toMatchObject({
       role: 'positive',
-    }));
-    expect(JSON.stringify(result)).not.toContain('tempting but not proven');
+      nodeId: '3',
+      confidence: 'derived',
+      composition: 'routed',
+    });
+    expect(result.negativePrompt).toBe('fixture negative prompt');
   });
 
   it('resolves the core SamplerCustom helper graph', () => {
@@ -406,7 +414,8 @@ describe('ComfyUI generation graph parsing', () => {
       negativePrompt: 'negative',
       seed: '18446744073709551615',
       sampler: 'dpmpp_2m',
-      samplers: ['dpmpp_2m', 'karras'],
+      // Sampler names only; the scheduler is reported per stage.
+      samplers: ['dpmpp_2m'],
     });
   });
 
@@ -434,21 +443,26 @@ describe('ComfyUI generation graph parsing', () => {
 
     expect(result.positivePrompt).toBeNull();
     expect(result.prompt).toBeNull();
+    // Each text is exactly what its encoder used; the encoders' outputs are
+    // then combined, so neither is the prompt on its own.
     expect(result.promptFragments.filter(({ role }) => role === 'positive')).toEqual([
       expect.objectContaining({
         text: 'first positive fragment',
-        composition: 'conditioning-combine',
+        composition: 'combined',
+        confidence: 'exact',
       }),
       expect.objectContaining({
         text: 'second positive fragment',
-        composition: 'conditioning-combine',
+        composition: 'combined',
+        confidence: 'exact',
       }),
     ]);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'PROMPT_COMPOSED' }));
     expect(JSON.stringify(result)).not.toContain('this note must never become a prompt');
     expect(result.origin.resolution).toBe('partial');
   });
 
-  it('does not guess values produced by unknown runtime prompt nodes', () => {
+  it('never presents text from a node that may transform it as the prompt', () => {
     const graph = coreGraph();
     graph[14] = {
       class_type: 'CustomPromptAssembler',
@@ -461,16 +475,20 @@ describe('ComfyUI generation graph parsing', () => {
 
     const result = parseComfyGenerationPayload(graph, { fileName: 'clip_1.mp4' });
 
+    // The assembler holds more than the text, so what it passes on may differ:
+    // the text is a candidate fragment, never the prompt, and the result is
+    // partial.
     expect(result.positivePrompt).toBeNull();
     expect(result.promptFragments).toEqual([
-      expect.objectContaining({ role: 'negative', text: 'blurry, distorted' }),
+      expect.objectContaining({
+        role: 'positive',
+        nodeId: '14',
+        confidence: 'candidate',
+        composition: 'upstream',
+      }),
+      expect.objectContaining({ role: 'negative', text: 'blurry, distorted', confidence: 'exact' }),
     ]);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: 'UNRESOLVED_DYNAMIC_PROMPT',
-      nodeId: '3',
-      role: 'positive',
-    }));
-    expect(JSON.stringify(result)).not.toContain('tempting but not necessarily');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'PROMPT_CANDIDATE' }));
     expect(result.origin.resolution).toBe('partial');
   });
 

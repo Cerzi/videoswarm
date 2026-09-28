@@ -296,13 +296,15 @@ describe("generation metadata coordinator", () => {
     expect(result).toMatchObject({
       found: true,
       sourceKind: "embedded",
-      quality: "exact",
+      // The positive prompt reaches the encoder through a primitive.
+      quality: "derived",
       metadata: {
         positivePrompt: "fixture positive prompt",
         negativePrompt: "fixture negative prompt",
         seed: "424242424242",
         model: "fixture-low.safetensors",
-        sampler: "WanVideoSampler",
+        // WanVideoSampler has no sampler_name; its class is not a sampler name.
+        sampler: null,
         models: ["fixture-low.safetensors", "fixture-high.safetensors"],
         vaes: ["fixture-vae.safetensors"],
         textEncoders: ["fixture-t5.safetensors"],

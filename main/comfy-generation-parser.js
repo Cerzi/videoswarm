@@ -1,106 +1,127 @@
 const path = require('path');
-const { replaceNonFiniteJsonTokens } = require('./json-non-finite');
+const {
+  DEFAULT_COMFY_GENERATION_LIMITS,
+  ComfyGenerationParserError,
+  findComfyApiGraph,
+  isComfyApiGraph,
+  isPlainObject,
+  parseBoundedJson,
+  quoteUnsafeJsonIntegers,
+} = require('./comfy-payload');
 
-const DEFAULT_COMFY_GENERATION_LIMITS = Object.freeze({
-  maxBytes: 2 * 1024 * 1024,
-  maxJsonDepth: 32,
-  maxJsonNodes: 10000,
-  maxUnwrapDepth: 3,
-  maxGraphNodes: 4096,
-  maxGraphEdges: 16384,
-  maxTraversalDepth: 128,
-  maxTraversalVisits: 32768,
-  maxOutputs: 32,
-  maxSamplerStages: 32,
-  maxPromptFragments: 64,
-  maxAssetsPerKind: 64,
-  maxDiagnostics: 64,
-  maxScalarLength: 1024,
-  maxPromptLength: 16384,
-  maxPromptTotalLength: 64 * 1024,
-});
+// The Generation panel's reader. It finds a render's output, sampler stages,
+// checkpoint, LoRAs, prompt, seed and settings by SOCKET TYPE - what a node
+// consumes and produces - instead of by node class, so custom nodes need no
+// adapter. Types come from the embedded UI workflow when there is one, and
+// from ComfyUI's conventional input names when there is not.
+// See docs/architecture/generation-type-flow.md.
 
-const OUTPUT_ADAPTERS = new Map([
-  ['VHS_VideoCombine', {
-    exactNames: ['filename', 'file_name', 'output_filename'],
-    prefixes: ['filename_prefix'],
-  }],
-  ['SaveVideo', {
-    exactNames: ['filename', 'file_name', 'output_filename'],
-    prefixes: ['filename_prefix'],
-  }],
-  ['VideoCombine', {
-    exactNames: ['filename', 'file_name', 'output_filename'],
-    prefixes: ['filename_prefix'],
-  }],
-  ['SaveWEBM', {
-    exactNames: ['filename', 'file_name', 'output_filename'],
-    prefixes: ['filename_prefix'],
-  }],
-  ['SaveAnimatedWEBP', {
-    exactNames: ['filename', 'file_name', 'output_filename'],
-    prefixes: ['filename_prefix'],
-  }],
+const MODEL_EXTENSIONS = new Set(['.safetensors', '.gguf', '.ckpt', '.pt', '.pth', '.bin', '.sft']);
+const MEDIA_EXTENSIONS = new Map([
+  ['.png', 'image'], ['.jpg', 'image'], ['.jpeg', 'image'], ['.webp', 'image'],
+  ['.mp4', 'video'], ['.mov', 'video'], ['.webm', 'video'], ['.mkv', 'video'],
+  ['.wav', 'audio'], ['.mp3', 'audio'], ['.flac', 'audio'],
 ]);
 
-const SAMPLER_TYPES = new Set([
-  'KSampler',
-  'KSamplerAdvanced',
-  'SamplerCustom',
-  'SamplerCustomAdvanced',
-  'WanVideoSampler',
+// Section 1, rule 3: conventional input names, used when the UI workflow does
+// not declare a socket's type.
+const INPUT_NAME_TYPES = new Map([
+  ['model', 'MODEL'],
+  ['clip', 'CLIP'],
+  ['vae', 'VAE'],
+  ['positive', 'CONDITIONING'],
+  ['negative', 'CONDITIONING'],
+  ['conditioning', 'CONDITIONING'],
+  ['text_embeds', 'CONDITIONING'],
+  ['latent_image', 'LATENT'],
+  ['latent', 'LATENT'],
+  ['samples', 'LATENT'],
+  ['guider', 'GUIDER'],
+  ['sigmas', 'SIGMAS'],
+  ['noise', 'NOISE'],
+  ['sampler', 'SAMPLER'],
+  ['image', 'IMAGE'],
+  ['images', 'IMAGE'],
+  ['video', 'VIDEO'],
+  ['seed', 'INT'],
+  ['noise_seed', 'INT'],
+  ['steps', 'INT'],
+  ['start_at_step', 'INT'],
+  ['end_at_step', 'INT'],
+  ['cfg', 'FLOAT'],
+  ['denoise', 'FLOAT'],
 ]);
+// Switch inputs (rgthree `any_01`, `any_02`, ...) carry whatever they are
+// given; ComfyUI declares them `*`.
+const ANY_INPUT = /^any_\d+$/i;
 
-const UNARY_CONDITIONING_INPUT = new Map([
-  ['FluxGuidance', 'conditioning'],
-  ['ConditioningSetArea', 'conditioning'],
-  ['ConditioningSetAreaPercentage', 'conditioning'],
-  ['ConditioningSetAreaStrength', 'conditioning'],
-  ['ConditioningSetMask', 'conditioning'],
-  ['ConditioningZeroOut', 'conditioning'],
-  ['ConditioningSetTimestepRange', 'conditioning'],
+// Prompt text is looked for upstream of a conditioning input along every link
+// except those carrying models, media, sampling machinery or plain numbers.
+// Custom types (a composer's reference set, a conditioning bundle) and untyped
+// links pass, because text reaches samplers through them.
+const NON_PROMPT_TYPES = new Set([
+  'MODEL', 'CLIP', 'VAE', 'LATENT', 'IMAGE', 'VIDEO', 'AUDIO', 'MASK',
+  'NOISE', 'SIGMAS', 'SAMPLER', 'GUIDER', 'INT', 'FLOAT', 'BOOLEAN',
+  'CLIP_VISION', 'CLIP_VISION_OUTPUT', 'CONTROL_NET', 'UPSCALE_MODEL',
 ]);
+const HELPER_TYPES = new Set(['NOISE', 'SIGMAS', 'SAMPLER', 'GUIDER']);
+const MEDIA_TYPES = new Set(['IMAGE', 'VIDEO', 'AUDIO']);
+const MIN_PROMPT_WORDS = 4;
 
-const MODEL_PASSTHROUGH_INPUT = new Map([
-  ['ModelSamplingDiscrete', 'model'],
-  ['ModelSamplingContinuousEDM', 'model'],
-  ['ModelSamplingSD3', 'model'],
-  ['ModelSamplingAuraFlow', 'model'],
-  ['ModelSamplingFlux', 'model'],
-  ['WanVideoSetBlockSwap', 'model'],
-]);
+const OUTPUT_EXACT_NAMES = ['filename', 'file_name', 'output_filename'];
+const OUTPUT_PREFIX_NAMES = ['filename_prefix', 'output_path'];
 
-const DECODE_TYPES = new Set(['VAEDecode', 'VAEDecodeTiled', 'WanVideoDecode']);
+const SETTING_NAMES = {
+  seed: ['seed', 'noise_seed'],
+  steps: ['steps'],
+  cfg: ['cfg'],
+  denoise: ['denoise', 'denoise_strength'],
+  startStep: ['start_at_step', 'start_step'],
+  endStep: ['end_at_step', 'end_step'],
+  sampler: ['sampler_name'],
+  scheduler: ['scheduler'],
+};
 
-const PROMPT_STRING_INPUT = new Map([
-  ['PrimitiveStringMultiline', 'value'],
-]);
+// Wrapper suites name their own model and text-embedding types
+// (WANVIDEOMODEL, WANVIDEOTEXTEMBEDS). They play MODEL and CONDITIONING.
+function isModelType(type) {
+  return type === 'MODEL' || (typeof type === 'string' && /VIDEOMODEL$|^WAN.*MODEL$/.test(type));
+}
 
-const SCALAR_NODE_INPUT = new Map([
-  ['INTConstant', 'value'],
-  ['Int', 'value'],
-  ['Float', 'value'],
-  ['Seed (rgthree)', 'seed'],
-]);
+function isConditioningType(type) {
+  return type === 'CONDITIONING' || (typeof type === 'string' && /TEXT_?EMBEDS$/.test(type));
+}
 
-class ComfyGenerationParserError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = 'ComfyGenerationParserError';
-    this.code = code;
+function extensionOf(value) {
+  const match = /\.[a-z0-9]+$/i.exec(String(value).trim());
+  return match ? match[0].toLowerCase() : '';
+}
+
+function isModelFile(value) {
+  return typeof value === 'string' && MODEL_EXTENSIONS.has(extensionOf(value));
+}
+
+function wordCount(value) {
+  return String(value).trim().split(/\s+/).filter(Boolean).length;
+}
+
+// A JSON array or object held in a string (a composer's file list) is data,
+// not prose - but prose may start with "[Shot 1]", so it must really parse.
+function isJsonContainer(value) {
+  const text = value.trim();
+  if (!/^[[{]/.test(text) || !/[\]}]$/.test(text)) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed !== null && typeof parsed === 'object';
+  } catch {
+    return false;
   }
 }
 
-function isPlainObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 function clampString(value, maxLength) {
-  if (typeof value !== 'string') return null;
-  const result = value.trim();
-  return result ? result.slice(0, maxLength) : null;
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text.slice(0, maxLength) : null;
 }
 
 function naturalNodeCompare(left, right) {
@@ -115,222 +136,49 @@ function naturalNodeCompare(left, right) {
   });
 }
 
-function quoteUnsafeJsonIntegers(source) {
-  let output = '';
-  let index = 0;
-  while (index < source.length) {
-    const current = source[index];
-    if (current === '"') {
-      const start = index;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === '\\') {
-          index += 2;
-          continue;
-        }
-        if (source[index] === '"') {
-          index += 1;
-          break;
-        }
-        index += 1;
-      }
-      output += source.slice(start, index);
-      continue;
-    }
-
-    if (current === '-' || (current >= '0' && current <= '9')) {
-      const start = index;
-      if (source[index] === '-') index += 1;
-      if (source[index] === '0') {
-        index += 1;
-      } else {
-        while (source[index] >= '0' && source[index] <= '9') index += 1;
-      }
-      let isInteger = true;
-      if (source[index] === '.') {
-        isInteger = false;
-        index += 1;
-        while (source[index] >= '0' && source[index] <= '9') index += 1;
-      }
-      if (source[index] === 'e' || source[index] === 'E') {
-        isInteger = false;
-        index += 1;
-        if (source[index] === '+' || source[index] === '-') index += 1;
-        while (source[index] >= '0' && source[index] <= '9') index += 1;
-      }
-      const token = source.slice(start, index);
-      if (isInteger) {
-        try {
-          const numeric = BigInt(token);
-          if (
-            numeric > BigInt(Number.MAX_SAFE_INTEGER) ||
-            numeric < BigInt(Number.MIN_SAFE_INTEGER)
-          ) {
-            output += JSON.stringify(token);
-            continue;
-          }
-        } catch {
-          // JSON.parse below provides the authoritative syntax error.
-        }
-      }
-      output += token;
-      continue;
-    }
-
-    output += current;
-    index += 1;
-  }
-  return output;
+function normalizeFileName(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return path.win32.basename(path.posix.basename(value.trim()));
 }
 
-function inspectBoundedShape(root, limits) {
-  const stack = [{ value: root, depth: 0 }];
-  const seen = new WeakSet();
-  let visited = 0;
+// --- payload -----------------------------------------------------------
 
-  while (stack.length) {
-    const current = stack.pop();
-    visited += 1;
-    if (visited > limits.maxJsonNodes) {
-      throw new ComfyGenerationParserError(
-        'COMFY_JSON_NODE_LIMIT',
-        `Generation metadata exceeds the ${limits.maxJsonNodes}-value limit`
-      );
-    }
-    if (current.depth > limits.maxJsonDepth) {
-      throw new ComfyGenerationParserError(
-        'COMFY_JSON_DEPTH_LIMIT',
-        `Generation metadata exceeds the maximum depth of ${limits.maxJsonDepth}`
-      );
-    }
-    if (!current.value || typeof current.value !== 'object') continue;
-    if (seen.has(current.value)) {
-      throw new ComfyGenerationParserError(
-        'COMFY_JSON_CYCLE',
-        'Generation metadata contains an object cycle'
-      );
-    }
-    seen.add(current.value);
-
-    const depth = current.depth + 1;
-    const pushChild = (value) => {
-      if (visited + stack.length >= limits.maxJsonNodes) {
-        throw new ComfyGenerationParserError(
-          'COMFY_JSON_NODE_LIMIT',
-          `Generation metadata exceeds the ${limits.maxJsonNodes}-value limit`
-        );
-      }
-      stack.push({ value, depth });
-    };
-    if (Array.isArray(current.value)) {
-      for (let index = 0; index < current.value.length; index += 1) {
-        pushChild(current.value[index]);
-      }
-      continue;
-    }
-    for (const key in current.value) {
-      if (!Object.prototype.hasOwnProperty.call(current.value, key)) continue;
-      pushChild(current.value[key]);
-    }
-  }
+function isUiWorkflow(value) {
+  return isPlainObject(value) && Array.isArray(value.nodes);
 }
 
-function parseBoundedJson(text, limits) {
-  const source = String(text ?? '');
-  if (Buffer.byteLength(source, 'utf8') > limits.maxBytes) {
-    throw new ComfyGenerationParserError(
-      'COMFY_METADATA_TOO_LARGE',
-      `Generation metadata exceeds the ${limits.maxBytes}-byte limit`
-    );
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(quoteUnsafeJsonIntegers(source));
-  } catch (strictError) {
-    // ComfyUI writes Python's NaN/Infinity into API prompts. Non-finite
-    // tokens are replaced before unsafe integers are quoted, because the
-    // integer scanner would otherwise read the sign of -Infinity as a number.
-    try {
-      parsed = JSON.parse(
-        quoteUnsafeJsonIntegers(replaceNonFiniteJsonTokens(source))
-      );
-    } catch {
-      throw new ComfyGenerationParserError(
-        'COMFY_INVALID_JSON',
-        `Generation metadata is not valid JSON: ${
-          strictError?.message || strictError
-        }`
-      );
-    }
-  }
-  inspectBoundedShape(parsed, limits);
-  return parsed;
-}
-
-function isComfyApiGraph(value) {
-  if (!isPlainObject(value)) return false;
-  return Object.keys(value).some((nodeId) => {
-    const node = value[nodeId];
-    return isPlainObject(node) &&
-      typeof node.class_type === 'string' &&
-      isPlainObject(node.inputs);
-  });
-}
-
-function findComfyApiGraph(payload, limits) {
-  const queue = [{ value: payload, depth: 0, metadataKey: null }];
-  const seen = new WeakSet();
-  let topLevelJsonError = null;
-
+// The UI workflow travels beside the API prompt: as a sibling of `prompt` in
+// the probe payload or a VHS envelope, or inside a sidecar's JSON.
+function findUiWorkflow(payload, limits) {
+  const queue = [{ value: payload, depth: 0 }];
   while (queue.length) {
-    const current = queue.shift();
-    let value = current.value;
+    const { value, depth } = queue.shift();
+    let parsed = value;
     if (typeof value === 'string') {
-      if (current.depth >= limits.maxUnwrapDepth) continue;
       try {
-        value = parseBoundedJson(value, limits);
-      } catch (error) {
-        // A non-JSON top-level string is a malformed payload. A plain string
-        // nested inside an otherwise valid generic sidecar (for example
-        // {"prompt":"a cat"}) is simply not an API graph and must be allowed
-        // to fall through to the bounded generic parser.
-        if (current.depth === 0) topLevelJsonError = error;
+        parsed = parseBoundedJson(value, limits);
+      } catch {
         continue;
       }
-      queue.unshift({
-        value,
-        depth: current.depth + 1,
-        metadataKey: current.metadataKey,
-      });
-      continue;
     }
-    if (!isPlainObject(value)) continue;
-    inspectBoundedShape(value, limits);
-    if (isComfyApiGraph(value)) {
-      return { graph: value, metadataKey: current.metadataKey || 'prompt' };
-    }
-    if (seen.has(value) || current.depth >= limits.maxUnwrapDepth) continue;
-    seen.add(value);
-
-    const candidates = [
-      ['prompt', value.prompt],
-      ['api_prompt', value.api_prompt],
-      ['apiWorkflow', value.apiWorkflow],
-      ['workflow', value.workflow],
-      ['prompt', value.metadata?.prompt],
-    ];
-    for (const [metadataKey, candidate] of candidates) {
-      if (candidate === undefined || candidate === null) continue;
-      queue.push({
-        value: candidate,
-        depth: current.depth + 1,
-        metadataKey,
-      });
+    if (!isPlainObject(parsed)) continue;
+    if (isUiWorkflow(parsed)) return parsed;
+    if (depth >= limits.maxUnwrapDepth) continue;
+    for (const key of ['workflow', 'extra_pnginfo', 'comment', 'description']) {
+      if (parsed[key] !== undefined) queue.push({ value: parsed[key], depth: depth + 1 });
     }
   }
-
-  if (typeof payload === 'string' && topLevelJsonError) throw topLevelJsonError;
   return null;
+}
+
+function asRef(value, nodes) {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [nodeId, slot] = value;
+  if ((typeof nodeId !== 'string' && typeof nodeId !== 'number') || !Number.isInteger(slot)) {
+    return null;
+  }
+  const id = String(nodeId);
+  return nodes.has(id) ? { nodeId: id, slot } : null;
 }
 
 function indexGraph(graph, limits) {
@@ -341,994 +189,790 @@ function indexGraph(graph, limits) {
       `ComfyUI graph exceeds the ${limits.maxGraphNodes}-node limit`
     );
   }
-
   const nodes = new Map();
-  entries.forEach(([rawNodeId, rawNode]) => {
-    if (!isPlainObject(rawNode) || !isPlainObject(rawNode.inputs)) return;
-    const classType = clampString(rawNode.class_type, limits.maxScalarLength);
-    if (!classType) return;
-    const nodeId = String(rawNodeId).slice(0, limits.maxScalarLength);
-    nodes.set(nodeId, {
-      id: nodeId,
-      classType,
-      inputs: rawNode.inputs,
-    });
-  });
-
-  let edgeCount = 0;
-  const asRef = (value) => {
-    if (!Array.isArray(value) || value.length < 2) return null;
-    const nodeId = String(value[0]);
-    const slot = Number(value[1]);
-    if (!nodes.has(nodeId) || !Number.isSafeInteger(slot) || slot < 0 || slot > 255) {
-      return null;
+  for (const [id, node] of entries) {
+    if (isPlainObject(node) && typeof node.class_type === 'string' && isPlainObject(node.inputs)) {
+      nodes.set(String(id), { id: String(id), classType: node.class_type, inputs: node.inputs });
     }
-    return { nodeId, slot };
+  }
+  let edges = 0;
+  for (const node of nodes.values()) {
+    for (const value of Object.values(node.inputs)) {
+      if (asRef(value, nodes)) edges += 1;
+    }
+  }
+  if (edges > limits.maxGraphEdges) {
+    throw new ComfyGenerationParserError(
+      'COMFY_GRAPH_EDGE_LIMIT',
+      `ComfyUI graph exceeds the ${limits.maxGraphEdges}-edge limit`
+    );
+  }
+  return nodes;
+}
+
+// --- Section 1: socket types --------------------------------------------------
+
+function createTypeMap(workflow, nodes) {
+  const inputTypes = new Map();
+  const outputTypes = new Map();
+  const outputNames = new Map();
+  const key = (nodeId, part) => `${nodeId}\u0000${part}`;
+  const set = (map, entryKey, type, evidence) => {
+    if (typeof type !== 'string' || !type || map.has(entryKey)) return;
+    map.set(entryKey, { type, evidence });
   };
 
-  nodes.forEach((node) => {
-    Object.keys(node.inputs).forEach((inputName) => {
-      if (!asRef(node.inputs[inputName])) return;
-      edgeCount += 1;
-      if (edgeCount > limits.maxGraphEdges) {
-        throw new ComfyGenerationParserError(
-          'COMFY_GRAPH_EDGE_LIMIT',
-          `ComfyUI graph exceeds the ${limits.maxGraphEdges}-edge limit`
-        );
+  const subgraphs = new Map();
+  for (const subgraph of workflow?.definitions?.subgraphs || []) {
+    if (isPlainObject(subgraph) && typeof subgraph.id === 'string') {
+      subgraphs.set(subgraph.id, subgraph);
+    }
+  }
+
+  // Subgraph inner nodes appear in the API graph as `outer:inner`; nested
+  // subgraphs extend the id. ComfyUI flattens subgraphs when it builds the
+  // API prompt, so only the inner nodes' own sockets need typing.
+  const addNodes = (list, prefix, depth) => {
+    if (!Array.isArray(list) || depth > 8) return;
+    for (const node of list) {
+      if (!isPlainObject(node) || node.id === undefined) continue;
+      const apiId = `${prefix}${node.id}`;
+      for (const input of Array.isArray(node.inputs) ? node.inputs : []) {
+        if (isPlainObject(input)) set(inputTypes, key(apiId, input.name), input.type, 'declared');
       }
+      (Array.isArray(node.outputs) ? node.outputs : []).forEach((output, slot) => {
+        if (!isPlainObject(output)) return;
+        set(outputTypes, key(apiId, slot), output.type, 'declared');
+        if (typeof output.name === 'string' && output.name) {
+          outputNames.set(key(apiId, slot), output.name);
+        }
+      });
+      const inner = subgraphs.get(node.type);
+      if (inner) addNodes(inner.nodes, `${apiId}:`, depth + 1);
+    }
+  };
+  addNodes(workflow?.nodes, '', 0);
+
+  // Rule 3: conventional input names, and each producer's output slot typed
+  // by the input that consumes it.
+  for (const node of nodes.values()) {
+    for (const [name, value] of Object.entries(node.inputs)) {
+      const byName = INPUT_NAME_TYPES.get(name.toLowerCase()) ||
+        (ANY_INPUT.test(name) ? '*' : null) ||
+        (/^conditioning_/i.test(name) ? 'CONDITIONING' : null) ||
+        // `audio_vae`, `video_vae`, `t5_clip`: a qualified VAE or CLIP input.
+        (/_vae$/i.test(name) ? 'VAE' : null) ||
+        (/_clip$/i.test(name) ? 'CLIP' : null);
+      if (byName) set(inputTypes, key(node.id, name), byName, 'inferred');
+      const ref = asRef(value, nodes);
+      const consumed = inputTypes.get(key(node.id, name));
+      if (ref && consumed) set(outputTypes, key(ref.nodeId, ref.slot), consumed.type, 'inferred');
+    }
+  }
+
+  const evidenceRank = { declared: 0, inferred: 1 };
+  return {
+    input: (nodeId, name) => inputTypes.get(key(nodeId, name)) || null,
+    // A link's type is its producer's output, else its consumer's input. A
+    // concrete type beats "*" (a switch's output is "*", the save consuming
+    // it says VIDEO), and declared evidence beats inferred.
+    link(consumerId, name, ref) {
+      const produced = outputTypes.get(key(ref.nodeId, ref.slot));
+      const consumed = inputTypes.get(key(consumerId, name));
+      if (produced && consumed) {
+        if (produced.type === '*' && consumed.type !== '*') return consumed;
+        if (consumed.type === '*' && produced.type !== '*') return produced;
+        if (evidenceRank[consumed.evidence] < evidenceRank[produced.evidence]) return consumed;
+      }
+      return produced || consumed || null;
+    },
+    outputsOf(nodeId) {
+      const found = [];
+      for (let slot = 0; slot < 64; slot += 1) {
+        const entry = outputTypes.get(key(nodeId, slot));
+        if (entry) found.push(entry.type);
+      }
+      return found;
+    },
+    outputName: (nodeId, slot) => outputNames.get(key(nodeId, slot)) || null,
+  };
+}
+
+// --- Section 2: pass-through, and resolving values ------------------------------
+
+function createReader({ nodes, types, limits }) {
+  const inputRefs = (node) =>
+    Object.entries(node.inputs)
+      .map(([name, value]) => ({ name, ref: asRef(value, nodes) }))
+      .filter((entry) => entry.ref);
+
+  const linkType = (node, name, ref) => types.link(node.id, name, ref)?.type || null;
+
+  // A switch or reroute carries its first connected input in name order. A
+  // conditional switch (`on_true` / `on_false` and one selector) carries the
+  // branch its selector resolves to; an unresolvable selector leaves the value
+  // unresolved rather than guessed.
+  const passThroughInput = (node) => {
+    if ('on_true' in node.inputs && 'on_false' in node.inputs) {
+      const selector = Object.keys(node.inputs).find(
+        (name) => name !== 'on_true' && name !== 'on_false'
+      );
+      const chosen = selector ? resolve(node.inputs[selector]) : null;
+      if (!chosen || typeof chosen.value !== 'boolean') return null;
+      const name = chosen.value ? 'on_true' : 'on_false';
+      return { name, ref: asRef(node.inputs[name], nodes) };
+    }
+    const outputs = types.outputsOf(node.id);
+    const refs = inputRefs(node);
+    if (outputs.length > 1 || refs.length === 0) return null;
+    const literals = Object.values(node.inputs).filter(
+      (value) => value !== null && !asRef(value, nodes)
+    );
+    if (literals.length) return null;
+    const outputType = outputs[0] || null;
+    const carried = refs.every(({ name, ref }) => {
+      if (outputType === null) return types.input(node.id, name)?.type === '*';
+      const type = linkType(node, name, ref);
+      return type === outputType || type === '*' || outputType === '*';
     });
-  });
+    if (!carried) return null;
+    return [...refs].sort((a, b) => naturalNodeCompare(a.name, b.name))[0];
+  };
 
-  return { nodes, asRef };
-}
-
-function scalar(value, maxLength) {
-  if (value === null || value === undefined || Array.isArray(value)) return null;
-  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-    return null;
-  }
-  if (typeof value === 'string') return clampString(value, maxLength);
-  return value;
-}
-
-function scalarString(value, maxLength) {
-  const result = scalar(value, maxLength);
-  if (result === null) return null;
-  const text = String(result).trim();
-  return text ? text.slice(0, maxLength) : null;
-}
-
-function normalizeFileName(value) {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  return path.win32.basename(path.posix.basename(value.trim()));
-}
-
-function outputFileMatch(node, adapter, fileName, limits) {
-  if (!fileName) return null;
-  const target = normalizeFileName(fileName);
-  if (!target) return null;
-  const targetStem = target.slice(0, target.length - path.extname(target).length);
-
-  for (const key of adapter.exactNames) {
-    const candidate = normalizeFileName(scalarString(node.inputs[key], limits.maxScalarLength));
-    if (candidate && candidate.toLowerCase() === target.toLowerCase()) {
-      return { score: 3, match: 'exact-filename' };
+  // Follow a value through pass-through nodes and one-literal primitives to a
+  // literal (`{ value, hops }`) or a real producer (`{ node }`). Declared as a
+  // function because pass-through and resolution call each other.
+  function resolve(value, visited = new Set(), hops = 0) {
+    const ref = asRef(value, nodes);
+    if (!ref) {
+      return typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean'
+        ? { value, hops }
+        : null;
     }
-  }
-  for (const key of adapter.prefixes) {
-    const rawPrefix = scalarString(node.inputs[key], limits.maxScalarLength);
-    const prefix = normalizeFileName(rawPrefix);
-    if (!prefix) continue;
-    const prefixStem = prefix.slice(0, prefix.length - path.extname(prefix).length);
-    const normalizedPrefix = prefixStem.toLowerCase();
-    const normalizedTarget = targetStem.toLowerCase();
-    if (
-      normalizedTarget === normalizedPrefix ||
-      normalizedTarget.startsWith(`${normalizedPrefix}_`) ||
-      normalizedTarget.startsWith(`${normalizedPrefix}-`)
-    ) {
-      return { score: 2, match: 'filename-prefix' };
+    if (visited.has(ref.nodeId) || visited.size > limits.maxTraversalDepth) return null;
+    visited.add(ref.nodeId);
+    const node = nodes.get(ref.nodeId);
+    const through = passThroughInput(node);
+    if (through) return resolve(node.inputs[through.name], visited, hops + 1);
+    const scalars = Object.values(node.inputs).filter(
+      (entry) =>
+        typeof entry === 'number' ||
+        typeof entry === 'boolean' ||
+        (typeof entry === 'string' && entry !== '')
+    );
+    if (inputRefs(node).length === 0 && scalars.length === 1) {
+      return { value: scalars[0], hops: hops + 1 };
     }
+    return { node, hops };
   }
-  return null;
+
+  // Upstream nodes by distance, optionally skipping links of excluded types.
+  const upstream = (startId, excluded = null) => {
+    const distance = new Map([[startId, 0]]);
+    const queue = [startId];
+    while (queue.length) {
+      const id = queue.shift();
+      const node = nodes.get(id);
+      for (const { name, ref } of inputRefs(node)) {
+        if (distance.has(ref.nodeId)) continue;
+        if (excluded && excluded.has(linkType(node, name, ref))) continue;
+        const next = distance.get(id) + 1;
+        if (next > limits.maxTraversalDepth) {
+          throw new ComfyGenerationParserError(
+            'COMFY_TRAVERSAL_DEPTH_LIMIT',
+            `ComfyUI traversal exceeds the maximum depth of ${limits.maxTraversalDepth}`
+          );
+        }
+        if (distance.size >= limits.maxTraversalVisits) {
+          throw new ComfyGenerationParserError(
+            'COMFY_TRAVERSAL_LIMIT',
+            `ComfyUI traversal exceeds the ${limits.maxTraversalVisits}-visit limit`
+          );
+        }
+        distance.set(ref.nodeId, next);
+        queue.push(ref.nodeId);
+      }
+    }
+    return distance;
+  };
+
+  const inputsWhere = (node, predicate) =>
+    inputRefs(node).filter(({ name, ref }) => predicate(linkType(node, name, ref), name));
+  const consumes = (node, predicate) => inputsWhere(node, predicate).length > 0;
+
+  return { inputRefs, linkType, passThroughInput, resolve, upstream, inputsWhere, consumes };
 }
 
-function selectOutputNode(nodes, fileName, limits) {
-  const outputs = Array.from(nodes.values())
-    .filter((node) => OUTPUT_ADAPTERS.has(node.classType))
-    .sort((left, right) => naturalNodeCompare(left.id, right.id));
+// --- Section 3: roles ---------------------------------------------------------
+
+function selectOutput(nodes, reader, fileName, limits) {
+  const outputs = [...nodes.values()]
+    .filter((node) =>
+      reader.consumes(node, (type) => type === 'IMAGE' || type === 'VIDEO') &&
+      [...OUTPUT_EXACT_NAMES, ...OUTPUT_PREFIX_NAMES].some((name) => typeof node.inputs[name] === 'string')
+    )
+    .sort((a, b) => naturalNodeCompare(a.id, b.id));
   if (outputs.length > limits.maxOutputs) {
     throw new ComfyGenerationParserError(
       'COMFY_OUTPUT_LIMIT',
       `ComfyUI graph exceeds the ${limits.maxOutputs}-output limit`
     );
   }
-  if (!outputs.length) return { node: null, match: null, ambiguous: false };
+  if (!outputs.length) return { node: null, ambiguous: false };
 
-  const matches = outputs
-    .map((node) => ({
-      node,
-      result: outputFileMatch(
-        node,
-        OUTPUT_ADAPTERS.get(node.classType),
-        fileName,
-        limits
-      ),
-    }))
-    .filter((candidate) => candidate.result);
+  const target = normalizeFileName(fileName);
+  const score = (node) => {
+    if (!target) return null;
+    const targetStem = target.slice(0, target.length - path.extname(target).length).toLowerCase();
+    for (const name of OUTPUT_EXACT_NAMES) {
+      const candidate = normalizeFileName(node.inputs[name]);
+      if (candidate && candidate.toLowerCase() === target.toLowerCase()) {
+        return { score: 3, match: 'exact-filename' };
+      }
+    }
+    for (const name of OUTPUT_PREFIX_NAMES) {
+      const prefix = normalizeFileName(node.inputs[name]);
+      if (!prefix) continue;
+      const stem = prefix.slice(0, prefix.length - path.extname(prefix).length).toLowerCase();
+      if (targetStem === stem || targetStem.startsWith(`${stem}_`) || targetStem.startsWith(`${stem}-`)) {
+        return { score: 2, match: 'filename-prefix' };
+      }
+    }
+    return null;
+  };
+  const matches = outputs.map((node) => ({ node, result: score(node) })).filter((entry) => entry.result);
   if (matches.length) {
-    const bestScore = Math.max(...matches.map((candidate) => candidate.result.score));
-    const best = matches.filter((candidate) => candidate.result.score === bestScore);
-    if (best.length === 1) {
-      return {
-        node: best[0].node,
-        match: best[0].result.match,
-        ambiguous: false,
-      };
-    }
-    return { node: null, match: null, ambiguous: true };
+    const best = Math.max(...matches.map((entry) => entry.result.score));
+    const top = matches.filter((entry) => entry.result.score === best);
+    return top.length === 1
+      ? { node: top[0].node, match: top[0].result.match, ambiguous: false }
+      : { node: null, ambiguous: true };
   }
-  if (outputs.length === 1) {
-    return { node: outputs[0], match: 'only-output', ambiguous: false };
-  }
-  return { node: null, match: null, ambiguous: true };
+  if (outputs.length === 1) return { node: outputs[0], match: 'only-output', ambiguous: false };
+  return { node: null, ambiguous: true };
 }
 
-function collectReachable(outputNode, nodes, asRef, limits) {
-  const distance = new Map([[outputNode.id, 0]]);
-  const stack = [{ nodeId: outputNode.id, depth: 0 }];
-  let visits = 0;
-
-  while (stack.length) {
-    const current = stack.pop();
-    visits += 1;
-    if (visits > limits.maxTraversalVisits) {
-      throw new ComfyGenerationParserError(
-        'COMFY_TRAVERSAL_LIMIT',
-        `ComfyUI traversal exceeds the ${limits.maxTraversalVisits}-visit limit`
-      );
-    }
-    if (current.depth > limits.maxTraversalDepth) {
-      throw new ComfyGenerationParserError(
-        'COMFY_TRAVERSAL_DEPTH_LIMIT',
-        `ComfyUI traversal exceeds the maximum depth of ${limits.maxTraversalDepth}`
-      );
-    }
-    const node = nodes.get(current.nodeId);
-    if (!node) continue;
-    Object.keys(node.inputs).forEach((inputName) => {
-      const ref = asRef(node.inputs[inputName]);
-      if (!ref) return;
-      const nextDistance = current.depth + 1;
-      const previousDistance = distance.get(ref.nodeId);
-      if (previousDistance !== undefined && previousDistance <= nextDistance) return;
-      distance.set(ref.nodeId, nextDistance);
-      stack.push({ nodeId: ref.nodeId, depth: nextDistance });
-    });
-  }
-  return distance;
-}
-
-function createCollector({ nodes, asRef, reachable, limits }) {
-  const diagnostics = [];
-  const diagnosticKeys = new Set();
-  const promptFragments = [];
-  const promptKeys = new Set();
-  let promptLength = 0;
-  const models = [];
-  const vaes = [];
-  const textEncoders = [];
-  const loras = [];
-  const sourceInputs = [];
-  const assetKeys = new Set();
-  const loraByKey = new Map();
-
-  const addDiagnostic = ({ code, message, node, role = null }) => {
-    const key = `${code}:${node?.id || ''}:${role || ''}`;
-    if (diagnosticKeys.has(key) || diagnostics.length >= limits.maxDiagnostics) return;
-    diagnosticKeys.add(key);
-    diagnostics.push({
-      code,
-      message,
-      nodeId: node?.id || null,
-      classType: node?.classType || null,
-      role,
-    });
-  };
-
-  const addAsset = (bucket, kind, name, node, extra = {}) => {
-    const cleanName = scalarString(name, limits.maxScalarLength);
-    if (!cleanName || bucket.length >= limits.maxAssetsPerKind) return;
-    const bucketName = bucket === models
-      ? 'models'
-      : bucket === vaes
-        ? 'vaes'
-        : 'text-encoders';
-    const key = `${bucketName}:${kind}:${node?.id || ''}:${cleanName}`;
-    if (assetKeys.has(key)) return;
-    assetKeys.add(key);
-    bucket.push({ name: cleanName, kind, nodeId: node?.id || null, ...extra });
-  };
-
-  const addLora = ({
-    name,
-    node,
-    strengthModel = null,
-    strengthClip = null,
-    appliedTo = [],
-  }) => {
-    const cleanName = scalarString(name, limits.maxScalarLength);
-    if (!cleanName) return null;
-    const key = `${node?.id || ''}:${cleanName}`;
-    let lora = loraByKey.get(key);
-    if (!lora) {
-      if (loras.length >= limits.maxAssetsPerKind) return null;
-      lora = {
-        name: cleanName,
-        nodeId: node?.id || null,
-        strengthModel,
-        strengthClip,
-        appliedTo: [],
-      };
-      loraByKey.set(key, lora);
-      loras.push(lora);
-    }
-    appliedTo.forEach((semantic) => {
-      if (semantic && !lora.appliedTo.includes(semantic)) lora.appliedTo.push(semantic);
-    });
-    return lora;
-  };
-
-  const addPrompt = ({
-    role,
-    text,
-    node,
-    field,
-    composition,
-    confidence = 'exact',
-    truncated = false,
-  }) => {
-    const cleanText = scalarString(text, limits.maxPromptLength);
-    if (!cleanText || promptFragments.length >= limits.maxPromptFragments) return;
-    if (truncated || (typeof text === 'string' && text.trim().length > cleanText.length)) {
-      addDiagnostic({
-        code: 'PROMPT_FRAGMENT_TRUNCATED',
-        message: 'Prompt text was shortened to the configured display and cache limit',
-        node,
-        role,
-      });
-    }
-    if (promptLength + cleanText.length > limits.maxPromptTotalLength) {
-      addDiagnostic({
-        code: 'PROMPT_TOTAL_LIMIT',
-        message: 'Additional prompt text was omitted because the prompt budget was reached',
-        node,
-        role,
-      });
-      return;
-    }
-    const key = `${role}:${node.id}:${field}:${cleanText}`;
-    if (promptKeys.has(key)) return;
-    promptKeys.add(key);
-    promptLength += cleanText.length;
-    promptFragments.push({
-      role,
-      text: cleanText,
-      nodeId: node.id,
-      classType: node.classType,
-      field,
-      composition,
-      confidence,
-    });
-  };
-
-  const traceWanLoras = (ref, visited = new Set(), depth = 0) => {
-    if (!ref || depth > limits.maxTraversalDepth) return;
-    const visitKey = `${ref.nodeId}:${ref.slot}`;
-    if (visited.has(visitKey)) return;
-    visited.add(visitKey);
-    const node = nodes.get(ref.nodeId);
-    if (!node) return;
-
-    if (node.classType === 'WanVideoLoraSelect') {
-      traceWanLoras(asRef(node.inputs.prev_lora), visited, depth + 1);
-      const strength = scalar(node.inputs.strength, limits.maxScalarLength);
-      if (strength === null || Number(strength) !== 0) {
-        addLora({
-          name: node.inputs.lora,
-          node,
-          strengthModel: strength,
-          appliedTo: ['model'],
-        });
-      }
-      return;
-    }
-
-    if (node.classType === 'WanVideoLoraSelectMulti') {
-      traceWanLoras(asRef(node.inputs.prev_lora), visited, depth + 1);
-      Object.keys(node.inputs)
-        .map((key) => /^lora_(\d+)$/u.exec(key))
-        .filter(Boolean)
-        .sort((left, right) => Number(left[1]) - Number(right[1]))
-        .forEach((match) => {
-          const index = match[1];
-          const strength = scalar(
-            node.inputs[`strength_${index}`],
-            limits.maxScalarLength
-          );
-          if (strength !== null && Number(strength) === 0) return;
-          addLora({
-            name: node.inputs[`lora_${index}`],
-            node,
-            strengthModel: strength,
-            appliedTo: ['model'],
-          });
-        });
-      return;
-    }
-
-    addDiagnostic({
-      code: 'UNRESOLVED_LORA_NODE',
-      message: `Could not resolve WanVideo LoRA source through ${node.classType}`,
-      node,
-      role: 'model',
-    });
-  };
-
-  const traceAsset = (ref, semantic, visited = new Set(), depth = 0) => {
-    if (!ref || depth > limits.maxTraversalDepth) return;
-    const visitKey = `${semantic}:${ref.nodeId}:${ref.slot}`;
-    if (visited.has(visitKey)) return;
-    visited.add(visitKey);
-    const node = nodes.get(ref.nodeId);
-    if (!node) return;
-
-    if (node.classType === 'LoraLoader' || node.classType === 'LoraLoaderModelOnly') {
-      const upstreamKey = semantic === 'clip' ? 'clip' : 'model';
-      const upstream = asRef(node.inputs[upstreamKey]);
-      if (upstream) traceAsset(upstream, semantic, visited, depth + 1);
-      addLora({
-        name: node.inputs.lora_name,
-        node,
-        strengthModel: scalar(node.inputs.strength_model, limits.maxScalarLength),
-        strengthClip: scalar(node.inputs.strength_clip, limits.maxScalarLength),
-        appliedTo: [semantic],
-      });
-      return;
-    }
-
-    if (semantic === 'model' && node.classType === 'WanVideoSetLoRAs') {
-      traceWanLoras(asRef(node.inputs.lora));
-      traceAsset(asRef(node.inputs.model), semantic, visited, depth + 1);
-      return;
-    }
-
-    if (semantic === 'model' && node.classType === 'WanVideoModelLoader') {
-      addAsset(models, 'diffusion-model', node.inputs.model, node);
-      traceWanLoras(asRef(node.inputs.lora));
-      return;
-    }
-
-    if (node.classType === 'CheckpointLoaderSimple' || node.classType === 'CheckpointLoader') {
-      const checkpoint = node.inputs.ckpt_name ?? node.inputs.checkpoint_name;
-      if (semantic === 'model') {
-        addAsset(models, 'checkpoint', checkpoint, node);
-      } else if (semantic === 'vae') {
-        addAsset(vaes, 'bundled-checkpoint', checkpoint, node);
-      } else if (semantic === 'clip') {
-        addAsset(textEncoders, 'bundled-checkpoint', checkpoint, node);
-      }
-      return;
-    }
-
-    if (semantic === 'model' && (
-      node.classType === 'UNETLoader' ||
-      node.classType === 'LoadDiffusionModel'
-    )) {
-      addAsset(
-        models,
-        'diffusion-model',
-        node.inputs.unet_name ?? node.inputs.model_name,
-        node
-      );
-      return;
-    }
-    if (semantic === 'vae' && node.classType === 'VAELoader') {
-      addAsset(vaes, 'vae', node.inputs.vae_name, node);
-      return;
-    }
-    if (semantic === 'vae' && node.classType === 'WanVideoVAELoader') {
-      addAsset(vaes, 'vae', node.inputs.model_name, node);
-      return;
-    }
-    if (semantic === 'clip' && [
-      'CLIPLoader',
-      'DualCLIPLoader',
-      'TripleCLIPLoader',
-      'QuadrupleCLIPLoader',
-    ].includes(node.classType)) {
-      ['clip_name', 'clip_name1', 'clip_name2', 'clip_name3', 'clip_name4']
-        .forEach((key) => addAsset(textEncoders, 'text-encoder', node.inputs[key], node));
-      return;
-    }
-    if (semantic === 'clip' && node.classType === 'LoadWanVideoT5TextEncoder') {
-      addAsset(textEncoders, 'text-encoder', node.inputs.model_name, node);
-      return;
-    }
-
-    const passthroughKey = semantic === 'model'
-      ? MODEL_PASSTHROUGH_INPUT.get(node.classType)
-      : null;
-    if (passthroughKey) {
-      traceAsset(asRef(node.inputs[passthroughKey]), semantic, visited, depth + 1);
-      return;
-    }
-
-    const conventionalInput = asRef(node.inputs[semantic]);
-    if (conventionalInput) {
-      addDiagnostic({
-        code: 'UNKNOWN_ASSET_TRANSFORM',
-        message: `Traced through unrecognized ${semantic} node ${node.classType}`,
-        node,
-        role: semantic,
-      });
-      traceAsset(conventionalInput, semantic, visited, depth + 1);
-      return;
-    }
-
-    addDiagnostic({
-      code: 'UNRESOLVED_ASSET_NODE',
-      message: `Could not resolve ${semantic} source through ${node.classType}`,
-      node,
-      role: semantic,
-    });
-  };
-
-  const resolvePromptString = (
-    value,
-    provenance,
-    state = {
-      path: new Set(),
-      memo: new Map(),
-      visits: 0,
-    },
-    depth = 0
-  ) => {
-    if (typeof value === 'string') {
-      return {
-        text: value,
-        truncated: value.trim().length > limits.maxPromptLength,
-        ...provenance,
-      };
-    }
-    const ref = asRef(value);
-    if (!ref || depth > limits.maxTraversalDepth) return null;
-    const visitKey = `${ref.nodeId}:${ref.slot}`;
-    if (state.path.has(visitKey)) return null;
-    if (state.memo.has(visitKey)) return state.memo.get(visitKey);
-    state.visits += 1;
-    if (state.visits > limits.maxTraversalVisits) return null;
-    const node = nodes.get(ref.nodeId);
-    if (!node) return null;
-    state.path.add(visitKey);
-
-    let result = null;
-    try {
-      const promptInput = PROMPT_STRING_INPUT.get(node.classType);
-      if (promptInput) {
-        result = resolvePromptString(
-          node.inputs[promptInput],
-          {
-            node,
-            field: promptInput,
-            composition: 'string-reference',
-            confidence: 'exact',
-          },
-          state,
-          depth + 1
-        );
-      }
-    } finally {
-      state.path.delete(visitKey);
-    }
-
-    state.memo.set(visitKey, result);
-    return result;
-  };
-
-  const collectPromptInput = ({ value, role, node, field, composition }) => {
-    const resolved = resolvePromptString(value, {
-      node,
-      field,
-      composition,
-      confidence: 'exact',
-    });
-    if (resolved) {
-      addPrompt({ role, ...resolved });
-      return;
-    }
-    if (!asRef(value)) return;
-    addDiagnostic({
-      code: 'UNRESOLVED_DYNAMIC_PROMPT',
-      message: `${field} is produced by a runtime node without a registered adapter`,
-      node,
-      role,
-    });
-  };
-
-  const resolveConditioning = (
-    ref,
-    role,
-    composition = 'direct',
-    visited = new Set(),
-    depth = 0
-  ) => {
-    if (!ref) return;
-    if (depth > limits.maxTraversalDepth) {
-      addDiagnostic({
-        code: 'CONDITIONING_DEPTH_LIMIT',
-        message: 'Conditioning traversal exceeded its depth limit',
-        node: nodes.get(ref.nodeId),
-        role,
-      });
-      return;
-    }
-    const visitKey = `${role}:${ref.nodeId}:${ref.slot}`;
-    if (visited.has(visitKey)) return;
-    visited.add(visitKey);
-    const node = nodes.get(ref.nodeId);
-    if (!node) return;
-
-    if (node.classType === 'CLIPTextEncode') {
-      collectPromptInput({
-        value: node.inputs.text,
-        role,
-        node,
-        field: 'text',
-        composition,
-      });
-      traceAsset(asRef(node.inputs.clip), 'clip');
-      return;
-    }
-
-    if (node.classType === 'CLIPTextEncodeSDXL') {
-      ['text_g', 'text_l'].forEach((field) => {
-        collectPromptInput({
-          value: node.inputs[field],
-          role,
-          node,
-          field,
-          composition,
-        });
-      });
-      traceAsset(asRef(node.inputs.clip), 'clip');
-      return;
-    }
-
-    if (node.classType === 'WanVideoTextEncode') {
-      const field = role === 'negative' ? 'negative_prompt' : 'positive_prompt';
-      collectPromptInput({
-        value: node.inputs[field],
-        role,
-        node,
-        field,
-        composition,
-      });
-      traceAsset(asRef(node.inputs.t5), 'clip');
-      return;
-    }
-
-    if (node.classType === 'ConditioningCombine') {
-      ['conditioning_1', 'conditioning_2'].forEach((key) => {
-        resolveConditioning(
-          asRef(node.inputs[key]),
-          role,
-          'conditioning-combine',
-          visited,
-          depth + 1
-        );
-      });
-      return;
-    }
-    if (node.classType === 'ConditioningConcat') {
-      ['conditioning_to', 'conditioning_from', 'conditioning_1', 'conditioning_2']
-        .forEach((key) => {
-          resolveConditioning(
-            asRef(node.inputs[key]),
-            role,
-            'conditioning-concat',
-            visited,
-            depth + 1
-          );
-        });
-      return;
-    }
-
-    const unaryInput = UNARY_CONDITIONING_INPUT.get(node.classType);
-    if (unaryInput) {
-      resolveConditioning(
-        asRef(node.inputs[unaryInput]),
-        role,
-        composition,
-        visited,
-        depth + 1
-      );
-      return;
-    }
-
-    if (node.classType === 'ControlNetApplyAdvanced') {
-      const inputName = ref.slot === 1 ? 'negative' : 'positive';
-      resolveConditioning(
-        asRef(node.inputs[inputName]),
-        role,
-        composition,
-        visited,
-        depth + 1
-      );
-      return;
-    }
-    if (node.classType === 'LTXVConditioning') {
-      const inputName = ref.slot === 1 ? 'negative' : 'positive';
-      resolveConditioning(
-        asRef(node.inputs[inputName]),
-        role,
-        composition,
-        visited,
-        depth + 1
-      );
-      return;
-    }
-
-    addDiagnostic({
-      code: 'UNRESOLVED_CONDITIONING_NODE',
-      message: `Conditioning passes through unsupported node ${node.classType}`,
-      node,
-      role,
-    });
-  };
-
-  const collectSources = () => {
-    Array.from(reachable.keys())
-      .sort(naturalNodeCompare)
-      .forEach((nodeId) => {
-        const node = nodes.get(nodeId);
-        if (!node) return;
-        let kind = null;
-        let value = null;
-        if (node.classType === 'LoadImage') {
-          kind = 'image';
-          value = node.inputs.image;
-        } else if ([
-          'LoadVideo',
-          'VHS_LoadVideo',
-          'VHS_LoadVideoPath',
-        ].includes(node.classType)) {
-          kind = 'video';
-          value = node.inputs.video ?? node.inputs.path ?? node.inputs.filename;
-        }
-        const name = scalarString(value, limits.maxScalarLength);
-        if (!kind || !name || sourceInputs.length >= limits.maxAssetsPerKind) return;
-        sourceInputs.push({ name, kind, nodeId: node.id, classType: node.classType });
-      });
-  };
-
-  return {
-    diagnostics,
-    promptFragments,
-    models,
-    vaes,
-    textEncoders,
-    loras,
-    sourceInputs,
-    addDiagnostic,
-    traceAsset,
-    resolveConditioning,
-    collectSources,
-  };
-}
-
-function firstScalar(inputs, keys, maxLength) {
-  for (const key of keys) {
-    const value = scalar(inputs[key], maxLength);
-    if (value !== null) return value;
-  }
-  return null;
-}
-
-function resolveKnownScalar(
-  value,
-  { nodes, asRef, limits },
-  visited = new Set(),
-  depth = 0
-) {
-  const direct = scalar(value, limits.maxScalarLength);
-  if (direct !== null) return direct;
-  const ref = asRef(value);
-  if (!ref || depth > limits.maxTraversalDepth) return null;
-  const visitKey = `${ref.nodeId}:${ref.slot}`;
-  if (visited.has(visitKey)) return null;
-  visited.add(visitKey);
-  const node = nodes.get(ref.nodeId);
-  const field = node ? SCALAR_NODE_INPUT.get(node.classType) : null;
-  if (!node || !field) return null;
-  return resolveKnownScalar(
-    node.inputs[field],
-    { nodes, asRef, limits },
-    visited,
-    depth + 1
+// A sampler stage outputs a LATENT and consumes a model with conditioning, a
+// guider, or noise with sigmas. A node that only plans windows or composes
+// references (a custom conditioning bundle, no model) is not one.
+function isSamplerStage(node, reader, types) {
+  if (!types.outputsOf(node.id).includes('LATENT')) return false;
+  return (
+    (reader.consumes(node, isModelType) && reader.consumes(node, isConditioningType)) ||
+    reader.consumes(node, (type) => type === 'GUIDER') ||
+    (reader.consumes(node, (type) => type === 'NOISE') &&
+      reader.consumes(node, (type) => type === 'SIGMAS'))
   );
 }
 
-function firstResolvedScalar(inputs, keys, context) {
-  for (const key of keys) {
-    const value = resolveKnownScalar(inputs[key], context);
-    if (value !== null) return value;
-  }
-  return null;
+function modelKind(inputName) {
+  if (/^ckpt/i.test(inputName)) return 'checkpoint';
+  if (/^unet/i.test(inputName)) return 'unet';
+  return 'model';
 }
 
-function parseSamplerStage(node, { nodes, asRef, limits }) {
-  const inputs = node.inputs;
-  const scalarContext = { nodes, asRef, limits };
-  const stage = {
-    nodeId: node.id,
-    classType: node.classType,
-    role: 'contributor',
-    seed: scalarString(
-      firstResolvedScalar(inputs, ['seed', 'noise_seed'], scalarContext),
-      limits.maxScalarLength
-    ),
-    steps: firstResolvedScalar(inputs, ['steps'], scalarContext),
-    cfg: firstResolvedScalar(inputs, ['cfg'], scalarContext),
-    sampler: scalarString(
-      firstScalar(inputs, ['sampler_name'], limits.maxScalarLength),
-      limits.maxScalarLength
-    ),
-    scheduler: scalarString(
-      firstScalar(inputs, ['scheduler'], limits.maxScalarLength),
-      limits.maxScalarLength
-    ),
-    denoise: firstResolvedScalar(inputs, ['denoise', 'denoise_strength'], scalarContext),
-    startStep: firstResolvedScalar(inputs, ['start_at_step', 'start_step'], scalarContext),
-    endStep: firstResolvedScalar(inputs, ['end_at_step', 'end_step'], scalarContext),
-    modelRef: asRef(inputs.model),
-    positiveRef: asRef(inputs.positive),
-    negativeRef: asRef(inputs.negative),
-  };
-
-  if (node.classType === 'WanVideoSampler') {
-    stage.sampler = node.classType;
-    stage.positiveRef ||= asRef(inputs.text_embeds);
-    stage.negativeRef ||= asRef(inputs.text_embeds);
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
+    return null;
   }
-
-  if (node.classType === 'SamplerCustom' || node.classType === 'SamplerCustomAdvanced') {
-    const noiseNode = nodes.get(asRef(inputs.noise)?.nodeId);
-    if (!stage.seed && noiseNode?.classType === 'RandomNoise') {
-      stage.seed = scalarString(noiseNode.inputs.noise_seed, limits.maxScalarLength);
-    }
-
-    const guiderNode = nodes.get(asRef(inputs.guider)?.nodeId);
-    if (guiderNode && ['CFGGuider', 'BasicGuider', 'DualCFGGuider'].includes(
-      guiderNode.classType
-    )) {
-      if (stage.cfg === null) stage.cfg = scalar(guiderNode.inputs.cfg, limits.maxScalarLength);
-      stage.modelRef ||= asRef(guiderNode.inputs.model);
-      stage.positiveRef ||= asRef(guiderNode.inputs.positive);
-      stage.negativeRef ||= asRef(guiderNode.inputs.negative);
-    }
-
-    const samplerNode = nodes.get(asRef(inputs.sampler)?.nodeId);
-    if (!stage.sampler && samplerNode?.classType === 'KSamplerSelect') {
-      stage.sampler = scalarString(
-        samplerNode.inputs.sampler_name,
-        limits.maxScalarLength
-      );
-    }
-
-    const schedulerNode = nodes.get(asRef(inputs.sigmas)?.nodeId);
-    if (schedulerNode?.classType === 'BasicScheduler') {
-      if (!stage.scheduler) {
-        stage.scheduler = scalarString(
-          schedulerNode.inputs.scheduler,
-          limits.maxScalarLength
-        );
-      }
-      if (stage.steps === null) {
-        stage.steps = scalar(schedulerNode.inputs.steps, limits.maxScalarLength);
-      }
-      if (stage.denoise === null) {
-        stage.denoise = scalar(schedulerNode.inputs.denoise, limits.maxScalarLength);
-      }
-      stage.modelRef ||= asRef(schedulerNode.inputs.model);
-    }
-  }
-
-  return stage;
-}
-
-function uniqueStrings(values) {
-  return Array.from(new Set(values.filter(Boolean)));
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function parseComfyGenerationPayload(payload, options = {}) {
   const limits = { ...DEFAULT_COMFY_GENERATION_LIMITS, ...(options.limits || {}) };
   const located = findComfyApiGraph(payload, limits);
   if (!located) return null;
-  const { nodes, asRef } = indexGraph(located.graph, limits);
-  const selected = selectOutputNode(nodes, options.fileName, limits);
+  const nodes = indexGraph(located.graph, limits);
+  const workflow = findUiWorkflow(payload, limits);
+  const types = createTypeMap(workflow, nodes);
+  const reader = createReader({ nodes, types, limits });
+
+  const diagnostics = [];
+  const diagnosticKeys = new Set();
+  const diagnose = (code, message, node = null, role = null) => {
+    const entryKey = `${code}:${node?.id || ''}:${role || ''}`;
+    if (diagnosticKeys.has(entryKey) || diagnostics.length >= limits.maxDiagnostics) return;
+    diagnosticKeys.add(entryKey);
+    diagnostics.push({ code, message, nodeId: node?.id || null, classType: node?.classType || null, role });
+  };
+
   const baseOrigin = isPlainObject(options.origin) ? options.origin : {};
   const origin = {
     kind: clampString(baseOrigin.kind, limits.maxScalarLength) || 'unknown',
     carrier: clampString(baseOrigin.carrier, limits.maxScalarLength) || 'json',
-    metadataKey: clampString(
-      baseOrigin.metadataKey,
-      limits.maxScalarLength
-    ) || located.metadataKey,
+    metadataKey: clampString(baseOrigin.metadataKey, limits.maxScalarLength) || located.metadataKey,
     graphFormat: 'api',
     resolution: 'partial',
+    // Whether socket types came from the embedded UI workflow or were
+    // inferred from input names. Recorded, not used to lower confidence: on
+    // real renders the conventional names proved as reliable.
+    typeEvidence: workflow ? 'declared' : 'inferred',
   };
 
+  const empty = {
+    provider: 'comfyui',
+    origin,
+    output: null,
+    positivePrompt: null,
+    negativePrompt: null,
+    promptFragments: [],
+    samplerStages: [],
+    assets: { models: [], vaes: [], textEncoders: [], loras: [] },
+    sourceInputs: [],
+    diagnostics,
+    prompt: null,
+    seed: null,
+    model: null,
+    models: [],
+    sampler: null,
+    samplers: [],
+    sourceImage: null,
+    sourceImages: [],
+    generationRun: null,
+  };
+
+  const selected = selectOutput(nodes, reader, options.fileName, limits);
   if (!selected.node) {
-    return {
-      provider: 'comfyui',
-      origin: { ...origin, resolution: selected.ambiguous ? 'ambiguous' : 'partial' },
-      output: null,
-      positivePrompt: null,
-      negativePrompt: null,
-      promptFragments: [],
-      samplerStages: [],
-      assets: { models: [], vaes: [], textEncoders: [], loras: [] },
-      sourceInputs: [],
-      diagnostics: [{
-        code: selected.ambiguous ? 'AMBIGUOUS_OUTPUT' : 'OUTPUT_NOT_FOUND',
-        message: selected.ambiguous
-          ? 'Several output nodes could own this file'
-          : 'No supported ComfyUI output node was found',
-        nodeId: null,
-        classType: null,
-        role: null,
-      }],
-      prompt: null,
-      seed: null,
-      model: null,
-      models: [],
-      sampler: null,
-      samplers: [],
-      sourceImage: null,
-      sourceImages: [],
-      generationRun: null,
-    };
+    diagnose(
+      selected.ambiguous ? 'AMBIGUOUS_OUTPUT' : 'OUTPUT_NOT_FOUND',
+      selected.ambiguous
+        ? 'Several output nodes could own this file'
+        : 'No node takes IMAGE or VIDEO and names an output file'
+    );
+    return { ...empty, origin: { ...origin, resolution: selected.ambiguous ? 'ambiguous' : 'partial' } };
   }
 
-  const reachable = collectReachable(selected.node, nodes, asRef, limits);
-  const collector = createCollector({ nodes, asRef, reachable, limits });
-  const samplerNodes = Array.from(reachable.entries())
-    .map(([nodeId, distance]) => ({ node: nodes.get(nodeId), distance }))
-    .filter(({ node }) => node && SAMPLER_TYPES.has(node.classType))
-    .sort((left, right) =>
-      right.distance - left.distance || naturalNodeCompare(left.node.id, right.node.id)
-    );
-
-  if (samplerNodes.length > limits.maxSamplerStages) {
+  const reachable = reader.upstream(selected.node.id);
+  const stageEntries = [...reachable.entries()]
+    .map(([id, distance]) => ({ node: nodes.get(id), distance }))
+    .filter(({ node }) => isSamplerStage(node, reader, types))
+    .sort((a, b) => b.distance - a.distance || naturalNodeCompare(a.node.id, b.node.id));
+  if (stageEntries.length > limits.maxSamplerStages) {
     throw new ComfyGenerationParserError(
       'COMFY_SAMPLER_LIMIT',
       `ComfyUI graph exceeds the ${limits.maxSamplerStages}-sampler limit`
     );
   }
-  const samplerStages = samplerNodes.map(({ node, distance }) => ({
-    ...parseSamplerStage(node, { nodes, asRef, limits }),
-    distanceToOutput: distance,
-  }));
-  const nearestDistance = samplerNodes.length
-    ? Math.min(...samplerNodes.map(({ distance }) => distance))
-    : null;
-  const nearestCount = samplerNodes.filter(({ distance }) => distance === nearestDistance).length;
-  if (nearestCount === 1) {
-    const finalStage = samplerStages.find(
-      (stage) => stage.distanceToOutput === nearestDistance
+
+  // --- assets and LoRAs --------------------------------------------------------
+  const models = [];
+  const vaes = [];
+  const textEncoders = [];
+  const loras = [];
+  const loraByKey = new Map();
+  const assetKeys = new Set();
+
+  const bucketNames = new Map([[models, 'models'], [vaes, 'vaes'], [textEncoders, 'textEncoders']]);
+  const addAsset = (bucket, kind, name, node) => {
+    const clean = clampString(name, limits.maxScalarLength);
+    const assetKey = `${bucketNames.get(bucket)}:${kind}:${node.id}:${clean}`;
+    if (!clean || assetKeys.has(assetKey) || bucket.length >= limits.maxAssetsPerKind) return;
+    assetKeys.add(assetKey);
+    bucket.push({ name: clean, kind, nodeId: node.id });
+  };
+
+  const modelFiles = (node) => Object.entries(node.inputs).filter(([, value]) => isModelFile(value));
+  // A root's model file, else - for a loader whose value carries no
+  // extension - a string under a conventional `*_name` input.
+  const rootFiles = (node) => {
+    const files = modelFiles(node);
+    if (files.length) return files;
+    return Object.entries(node.inputs).filter(
+      ([name, value]) => /_name$/i.test(name) && typeof value === 'string' && value.trim()
     );
-    if (finalStage) finalStage.role = 'final';
-  }
+  };
 
-  if (!samplerStages.length) {
-    collector.addDiagnostic({
-      code: 'SAMPLER_NOT_FOUND',
-      message: 'No supported sampler was reachable from the selected output',
-      node: selected.node,
-    });
-  }
+  const addLora = (name, node, strengthModel, strengthClip, appliedTo) => {
+    const clean = clampString(name, limits.maxScalarLength);
+    if (!clean) return;
+    const loraKey = `${node.id}:${clean}`;
+    let lora = loraByKey.get(loraKey);
+    if (!lora) {
+      if (loras.length >= limits.maxAssetsPerKind) return;
+      lora = { name: clean, nodeId: node.id, strengthModel, strengthClip, appliedTo: [] };
+      loraByKey.set(loraKey, lora);
+      loras.push(lora);
+    }
+    if (!lora.appliedTo.includes(appliedTo)) {
+      lora.appliedTo.push(appliedTo);
+      lora.appliedTo.sort();
+    }
+  };
 
-  [...samplerStages]
-    .sort((left, right) => Number(right.role === 'final') - Number(left.role === 'final'))
-    .forEach((stage) => {
-      collector.resolveConditioning(stage.positiveRef, 'positive');
-      collector.resolveConditioning(stage.negativeRef, 'negative');
-      collector.traceAsset(stage.modelRef, 'model');
-      delete stage.modelRef;
-      delete stage.positiveRef;
-      delete stage.negativeRef;
-    });
+  // LoRAs a node holds itself: a model file under a lora-named input
+  // (`lora_name`, `lora`, `lora_0`) with the strength of the same suffix, or
+  // rgthree Power Lora `{on, lora, strength}` entries. Zero strength or
+  // `on: false` is not used, and is not reported.
+  const collectOwnLoras = (node, appliedTo) => {
+    for (const [name, value] of Object.entries(node.inputs)) {
+      if (isPlainObject(value) && typeof value.lora === 'string' && value.lora) {
+        const strength = numberOrNull(value.strength ?? value.strengthModel);
+        if (value.on === false || strength === 0) continue;
+        addLora(value.lora, node, strength, null, appliedTo);
+        continue;
+      }
+      const match = /lora(.*)$/i.exec(name);
+      if (!match || !isModelFile(value)) continue;
+      const suffix = match[1] === '_name' ? '_model' : match[1];
+      const strengthName = [`strength${suffix}`, 'strength']
+        .find((candidate) => node.inputs[candidate] !== undefined);
+      const strength = strengthName
+        ? numberOrNull(reader.resolve(node.inputs[strengthName])?.value)
+        : null;
+      if (strength === 0) continue;
+      addLora(value, node, strength, numberOrNull(node.inputs.strength_clip), appliedTo);
+    }
+  };
 
-  Array.from(reachable.keys())
-    .sort(naturalNodeCompare)
-    .forEach((nodeId) => {
+  // A LoRA stack attached to a chain node through a lora-named link input
+  // (`lora`, `prev_lora`), collected base-first.
+  const collectLoraStack = (node, appliedTo, visited = new Set()) => {
+    for (const { name, ref } of reader.inputRefs(node)) {
+      if (!/lora/i.test(name) || visited.has(ref.nodeId)) continue;
+      visited.add(ref.nodeId);
+      const selector = nodes.get(ref.nodeId);
+      collectLoraStack(selector, appliedTo, visited);
+      collectOwnLoras(selector, appliedTo);
+    }
+  };
+
+  // Walk a MODEL / CLIP / VAE chain up through pass-through to its root,
+  // visiting each node on the way.
+  const traceChain = (startRef, isChainType, onRoot, onNode) => {
+    const visited = new Set();
+    let ref = startRef;
+    for (let depth = 0; ref && depth <= limits.maxTraversalDepth; depth += 1) {
+      if (visited.has(ref.nodeId)) return;
+      visited.add(ref.nodeId);
+      const node = nodes.get(ref.nodeId);
+      const through = reader.passThroughInput(node);
+      if (through) {
+        ref = through.ref;
+        continue;
+      }
+      onNode?.(node);
+      const next = reader.inputsWhere(node, isChainType)[0];
+      if (!next) {
+        onRoot(node);
+        return;
+      }
+      ref = next.ref;
+    }
+  };
+
+  const modelRoots = new Set();
+  const traceModel = (ref) =>
+    traceChain(
+      ref,
+      isModelType,
+      (root) => {
+        modelRoots.add(root.id);
+        rootFiles(root).forEach(([name, file]) => addAsset(models, modelKind(name), file, root));
+      },
+      (node) => {
+        collectLoraStack(node, 'model');
+        collectOwnLoras(node, 'model');
+      }
+    );
+
+  // --- Section 3: prompt text ----------------------------------------------------
+  const promptFragments = [];
+  const promptKeys = new Set();
+  let promptLength = 0;
+
+  // Nodes whose text can reach a conditioning input. Each is marked
+  // `into-encoder` when its value flows unchanged (through switches only) into
+  // a node that produces conditioning, and `upstream` otherwise. A node that
+  // passes a positive/negative pair through (an output slot named like one of
+  // its inputs) is followed only along the matching input.
+  const producesConditioning = (node) => types.outputsOf(node.id).some(isConditioningType);
+  const promptReach = (startRef) => {
+    const reached = new Map();
+    const queue = [{ nodeId: startRef.nodeId, slot: startRef.slot, state: 'start' }];
+    while (queue.length && reached.size < limits.maxTraversalVisits) {
+      const { nodeId, slot, state } = queue.shift();
       const node = nodes.get(nodeId);
-      if (!node || !DECODE_TYPES.has(node.classType)) return;
-      collector.traceAsset(asRef(node.inputs.vae), 'vae');
+      const slotName = types.outputName(nodeId, slot);
+      const previous = reached.get(nodeId);
+      const firstVisit = previous === undefined;
+      if (firstVisit || (previous === 'upstream' && state !== 'upstream')) reached.set(nodeId, state);
+      let refs = reader
+        .inputRefs(node)
+        .filter(({ name, ref }) => !NON_PROMPT_TYPES.has(reader.linkType(node, name, ref)));
+      if (slotName && refs.some(({ name }) => name === slotName)) {
+        refs = refs.filter(({ name }) => name === slotName);
+      } else if (!firstVisit) {
+        continue;
+      }
+      const carries = producesConditioning(node) ||
+        (state === 'into-encoder' && Boolean(reader.passThroughInput(node)));
+      for (const { ref } of refs) {
+        queue.push({ nodeId: ref.nodeId, slot: ref.slot, state: carries ? 'into-encoder' : 'upstream' });
+      }
+    }
+    return reached;
+  };
+
+  // Evidence for a text literal, from the node that holds it: an encoder
+  // (it outputs conditioning) used it as written, so it is exact; a pure
+  // value holder whose value reaches an encoder unchanged is graph-derived;
+  // anything else may transform it before use, so it is only a candidate.
+  const textEvidence = (node, state) => {
+    if (producesConditioning(node)) return { confidence: 'exact', composition: state === 'start' ? 'direct' : 'combined' };
+    const literals = Object.values(node.inputs).filter((value) => !asRef(value, nodes));
+    if (state === 'into-encoder' && !reader.inputRefs(node).length && literals.length === 1) {
+      return { confidence: 'derived', composition: 'routed' };
+    }
+    return { confidence: 'candidate', composition: 'upstream' };
+  };
+
+  // Text on a node. On an encoder: prose of four or more words, or any string
+  // under a declared STRING socket or a text-named input. On a value holder:
+  // its one value. Anywhere else: prose only, since short strings there are
+  // settings. Never a file or JSON.
+  const promptTexts = (node, evidence) =>
+    Object.entries(node.inputs).filter(([field, value]) => {
+      if (typeof value !== 'string' || !value.trim()) return false;
+      if (MEDIA_EXTENSIONS.has(extensionOf(value)) || isModelFile(value) || isJsonContainer(value)) {
+        return false;
+      }
+      const declared = types.input(node.id, field)?.type;
+      if (evidence.confidence === 'derived' || wordCount(value) >= MIN_PROMPT_WORDS) return true;
+      return evidence.confidence === 'exact' &&
+        (declared === 'STRING' || (!declared && /text|prompt/i.test(field)));
     });
-  collector.collectSources();
 
-  const positiveFragments = collector.promptFragments.filter(
-    (fragment) => fragment.role === 'positive'
-  );
-  const negativeFragments = collector.promptFragments.filter(
-    (fragment) => fragment.role === 'negative'
-  );
-  const positivePrompt = positiveFragments.length === 1
-    ? positiveFragments[0].text
-    : null;
-  const negativePrompt = negativeFragments.length === 1
-    ? negativeFragments[0].text
-    : null;
+  const encoderRoots = [];
+  // A text field reached from both walks (a negative made by zeroing the
+  // positive) is the positive prompt; a field named for the negative prompt
+  // is negative whichever walk found it.
+  const claimed = new Set();
+  const collectPrompt = (entry, walkRole) => {
+    const reach = promptReach(entry.ref);
+    for (const [id, state] of [...reach.entries()].sort((a, b) => naturalNodeCompare(a[0], b[0]))) {
+      const node = nodes.get(id);
+      const evidence = textEvidence(node, state);
+      if (!reader.inputRefs(node).length) {
+        modelFiles(node).forEach(([, file]) => encoderRoots.push({ node, file }));
+      }
+      for (const [field, value] of promptTexts(node, evidence)) {
+        const role = /neg/i.test(field) ? 'negative' : walkRole;
+        const fieldKey = `${id}:${field}`;
+        if (role === 'positive') claimed.add(fieldKey);
+        else if (walkRole === 'negative' && claimed.has(fieldKey)) continue;
+        const promptKey = `${role}:${fieldKey}`;
+        if (promptKeys.has(promptKey)) continue;
+        if (promptFragments.length >= limits.maxPromptFragments) return;
+        let text = value.trim();
+        if (text.length > limits.maxPromptLength) {
+          text = text.slice(0, limits.maxPromptLength);
+          diagnose(
+            'PROMPT_FRAGMENT_TRUNCATED',
+            'Prompt text was shortened to the configured display and cache limit',
+            node,
+            role
+          );
+        }
+        if (promptLength + text.length > limits.maxPromptTotalLength) {
+          diagnose(
+            'PROMPT_TOTAL_LIMIT',
+            'Additional prompt text was omitted because the prompt budget was reached',
+            node,
+            role
+          );
+          return;
+        }
+        promptKeys.add(promptKey);
+        promptLength += text.length;
+        promptFragments.push({
+          role,
+          text,
+          nodeId: id,
+          classType: node.classType,
+          field,
+          composition: evidence.composition,
+          confidence: evidence.confidence,
+        });
+      }
+    }
+  };
 
-  const finalStage = [...samplerStages].reverse().find((stage) => stage.role === 'final') ||
-    [...samplerStages].reverse().find(Boolean) || null;
-  const modelNames = uniqueStrings(collector.models.map((asset) => asset.name));
-  const samplerNames = uniqueStrings(
-    samplerStages.flatMap((stage) => [stage.sampler, stage.scheduler])
+  // --- Section 5: settings per stage --------------------------------------------
+  const readSetting = (stage, names) => {
+    const helpers = [];
+    for (const { ref } of reader.inputsWhere(stage, (type) => HELPER_TYPES.has(type))) {
+      // A wrapper around the noise or sigmas passes its own NOISE/SIGMAS on;
+      // follow those a few levels.
+      let current = nodes.get(ref.nodeId);
+      for (let depth = 0; current && depth < 4; depth += 1) {
+        helpers.push(current);
+        const inner = reader.inputsWhere(current, (type) => HELPER_TYPES.has(type))[0];
+        current = inner ? nodes.get(inner.ref.nodeId) : null;
+      }
+    }
+    for (const node of [stage, ...helpers]) {
+      for (const name of names) {
+        if (node.inputs[name] === undefined) continue;
+        const resolved = reader.resolve(node.inputs[name]);
+        if (resolved && 'value' in resolved) return resolved.value;
+      }
+    }
+    return null;
+  };
+
+  const guiderOf = (stage) => {
+    const entry = reader.inputsWhere(stage, (type) => type === 'GUIDER')[0];
+    return entry ? reader.resolve(stage.inputs[entry.name])?.node || null : null;
+  };
+
+  const text = (value) =>
+    value === null || value === undefined ? null : clampString(value, limits.maxScalarLength);
+  const numeric = (value) => {
+    if (value === null || value === undefined) return null;
+    return numberOrNull(value) ?? text(value);
+  };
+
+  const samplerStages = stageEntries.map(({ node, distance }) => {
+    const read = (key) => readSetting(node, SETTING_NAMES[key]);
+    const guider = guiderOf(node);
+    const cfg = read('cfg') ?? (guider?.inputs.cfg !== undefined ? reader.resolve(guider.inputs.cfg)?.value ?? null : null);
+    return {
+      nodeId: node.id,
+      classType: node.classType,
+      role: 'contributor',
+      seed: text(read('seed')),
+      steps: numeric(read('steps')),
+      cfg: numeric(cfg),
+      sampler: text(read('sampler')),
+      scheduler: text(read('scheduler')),
+      denoise: numeric(read('denoise')),
+      startStep: numeric(read('startStep')),
+      endStep: numeric(read('endStep')),
+      distanceToOutput: distance,
+    };
+  });
+  const nearest = samplerStages.length
+    ? Math.min(...samplerStages.map((stage) => stage.distanceToOutput))
+    : null;
+  const nearestStages = samplerStages.filter((stage) => stage.distanceToOutput === nearest);
+  if (nearestStages.length === 1) nearestStages[0].role = 'final';
+  if (!samplerStages.length) {
+    diagnose(
+      'SAMPLER_NOT_FOUND',
+      'No node outputs a LATENT from a model and conditioning, a guider, or noise and sigmas',
+      selected.node
+    );
+  }
+
+  // Assets and prompts are read final stage first, so the final stage's
+  // model and prompt lead their lists.
+  const orderedStages = [...stageEntries].sort(
+    (a, b) => a.distance - b.distance || naturalNodeCompare(a.node.id, b.node.id)
   );
-  const sourceImages = uniqueStrings(
-    collector.sourceInputs
-      .filter((source) => source.kind === 'image')
-      .map((source) => source.name)
-  );
-  const hasPartialEvidence = collector.diagnostics.length > 0 ||
-    nearestCount > 1 ||
-    positiveFragments.length > 1 ||
-    negativeFragments.length > 1;
+  const negatives = [];
+  for (const { node } of orderedStages) {
+    const owner = guiderOf(node) || node;
+    const model = reader.inputsWhere(owner, isModelType)[0];
+    if (model) traceModel(model.ref);
+    for (const entry of reader.inputsWhere(owner, isConditioningType)) {
+      if (/neg/i.test(entry.name)) negatives.push(entry);
+      else collectPrompt(entry, 'positive');
+    }
+  }
+  negatives.forEach((entry) => collectPrompt(entry, 'negative'));
+
+  // VAE and text encoder: roots of the VAE and CLIP chains reachable from the
+  // output, and model files at the roots of the prompt path (a T5 loader).
+  for (const id of [...reachable.keys()].sort(naturalNodeCompare)) {
+    const node = nodes.get(id);
+    for (const { name, ref } of reader.inputRefs(node)) {
+      const type = reader.linkType(node, name, ref);
+      if (type === 'VAE') {
+        traceChain(ref, (candidate) => candidate === 'VAE', (root) =>
+          rootFiles(root).forEach(([, file]) =>
+            addAsset(vaes, modelRoots.has(root.id) ? 'bundled-checkpoint' : 'vae', file, root)
+          ));
+      } else if (type === 'CLIP') {
+        traceChain(
+          ref,
+          (candidate) => candidate === 'CLIP',
+          (root) =>
+            rootFiles(root).forEach(([, file]) =>
+              addAsset(textEncoders, modelRoots.has(root.id) ? 'bundled-checkpoint' : 'text-encoder', file, root)
+            ),
+          (patch) => collectOwnLoras(patch, 'clip')
+        );
+      }
+    }
+  }
+  encoderRoots.forEach(({ node, file }) => addAsset(textEncoders, 'text-encoder', file, node));
+
+  // Sources: media-producing roots on the path (no media input of their own)
+  // whose string input names a media file.
+  const sourceInputs = [];
+  for (const id of [...reachable.keys()].sort(naturalNodeCompare)) {
+    const node = nodes.get(id);
+    if (reader.consumes(node, (type) => MEDIA_TYPES.has(type))) continue;
+    for (const value of Object.values(node.inputs)) {
+      const kind = typeof value === 'string' ? MEDIA_EXTENSIONS.get(extensionOf(value)) : null;
+      if (kind && sourceInputs.length < limits.maxAssetsPerKind) {
+        sourceInputs.push({ name: clampString(value, limits.maxScalarLength), kind, nodeId: id, classType: node.classType });
+      }
+    }
+  }
+
+  // Positive fragments first, each role in the order it was found.
+  promptFragments.sort((a, b) => Number(a.role !== 'positive') - Number(b.role !== 'positive'));
+  const positive = promptFragments.filter((fragment) => fragment.role === 'positive');
+  const negative = promptFragments.filter((fragment) => fragment.role === 'negative');
+  const single = (fragments) =>
+    fragments.length === 1 && fragments[0].confidence !== 'candidate' ? fragments[0].text : null;
+  if (positive.length > 1 || negative.length > 1) {
+    diagnose('PROMPT_COMPOSED', 'The prompt is composed from several text fields; they are shown as fragments');
+  }
+  if (promptFragments.some((fragment) => fragment.confidence === 'candidate')) {
+    diagnose('PROMPT_CANDIDATE', 'Prompt text passes through a node that may change it before it is used');
+  }
+
+  const finalStage = samplerStages.find((stage) => stage.role === 'final') || samplerStages.at(-1) || null;
+  const modelNames = [...new Set(models.map((asset) => asset.name))];
+  const sourceImages = [...new Set(sourceInputs.filter((source) => source.kind === 'image').map((source) => source.name))];
+  const partial = diagnostics.length > 0 || nearestStages.length > 1;
+  const positivePrompt = single(positive);
 
   return {
-    provider: 'comfyui',
-    origin: {
-      ...origin,
-      resolution: hasPartialEvidence ? 'partial' : 'traced',
-    },
-    output: {
-      nodeId: selected.node.id,
-      classType: selected.node.classType,
-      match: selected.match,
-    },
+    ...empty,
+    origin: { ...origin, resolution: partial ? 'partial' : 'traced' },
+    output: { nodeId: selected.node.id, classType: selected.node.classType, match: selected.match },
     positivePrompt,
-    negativePrompt,
-    promptFragments: collector.promptFragments,
+    negativePrompt: single(negative),
+    promptFragments,
     samplerStages,
-    assets: {
-      models: collector.models,
-      vaes: collector.vaes,
-      textEncoders: collector.textEncoders,
-      loras: collector.loras,
-    },
-    sourceInputs: collector.sourceInputs,
-    diagnostics: collector.diagnostics,
+    assets: { models, vaes, textEncoders, loras },
+    sourceInputs,
+    diagnostics,
     prompt: positivePrompt,
     seed: finalStage?.seed || null,
     model: modelNames[0] || null,
     models: modelNames,
     sampler: finalStage?.sampler || null,
-    samplers: samplerNames,
+    // Sampler names only: schedulers are shown as their own fact, and a
+    // scheduler in this list would be displayed as the sampler.
+    samplers: [...new Set(samplerStages.map((stage) => stage.sampler).filter(Boolean))],
     sourceImage: sourceImages[0] || null,
     sourceImages,
-    generationRun: null,
   };
 }
 
 module.exports = {
   DEFAULT_COMFY_GENERATION_LIMITS,
   ComfyGenerationParserError,
-  quoteUnsafeJsonIntegers,
-  isComfyApiGraph,
+  INPUT_NAME_TYPES,
   findComfyApiGraph,
+  isComfyApiGraph,
+  isSamplerStage,
   parseBoundedJson,
   parseComfyGenerationPayload,
+  quoteUnsafeJsonIntegers,
 };
