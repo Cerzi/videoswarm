@@ -12,9 +12,8 @@ import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
 import MetadataPanel from "./components/MetadataPanel";
-import HeaderBar from "./components/HeaderBar";
+import TopBar from "./components/TopBar";
 import FiltersPopover from "./components/FiltersPopover";
-import CollectionNavigationBar from "./components/CollectionNavigationBar";
 import LibrarySidebar from "./components/LibrarySidebar";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import DockedMetadataInspector from "./components/DockedMetadataInspector";
@@ -55,6 +54,7 @@ import useReviewSessions from "./hooks/review/useReviewSessions";
 import { SortKey } from "./sorting/sorting.js";
 import { describeSort, parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 import { showToast } from "./app/toastStack";
+import { openDonationPage } from "./utils/support";
 
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
@@ -180,6 +180,9 @@ function App() {
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
+  // UX redesign D2: the status line shows counts and sort unless asked for
+  // the playback diagnostics.
+  const [playbackDetailsVisible, setPlaybackDetailsVisible] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
@@ -223,7 +226,7 @@ function App() {
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
   const [reviewProfileEpoch, setReviewProfileEpoch] = useState(0);
-  const [webCollectionEpoch, setWebCollectionEpoch] = useState(0);
+  const [webCollectionEpoch] = useState(0);
   const [reviewResume, setReviewResume] = useState(() =>
     createIdleReviewResume()
   );
@@ -469,13 +472,13 @@ function App() {
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,
-    handleWebFileSelection,
   } = useElectronFolderLifecycle({
     selection,
     recursiveMode,
     setRecursiveMode,
     setShowFilenames,
     setHoverAudioEnabled,
+    setPlaybackDetailsVisible,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -1531,25 +1534,6 @@ function App() {
     cancelReviewResume();
     captureFolderViewState();
   };
-
-  const handleWebDirectorySelection = useCallback(
-    async (event) => {
-      const files = event?.target?.files;
-      closeFullScreenRef.current?.();
-      setWebCollectionEpoch((epoch) => epoch + 1);
-      libraryOpenRequestRef.current += 1;
-      await reviewSessions.flush();
-      cancelReviewResume();
-      captureFolderViewState();
-      return handleWebFileSelection({ target: { files } });
-    },
-    [
-      cancelReviewResume,
-      captureFolderViewState,
-      handleWebFileSelection,
-      reviewSessions.flush,
-    ]
-  );
 
   const focusReviewTarget = useCallback(
     (videoId, token, onMounted, onMissing) => {
@@ -2821,10 +2805,6 @@ function App() {
     zoomLevel,
   ]);
 
-  const toggleRecursive = useCallback(() => {
-    handleRecursiveChange(!recursiveMode);
-  }, [handleRecursiveChange, recursiveMode]);
-
   const handleFolderNavigate = useCallback(
     async (relativePath) => {
       if (!activeRootPath) return;
@@ -3163,6 +3143,14 @@ function App() {
     setHoverAudioEnabled((previous) => {
       const next = !previous;
       window.electronAPI?.saveSettingsPartial?.({ hoverAudioEnabled: next });
+      return next;
+    });
+  }, []);
+
+  const togglePlaybackDetails = useCallback(() => {
+    setPlaybackDetailsVisible((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({ playbackDetailsVisible: next });
       return next;
     });
   }, []);
@@ -4625,18 +4613,51 @@ function App() {
             onCancel={cancelFolderLoad}
           />
 
-          <HeaderBar
+          <TopBar
             isLoadingFolder={isLoadingFolder}
-            handleFolderSelect={handleChooseFolder}
-            handleWebFileSelection={handleWebDirectorySelection}
-            recursiveMode={recursiveMode}
-            toggleRecursive={toggleRecursive}
-            showFilenames={showFilenames}
-            toggleFilenames={toggleFilenames}
-            hoverAudioEnabled={hoverAudioEnabled}
-            onHoverAudioToggle={toggleHoverAudio}
+            onOpenFolder={handleChooseFolder}
+            recentFolders={recentFolders}
+            pinnedFolders={pinnedRoots}
+            onOpenLocation={handleOpenLibraryRoot}
+            hasOpenFolder={Boolean(activeRootPath)}
+            breadcrumb={folderBreadcrumb}
+            onBreadcrumbSelect={handleFolderNavigate}
+            previousSibling={siblingFolders.previous}
+            nextSibling={siblingFolders.next}
+            onPreviousFolder={handlePreviousFolder}
+            onNextFolder={handleNextFolder}
+            matchingCount={scopedFilteredVideos.length}
+            totalCount={videos.length}
+            scope={folderScope}
+            onScopeChange={handleFolderScopeChange}
+            recursive={recursiveMode}
+            onRecursiveChange={handleRecursiveChange}
+            isRefreshingFolder={isRefreshingFolder}
+            showSidebarToggle={Boolean(activeRootPath)}
+            sidebarOpen={isLibrarySidebarOpen}
+            onSidebarToggle={setLibrarySidebarOpen}
+            onFiltersToggle={() => setFiltersOpen((open) => !open)}
+            filtersActiveCount={filtersActiveCount}
+            onFiltersClear={resetFilters}
+            filtersAreOpen={isFiltersOpen}
+            filtersButtonRef={filtersButtonRef}
+            sortKey={sortKey}
+            sortSelection={formatSortValue(sortKey, sortDir)}
+            onSortChange={handleSortChange}
+            onReshuffle={reshuffleRandom}
+            zoomLevel={zoomLevel}
+            onZoomChange={handleZoomChangeSafe}
+            minimumZoomLevel={getMinimumZoomLevel()}
             reviewModeEnabled={reviewModeEnabled}
             onReviewModeToggle={toggleReviewMode}
+            showFilenames={showFilenames}
+            onFilenamesToggle={toggleFilenames}
+            hoverAudioEnabled={hoverAudioEnabled}
+            onHoverAudioToggle={toggleHoverAudio}
+            groupByFolders={groupByFolders}
+            onGroupByFoldersToggle={toggleGroupByFolders}
+            showFolderHeaders={showFolderHeaders}
+            onFolderHeadersToggle={setShowFolderHeaders}
             playbackMode={playbackMode}
             onPlaybackModeChange={handlePlaybackModeChange}
             playbackDecision={playbackDecision}
@@ -4645,49 +4666,14 @@ function App() {
             onProxyPlaybackToggle={toggleProxyPlayback}
             proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
             workSuspended={workSuspended}
-            isRefreshingFolder={isRefreshingFolder}
+            playbackDetailsVisible={playbackDetailsVisible}
+            onPlaybackDetailsToggle={togglePlaybackDetails}
             onHotkeyHelp={() => setHotkeyHelpOpen(true)}
-            zoomLevel={zoomLevel}
-            handleZoomChangeSafe={handleZoomChangeSafe}
-            getMinimumZoomLevel={getMinimumZoomLevel}
-            sortKey={sortKey}
-            sortSelection={formatSortValue(sortKey, sortDir)}
-            groupByFolders={groupByFolders}
-            onSortChange={handleSortChange}
-            onGroupByFoldersToggle={toggleGroupByFolders}
-            onReshuffle={reshuffleRandom}
-            recentFolders={recentFolders}
-            onRecentOpen={handleOpenLibraryRoot}
-            hasOpenFolder={Boolean(activeRootPath) || videos.length > 0}
-            onFiltersToggle={() => setFiltersOpen((open) => !open)}
-            filtersActiveCount={filtersActiveCount}
-            onFiltersClear={resetFilters}
-            filtersAreOpen={isFiltersOpen}
-            filtersButtonRef={filtersButtonRef}
+            onOpenAbout={() => setAboutOpen(true)}
+            onOpenSupport={() => {
+              void openDonationPage();
+            }}
           />
-
-          {activeRootPath && (
-            <CollectionNavigationBar
-              breadcrumb={folderBreadcrumb}
-              onBreadcrumbSelect={handleFolderNavigate}
-              scope={folderScope}
-              onScopeChange={handleFolderScopeChange}
-              previousSibling={siblingFolders.previous}
-              nextSibling={siblingFolders.next}
-              onPreviousFolder={handlePreviousFolder}
-              onNextFolder={handleNextFolder}
-              recursive={recursiveMode}
-              onRecursiveChange={handleRecursiveChange}
-              sidebarOpen={isLibrarySidebarOpen}
-              onSidebarToggle={setLibrarySidebarOpen}
-              showFolderHeaders={showFolderHeaders}
-              onFolderHeadersToggle={setShowFolderHeaders}
-              folderHeadersAvailable={groupByFolders}
-              matchingCount={scopedFilteredVideos.length}
-              totalCount={videos.length}
-              disabled={isLoadingFolder}
-            />
-          )}
 
           {(activeRootPath || tagCollection) && reviewModeEnabled && (
             <ReviewToolbar
@@ -4907,6 +4893,7 @@ function App() {
           )}
 
           <DebugSummary
+            detailed={playbackDetailsVisible}
             total={videoCollection.stats.total}
             rendered={virtualItems.length}
             playing={videoCollection.stats.playing}

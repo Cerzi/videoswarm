@@ -116,7 +116,8 @@ async function chooseFolderThroughNativeDialog(electronApp, page, folderPath) {
       filePaths: [selectedPath],
     });
   }, folderPath);
-  await page.getByTitle("Select folder").click();
+  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Open folder…/ }).click();
 }
 
 module.exports = {

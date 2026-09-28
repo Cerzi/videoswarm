@@ -1,0 +1,147 @@
+/* One row, never wrapped: what does not fit folds into ⋯ (see TopBar.jsx).
+   Only the breadcrumb may shrink, with an ellipsis. */
+.header.topbar {
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  min-height: 48px;
+}
+
+.topbar > * {
+  flex-shrink: 0;
+}
+
+.topbar__spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.topbar__icon {
+  min-width: 2rem;
+  justify-content: center;
+}
+
+.topbar__icon.is-active {
+  background: var(--color-border);
+}
+
+.topbar__open {
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.topbar__location {
+  flex: 0 1 auto;
+  min-width: 6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  overflow: hidden;
+}
+
+.topbar__siblings {
+  display: inline-flex;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.topbar__siblings .toggle-button {
+  padding: 0.25rem 0.45rem;
+}
+
+.topbar__breadcrumb {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.topbar__crumb {
+  min-width: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: #aeb4b7;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.25rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.topbar__crumb:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-border);
+}
+
+.topbar__crumb.is-current {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.topbar__separator {
+  color: #6f777b;
+}
+
+.topbar__count {
+  flex-shrink: 0;
+  color: #8f979b;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar__scope {
+  max-width: 11rem;
+}
+
+.topbar__subfolders {
+  white-space: nowrap;
+}
+
+.topbar__filters {
+  position: relative;
+}
+
+.topbar__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #aeb4b7;
+}
+
+.topbar__zoom-slider {
+  width: 7.5rem;
+  accent-color: var(--color-accent);
+}
+
+.topbar__zoom-slider[data-below-minimum="true"] {
+  accent-color: #ffa726;
+}
+
+.menu-button__custom .topbar__zoom-slider {
+  width: 100%;
+}
+
+.topbar__review {
+  font-weight: 600;
+}
+
+.topbar__review.active {
+  background: #397947;
+  border-color: #5ad06e;
+  color: #fff;
+}
+
+.topbar__more {
+  min-width: 2.2rem;
+  justify-content: center;
+}
+
+.topbar__more-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}

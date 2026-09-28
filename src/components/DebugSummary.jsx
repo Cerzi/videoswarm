@@ -1,6 +1,10 @@
 import React from "react";
 
+// The status line under the top bar. By default only what a reviewer uses:
+// how many clips, and how they are sorted. View › Playback details adds the
+// diagnostics for tuning playback (UX redesign D2).
 export default function DebugSummary({
+  detailed = false,
   total,
   rendered,
   playing,
@@ -14,6 +18,19 @@ export default function DebugSummary({
   playbackTelemetry,
   workSuspensionReason,
 }) {
+  if (!detailed) {
+    const count = Math.max(0, Number(total) || 0);
+    return (
+      <div className="debug-info debug-info--short">
+        <span>
+          {count.toLocaleString()} {count === 1 ? "clip" : "clips"}
+        </span>
+        {sortStatus && <span aria-hidden="true">·</span>}
+        {sortStatus && <span>{sortStatus}</span>}
+      </div>
+    );
+  }
+
   return (
     <div
       className="debug-info"

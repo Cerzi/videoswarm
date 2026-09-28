@@ -94,8 +94,21 @@ squeezing any of them. **Awaiting the user's answer**; it is the last slice.
    Pinned folders, Video Swarm. Internal identifiers (the `VideoSwarmData`
    folder, `copyAccepted` IPC) are unchanged.
 2. **View and ⋯ menus, Review label, short status line (D2–D5).** Status:
-   **Unimplemented**
-3. **One top bar with overflow into ⋯ (D6).** Status: **Unimplemented**
+   **Implemented**, **Verified** (2026-09-28). `TopBar` replaces
+   `HeaderBar`; its menus use the shared `menu/MenuButton` (menu,
+   `menuitemcheckbox` and `menuitemradio` roles, arrow keys, Esc).
+   Playback details is a saved setting (`playbackDetailsVisible`, off by
+   default); off, the status line reads "24 clips · Sorted by Name ↑".
+   Preferences… appears in ⋯ once slice 4 passes `onOpenPreferences`.
+3. **One top bar with overflow into ⋯ (D6).** Status: **Implemented**,
+   **Verified** (2026-09-28). Landed with slice 2, because both rewrite
+   the same bar. `CollectionNavigationBar` is gone; the bar never wraps.
+   It measures its children and folds, in order, zoom, sort, scope,
+   Include subfolders, then the ‹ › buttons into ⋯, and unfolds when the
+   window widens again. In the real app: nothing folds at 1440 or 1280,
+   zoom folds at 1024, and sort at 900. Nothing is ever offscreen.
+   The browser-only folder picker (`<input webkitdirectory>`, shown only
+   outside Electron) is dropped, because the app is desktop-only.
 4. **Preferences (D8).** Status: **Unimplemented**
 5. **Details docked by default (D1), then the activity rail (D7).** Status:
    **Unimplemented**

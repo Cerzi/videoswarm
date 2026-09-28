@@ -313,7 +313,7 @@ const useVideoCollectionMock = vi.fn(() => ({
   onCardHoverAudioStart: vi.fn(),
   onCardHoverAudioEnd: vi.fn(),
 }));
-const headerBarSpy = vi.fn();
+const topBarSpy = vi.fn();
 const filtersPopoverSpy = vi.fn();
 const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
@@ -398,12 +398,41 @@ vi.mock("./components/MetadataPanel", async () => {
     }),
   };
 });
-vi.mock("./components/HeaderBar", () => ({
+vi.mock("./components/TopBar", async () => {
+  const { FolderScope } = await vi.importActual("./library/folderModel");
+  return {
   __esModule: true,
   default: (props) => {
-    headerBarSpy(props);
+    topBarSpy(props);
+    const busy = Boolean(props.isLoadingFolder);
     return (
       <>
+        {props.hasOpenFolder ? (
+          <nav aria-label="Location">
+            {(props.breadcrumb || []).map((crumb) => crumb.label).join(" / ")}
+          </nav>
+        ) : null}
+        {props.hasOpenFolder ? (
+          <select
+            aria-label="Folder scope"
+            value={props.scope}
+            disabled={busy}
+            onChange={(event) => props.onScopeChange?.(event.target.value)}
+          >
+            {Object.values(FolderScope).map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        ) : null}
+        <label>
+          <input
+            type="checkbox"
+            checked={Boolean(props.recursive)}
+            disabled={busy}
+            onChange={(event) => props.onRecursiveChange?.(event.target.checked)}
+          />
+          Include subfolders
+        </label>
         <button
           type="button"
           aria-label="Player audio on hover"
@@ -414,11 +443,11 @@ vi.mock("./components/HeaderBar", () => ({
         </button>
         <button
           type="button"
-          aria-label="Review mode"
+          aria-label="Review"
           aria-pressed={Boolean(props.reviewModeEnabled)}
           onClick={() => props.onReviewModeToggle?.()}
         >
-          Review mode
+          Review
         </button>
         <button
           type="button"
@@ -452,7 +481,8 @@ vi.mock("./components/HeaderBar", () => ({
       </>
     );
   },
-}));
+};
+});
 vi.mock("./components/FiltersPopover", async () => {
   const ReactModule = await vi.importActual("react");
   return {
@@ -702,7 +732,7 @@ describe("App hook composition", () => {
       mediaScheduler: collectionArgs.mediaScheduler,
     });
 
-    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    const headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps).toMatchObject({
       playbackMode: "balanced",
       playbackDecision,
@@ -825,7 +855,7 @@ describe("App hook composition", () => {
     const trashArgs = useTrashIntegrationMock.mock.calls.at(-1)?.[0];
     expect(trashArgs.workSuspended).toBe(true);
 
-    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    const headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps.workSuspended).toBe(true);
 
     const overlayProps = loadingOverlaySpy.mock.calls.at(-1)?.[0];
@@ -845,7 +875,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Use Static + Hover playback" })
     );
 
-    let headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    let headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     let collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(headerProps.playbackMode).toBe("static-hover");
     expect(collectionArgs.playbackMode).toBe("static-hover");
@@ -857,7 +887,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Use All Motion playback" })
     );
 
-    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(headerProps.playbackMode).toBe("all-motion");
     expect(collectionArgs.playbackMode).toBe("all-motion");
@@ -870,7 +900,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Toggle proxy playback" })
     );
 
-    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps.proxyPlaybackEnabled).toBe(true);
     expect(saveSettingsPartial).toHaveBeenCalledWith({
       proxyPlaybackEnabled: true,
@@ -898,7 +928,7 @@ describe("App hook composition", () => {
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
       hoverAudioEnabled: true,
     });
-    expect(headerBarSpy).toHaveBeenCalled();
+    expect(topBarSpy).toHaveBeenCalled();
   });
 
   test("keeps navigation and rating while hiding review workflow when disabled", async () => {
@@ -918,9 +948,9 @@ describe("App hook composition", () => {
 
     render(<App />);
 
-    const toggle = screen.getByRole("button", { name: "Review mode" });
+    const toggle = screen.getByRole("button", { name: "Review" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Location" })).toBeVisible();
     expect(screen.getByLabelText("Review workflow")).toBeVisible();
     fireEvent.click(toggle);
 
@@ -935,7 +965,7 @@ describe("App hook composition", () => {
     expect(useHotkeysMock.mock.calls.at(-1)?.[2].onSetRating).toEqual(
       expect.any(Function)
     );
-    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Location" })).toBeVisible();
     expect(screen.queryByLabelText("Review workflow")).toBeNull();
   });
 
@@ -1121,7 +1151,7 @@ describe("App hook composition", () => {
 
     expect(screen.queryByText(/Welcome to Video Swarm/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("navigation", { name: "Current folder path" })
+      screen.getByRole("navigation", { name: "Location" })
     ).toHaveTextContent("empty-run");
     const emptyStatus = screen
       .getByText("No videos in this collection")
@@ -1617,65 +1647,6 @@ describe("App hook composition", () => {
         scope: "current-folder",
       })
     );
-  });
-
-  test("drains an in-flight checkpoint before a web directory switch", async () => {
-    const activeVideo = {
-      id: "web-switch-video",
-      instanceId: 11,
-      name: "web.mp4",
-      fingerprint: "fingerprint-web",
-      reviewState: "unreviewed",
-    };
-    useElectronLifecycleMock.mockImplementation(() => ({
-      ...electronLifecycleReturn,
-      videos: [activeVideo],
-      activeRootPath: "/before-web-switch",
-      libraryRoot: { rootPath: "/before-web-switch", recursive: true },
-      loadingStatus: { phase: "complete" },
-    }));
-    useFilterStateMock.mockImplementation(() => ({
-      ...filterStateReturn,
-      filteredVideos: [activeVideo],
-    }));
-    Object.assign(masonryReturn, {
-      orderedVideos: [activeVideo],
-      displayVideos: [activeVideo],
-      orderedIds: [activeVideo.id],
-      orderForRange: [activeVideo.id],
-    });
-    const pendingSave = createDeferredPromise();
-    const save = vi.fn(() => pendingSave.promise);
-    installReviewSessionsApi({ save });
-
-    vi.resetModules();
-    const { default: App } = await import("./App.jsx");
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", {
-      name: /Find next Unreviewed/,
-    }));
-    await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    electronLifecycleReturn.handleWebFileSelection.mockClear();
-
-    let switchPromise;
-    act(() => {
-      switchPromise = headerBarSpy.mock.calls.at(-1)?.[0]
-        .handleWebFileSelection({ target: { files: ["next-root"] } });
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(electronLifecycleReturn.handleWebFileSelection).not.toHaveBeenCalled();
-
-    await act(async () => {
-      const draft = save.mock.calls[0][0];
-      pendingSave.resolve({ checkpoint: { ...draft, updatedAt: 2345 } });
-      await switchPromise;
-    });
-    expect(electronLifecycleReturn.handleWebFileSelection).toHaveBeenCalledWith({
-      target: { files: ["next-root"] },
-    });
   });
 
   test("drains the child cursor before disabling recursive ownership", async () => {

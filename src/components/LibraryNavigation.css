@@ -1,162 +1,12 @@
-.collection-navigation {
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.35rem 0.75rem;
-  background: #242424;
-  border-bottom: 1px solid var(--color-border, #3d3d3d);
-  color: var(--color-text, #f5f5f5);
-  overflow-anchor: none;
-}
 
-.collection-navigation__primary,
-.collection-navigation__controls,
-.collection-navigation__siblings,
-.collection-navigation__scope,
-.collection-navigation__check {
-  display: flex;
-  align-items: center;
-}
-
-.collection-navigation__primary {
-  flex: 1 1 auto;
-  min-width: 0;
-  gap: 0.4rem;
-}
-
-.collection-navigation__controls {
-  flex: 0 0 auto;
-  gap: 0.55rem;
-}
-
-.collection-navigation__siblings {
-  gap: 0.2rem;
-}
-
-.collection-navigation button,
-.collection-navigation select,
 .library-sidebar button,
 .library-sidebar__content button {
   font: inherit;
 }
-
-.collection-navigation__icon-button,
-.collection-navigation__headers-toggle {
-  min-width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #464646;
-  border-radius: 6px;
-  background: #2d2d2d;
-  color: #d8d8d8;
-  cursor: pointer;
-}
-
-.collection-navigation__icon-button:hover:not(:disabled),
-.collection-navigation__headers-toggle:hover:not(:disabled),
-.collection-navigation__icon-button.is-active,
-.collection-navigation__headers-toggle.is-active {
-  border-color: rgba(81, 207, 102, 0.7);
-  background: rgba(81, 207, 102, 0.12);
-  color: #7ee18f;
-}
-
-.collection-navigation__icon-button:disabled,
-.collection-navigation__headers-toggle:disabled,
-.collection-navigation__crumb:disabled,
 .library-sidebar button:disabled,
 .library-sidebar__content button:disabled {
   opacity: 0.42;
   cursor: default;
-}
-
-.collection-navigation__breadcrumb {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.collection-navigation__crumb {
-  min-width: 0;
-  max-width: 220px;
-  padding: 0.2rem 0.35rem;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.66);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8rem;
-}
-
-.collection-navigation__crumb:hover:not(:disabled) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.collection-navigation__crumb.is-current {
-  color: #fff;
-  font-weight: 600;
-}
-
-.collection-navigation__separator {
-  flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.25);
-  font-size: 0.75rem;
-}
-
-.collection-navigation__count {
-  min-width: 72px;
-  color: rgba(255, 255, 255, 0.58);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  font-size: 0.72rem;
-}
-
-.collection-navigation__scope {
-  gap: 0.35rem;
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.collection-navigation__scope select {
-  height: 30px;
-  max-width: 150px;
-  padding: 0 1.5rem 0 0.5rem;
-  border: 1px solid #464646;
-  border-radius: 6px;
-  background: #2d2d2d;
-  color: #f2f2f2;
-  font-size: 0.75rem;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-.collection-navigation__check {
-  gap: 0.35rem;
-  color: rgba(255, 255, 255, 0.7);
-  white-space: nowrap;
-  font-size: 0.75rem;
-}
-
-.collection-navigation__check input {
-  margin: 0;
-  accent-color: var(--color-accent, #51cf66);
-}
-
-.collection-navigation__headers-toggle {
-  padding: 0 0.55rem;
-  font-size: 0.72rem;
 }
 
 .library-sidebar {
@@ -662,27 +512,7 @@
   color: rgba(255, 255, 255, 0.44);
 }
 
-@media (max-width: 1100px) {
-  .collection-navigation__scope > span,
-  .collection-navigation__check > span {
-    display: none;
-  }
-
-  .collection-navigation__scope select {
-    max-width: 130px;
-  }
-}
-
 @media (max-width: 820px) {
-  .collection-navigation {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .collection-navigation__controls {
-    justify-content: flex-end;
-  }
 
   .library-sidebar {
     width: 230px;

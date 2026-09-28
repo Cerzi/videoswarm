@@ -137,6 +137,7 @@ export function useElectronFolderLifecycle({
   setRecursiveMode,
   setShowFilenames,
   setHoverAudioEnabled,
+  setPlaybackDetailsVisible,
   setSortKey,
   setSortDir,
   groupByFolders: _groupByFolders,
@@ -191,6 +192,7 @@ export function useElectronFolderLifecycle({
     setRecursiveMode,
     setShowFilenames,
     setHoverAudioEnabled,
+    setPlaybackDetailsVisible,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -211,6 +213,7 @@ export function useElectronFolderLifecycle({
       setRecursiveMode,
       setShowFilenames,
       setHoverAudioEnabled,
+      setPlaybackDetailsVisible,
       setSortKey,
       setSortDir,
       setGroupByFolders,
@@ -229,6 +232,7 @@ export function useElectronFolderLifecycle({
     setRecursiveMode,
     setShowFilenames,
     setHoverAudioEnabled,
+    setPlaybackDetailsVisible,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -1111,6 +1115,7 @@ export function useElectronFolderLifecycle({
       setRecursiveMode: applyRecursiveMode,
       setShowFilenames: applyShowFilenames,
       setHoverAudioEnabled: applyHoverAudioEnabled,
+      setPlaybackDetailsVisible: applyPlaybackDetailsVisible,
       setSortKey: applySortKey,
       setSortDir: applySortDir,
       setGroupByFolders: applyGroupByFolders,
@@ -1132,6 +1137,8 @@ export function useElectronFolderLifecycle({
       applyShowFilenames(settings.showFilenames);
     if (settings.hoverAudioEnabled !== undefined)
       applyHoverAudioEnabled?.(settings.hoverAudioEnabled === true);
+    if (settings.playbackDetailsVisible !== undefined)
+      applyPlaybackDetailsVisible?.(settings.playbackDetailsVisible === true);
     if (settings.zoomLevel !== undefined)
       applyZoomLevelFromSettings(settings.zoomLevel);
     if (settings.sortKey) applySortKey(settings.sortKey);

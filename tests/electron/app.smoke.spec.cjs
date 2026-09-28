@@ -14,7 +14,7 @@ async function waitForVideoTotal(page, expected) {
   await page.waitForFunction(
     (count) =>
       document.querySelector(".debug-info")?.textContent?.includes(
-        `🎬 ${count} videos`
+        `${count.toLocaleString()} clips`
       ),
     expected
   );
