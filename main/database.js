@@ -96,7 +96,7 @@ const GENERATION_EXTRACTION_STATUSES = new Set([
   'none',
   'unsupported',
 ]);
-const GENERATION_QUALITIES = new Set(['exact', 'partial', 'unknown']);
+const GENERATION_QUALITIES = new Set(['exact', 'derived', 'partial', 'unknown']);
 let didWarnMalformedReviewCheckpoint = false;
 
 function clampGenerationText(value, maxBytes) {
@@ -690,6 +690,27 @@ function initDatabase(app, profilePath) {
   // The migration is additive and transactional so existing profile databases
   // can be opened without rewriting or discarding their metadata.
   const migrateContentInstanceCatalog = db.transaction(() => {
+    // A generation-metadata table whose quality check predates 'derived'
+    // (graph-derived evidence) refuses to save such a result, and SQLite
+    // cannot relax a CHECK in place. Set it aside here, let the table be
+    // created with the current check below, and copy its rows back once the
+    // column migrations have run. A table with no quality column yet needs
+    // nothing: the column is added later with the current check.
+    const generationTableSql = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'instance_generation_metadata';"
+      )
+      .get()?.sql;
+    const rebuildGenerationTable = Boolean(
+      generationTableSql &&
+        /quality\s+IN\s*\(/i.test(generationTableSql) &&
+        !generationTableSql.includes("'derived'")
+    );
+    if (rebuildGenerationTable) {
+      db.exec(
+        'ALTER TABLE instance_generation_metadata RENAME TO instance_generation_metadata_before_derived;'
+      );
+    }
     const legacyFileColumns = new Set(
       db
         .prepare('PRAGMA table_info(files);')
@@ -870,7 +891,7 @@ function initDatabase(app, profilePath) {
           )
         ),
         quality TEXT NOT NULL DEFAULT 'partial' CHECK (
-          quality IN ('exact', 'partial', 'unknown')
+          quality IN ('exact', 'derived', 'partial', 'unknown')
         ),
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
@@ -1094,13 +1115,26 @@ function initDatabase(app, profilePath) {
         'quality',
         `ALTER TABLE instance_generation_metadata
          ADD COLUMN quality TEXT NOT NULL DEFAULT 'partial' CHECK (
-           quality IN ('exact', 'partial', 'unknown')
+           quality IN ('exact', 'derived', 'partial', 'unknown')
          );`,
       ],
     ];
     generationColumnMigrations.forEach(([column, statement]) => {
       if (!generationMetadataColumns.has(column)) db.exec(statement);
     });
+    if (rebuildGenerationTable) {
+      const columnsOf = (table) =>
+        db.prepare(`PRAGMA table_info(${table});`).all().map((row) => row.name);
+      const previous = new Set(columnsOf('instance_generation_metadata_before_derived'));
+      const shared = columnsOf('instance_generation_metadata')
+        .filter((column) => previous.has(column))
+        .join(', ');
+      db.exec(`
+        INSERT INTO instance_generation_metadata (${shared})
+        SELECT ${shared} FROM instance_generation_metadata_before_derived;
+        DROP TABLE instance_generation_metadata_before_derived;
+      `);
+    }
 
     const now = Date.now();
     db.prepare(`
