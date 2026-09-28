@@ -1244,6 +1244,72 @@ describe("App hook composition", () => {
     });
   });
 
+  test("docked by default: Library at launch, Details follows new selections", async () => {
+    const videos = ["follow-a", "follow-b"].map((id, index) => ({
+      id,
+      instanceId: 200 + index,
+      name: `${id}.mp4`,
+      fingerprint: `fingerprint-${id}`,
+      reviewState: "unreviewed",
+      tags: [],
+    }));
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/follow-root",
+      libraryRoot: { rootPath: "/follow-root", name: "follow-root", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "follow-root" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({ id: video.id, item: video, style: {} })),
+    });
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+    act(() => useElectronLifecycleMock.mock.calls.at(-1)?.[0].setMetadataInspectorMode("docked"));
+
+    const libraryTab = () => screen.getByRole("tab", { name: "Library" });
+    const detailsTab = () => screen.getByRole("tab", { name: /Details/ });
+    const select = (id) =>
+      act(() => {
+        selectionMock.selected = new Set(id ? [id] : []);
+        selectionMock.size = id ? 1 : 0;
+        selectionMock.anchorId = id;
+        rendered.rerender(<App />);
+      });
+
+    // Loading the saved mode does not hide the Library.
+    expect(libraryTab()).toHaveAttribute("aria-selected", "true");
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen ?? false).toBe(false);
+
+    select("follow-a");
+    await waitFor(() => expect(detailsTab()).toHaveAttribute("aria-selected", "true"));
+
+    // Going back to the Library dismisses Details for this selection only.
+    fireEvent.click(libraryTab());
+    select("follow-a");
+    expect(libraryTab()).toHaveAttribute("aria-selected", "true");
+    select("follow-b");
+    await waitFor(() => expect(detailsTab()).toHaveAttribute("aria-selected", "true"));
+
+    // A hidden sidebar stays hidden.
+    fireEvent.click(libraryTab());
+    select(null);
+    act(() => topBarSpy.mock.calls.at(-1)?.[0].onSidebarToggle(false));
+    select("follow-a");
+    expect(screen.queryByRole("tab", { name: /Details/ })).toBeNull();
+  });
+
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
     const video = {
       id: "dock-video",

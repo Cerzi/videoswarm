@@ -452,12 +452,14 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
+  // A saved mode sets where Details appears, not which sidebar tab shows:
+  // docked is the default (UX redesign D1), and switching to Details on every
+  // launch would hide the Library just when a folder is being chosen. Docking
+  // by hand, I and Open details still bring the Details tab forward.
   const applyMetadataInspectorModeFromSettings = useCallback((value) => {
     const next = value === "docked" ? "docked" : "floating";
     setMetadataInspectorMode(next);
     if (next === "docked") {
-      setWorkspaceSidebarTab("details");
-      setLibrarySidebarOpen(true);
       setMetadataPanelOpen(false);
     }
   }, []);
@@ -1285,10 +1287,19 @@ function App() {
       return;
     }
 
+    // Docked Details follows the selection the way the floating panel does:
+    // a new selection brings its tab forward unless the user went back to
+    // the Library for this one. A hidden sidebar stays hidden.
     if (metadataInspectorMode === "docked") {
-      previousMetadataSelectionKeyRef.current = metadataSelectionKey;
       setMetadataPanelOpen(false);
-      setMetadataDismissedSelectionKey(null);
+      if (
+        metadataSelectionKey !== previousKey &&
+        metadataDismissedSelectionKey !== metadataSelectionKey
+      ) {
+        previousMetadataSelectionKeyRef.current = metadataSelectionKey;
+        setMetadataDismissedSelectionKey(null);
+        if (isLibrarySidebarOpen) setWorkspaceSidebarTab("details");
+      }
       return;
     }
 
@@ -1307,12 +1318,23 @@ function App() {
       }));
     }
   }, [
+    isLibrarySidebarOpen,
     metadataAnchorId,
     metadataDismissedSelectionKey,
     metadataInspectorMode,
     metadataSelectionKey,
     selection.size,
   ]);
+
+  const handleWorkspaceSidebarTabChange = useCallback(
+    (tab) => {
+      setWorkspaceSidebarTab(tab);
+      if (tab === "library" && metadataInspectorMode === "docked" && selection.size > 0) {
+        setMetadataDismissedSelectionKey(metadataSelectionKey);
+      }
+    },
+    [metadataInspectorMode, metadataSelectionKey, selection.size]
+  );
 
   const sortStatus = useMemo(
     () => describeSort(sortKey, sortDir, groupByFolders),
@@ -4994,7 +5016,7 @@ function App() {
                   metadataInspectorMode === "docked" ? (
                     <WorkspaceSidebar
                       activeTab={workspaceSidebarTab}
-                      onTabChange={setWorkspaceSidebarTab}
+                      onTabChange={handleWorkspaceSidebarTabChange}
                       selectionCount={selection.size}
                       libraryProps={{
                         tree: folderTree,

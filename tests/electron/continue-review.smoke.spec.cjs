@@ -101,8 +101,10 @@ test("continues a flushed review session after restart from the cached first gri
       '.video-item[data-filename="clip-0002.mp4"]'
     );
     await firstClip.click();
-    const selectionDetails = firstPage.getByRole("complementary", {
-      name: "Details",
+    // Details is docked in the sidebar by default and comes forward for a
+    // new selection, so it never covers the grid card clicked next.
+    const selectionDetails = firstPage.getByRole("region", {
+      name: "Docked selection details",
     });
     await selectionDetails
       .getByRole("button", { name: /^Accept\b/ })
@@ -121,16 +123,6 @@ test("continues a flushed review session after restart from the cached first gri
         }, folderPath)
       )
       .toBe(true);
-
-    // The floating Details panel may cover the next grid card at smaller CI
-    // viewport sizes. Dismiss it through the user-facing control so this smoke
-    // continues to exercise a real pointer selection rather than a forced DOM
-    // click through an overlapping surface.
-    const closeSelectionDetails = selectionDetails.getByRole("button", {
-      name: "Close selection details",
-    });
-    await expect(closeSelectionDetails).toBeVisible();
-    await closeSelectionDetails.click();
 
     // The navigation save is deliberately still inside the 400 ms debounce.
     // VideoCard waits 300 ms to distinguish a double click, so first wait only
