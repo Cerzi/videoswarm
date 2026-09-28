@@ -21,6 +21,7 @@ import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
+import PreferencesDialog from "./components/preferences/PreferencesDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
@@ -204,6 +205,7 @@ function App() {
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
+  const [isPreferencesOpen, setPreferencesOpen] = useState(false);
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
   const [acceptedCopyProgress, setAcceptedCopyProgress] = useState(null);
@@ -360,6 +362,17 @@ function App() {
   const respondToProfilePrompt = useCallback((requestId, value) => {
     const profilesApi = window.electronAPI?.profiles;
     profilesApi?.respondToPrompt?.(requestId, value);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenPreferences?.(() => {
+      setPreferencesOpen(true);
+    });
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -4670,6 +4683,7 @@ function App() {
             onPlaybackDetailsToggle={togglePlaybackDetails}
             onHotkeyHelp={() => setHotkeyHelpOpen(true)}
             onOpenAbout={() => setAboutOpen(true)}
+            onOpenPreferences={() => setPreferencesOpen(true)}
             onOpenSupport={() => {
               void openDonationPage();
             }}
@@ -4761,6 +4775,23 @@ function App() {
             transferLayout={transferLayout}
             onTransferLayoutChange={handleTransferLayoutChange}
             transferProgress={acceptedCopyProgress}
+          />
+          <PreferencesDialog
+            open={isPreferencesOpen}
+            onClose={() => setPreferencesOpen(false)}
+            suspended={isDataLocationOpen}
+            dataLocationOpen={isDataLocationOpen}
+            onOpenDataLocation={() => setDataLocationOpen(true)}
+            playbackMode={playbackMode}
+            onPlaybackModeChange={handlePlaybackModeChange}
+            proxyPlaybackEnabled={proxyPlaybackEnabled}
+            proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
+            onProxyPlaybackToggle={toggleProxyPlayback}
+            hoverAudioEnabled={hoverAudioEnabled}
+            onHoverAudioToggle={toggleHoverAudio}
+            playbackDetailsVisible={playbackDetailsVisible}
+            onPlaybackDetailsToggle={togglePlaybackDetails}
+            playbackCapabilityStatus={playbackCapabilityStatus}
           />
           <DataLocationDialog
             open={isDataLocationOpen}

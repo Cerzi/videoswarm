@@ -2800,6 +2800,15 @@ function createMenu() {
       label: "Options",
       submenu: [
         {
+          label: "Preferences…",
+          accelerator: "CmdOrCtrl+,",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-preferences");
+            }
+          },
+        },
+        {
           label: "Data Location",
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5021,6 +5030,18 @@ ipcMain.handle("comfy:connection:set", async (_event, payload = {}) => {
   comfyRunner?.reconfigure();
   if (value.enabled) void comfyRunner?.resume();
   return value;
+});
+
+// A native picker for ComfyUI's output folder. It grants nothing: the path
+// only comes back through comfy:connection:set, which validates it.
+ipcMain.handle("comfy:connection:choose-output-dir", async (event) => {
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(ownerWindow || undefined, {
+    properties: ["openDirectory"],
+    title: "ComfyUI output folder",
+  });
+  if (result.canceled || !result.filePaths?.length) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 // Read-only: GET /queue and two node definitions. Nothing is queued.
