@@ -70,6 +70,7 @@ const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
 const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
+const { buildSequenceSnapshotResponse } = require("./main/sequence-view");
 const {
   IPC_LIMITS,
   assertBoolean,
@@ -4527,6 +4528,123 @@ ipcMain.handle("library:update-saved-view", async (_event, payload = {}) =>
 ipcMain.handle("library:delete-saved-view", async (_event, payload = {}) =>
   runLibraryCatalogOperation((metadataStore) => ({
     deleted: metadataStore.deleteSavedView(payload?.id),
+  }))
+);
+
+const SEQUENCE_IPC_LIMITS = Object.freeze({
+  maxNameChars: 80,
+  // Mirrors SEQUENCE_ENTRY_LIMIT in main/database.js. The store is still the
+  // authority; this only stops an oversized payload from being parsed at all.
+  maxEntries: 500,
+});
+
+function normalizeSequenceIpcId(payload, key = "id") {
+  return assertInteger(payload?.[key], {
+    name: `sequence ${key}`,
+    min: 1,
+  });
+}
+
+function normalizeSequenceIpcName(payload) {
+  return assertString(payload?.name, {
+    name: "sequence name",
+    minChars: 1,
+    maxChars: SEQUENCE_IPC_LIMITS.maxNameChars,
+    trim: true,
+  });
+}
+
+function normalizeSequenceEntryIdArray(payload, key = "entryIds") {
+  return assertInstanceIdArray(payload?.[key], {
+    name: `sequence ${key}`,
+    maxEntries: SEQUENCE_IPC_LIMITS.maxEntries,
+  });
+}
+
+ipcMain.handle("sequences:list", async () =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequences: metadataStore.listSequences(),
+  }))
+);
+
+ipcMain.handle("sequences:snapshot", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore, context) =>
+    buildSequenceSnapshotResponse(metadataStore, {
+      sequenceId: normalizeSequenceIpcId(payload),
+      preferredRootPath:
+        typeof payload?.preferredRootPath === "string" &&
+        payload.preferredRootPath
+          ? assertPathString(payload.preferredRootPath, {
+              name: "preferred root path",
+            })
+          : null,
+      generation: context.generation,
+    })
+  )
+);
+
+ipcMain.handle("sequences:create", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequence: metadataStore.createSequence(normalizeSequenceIpcName(payload)),
+  }))
+);
+
+ipcMain.handle("sequences:rename", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequence: metadataStore.renameSequence(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceIpcName(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:delete", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    deleted: metadataStore.deleteSequence(normalizeSequenceIpcId(payload)),
+  }))
+);
+
+ipcMain.handle("sequences:append", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.appendToSequence(
+      normalizeSequenceIpcId(payload),
+      assertStringArray(payload?.fingerprints, {
+        name: "fingerprints",
+        maxEntries: SEQUENCE_IPC_LIMITS.maxEntries,
+        item: { minChars: 1, maxChars: 512 },
+        // A story may return to a shot, so a repeated fingerprint in one
+        // append is meaningful and must survive the payload check.
+        dedupe: false,
+      })
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:remove-entries", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.removeSequenceEntries(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceEntryIdArray(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:reorder", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.reorderSequenceEntries(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceEntryIdArray(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:move-entry", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.moveSequenceEntry(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceIpcId(payload, "entryId"),
+      assertInteger(payload?.position, { name: "sequence position", min: 0 })
+    ),
   }))
 );
 

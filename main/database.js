@@ -46,6 +46,15 @@ const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
 });
 const SAVED_VIEW_LIMIT = 100;
 const SAVED_VIEW_NAME_LIMIT = 80;
+const SEQUENCE_LIMIT = 100;
+const SEQUENCE_NAME_LIMIT = 80;
+// A sequence is assembled by hand, and at the short clip lengths it targets 500
+// entries is already far past the point where the work belongs in an editor.
+const SEQUENCE_ENTRY_LIMIT = 500;
+// Positions are dense and zero-based, so a reorder has to park rows above the
+// live range before landing them; UNIQUE(sequence_id, position) would otherwise
+// collide mid-permutation. Nothing may hold a real position this high.
+const SEQUENCE_POSITION_STAGING_OFFSET = 1_000_000;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;
@@ -852,6 +861,25 @@ function initDatabase(app, profilePath) {
         FOREIGN KEY (instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS sequences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS sequence_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sequence_id INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        UNIQUE(sequence_id, position),
+        FOREIGN KEY (sequence_id) REFERENCES sequences(id) ON DELETE CASCADE,
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint)
+          ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_library_roots_path
         ON library_roots(root_path);
       CREATE INDEX IF NOT EXISTS idx_directories_root_parent
@@ -870,6 +898,12 @@ function initDatabase(app, profilePath) {
         ON saved_views(updated_at DESC, name COLLATE NOCASE);
       CREATE INDEX IF NOT EXISTS idx_review_checkpoints_updated
         ON review_checkpoints(updated_at DESC, root_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_sequences_updated
+        ON sequences(updated_at DESC, name COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS idx_sequence_entries_order
+        ON sequence_entries(sequence_id, position);
+      CREATE INDEX IF NOT EXISTS idx_sequence_entries_fingerprint
+        ON sequence_entries(fingerprint);
     `);
 
     const mediaContentColumns = new Set(
@@ -1691,6 +1725,9 @@ function createMetadataStore(db) {
     SET anchor_fingerprint = @to
     WHERE anchor_fingerprint = @from;
   `);
+  const rekeySequenceEntries = db.prepare(`
+    UPDATE sequence_entries SET fingerprint = @to WHERE fingerprint = @from;
+  `);
   const deleteContentReviewStmt = db.prepare(
     'DELETE FROM content_review WHERE fingerprint = ?;'
   );
@@ -1733,6 +1770,82 @@ function createMetadataStore(db) {
     WHERE id = ?;
   `);
   const savedViewDelete = db.prepare(`DELETE FROM saved_views WHERE id = ?;`);
+
+  const sequenceCount = db.prepare(`SELECT COUNT(*) AS count FROM sequences;`);
+  const sequenceSelect = `
+    SELECT
+      s.*,
+      (
+        SELECT COUNT(*) FROM sequence_entries e WHERE e.sequence_id = s.id
+      ) AS entry_count
+    FROM sequences s
+  `;
+  const sequenceById = db.prepare(`${sequenceSelect} WHERE s.id = ?;`);
+  const sequencesList = db.prepare(
+    `${sequenceSelect} ORDER BY s.name COLLATE NOCASE, s.id;`
+  );
+  const sequenceInsert = db.prepare(`
+    INSERT INTO sequences (name, created_at, updated_at) VALUES (?, ?, ?);
+  `);
+  const sequenceRename = db.prepare(`
+    UPDATE sequences SET name = ?, updated_at = ? WHERE id = ?;
+  `);
+  const sequenceTouch = db.prepare(`
+    UPDATE sequences SET updated_at = ? WHERE id = ?;
+  `);
+  const sequenceDelete = db.prepare(`DELETE FROM sequences WHERE id = ?;`);
+  const sequenceEntriesList = db.prepare(`
+    SELECT * FROM sequence_entries WHERE sequence_id = ? ORDER BY position;
+  `);
+  const sequenceEntryCount = db.prepare(`
+    SELECT COUNT(*) AS count FROM sequence_entries WHERE sequence_id = ?;
+  `);
+  const sequenceEntryInsert = db.prepare(`
+    INSERT INTO sequence_entries (sequence_id, position, fingerprint, added_at)
+    VALUES (?, ?, ?, ?);
+  `);
+  const sequenceEntryDelete = db.prepare(`
+    DELETE FROM sequence_entries WHERE sequence_id = ? AND id = ?;
+  `);
+  const sequenceEntryPositionUpdate = db.prepare(`
+    UPDATE sequence_entries SET position = ? WHERE id = ?;
+  `);
+  const sequenceContentExists = db.prepare(`
+    SELECT fingerprint FROM media_content WHERE fingerprint = ?;
+  `);
+  /**
+   * The instance a sequence entry should play.
+   *
+   * Prefers one under the root the caller is looking at, then any present
+   * instance anywhere, then nothing -- which the caller renders as a gap rather
+   * than dropping the entry. The projection matches the tagged-library query so
+   * both feed the same renderer record contract.
+   */
+  const sequenceInstanceForContent = db.prepare(`
+    SELECT fi.*,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE fi.fingerprint = @fingerprint
+      AND fi.is_present != 0
+      AND d.is_present != 0
+    ORDER BY (fi.root_id = @preferred_root_id) DESC, fi.id
+    LIMIT 1;
+  `);
 
   const reviewCheckpointCount = db.prepare(`
     SELECT COUNT(*) AS count FROM review_checkpoints;
@@ -2239,6 +2352,62 @@ function createMetadataStore(db) {
     }
   }
 
+  function normalizeSequenceId(value) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new TypeError('A positive sequence id is required');
+    }
+    return id;
+  }
+
+  function normalizeSequenceEntryId(value) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new TypeError('A positive sequence entry id is required');
+    }
+    return id;
+  }
+
+  function normalizeSequenceName(value) {
+    const name = typeof value === 'string' ? value.trim() : '';
+    if (!name) throw new TypeError('Sequence name is required');
+    if (name.length > SEQUENCE_NAME_LIMIT) {
+      throw new RangeError(
+        `Sequence name exceeds ${SEQUENCE_NAME_LIMIT} characters`
+      );
+    }
+    return name;
+  }
+
+  function normalizeSequenceFingerprint(value) {
+    const fingerprint = typeof value === 'string' ? value.trim() : '';
+    if (!fingerprint) {
+      throw new TypeError('A sequence entry requires a content fingerprint');
+    }
+    return fingerprint;
+  }
+
+  function mapSequenceRow(row) {
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      name: row.name,
+      entryCount: Number(row.entry_count || 0),
+      createdAt: Number(row.created_at || 0),
+      updatedAt: Number(row.updated_at || 0),
+    };
+  }
+
+  function mapSequenceEntryRow(row) {
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      position: Number(row.position || 0),
+      fingerprint: row.fingerprint,
+      addedAt: Number(row.added_at || 0),
+    };
+  }
+
   function warnMalformedReviewCheckpoint(error, row = null) {
     if (didWarnMalformedReviewCheckpoint) return;
     didWarnMalformedReviewCheckpoint = true;
@@ -2413,6 +2582,10 @@ function createMetadataStore(db) {
     rekeyTagLinks.run(parameters);
     rekeyInstanceFingerprints.run(parameters);
     rekeyCheckpointAnchors.run(parameters);
+    // Sequence entries cascade from media_content, so carrying them across
+    // before the source row is dropped is what stops a v1 -> v2 migration from
+    // silently shortening a sequence.
+    rekeySequenceEntries.run(parameters);
     // Children no longer reference the source, so dropping it cannot cascade
     // into the metadata that was just carried over.
     deleteContentReviewStmt.run(fromFingerprint);
@@ -3374,6 +3547,275 @@ function createMetadataStore(db) {
   function deleteSavedView(savedViewId) {
     const id = normalizeSavedViewId(savedViewId);
     return savedViewDelete.run(id).changes > 0;
+  }
+
+  function listSequences() {
+    return sequencesList.all().map(mapSequenceRow).filter(Boolean);
+  }
+
+  function getSequence(sequenceId) {
+    return mapSequenceRow(sequenceById.get(normalizeSequenceId(sequenceId)));
+  }
+
+  /**
+   * A name collision is an ordinary outcome of a rename dialog rather than a
+   * defect, so it is reported with a stable code instead of the raw SQLite
+   * constraint text a caller would otherwise have to pattern-match.
+   */
+  function asSequenceNameError(error, name) {
+    if (String(error?.code || '').startsWith('SQLITE_CONSTRAINT')) {
+      const conflict = new Error(`A sequence named "${name}" already exists`);
+      conflict.code = 'SEQUENCE_NAME_TAKEN';
+      return conflict;
+    }
+    return error;
+  }
+
+  function createSequence(name) {
+    const safeName = normalizeSequenceName(name);
+    const count = Number(sequenceCount.get()?.count || 0);
+    if (count >= SEQUENCE_LIMIT) {
+      throw new RangeError(`Sequence limit of ${SEQUENCE_LIMIT} reached`);
+    }
+    const now = Date.now();
+    let result;
+    try {
+      result = sequenceInsert.run(safeName, now, now);
+    } catch (error) {
+      throw asSequenceNameError(error, safeName);
+    }
+    return mapSequenceRow(sequenceById.get(result.lastInsertRowid));
+  }
+
+  function renameSequence(sequenceId, name) {
+    const id = normalizeSequenceId(sequenceId);
+    if (!sequenceById.get(id)) throw new Error(`Sequence does not exist: ${id}`);
+    const safeName = normalizeSequenceName(name);
+    try {
+      sequenceRename.run(safeName, Date.now(), id);
+    } catch (error) {
+      throw asSequenceNameError(error, safeName);
+    }
+    return mapSequenceRow(sequenceById.get(id));
+  }
+
+  function deleteSequence(sequenceId) {
+    const id = normalizeSequenceId(sequenceId);
+    return sequenceDelete.run(id).changes > 0;
+  }
+
+  function getSequenceEntries(sequenceId) {
+    const id = normalizeSequenceId(sequenceId);
+    return sequenceEntriesList.all(id).map(mapSequenceEntryRow).filter(Boolean);
+  }
+
+  function requireSequence(id) {
+    const row = sequenceById.get(id);
+    if (!row) throw new Error(`Sequence does not exist: ${id}`);
+    return row;
+  }
+
+  /**
+   * Rewrite positions to dense 0..n-1 in the given entry order.
+   *
+   * Two phases, for the same reason a permutation of filenames needs temporary
+   * names: UNIQUE(sequence_id, position) rejects the intermediate state where a
+   * row is being given a position another row still holds. Parking every row
+   * above SEQUENCE_POSITION_STAGING_OFFSET first makes the second pass
+   * collision-free. Must run inside a transaction.
+   */
+  function rewriteSequencePositions(orderedEntryIds) {
+    orderedEntryIds.forEach((entryId, index) => {
+      sequenceEntryPositionUpdate.run(
+        SEQUENCE_POSITION_STAGING_OFFSET + index,
+        entryId
+      );
+    });
+    orderedEntryIds.forEach((entryId, index) => {
+      sequenceEntryPositionUpdate.run(index, entryId);
+    });
+  }
+
+  function appendToSequence(sequenceId, fingerprints) {
+    const id = normalizeSequenceId(sequenceId);
+    const requested = (
+      Array.isArray(fingerprints) ? fingerprints : [fingerprints]
+    ).map(normalizeSequenceFingerprint);
+
+    db.transaction(() => {
+      requireSequence(id);
+      if (!requested.length) return;
+      const existing = Number(sequenceEntryCount.get(id)?.count || 0);
+      if (existing + requested.length > SEQUENCE_ENTRY_LIMIT) {
+        throw new RangeError(
+          `Sequence entry limit of ${SEQUENCE_ENTRY_LIMIT} reached`
+        );
+      }
+      // Reject the whole batch before writing any of it, so a selection
+      // containing one unindexed clip cannot half-append.
+      for (const fingerprint of requested) {
+        if (!sequenceContentExists.get(fingerprint)) {
+          throw new Error(`Unknown content fingerprint: ${fingerprint}`);
+        }
+      }
+      const now = Date.now();
+      requested.forEach((fingerprint, index) => {
+        sequenceEntryInsert.run(id, existing + index, fingerprint, now);
+      });
+      sequenceTouch.run(now, id);
+    })();
+
+    return getSequenceEntries(id);
+  }
+
+  function removeSequenceEntries(sequenceId, entryIds) {
+    const id = normalizeSequenceId(sequenceId);
+    const requested = (Array.isArray(entryIds) ? entryIds : [entryIds]).map(
+      normalizeSequenceEntryId
+    );
+
+    db.transaction(() => {
+      requireSequence(id);
+      const removed = requested.reduce(
+        (total, entryId) =>
+          total + sequenceEntryDelete.run(id, entryId).changes,
+        0
+      );
+      if (!removed) return;
+      rewriteSequencePositions(
+        sequenceEntriesList.all(id).map((row) => Number(row.id))
+      );
+      sequenceTouch.run(Date.now(), id);
+    })();
+
+    return getSequenceEntries(id);
+  }
+
+  function reorderSequenceEntries(sequenceId, orderedEntryIds) {
+    const id = normalizeSequenceId(sequenceId);
+    const requested = (
+      Array.isArray(orderedEntryIds) ? orderedEntryIds : []
+    ).map(normalizeSequenceEntryId);
+
+    db.transaction(() => {
+      requireSequence(id);
+      const current = sequenceEntriesList.all(id).map((row) => Number(row.id));
+      if (requested.length !== current.length) {
+        throw new RangeError(
+          'A reorder must list every entry in the sequence exactly once'
+        );
+      }
+      const belongs = new Set(current);
+      const seen = new Set();
+      for (const entryId of requested) {
+        if (!belongs.has(entryId)) {
+          throw new Error(`Entry ${entryId} is not in sequence ${id}`);
+        }
+        if (seen.has(entryId)) {
+          throw new RangeError(`Entry ${entryId} was listed more than once`);
+        }
+        seen.add(entryId);
+      }
+      rewriteSequencePositions(requested);
+      sequenceTouch.run(Date.now(), id);
+    })();
+
+    return getSequenceEntries(id);
+  }
+
+  function moveSequenceEntry(sequenceId, entryId, targetPosition) {
+    const id = normalizeSequenceId(sequenceId);
+    const movedId = normalizeSequenceEntryId(entryId);
+    const order = sequenceEntriesList.all(id).map((row) => Number(row.id));
+    const from = order.indexOf(movedId);
+    if (from === -1) throw new Error(`Entry ${movedId} is not in sequence ${id}`);
+
+    const requested = Number(targetPosition);
+    if (!Number.isSafeInteger(requested)) {
+      throw new TypeError('A target position is required');
+    }
+    const to = Math.min(Math.max(requested, 0), order.length - 1);
+    if (to === from) return getSequenceEntries(id);
+
+    const next = order.slice();
+    next.splice(from, 1);
+    next.splice(to, 0, movedId);
+    return reorderSequenceEntries(id, next);
+  }
+
+  /**
+   * Entries resolved to a playable instance, in order.
+   *
+   * An entry whose content has no present instance keeps its position and
+   * reports `instance: null`. It is never dropped: a sequence that quietly
+   * shortens itself is a story edited by accident.
+   */
+  function getSequenceSnapshot(sequenceId, options = {}) {
+    const id = normalizeSequenceId(sequenceId);
+    const sequence = mapSequenceRow(sequenceById.get(id));
+    if (!sequence) return null;
+    // Roots are addressed by path everywhere else in this store, so callers
+    // never have to know an internal root id. -1 can match no row.
+    const preferredRoot = options.preferredRootPath
+      ? rootByPath.get(normalizeRootPath(options.preferredRootPath))
+      : null;
+    const preferredRootId = preferredRoot ? Number(preferredRoot.id) : -1;
+
+    const tagsByFingerprint = new Map();
+    const entries = getSequenceEntries(id).map((entry) => {
+      const row = sequenceInstanceForContent.get({
+        fingerprint: entry.fingerprint,
+        preferred_root_id: preferredRootId,
+      });
+      if (!row) return { ...entry, instance: null };
+      if (!tagsByFingerprint.has(entry.fingerprint)) {
+        tagsByFingerprint.set(
+          entry.fingerprint,
+          tagsForFingerprint.all(entry.fingerprint).map((tag) => tag.name)
+        );
+      }
+      const width = Number(row.content_width || 0);
+      const height = Number(row.content_height || 0);
+      const durationMs = normalizeDurationMs(row.content_duration_ms);
+      const frameRate = normalizeFrameRate(row.content_frame_rate);
+      return {
+        ...entry,
+        instance: {
+          instanceId: Number(row.id),
+          rootPath: row.owner_root_path,
+          relativePath: row.relative_path,
+          absolutePath: row.absolute_path,
+          size: Number(row.size || 0),
+          mtimeMs: Number(row.mtime_ms || 0),
+          createdMs: Number(row.content_created_ms || row.mtime_ms || 0),
+          fingerprint: row.fingerprint || null,
+          tags: tagsByFingerprint.get(entry.fingerprint) || [],
+          rating: Number.isFinite(Number(row.rating_value))
+            ? Number(row.rating_value)
+            : null,
+          reviewState: REVIEW_STATES.has(row.review_state)
+            ? row.review_state
+            : 'unreviewed',
+          dimensions:
+            width > 0 && height > 0
+              ? {
+                  width,
+                  height,
+                  aspectRatio: width / height,
+                  ...(durationMs ? { durationMs } : {}),
+                  ...(frameRate ? { frameRate } : {}),
+                }
+              : null,
+          hasAudio: mapHasAudio(row.content_has_audio),
+        },
+      };
+    });
+
+    return {
+      ...sequence,
+      entries,
+      missingCount: entries.filter((entry) => !entry.instance).length,
+    };
   }
 
   function requireReviewCheckpointRoot(rootPath) {
@@ -4358,6 +4800,17 @@ function createMetadataStore(db) {
     createSavedView,
     updateSavedView,
     deleteSavedView,
+    listSequences,
+    getSequence,
+    createSequence,
+    renameSequence,
+    deleteSequence,
+    getSequenceEntries,
+    getSequenceSnapshot,
+    appendToSequence,
+    removeSequenceEntries,
+    reorderSequenceEntries,
+    moveSequenceEntry,
     listReviewCheckpoints,
     getReviewCheckpoint,
     saveReviewCheckpoint,

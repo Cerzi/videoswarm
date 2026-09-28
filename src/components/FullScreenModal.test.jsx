@@ -1348,3 +1348,136 @@ describe("FullScreenModal media ownership", () => {
     expect(scheduler.getSnapshot().externalDecoders).toBe(0);
   });
 });
+
+describe("FullScreenModal sequence play-through", () => {
+  let pauseSpy;
+  let loadSpy;
+  let playSpy;
+
+  const clip = (id) => ({
+    id,
+    instanceId: 81,
+    name: `${id}.mp4`,
+    fullPath: `/library/${id}.mp4`,
+    sourceUrl: "videoswarm-media://instance/81?v=4",
+    isElectronFile: true,
+  });
+
+  beforeEach(() => {
+    pauseSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+    loadSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "load")
+      .mockImplementation(() => {});
+    playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    expect(pauseSpy).toBeDefined();
+    expect(loadSpy).toBeDefined();
+    expect(playSpy).toBeDefined();
+  });
+
+  it("loops the clip for ordinary grid review", () => {
+    const onNavigate = vi.fn();
+    render(
+      <FullScreenModal
+        video={clip("one")}
+        onClose={vi.fn()}
+        onNavigate={onNavigate}
+        showFilenames={false}
+      />
+    );
+
+    const element = document.body.querySelector("video");
+    expect(element.loop).toBe(true);
+    fireEvent.ended(element);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("advances to the next entry at the end of a clip", () => {
+    const onNavigate = vi.fn();
+    render(
+      <FullScreenModal
+        video={clip("one")}
+        onClose={vi.fn()}
+        onNavigate={onNavigate}
+        showFilenames={false}
+        advanceOnEnd
+        canNavigateNext
+      />
+    );
+
+    const element = document.body.querySelector("video");
+    expect(element.loop).toBe(false);
+    fireEvent.ended(element);
+    expect(onNavigate).toHaveBeenCalledWith("next");
+  });
+
+  it("ends the session on the last entry rather than wrapping", () => {
+    const onClose = vi.fn();
+    const onNavigate = vi.fn();
+    render(
+      <FullScreenModal
+        video={clip("last")}
+        onClose={onClose}
+        onNavigate={onNavigate}
+        showFilenames={false}
+        advanceOnEnd
+        canNavigateNext={false}
+      />
+    );
+
+    fireEvent.ended(document.body.querySelector("video"));
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith("sequence-complete");
+  });
+
+  it("keeps the loop attribute in step with the session on rerender", () => {
+    const common = {
+      video: clip("one"),
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      showFilenames: false,
+    };
+    const rendered = render(<FullScreenModal {...common} advanceOnEnd />);
+    const element = document.body.querySelector("video");
+    expect(element.loop).toBe(false);
+
+    // React restores the declarative attribute on rerender, so the two have to
+    // agree or a sequence session silently starts looping again.
+    rendered.rerender(<FullScreenModal {...common} advanceOnEnd />);
+    expect(element.loop).toBe(false);
+
+    rendered.rerender(<FullScreenModal {...common} advanceOnEnd={false} />);
+    expect(element.loop).toBe(true);
+  });
+
+  it("releases the element once when a sequence session ends", () => {
+    const onClose = vi.fn();
+    const rendered = render(
+      <FullScreenModal
+        video={clip("last")}
+        onClose={onClose}
+        onNavigate={vi.fn()}
+        showFilenames={false}
+        advanceOnEnd
+        canNavigateNext={false}
+      />
+    );
+    const element = document.body.querySelector("video");
+
+    fireEvent.ended(element);
+    // A second end event after the close request must not re-close.
+    fireEvent.ended(element);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    rendered.unmount();
+    expect(element.getAttribute("src")).toBeNull();
+  });
+});
