@@ -56,10 +56,10 @@ them and lost nothing the previous parser found. A MiniMax prompt is still
 shown as its composer's fields (candidate fragments, Partial), because the
 composer builds the final text at run time.
 
-## 1c. Re-rendering inside Video Swarm: Phase 1 done, Phases 2–4 open
+## 1c. Re-rendering inside Video Swarm: Phases 1–2 done, 3–4 open
 
-Status: **Accepted**; Phase 1 **Implemented** (2026-09-28), Phases 2–4
-**Unimplemented** — see
+Status: **Accepted**; Phases 1 and 2 **Implemented** (2026-09-28), Phases 3
+and 4 **Unimplemented** — see
 [`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md)
 
 Recipes learned from two or more draft/final pairs replace the standalone
@@ -68,7 +68,10 @@ loopback-only, opt-in ComfyUI connection; the engine in Video Swarm's main
 process with a tray icon while a queue runs; single-pass only for version 1.
 Phase 1, the learner, matcher and apply as pure modules
 (`main/comfy-recipe.js`), reproduces real Omni and long-form finals from
-held-out drafts. Next is Phase 2: the ComfyUI client, checks and runner.
+held-out drafts. Phase 2 adds the connection, checks, queue and runner in the
+main process with its IPC, but no interface yet. Next is Phase 3, the
+interface (see 5b first), then Phase 4: out-of-memory retries, RAM and time
+estimates, two-pass rendering.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 

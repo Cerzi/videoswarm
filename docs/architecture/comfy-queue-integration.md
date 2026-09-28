@@ -1,8 +1,9 @@
 # Re-rendering in Video Swarm with Learned Recipes
 
 Status: **Accepted** (decisions recorded 2026-09-28). Phase 1, the recipe
-learner and matcher, is **Implemented** and **Verified**; Phases 2–4 are
-**Unimplemented**.
+learner and matcher, and Phase 2, the ComfyUI connection, checks and runner,
+are **Implemented** and **Verified**; Phases 3 (interface) and 4 (two-pass,
+RAM and estimates) are **Unimplemented**.
 Last updated: 2026-09-28
 
 ## Summary
@@ -260,46 +261,89 @@ saving and the provenance tag are Phase 2 (**Unimplemented**)
 
 ## 5. Checks before anything runs
 
-Status: **Proposed**
+Status: **Implemented** (`main/comfy-checks.js`)
 
-Ported from the standalone app's `problems_in` and `plan`, against ComfyUI's
-`/object_info`:
+Ported from the standalone app's `problems_in`, with nothing keyed to a node
+class, against ComfyUI's node definitions. Those are fetched per class
+(`/object_info/{class}`, cached a minute): the full `/object_info` is 103 MB
+on the user's install, too much to parse in the main process every minute.
 
-- every node class is installed, and every *required* input is present —
-  including autogrow inputs, which arrive as `name.sub` keys
-  (`images.image_0`);
-- every combo value exists: models, LoRAs, and other combo inputs;
-- every input file is still in ComfyUI's `input/`. This matters more than it
-  looks: the MiniMax composer **silently drops** a missing reference slot and
-  renumbers `<Picture N>`, so a missing file re-renders wrong rather than
-  failing;
-- a final does not already exist beside the draft;
-- the draft is not already in the queue under another path.
+- every node class is installed — checked on **every** node, because
+  ComfyUI refuses a prompt holding any class it lacks, wired or not;
+- on nodes an output depends on (outputs are the classes ComfyUI marks
+  `output_node`), every *required* input is present — including autogrow
+  inputs, which arrive as `name.sub` keys (`images.image_0`);
+- every combo value exists: models, LoRAs and other combo inputs, and rgthree
+  Power Lora `{ on, lora }` entries against the LoRA loader's list;
+- every **input file** a string input names — alone, or inside a JSON list or
+  object of names — is in ComfyUI's input folder, as its LoadImage,
+  LoadVideo and LoadAudio lists give it. This matters more than it looks: the
+  MiniMax composer **silently drops** a missing reference slot and renumbers
+  `<Picture N>`, so a missing file re-renders wrong rather than failing. A
+  slot a sibling input switches off is not required: a list named for
+  bypassing holding `true` at that position (`slot_bypassed`), or settings
+  holding `{ bypassed: true }`, `{ enabled: false }` and the like there
+  (`media_settings`). Real drafts name deleted media in bypassed slots and
+  render fine, so without this they were blocked;
+- a draft already rendered with the same recipe and settings is **held**
+  (Section 6), and one already queued runs once.
 
-A clip that fails a check shows the reason and is skipped; nothing is
-submitted to find out.
+A clip that fails a check is **blocked** with the first reason on its row and
+every problem in the listing; nothing is submitted to find out. Checks re-run
+every minute, so installing the missing LoRA unblocks it.
 
 ## 6. Running
 
-Status: **Proposed**
+Status: **Implemented** (`main/comfy-runner.js`, `main/comfy-client.js`,
+`main/comfy-queue-store.js`) except out-of-memory retries and estimates,
+which are Phase 4
 
 Ported from the standalone app's `Runner`, with its behaviour kept:
 
 - **One clip on ComfyUI's queue at a time**, so the user's own generations slot
-  in between, and reordering applies immediately.
-- **Crash recovery** — a prompt lost with ComfyUI (no queue entry, no history
-  after it returns) fails after three checks and the queue moves on; a failed
-  clip retries only when the user asks. ComfyUI is never restarted by Video
-  Swarm.
-- **Adoption** — on restart, renders still on ComfyUI's queue are recognised by
-  the draft prompt in their provenance tag.
-- **Out-of-memory** — retried one size rung down, only for genuine OOM, with
-  the classifier and test corpus described in `comfy-requeue.md` Section 6.
-- **History** — every final recorded against its draft by embedded prompt, so
-  moving either file loses nothing. A draft re-added after it was rendered is
-  held with a link to its final, and "Render again" overrides.
-- **Estimates** — `rate × steps × video seconds × MP^1.15`, the rate learned
-  from this machine's own finished renders of the same recipe.
+  in between; the page order is the run order (first added, last added;
+  *shortest* and *longest* fall back to added order until Phase 4's
+  estimates). Start and Stop: Stop withdraws a prompt still waiting in
+  ComfyUI's queue (`POST /queue` delete) and lets a rendering one finish.
+- **Each clip is prepared just before it is sent**: its recipe applied to the
+  draft's embedded graphs (MP4 and MOV drafts; ComfyUI's SaveVideo writes
+  MP4), the checks run, and the final named. The prompt goes to `POST /prompt`
+  with `extra_data.extra_pnginfo` = `{ workflow, requeue }` and **no
+  `client_id`**, so ComfyUI broadcasts progress to every listener, its own
+  page included.
+- **Finals beside their drafts**: the output's `filename_prefix` becomes
+  `<draft folder relative to the output folder>/<draft stem>_final_<label>`
+  when the draft is inside ComfyUI's output folder, otherwise the draft's own
+  save folder from its embedded prefix. The label is the recipe's name, then
+  each changed setting (`omni-quality_steps50`).
+- **Provenance** — the `requeue` tag as comfy-requeue writes it
+  (`source_path`, `source_prompt`, `source_workflow`, `passes`, `phase`), plus
+  the recipe id and name, the settings and rule choices, and the queue item.
+  `source_path` is relative to the output folder, or only the file name for a
+  draft outside it, so a shared final does not carry the user's folders.
+- **Outcomes** from `/history`: ok, out of memory (the "out of memory"
+  family), error with the node type and message, or interrupted, with
+  `execution_start` → finish seconds. A refused prompt fails with ComfyUI's
+  own reason.
+- **Crash recovery** — a prompt missing from both `/queue` and `/history` for
+  three polls while ComfyUI answers fails ("ComfyUI stopped during it") and
+  the queue goes on. With ComfyUI down the runner waits, and clips can still
+  be added. A failed clip retries only when the user asks. ComfyUI is never
+  restarted, freed or interrupted by the runner.
+- **Adoption** — on start, the profile's prompts still on ComfyUI's queue are
+  recognised by the draft prompt in their tag's `source_prompt` (only prompts
+  carrying Video Swarm's own marker), and the queue follows them.
+- **Out-of-memory** — in version 1 it fails with its reason. Retrying one
+  size rung down is Phase 4.
+- **History** — every final recorded against its draft (content fingerprint),
+  recipe and settings in the profile database. A draft added again with the
+  same recipe and settings is **held** with a link to its final, and "Render
+  again" overrides; the same draft queued twice runs once.
+- **Estimates** — Phase 4: `rate × steps × video seconds × MP^1.15`, the rate
+  learned from this machine's own finished renders of the same recipe.
+
+The queue item states are ready, waiting, rendering, done, failed, held, and
+**blocked** (a failed check).
 
 ### Memory: single pass first
 
@@ -314,32 +358,54 @@ actually released in between, and it mostly is not: `POST /free` runs only
 between prompts, and even then about 52 GB stays resident. Only a freshly
 restarted ComfyUI (~8 GB) had room for the second pass.
 
-So version 1 is **single-pass only** (Decision 3), with a per-clip RAM
-estimate that refuses a clip which will not fit rather than letting it swap or
-die. Two-pass rendering, a RAM cap and the `_nopost_` fallback are Phase 4.
+So version 1 is **single-pass only** (Decision 3). The per-clip RAM estimate
+that refuses a clip which will not fit, two-pass rendering, a RAM cap and the
+`_nopost_` fallback are Phase 4; until then a clip that runs out of memory
+fails with the reason.
 The standalone app now renders two passes by restarting ComfyUI's systemd
 service between them; that works on the user's machine, but other users have
 no such service, so it is not a version 1 foundation.
 
 ## 7. Where the engine lives
 
-Status: **Unimplemented** — decided (Decisions 1 and 2)
+Status: **Implemented** (Decisions 1 and 2)
 
-The engine is main-process code behind an opt-in **ComfyUI connection**:
+The engine is main-process code behind an opt-in **ComfyUI connection**
+(`main/comfy-connection.js`), a per-profile setting:
 
 - off by default; when on, it accepts only **loopback** addresses
-  (`127.0.0.1`, `::1`, `localhost`) and never the internet;
-- all traffic in the main process behind bounded IPC; the renderer's CSP does
-  not change, and the renderer never sends a URL, a graph or a path — only
-  clip ids and recipe ids, as `comfy-requeue.md` Section 1 already specified;
-- ComfyUI responses are untrusted input, parsed with the existing bounded
-  readers.
+  (`localhost`, `127.0.0.1`, `[::1]`) with no path, and never the internet.
+  The client checks again when the name resolves, so a hosts file pointing
+  `localhost` elsewhere is refused;
+- switching it on needs ComfyUI's **output folder**, which must exist, so
+  finals can be saved beside their drafts;
+- it changes only through its own validated IPC: the renderer's general
+  settings writes cannot set it, and an unusable stored value turns it off;
+- all traffic is in the main process; the renderer's CSP does not change. The
+  renderer sends the connection address, recipe and queue ids, settings, and
+  the paths of clips it was shown — each authorized against the folders it
+  opened, like every other native action — and never a graph;
+- ComfyUI responses are untrusted input: size-bounded, time-limited, and
+  parsed with exact 64-bit integers.
 
 An overnight queue must survive the window closing, which was the reason the
-earlier design was rejected. While a queue is active, closing the window
-**keeps Video Swarm running in the system tray** with a "Queue running — n
-left" item; quitting from the tray asks first. With no active queue, closing
-quits as today.
+earlier design was rejected. While a queue is active (running, or a prompt of
+ours in ComfyUI), closing the window **keeps Video Swarm running in the
+system tray** (`main/comfy-tray.js`): "Rendering — n left", Show Video Swarm,
+Stop queue, Quit. Quitting while one of our prompts is in ComfyUI asks
+first; that prompt keeps rendering and is adopted at the next start. With no
+active queue, closing quits as today. Each profile has its own runner; a
+profile switch disposes it without withdrawing anything.
+
+### IPC and preload surface (for Phase 3)
+
+`window.electronAPI.comfyQueue`: `getConnection`, `setConnection`,
+`testConnection` (read-only: `GET /queue` and two node definitions),
+`recipes.list/get/delete/learn` (examples are a draft and its quality
+version, or a comfy-requeue final alone), `add` (clips, recipe, settings,
+rule choices), `list` (the queue in run order with each clip's check
+results), `history`, `start`, `stop`, `setOrder`, `retry`, `renderAgain`,
+`remove`, and `onChanged` events.
 
 A **separate runner service** owning the queue, with Video Swarm as its front
 end, was the alternative. It is not being built (Decision 2).
@@ -385,7 +451,8 @@ proposal was written with.
    prompts.
 2. **ComfyUI client, checks and runner**, ported with the app's tests against
    a fake ComfyUI: loopback-only opt-in connection, main-process engine, tray
-   while a queue runs (Decisions 1 and 2).
+   while a queue runs (Decisions 1 and 2). **Implemented, Verified**
+   (2026-09-28).
 3. **Interface**: Queue and Finished tabs, recipe screen, "Queue with recipe…",
    badges.
 4. **Two-pass rendering, RAM cap and estimates** (after version 1, Decision 3).
@@ -463,6 +530,43 @@ proposal was written with.
     what renders.
   - UI operations cover top-level nodes; nodes inside subgraphs are applied in
     the API prompt only.
+
+### 2026-09-28 — Phase 2: connection, checks and runner
+
+- Modules: `comfy-connection.js` (setting), `comfy-client.js` (bounded HTTP
+  client and outcome classification), `comfy-checks.js`, `comfy-queue-store.js`
+  (recipes, queue and finals in the profile's SQLite, plus an in-memory
+  store with the same contract for tests), `comfy-runner.js`, `comfy-tray.js`;
+  wiring in `main.js` and `preload.js`. `container-tags.js` returns a final's
+  `requeue` tag when asked (`includeRequeue`), for learning from finals.
+- Tests use a fake ComfyUI, a real HTTP server on loopback
+  (`main/__tests__/helpers/fakeComfyUi.cjs`). Ported from comfy-requeue's
+  runner tests: ordering, one at a time, Stop withdrawing a waiting prompt,
+  a lost prompt failing while the queue goes on, ComfyUI down, adoption after
+  a restart, repeats held, the duplicate draft running once, checks blocking
+  a missing LoRA or reference file, out of memory and errors failing with
+  their reason. The store contract runs on the memory store under Node and
+  on SQLite in `npm run test:electron-abi`.
+- The real app, headless, against the fake ComfyUI
+  (`tests/electron/comfy-queue.smoke.spec.cjs`): a non-loopback address
+  refused; the connection switched on and tested; a recipe learned from
+  three tagged finals; a draft queued twice runs once, and a path the window
+  was never shown is refused; the prompt sent with the final named beside
+  the draft; the window closed mid-render leaves the app running, the render
+  finishes, and the reopened window shows it done; quitting under a render
+  asks, Cancel keeps the app, Quit leaves the prompt in ComfyUI; the next
+  start follows it.
+- Read-only against the user's real ComfyUI (`GET` only, enforced in the
+  script): the connection test, `/queue`, `/history?max_items=10` classified
+  (8 ok, 2 interrupted), and the Omni and long-form recipes learned from real
+  finals applied to real held-out drafts and checked with ComfyUI's own node
+  definitions (34 and 30 classes). Both passed; copies with a missing LoRA
+  and a missing reference were blocked. That run found the switched-off-slot
+  false positive fixed above. Nothing was queued, freed or interrupted.
+- Left for later: out-of-memory retries, RAM estimates and time estimates
+  (Phase 4); drafts in containers other than MP4/MOV; a UI-only mirror of a
+  setting keeps the example's value (Phase 1 note). Python's NaN in a draft
+  is resubmitted as `null`.
 
 ## References
 
