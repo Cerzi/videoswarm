@@ -1189,7 +1189,6 @@ function createEnumeratedVideoFileObject(filePath, baseFolderPath, stats) {
       folder: path.dirname(filePath),
       baseName: path.basename(fileName, ext),
       sizeFormatted: formatFileSize(stats.size),
-      dateModifiedFormatted: stats.mtime.toLocaleDateString(),
       dateCreatedFormatted: stats.birthtime.toLocaleDateString(),
     },
   };

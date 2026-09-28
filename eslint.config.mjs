@@ -13,6 +13,8 @@ const testFiles = [
 export default [
   {
     ignores: [
+      // Agent worktrees live inside the repository; each lints itself.
+      ".claude/**",
       "coverage/**",
       "dist/**",
       "dist-react/**",
