@@ -1,7 +1,10 @@
 # ComfyUI Re-queue (Promotion)
 
-Status: **Rejected — not building this in Video Swarm**
-Last updated: 2026-09-27
+Status: **Rejected — not building this in Video Swarm.** A new proposal,
+built on recipes learned from examples rather than per-workflow code, is in
+[`comfy-queue-integration.md`](comfy-queue-integration.md) and awaits the
+user's decisions.
+Last updated: 2026-09-28
 
 ## Outcome
 

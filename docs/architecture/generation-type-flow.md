@@ -1,0 +1,363 @@
+# Generation Metadata by Socket Type
+
+Status: **Unimplemented — design, with a prototype and a port under
+evaluation; nothing here replaces the shipped parser yet**
+Last updated: 2026-09-28
+
+## Summary
+
+The Generation panel reads a ComfyUI render's checkpoint, LoRAs, prompt, seed
+and sampling settings by tracing the embedded API graph from the output node
+back to the sampler. `main/comfy-generation-parser.js` does that with
+**allow-lists of node classes**: five sampler classes (`SAMPLER_TYPES`),
+per-class maps of which input carries conditioning or a model
+(`UNARY_CONDITIONING_INPUT`, `MODEL_PASSTHROUGH_INPUT`), three decode classes,
+and so on. A node that is not on a list stops the trace.
+
+That is why the panel is unreliable. No list keeps up with custom nodes, and a
+single wrapper, switch or composer anywhere on the path loses everything behind
+it. On the user's library, MiniMax H3 graphs yield no prompt or seed (the prompt
+lives in a composer, the seed arrives through `RandomNoise`), and the V2V hybrid
+yields nothing at all (its custom save node is not a recognised output).
+
+This document replaces the allow-lists with **socket types**. ComfyUI's
+embedded UI `workflow` records the type of every input and output socket, and
+every link carries its type too. Types are shared by every custom node:
+`MODEL`, `CLIP`, `VAE`, `CONDITIONING`, `LATENT`, `IMAGE`, `GUIDER`, `SIGMAS`,
+`NOISE`, `INT`, `FLOAT`, `STRING`, and `*` for switches that pass anything
+through. Roles are defined by what a node consumes and produces, not by its
+name.
+
+This is a living design record in the style of
+[`embedded-generation-metadata.md`](embedded-generation-metadata.md), whose
+goals, non-goals, bounds and evidence levels it keeps. A section is marked
+**Implemented** only after its focused acceptance tests pass, and **Verified**
+only after the repository gates also pass.
+
+## Status convention
+
+- **Implemented** means the behavior and its focused verification are present.
+- **Verified** means the repository-wide gates also passed on that change.
+- **Unimplemented** means at least one acceptance criterion is still open.
+- **Deferred** means deliberately out of scope until stated evidence exists.
+
+## Goals
+
+- Read checkpoint, LoRAs, prompt, seed, steps, CFG, sampler and scheduler from
+  graphs built from custom nodes that no one has written an adapter for.
+- Keep the panel's evidence levels: a value is **direct** (one literal on a
+  proven path), **graph-derived** (resolved through links, switches or
+  primitives), or **unresolved** (reported, never guessed).
+- Make reliability **measurable**: a coverage harness over a real corpus
+  reports how often each field is found, before and after any change.
+- Give generation versions a better ordering signal than output pixels.
+
+## Non-goals
+
+Inherited unchanged from `embedded-generation-metadata.md`: no execution of
+workflow code, no raw graphs in SQLite or renderer state, lazy and bounded
+work, no network access and no ComfyUI installation required. Also:
+
+- **No class allow-lists** in the new reader. Conventional *input names*
+  (`model`, `positive`, `seed`) are used, because ComfyUI itself standardises
+  them; class names are not.
+- **No reconstruction of composed prompts.** A composer that builds its prompt
+  from several text fields yields those fields as fragments, as today. The
+  reader never concatenates them with guessed punctuation.
+- Generation versions keep their own graph-free key
+  ([`generation-versions.md`](generation-versions.md)). Nothing here feeds
+  grouping.
+
+## Evidence: the prototype
+
+`prototypes/typeflow.py` (74 lines, stdlib) is the proof of concept. With no
+node lists at all, on 2026-09-28 it read, from real renders in the user's
+library:
+
+| Render | Checkpoint | LoRAs | Prompt | Seed | Steps |
+|---|---|---|---|---|---|
+| H3 hybrid (`HybridNative_Ref2VA`) | yes | 3, incl. the turbo LoRA | yes | 123 | 8 |
+| H3 long-form | yes | 2, incl. turbo | yes | 123 and the noise seed | 8 |
+| V2V hybrid | yes | 1 | yes | 123 | 8 |
+| LTX outpaint | — | — | — | — | — |
+| VR180 | — | — | — | — | — |
+| AnimateDiff masking (seedless) | — | — | — | — | — |
+
+The shipped parser, on the same H3 and V2V renders, returns no prompt and no
+seed, and nothing at all for the V2V hybrid.
+
+The misses are exactly the two cases below that the prototype does not handle:
+**subgraphs** (LTX outpaint) and **no UI workflow** (VR180 saves through VHS,
+which embeds only `prompt`). The AnimateDiff graph genuinely has no sampler.
+
+The prototype also shows two faults the design must fix:
+
+- Its sampler test ("produces a LATENT and takes a MODEL, directly or through a
+  direct input") also admits `MMH3ReferenceMultiPrompt` and `H3HybridWindows`.
+  Their real sockets show why: `H3HybridWindows` takes `MODEL`, a custom
+  `MMH3_COND_SET` and a `LATENT` and outputs six types; the multi-prompt node
+  takes no `MODEL` at all. Section 3 tightens the test.
+- On the long-form graph it reports two seeds, `123` and the real noise seed,
+  because it collects every `seed`-named input upstream of any sampler.
+  Section 5 ties numeric settings to a stage.
+
+## 1. Socket types
+
+Status: **Unimplemented**
+
+A **type map** assigns every API input `(nodeId, inputName)` and every output
+slot `(nodeId, slot)` a socket type, with the evidence it came from:
+
+1. **Declared** — the embedded UI `workflow`: `nodes[].inputs[].type`,
+   `nodes[].outputs[].type`, and the typed `links` array
+   (`[id, originNode, originSlot, targetNode, targetSlot, type]`).
+2. **Subgraph-declared** — `workflow.definitions.subgraphs[]`. An API id such as
+   `5407:5600` is inner node `5600` of the subgraph instantiated by outer node
+   `5407`, whose UI `type` is the subgraph's `id`. Nested subgraphs extend the
+   id (`a:b:c`). Inner links are objects (`{origin_id, origin_slot, target_id,
+   target_slot, type}`); an `origin_id` of `-10` is the subgraph's input side
+   and `-20` its output side, which is how inner and outer links join.
+3. **Inferred** — when there is no UI workflow, or a node is missing from it,
+   types come from ComfyUI's conventional input names: `model`→`MODEL`,
+   `clip`→`CLIP`, `vae`→`VAE`, `positive`/`negative`/`conditioning`→
+   `CONDITIONING`, `latent_image`/`latent`/`samples`→`LATENT`,
+   `guider`→`GUIDER`, `sigmas`→`SIGMAS`, `noise`→`NOISE`, `sampler`→`SAMPLER`,
+   `image`/`images`→`IMAGE`, `video`→`VIDEO`. An output slot's type is the type
+   of the input that consumes it, so one named consumer types the producer.
+4. **Catalogued** — with the optional ComfyUI connection of
+   [`comfy-queue-integration.md`](comfy-queue-integration.md) switched on,
+   `/object_info` gives every installed class's socket types. This is
+   **Deferred** until that connection exists; the reader must work without it.
+
+Types are only ever *used*, never trusted blindly: a declared type that
+contradicts the link's own type is recorded as a diagnostic, and the link's
+type wins.
+
+### Acceptance
+
+- API ids of subgraph inner nodes resolve to their declared types, including
+  nested subgraphs and links crossing the subgraph boundary.
+- With no UI workflow, a VHS-saved graph is fully typed from input names.
+- Every type records whether it was declared, subgraph-declared or inferred.
+
+## 2. Pass-through
+
+Status: **Unimplemented**
+
+Some nodes carry a value without changing its meaning. They are followed,
+never reported:
+
+- A node whose output is typed `*`, or whose inputs are all `*`-typed or of a
+  single type equal to its output (rgthree `Any Switch`, reroutes that survive
+  into the API graph): the carried value is the **first connected input in
+  input-name order** (`any_01` before `any_02`), which is the switch's own rule.
+- A node with no linked inputs and exactly one scalar literal (`PrimitiveInt`,
+  `PrimitiveFloat`, `Seed (rgthree)`, `INTConstant`): the value is that literal.
+
+Muted (mode 2) and bypassed (mode 4) nodes do not appear in the API graph, so
+the API graph is already the executed graph. The UI graph is consulted only
+for types.
+
+### Acceptance
+
+- A value routed through nested switches and a primitive resolves to its
+  literal, as graph-derived.
+- A switch with no connected input resolves to nothing, not to a neighbour.
+
+## 3. Roles
+
+Status: **Unimplemented**
+
+All roles are found by walking **upstream from the output**, so nodes on
+unconnected branches (a still-image branch, a disabled preview) never
+contribute.
+
+- **Output** — a node consuming `IMAGE` or `VIDEO` that holds a
+  filename-like string input (`filename_prefix`, `filename`, `path`). Prefer
+  the one whose prefix matches the file's own name; otherwise the only
+  candidate; otherwise report **ambiguous** and stop, as today.
+- **Sampler stage** — a node that **outputs `LATENT`**, **consumes a
+  `LATENT`**, and consumes either `MODEL` and `CONDITIONING`, or a `GUIDER`, or
+  `NOISE` and `SIGMAS`. This admits `KSampler`, `KSamplerAdvanced`,
+  `SamplerCustomAdvanced` and any custom sampler with standard sockets, and
+  rejects the prototype's two false positives by their own socket types.
+  Stages are ordered by distance to the output; the nearest is **final**, and
+  a tie is partial, as today.
+- **Guider** — the source of a stage's `GUIDER` input. Its `MODEL` and
+  `CONDITIONING` inputs stand in for the stage's own.
+- **Model chain** — from a stage's (or its guider's) `MODEL` input, follow
+  `MODEL`-typed links upstream through pass-through. A node with no `MODEL`
+  input is the **root**; its string inputs ending in a model extension
+  (`.safetensors`, `.gguf`, `.ckpt`, `.pt`, `.pth`, `.bin`) name the
+  checkpoint. A node *on* the chain is a patch. It is a **LoRA** when it holds a
+  model-extension string under an input whose name contains `lora`, or dict
+  inputs shaped `{on, lora, strength}` (rgthree Power Lora); `strength*` inputs
+  give strengths, and a zero or `on: false` entry is not "used", as today.
+- **Prompt** — from a stage's (or guider's) `positive`/`negative`/
+  `conditioning` input, walk upstream along `CONDITIONING`, `STRING` and `*`
+  links, and through any node that outputs one of those. Collect string
+  literals of at least four words that are not file names. Which input the
+  walk started from decides **positive** or **negative**. One string is a
+  direct prompt; several are fragments labelled with their node and input name
+  (`summary`, `detailed_description`), and the result is partial.
+- **VAE, text encoder** — roots of `VAE` and `CLIP` chains, found the same way
+  as the model root. This replaces `DECODE_TYPES`.
+- **Sources** — `IMAGE`/`VIDEO`/`AUDIO`-producing roots on the path whose
+  string input names a media file, as today.
+
+### Acceptance
+
+- The false positives the prototype admitted are rejected by socket types.
+- A MiniMax H3 composer's text fields are returned as positive fragments.
+- A LoRA reached only through an Any Switch is reported; one on an
+  unconnected branch is not.
+
+## 4. No UI workflow
+
+Status: **Unimplemented**
+
+VHS `VideoCombine` embeds only `prompt`. Everything above still runs on
+inferred types (Section 1, rule 3), with every result downgraded one evidence
+level. On the VR180 graph this reaches: output `VHS_VideoCombine` by
+`filename_prefix`; stage `SamplerCustomAdvanced` by `noise`/`guider`/
+`sigmas`/`latent_image`; guider `BasicGuider`; model root `UNETLoader` through
+two patch nodes by `model`; seed `5044` through a noise wrapper by `noise`;
+steps `30` from `BasicScheduler` by `sigmas`.
+
+### Acceptance
+
+- The VR180 render yields checkpoint, seed and steps with inferred evidence.
+
+## 5. Settings per stage
+
+Status: **Unimplemented**
+
+Numeric and choice settings are read **per sampler stage**, from the stage
+node and the nodes that feed its non-model, non-conditioning, non-latent
+inputs (`NOISE`, `SIGMAS`, `SAMPLER`, `GUIDER`), each resolved through
+Section 2:
+
+- seed — inputs named `seed` or `noise_seed`;
+- steps, CFG, denoise, start/end step — by their conventional names;
+- sampler and scheduler — `sampler_name`, `scheduler`.
+
+Seeds keep their exact source text, as the current parser and the generation
+key do. The panel's **seed** is the final stage's; other stages keep theirs in
+`samplerStages`. A `seed`-named input elsewhere upstream (an image-noise node,
+a disabled per-step roll) is not the generation seed and is not reported as
+one, which removes the long-form's second seed.
+
+### Acceptance
+
+- The long-form hybrid reports one seed per stage and one panel seed.
+- Steps and switch points of a two-stage `KSamplerAdvanced` graph are reported
+  per stage.
+
+## 6. Generation size, and version ordering
+
+Status: **Unimplemented**
+
+The generation-versions ordering uses **output pixels**, and on 2026-09-28 one
+real pair was ordered wrongly: a draft RTX-upscaled to 1088×1920 out-pixelled
+its `_nopost_` final at 928×1664, so the draft read as the best version
+([`generation-versions.md`](generation-versions.md), "Known limitation").
+
+The final stage's `LATENT` input traces to what sized the generation. Resolved
+through Section 2, the reader reports a **render size**:
+
+- `width`/`height` inputs on the node that produced the first stage's latent
+  (`EmptyLatentImage`, `EmptyHunyuanLatentVideo`, `MiniMaxH3ReferenceToVideo`);
+- or, when those are linked to a size calculator, a `*megapixels*` input on
+  that calculator (the MiniMax composer's `output_megapixels`).
+
+Versions would then order by **render megapixels, then total steps**, falling
+back to output pixels, duration and modification time when the graph does not
+say. This needs render size and steps stored per content, the same way the
+generation key is: an additive column pair on `media_content`, computed by the
+existing background indexer from the payload it already reads. That wiring is
+**Unimplemented** and belongs to the implementation phase, not this design.
+
+### Acceptance
+
+- The RTX-upscaled draft and its `_nopost_` final order correctly.
+- A graph that does not state its size keeps the current ordering.
+
+## 7. Coverage harness
+
+Status: **Unimplemented**
+
+Reliability is a number, not an impression. `scripts/generation-coverage.cjs`
+walks a folder, reads each clip's embedded tags in-process (ffprobe for
+non-ISO containers), runs **both** the shipped parser and the type-flow
+reader, and reports per top-level folder the share of clips with a
+checkpoint, a prompt (direct or fragments), a seed and steps, plus a sample of
+spot-check lines. It prints counts and field presence, never prompt text.
+
+It is a development tool, not part of `npm test`: it reads the user's own
+library. The corpus is the user's `data/work/output` (H3, H3-Long, video,
+vr180, outpaint, requeue).
+
+### Acceptance
+
+- One command prints a before/after table for a corpus folder.
+- The switch-over decision in Section 8 cites its numbers.
+
+## 8. Switching the panel over
+
+Status: **Unimplemented**
+
+The type-flow reader implements the same interface as
+`parseComfyGenerationPayload` — `(payload, { fileName, origin })` returning
+the same result shape — so the generation-metadata service can use either.
+It needs the payload's `workflow` as well as its `prompt`; the probe already
+returns both.
+
+The switch-over is a **measured** step: run the harness, compare field
+coverage per folder, spot-check disagreements, and switch only when the new
+reader is at least as good everywhere. Bumping the parser cache version then
+re-reads every cached result. Until then the shipped parser stays the panel's
+reader and the new one runs only in the harness.
+
+## Open questions
+
+- Whether `/object_info` typing (Section 1, rule 4) is worth having once the
+  ComfyUI connection exists, or whether inferred types are enough.
+- Whether the old allow-list parser is deleted at switch-over or kept as a
+  fallback for graphs the type-flow reader cannot type. Keeping both doubles
+  the surface; the harness should decide.
+
+## Deferred
+
+- `/object_info` typing, pending the ComfyUI connection.
+- Visual-workflow-only payloads (a `workflow` with no `prompt`): still
+  deferred, as in `embedded-generation-metadata.md`.
+- Evaluating custom string composition: never, per the non-goals.
+
+## Implementation order
+
+1. A pure type-flow reader behind the parser interface, with reduced real
+   fixtures for H3 Omni, long-form, V2V, LTX outpaint (subgraphs) and VR180
+   (no workflow).
+2. The coverage harness, run on the user's corpus, with results recorded here.
+3. Switch-over, when the harness supports it.
+4. Render size per content, and generation-version ordering by it.
+
+## Implementation notes and decisions
+
+### 2026-09-28 — Design
+
+- Brief from the comfy-requeue session; prototype preserved as
+  `prototypes/typeflow.py`. The prototype's results and faults above were
+  re-run in this repository on real renders before writing this.
+- Input *names* are allowed as evidence and class *names* are not, because
+  ComfyUI standardises the former across custom nodes and not the latter.
+
+## References
+
+- Current parser, evidence levels and bounds:
+  [`embedded-generation-metadata.md`](embedded-generation-metadata.md).
+- Version ordering limitation:
+  [`generation-versions.md`](generation-versions.md).
+- The optional ComfyUI connection:
+  [`comfy-queue-integration.md`](comfy-queue-integration.md).
+- Prototype: [`prototypes/typeflow.py`](prototypes/typeflow.py).
