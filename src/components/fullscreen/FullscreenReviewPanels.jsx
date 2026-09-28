@@ -297,7 +297,7 @@ export function FullscreenHeaderActions({
           <header>
             <div>
               <h3 id="fullscreen-shortcuts-title">Fullscreen shortcuts</h3>
-              <p>Control the active clip without leaving the Loupe.</p>
+              <p>Control the active clip without leaving Fullscreen.</p>
             </div>
             <button
               type="button"
@@ -358,7 +358,7 @@ export function FullscreenDetailsDock({
   return (
     <div className="fullscreen-review-panel__details-content">
       <div className="fullscreen-review-panel__details-heading">
-        <strong>Clip details</strong>
+        <strong>Details</strong>
         <span>{video.name}</span>
       </div>
       <MetadataFileFactsSection info={info} includeRelativePath />

@@ -102,7 +102,7 @@ test("continues a flushed review session after restart from the cached first gri
     );
     await firstClip.click();
     const selectionDetails = firstPage.getByRole("complementary", {
-      name: "Selection details",
+      name: "Details",
     });
     await selectionDetails
       .getByRole("button", { name: /^Accept\b/ })

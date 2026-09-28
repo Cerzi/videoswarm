@@ -373,7 +373,7 @@ function normalizeQueryResult(result) {
   }
   if (result?.truncated || records.length > ACCEPTED_COPY_MAX_MEDIA) {
     throw new AcceptedCopyError(
-      `Copy Accepted is limited to ${ACCEPTED_COPY_MAX_MEDIA.toLocaleString()} media files per operation`,
+      `A transfer is limited to ${ACCEPTED_COPY_MAX_MEDIA.toLocaleString()} media files per operation`,
       "ACCEPTED_COPY_TOO_MANY_MEDIA"
     );
   }
@@ -1268,13 +1268,13 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     if (closed) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.CLOSED,
-        "Copy Accepted is closed"
+        "Transfer is closed"
       );
     }
     if (!admissionOpen) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.PAUSED,
-        "Copy Accepted is paused"
+        "Transfer is paused"
       );
     }
     if (activePreparation) {
@@ -1699,13 +1699,13 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
     if (closed) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.CLOSED,
-        "Copy Accepted is closed"
+        "Transfer is closed"
       );
     }
     if (!admissionOpen) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.PAUSED,
-        "Copy Accepted is paused"
+        "Transfer is paused"
       );
     }
     if (request?.collisionPolicy !== "skip") {

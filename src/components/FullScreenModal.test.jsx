@@ -1274,7 +1274,7 @@ describe("FullScreenModal media ownership", () => {
         detailsDock={<button type="button">Last control</button>}
       />
     );
-    const dialog = screen.getByRole("dialog", { name: "Fullscreen review" });
+    const dialog = screen.getByRole("dialog", { name: "Fullscreen" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(background).toHaveAttribute("inert");
     expect(document.body.style.overflow).toBe("hidden");

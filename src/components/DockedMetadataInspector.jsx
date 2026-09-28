@@ -51,7 +51,7 @@ export default function DockedMetadataInspector({
     >
       <header className="metadata-docked-inspector__header">
         <div className="metadata-panel__titles">
-          <strong className="metadata-panel__title">Selection details</strong>
+          <strong className="metadata-panel__title">Details</strong>
           <span className="metadata-panel__subtitle" title={subtitle}>
             {subtitle}
           </span>
@@ -74,10 +74,10 @@ export default function DockedMetadataInspector({
               type="button"
               className="metadata-panel__button metadata-panel__button--compact"
               onClick={() => onTransferSelection(selectedVideos)}
-              aria-label={`Move, copy or link ${count} selected clip${
+              aria-label={`Transfer ${count} selected clip${
                 count === 1 ? "" : "s"
               }`}
-              title="Move, copy or link the selection into another folder"
+              title="Transfer the selection: move, copy or link it into another folder"
             >
               <span>Transfer</span>
             </button>

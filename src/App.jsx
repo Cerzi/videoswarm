@@ -724,8 +724,8 @@ function App() {
     const labels = {
       [REVIEW_FILTERS.UNREVIEWED]: "Unreviewed",
       [REVIEW_FILTERS.REVIEWED]: "Reviewed",
-      [REVIEW_FILTERS.PICK]: "Accepted",
-      [REVIEW_FILTERS.REJECT]: "Rejects",
+      [REVIEW_FILTERS.PICK]: "Accept",
+      [REVIEW_FILTERS.REJECT]: "Reject",
     };
     return labels[value] || null;
   }, [filters.reviewFilter]);
@@ -1895,7 +1895,7 @@ function App() {
     async (destinationPath = null, layout = "structured", reusePlanId = null) => {
       const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
       if (typeof prepare !== "function") {
-        throw new Error("Copy Accepted is unavailable");
+        throw new Error("Transfer is unavailable");
       }
       setAcceptedCopyProgress(null);
       const result = await prepare({
@@ -2146,7 +2146,7 @@ function App() {
     async (planId, requestedMode = "copy") => {
       const start = window.electronAPI?.review?.copyAccepted?.start;
       if (typeof start !== "function") {
-        throw new Error("Copy Accepted is unavailable");
+        throw new Error("Transfer is unavailable");
       }
       setAcceptedCopyProgress(null);
       const transferMode =
@@ -3952,7 +3952,7 @@ function App() {
               phase: "index-required",
               scanId: activeScanId,
               message:
-                "Index subfolders before continuing this saved review scope.",
+                "Include subfolders before continuing this saved review scope.",
             }
           : previous
       );
@@ -4958,7 +4958,7 @@ function App() {
                     Open a directory, or choose a pinned library root to continue reviewing.
                   </p>
                   <p>
-                    Index subfolders to browse large generation runs as a tree while keeping the flattened swarm available.
+                    Include subfolders to browse large generation runs as a tree while keeping the flattened swarm available.
                   </p>
                   {window.innerWidth > 2560 && (
                     <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
@@ -5204,7 +5204,7 @@ function App() {
               canNavigatePrevious={fullscreenController.hasPrevious}
               canNavigateNext={fullscreenController.hasNext}
               positionLabel={fullscreenPositionLabel}
-              dialogLabel={fullScreenVideo.name || "Fullscreen review"}
+              dialogLabel={fullScreenVideo.name || "Fullscreen"}
               headerContent={
                 <FullscreenHeaderContent
                   video={fullScreenVideo}

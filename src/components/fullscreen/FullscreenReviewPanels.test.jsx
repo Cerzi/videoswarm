@@ -116,7 +116,7 @@ describe("FullscreenReviewPanels", () => {
 
     expect(screen.getByText("Rate current clip")).toBeVisible();
     expect(screen.getByText("Set star rating")).toBeVisible();
-    expect(screen.queryByText("Mark as Accept")).toBeNull();
+    expect(screen.queryByText("Accept")).toBeNull();
   });
 
   it("reuses file, generation, and tag sections in the dock", () => {

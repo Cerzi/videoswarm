@@ -185,14 +185,14 @@ export default function HeaderBar({
           </div>
         )}
 
-        <label className="subfolders-option" title="Scan subfolders">
+        <label className="subfolders-option" title="Include clips in subfolders, and watch them for changes">
           <input
             type="checkbox"
             checked={recursiveMode}
             onChange={toggleRecursive}
             disabled={isLoadingFolder}
           />
-          <span>Subfolders</span>
+          <span>Include subfolders</span>
         </label>
 
         {hasOpenFolder && recentFolders.length > 0 && (

@@ -1729,7 +1729,7 @@ describe("App hook composition", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Find next Unreviewed/ }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     await act(async () => {
       await Promise.resolve();
     });
@@ -2516,7 +2516,7 @@ describe("App hook composition", () => {
     });
     expect(selectionMock.clear).toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     await waitFor(() => expect(reloadCurrentRoot).toHaveBeenLastCalledWith(false));
     await waitFor(() =>
       expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual(videos)
@@ -3349,7 +3349,7 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
     fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
       target: { value: "Every keeper" },
     });
     await act(async () => {
@@ -3368,7 +3368,7 @@ describe("library search scope", () => {
 
     await renderWithTags(["keeper"]);
     fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
       target: { value: "Folder keepers" },
     });
     await act(async () => {

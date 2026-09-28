@@ -73,8 +73,8 @@ const REVIEW_OPTIONS = [
   { value: REVIEW_FILTERS.ANY, label: "Any" },
   { value: REVIEW_FILTERS.UNREVIEWED, label: "Unreviewed" },
   { value: REVIEW_FILTERS.REVIEWED, label: "Reviewed" },
-  { value: REVIEW_FILTERS.PICK, label: "Accepted" },
-  { value: REVIEW_FILTERS.REJECT, label: "Rejects" },
+  { value: REVIEW_FILTERS.PICK, label: "Accept" },
+  { value: REVIEW_FILTERS.REJECT, label: "Reject" },
 ];
 
 function renderTagChip(tag, onRemove, variant) {

@@ -640,7 +640,7 @@ const MetadataPanel = forwardRef((
       ref={setLayerRef}
       className={panelClass}
       role="complementary"
-      aria-label="Selection details"
+      aria-label="Details"
       onKeyDown={handlePanelKeyDown}
     >
       <div
@@ -712,10 +712,10 @@ const MetadataPanel = forwardRef((
                 type="button"
                 className="metadata-panel__button metadata-panel__button--compact"
                 onClick={() => onTransferSelection(selectedVideos)}
-                aria-label={`Move, copy or link ${derivedSelectionCount} selected clip${
+                aria-label={`Transfer ${derivedSelectionCount} selected clip${
                   derivedSelectionCount === 1 ? "" : "s"
                 }`}
-                title="Move, copy or link the selection into another folder"
+                title="Transfer the selection: move, copy or link it into another folder"
               >
                 <span>Transfer</span>
               </button>

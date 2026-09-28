@@ -330,14 +330,14 @@ describe("LibrarySidebar", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
       target: { value: "My pass" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaveCurrentView).toHaveBeenCalledWith("My pass"));
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Delete saved view Unreviewed picks" })
+      screen.getByRole("button", { name: "Delete smart view Unreviewed picks" })
     );
     expect(onDeleteSavedView).toHaveBeenCalledWith(1, {
       id: 1,

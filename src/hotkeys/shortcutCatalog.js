@@ -12,7 +12,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-pick",
     keys: ["A", "P"],
     keyJoiner: "or",
-    label: "Mark as Accept",
+    label: "Accept",
     detail: "Applies to every selected clip.",
     state: "pick",
   }),
@@ -20,7 +20,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-reviewed",
     keys: ["S", "R"],
     keyJoiner: "or",
-    label: "Mark as Reviewed",
+    label: "Reviewed",
     detail: "Applies to every selected clip.",
     state: "reviewed",
   }),
@@ -28,7 +28,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-reject",
     keys: ["D", "X"],
     keyJoiner: "or",
-    label: "Mark as Reject",
+    label: "Reject",
     detail: "Applies to every selected clip.",
     state: "reject",
   }),
@@ -36,7 +36,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-unreviewed",
     keys: ["F", "U"],
     keyJoiner: "or",
-    label: "Reset to Unreviewed",
+    label: "Unreviewed",
     detail: "Also clears ratings; tags are kept.",
     state: "unreviewed",
   }),
@@ -158,7 +158,7 @@ export const FULLSCREEN_NAVIGATION_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "fullscreen-details",
     keys: ["I"],
-    label: "Toggle clip details",
+    label: "Show or hide Details",
     command: FULLSCREEN_COMMANDS.DETAILS,
   }),
 ]);
@@ -369,7 +369,7 @@ const SELECTION_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "open-selection-details",
     keys: ["I"],
-    label: "Open selection details",
+    label: "Open Details",
     detail: "Available when one or more clips are selected.",
   }),
   freezeShortcut({
@@ -443,7 +443,7 @@ export const HOTKEY_SECTIONS = Object.freeze([
   }),
   Object.freeze({
     id: "fullscreen",
-    title: "Fullscreen player",
+    title: "Fullscreen",
     description: "Review keys above also apply to the current fullscreen clip.",
     shortcuts: FULLSCREEN_PLAYER_SHORTCUTS,
   }),
