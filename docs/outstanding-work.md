@@ -185,14 +185,15 @@ Status: **Audited** (2026-09-28); awaiting the user's decisions — see the
 audit page, https://claude.ai/artifact/MgNRWMjGDcVKyzJeBStmsu (private to the
 user)
 
-The audit found, besides the layout questions, plain bugs to fix regardless:
-the header does not fit below about 1400 px (Filters and Keyboard shortcuts
-fall off at 1280 px), the review bar scrolls sideways, the fullscreen review
-rail clips its buttons, the docked Details title overlaps Focus, a resolution
-sort shows "Sorted by undefined" and is not saved, Properties is a stub,
-Windows terms ("Show in Explorer", "Recycle Bin") show on every platform, the
-transfer picker is titled "Transfer accepted clips" for any selection, the
-resolution filter has no summary chip, and the memory warning overlaps toasts.
+The audit also found plain bugs, **fixed on 2026-09-28**: the header, review
+bar, fullscreen review rail and docked Details header now wrap instead of
+clipping (at 1280 px Filters and Keyboard shortcuts had fallen off the
+header; the wrapping is the interim form until D6 is decided); a resolution
+sort is named and remembered; the Properties stub is gone; file actions use
+each platform's words (Show in File Manager / Finder / Explorer, Move to
+Trash / Recycle Bin); the transfer picker title fits any selection; the
+resolution filter has summary chips; toasts stack instead of overlapping,
+and the memory warning moved clear of them and no longer blocks clicks.
 The decisions (D1–D10) cover where Details, diagnostics, playback settings,
 Donate, review mode, narrow windows, new features and a Preferences dialog
 should live, and a naming glossary.
