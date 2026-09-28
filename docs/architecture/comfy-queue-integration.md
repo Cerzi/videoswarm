@@ -423,6 +423,40 @@ Status: **Proposed**
 - **Clip badges**: queued, rendering, failed, and "has a final" — which the
   versions stack already shows independently of the queue.
 
+## 9. Next engine phase: a detached engine
+
+Status: **Planned**, not started. Recorded 2026-09-28 from the
+comfy-requeue session, acting for the user. Work starts only when the user
+says so. It supersedes Decision 2's in-process engine and tray when it lands.
+
+- **Process.** The engine runs as its own detached process, started with
+  Electron's own binary under `ELECTRON_RUN_AS_NODE=1`. Nothing else is
+  installed. Video Swarm talks to it over a **loopback HTTP** interface.
+- **State.** Durable state lives in the engine's own file, not in the
+  profile database. ComfyUI's queue only ever holds the one job being sent.
+  After a restart, a job still in ComfyUI is **adopted by a tag embedded in
+  its prompt**.
+- **Lifetime.** The engine runs only while there is work, plus an optional
+  **"Start at login"**.
+- **Restarting ComfyUI.** An optional user-supplied restart command, off by
+  default; for example `systemctl --user restart comfyui@work`. It runs only
+  while ComfyUI's queue is empty. Without it, the fallbacks are single-pass
+  rendering or a `_nopost` final.
+- **Separation.**
+  - Switched off, there is no engine process, no port, no tray, no login
+    item and no queue UI.
+  - Core Video Swarm never imports the engine; they share only the HTTP
+    interface.
+  - Its settings join Preferences as one more section (UX redesign D8).
+- **Parity with `~/Work/comfy-requeue`:**
+  - the RAM model;
+  - two-pass rendering;
+  - detection of requeued drafts;
+  - the quality-gain score;
+  - history;
+  - estimates;
+  - the system monitor.
+
 ## Decisions
 
 Made by the user on 2026-09-28, replacing the three open questions this
@@ -456,6 +490,8 @@ proposal was written with.
 3. **Interface**: Queue and Finished tabs, recipe screen, "Queue with recipe…",
    badges.
 4. **Two-pass rendering, RAM cap and estimates** (after version 1, Decision 3).
+5. **The detached engine** (Section 9). Planned; starts only when the user
+   says so. Items 3 and 4 may land inside it rather than in the main process.
 
 ## Implementation notes and decisions
 
