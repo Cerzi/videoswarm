@@ -2824,7 +2824,7 @@ function createMenu() {
       label: "Help",
       submenu: [
         {
-          label: "About VideoSwarm",
+          label: "About Video Swarm",
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send("ui:open-about");
@@ -2832,7 +2832,7 @@ function createMenu() {
           },
         },
         {
-          label: "Support VideoSwarm on Ko-fi",
+          label: "Support Video Swarm on Ko-fi",
           click: () => {
             openDonationPage().catch((error) => {
               console.warn("Failed to open support link", error);

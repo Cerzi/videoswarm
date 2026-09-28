@@ -335,9 +335,9 @@ class DataLocationManager {
         buttons: ["Retry", "Quit"],
         defaultId: 0,
         cancelId: 1,
-        title: "VideoSwarm",
+        title: "Video Swarm",
         message:
-          "VideoSwarm cannot access the data folder specified by '--user-data-dir'.",
+          "Video Swarm cannot access the data folder specified by '--user-data-dir'.",
         detail: `${target}\n\n${detail}`.trim(),
         noLink: true,
       });
@@ -368,8 +368,8 @@ class DataLocationManager {
         ],
         defaultId: 0,
         cancelId: 2,
-        title: "VideoSwarm",
-        message: "VideoSwarm cannot access the configured data folder.",
+        title: "Video Swarm",
+        message: "Video Swarm cannot access the configured data folder.",
         detail: `${target}\n\n${detail}`.trim(),
         noLink: true,
       });
@@ -391,7 +391,7 @@ class DataLocationManager {
       }
 
       const selection = await this.dialog.showOpenDialog({
-        title: "Select VideoSwarm data folder",
+        title: "Select Video Swarm data folder",
         properties: ["openDirectory", "createDirectory"],
       });
 
@@ -487,8 +487,8 @@ class DataLocationManager {
           buttons: ["Retry", "Revert to old folder", "Continue anyway"],
           defaultId: 0,
           cancelId: 2,
-          title: "VideoSwarm",
-          message: "Moving VideoSwarm data to the new folder failed.",
+          title: "Video Swarm",
+          message: "Moving Video Swarm data to the new folder failed.",
           detail: error?.message || "",
           noLink: true,
         });
@@ -541,7 +541,7 @@ class DataLocationManager {
 
   async browseForDirectory(browserWindow) {
     const result = await this.dialog.showOpenDialog(browserWindow || null, {
-      title: "Select VideoSwarm data folder",
+      title: "Select Video Swarm data folder",
       properties: ["openDirectory", "createDirectory"],
     });
 
@@ -579,9 +579,9 @@ class DataLocationManager {
       ],
       defaultId: 0,
       cancelId: 2,
-      title: "VideoSwarm",
+      title: "Video Swarm",
       message:
-        "VideoSwarm needs to restart to use the new data folder. Move your existing settings, profiles, thumbnails, and caches to the new location?",
+        "Video Swarm needs to restart to use the new data folder. Move your existing settings, profiles, thumbnails, and caches to the new location?",
       detail: `New data folder:\n${targetPath}`,
       noLink: true,
     });
@@ -598,8 +598,8 @@ class DataLocationManager {
         buttons: ["OK"],
         defaultId: 0,
         cancelId: 0,
-        title: "VideoSwarm",
-        message: "VideoSwarm cannot write to the selected data folder.",
+        title: "Video Swarm",
+        message: "Video Swarm cannot write to the selected data folder.",
         detail: check.error?.message || "",
         noLink: true,
       });

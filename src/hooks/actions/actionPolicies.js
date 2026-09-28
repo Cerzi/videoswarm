@@ -75,7 +75,7 @@ export const actionPolicies = {
   // a destination, preflight and an explicit Move, Copy or Link still come first.
   'transfer-files': {
     id: 'transfer-files',
-    label: 'Move, Copy or Link to…',
+    label: 'Transfer…',
     whenContextWithMulti: TargetPolicy.ALL_SELECTED,
     enabledForToolbar: (count) => count >= 1,
   },

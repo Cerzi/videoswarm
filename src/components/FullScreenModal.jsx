@@ -249,7 +249,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     resolveReturnFocus,
     returnFocusRef = null,
     fallbackFocusRef = null,
-    dialogLabel = "Fullscreen review",
+    dialogLabel = "Fullscreen",
     dialogDescription =
       "Review one video at a time. Use the arrow keys to move and Escape to close.",
     positionLabel = null,
@@ -1466,7 +1466,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
           {showDetails && renderedDetailsDock ? (
             <aside
               className="fullscreen-review__details"
-              aria-label="Clip details"
+              aria-label="Details"
               data-hotkey-exempt
             >
               {renderedDetailsDock}

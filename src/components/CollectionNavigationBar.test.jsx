@@ -82,7 +82,7 @@ describe("CollectionNavigationBar", () => {
     );
     expect(props.onNextFolder).toHaveBeenCalledWith(props.nextSibling);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     expect(props.onRecursiveChange).toHaveBeenCalledWith(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Hide workspace sidebar" }));
@@ -134,6 +134,6 @@ describe("CollectionNavigationBar", () => {
       screen.getByRole("button", { name: "Next matching folder: none" })
     ).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Folder scope" })).toBeDisabled();
-    expect(screen.getByRole("checkbox", { name: "Index subfolders" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Include subfolders" })).toBeDisabled();
   });
 });

@@ -151,7 +151,7 @@ function CollectionNavigationBar({
             onChange={(event) => onRecursiveChange?.(event.target.checked)}
             disabled={disabled}
           />
-          <span>Index subfolders</span>
+          <span>Include subfolders</span>
         </label>
 
         {!sidebarOpen && folderHeadersAvailable ? (

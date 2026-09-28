@@ -88,7 +88,11 @@ squeezing any of them. **Awaiting the user's answer**; it is the last slice.
 
 ## Slices
 
-1. **Glossary (D9).** Status: **Unimplemented**
+1. **Glossary (D9).** Status: **Implemented**, **Verified** (2026-09-28).
+   Every retired term in the table is gone from the UI: Transfer…, the
+   four review states, Smart view, Details, Fullscreen, Include subfolders,
+   Pinned folders, Video Swarm. Internal identifiers (the `VideoSwarmData`
+   folder, `copyAccepted` IPC) are unchanged.
 2. **View and ⋯ menus, Review label, short status line (D2–D5).** Status:
    **Unimplemented**
 3. **One top bar with overflow into ⋯ (D6).** Status: **Unimplemented**

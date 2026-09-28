@@ -48,7 +48,7 @@ export default function AboutDialog({ open, onClose }) {
         ref={dialogRef}
       >
         <header className="about-dialog__header">
-          <h2 id="about-dialog__title">About VideoSwarm</h2>
+          <h2 id="about-dialog__title">About Video Swarm</h2>
         </header>
         <div className="about-dialog__body">
           <p className="about-dialog__intro">{supportContent.donationBlurb}</p>
