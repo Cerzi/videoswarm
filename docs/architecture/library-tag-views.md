@@ -1,7 +1,7 @@
 # Library-wide Tag Views
 
-Status: **Implemented**, apart from smart-view scope — see Implementation order
-Last updated: 2026-08-12
+Status: **Implemented**
+Last updated: 2026-09-28
 
 ## Summary
 
@@ -31,6 +31,29 @@ The change is one axis, not a new browsing mode: a view's scope becomes either
 **folder** (today's behaviour, unchanged and the default) or **library**
 (evaluated across every indexed root in the profile). Everything else about
 smart views — naming, saving, applying, deleting — is untouched.
+
+### Smart-view scope
+
+Status: **Implemented** (2026-09-28)
+
+The definition carries `searchScope: "folder" | "library"` beside its folder
+scope. Every view saved before the axis existed normalizes to `folder` and
+means exactly what it meant.
+
+- A view saved **during a library search** is a library view. A library
+  search is defined by its tags, so the main process keeps `library` only
+  when the view has an include tag, the same rule as the scope control.
+- **Applying a library view** always runs the library search with its tags
+  and match mode, from a folder, from another library search, or from the
+  home screen, where folder views stay unavailable. Leaving it returns to the
+  folder it was applied from, if there was one.
+- **A folder view** is evaluated against whatever is open, as before —
+  including an open library search, where its filters narrow the snapshot.
+- The sidebar marks library views (◇ and a *Library* tag) and says they apply
+  across the entire library.
+- A library search that finds nothing now stays an empty search instead of
+  falling back to the home screen, which applying a library view from home
+  would otherwise have done.
 
 ## 1. The query
 
@@ -265,12 +288,9 @@ a collision exactly like any other rather than resolved by ordering.
    and reported, with focused database coverage.~~ Done.
 2. ~~Bounded IPC and preload exposure.~~ Done.
 3. ~~Rootless collection wiring, neutralized root chrome, refresh control.~~
-   Done, apart from the Continue Review explanation in Section 3.
-4. **Smart-view scope, defaulting to folder so existing saved views are
-   unchanged. Not built** — `saved_views` still carries no scope axis, so the
-   "one axis" promised at the top of this document only reaches the live filter
-   panel, never a saved recipe. Tracked in
-   [`../outstanding-work.md`](../outstanding-work.md).
+   Done, including the Continue Review explanation in Section 3.
+4. ~~Smart-view scope, defaulting to folder so existing saved views are
+   unchanged.~~ Done (2026-09-28); see Smart-view scope above.
 5. ~~Per-root transfer planning.~~ Done.
 
 ## References

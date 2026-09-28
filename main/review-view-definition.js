@@ -161,6 +161,14 @@ function normalizeReviewViewDefinition(
         ? scopeInput
         : 'all-descendants',
     };
+    // Where a saved view searches: the open folder (the default, so every
+    // view saved before this axis existed means what it meant), or every
+    // indexed root. A library search is defined by its tags, so without an
+    // include tag it stays a folder view.
+    normalized.searchScope =
+      input.searchScope === 'library' && normalized.filters.includeTags.length > 0
+        ? 'library'
+        : 'folder';
   }
 
   const serialized = JSON.stringify(normalized);

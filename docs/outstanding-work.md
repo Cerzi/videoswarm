@@ -90,19 +90,12 @@ the empty streamed scan, and the original case was rerun in the real app
 
 ## 2. Smart views cannot be library-scoped
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-09-28)
 
-This is item 4 of the implementation order in `library-tag-views.md` and the one
-piece of that feature that was never built. The document's opening section
-promises it, so the doc currently reads as though it exists.
-
-`saved_views` stores an opaque `definition_json` and `useSavedViews` passes a
-`definition` straight through with no scope axis. A saved view is therefore
-still only a recipe evaluated against whichever root is open, so a saved
-`#keeper` view cannot mean "every keeper in the profile".
-
-Default to folder scope when adding it, so every existing saved view keeps
-meaning exactly what it meant before.
+A saved view now carries `searchScope`: views saved during a library search
+search the whole library wherever they are applied, including from the home
+screen; every existing view defaults to folder scope and is unchanged. See
+`library-tag-views.md`, Smart-view scope.
 
 ## 3. Continue Review does not explain itself in a library view
 
@@ -131,6 +124,9 @@ feature set.
 - **Requiring a tag before a library search.** The scope control is disabled
   until an include tag is selected. Reasonable on a 24k-clip profile, possibly
   annoying on a small one.
+- **Library smart views** (after rc.5). A view saved during a library
+  search is marked ◇ *Library* in the sidebar and can be applied from the
+  home screen. Check the marker is clear and the badge fits narrow sidebars.
 - **The review toolbar in a library view** (after rc.5). It used to be hidden
   there; it now shows, with a line explaining there is no resume point. Check
   it reads as helpful rather than as clutter.

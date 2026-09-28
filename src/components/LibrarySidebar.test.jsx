@@ -364,6 +364,27 @@ describe("LibrarySidebar", () => {
     expect(screen.getByRole("button", { name: "Save current smart view" })).toBeDisabled();
   });
 
+  it("lets a library view apply without an open collection, and marks it", () => {
+    const onApplySavedView = vi.fn();
+    const library = { id: 2, name: "Every keeper", definition: { searchScope: "library" } };
+    render(
+      <LibrarySidebar
+        savedViews={[{ id: 1, name: "Unreviewed picks", definition: { searchScope: "folder" } }, library]}
+        onApplySavedView={onApplySavedView}
+        onSaveCurrentView={vi.fn()}
+        smartViewsEnabled={false}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Unreviewed picks" })).toBeDisabled();
+    const apply = screen.getByRole("button", { name: "Every keeper Library" });
+    expect(apply).toBeEnabled();
+    expect(apply).toHaveAttribute("title", "Apply Every keeper across the entire library");
+    expect(apply).toHaveTextContent("Library");
+    fireEvent.click(apply);
+    expect(onApplySavedView).toHaveBeenCalledWith(library);
+  });
+
   it("renders useful empty states without owning any Electron behavior", () => {
     render(<LibrarySidebar />);
     expect(screen.getByText("Pin frequently used roots here.")).toBeVisible();
