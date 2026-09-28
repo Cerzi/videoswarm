@@ -1329,5 +1329,6 @@ module.exports = {
   quoteUnsafeJsonIntegers,
   isComfyApiGraph,
   findComfyApiGraph,
+  parseBoundedJson,
   parseComfyGenerationPayload,
 };

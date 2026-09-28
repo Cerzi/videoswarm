@@ -85,6 +85,18 @@ describe("readIsoBmffEmbeddedPayload", () => {
     expect(result).toEqual({ status: "found", payload: { prompt: PROMPT } });
   });
 
+  it("reads the workflow tag only when asked", async () => {
+    const buffer = mp4({
+      moovChildren: [box("udta", mdtaMeta([["workflow", '{"nodes":[]}'], ["prompt", PROMPT]]))],
+    });
+    const filePath = path.join(temporaryDirectory(), "clip.mp4");
+    fs.writeFileSync(filePath, buffer);
+    expect((await readIsoBmffEmbeddedPayload(filePath)).payload).toEqual({ prompt: PROMPT });
+    expect(
+      (await readIsoBmffEmbeddedPayload(filePath, {}, { includeWorkflow: true })).payload
+    ).toEqual({ prompt: PROMPT, workflow: '{"nodes":[]}' });
+  });
+
   it("finds moov after a large mdat", async () => {
     const result = await readBuffer(
       mp4({

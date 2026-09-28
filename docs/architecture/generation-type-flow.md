@@ -1,7 +1,8 @@
 # Generation Metadata by Socket Type
 
-Status: **Unimplemented — design, with a prototype and a port under
-evaluation; nothing here replaces the shipped parser yet**
+Status: **Reader and coverage harness Implemented and Verified; not wired
+into the Generation panel.** Switch-over (Section 8) and render-size ordering
+(Section 6) remain Unimplemented.
 Last updated: 2026-09-28
 
 ## Summary
@@ -103,7 +104,7 @@ The prototype also shows two faults the design must fix:
 
 ## 1. Socket types
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
 
 A **type map** assigns every API input `(nodeId, inputName)` and every output
 slot `(nodeId, slot)` a socket type, with the evidence it came from:
@@ -114,35 +115,42 @@ slot `(nodeId, slot)` a socket type, with the evidence it came from:
 2. **Subgraph-declared** — `workflow.definitions.subgraphs[]`. An API id such as
    `5407:5600` is inner node `5600` of the subgraph instantiated by outer node
    `5407`, whose UI `type` is the subgraph's `id`. Nested subgraphs extend the
-   id (`a:b:c`). Inner links are objects (`{origin_id, origin_slot, target_id,
-   target_slot, type}`); an `origin_id` of `-10` is the subgraph's input side
-   and `-20` its output side, which is how inner and outer links join.
+   id (`a:b:c`). ComfyUI flattens subgraphs when it builds the API prompt, so
+   every API link already names a concrete producer; only the inner nodes'
+   own socket types are needed, never the subgraph's boundary links (object
+   links whose `origin_id` of `-10` is the input side and `-20` the output).
 3. **Inferred** — when there is no UI workflow, or a node is missing from it,
    types come from ComfyUI's conventional input names: `model`→`MODEL`,
    `clip`→`CLIP`, `vae`→`VAE`, `positive`/`negative`/`conditioning`→
    `CONDITIONING`, `latent_image`/`latent`/`samples`→`LATENT`,
    `guider`→`GUIDER`, `sigmas`→`SIGMAS`, `noise`→`NOISE`, `sampler`→`SAMPLER`,
-   `image`/`images`→`IMAGE`, `video`→`VIDEO`. An output slot's type is the type
-   of the input that consumes it, so one named consumer types the producer.
+   `image`/`images`→`IMAGE`, `video`→`VIDEO`; the standard scalars
+   `seed`, `noise_seed`, `steps`, `start_at_step`, `end_at_step`→`INT`,
+   `cfg`, `denoise`→`FLOAT`; and switch inputs named `any_NN`→`*`. An output
+   slot's type is the type of the input that consumes it, so one named
+   consumer types the producer.
 4. **Catalogued** — with the optional ComfyUI connection of
    [`comfy-queue-integration.md`](comfy-queue-integration.md) switched on,
    `/object_info` gives every installed class's socket types. This is
    **Deferred** until that connection exists; the reader must work without it.
 
-Types are only ever *used*, never trusted blindly: a declared type that
-contradicts the link's own type is recorded as a diagnostic, and the link's
-type wins.
+A link's type is its producer's output type, else its consumer's input type,
+with two refinements the real corpus forced: a **concrete type beats `*`**
+(a switch's output is declared `*`, but the save consuming it declares
+`VIDEO`; preferring `*` lost the output on 56 H3 renders), and declared
+evidence beats inferred. The UI graph's **output slot names** are kept too;
+Section 3 uses them to keep positive and negative apart.
 
 ### Acceptance
 
-- API ids of subgraph inner nodes resolve to their declared types, including
-  nested subgraphs and links crossing the subgraph boundary.
+- API ids of subgraph inner nodes resolve to their declared types. Nested
+  subgraphs are handled by the same recursion but no real fixture has one yet.
 - With no UI workflow, a VHS-saved graph is fully typed from input names.
 - Every type records whether it was declared, subgraph-declared or inferred.
 
 ## 2. Pass-through
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
 
 Some nodes carry a value without changing its meaning. They are followed,
 never reported:
@@ -151,8 +159,14 @@ never reported:
   single type equal to its output (rgthree `Any Switch`, reroutes that survive
   into the API graph): the carried value is the **first connected input in
   input-name order** (`any_01` before `any_02`), which is the switch's own rule.
-- A node with no linked inputs and exactly one scalar literal (`PrimitiveInt`,
-  `PrimitiveFloat`, `Seed (rgthree)`, `INTConstant`): the value is that literal.
+- A **conditional switch** — inputs named `on_true` and `on_false` plus one
+  selector (KJNodes `LazySwitchKJ`, core `ComfySwitchNode`): the selector is
+  resolved to a boolean and the chosen branch is carried. An unresolvable
+  selector leaves the value unresolved, never guessed. Older H3 renders route
+  their model and steps through one, and missed both without this rule.
+- A node with no linked inputs and exactly one scalar literal, booleans
+  included (`PrimitiveInt`, `PrimitiveBoolean`, `Seed (rgthree)`,
+  `INTConstant`): the value is that literal.
 
 Muted (mode 2) and bypassed (mode 4) nodes do not appear in the API graph, so
 the API graph is already the executed graph. The UI graph is consulted only
@@ -166,7 +180,7 @@ for types.
 
 ## 3. Roles
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
 
 All roles are found by walking **upstream from the output**, so nodes on
 unconnected branches (a still-image branch, a disabled preview) never
@@ -196,8 +210,17 @@ contribute.
 - **Prompt** — from a stage's (or guider's) `positive`/`negative`/
   `conditioning` input, walk upstream along `CONDITIONING`, `STRING` and `*`
   links, and through any node that outputs one of those. Collect string
-  literals of at least four words that are not file names. Which input the
-  walk started from decides **positive** or **negative**. One string is a
+  literals of at least four words that are not file names or JSON held in a
+  string (a composer's file list; tested by parsing, because prose may begin
+  with `[Shot 1]`). The walk follows every link except those typed as models,
+  media, sampling machinery or plain numbers, because text reaches samplers
+  through custom types (`MMH3_COND_SET`) as well as `CONDITIONING` and
+  `STRING`. Which input the walk started from decides **positive** or
+  **negative**. Two rules keep them apart: a node that passes a pair through
+  (an output slot named like one of its inputs, as LTX's conditioning nodes
+  name `positive` and `negative`) is followed only along the matching input;
+  and text reached from both walks — a negative made by zeroing the positive —
+  is positive only. One string is a
   direct prompt; several are fragments labelled with their node and input name
   (`summary`, `detailed_description`), and the result is partial.
 - **VAE, text encoder** — roots of `VAE` and `CLIP` chains, found the same way
@@ -214,7 +237,7 @@ contribute.
 
 ## 4. No UI workflow
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
 
 VHS `VideoCombine` embeds only `prompt`. Everything above still runs on
 inferred types (Section 1, rule 3), with every result downgraded one evidence
@@ -230,7 +253,7 @@ steps `30` from `BasicScheduler` by `sigmas`.
 
 ## 5. Settings per stage
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
 
 Numeric and choice settings are read **per sampler stage**, from the stage
 node and the nodes that feed its non-model, non-conditioning, non-latent
@@ -284,7 +307,7 @@ existing background indexer from the payload it already reads. That wiring is
 
 ## 7. Coverage harness
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28) as `scripts/generation-coverage.cjs`
 
 Reliability is a number, not an impression. `scripts/generation-coverage.cjs`
 walks a folder, reads each clip's embedded tags in-process (ffprobe for
@@ -351,6 +374,43 @@ reader and the new one runs only in the harness.
   re-run in this repository on real renders before writing this.
 - Input *names* are allowed as evidence and class *names* are not, because
   ComfyUI standardises the former across custom nodes and not the latter.
+
+### 2026-09-28 — Reader, harness and first corpus run
+
+- `main/comfy-type-flow.js` implements Sections 1–5 behind the shipped
+  parser's interface and result shape (`parseComfyTypeFlow(payload,
+  { fileName, origin })`), reusing its payload location, bounds and NaN
+  handling. It is **not wired in**. `container-tags.js` gained an
+  `includeWorkflow` option so the harness can read the UI graph in-process;
+  the generation-key indexer still skips it.
+- `scripts/generation-coverage.cjs` over the user's `data/work/output`
+  (3,332 clips, 2,935 with a `prompt` tag), shipped → type-flow:
+
+  | Folder | Tagged | Output | Checkpoint | Prompt | Seed | Steps |
+  |---|---|---|---|---|---|---|
+  | H3 | 2,366 | 100 → 100% | 33 → 100% | 0 → 100% | 1 → 100% | 40 → 100% |
+  | H3-Long | 97 | 98 → 98% | 0 → 98% | 0 → 98% | 98 → 98% | 0 → 98% |
+  | requeue | 336 | 100 → 100% | 99 → 100% | 0 → 100% | 1 → 100% | 99 → 100% |
+  | video | 67 | 73 → 100% | 9 → 90% | 0 → 90% | 54 → 90% | 7 → 90% |
+  | vr180 | 48 | 100 → 100% | 100 → 100% | 0 → 100% | 0 → 100% | 100 → 100% |
+  | outpaint | 5 | 100 → 100% | 80 → 100% | 0 → 40% | 80 → 100% | 0 → 20% |
+  | **All** | **2,935** | **99 → 100%** | **40 → 99%** | **0 → 99%** | **6 → 99%** | **46 → 99%** |
+
+  No clip lost a field the shipped parser found. The remaining gaps are
+  mostly genuine: the top-level AnimateDiff/masking renders have no sampler;
+  LTX samples from explicit sigmas, so has no step count; and those outpaint
+  renders' positive prompt is empty.
+- Values, not just presence: all 17 real `_final_1.5mp_35st_` finals report
+  35 steps, their 15 drafts report 8, and every draft's reported seed is one
+  the generation key collected. The full corpus run takes about six seconds.
+- Five rules above came from the corpus, not the prototype: `any_NN` and
+  scalar input names, conditional switches, boolean primitives, concrete
+  types over `*`, and slot-name pairing of positive and negative. The last
+  one corrected an early result that read an LTX render's negative text as
+  its prompt.
+- Tests: `main/__tests__/comfyTypeFlow.test.js`, 13 cases over five reduced
+  real fixtures (`fixtures/type-flow/`: Omni, long-form, V2V, LTX subgraphs,
+  VR180 without a workflow) and synthetic single-rule graphs.
 
 ## References
 
