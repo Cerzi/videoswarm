@@ -385,6 +385,63 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
 
+  // Re-rendering through a ComfyUI on this computer. Clips are named by the
+  // paths the renderer was shown; everything else is ids and settings.
+  comfyQueue: {
+    getConnection: async () => ipcRenderer.invoke("comfy:connection:get"),
+    setConnection: async ({ enabled, url, outputDir } = {}) =>
+      ipcRenderer.invoke("comfy:connection:set", {
+        enabled: enabled === true,
+        url: typeof url === "string" ? url : undefined,
+        outputDir: typeof outputDir === "string" ? outputDir : null,
+      }),
+    testConnection: async (url) =>
+      ipcRenderer.invoke(
+        "comfy:connection:test",
+        typeof url === "string" ? { url } : {}
+      ),
+    recipes: {
+      list: async () => ipcRenderer.invoke("comfy:recipes:list"),
+      get: async (id) => ipcRenderer.invoke("comfy:recipes:get", { id }),
+      delete: async (id) => ipcRenderer.invoke("comfy:recipes:delete", { id }),
+      // examples: [{ finalPath, draftPath? }]; a comfy-requeue final alone
+      // carries its draft.
+      learn: async ({ name, examples } = {}) =>
+        ipcRenderer.invoke("comfy:recipes:learn", {
+          name,
+          examples: Array.isArray(examples)
+            ? examples.map((example) => ({
+                finalPath: example?.finalPath,
+                draftPath: example?.draftPath ?? null,
+              }))
+            : [],
+        }),
+    },
+    add: async ({ recipeId, clips, settings, choices } = {}) =>
+      ipcRenderer.invoke("comfy:queue:add", {
+        recipeId,
+        clips: Array.isArray(clips)
+          ? clips.map((clip) => ({ fullPath: clip?.fullPath }))
+          : [],
+        settings: settings ?? {},
+        choices: choices ?? {},
+      }),
+    list: async () => ipcRenderer.invoke("comfy:queue:list"),
+    history: async (limit) =>
+      ipcRenderer.invoke("comfy:queue:history", limit === undefined ? {} : { limit }),
+    start: async () => ipcRenderer.invoke("comfy:queue:start"),
+    stop: async () => ipcRenderer.invoke("comfy:queue:stop"),
+    setOrder: async (order) => ipcRenderer.invoke("comfy:queue:order", { order }),
+    retry: async (id) => ipcRenderer.invoke("comfy:queue:retry", { id }),
+    renderAgain: async (id) => ipcRenderer.invoke("comfy:queue:render-again", { id }),
+    remove: async (id) => ipcRenderer.invoke("comfy:queue:remove", { id }),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("comfy-queue:changed", handler);
+      return () => ipcRenderer.removeListener("comfy-queue:changed", handler);
+    },
+  },
+
   library: {
     taggedSnapshot: async (tags, matchMode) =>
       ipcRenderer.invoke("library:tagged-snapshot", {

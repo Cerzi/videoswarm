@@ -20,9 +20,11 @@ const CONTAINER_TAG_LIMITS = Object.freeze({
 
 // Only these are decoded; everything else, including the large visual
 // `workflow` graph, is skipped without being turned into a string unless a
-// caller asks for it (`includeWorkflow`).
+// caller asks for it (`includeWorkflow`). `includeRequeue` also returns a
+// re-render final's `requeue` provenance tag, for learning recipes.
 const WANTED_TAGS = new Set(["prompt", "comment", "description"]);
 const WANTED_TAGS_WITH_WORKFLOW = new Set([...WANTED_TAGS, "workflow"]);
+const WANTED_TAGS_WITH_REQUEUE = new Set([...WANTED_TAGS_WITH_WORKFLOW, "requeue"]);
 const FOURCC_TAGS = new Map([
   ["©cmt", "comment"],
   ["©des", "description"],
@@ -104,7 +106,11 @@ function tagNameForItem(itemAtom, keys) {
 }
 
 function readMetaTags(meta, tags, budget, limits) {
-  const wanted = limits.includeWorkflow ? WANTED_TAGS_WITH_WORKFLOW : WANTED_TAGS;
+  const wanted = limits.includeRequeue
+    ? WANTED_TAGS_WITH_REQUEUE
+    : limits.includeWorkflow
+      ? WANTED_TAGS_WITH_WORKFLOW
+      : WANTED_TAGS;
   const children = metaChildren(meta);
   const keys = readKeys(findChild(children, "keys", limits), limits);
   const ilst = findChild(children, "ilst", limits);
@@ -197,9 +203,12 @@ async function readIsoBmffEmbeddedPayload(filePath, expected = {}, options = {})
     const selected = selectEmbeddedPayload([
       { tags, scope: "format", streamIndex: null },
     ]);
-    return selected.found
-      ? { status: "found", payload: selected.payload }
-      : { status: "not-found" };
+    if (!selected.found) return { status: "not-found" };
+    const payload =
+      limits.includeRequeue && typeof tags.requeue === "string"
+        ? { ...selected.payload, requeue: tags.requeue }
+        : selected.payload;
+    return { status: "found", payload };
   } catch (error) {
     return { status: "unreadable", code: error?.code || "READ_FAILED" };
   } finally {
