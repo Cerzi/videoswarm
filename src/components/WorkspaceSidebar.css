@@ -148,10 +148,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  /* A narrow sidebar puts the buttons under the title instead of the title
+     running over them; the header grows to hold them rather than being
+     squeezed back to its 48 px minimum by the column around it. */
+  flex-wrap: wrap;
+  flex-shrink: 0;
   min-height: 48px;
   padding: 0.45rem 0.55rem 0.45rem 0.7rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.075);
   background: #202428;
+}
+
+.metadata-docked-inspector__header .metadata-panel__titles {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.metadata-docked-inspector__header .metadata-panel__title,
+.metadata-docked-inspector__header .metadata-panel__subtitle {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metadata-docked-inspector__actions {

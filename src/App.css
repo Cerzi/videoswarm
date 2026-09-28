@@ -54,6 +54,14 @@ body {
   align-items: center;
   gap: 1rem;
   margin-left: auto;
+  /* Fill what the left group leaves and wrap only what does not fit, rather
+     than letting controls fall off the right edge (at 1280 px, Filters and
+     Keyboard shortcuts did). */
+  flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 0.4rem;
 }
 
 .file-input-wrapper {
