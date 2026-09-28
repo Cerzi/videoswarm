@@ -15,6 +15,9 @@ import "./TopBar.css";
 // is too narrow the lowest-priority controls fold into ⋯ rather than wrapping
 // or falling off the edge.
 
+// The narrowest the folder name may get before more controls fold (px).
+const MIN_NAME_WIDTH = 80;
+
 // Folded first to last.
 export const FOLD_ORDER = Object.freeze(["zoom", "sort", "scope", "subfolders", "siblings"]);
 
@@ -75,10 +78,6 @@ export default function TopBar({
   recursive = false,
   onRecursiveChange,
   isRefreshingFolder = false,
-  // sidebar
-  showSidebarToggle = false,
-  sidebarOpen = false,
-  onSidebarToggle,
   // filters
   onFiltersToggle,
   filtersActiveCount = 0,
@@ -149,7 +148,13 @@ export default function TopBar({
       gap * Math.max(0, children.length - 1) +
       (parseFloat(style.paddingLeft) || 0) +
       (parseFloat(style.paddingRight) || 0);
-    if (needed <= bar.clientWidth + 1) return;
+    // The breadcrumb shrinks instead of overflowing, so a name squeezed below
+    // MIN_NAME_WIDTH counts as overflow too, rather than vanishing.
+    const crumbs = bar.querySelector(".topbar__breadcrumb");
+    const nameSqueezed = Boolean(
+      crumbs && crumbs.scrollWidth > crumbs.clientWidth && crumbs.clientWidth < MIN_NAME_WIDTH
+    );
+    if (needed <= bar.clientWidth + 1 && !nameSqueezed) return;
     const next = FOLD_ORDER.find((key) => foldable[key] && !folded.includes(key));
     if (next) setFolded((previous) => [...previous, next]);
   });
@@ -297,20 +302,6 @@ export default function TopBar({
 
   return (
     <div className="header topbar" ref={barRef}>
-      {showSidebarToggle ? (
-        <button
-          type="button"
-          className={`toggle-button topbar__icon ${sidebarOpen ? "is-active" : ""}`}
-          onClick={() => onSidebarToggle?.(!sidebarOpen)}
-          aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          aria-pressed={sidebarOpen}
-          title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          disabled={busy}
-        >
-          ☰
-        </button>
-      ) : null}
-
       <MenuButton
         label="Open"
         icon={<FolderIcon />}

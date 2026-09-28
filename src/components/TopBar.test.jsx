@@ -22,9 +22,6 @@ const baseProps = () => ({
   onScopeChange: vi.fn(),
   recursive: true,
   onRecursiveChange: vi.fn(),
-  showSidebarToggle: true,
-  sidebarOpen: true,
-  onSidebarToggle: vi.fn(),
   onFiltersToggle: vi.fn(),
   onFiltersClear: vi.fn(),
   sortSelection: "name-asc",
@@ -86,15 +83,12 @@ describe("TopBar", () => {
     expect(props.onScopeChange).toHaveBeenCalledWith(FolderScope.ALL_DESCENDANTS);
     fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     expect(props.onRecursiveChange).toHaveBeenCalledWith(false);
-    fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    expect(props.onSidebarToggle).toHaveBeenCalledWith(false);
   });
 
   it("hides folder-only controls with no folder open", () => {
-    render(<TopBar {...baseProps()} hasOpenFolder={false} showSidebarToggle={false} />);
+    render(<TopBar {...baseProps()} hasOpenFolder={false} />);
     expect(screen.queryByRole("navigation", { name: "Location" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Folder scope" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /sidebar/ })).toBeNull();
     expect(screen.getByRole("checkbox", { name: "Include subfolders" })).toBeInTheDocument();
   });
 

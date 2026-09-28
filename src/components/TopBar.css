@@ -20,10 +20,6 @@
   justify-content: center;
 }
 
-.topbar__icon.is-active {
-  background: var(--color-border);
-}
-
 .topbar__open {
   gap: 0.4rem;
   font-weight: 600;
