@@ -1,6 +1,6 @@
 # Outstanding Work
 
-Last updated: 2026-09-27
+Last updated: 2026-09-28
 
 Written at a machine change, so it is a handover rather than a roadmap: what is
 genuinely unfinished, what is finished but unverified by a human, and where the
@@ -48,6 +48,24 @@ of MiniMax H3 graphs stay unresolved, because the prompt lives in a
 of which has an adapter; and the V2V hybrid graph reports `OUTPUT_NOT_FOUND`
 because its custom save node is not a recognized output. Those are resolver
 coverage gaps, not parsing failures.
+
+Both are addressed, but not yet shipped, by the socket-type reader in
+[`architecture/generation-type-flow.md`](architecture/generation-type-flow.md):
+on the user's 2,935 tagged clips it finds a prompt and a seed in 99% of them
+and loses nothing the shipped parser finds. Switching the Generation panel
+over to it is the open step.
+
+## 1c. Re-rendering inside Video Swarm is proposed, pending three decisions
+
+Status: **Proposed** — see
+[`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md)
+
+Recipes learned from an example draft/final pair would replace the
+standalone app's per-workflow code. It reverses the earlier rejection, so
+three choices are the user's: local ComfyUI connectivity at all, engine in
+Video Swarm with a tray icon or a separate runner, and single-pass only for
+version 1. Its Phase 1 (learner and matcher as pure modules) needs none of
+them.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 
