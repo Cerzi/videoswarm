@@ -262,11 +262,6 @@ const ContextMenu = ({
         label: `📁 ${menuLabel('transfer-files')}`,
         action: 'transfer-files',
       },
-      {
-        id: 'file-properties',
-        label: `📊 ${menuLabel('file-properties')}`,
-        action: 'file-properties',
-      },
     ]);
 
     pushSection([

@@ -20,6 +20,7 @@ import {
 } from "../metadata/metadataContent";
 import "./FullscreenReviewPanels.css";
 import MetadataVersionsSection from "../metadata/MetadataVersionsSection";
+import { showInFileManagerLabel } from "../../platform/fileManagerTerms";
 
 const RATINGS = [1, 2, 3, 4, 5];
 const REVIEW_ACTIONS = [
@@ -29,7 +30,7 @@ const REVIEW_ACTIONS = [
   { state: REVIEW_STATES.UNREVIEWED, label: "Unreviewed" },
 ];
 const SAFE_ACTIONS = [
-  { id: ActionIds.SHOW_IN_FOLDER, label: "Open in folder", nativeOnly: true },
+  { id: ActionIds.SHOW_IN_FOLDER, label: showInFileManagerLabel(), nativeOnly: true },
   { id: ActionIds.OPEN_EXTERNAL, label: "Open externally", nativeOnly: true },
   { id: ActionIds.COPY_PATH, label: "Copy path" },
   { id: ActionIds.COPY_RELATIVE_PATH, label: "Copy relative path" },

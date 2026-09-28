@@ -1,4 +1,5 @@
 // src/hooks/actions/actionPolicies.js
+import { moveToTrashLabel, showInFileManagerLabel } from '../../platform/fileManagerTerms';
 
 export const TargetPolicy = {
   ALL_SELECTED: 'all-selected',
@@ -24,14 +25,10 @@ export const actionPolicies = {
 
   'show-in-folder': {
     id: 'show-in-folder',
-    label: 'Show in Explorer',
-    whenContextWithMulti: TargetPolicy.CONTEXT_ONLY,
-    enabledForToolbar: (count) => count === 1,
-  },
-
-  'file-properties': {
-    id: 'file-properties',
-    label: 'Properties',
+    // Named for the platform's file manager: Explorer, Finder, File Manager.
+    get label() {
+      return showInFileManagerLabel();
+    },
     whenContextWithMulti: TargetPolicy.CONTEXT_ONLY,
     enabledForToolbar: (count) => count === 1,
   },
@@ -39,7 +36,9 @@ export const actionPolicies = {
   // Multi-item actions: operate on all selected by default; in context menu they still apply to all selected.
   'move-to-trash': {
     id: 'move-to-trash',
-    label: 'Move to Recycle Bin',
+    get label() {
+      return moveToTrashLabel();
+    },
     whenContextWithMulti: TargetPolicy.ALL_SELECTED,
     enabledForToolbar: (count) => count >= 1,
   },

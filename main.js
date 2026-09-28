@@ -3593,15 +3593,16 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   // path that was actually authorized and identity-bound above.
   const sampleName = path.basename(canonicalPaths[0]);
   const count = canonicalPaths.length;
+  const trashName = process.platform === "win32" ? "Recycle Bin" : "Trash";
   const message =
     count === 1
-      ? `Move "${sampleName}" to Recycle Bin?`
-      : `Move ${count} items to Recycle Bin?`;
+      ? `Move "${sampleName}" to the ${trashName}?`
+      : `Move ${count} items to the ${trashName}?`;
 
   try {
     const { response } = await dialog.showMessageBox(win, {
       type: "warning",
-      buttons: ["Move to Bin", "Cancel"],
+      buttons: [`Move to ${trashName}`, "Cancel"],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
