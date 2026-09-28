@@ -49,11 +49,12 @@ of which has an adapter; and the V2V hybrid graph reports `OUTPUT_NOT_FOUND`
 because its custom save node is not a recognized output. Those are resolver
 coverage gaps, not parsing failures.
 
-Both are addressed, but not yet shipped, by the socket-type reader in
-[`architecture/generation-type-flow.md`](architecture/generation-type-flow.md):
-on the user's 2,935 tagged clips it finds a prompt and a seed in 99% of them
-and loses nothing the shipped parser finds. Switching the Generation panel
-over to it is the open step.
+Both are fixed since the Generation panel switched to the socket-type reader
+([`architecture/generation-type-flow.md`](architecture/generation-type-flow.md),
+2026-09-28): on 2,950 tagged clips it finds a prompt and a seed in 99% of
+them and lost nothing the previous parser found. A MiniMax prompt is still
+shown as its composer's fields (candidate fragments, Partial), because the
+composer builds the final text at run time.
 
 ## 1c. Re-rendering inside Video Swarm is proposed, pending three decisions
 
@@ -163,6 +164,16 @@ feature set.
   user-facing work that was never in any earlier release candidate, including
   the content-identity change. Promote to stable only after rc.5 has been used
   in earnest — see Section 4 for why.
+
+## 5a. Clip sequences are parked on a branch
+
+The unfinished clip-sequences work (`docs/architecture/clip-sequences.md`,
+`SequencePanel`, `main/sequence-view.js`, `useSequences`, `selectionOrder`;
+last active 2026-09-01) was moved unchanged out of the main checkout onto
+`wip/clip-sequences` (`02106f2`) so `main` could fast-forward. It touches
+`main.js`, `main/database.js`, `preload.js`, `src/App.jsx` and
+`src/library/folderViewState.js`, all of which have moved since, so **rebase
+it onto `main` before continuing it.**
 
 ## 6. Local branches that were not pushed
 

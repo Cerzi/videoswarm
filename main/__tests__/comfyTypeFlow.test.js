@@ -5,8 +5,8 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { parseComfyTypeFlow } = require("../comfy-type-flow");
 const { parseComfyGenerationPayload } = require("../comfy-generation-parser");
+const parseComfyTypeFlow = parseComfyGenerationPayload;
 
 // Reduced copies of real renders: API prompt and UI workflow, with graph
 // topology, socket types, links, modes, subgraph definitions, seeds and
@@ -34,9 +34,9 @@ const positiveFields = (result) =>
   result.promptFragments.filter((fragment) => fragment.role === "positive").map((fragment) => fragment.field);
 
 describe("type-flow reader on reduced real renders", () => {
-  it("reads a MiniMax H3 Omni draft the class-list parser cannot", () => {
+  it("reads a MiniMax H3 Omni draft, whose composer and seed node no allow-list knew", () => {
     const result = read("omni-draft");
-    expect(result.output).toMatchObject({ classType: "SaveVideo", match: "filename" });
+    expect(result.output).toMatchObject({ classType: "SaveVideo", match: "filename-prefix" });
     expect(result.samplerStages).toHaveLength(1);
     expect(finalStage(result)).toMatchObject({
       classType: "SamplerCustomAdvanced",
@@ -58,13 +58,10 @@ describe("type-flow reader on reduced real renders", () => {
       "non_diegetic_music",
     ]);
     expect(result.prompt).toBeNull();
-    expect(result.diagnostics.map((entry) => entry.code)).toEqual(["PROMPT_COMPOSED"]);
-
-    const shipped = parseComfyGenerationPayload(fixture("omni-draft").payload.prompt, {
-      fileName: fixture("omni-draft").fileName,
-    });
-    expect(shipped.seed).toBeNull();
-    expect(shipped.promptFragments).toEqual([]);
+    // The composer holds several fields and turns them into one prompt at run
+    // time: candidates, and the result is partial.
+    expect(result.promptFragments.every((fragment) => fragment.confidence === "candidate")).toBe(true);
+    expect(result.diagnostics.map((entry) => entry.code)).toEqual(["PROMPT_COMPOSED", "PROMPT_CANDIDATE"]);
   });
 
   it("reads both stages of the long-form hybrid, each with its own seed", () => {
@@ -85,14 +82,10 @@ describe("type-flow reader on reduced real renders", () => {
 
   it("finds a custom save node by its VIDEO input and file name", () => {
     const result = read("v2v-hybrid");
-    expect(result.output).toMatchObject({ classType: "H3HybridSaveRun", match: "filename" });
+    expect(result.output).toMatchObject({ classType: "H3HybridSaveRun", match: "filename-prefix" });
     expect(result.seed).toBe("123");
     expect(result.models).toHaveLength(1);
     expect(result.sourceInputs.length).toBeGreaterThan(0);
-    const shipped = parseComfyGenerationPayload(fixture("v2v-hybrid").payload.prompt, {
-      fileName: fixture("v2v-hybrid").fileName,
-    });
-    expect(shipped.output).toBeNull();
   });
 
   it("types subgraph inner nodes and keeps a conditioning pair's branches apart", () => {
@@ -106,7 +99,7 @@ describe("type-flow reader on reduced real renders", () => {
     expect(result.prompt).toBeNull();
     expect(result.negativePrompt).toEqual(expect.any(String));
     expect(result.promptFragments.map((fragment) => fragment.role)).toEqual(["negative"]);
-    expect(result.origin).toMatchObject({ graphFormat: "api+ui", resolution: "traced" });
+    expect(result.origin).toMatchObject({ typeEvidence: "declared", resolution: "traced" });
   });
 
   it("falls back to conventional input names when no UI workflow was embedded", () => {
@@ -114,15 +107,23 @@ describe("type-flow reader on reduced real renders", () => {
     expect(result.output.classType).toBe("VHS_VideoCombine");
     expect(finalStage(result)).toMatchObject({ seed: "4242", steps: 20 });
     expect(result.models).toHaveLength(1);
-    expect(result.origin).toMatchObject({ graphFormat: "api", resolution: "partial" });
-    expect(result.diagnostics.map((entry) => entry.code)).toContain("TYPES_INFERRED");
+    // Types came from input names; that is recorded, and the composer's
+    // fields are candidates exactly as with a workflow.
+    expect(result.origin).toMatchObject({ typeEvidence: "inferred", resolution: "partial" });
+    // `audio_vae` is typed as a VAE by its name, so the audio VAE is a VAE and
+    // not a text encoder the prompt walk happened to reach.
+    expect(result.assets.vaes).toHaveLength(2);
+    expect(result.assets.textEncoders).toHaveLength(1);
     expect(result.promptFragments.every((fragment) => fragment.confidence === "candidate")).toBe(true);
   });
 
-  it("returns the shipped parser's result shape", () => {
-    const { payload, fileName } = fixture("vr180-no-workflow");
-    const shipped = parseComfyGenerationPayload(payload.prompt, { fileName });
-    expect(Object.keys(read("vr180-no-workflow")).sort()).toEqual(Object.keys(shipped).sort());
+  it("returns the result shape the generation-metadata service persists", () => {
+    expect(Object.keys(read("vr180-no-workflow")).sort()).toEqual([
+      "assets", "diagnostics", "generationRun", "model", "models", "negativePrompt",
+      "origin", "output", "positivePrompt", "prompt", "promptFragments", "provider",
+      "sampler", "samplerStages", "samplers", "seed", "sourceImage", "sourceImages",
+      "sourceInputs",
+    ]);
   });
 });
 
@@ -234,7 +235,7 @@ describe("type-flow rules", () => {
     expect(readGraph(graph).promptFragments.map((fragment) => fragment.field)).toEqual(["summary"]);
   });
 
-  it("is bounded and rejects malformed payloads like the shipped parser", () => {
+  it("is bounded and rejects malformed payloads", () => {
     expect(() => parseComfyTypeFlow("{not json", {})).toThrowError(
       expect.objectContaining({ code: "COMFY_INVALID_JSON" })
     );
@@ -247,6 +248,6 @@ describe("type-flow rules", () => {
     }
     expect(() =>
       parseComfyTypeFlow({ prompt: JSON.stringify(many) }, { limits: { maxGraphNodes: 8 } })
-    ).not.toThrow();
+    ).toThrowError(expect.objectContaining({ code: "COMFY_GRAPH_NODE_LIMIT" }));
   });
 });

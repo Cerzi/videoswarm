@@ -13,7 +13,9 @@ const {
 
 // 4: API prompts carrying Python NaN/Infinity parse instead of failing, which
 // can change a clip's result from a sidecar fallback to its embedded graph.
-const GENERATION_METADATA_PARSER_VERSION = 4;
+// 5: the reader traces by socket type instead of node allow-lists
+// (docs/architecture/generation-type-flow.md); every cached result is re-read.
+const GENERATION_METADATA_PARSER_VERSION = 5;
 const GENERATION_METADATA_SERVICE_LIMITS = Object.freeze({
   concurrency: 2,
   maxPending: 64,

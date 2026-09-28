@@ -620,6 +620,20 @@ A packaged Electron smoke fixture and cross-platform reader verification remain
   now shows *Embedded · Partial* with model, VAE, sampler and scheduler; its
   prompt and seed remain unresolved for want of MiniMax adapters.
 
+### 2026-09-28 — The resolver is replaced by a socket-type reader
+
+- Section 4's allow-list resolver (sampler, conditioning, model-passthrough,
+  decode and output class lists, and the WanVideoWrapper adapters) is
+  replaced by a reader that finds the same roles by socket type; see
+  [`generation-type-flow.md`](generation-type-flow.md). The interface, result
+  shape, sidecar handling, source precedence and bounds described here are
+  unchanged; the parser cache version is 5. The evidence levels keep their
+  names, and are now assigned from the node that holds the text: an encoder
+  (exact), a single value reaching an encoder unchanged (graph-derived), or
+  any other node (candidate, partial).
+- The cache table now accepts the `derived` quality this document already
+  described; before, a graph-derived result failed to save.
+
 ### Remaining implementation work
 
 - Bundle or otherwise provision and verify an audited cross-platform metadata

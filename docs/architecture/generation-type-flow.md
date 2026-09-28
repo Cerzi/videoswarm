@@ -1,8 +1,8 @@
 # Generation Metadata by Socket Type
 
-Status: **Reader and coverage harness Implemented and Verified; not wired
-into the Generation panel.** Switch-over (Section 8) and render-size ordering
-(Section 6) remain Unimplemented.
+Status: **Implemented and Verified — the socket-type reader is the Generation
+panel's reader** (2026-09-28). Render-size ordering of generation versions
+(Section 6) remains Unimplemented.
 Last updated: 2026-09-28
 
 ## Summary
@@ -104,7 +104,7 @@ The prototype also shows two faults the design must fix:
 
 ## 1. Socket types
 
-Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-generation-parser.js`
 
 A **type map** assigns every API input `(nodeId, inputName)` and every output
 slot `(nodeId, slot)` a socket type, with the evidence it came from:
@@ -150,7 +150,7 @@ Section 3 uses them to keep positive and negative apart.
 
 ## 2. Pass-through
 
-Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-generation-parser.js`
 
 Some nodes carry a value without changing its meaning. They are followed,
 never reported:
@@ -180,7 +180,7 @@ for types.
 
 ## 3. Roles
 
-Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-generation-parser.js`
 
 All roles are found by walking **upstream from the output**, so nodes on
 unconnected branches (a still-image branch, a disabled preview) never
@@ -237,11 +237,15 @@ contribute.
 
 ## 4. No UI workflow
 
-Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-generation-parser.js`
 
 VHS `VideoCombine` embeds only `prompt`. Everything above still runs on
-inferred types (Section 1, rule 3), with every result downgraded one evidence
-level. On the VR180 graph this reaches: output `VHS_VideoCombine` by
+inferred types (Section 1, rule 3). The result records `origin.typeEvidence:
+"inferred"` but is **not** downgraded: this design first said inferred types
+should lower evidence one level, but on the real corpus and the shipped
+parser's own fixtures the conventional names proved as reliable as declared
+types, and a downgrade would have marked every VHS-saved render Graph-derived
+for no difference in reliability. On the VR180 graph this reaches: output `VHS_VideoCombine` by
 `filename_prefix`; stage `SamplerCustomAdvanced` by `noise`/`guider`/
 `sigmas`/`latent_image`; guider `BasicGuider`; model root `UNETLoader` through
 two patch nodes by `model`; seed `5044` through a noise wrapper by `noise`;
@@ -249,11 +253,13 @@ steps `30` from `BasicScheduler` by `sigmas`.
 
 ### Acceptance
 
-- The VR180 render yields checkpoint, seed and steps with inferred evidence.
+- The VR180 render yields checkpoint, seed and steps, recorded as inferred.
+- Qualified names (`audio_vae`, `t5_clip`) type as VAE and CLIP, so an audio
+  VAE is never reported as a text encoder.
 
 ## 5. Settings per stage
 
-Status: **Implemented and Verified** (2026-09-28) in `main/comfy-type-flow.js`
+Status: **Implemented and Verified** (2026-09-28) in `main/comfy-generation-parser.js`
 
 Numeric and choice settings are read **per sampler stage**, from the stage
 node and the nodes that feed its non-model, non-conditioning, non-latent
@@ -327,27 +333,70 @@ vr180, outpaint, requeue).
 
 ## 8. Switching the panel over
 
-Status: **Unimplemented**
+Status: **Implemented and Verified** (2026-09-28)
 
-The type-flow reader implements the same interface as
-`parseComfyGenerationPayload` — `(payload, { fileName, origin })` returning
-the same result shape — so the generation-metadata service can use either.
-It needs the payload's `workflow` as well as its `prompt`; the probe already
-returns both.
+The socket-type reader **is** `parseComfyGenerationPayload` in
+`main/comfy-generation-parser.js`, behind the same interface and result shape,
+so the generation-metadata service is unchanged apart from its parser cache
+version (now **5**, so every cached result is re-read). The class allow-lists
+(`SAMPLER_TYPES`, `UNARY_CONDITIONING_INPUT`, `MODEL_PASSTHROUGH_INPUT`,
+`DECODE_TYPES`, the output and Wan adapters) are deleted, not kept as a
+parallel path. Payload location, JSON bounds, `NaN` handling and exact 64-bit
+seeds moved to `main/comfy-payload.js`. Sidecar reading, the generic sidecar
+fallback and source precedence are untouched.
 
-The switch-over is a **measured** step: run the harness, compare field
-coverage per folder, spot-check disagreements, and switch only when the new
-reader is at least as good everywhere. Bumping the parser cache version then
-re-reads every cached result. Until then the shipped parser stays the panel's
-reader and the new one runs only in the harness.
+### Evidence for prompt text
+
+Confidence comes from the node that holds the text, not from its distance to
+the sampler:
+
+- **exact** (Direct) — the node outputs conditioning: it is the encoder, and
+  used the text as written. Behind a combine it is still exact, composed with
+  another (`composition: "combined"`).
+- **derived** (Graph-derived) — a node holding one value and nothing else,
+  whose value reaches an encoder through switches only (`"routed"`).
+- **candidate** (Partial) — any other node, which may change the text before
+  it is used: a composer, an assembler, an enhancer (`"upstream"`). Shown as a
+  fragment, never as *the* prompt, with a `PROMPT_CANDIDATE` diagnostic.
+
+On an encoder, short text counts (a two-word negative prompt); on a
+candidate, only prose of four words or more, so settings stored as strings
+are not mistaken for prompts.
+
+### What changed on purpose
+
+- A node holding a single string, whatever its class, is read as a value
+  holder like `PrimitiveStringMultiline`: its text becomes a Graph-derived
+  prompt. The shipped parser withheld such text when it did not know the
+  class; types cannot tell the two apart, and the evidence badge says how the
+  text was reached.
+- Text from nodes that may transform it is now shown, as labelled candidate
+  fragments, instead of being hidden with a diagnostic.
+- `samplers` lists sampler names only. The shipped parser added schedulers, so
+  the panel showed the scheduler twice, and a graph with no `sampler_name`
+  (WanVideoWrapper) showed its scheduler as the sampler. It also used to report
+  the class name `WanVideoSampler` as the sampler; that is gone.
+
+### A latent storage bug
+
+The service has always been able to produce the `derived` quality, and the
+panel renders a Graph-derived badge for it, but the cache table's `CHECK`
+constraint and allow-list accepted only exact, partial and unknown, so any
+graph-derived result failed to save ("Unsupported generation quality:
+derived"). The shipped parser rarely produced one; the new reader does. The
+constraint now allows it. A profile whose table has the old check gets the
+table rebuilt with its rows copied across (SQLite cannot relax a `CHECK` in
+place), keeping the embedded-metadata guarantee that migration loses no
+cached rows; a table so old it has no quality column needs nothing, because
+the column is added later with the current check.
 
 ## Open questions
 
 - Whether `/object_info` typing (Section 1, rule 4) is worth having once the
   ComfyUI connection exists, or whether inferred types are enough.
-- Whether the old allow-list parser is deleted at switch-over or kept as a
-  fallback for graphs the type-flow reader cannot type. Keeping both doubles
-  the surface; the harness should decide.
+- ~~Whether the old allow-list parser is kept as a fallback.~~ Deleted at
+  switch-over: the harness found no clip where it found a field the new
+  reader did not.
 
 ## Deferred
 
@@ -362,7 +411,7 @@ reader and the new one runs only in the harness.
    fixtures for H3 Omni, long-form, V2V, LTX outpaint (subgraphs) and VR180
    (no workflow).
 2. The coverage harness, run on the user's corpus, with results recorded here.
-3. Switch-over, when the harness supports it.
+3. ~~Switch-over, when the harness supports it.~~ Done.
 4. Render size per content, and generation-version ordering by it.
 
 ## Implementation notes and decisions
@@ -377,7 +426,8 @@ reader and the new one runs only in the harness.
 
 ### 2026-09-28 — Reader, harness and first corpus run
 
-- `main/comfy-type-flow.js` implements Sections 1–5 behind the shipped
+- `main/comfy-type-flow.js` (merged into `comfy-generation-parser.js` at
+  switch-over) implements Sections 1–5 behind the shipped
   parser's interface and result shape (`parseComfyTypeFlow(payload,
   { fileName, origin })`), reusing its payload location, bounds and NaN
   handling. It is **not wired in**. `container-tags.js` gained an
@@ -411,6 +461,41 @@ reader and the new one runs only in the harness.
 - Tests: `main/__tests__/comfyTypeFlow.test.js`, 13 cases over five reduced
   real fixtures (`fixtures/type-flow/`: Omni, long-form, V2V, LTX subgraphs,
   VR180 without a workflow) and synthetic single-rule graphs.
+
+### 2026-09-28 — Switch-over
+
+- The reader replaced the allow-list resolver as the Generation panel's
+  parser, as described in Section 8. Porting the shipped parser's own tests
+  found what the corpus could not, because the corpus has no WanVideoWrapper
+  renders: wrapper suites use their own socket types, so types ending
+  `VIDEOMODEL` and `TEXTEMBEDS` (and, without a workflow, the `text_embeds`
+  input) play MODEL and CONDITIONING; LoRA stacks hang off the model chain
+  through lora-named links (`lora`, `prev_lora`, with `lora_N` paired to
+  `strength_N`); and a text encoder is also the model-file root the prompt
+  path reaches (a T5 loader). The Wan fixture now reads the same models,
+  LoRAs in the same order, text encoder, VAE, stages and prompts as before.
+- Bounds are enforced with the shipped codes (`COMFY_GRAPH_NODE_LIMIT`,
+  `COMFY_GRAPH_EDGE_LIMIT`, `COMFY_TRAVERSAL_DEPTH_LIMIT`,
+  `COMFY_TRAVERSAL_LIMIT`, `COMFY_OUTPUT_LIMIT`, `COMFY_SAMPLER_LIMIT`), and
+  output selection keeps the shipped matching (exact file name, then a
+  prefix followed by `_` or `-`, then the only output).
+- `scripts/generation-coverage.cjs` now goes through the panel's own path:
+  tags from the service's ffprobe probe, then the service's
+  `hasSupportedFields` and `buildPersistenceInput`, with `--baseline` taking
+  the previous parser (extracted from git) for comparison. On 2,950 tagged
+  clips, previous → current: output 99 → 100%, checkpoint 40 → 99%, prompt
+  0 → 99%, seed 6 → 99%, steps 45 → 99%. **No clip lost a field.** Evidence:
+  33 Direct, 53 Graph-derived, 2,861 Partial (almost all MiniMax composer
+  prompts, shown as candidate fragments), 3 with nothing supported.
+- The real app, headless on copies of an H3 Omni draft, a long-form, a V2V,
+  an LTX outpaint and a VR180 clip, showed model, VAE, text encoder, seed,
+  sampler, scheduler and steps for all five; the Omni's composer fields as
+  labelled candidate fragments; and the outpaint's negative prompt with a
+  Graph-derived badge. That run found the storage bug and the audio-VAE
+  misattribution above.
+- Verification: parser, type-flow and service suites; the new Electron-ABI
+  suite `generationMetadataQuality.test.js`; `npm test -- --run`,
+  `npm run test:electron-abi`, zero-warning lint and the Vite build.
 
 ## References
 
