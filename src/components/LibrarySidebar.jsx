@@ -392,21 +392,31 @@ export function LibrarySidebarContent({
 
         {savedViews.length ? (
           <ul className="library-saved-view-list">
-            {savedViews.map((view) => (
+            {savedViews.map((view) => {
+              // A library view needs no open collection: it searches every
+              // indexed root.
+              const searchesLibrary = view.definition?.searchScope === "library";
+              const applicable = smartViewsEnabled || searchesLibrary;
+              return (
               <li key={view.id}>
                 <button
                   type="button"
                   className="library-saved-view-list__apply"
                   onClick={() => onApplySavedView?.(view)}
                   title={
-                    smartViewsEnabled
-                      ? `Apply ${view.name}`
-                      : "Open a collection to apply this smart view"
+                    !applicable
+                      ? "Open a collection to apply this smart view"
+                      : searchesLibrary
+                        ? `Apply ${view.name} across the entire library`
+                        : `Apply ${view.name}`
                   }
-                  disabled={disabled || !smartViewsEnabled}
+                  disabled={disabled || !applicable}
                 >
-                  <span aria-hidden="true">◆</span>
-                  <span>{view.name}</span>
+                  <span aria-hidden="true">{searchesLibrary ? "◇" : "◆"}</span>
+                  <span className="library-saved-view-list__name">{view.name}</span>
+                  {searchesLibrary ? (
+                    <span className="library-saved-view-list__scope">Library</span>
+                  ) : null}
                 </button>
                 <button
                   type="button"
@@ -419,7 +429,8 @@ export function LibrarySidebarContent({
                   ×
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         ) : (
           <p className="library-sidebar__empty">Save filters for repeat browsing setups.</p>

@@ -209,6 +209,9 @@ function App() {
   const [transferSelection, setTransferSelection] = useState([]);
   const [tagRefreshToken, setTagRefreshToken] = useState(0);
   const [librarySearchScope, setLibrarySearchScope] = useState("folder");
+  // Bumped to re-run the library search even when its tags did not change,
+  // as applying a library-scoped smart view does.
+  const [librarySearchRequest, setLibrarySearchRequest] = useState(0);
   // Remembered so leaving a library search returns to where it was entered
   // from, rather than to an empty app.
   const folderScopeReturnRef = useRef(null);
@@ -2135,18 +2138,27 @@ function App() {
     "\u0000"
   )}`;
   const lastLibraryTagsRef = useRef(includeTagsKey);
+  const lastLibraryRequestRef = useRef(librarySearchRequest);
   useEffect(() => {
     if (librarySearchScope !== "library") {
       lastLibraryTagsRef.current = includeTagsKey;
+      lastLibraryRequestRef.current = librarySearchRequest;
       return;
     }
-    if (lastLibraryTagsRef.current === includeTagsKey) return;
+    if (
+      lastLibraryTagsRef.current === includeTagsKey &&
+      lastLibraryRequestRef.current === librarySearchRequest
+    ) {
+      return;
+    }
     lastLibraryTagsRef.current = includeTagsKey;
+    lastLibraryRequestRef.current = librarySearchRequest;
     loadTagCollection(filters.includeTags, filters.includeTagsMode);
   }, [
     filters.includeTags,
     filters.includeTagsMode,
     includeTagsKey,
+    librarySearchRequest,
     librarySearchScope,
     loadTagCollection,
   ]);
@@ -3050,6 +3062,12 @@ function App() {
           randomSeed,
         },
         scope: { mode: folderScope },
+        // Saved during a library search, the view searches the library
+        // wherever it is applied; otherwise it applies to the open folder.
+        searchScope:
+          librarySearchScope === "library" && (filters.includeTags || []).length
+            ? "library"
+            : "folder",
       };
       try {
         const view = await createSavedView(name, definition);
@@ -3066,6 +3084,7 @@ function App() {
       filters,
       folderScope,
       groupByFolders,
+      librarySearchScope,
       notify,
       randomSeed,
       sortDir,
@@ -3090,7 +3109,19 @@ function App() {
       const nextScope = Object.values(FolderScope).includes(definition.scope?.mode)
         ? definition.scope.mode
         : FolderScope.ALL_DESCENDANTS;
-      if (activeRootPath) {
+      const searchesLibrary =
+        definition.searchScope === "library" &&
+        Array.isArray(definition.filters?.includeTags) &&
+        definition.filters.includeTags.length > 0;
+      if (searchesLibrary) {
+        // The same search wherever it is applied from, the home screen
+        // included: every indexed root, not the open folder.
+        if (librarySearchScope !== "library") {
+          folderScopeReturnRef.current = activeRootPath || null;
+          setLibrarySearchScope("library");
+        }
+        setLibrarySearchRequest((request) => request + 1);
+      } else if (activeRootPath) {
         folderViewStateRef.current.setLocation(
           activeRootPath,
           currentDirectory,
@@ -3112,6 +3143,7 @@ function App() {
       activeRootPath,
       captureFolderViewState,
       currentDirectory,
+      librarySearchScope,
       notify,
       selection.clear,
       updateFilters,
@@ -4901,7 +4933,7 @@ function App() {
           />
 
           {/* Home state: pinned library roots and recent locations */}
-          {!activeRootPath && videos.length === 0 && !isLoadingFolder ? (
+          {!activeRootPath && !tagCollection && videos.length === 0 && !isLoadingFolder ? (
             <div className="library-home-workspace">
               {isLibrarySidebarOpen &&
                 (pinnedRoots.length > 0 || savedViews.length > 0) && (

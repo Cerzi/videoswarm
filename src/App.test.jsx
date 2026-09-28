@@ -3328,6 +3328,85 @@ describe("library search scope", () => {
     );
   });
 
+  // The smart views sidebar shows beside an open root.
+  const withOpenRoot = () =>
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+
+  test("saves a view made during a library search as a library view", async () => {
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    window.electronAPI = { library: { taggedSnapshot } };
+    const createSavedView = vi.fn(async (name) => ({ id: 3, name }));
+    useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, createSavedView }));
+    withOpenRoot();
+
+    const { props } = await renderWithTags(["keeper"]);
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+      target: { value: "Every keeper" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    expect(createSavedView).toHaveBeenCalledWith(
+      "Every keeper",
+      expect.objectContaining({ searchScope: "library" })
+    );
+  });
+
+  test("saves a view made in a folder as a folder view", async () => {
+    const createSavedView = vi.fn(async (name) => ({ id: 5, name }));
+    useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, createSavedView }));
+    withOpenRoot();
+
+    await renderWithTags(["keeper"]);
+    fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+      target: { value: "Folder keepers" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    expect(createSavedView).toHaveBeenCalledWith(
+      "Folder keepers",
+      expect.objectContaining({ searchScope: "folder" })
+    );
+  });
+
+  test("applying a library view searches the library with its tags", async () => {
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    window.electronAPI = { library: { taggedSnapshot } };
+    const libraryView = {
+      id: 4,
+      name: "Every keeper",
+      definition: {
+        version: 1,
+        filters: { includeTags: ["keeper"], includeTagsMode: "all" },
+        sort: { key: "name", dir: "asc", groupByFolders: true },
+        scope: { mode: "all-descendants" },
+        searchScope: "library",
+      },
+    };
+    useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, savedViews: [libraryView] }));
+    withOpenRoot();
+
+    await renderWithTags(["keeper"]);
+    expect(taggedSnapshot).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Every keeper Library" }));
+    });
+    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all"));
+    expect(taggedSnapshot).toHaveBeenCalledTimes(1);
+    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(libraryView.definition.filters);
+  });
+
   test("runs the search once a tag constrains it", async () => {
     const taggedSnapshot = vi.fn(async () => ({
       success: true,

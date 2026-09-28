@@ -545,6 +545,11 @@ maybeDescribe('review state and saved library views', () => {
       },
     });
     expect(created.definition).not.toHaveProperty('ignored');
+    // Views saved before the search-scope axis stay folder views.
+    expect(created.definition.searchScope).toBe('folder');
+    const library = store.createSavedView('Every keeper', definition({ searchScope: 'library' }));
+    expect(store.listSavedViews().find((view) => view.id === library.id).definition.searchScope).toBe('library');
+    expect(store.deleteSavedView(library.id)).toBe(true);
     expect(() => store.createSavedView('picks', definition())).toThrow();
     expect(() => store.createSavedView('x'.repeat(81), definition())).toThrow(
       /80 characters/i

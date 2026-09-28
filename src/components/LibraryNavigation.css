@@ -487,6 +487,9 @@
 .library-saved-view-list li {
   display: flex;
   align-items: center;
+  /* A grid item is as wide as its content unless told otherwise, so a long
+     view name pushed the delete button out of the sidebar. */
+  min-width: 0;
   border-radius: 5px;
 }
 
@@ -509,10 +512,22 @@
   font-size: 0.7rem;
 }
 
-.library-saved-view-list__apply span:last-child {
+.library-saved-view-list__name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.library-saved-view-list__scope {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border: 1px solid rgba(145, 167, 255, 0.35);
+  border-radius: 3px;
+  color: #91a7ff;
+  font-size: 0.56rem;
+  letter-spacing: 0.02em;
 }
 
 .library-saved-view-list__apply span:first-child {
