@@ -543,7 +543,10 @@ function App() {
     deleteSavedView,
   } = useSavedViews();
 
-  const [isSequencePanelOpen, setIsSequencePanelOpen] = useState(false);
+  // The Sequences panel opens by itself the first time clips are added in a
+  // session, so the result of that first add is visible; after that an add
+  // only reports itself and never pulls the sidebar away from another panel.
+  const sequencePanelShownRef = useRef(false);
   const [sequencePlayback, setSequencePlayback] = useState(null);
   const pendingSequenceOpenRef = useRef(null);
   const sequences = useSequences({ preferredRootPath: activeRootPath });
@@ -1313,7 +1316,11 @@ function App() {
         previousMetadataSelectionKeyRef.current = metadataSelectionKey;
         setMetadataDismissedSelectionKey(null);
         if (isLibrarySidebarOpen) {
-          setWorkspaceSidebarTab((tab) => (tab === "generation" ? tab : "details"));
+          // Sequences stays in front too: selecting clips to add is how
+          // that panel is used.
+          setWorkspaceSidebarTab((tab) =>
+            tab === "generation" || tab === "sequences" ? tab : "details"
+          );
         }
       }
       return;
@@ -2265,9 +2272,14 @@ function App() {
         notify("These clips are not indexed yet", "warning");
         return;
       }
-      setIsSequencePanelOpen(true);
+      if (!sequencePanelShownRef.current) {
+        sequencePanelShownRef.current = true;
+        setLibrarySidebarOpen(true);
+        setWorkspaceSidebarTab("sequences");
+      }
       try {
         let sequenceId = sequences.activeSequenceId;
+        let sequenceName = sequences.activeSequence?.name || null;
         if (!sequenceId) {
           const taken = new Set(
             sequences.sequences.map((entry) => entry.name.toLowerCase())
@@ -2276,13 +2288,15 @@ function App() {
           while (taken.has(`sequence ${ordinal}`)) ordinal += 1;
           const created = await sequences.createSequence(`Sequence ${ordinal}`);
           sequenceId = created?.id ?? null;
+          sequenceName = created?.name || null;
         }
         if (!sequenceId) return;
         await sequences.appendFingerprints(list, sequenceId);
+        const target = sequenceName ? `“${sequenceName}”` : "the sequence";
         notify(
           list.length === 1
-            ? "Added 1 clip to the sequence"
-            : `Added ${list.length} clips to the sequence`,
+            ? `Added 1 clip to ${target}`
+            : `Added ${list.length} clips to ${target}`,
           "success"
         );
       } catch (error) {
@@ -2292,11 +2306,24 @@ function App() {
     [notify, sequences]
   );
 
+  // The selection goes in the grid's sort order (clip-sequences.md,
+  // Section 2), whichever way the add is asked for.
+  const handleAddSelectionToSequence = useCallback(
+    () => handleAddToSequence(selectedFingerprintsInSortOrder),
+    [handleAddToSequence, selectedFingerprintsInSortOrder]
+  );
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
       if (actionId === "sequence:add") {
-        handleAddToSequence(contextMetadataFingerprints);
+        // A multi-clip selection keeps sort order rather than click order;
+        // one clip is the clip that was right-clicked.
+        handleAddToSequence(
+          selection.size > 1
+            ? selectedFingerprintsInSortOrder
+            : contextMetadataFingerprints
+        );
         return;
       }
       if (actionId === "metadata:open") {
@@ -2372,6 +2399,7 @@ function App() {
       metadataAnchorId,
       contextMetadataFingerprints,
       handleAddToSequence,
+      selectedFingerprintsInSortOrder,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
       reviewModeEnabled,
@@ -3055,6 +3083,7 @@ function App() {
         ? () => handleNextFolder(siblingFolders.next)
         : null,
     onOpenDetails: () => openMetadataPanel(),
+    onAddToSequence: () => handleAddSelectionToSequence(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
   });
 
@@ -5191,6 +5220,7 @@ function App() {
                           generationVersions={gridGenerationVersions}
                           onFocusSelection={focusSelection}
                           onTransferSelection={handleRequestTransfer}
+                          onAddToSequence={handleAddSelectionToSequence}
                           onUndock={handleUndockMetadataPanel}
                         />
                       ) : null,
@@ -5200,6 +5230,25 @@ function App() {
                           generationMetadataState={generationMetadataState}
                         />
                       ) : null,
+                      sequenceEntryCount:
+                        sequences.activeSequence?.entries?.length || 0,
+                      sequencesContent: (
+                        <SequencePanel
+                          sequences={sequences.sequences}
+                          activeSequence={sequences.activeSequence}
+                          activeSequenceId={sequences.activeSequenceId}
+                          error={sequences.error}
+                          selectedCount={selection.size}
+                          onSelectSequence={sequences.selectSequence}
+                          onCreateSequence={sequences.createSequence}
+                          onRenameSequence={sequences.renameSequence}
+                          onDeleteSequence={sequences.deleteSequence}
+                          onAddSelection={handleAddSelectionToSequence}
+                          onRemoveEntries={sequences.removeEntries}
+                          onMoveEntry={sequences.moveEntry}
+                          onPlaySequence={handlePlaySequence}
+                        />
+                      ),
                     })}
                   />
                 )}
@@ -5346,29 +5395,10 @@ function App() {
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
                 onTransferSelection={handleRequestTransfer}
+                onAddToSequence={handleAddSelectionToSequence}
                 onDock={activeRootPath ? handleDockMetadataPanel : undefined}
                 />
               ) : null}
-              {isSequencePanelOpen && (
-                <SequencePanel
-                  sequences={sequences.sequences}
-                  activeSequence={sequences.activeSequence}
-                  activeSequenceId={sequences.activeSequenceId}
-                  error={sequences.error}
-                  selectedCount={selection.size}
-                  onSelectSequence={sequences.selectSequence}
-                  onCreateSequence={sequences.createSequence}
-                  onRenameSequence={sequences.renameSequence}
-                  onDeleteSequence={sequences.deleteSequence}
-                  onAddSelection={() =>
-                    handleAddToSequence(selectedFingerprintsInSortOrder)
-                  }
-                  onRemoveEntries={sequences.removeEntries}
-                  onMoveEntry={sequences.moveEntry}
-                  onPlaySequence={handlePlaySequence}
-                  onClose={() => setIsSequencePanelOpen(false)}
-                />
-              )}
             </div>
           )}
 

@@ -50,6 +50,23 @@ describe("DockedMetadataInspector", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("adds the selection to the sequence from the docked pane", () => {
+    const onAddToSequence = vi.fn();
+    const second = { ...video, id: "clip-b", name: "clip-b.mp4" };
+    render(
+      <DockedMetadataInspector
+        selectionCount={2}
+        selectedVideos={[video, second]}
+        onAddToSequence={onAddToSequence}
+        onUndock={vi.fn()}
+      />
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add 2 selected clips to the sequence" })
+    );
+    expect(onAddToSequence).toHaveBeenCalledOnce();
+  });
+
   it("offers Move/Copy for the selection in the docked pane", () => {
     const onTransferSelection = vi.fn();
     const second = { ...video, id: "clip-b", name: "clip-b.mp4" };

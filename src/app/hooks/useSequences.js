@@ -243,6 +243,18 @@ export function useSequences({ preferredRootPath = null } = {}) {
     refreshSequences();
   }, [refreshSequences]);
 
+  // With sequences stored but none chosen (a launch, a profile switch), pick
+  // the one worked on most recently. Otherwise the picker would name one
+  // sequence while the list showed nothing, and the next add would start a
+  // new sequence instead of continuing the one on screen.
+  useEffect(() => {
+    if (activeSequenceId != null || !sequences.length) return;
+    const latest = sequences.reduce((best, candidate) =>
+      Number(candidate?.updatedAt) > Number(best?.updatedAt) ? candidate : best
+    );
+    if (latest?.id) selectSequence(latest.id);
+  }, [activeSequenceId, selectSequence, sequences]);
+
   useEffect(() => {
     const subscribe = window.electronAPI?.profiles?.onChanged;
     if (!subscribe) return undefined;

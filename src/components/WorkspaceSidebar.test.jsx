@@ -110,6 +110,42 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Library"]);
   });
 
+  it("puts Sequences on the rail in both Details modes, with an entry-count badge", () => {
+    const sequencesContent = <div>Shot list</div>;
+    const { rerender } = render(
+      <ControlledSidebar
+        panelList={panels({ sequencesContent, sequenceEntryCount: 12 })}
+      />
+    );
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Library",
+      "Details",
+      "Generation",
+      "Sequences12",
+    ]);
+    expect(
+      screen.getByRole("tab", { name: "Sequences 12 clips in the sequence" })
+    ).toBeVisible();
+
+    rerender(
+      <ControlledSidebar
+        panelList={panels({
+          detailsDocked: false,
+          sequencesContent,
+          sequenceEntryCount: 0,
+        })}
+      />
+    );
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Library",
+      "Sequences",
+    ]);
+    fireEvent.click(screen.getByRole("tab", { name: "Sequences" }));
+    expect(screen.getByRole("tabpanel", { name: "Sequences" })).toHaveTextContent(
+      "Shot list"
+    );
+  });
+
   it("falls back to the first panel when the active one is gone", () => {
     render(
       <WorkspaceSidebar panels={panels({ detailsDocked: false })} activePanel="details" open />

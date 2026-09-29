@@ -83,6 +83,8 @@ describe("useSequences", () => {
       result.current.selectSequence(7);
     });
     await waitFor(() => expect(result.current.activeSequence).toBeTruthy());
+    const snapshotsBefore =
+      window.electronAPI.sequences.snapshot.mock.calls.length;
 
     await act(async () => {
       await result.current.appendFingerprints(["fp-a", "fp-b", "fp-a"]);
@@ -94,7 +96,27 @@ describe("useSequences", () => {
       "fp-b",
       "fp-a",
     ]);
-    expect(window.electronAPI.sequences.snapshot).toHaveBeenCalledTimes(2);
+    expect(window.electronAPI.sequences.snapshot).toHaveBeenCalledTimes(
+      snapshotsBefore + 1
+    );
+  });
+
+  it("opens the most recently changed sequence when none is chosen", async () => {
+    window.electronAPI.sequences.list.mockResolvedValue({
+      success: true,
+      sequences: [
+        { id: 3, name: "Act one", entryCount: 1, updatedAt: 10 },
+        { id: 7, name: "Act two", entryCount: 2, updatedAt: 50 },
+        { id: 9, name: "Act three", entryCount: 0, updatedAt: 20 },
+      ],
+    });
+    const { result } = renderHook(() => useSequences());
+
+    await waitFor(() => expect(result.current.activeSequenceId).toBe(7));
+    await waitFor(() => expect(result.current.activeSequence).toBeTruthy());
+    expect(window.electronAPI.sequences.snapshot).toHaveBeenCalledWith(7, {
+      preferredRootPath: null,
+    });
   });
 
   it("does not call the store for an empty append", async () => {
