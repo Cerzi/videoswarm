@@ -38,6 +38,19 @@ function describeComfyQueueStore({ describe, it, expect, beforeEach, afterEach }
       expect(store.getQueueItem(first.id)).toBeNull();
     });
 
+    it("keeps the holds a person confirmed, cleaned, and outside the knobs", () => {
+      const item = store.addQueueItem({ fingerprint: "fp-1", draftPath: "/out/a_00001_.mp4", recipeId: 1, knobs: {} });
+      expect(item.confirmed).toEqual([]);
+      const updated = store.updateQueueItem(item.id, {
+        confirmed: ["save:9:CustomSave", "save:9:CustomSave", 5, "", "x".repeat(300), "dependency:4:Editor"],
+      });
+      expect(updated.confirmed).toEqual(["save:9:CustomSave", "dependency:4:Editor"]);
+      expect(store.getQueueItem(item.id).confirmed).toEqual(["save:9:CustomSave", "dependency:4:Editor"]);
+      // Confirming does not make it another render.
+      expect(store.findActiveQueueItem({ fingerprint: "fp-1", recipeId: 1, knobs: {} })?.id).toBe(item.id);
+      expect(store.getQueueItem(item.id).knobs).toEqual({ choices: {}, settings: {} });
+    });
+
     it("records finals and finds the latest for a draft, recipe and knobs", () => {
       store.addFinal({ fingerprint: "fp-1", draftPath: "/out/a.mp4", finalPath: "/out/a_final_1.mp4", recipeId: 1, recipeName: "Omni", knobs: {}, seconds: 60, finishedAt: 1 });
       store.addFinal({ fingerprint: "fp-1", draftPath: "/out/a.mp4", finalPath: "/out/a_final_2.mp4", recipeId: 1, recipeName: "Omni", knobs: {}, seconds: 61, finishedAt: 2 });
