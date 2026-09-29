@@ -546,14 +546,14 @@ body.metadata-panel-drag-active {
   grid-column: 1 / -1;
 }
 
-.metadata-panel__generation-prompt dt {
+.metadata-panel__generation-copyable dt {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
 }
 
-.metadata-panel__generation-prompt dt .metadata-panel__copy {
+.metadata-panel__generation-copyable dt .metadata-panel__copy {
   min-height: 22px;
   padding: 0.12rem 0.42rem;
   letter-spacing: normal;

@@ -94,6 +94,33 @@ describe("reusable metadata content sections", () => {
     }
   });
 
+  it("copies composed prompt fragments together", async () => {
+    const copyToClipboard = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI = { copyToClipboard };
+    try {
+      render(
+        <MetadataGenerationSection
+          state={{
+            found: true,
+            metadata: {
+              promptFragments: [
+                { text: "a fox", role: "positive" },
+                { text: "in snow", role: "positive" },
+              ],
+            },
+          }}
+        />
+      );
+      expect(screen.queryByRole("button", { name: "Copy positive prompt" })).toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Copy prompt fragments" }));
+      });
+      expect(copyToClipboard).toHaveBeenCalledWith("a fox\n\nin snow");
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
   it("defaults generation details open and keeps header actions available while collapsed", () => {
     const onRefresh = vi.fn();
     render(

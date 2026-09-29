@@ -1,6 +1,6 @@
 import React, { useId, useRef } from "react";
 import { LibrarySidebarContent } from "./LibrarySidebar";
-import { DetailsIcon, LibraryIcon } from "./UiIcons";
+import { DetailsIcon, GenerationIcon, LibraryIcon } from "./UiIcons";
 import "./WorkspaceSidebar.css";
 
 // The sidebar is an activity rail (UX redesign D7): a strip of icons, one per
@@ -33,13 +33,27 @@ function EmptyDetails({ selectedCount }) {
   );
 }
 
-// The two panels every collection has. Details is present only while it is
-// docked; floating Details lives over the grid instead.
+function EmptyGeneration({ selectedCount }) {
+  return (
+    <div className="workspace-sidebar__empty-details" role="status">
+      <span className="workspace-sidebar__empty-icon" aria-hidden="true">
+        ◇
+      </span>
+      <strong>{selectedCount > 1 ? "Several clips selected" : "No clip selected"}</strong>
+      <span>Select one clip to see how it was generated.</span>
+    </div>
+  );
+}
+
+// The panels every collection has. Details and Generation are present only
+// while Details is docked; floating Details lives over the grid instead,
+// with Generation as its last section.
 export function buildWorkspacePanels({
   libraryProps = {},
   disabled = false,
   detailsDocked = false,
   detailsContent = null,
+  generationContent = null,
   selectionCount = 0,
 }) {
   const safeLibraryProps = libraryProps && typeof libraryProps === "object"
@@ -71,6 +85,12 @@ export function buildWorkspacePanels({
         }
         : null,
       content: detailsContent ?? <EmptyDetails selectedCount={selectedCount} />,
+    });
+    panels.push({
+      id: "generation",
+      label: "Generation",
+      icon: <GenerationIcon />,
+      content: generationContent ?? <EmptyGeneration selectedCount={selectedCount} />,
     });
   }
   return panels;

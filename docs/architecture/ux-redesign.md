@@ -168,6 +168,26 @@ gates, and a check in the real app at 1024, 1280 and 1440 px.
 - Recorded from the user's answers to the audit (D1 c, D2 b, D3 a, D4 b,
   D5 a, D6 a, D7 a with the caveat above, D8 a, D9 a, D10 b).
 
+### 2026-09-29 — Details split: Generation gets its own panel
+
+When Generation was expanded, Details was mostly generation readout, and
+review, tags and versions sat below it. The user chose a Generation icon on
+the rail over tabs inside Details: one level, one click, and the whole
+sidebar for the readout.
+
+- **Docked (default).** Details holds, in order: review state, rating, tags,
+  versions and file facts. The Generation panel holds the readout, always
+  open, and is read only while the panel shows.
+  - Selecting another clip keeps whichever clip panel is in front, so
+    prompts can be read clip after clip.
+- **Floating Details and the fullscreen strip.** These have no rail, so
+  Generation is their last section and keeps its collapse toggle.
+- **Copying prompts.** The positive prompt, the negative prompt and composed
+  prompt fragments each get a Copy button.
+- **Ctrl+C.** It now copies highlighted text. Fullscreen shortcuts ignore
+  key presses with Ctrl, ⌘ or Alt held; before, Ctrl+C copied a frame and
+  Ctrl+A marked the clip Accepted.
+
 ## References
 
 - The audit: outstanding work 5b in [`../outstanding-work.md`](../outstanding-work.md).

@@ -76,20 +76,36 @@ describe("WorkspaceSidebar", () => {
 
     const libraryTab = screen.getByRole("tab", { name: "Library" });
     const detailsTab = screen.getByRole("tab", { name: "Details" });
+    const generationTab = screen.getByRole("tab", { name: "Generation" });
     libraryTab.focus();
     fireEvent.keyDown(libraryTab, { key: "ArrowDown" });
     expect(detailsTab).toHaveFocus();
     expect(screen.queryByRole("tabpanel")).toBeNull();
     fireEvent.keyDown(detailsTab, { key: "ArrowDown" });
+    expect(generationTab).toHaveFocus();
+    fireEvent.keyDown(generationTab, { key: "ArrowDown" });
     expect(libraryTab).toHaveFocus();
-    fireEvent.keyDown(libraryTab, { key: "End" });
-    expect(detailsTab).toHaveFocus();
-    fireEvent.keyDown(detailsTab, { key: "Home" });
+    fireEvent.keyDown(libraryTab, { key: "ArrowUp" });
+    expect(generationTab).toHaveFocus();
+    fireEvent.keyDown(generationTab, { key: "Home" });
     expect(libraryTab).toHaveFocus();
     expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
-  it("leaves Details off the rail while it floats", () => {
+  it("gives Generation its own panel while Details is docked", () => {
+    render(<ControlledSidebar panelList={panels({ selectionCount: 2 })} />);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Library",
+      "Details2",
+      "Generation",
+    ]);
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    expect(screen.getByRole("tabpanel", { name: "Generation" })).toHaveTextContent(
+      "Select one clip to see how it was generated."
+    );
+  });
+
+  it("leaves Details and Generation off the rail while Details floats", () => {
     render(<ControlledSidebar panelList={panels({ detailsDocked: false })} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Library"]);
   });
