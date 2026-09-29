@@ -112,6 +112,17 @@
   font-size: 0.64rem;
 }
 
+/* A narrow review bar keeps the status line only; the hint stays readable
+   by screen readers and as the summary's tooltip. */
+.review-session--compact .review-session__detail {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .review-session__announcement {
   position: absolute;
   width: 1px;
