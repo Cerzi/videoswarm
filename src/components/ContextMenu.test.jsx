@@ -184,13 +184,13 @@ describe('ContextMenu', () => {
     });
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
-      value: 400,
+      value: 440,
     });
 
     render(
       <ContextMenu
         visible
-        position={{ x: 490, y: 390 }}
+        position={{ x: 490, y: 430 }}
         contextId="a"
         selectionCount={1}
         getById={getById}
@@ -201,8 +201,8 @@ describe('ContextMenu', () => {
     );
 
     const rootMenu = screen.getByRole('menu', { name: /Actions for Video a/i });
-    // Bottom-clamped: 400 - 8 margin - the menu's estimated 352 px.
-    expect(rootMenu).toHaveStyle({ left: '212px', top: '40px' });
+    // Bottom-clamped: 440 - 8 margin - the menu's estimated 388 px.
+    expect(rootMenu).toHaveStyle({ left: '212px', top: '44px' });
 
     const copyMenu = openSubmenu(/Copy$/i);
     expect(copyMenu).toHaveStyle({ left: '8px' });
@@ -248,14 +248,14 @@ describe('ContextMenu', () => {
     });
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
-      value: 400,
+      value: 440,
     });
     const onPlacementChange = vi.fn();
 
     render(
       <ContextMenu
         visible
-        position={{ x: 490, y: 390 }}
+        position={{ x: 490, y: 430 }}
         contextId="edge"
         selectionCount={1}
         getById={getById}
@@ -272,9 +272,9 @@ describe('ContextMenu', () => {
       side: 'left',
       rect: expect.objectContaining({
         x: 212,
-        y: 40,
+        y: 44,
         left: 212,
-        top: 40,
+        top: 44,
         right: 492,
         width: 280,
       }),
@@ -288,7 +288,7 @@ describe('ContextMenu', () => {
     });
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
-      value: 400,
+      value: 440,
     });
     const onPlacementChange = vi.fn();
     const sharedProps = {
@@ -302,7 +302,7 @@ describe('ContextMenu', () => {
       onPlacementChange,
     };
     const { rerender } = render(
-      <ContextMenu {...sharedProps} position={{ x: 490, y: 390 }} />
+      <ContextMenu {...sharedProps} position={{ x: 490, y: 430 }} />
     );
     await waitFor(() => expect(onPlacementChange).toHaveBeenCalledTimes(1));
     onPlacementChange.mockClear();
