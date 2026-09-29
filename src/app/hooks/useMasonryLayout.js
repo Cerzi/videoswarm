@@ -91,6 +91,9 @@ const baseAspectRatio = (video) => {
   return DEFAULT_ASPECT_RATIO;
 };
 
+// Within this many pixels of the top counts as at the top.
+const AT_TOP_PX = 1;
+
 function findSurvivingAnchor(previousLayout, nextLayout, scrollTop, viewportHeight) {
   if (!previousLayout?.positions?.length || !nextLayout?.positionsById?.size) {
     return null;
@@ -376,8 +379,17 @@ export function useMasonryLayout({
     const previousLayout = previousLayoutRef.current;
     const scrollEl = scrollContainerElement || scrollContainerRef?.current;
 
-    if (previousLayout && previousLayout !== layout && scrollEl) {
-      const currentScrollTop = Math.max(0, Number(scrollEl.scrollTop) || 0);
+    const currentScrollTop = Math.max(0, Number(scrollEl?.scrollTop) || 0);
+    // A view at the very top stays there: anchoring keeps a reader's place
+    // once they have scrolled. At the top it would follow the first card to
+    // wherever it lands, and a folder's scan arrives in disk order rather
+    // than sort order, so a newly opened folder could end up far down.
+    if (
+      previousLayout &&
+      previousLayout !== layout &&
+      scrollEl &&
+      currentScrollTop > AT_TOP_PX
+    ) {
       const anchor = findSurvivingAnchor(
         previousLayout,
         layout,

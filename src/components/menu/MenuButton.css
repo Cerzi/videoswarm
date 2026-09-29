@@ -1,0 +1,122 @@
+.menu-button {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-button__trigger {
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.menu-button__trigger.is-open {
+  background: var(--color-border);
+}
+
+.menu-button__caret {
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.menu-button__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 1200;
+  /* Absolutely positioned in a small wrapper, so size to the content
+     rather than shrinking to the minimum and truncating long labels. */
+  width: max-content;
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  background: #26292b;
+  border: 1px solid #3d4245;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.menu-button__menu--end {
+  right: 0;
+}
+
+.menu-button__menu--start {
+  left: 0;
+}
+
+.menu-button__item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.55rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-button__item:hover:not(:disabled),
+.menu-button__item:focus-visible {
+  background: rgba(81, 207, 102, 0.14);
+  outline: none;
+}
+
+.menu-button__item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-button__mark {
+  color: var(--color-accent);
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.menu-button__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-button__shortcut {
+  font: 0.7rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid #454a4d;
+  border-radius: 4px;
+  color: #aeb4b7;
+}
+
+.menu-button__heading {
+  padding: 0.55rem 0.55rem 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #8f979b;
+}
+
+.menu-button__note {
+  padding: 0.3rem 0.55rem 0.45rem 2.1rem;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: #8f979b;
+}
+
+.menu-button__separator {
+  height: 1px;
+  margin: 0.3rem 0.2rem;
+  background: #3d4245;
+}
+
+.menu-button__custom {
+  padding: 0.3rem 0.55rem 0.4rem 2.1rem;
+}

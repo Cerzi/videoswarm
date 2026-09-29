@@ -117,9 +117,11 @@ const {
   readSettingsFileBounded,
 } = require("./main/settings-writer");
 const { normalizeZoomLevel } = require("./main/zoom-settings");
+const { REVIEW_SORT_KEYS } = require("./main/review-view-definition");
 const {
   METADATA_INSPECTOR_MODES,
-  normalizeMetadataInspectorMode,
+  METADATA_INSPECTOR_REVISION,
+  resolveMetadataInspectorMode,
 } = require("./main/metadata-inspector-settings");
 const {
   createDirectoryAggregateBatcher,
@@ -288,10 +290,13 @@ const defaultSettings = {
   fullscreenAudioEnabled: false,
   recentTransferDestinations: [],
   transferLayout: "structured",
-  metadataInspectorMode: METADATA_INSPECTOR_MODES.FLOATING,
+  metadataInspectorMode: METADATA_INSPECTOR_MODES.DOCKED,
+  metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
   zoomLevel: 1, // Will be updated after app ready if no saved setting
   showFilenames: true,
   hoverAudioEnabled: false,
+  // The status line's playback diagnostics, off unless asked for.
+  playbackDetailsVisible: false,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1712,7 +1717,8 @@ function normaliseLoadedSettings(rawSettings) {
   };
   const hasZoom = Object.prototype.hasOwnProperty.call(source, "zoomLevel") &&
     source.zoomLevel !== null && source.zoomLevel !== undefined;
-  const sortKey = ["name", "created", "random"].includes(source.sortKey)
+  // The same keys smart views accept, so a sort added there is kept here too.
+  const sortKey = REVIEW_SORT_KEYS.has(source.sortKey)
     ? source.sortKey
     : defaultSettings.sortKey;
   const randomSeed = source.randomSeed !== null &&
@@ -1747,9 +1753,8 @@ function normaliseLoadedSettings(rawSettings) {
     transferLayout: TRANSFER_LAYOUTS.has(source.transferLayout)
       ? source.transferLayout
       : defaultSettings.transferLayout,
-    metadataInspectorMode: normalizeMetadataInspectorMode(
-      source.metadataInspectorMode
-    ),
+    metadataInspectorMode: resolveMetadataInspectorMode(source),
+    metadataInspectorRevision: METADATA_INSPECTOR_REVISION,
     zoomLevel: normalizeZoomLevel(
       hasZoom ? source.zoomLevel : computeDefaultZoomLevel(),
       defaultSettings.zoomLevel
@@ -1758,6 +1763,7 @@ function normaliseLoadedSettings(rawSettings) {
       source.showFilenames === undefined
         ? defaultSettings.showFilenames
         : Boolean(source.showFilenames),
+    playbackDetailsVisible: source.playbackDetailsVisible === true,
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled
@@ -2796,6 +2802,15 @@ function createMenu() {
       label: "Options",
       submenu: [
         {
+          label: "Preferences…",
+          accelerator: "CmdOrCtrl+,",
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ui:open-preferences");
+            }
+          },
+        },
+        {
           label: "Data Location",
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2823,7 +2838,7 @@ function createMenu() {
       label: "Help",
       submenu: [
         {
-          label: "About VideoSwarm",
+          label: "About Video Swarm",
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send("ui:open-about");
@@ -2831,7 +2846,7 @@ function createMenu() {
           },
         },
         {
-          label: "Support VideoSwarm on Ko-fi",
+          label: "Support Video Swarm on Ko-fi",
           click: () => {
             openDonationPage().catch((error) => {
               console.warn("Failed to open support link", error);
@@ -3283,6 +3298,7 @@ ipcMain.handle("save-settings", async (_event, settings) => {
     {
       ...withoutComfyConnection(settings),
       comfyConnection: normalizeComfyConnection(currentSettings?.comfyConnection),
+      metadataInspectorRevision: currentSettings?.metadataInspectorRevision,
     },
     context.profileId
   );
@@ -3592,15 +3608,16 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   // path that was actually authorized and identity-bound above.
   const sampleName = path.basename(canonicalPaths[0]);
   const count = canonicalPaths.length;
+  const trashName = process.platform === "win32" ? "Recycle Bin" : "Trash";
   const message =
     count === 1
-      ? `Move "${sampleName}" to Recycle Bin?`
-      : `Move ${count} items to Recycle Bin?`;
+      ? `Move "${sampleName}" to the ${trashName}?`
+      : `Move ${count} items to the ${trashName}?`;
 
   try {
     const { response } = await dialog.showMessageBox(win, {
       type: "warning",
-      buttons: ["Move to Bin", "Cancel"],
+      buttons: [`Move to ${trashName}`, "Cancel"],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -4330,7 +4347,8 @@ const reviewCopyAcceptedCoordinator =
       // first-run fallback.
       const [lastDestination] = getRecentTransferDestinations();
       return dialog.showOpenDialog(win, {
-        title: "Transfer accepted clips",
+        // Shared by Process results and a transfer of any selection.
+        title: "Choose where to transfer the clips",
         buttonLabel: "Choose destination",
         defaultPath: lastDestination || app.getPath("documents"),
         properties: ["openDirectory", "createDirectory"],
@@ -5132,6 +5150,18 @@ ipcMain.handle("comfy:connection:set", async (_event, payload = {}) => {
   comfyRunner?.reconfigure();
   if (value.enabled) void comfyRunner?.resume();
   return value;
+});
+
+// A native picker for ComfyUI's output folder. It grants nothing: the path
+// only comes back through comfy:connection:set, which validates it.
+ipcMain.handle("comfy:connection:choose-output-dir", async (event) => {
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(ownerWindow || undefined, {
+    properties: ["openDirectory"],
+    title: "ComfyUI output folder",
+  });
+  if (result.canceled || !result.filePaths?.length) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 // Read-only: GET /queue and two node definitions. Nothing is queued.

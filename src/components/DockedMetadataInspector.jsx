@@ -5,6 +5,7 @@ import {
   MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS,
 } from "./metadata/metadataContent";
 import MetadataInspectorContent from "./metadata/MetadataInspectorContent";
+import { MetadataGenerationSection } from "./metadata/MetadataContentSections";
 import { FocusSelectionIcon, UndockPanelIcon } from "./UiIcons";
 
 export default function DockedMetadataInspector({
@@ -12,9 +13,6 @@ export default function DockedMetadataInspector({
   selectedVideos = [],
   selectionKey,
   availableTags = [],
-  generationMetadataState = null,
-  generationExpanded,
-  onGenerationExpandedChange,
   generationVersions = null,
   onAddTag,
   onRemoveTag,
@@ -51,7 +49,7 @@ export default function DockedMetadataInspector({
     >
       <header className="metadata-docked-inspector__header">
         <div className="metadata-panel__titles">
-          <strong className="metadata-panel__title">Selection details</strong>
+          <strong className="metadata-panel__title">Details</strong>
           <span className="metadata-panel__subtitle" title={subtitle}>
             {subtitle}
           </span>
@@ -74,10 +72,10 @@ export default function DockedMetadataInspector({
               type="button"
               className="metadata-panel__button metadata-panel__button--compact"
               onClick={() => onTransferSelection(selectedVideos)}
-              aria-label={`Move, copy or link ${count} selected clip${
+              aria-label={`Transfer ${count} selected clip${
                 count === 1 ? "" : "s"
               }`}
-              title="Move, copy or link the selection into another folder"
+              title="Transfer the selection: move, copy or link it into another folder"
             >
               <span>Transfer</span>
             </button>
@@ -106,10 +104,8 @@ export default function DockedMetadataInspector({
           active
           selectionKey={selectionKey}
           suggestionLimit={MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS}
-          generationMetadataState={generationMetadataState}
-          generationExpanded={generationExpanded}
-          onGenerationExpandedChange={onGenerationExpandedChange}
           generationVersions={generationVersions}
+          showGeneration={false}
           onAddTag={onAddTag}
           onRemoveTag={onRemoveTag}
           onApplyTagToSelection={onApplyTagToSelection}
@@ -117,6 +113,33 @@ export default function DockedMetadataInspector({
           onClearRating={onClearRating}
           onSetReviewState={onSetReviewState}
           reviewModeEnabled={reviewModeEnabled}
+        />
+      </div>
+    </section>
+  );
+}
+
+// The docked Generation panel: how the one selected clip was made, with the
+// whole sidebar to itself, so Details keeps review and tags in view.
+export function DockedGenerationPanel({ filename, generationMetadataState = null }) {
+  if (!generationMetadataState) return null;
+  return (
+    <section
+      className="metadata-docked-inspector"
+      aria-label="Docked generation details"
+    >
+      <header className="metadata-docked-inspector__header">
+        <div className="metadata-panel__titles">
+          <strong className="metadata-panel__title">Generation</strong>
+          <span className="metadata-panel__subtitle" title={filename || ""}>
+            {filename || ""}
+          </span>
+        </div>
+      </header>
+      <div className="metadata-docked-inspector__content">
+        <MetadataGenerationSection
+          state={generationMetadataState}
+          collapsible={false}
         />
       </div>
     </section>

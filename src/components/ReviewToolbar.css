@@ -14,9 +14,10 @@
   align-items: center;
   gap: 0.65rem;
   padding: 0.42rem 0.75rem;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
+  /* Wrap rather than scroll: Undo and Process results were off-screen at
+     1440 px behind a horizontal scrollbar. */
+  flex-wrap: wrap;
+  row-gap: 0.4rem;
 }
 
 .review-toolbar__progress {

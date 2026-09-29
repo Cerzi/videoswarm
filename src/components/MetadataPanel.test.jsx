@@ -76,7 +76,7 @@ describe("MetadataPanel floating shell", () => {
     });
 
     expect(
-      screen.getByRole("complementary", { name: "Selection details" })
+      screen.getByRole("complementary", { name: "Details" })
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Close selection details" })
@@ -263,7 +263,7 @@ describe("MetadataPanel floating shell", () => {
     });
 
     const inspector = screen.getByRole("complementary", {
-      name: "Selection details",
+      name: "Details",
     });
     const titlebar = screen.getByRole("group", { name: "Move selection details" });
     const panel = document.querySelector(".metadata-panel__container");

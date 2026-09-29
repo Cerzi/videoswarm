@@ -82,6 +82,7 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
     onSetReviewState,
     reviewModeEnabled = true,
     generationVersions = null,
+    showGeneration = true,
   },
   inputRef
 ) {
@@ -140,51 +141,12 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
     };
   }, [selectedVideos]);
 
+  // What you act on comes first: review, rating, tags, then the other
+  // versions of this generation and the file's facts. The long generation
+  // readout goes last, or to its own sidebar panel when Details is docked.
   return (
     <div className="metadata-panel__body">
-      <MetadataFileFactsSection info={singleSelectionInfo} />
-
-      {derivedSelectionCount === 1 ? (
-        <MetadataGenerationSection
-          state={generationMetadataState}
-          expanded={generationExpanded}
-          onExpandedChange={onGenerationExpandedChange}
-        />
-      ) : null}
-
-      {derivedSelectionCount === 1 ? (
-        <MetadataVersionsSection
-          video={selectedVideos[0]}
-          active={active}
-          generationVersions={generationVersions}
-        />
-      ) : null}
-
       <div className="metadata-panel__grid">
-        <section className="metadata-panel__section metadata-panel__section--rating">
-          <div className="metadata-panel__section-header">
-            <span title="Setting a rating also marks an Unreviewed clip as Reviewed">
-              Rating
-            </span>
-            {ratingInfo.mixed ? (
-              <span className="metadata-panel__badge">Mixed</span>
-            ) : ratingInfo.hasAny ? (
-              <span className="metadata-panel__badge metadata-panel__badge--accent">
-                {`${ratingInfo.value} / 5`}
-              </span>
-            ) : (
-              <span className="metadata-panel__badge">Not rated</span>
-            )}
-          </div>
-          <RatingStars
-            value={ratingInfo.value}
-            isMixed={ratingInfo.mixed}
-            onSelect={(value) => onSetRating?.(value)}
-            onClear={onClearRating}
-            disabled={!hasSelection}
-          />
-        </section>
-
         {reviewModeEnabled ? (
         <section className="metadata-panel__section metadata-panel__section--review">
           <div className="metadata-panel__section-header">
@@ -233,6 +195,30 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
         </section>
         ) : null}
 
+        <section className="metadata-panel__section metadata-panel__section--rating">
+          <div className="metadata-panel__section-header">
+            <span title="Setting a rating also marks an Unreviewed clip as Reviewed">
+              Rating
+            </span>
+            {ratingInfo.mixed ? (
+              <span className="metadata-panel__badge">Mixed</span>
+            ) : ratingInfo.hasAny ? (
+              <span className="metadata-panel__badge metadata-panel__badge--accent">
+                {`${ratingInfo.value} / 5`}
+              </span>
+            ) : (
+              <span className="metadata-panel__badge">Not rated</span>
+            )}
+          </div>
+          <RatingStars
+            value={ratingInfo.value}
+            isMixed={ratingInfo.mixed}
+            onSelect={(value) => onSetRating?.(value)}
+            onClear={onClearRating}
+            disabled={!hasSelection}
+          />
+        </section>
+
         <MetadataTagsSection
           ref={inputRef}
           selectedVideos={selectedVideos}
@@ -246,6 +232,24 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
           onApplyTagToSelection={onApplyTagToSelection}
         />
       </div>
+
+      {derivedSelectionCount === 1 ? (
+        <MetadataVersionsSection
+          video={selectedVideos[0]}
+          active={active}
+          generationVersions={generationVersions}
+        />
+      ) : null}
+
+      <MetadataFileFactsSection info={singleSelectionInfo} />
+
+      {showGeneration && derivedSelectionCount === 1 ? (
+        <MetadataGenerationSection
+          state={generationMetadataState}
+          expanded={generationExpanded}
+          onExpandedChange={onGenerationExpandedChange}
+        />
+      ) : null}
     </div>
   );
 });

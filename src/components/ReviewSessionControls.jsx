@@ -210,7 +210,7 @@ export default function ReviewSessionControls({
             disabled={disabled || typeof onIndexSubfolders !== "function"}
             onClick={() => onIndexSubfolders()}
           >
-            Index subfolders to continue
+            Include subfolders to continue
           </button>
         ) : null}
 

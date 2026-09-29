@@ -131,7 +131,7 @@ test("re-render queue: connect, learn, send, stay in the tray, ask before quitti
   try {
     const { electronApp, page } = context;
     await chooseFolderThroughNativeDialog(electronApp, page, outputDir);
-    await page.waitForFunction(() => document.querySelector(".debug-info")?.textContent?.includes("🎬 4 videos"));
+    await page.waitForFunction(() => document.querySelector(".debug-info")?.textContent?.includes("4 clips"));
 
     // Off by default; only a loopback address is accepted.
     expect(await page.evaluate(() => window.electronAPI.comfyQueue.getConnection())).toMatchObject({ enabled: false });
@@ -196,7 +196,7 @@ test("re-render queue: connect, learn, send, stay in the tray, ask before quitti
 
     // Quitting while a prompt is in ComfyUI asks first; Cancel keeps it open.
     await chooseFolderThroughNativeDialog(electronApp, page2, outputDir);
-    await page2.waitForFunction(() => document.querySelector(".debug-info")?.textContent?.includes("🎬 4 videos"));
+    await page2.waitForFunction(() => document.querySelector(".debug-info")?.textContent?.includes("4 clips"));
     await page2.evaluate(
       ({ recipeId, fullPath }) => window.electronAPI.comfyQueue.add({ recipeId, clips: [{ fullPath }], settings: { "set:124:steps": 50 } }),
       { recipeId: learned.recipe.id, fullPath: draftPath }

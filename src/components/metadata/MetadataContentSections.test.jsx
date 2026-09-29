@@ -1,5 +1,5 @@
 import React, { createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
   MetadataFileFactsSection,
   MetadataGenerationSection,
@@ -60,6 +60,65 @@ describe("reusable metadata content sections", () => {
     expect(reread.querySelector("svg")).toBeInTheDocument();
     fireEvent.click(reread);
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("copies each prompt with its own button and says whether it worked", async () => {
+    const copyToClipboard = vi.fn()
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false });
+    window.electronAPI = { copyToClipboard };
+    try {
+      render(
+        <MetadataGenerationSection
+          state={{
+            found: true,
+            metadata: { prompt: "A fox in snow", negativePrompt: "blurry, low detail" },
+          }}
+        />
+      );
+      const positive = screen.getByRole("button", { name: "Copy positive prompt" });
+      await act(async () => {
+        fireEvent.click(positive);
+      });
+      expect(copyToClipboard).toHaveBeenLastCalledWith("A fox in snow");
+      expect(positive).toHaveTextContent("Copied");
+
+      const negative = screen.getByRole("button", { name: "Copy negative prompt" });
+      await act(async () => {
+        fireEvent.click(negative);
+      });
+      expect(copyToClipboard).toHaveBeenLastCalledWith("blurry, low detail");
+      expect(negative).toHaveTextContent("Failed");
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
+  it("copies composed prompt fragments together", async () => {
+    const copyToClipboard = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI = { copyToClipboard };
+    try {
+      render(
+        <MetadataGenerationSection
+          state={{
+            found: true,
+            metadata: {
+              promptFragments: [
+                { text: "a fox", role: "positive" },
+                { text: "in snow", role: "positive" },
+              ],
+            },
+          }}
+        />
+      );
+      expect(screen.queryByRole("button", { name: "Copy positive prompt" })).toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Copy prompt fragments" }));
+      });
+      expect(copyToClipboard).toHaveBeenCalledWith("a fox\n\nin snow");
+    } finally {
+      delete window.electronAPI;
+    }
   });
 
   it("defaults generation details open and keeps header actions available while collapsed", () => {

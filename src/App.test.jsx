@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen, act, waitFor } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
 import { ActionIds } from "./hooks/actions/actions";
 
 const selectionMock = {
@@ -313,7 +313,7 @@ const useVideoCollectionMock = vi.fn(() => ({
   onCardHoverAudioStart: vi.fn(),
   onCardHoverAudioEnd: vi.fn(),
 }));
-const headerBarSpy = vi.fn();
+const topBarSpy = vi.fn();
 const filtersPopoverSpy = vi.fn();
 const videoCardSpy = vi.fn();
 const loadingOverlaySpy = vi.fn();
@@ -398,12 +398,41 @@ vi.mock("./components/MetadataPanel", async () => {
     }),
   };
 });
-vi.mock("./components/HeaderBar", () => ({
+vi.mock("./components/TopBar", async () => {
+  const { FolderScope } = await vi.importActual("./library/folderModel");
+  return {
   __esModule: true,
   default: (props) => {
-    headerBarSpy(props);
+    topBarSpy(props);
+    const busy = Boolean(props.isLoadingFolder);
     return (
       <>
+        {props.hasOpenFolder ? (
+          <nav aria-label="Location">
+            {(props.breadcrumb || []).map((crumb) => crumb.label).join(" / ")}
+          </nav>
+        ) : null}
+        {props.hasOpenFolder ? (
+          <select
+            aria-label="Folder scope"
+            value={props.scope}
+            disabled={busy}
+            onChange={(event) => props.onScopeChange?.(event.target.value)}
+          >
+            {Object.values(FolderScope).map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        ) : null}
+        <label>
+          <input
+            type="checkbox"
+            checked={Boolean(props.recursive)}
+            disabled={busy}
+            onChange={(event) => props.onRecursiveChange?.(event.target.checked)}
+          />
+          Include subfolders
+        </label>
         <button
           type="button"
           aria-label="Player audio on hover"
@@ -414,11 +443,11 @@ vi.mock("./components/HeaderBar", () => ({
         </button>
         <button
           type="button"
-          aria-label="Review mode"
+          aria-label="Review"
           aria-pressed={Boolean(props.reviewModeEnabled)}
           onClick={() => props.onReviewModeToggle?.()}
         >
-          Review mode
+          Review
         </button>
         <button
           type="button"
@@ -452,7 +481,8 @@ vi.mock("./components/HeaderBar", () => ({
       </>
     );
   },
-}));
+};
+});
 vi.mock("./components/FiltersPopover", async () => {
   const ReactModule = await vi.importActual("react");
   return {
@@ -702,7 +732,7 @@ describe("App hook composition", () => {
       mediaScheduler: collectionArgs.mediaScheduler,
     });
 
-    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    const headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps).toMatchObject({
       playbackMode: "balanced",
       playbackDecision,
@@ -886,7 +916,7 @@ describe("App hook composition", () => {
     const trashArgs = useTrashIntegrationMock.mock.calls.at(-1)?.[0];
     expect(trashArgs.workSuspended).toBe(true);
 
-    const headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    const headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps.workSuspended).toBe(true);
 
     const overlayProps = loadingOverlaySpy.mock.calls.at(-1)?.[0];
@@ -906,7 +936,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Use Static + Hover playback" })
     );
 
-    let headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    let headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     let collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(headerProps.playbackMode).toBe("static-hover");
     expect(collectionArgs.playbackMode).toBe("static-hover");
@@ -918,7 +948,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Use All Motion playback" })
     );
 
-    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     collectionArgs = useVideoCollectionMock.mock.calls.at(-1)?.[0];
     expect(headerProps.playbackMode).toBe("all-motion");
     expect(collectionArgs.playbackMode).toBe("all-motion");
@@ -931,7 +961,7 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Toggle proxy playback" })
     );
 
-    headerProps = headerBarSpy.mock.calls.at(-1)?.[0];
+    headerProps = topBarSpy.mock.calls.at(-1)?.[0];
     expect(headerProps.proxyPlaybackEnabled).toBe(true);
     expect(saveSettingsPartial).toHaveBeenCalledWith({
       proxyPlaybackEnabled: true,
@@ -959,7 +989,7 @@ describe("App hook composition", () => {
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
       hoverAudioEnabled: true,
     });
-    expect(headerBarSpy).toHaveBeenCalled();
+    expect(topBarSpy).toHaveBeenCalled();
   });
 
   test("keeps navigation and rating while hiding review workflow when disabled", async () => {
@@ -979,9 +1009,9 @@ describe("App hook composition", () => {
 
     render(<App />);
 
-    const toggle = screen.getByRole("button", { name: "Review mode" });
+    const toggle = screen.getByRole("button", { name: "Review" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Location" })).toBeVisible();
     expect(screen.getByLabelText("Review workflow")).toBeVisible();
     fireEvent.click(toggle);
 
@@ -996,7 +1026,7 @@ describe("App hook composition", () => {
     expect(useHotkeysMock.mock.calls.at(-1)?.[2].onSetRating).toEqual(
       expect.any(Function)
     );
-    expect(screen.getByLabelText("Collection navigation")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Location" })).toBeVisible();
     expect(screen.queryByLabelText("Review workflow")).toBeNull();
   });
 
@@ -1182,7 +1212,7 @@ describe("App hook composition", () => {
 
     expect(screen.queryByText(/Welcome to Video Swarm/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("navigation", { name: "Current folder path" })
+      screen.getByRole("navigation", { name: "Location" })
     ).toHaveTextContent("empty-run");
     const emptyStatus = screen
       .getByText("No videos in this collection")
@@ -1275,6 +1305,86 @@ describe("App hook composition", () => {
     });
   });
 
+  test("docked by default: Library at launch, Details follows new selections", async () => {
+    const videos = ["follow-a", "follow-b"].map((id, index) => ({
+      id,
+      instanceId: 200 + index,
+      name: `${id}.mp4`,
+      fingerprint: `fingerprint-${id}`,
+      reviewState: "unreviewed",
+      tags: [],
+    }));
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/follow-root",
+      libraryRoot: { rootPath: "/follow-root", name: "follow-root", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "follow-root" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({ id: video.id, item: video, style: {} })),
+    });
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+    act(() => useElectronLifecycleMock.mock.calls.at(-1)?.[0].setMetadataInspectorMode("docked"));
+
+    const libraryTab = () => screen.getByRole("tab", { name: "Library" });
+    const detailsTab = () => screen.getByRole("tab", { name: /Details/ });
+    const select = (id) =>
+      act(() => {
+        selectionMock.selected = new Set(id ? [id] : []);
+        selectionMock.size = id ? 1 : 0;
+        selectionMock.anchorId = id;
+        rendered.rerender(<App />);
+      });
+
+    // Loading the saved mode does not hide the Library.
+    expect(libraryTab()).toHaveAttribute("aria-selected", "true");
+    expect(metadataPanelSpy.mock.calls.at(-1)?.[0].isOpen ?? false).toBe(false);
+
+    select("follow-a");
+    await waitFor(() => expect(detailsTab()).toHaveAttribute("aria-selected", "true"));
+
+    // Going back to the Library dismisses Details for this selection only.
+    fireEvent.click(libraryTab());
+    select("follow-a");
+    expect(libraryTab()).toHaveAttribute("aria-selected", "true");
+    select("follow-b");
+    await waitFor(() => expect(detailsTab()).toHaveAttribute("aria-selected", "true"));
+
+    // A sidebar collapsed to the rail stays collapsed.
+    fireEvent.click(libraryTab());
+    select(null);
+    fireEvent.click(libraryTab());
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    select("follow-a");
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(detailsTab()).toHaveAttribute("aria-selected", "false");
+
+    // Its rail icon brings it back.
+    fireEvent.click(detailsTab());
+    expect(screen.getByRole("tabpanel", { name: /Details/ })).toBeVisible();
+
+    // Reading Generation, the next clip keeps Generation in front.
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    select("follow-b");
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Generation" })).toHaveAttribute("aria-selected", "true")
+    );
+    expect(detailsTab()).toHaveAttribute("aria-selected", "false");
+  });
+
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
     const video = {
       id: "dock-video",
@@ -1318,30 +1428,27 @@ describe("App hook composition", () => {
       metadataInspectorMode: "docked",
     });
     expect(
-      screen.getByRole("complementary", { name: "Library and clip details" })
+      screen.getByRole("complementary", { name: "Sidebar" })
     ).toBeVisible();
     expect(screen.getByRole("tab", { name: /Details/ })).toHaveAttribute(
       "aria-selected",
       "true"
     );
-    expect(screen.getByRole("region", { name: "Docked selection details" }))
-      .toHaveTextContent("dock.mp4");
-    expect(useGenerationMetadataMock.mock.calls
+    const generationCall = () => useGenerationMetadataMock.mock.calls
       .filter(([options]) => options.instanceId === 91)
-      .at(-1)?.[0]).toMatchObject({
-      instanceId: 91,
-      enabled: true,
-    });
+      .at(-1)?.[0];
+    // Docked Details keeps review and tags in view; the generation readout
+    // has its own panel and is read only while that panel shows.
+    const dockedDetails = screen.getByRole("region", { name: "Docked selection details" });
+    expect(dockedDetails).toHaveTextContent("dock.mp4");
+    expect(within(dockedDetails).queryByText("Generation")).toBeNull();
+    expect(generationCall()).toMatchObject({ instanceId: 91, enabled: false });
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Collapse Generation details",
-    }));
-    expect(useGenerationMetadataMock.mock.calls
-      .filter(([options]) => options.instanceId === 91)
-      .at(-1)?.[0]).toMatchObject({ enabled: false });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Expand Generation details",
-    }));
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    expect(screen.getByRole("region", { name: "Docked generation details" }))
+      .toHaveTextContent("dock.mp4");
+    expect(screen.queryByRole("button", { name: /Collapse Generation details/ })).toBeNull();
+    expect(generationCall()).toMatchObject({ instanceId: 91, enabled: true });
 
     fireEvent.click(screen.getByRole("tab", { name: "Library" }));
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute(
@@ -1366,9 +1473,9 @@ describe("App hook composition", () => {
     expect(window.electronAPI.saveSettingsPartial).toHaveBeenLastCalledWith({
       metadataInspectorMode: "floating",
     });
-    expect(
-      screen.queryByRole("complementary", { name: "Library and clip details" })
-    ).toBeNull();
+    // Floating Details leaves the rail; the Library stays.
+    expect(screen.queryByRole("tab", { name: /Details/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Library" })).toBeInTheDocument();
     expect(metadataPanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
       isOpen: true,
       selectedVideos: [video],
@@ -1680,65 +1787,6 @@ describe("App hook composition", () => {
     );
   });
 
-  test("drains an in-flight checkpoint before a web directory switch", async () => {
-    const activeVideo = {
-      id: "web-switch-video",
-      instanceId: 11,
-      name: "web.mp4",
-      fingerprint: "fingerprint-web",
-      reviewState: "unreviewed",
-    };
-    useElectronLifecycleMock.mockImplementation(() => ({
-      ...electronLifecycleReturn,
-      videos: [activeVideo],
-      activeRootPath: "/before-web-switch",
-      libraryRoot: { rootPath: "/before-web-switch", recursive: true },
-      loadingStatus: { phase: "complete" },
-    }));
-    useFilterStateMock.mockImplementation(() => ({
-      ...filterStateReturn,
-      filteredVideos: [activeVideo],
-    }));
-    Object.assign(masonryReturn, {
-      orderedVideos: [activeVideo],
-      displayVideos: [activeVideo],
-      orderedIds: [activeVideo.id],
-      orderForRange: [activeVideo.id],
-    });
-    const pendingSave = createDeferredPromise();
-    const save = vi.fn(() => pendingSave.promise);
-    installReviewSessionsApi({ save });
-
-    vi.resetModules();
-    const { default: App } = await import("./App.jsx");
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", {
-      name: /Find next Unreviewed/,
-    }));
-    await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    electronLifecycleReturn.handleWebFileSelection.mockClear();
-
-    let switchPromise;
-    act(() => {
-      switchPromise = headerBarSpy.mock.calls.at(-1)?.[0]
-        .handleWebFileSelection({ target: { files: ["next-root"] } });
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(electronLifecycleReturn.handleWebFileSelection).not.toHaveBeenCalled();
-
-    await act(async () => {
-      const draft = save.mock.calls[0][0];
-      pendingSave.resolve({ checkpoint: { ...draft, updatedAt: 2345 } });
-      await switchPromise;
-    });
-    expect(electronLifecycleReturn.handleWebFileSelection).toHaveBeenCalledWith({
-      target: { files: ["next-root"] },
-    });
-  });
-
   test("drains the child cursor before disabling recursive ownership", async () => {
     const childVideo = {
       id: "recursive-child-video",
@@ -1790,7 +1838,7 @@ describe("App hook composition", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Find next Unreviewed/ }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     await act(async () => {
       await Promise.resolve();
     });
@@ -2577,7 +2625,7 @@ describe("App hook composition", () => {
     });
     expect(selectionMock.clear).toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Index subfolders" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
     await waitFor(() => expect(reloadCurrentRoot).toHaveBeenLastCalledWith(false));
     await waitFor(() =>
       expect(useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos).toEqual(videos)
@@ -3410,7 +3458,7 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
     fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
       target: { value: "Every keeper" },
     });
     await act(async () => {
@@ -3429,7 +3477,7 @@ describe("library search scope", () => {
 
     await renderWithTags(["keeper"]);
     fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Saved view name" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
       target: { value: "Folder keepers" },
     });
     await act(async () => {

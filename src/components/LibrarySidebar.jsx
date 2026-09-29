@@ -2,6 +2,7 @@ import React, { memo, useMemo, useState } from "react";
 import { normalizeRelativePath } from "../library/folderModel";
 import { SortAscendingIcon, SortDescendingIcon } from "./UiIcons";
 import "./LibraryNavigation.css";
+import { trashName } from "../platform/fileManagerTerms";
 
 const normalizeExpandedPaths = (paths) =>
   paths instanceof Set ? paths : new Set(paths || []);
@@ -179,7 +180,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
             {removedCount > 0 ? (
               <span
                 className="library-folder-tree__removed-count"
-                title={`${removedCount} indexed video${removedCount === 1 ? " was" : "s were"} moved or sent to Bin from here. Ratings, tags, and review decisions are kept.`}
+                title={`${removedCount} indexed video${removedCount === 1 ? " was" : "s were"} moved or sent to the ${trashName()} from here. Ratings, tags, and review decisions are kept.`}
               >
                 {removedCount.toLocaleString()} removed
               </span>
@@ -269,7 +270,7 @@ export function LibrarySidebarContent({
         <header className="library-sidebar__section-header">
           <div>
             <span className="library-sidebar__eyebrow">Library</span>
-            <h2>Pinned roots</h2>
+            <h2>Pinned folders</h2>
           </div>
           <div className="library-sidebar__root-actions">
             {currentRootPath ? (
@@ -349,7 +350,7 @@ export function LibrarySidebarContent({
       <section className="library-sidebar__section library-sidebar__section--views">
         <header className="library-sidebar__section-header">
           <div>
-            <span className="library-sidebar__eyebrow">Reusable filters</span>
+            <span className="library-sidebar__eyebrow">Saved filters</span>
             <h2>Smart views</h2>
           </div>
           <button
@@ -379,7 +380,7 @@ export function LibrarySidebarContent({
               value={viewName}
               onChange={(event) => setViewName(event.target.value.slice(0, 80))}
               placeholder="View name"
-              aria-label="Saved view name"
+              aria-label="Smart view name"
               maxLength={80}
               autoFocus
               disabled={disabled}
@@ -422,8 +423,8 @@ export function LibrarySidebarContent({
                   type="button"
                   className="library-saved-view-list__delete"
                   onClick={() => onDeleteSavedView?.(view.id, view)}
-                  aria-label={`Delete saved view ${view.name}`}
-                  title="Delete saved view"
+                  aria-label={`Delete smart view ${view.name}`}
+                  title="Delete smart view"
                   disabled={disabled}
                 >
                   ×

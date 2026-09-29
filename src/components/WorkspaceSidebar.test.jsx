@@ -1,118 +1,159 @@
 import React, { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import WorkspaceSidebar from "./WorkspaceSidebar";
+import WorkspaceSidebar, { buildWorkspacePanels } from "./WorkspaceSidebar";
 
-function ControlledSidebar(props) {
-  const [activeTab, setActiveTab] = useState("library");
+const panels = (overrides = {}) =>
+  buildWorkspacePanels({
+    detailsDocked: true,
+    libraryProps: { pinnedRoots: [] },
+    detailsContent: <div>Clip facts</div>,
+    selectionCount: 0,
+    ...overrides,
+  });
+
+function ControlledSidebar({ initialOpen = true, panelList = panels() }) {
+  const [open, setOpen] = useState(initialOpen);
+  const [active, setActive] = useState("library");
   return (
     <WorkspaceSidebar
-      {...props}
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
+      panels={panelList}
+      open={open}
+      activePanel={active}
+      onSelectPanel={(id) => {
+        setOpen(true);
+        setActive(id);
+      }}
+      onCollapse={() => setOpen(false)}
     />
   );
 }
 
 describe("WorkspaceSidebar", () => {
-  it("owns one complementary landmark and correctly links its tabs and panels", () => {
+  it("is one landmark with a vertical rail linked to its panels", () => {
     render(
-      <WorkspaceSidebar
-        activeTab="library"
-        libraryProps={{ pinnedRoots: [] }}
-        detailsContent={<div>Clip facts</div>}
-        selectionCount={2}
-      />
+      <WorkspaceSidebar panels={panels({ selectionCount: 2 })} activePanel="library" open />
     );
 
     expect(screen.getAllByRole("complementary")).toHaveLength(1);
-    const tablist = screen.getByRole("tablist", {
-      name: "Workspace sidebar panels",
-    });
+    const rail = screen.getByRole("tablist", { name: "Sidebar panels" });
+    expect(rail).toHaveAttribute("aria-orientation", "vertical");
     const libraryTab = screen.getByRole("tab", { name: "Library" });
     const detailsTab = screen.getByRole("tab", { name: "Details 2 selected" });
     const libraryPanel = screen.getByRole("tabpanel", { name: "Library" });
-    const detailsPanel = document.getElementById(
-      detailsTab.getAttribute("aria-controls")
-    );
+    const detailsPanel = document.getElementById(detailsTab.getAttribute("aria-controls"));
 
-    expect(tablist).toContainElement(libraryTab);
+    expect(rail).toContainElement(libraryTab);
     expect(libraryTab).toHaveAttribute("aria-controls", libraryPanel.id);
-    expect(libraryPanel).toHaveAttribute("aria-labelledby", libraryTab.id);
     expect(detailsPanel).toHaveAttribute("aria-labelledby", detailsTab.id);
     expect(libraryTab).toHaveAttribute("aria-selected", "true");
-    expect(libraryTab).toHaveAttribute("tabindex", "0");
+    expect(libraryTab).toHaveAttribute("title", "Hide Library");
     expect(detailsTab).toHaveAttribute("aria-selected", "false");
     expect(detailsTab).toHaveAttribute("tabindex", "-1");
+    // Both panels stay mounted, so switching keeps their state.
     expect(detailsPanel).toHaveAttribute("hidden");
+    expect(detailsPanel).toHaveTextContent("Clip facts");
   });
 
-  it("switches and focuses tabs with click, arrows, Home, and End", () => {
-    render(
-      <ControlledSidebar detailsContent={<div>Clip facts</div>} />
-    );
+  it("opens a panel from its icon and collapses to the rail from the open one", () => {
+    render(<ControlledSidebar />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Details" }));
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Details" })).toHaveTextContent("Clip facts");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Details" }));
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Library" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Library" }));
+    expect(screen.getByRole("tabpanel", { name: "Library" })).toBeVisible();
+  });
+
+  it("moves focus with the arrow keys without opening or collapsing anything", () => {
+    render(<ControlledSidebar initialOpen={false} />);
 
     const libraryTab = screen.getByRole("tab", { name: "Library" });
     const detailsTab = screen.getByRole("tab", { name: "Details" });
-
+    const generationTab = screen.getByRole("tab", { name: "Generation" });
     libraryTab.focus();
-    fireEvent.keyDown(libraryTab, { key: "ArrowRight" });
+    fireEvent.keyDown(libraryTab, { key: "ArrowDown" });
     expect(detailsTab).toHaveFocus();
-    expect(detailsTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Details" })).toHaveTextContent(
-      "Clip facts"
-    );
-
-    fireEvent.keyDown(detailsTab, { key: "ArrowLeft" });
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    fireEvent.keyDown(detailsTab, { key: "ArrowDown" });
+    expect(generationTab).toHaveFocus();
+    fireEvent.keyDown(generationTab, { key: "ArrowDown" });
     expect(libraryTab).toHaveFocus();
-    expect(libraryTab).toHaveAttribute("aria-selected", "true");
-
-    fireEvent.keyDown(libraryTab, { key: "End" });
-    expect(detailsTab).toHaveFocus();
-    fireEvent.keyDown(detailsTab, { key: "Home" });
+    fireEvent.keyDown(libraryTab, { key: "ArrowUp" });
+    expect(generationTab).toHaveFocus();
+    fireEvent.keyDown(generationTab, { key: "Home" });
     expect(libraryTab).toHaveFocus();
-
-    fireEvent.click(detailsTab);
-    expect(detailsTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
-  it("shows a bounded selection badge and an informative empty Details state", () => {
+  it("gives Generation its own panel while Details is docked", () => {
+    render(<ControlledSidebar panelList={panels({ selectionCount: 2 })} />);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Library",
+      "Details2",
+      "Generation",
+    ]);
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    expect(screen.getByRole("tabpanel", { name: "Generation" })).toHaveTextContent(
+      "Select one clip to see how it was generated."
+    );
+  });
+
+  it("leaves Details and Generation off the rail while Details floats", () => {
+    render(<ControlledSidebar panelList={panels({ detailsDocked: false })} />);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Library"]);
+  });
+
+  it("falls back to the first panel when the active one is gone", () => {
+    render(
+      <WorkspaceSidebar panels={panels({ detailsDocked: false })} activePanel="details" open />
+    );
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("shows a selection badge and an informative empty Details state", () => {
     render(
       <WorkspaceSidebar
-        activeTab="details"
-        selectionCount={3}
+        panels={buildWorkspacePanels({ detailsDocked: true, selectionCount: 3 })}
+        activePanel="details"
+        open
       />
     );
-
     expect(screen.getByRole("tab", { name: "Details 3 selected" })).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Details unavailable");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "selected clips are ready"
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("selected clips are ready");
   });
 
-  it("blocks tab changes and disables nested library controls when disabled", () => {
-    const onTabChange = vi.fn();
+  it("blocks panel changes and disables nested library controls when disabled", () => {
+    const onSelectPanel = vi.fn();
+    const onCollapse = vi.fn();
     render(
       <WorkspaceSidebar
-        activeTab="library"
-        onTabChange={onTabChange}
+        panels={buildWorkspacePanels({
+          detailsDocked: true,
+          disabled: true,
+          libraryProps: {
+            currentRoot: { rootPath: "/root", pinned: false },
+            onTogglePin: vi.fn(),
+          },
+        })}
+        activePanel="library"
+        open
         disabled
-        libraryProps={{
-          currentRoot: { rootPath: "/root", pinned: false },
-          onTogglePin: vi.fn(),
-        }}
+        onSelectPanel={onSelectPanel}
+        onCollapse={onCollapse}
       />
     );
-
-    const libraryTab = screen.getByRole("tab", { name: "Library" });
-    const detailsTab = screen.getByRole("tab", { name: "Details" });
-    expect(libraryTab).toBeDisabled();
-    expect(detailsTab).toBeDisabled();
-    fireEvent.keyDown(libraryTab, { key: "End" });
-    expect(onTabChange).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Pin current library root" })
-    ).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Library" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Details" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pin current library root" })).toBeDisabled();
+    expect(onSelectPanel).not.toHaveBeenCalled();
+    expect(onCollapse).not.toHaveBeenCalled();
   });
 });

@@ -161,20 +161,42 @@ worktrees' built bundles.
   the content-identity change. Promote to stable only after rc.5 has been used
   in earnest — see Section 4 for why.
 
-## 5a. Clip sequences are parked on a branch
+## 5a. Clip sequences are rebased, not finished
+
+Status: **Rebased** (2026-09-28); the feature is **Partially implemented**
 
 The unfinished clip-sequences work (`docs/architecture/clip-sequences.md`,
 `SequencePanel`, `main/sequence-view.js`, `useSequences`, `selectionOrder`;
-last active 2026-09-01) was moved unchanged out of the main checkout onto
-`wip/clip-sequences` (`02106f2`) so `main` could fast-forward. It touches
-`main.js`, `main/database.js`, `preload.js`, `src/App.jsx` and
-`src/library/folderViewState.js`, all of which have moved since, so **rebase
-it onto `main` before continuing it.**
+last active 2026-09-01) now sits on **`claude/clip-sequences`**, replayed
+onto current `main`. Only the Electron-ABI suite list conflicted. On that
+branch the full suite, lint, the build, the Electron-ABI suites (including
+the 15 sequence-store and 6 sequence-view tests) and the Electron smoke
+specs pass. `wip/clip-sequences` (`02106f2`) is kept unchanged as the
+original; it exists on this machine only.
 
-## 5b. Feature bloat: a UX pass once re-rendering lands
+Still to build, per its own doc: writing the order onto disk (Section 5),
+exporting (Section 6) and the rest of missing-entry handling (Section 7).
+Where the Sequence panel lives is a question for the UX pass (5b), so it
+waits for that. Not merged into `main`.
 
-Status: **Unimplemented** — requested by the user on 2026-09-28, to start
-once the re-render work (1c) is finished
+## 5b. Feature bloat: a UX pass, audited
+
+Status: **Decided** (2026-09-28); the redesign is in progress — see
+[`architecture/ux-redesign.md`](architecture/ux-redesign.md) and the audit
+page, https://claude.ai/artifact/MgNRWMjGDcVKyzJeBStmsu (private to the user)
+
+The audit also found plain bugs, **fixed on 2026-09-28**: the header, review
+bar, fullscreen review rail and docked Details header now wrap instead of
+clipping (at 1280 px Filters and Keyboard shortcuts had fallen off the
+header; the wrapping is the interim form until D6 is decided); a resolution
+sort is named and remembered; the Properties stub is gone; file actions use
+each platform's words (Show in File Manager / Finder / Explorer, Move to
+Trash / Recycle Bin); the transfer picker title fits any selection; the
+resolution filter has summary chips; toasts stack instead of overlapping,
+and the memory warning moved clear of them and no longer blocks clicks.
+The decisions (D1–D10) cover where Details, diagnostics, playback settings,
+Donate, review mode, narrow windows, new features and a Preferences dialog
+should live, and a naming glossary.
 
 The app has grown a feature at a time (review mode, saved and smart views,
 generation versions, the Generation panel, transfers, and now re-rendering),
@@ -195,22 +217,38 @@ Phase 3 of re-rendering (its Queue and Finished tabs, recipe screen and
 badges) should be designed with this pass in mind rather than adding another
 top-level surface first.
 
-## 6. Local branches that were not pushed
+## 6. Local branches: audited
 
-Roughly thirty local branches under `codex/*`, `feature/*` and various
-experiments (`v2`, `masonic`, `temp`, `python_webserver_refactor`,
-`linux-native-decoder`) date from 2025 and early 2026. Their remote branches
-were deleted — the ordinary post-merge cleanup — and their tips are not
-reachable from `origin/main`, which is what a squash-merge looks like from the
-branch side.
+Status: **Audited** (2026-09-28); the actions below are the user's to take
 
-They were left alone deliberately: pushing them would recreate refs the
-repository already cleaned up. **This has not been verified commit by commit.**
-If any of that work matters, check it before the old machine is gone, because
-these branches exist nowhere else.
+This section used to say roughly thirty old branches existed only on this
+machine. **They do not**: every one of the 28 older unmerged branches is on
+GitHub under `archive/<name>`, at exactly the same commit (checked against
+the remote-tracking refs from the last fetch, 2026-08-31). Of the 67 local
+branches, 36 are fully merged into `main` and 31 are not; of those 31, only
+one exists nowhere else.
 
-The backup refs (`backup/main-before-squash`, `backup/pre-filter-20250810`,
-`backup-pre-prune`) are pre-rewrite snapshots and should stay local.
+What is genuinely only on this machine:
+
+- **`main` itself** — 21 commits ahead of `origin/main` at the last fetch:
+  generation versions, link transfer, the socket-type Generation reader,
+  re-render phases 1 and 2, and the fixes since. **Push `main` before the
+  machine change.**
+- **`wip/clip-sequences`** and its rebased copy **`claude/clip-sequences`**
+  (see 5a).
+- Local-only Claude branches (`claude/sad-mclean-f38fe4`,
+  `claude/comfy-typeflow-design`, `claude/type-flow-switchover`,
+  `claude/recipe-learner`, `claude/comfy-runner`,
+  `claude/outstanding-small-fixes`) — all fully merged into `main`, so they
+  are safe to delete once `main` is pushed.
+
+Work that never reached `main` but is archived: a custom **timeline scroll
+rail** (three iterations, Oct 2025), the March 2026 **“All Known” library
+browsing** (superseded by the library index and tag views), and a
+**native Linux decoder** its own last commit calls unworkable. The backup
+refs (`backup/main-before-squash`, `backup/pre-filter-20250810`,
+`backup-pre-prune`) should stay. The full per-branch table is in the audit
+page.
 
 ## References
 

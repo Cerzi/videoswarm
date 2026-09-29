@@ -3,9 +3,10 @@ import React, {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { PlusIcon, RefreshIcon } from "../UiIcons";
+import { CopyIcon, PlusIcon, RefreshIcon } from "../UiIcons";
 import {
   MAX_METADATA_SUGGESTION_TAGS,
   buildGenerationMetadataDiagnostics,
@@ -52,18 +53,71 @@ export function MetadataFileFactsSection({
   );
 }
 
+async function writeClipboardText(text) {
+  const api = typeof window !== "undefined" ? window.electronAPI : null;
+  if (api?.copyToClipboard) {
+    const result = await api.copyToClipboard(text);
+    return result?.success !== false;
+  }
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  return false;
+}
+
+// A prompt can be long and Ctrl+C is often taken by the grid, so each one
+// gets its own copy button that says for a moment whether it worked.
+export function CopyTextButton({ text, label }) {
+  const [status, setStatus] = useState(null);
+  const timerRef = useRef(null);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const copy = async () => {
+    let copied = false;
+    try {
+      copied = await writeClipboardText(text);
+    } catch {
+      copied = false;
+    }
+    setStatus(copied ? "copied" : "failed");
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setStatus(null), 1600);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`metadata-panel__button metadata-panel__button--compact metadata-panel__copy${
+        status ? ` is-${status}` : ""
+      }`}
+      onClick={copy}
+      aria-label={label}
+      title={label}
+    >
+      <CopyIcon />
+      <span aria-live="polite">
+        {status === "copied" ? "Copied" : status === "failed" ? "Failed" : "Copy"}
+      </span>
+    </button>
+  );
+}
+
+// `collapsible={false}` is for the docked Generation panel, which is the
+// section's own home and so is always open.
 export function MetadataGenerationSection({
   state,
   expanded,
   defaultExpanded = true,
   onExpandedChange,
+  collapsible = true,
 }) {
   const contentId = useId();
   const [uncontrolledExpanded, setUncontrolledExpanded] = useState(
     Boolean(defaultExpanded)
   );
   const isControlled = typeof expanded === "boolean";
-  const isExpanded = isControlled ? expanded : uncontrolledExpanded;
+  const isExpanded = !collapsible || (isControlled ? expanded : uncontrolledExpanded);
 
   if (!state) return null;
 
@@ -147,22 +201,26 @@ export function MetadataGenerationSection({
   return (
     <section className="metadata-panel__section metadata-panel__generation">
       <div className="metadata-panel__section-header">
-        <button
-          type="button"
-          className="metadata-panel__generation-toggle"
-          onClick={toggleExpanded}
-          aria-expanded={isExpanded}
-          aria-controls={contentId}
-          aria-label={`${isExpanded ? "Collapse" : "Expand"} Generation details`}
-        >
-          <span
-            className="metadata-panel__generation-chevron"
-            aria-hidden="true"
+        {collapsible ? (
+          <button
+            type="button"
+            className="metadata-panel__generation-toggle"
+            onClick={toggleExpanded}
+            aria-expanded={isExpanded}
+            aria-controls={contentId}
+            aria-label={`${isExpanded ? "Collapse" : "Expand"} Generation details`}
           >
-            {isExpanded ? "▾" : "▸"}
-          </span>
-          <span>Generation</span>
-        </button>
+            <span
+              className="metadata-panel__generation-chevron"
+              aria-hidden="true"
+            >
+              {isExpanded ? "▾" : "▸"}
+            </span>
+            <span>Generation</span>
+          </button>
+        ) : (
+          <span>Source</span>
+        )}
         <div className="metadata-panel__generation-actions">
           {sourceBadge ? (
             <span className="metadata-panel__badge">{sourceBadge}</span>
@@ -229,20 +287,32 @@ export function MetadataGenerationSection({
               ) : null}
               <dl className="metadata-panel__generation-grid">
                 {prompt ? (
-                  <div className="metadata-panel__generation-prompt">
-                    <dt>Positive prompt</dt>
+                  <div className="metadata-panel__generation-prompt metadata-panel__generation-copyable">
+                    <dt>
+                      <span>Positive prompt</span>
+                      <CopyTextButton text={prompt} label="Copy positive prompt" />
+                    </dt>
                     <dd>{prompt}</dd>
                   </div>
                 ) : null}
                 {negativePrompt ? (
-                  <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative">
-                    <dt>Negative prompt</dt>
+                  <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative metadata-panel__generation-copyable">
+                    <dt>
+                      <span>Negative prompt</span>
+                      <CopyTextButton text={negativePrompt} label="Copy negative prompt" />
+                    </dt>
                     <dd>{negativePrompt}</dd>
                   </div>
                 ) : null}
                 {promptFragments.length ? (
-                  <div className="metadata-panel__generation-wide">
-                    <dt>Prompt fragments</dt>
+                  <div className="metadata-panel__generation-wide metadata-panel__generation-copyable">
+                    <dt>
+                      <span>Prompt fragments</span>
+                      <CopyTextButton
+                        text={promptFragments.map((fragment) => fragment.text).join("\n\n")}
+                        label="Copy prompt fragments"
+                      />
+                    </dt>
                     <dd>
                       <ul>
                         {promptFragments.map((fragment, index) => (

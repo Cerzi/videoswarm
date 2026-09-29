@@ -2418,10 +2418,10 @@ function createMetadataStore(db) {
 
   function normalizeSavedViewName(value) {
     const name = typeof value === 'string' ? value.trim() : '';
-    if (!name) throw new TypeError('Saved view name is required');
+    if (!name) throw new TypeError('Smart view name is required');
     if (name.length > SAVED_VIEW_NAME_LIMIT) {
       throw new RangeError(
-        `Saved view name exceeds ${SAVED_VIEW_NAME_LIMIT} characters`
+        `Smart view name exceeds ${SAVED_VIEW_NAME_LIMIT} characters`
       );
     }
     return name;
@@ -3388,7 +3388,7 @@ function createMetadataStore(db) {
       recordCount += 1;
       if (recordCount > maxRecords) {
         throw new ReviewExportError(
-          `Copy Accepted is limited to ${maxRecords.toLocaleString()} media files per operation`,
+          `A transfer is limited to ${maxRecords.toLocaleString()} media files per operation`,
           'ACCEPTED_COPY_TOO_MANY_MEDIA'
         );
       }

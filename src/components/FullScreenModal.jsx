@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import {
   FULLSCREEN_COMMANDS,
   FULLSCREEN_PLAYER_SHORTCUTS,
+  hasCommandModifier,
   resolveFullscreenShortcut,
 } from "../hotkeys/shortcutCatalog";
 import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
@@ -253,7 +254,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     resolveReturnFocus,
     returnFocusRef = null,
     fallbackFocusRef = null,
-    dialogLabel = "Fullscreen review",
+    dialogLabel = "Fullscreen",
     dialogDescription =
       "Review one video at a time. Use the arrow keys to move and Escape to close.",
     positionLabel = null,
@@ -959,7 +960,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     if (!video || typeof document === "undefined") return undefined;
 
     const handleKeyDown = (event) => {
-      const binding = resolveFullscreenShortcut(event);
+      const binding = hasCommandModifier(event)
+        ? null
+        : resolveFullscreenShortcut(event);
 
       if (binding?.command === FULLSCREEN_COMMANDS.CLOSE) {
         event.preventDefault();
@@ -1490,7 +1493,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
           {showDetails && renderedDetailsDock ? (
             <aside
               className="fullscreen-review__details"
-              aria-label="Clip details"
+              aria-label="Details"
               data-hotkey-exempt
             >
               {renderedDetailsDock}

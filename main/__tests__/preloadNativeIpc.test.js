@@ -177,6 +177,7 @@ describe("preload native-work bridge", () => {
     const { api, ipcRenderer } = loadPreload();
     await api.comfyQueue.getConnection();
     await api.comfyQueue.setConnection({ enabled: "yes", url: "http://127.0.0.1:8188", outputDir: 5, extra: 1 });
+    await api.comfyQueue.chooseOutputDir();
     await api.comfyQueue.testConnection();
     await api.comfyQueue.testConnection("http://localhost:8188");
     await api.comfyQueue.recipes.list();
@@ -196,6 +197,7 @@ describe("preload native-work bridge", () => {
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["comfy:connection:get"],
       ["comfy:connection:set", { enabled: false, url: "http://127.0.0.1:8188", outputDir: null }],
+      ["comfy:connection:choose-output-dir"],
       ["comfy:connection:test", {}],
       ["comfy:connection:test", { url: "http://localhost:8188" }],
       ["comfy:recipes:list"],
@@ -221,6 +223,18 @@ describe("preload native-work bridge", () => {
     expect(callback).toHaveBeenCalledWith({ type: "changed", reason: "done" });
     unsubscribe();
     expect(ipcRenderer.removeListener).toHaveBeenCalledWith("comfy-queue:changed", handler);
+  });
+
+  it("opens Preferences from the application menu", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const callback = vi.fn();
+    const unsubscribe = api.onOpenPreferences(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("ui:open-preferences");
+    handler({});
+    expect(callback).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith("ui:open-preferences", handler);
   });
 
   it("authorizes an indexed library root on demand", async () => {

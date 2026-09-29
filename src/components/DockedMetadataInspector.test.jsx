@@ -63,7 +63,7 @@ describe("DockedMetadataInspector", () => {
     );
 
     const transfer = screen.getByRole("button", {
-      name: "Move, copy or link 2 selected clips",
+      name: "Transfer 2 selected clips",
     });
     fireEvent.click(transfer);
     // The docked pane hands over the same selection the floating one does.
