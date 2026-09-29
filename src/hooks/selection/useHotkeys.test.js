@@ -66,6 +66,21 @@ describe('useHotkeys', () => {
     expect(onOpenDetails).toHaveBeenCalledOnce();
   });
 
+  test('B adds the selection to the sequence, but not with modifiers, repeats or no selection', () => {
+    const onAddToSequence = vi.fn();
+    renderHook(() => useHotkeys(run, getSelection, { onAddToSequence }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b' }));
+    expect(onAddToSequence).toHaveBeenCalledWith(new Set(['x']));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'B', shiftKey: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', repeat: true }));
+    getSelection.mockReturnValue(new Set());
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b' }));
+    expect(onAddToSequence).toHaveBeenCalledOnce();
+  });
+
   test('does not open selection details with modifiers or in guarded targets', () => {
     const onOpenDetails = vi.fn();
     const { rerender } = renderHook(

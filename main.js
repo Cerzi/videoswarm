@@ -89,6 +89,18 @@ const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
 const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
+const { buildSequenceSnapshotResponse } = require("./main/sequence-view");
+const { buildSequenceCopyRecords } = require("./main/sequence-export");
+const {
+  assertEntriesResolvable,
+  createSequenceRenumberCoordinator,
+  recordRenumberInCatalog,
+} = require("./main/sequence-renumber");
+// Renumber plans awaiting confirmation, bound to the renderer that asked.
+const sequenceRenumberCoordinator = createSequenceRenumberCoordinator();
+const { createSequenceRenderer } = require("./main/sequence-render");
+// One-video sequence export through ffmpeg: one run at a time, cancellable.
+const sequenceRenderer = createSequenceRenderer();
 const {
   IPC_LIMITS,
   assertBoolean,
@@ -987,6 +999,8 @@ function invalidateNativeWorkOwner(sender) {
   reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
+  sequenceRenumberCoordinator.discardOwner(ownerId);
+  sequenceRenderer.cancelOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -1014,6 +1028,8 @@ function disposeNativeWorkOwner(sender) {
   reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
+  sequenceRenumberCoordinator.discardOwner(ownerId);
+  sequenceRenderer.cancelOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -4363,13 +4379,22 @@ const reviewCopyAcceptedCoordinator =
       directory,
       scope,
       instanceIds,
+      sequenceId,
+      request,
       maxRecords,
       maxPathBytes,
       assertActive,
     }) =>
-      // An explicit selection resolves rows by id; otherwise the review state
-      // is still the only thing that decides what gets transferred.
-      Array.isArray(instanceIds)
+      // A sequence resolves one row per position, repeats included, and
+      // refuses while any position is missing. An explicit selection
+      // resolves rows by id; otherwise the review state is still the only
+      // thing that decides what gets transferred.
+      sequenceId
+        ? resolveSequenceCopyRecords(context, sequenceId, {
+            preferredRootPath: request?.preferredRootPath || null,
+            assertActive,
+          })
+        : Array.isArray(instanceIds)
         ? context.metadataStore.getSelectionExportSnapshot({
             instanceIds,
             maxRecords: Math.min(
@@ -4542,7 +4567,14 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
   // Naming rows is not the same as asserting what they contain: the ids are
   // bounded here and resolved against the catalog in the main process, so a
   // renderer still cannot introduce a path of its own choosing.
-  const instanceIds = payload?.instanceIds === undefined ||
+  // A sequence names positions; its rows are resolved from the catalog here
+  // in the main process, exactly like a selection's ids.
+  const sequenceId = payload?.sequenceId === undefined ||
+    payload?.sequenceId === null
+    ? null
+    : assertInteger(payload.sequenceId, { name: "sequence id", min: 1 });
+  const instanceIds = sequenceId !== null ||
+    payload?.instanceIds === undefined ||
     payload?.instanceIds === null
     ? null
     : assertInstanceIdArray(payload.instanceIds, {
@@ -4555,6 +4587,9 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
     directory,
     scope,
     instanceIds,
+    sequenceId,
+    preferredRootPath:
+      sequenceId !== null ? normalizeSequencePreferredRoot(payload) : null,
     destinationPath,
     layout,
     reusePlanId,
@@ -4719,6 +4754,373 @@ ipcMain.handle("library:delete-saved-view", async (_event, payload = {}) =>
     deleted: metadataStore.deleteSavedView(payload?.id),
   }))
 );
+
+const SEQUENCE_IPC_LIMITS = Object.freeze({
+  maxNameChars: 80,
+  // Mirrors SEQUENCE_ENTRY_LIMIT in main/database.js. The store is still the
+  // authority; this only stops an oversized payload from being parsed at all.
+  maxEntries: 500,
+});
+
+function normalizeSequenceIpcId(payload, key = "id") {
+  return assertInteger(payload?.[key], {
+    name: `sequence ${key}`,
+    min: 1,
+  });
+}
+
+function normalizeSequenceIpcName(payload) {
+  return assertString(payload?.name, {
+    name: "sequence name",
+    minChars: 1,
+    maxChars: SEQUENCE_IPC_LIMITS.maxNameChars,
+    trim: true,
+  });
+}
+
+function normalizeSequenceEntryIdArray(payload, key = "entryIds") {
+  return assertInstanceIdArray(payload?.[key], {
+    name: `sequence ${key}`,
+    maxEntries: SEQUENCE_IPC_LIMITS.maxEntries,
+  });
+}
+
+ipcMain.handle("sequences:list", async () =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequences: metadataStore.listSequences(),
+  }))
+);
+
+ipcMain.handle("sequences:snapshot", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore, context) =>
+    buildSequenceSnapshotResponse(metadataStore, {
+      sequenceId: normalizeSequenceIpcId(payload),
+      preferredRootPath:
+        typeof payload?.preferredRootPath === "string" &&
+        payload.preferredRootPath
+          ? assertPathString(payload.preferredRootPath, {
+              name: "preferred root path",
+            })
+          : null,
+      generation: context.generation,
+    })
+  )
+);
+
+ipcMain.handle("sequences:create", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequence: metadataStore.createSequence(normalizeSequenceIpcName(payload)),
+  }))
+);
+
+ipcMain.handle("sequences:rename", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    sequence: metadataStore.renameSequence(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceIpcName(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:delete", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    deleted: metadataStore.deleteSequence(normalizeSequenceIpcId(payload)),
+  }))
+);
+
+ipcMain.handle("sequences:append", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.appendToSequence(
+      normalizeSequenceIpcId(payload),
+      assertStringArray(payload?.fingerprints, {
+        name: "fingerprints",
+        maxEntries: SEQUENCE_IPC_LIMITS.maxEntries,
+        item: { minChars: 1, maxChars: 512 },
+        // A story may return to a shot, so a repeated fingerprint in one
+        // append is meaningful and must survive the payload check.
+        dedupe: false,
+      })
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:remove-entries", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.removeSequenceEntries(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceEntryIdArray(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:reorder", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.reorderSequenceEntries(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceEntryIdArray(payload)
+    ),
+  }))
+);
+
+ipcMain.handle("sequences:move-entry", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    entries: metadataStore.moveSequenceEntry(
+      normalizeSequenceIpcId(payload),
+      normalizeSequenceIpcId(payload, "entryId"),
+      assertInteger(payload?.position, { name: "sequence position", min: 0 })
+    ),
+  }))
+);
+
+function normalizeSequencePreferredRoot(payload) {
+  return typeof payload?.preferredRootPath === "string" &&
+    payload.preferredRootPath
+    ? assertPathString(payload.preferredRootPath, {
+        name: "preferred root path",
+      })
+    : null;
+}
+
+function sequenceNotFoundError() {
+  return Object.assign(new Error("This sequence no longer exists"), {
+    code: "SEQUENCE_NOT_FOUND",
+    expose: true,
+  });
+}
+
+function resolveSequenceCopyRecords(
+  context,
+  sequenceId,
+  { preferredRootPath = null, assertActive } = {}
+) {
+  const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
+    preferredRootPath,
+  });
+  assertActive?.();
+  if (!snapshot) throw sequenceNotFoundError();
+  return { records: buildSequenceCopyRecords(snapshot) };
+}
+
+/**
+ * Like runLibraryCatalogOperation, for the sequence operations that touch the
+ * filesystem and so have to await. A refusal keeps its code and the positions
+ * or names it is about, which is what the renderer shows.
+ */
+async function runSequenceFileOperation(operation, defaultErrorCode) {
+  let context = null;
+  try {
+    context = captureMetadataContext();
+    const result = await operation(context);
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      profileId: context.profileId,
+      generation: context.generation,
+      ...(result || {}),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      profileId: context?.profileId || getActiveProfileId(),
+      generation: context?.generation ?? metadataProfileGeneration,
+      error: error?.message || String(error),
+      code: error?.code || defaultErrorCode,
+      ...(Array.isArray(error?.positions) ? { positions: error.positions } : {}),
+      ...(Array.isArray(error?.names) ? { names: error.names.slice(0, 100) } : {}),
+    };
+  }
+}
+
+// Renumber-in-place (clip-sequences.md, Section 5). Prepare resolves the
+// sequence, authorizes every file the way other native file actions are
+// authorized, and checks the disk; nothing is renamed until apply names the
+// plan the renderer confirmed. The coordinator is created with the other
+// native services near the top of this file.
+
+ipcMain.handle("sequences:renumber:prepare", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence renumber request");
+  const sequenceId = normalizeSequenceIpcId(payload);
+  const preferredRootPath = normalizeSequencePreferredRoot(payload);
+  return runSequenceFileOperation(async (context) => {
+    const { snapshot, entries } = await authorizeSequenceFiles(
+      event,
+      context,
+      sequenceId,
+      { preferredRootPath, action: "renumber" }
+    );
+    const prepared = await sequenceRenumberCoordinator.prepare({
+      ownerId: event.sender.id,
+      entries,
+      context,
+    });
+    return { sequenceName: snapshot.name, ...prepared };
+  }, "SEQUENCE_RENUMBER_ERROR");
+});
+
+ipcMain.handle("sequences:renumber:apply", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence renumber confirmation");
+  const planId = assertString(payload?.planId, {
+    name: "renumber plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  return runSequenceFileOperation(async (context) => {
+    const result = await sequenceRenumberCoordinator.apply({
+      ownerId: event.sender.id,
+      planId,
+      // A profile switch between the confirmation and now means the plan
+      // was made against another catalog; refuse it.
+      assertActive: (planContext) => {
+        assertMetadataContextActive(planContext);
+        if (planContext.generation !== context.generation) {
+          throw new ProfileOperationInvalidatedError();
+        }
+      },
+    });
+    // Tell the catalog now rather than waiting for the watcher, which may
+    // not be watching every root a sequence spans.
+    await recordRenumberInCatalog(context.metadataStore, result.renamed, {
+      assertActive: () => assertMetadataContextActive(context),
+      isCancelled: isDirectoryScanCancelled,
+    });
+    return {
+      renamedCount: result.renamed.length,
+      unchangedCount: result.unchangedCount,
+    };
+  }, "SEQUENCE_RENUMBER_ERROR");
+});
+
+/**
+ * Resolve a sequence to files this window may read: every position present,
+ * each one authorized like any other native file action. Shared by renumber
+ * and one-video export.
+ */
+async function authorizeSequenceFiles(event, context, sequenceId, options = {}) {
+  const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
+    preferredRootPath: options.preferredRootPath || null,
+  });
+  if (!snapshot) throw sequenceNotFoundError();
+  const instances = snapshot.entries.map((entry) => entry.instance);
+  assertEntriesResolvable(
+    instances.map((instance) => ({
+      absolutePath: instance?.absolutePath || null,
+    })),
+    { action: options.action || "renumber" }
+  );
+  const entries = [];
+  for (const [index, instance] of instances.entries()) {
+    let authorized;
+    try {
+      authorized = await assertRendererPath(event, instance.absolutePath, "file");
+    } catch (error) {
+      if (error?.code === "PROFILE_RECONFIGURATION_IN_PROGRESS") throw error;
+      throw Object.assign(
+        new Error(
+          `Position ${index + 1} (${path.basename(instance.absolutePath)}) ` +
+            "is not in a folder open in this window, or is no longer on " +
+            "disk. Open its folder first."
+        ),
+        { code: "SEQUENCE_FILE_UNAUTHORIZED", positions: [index + 1] }
+      );
+    }
+    entries.push({
+      absolutePath: authorized.path,
+      catalogPath: instance.absolutePath,
+      rootPath: instance.rootPath,
+    });
+  }
+  assertMetadataContextActive(context);
+  return { snapshot, entries };
+}
+
+// One-video export (clip-sequences.md, Section 6, tier 2). Availability is
+// learned by running ffmpeg, as proxy generation learns it; the panel shows
+// the reason instead of a control that cannot work.
+ipcMain.handle("sequences:render:availability", async () => {
+  const state = await sequenceRenderer.checkAvailability();
+  return {
+    success: true,
+    available: Boolean(state.available),
+    reason: state.available ? null : state.reason,
+  };
+});
+
+ipcMain.handle("sequences:render:prepare", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export request");
+  const sequenceId = normalizeSequenceIpcId(payload);
+  const preferredRootPath = normalizeSequencePreferredRoot(payload);
+  return runSequenceFileOperation(async (context) => {
+    const { snapshot, entries } = await authorizeSequenceFiles(
+      event,
+      context,
+      sequenceId,
+      { preferredRootPath, action: "export" }
+    );
+    const availability = await sequenceRenderer.checkAvailability();
+    if (!availability.available) {
+      throw Object.assign(new Error(availability.reason), {
+        code: "SEQUENCE_RENDER_UNAVAILABLE",
+      });
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) throw new ProfileOperationInvalidatedError();
+    const [lastDestination] = getRecentTransferDestinations();
+    const picked = await dialog.showOpenDialog(win, {
+      title: "Choose where to save the sequence video",
+      buttonLabel: "Save here",
+      defaultPath: lastDestination || app.getPath("videos"),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    assertMetadataContextActive(context);
+    const destination = picked?.canceled ? null : picked?.filePaths?.[0];
+    if (!destination) return { cancelled: true };
+    const plan = await sequenceRenderer.prepare({
+      ownerId: event.sender.id,
+      entries,
+      destinationDirectory: await fsPromises.realpath(destination),
+      name: snapshot.name,
+      context,
+    });
+    return { cancelled: false, sequenceName: snapshot.name, ...plan };
+  }, "SEQUENCE_RENDER_ERROR");
+});
+
+ipcMain.handle("sequences:render:start", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export start");
+  const planId = assertString(payload?.planId, {
+    name: "sequence export plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  const owner = event.sender;
+  return runSequenceFileOperation(async (context) => {
+    const result = await sequenceRenderer.start({
+      ownerId: owner.id,
+      planId,
+      assertActive: (planContext) => {
+        assertMetadataContextActive(planContext);
+        if (planContext.generation !== context.generation) {
+          throw new ProfileOperationInvalidatedError();
+        }
+      },
+      onProgress: (progress) => {
+        if (!owner.isDestroyed?.()) owner.send("sequences:render-progress", progress);
+      },
+    });
+    return result;
+  }, "SEQUENCE_RENDER_ERROR");
+});
+
+ipcMain.handle("sequences:render:cancel", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export cancel");
+  const planId = assertString(payload?.planId, {
+    name: "sequence export plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  return { success: true, ...sequenceRenderer.cancel({ ownerId: event.sender.id, planId }) };
+});
+
 
 function normalizeFingerprintArray(fingerprints) {
   return assertStringArray(fingerprints, {
@@ -5618,6 +6020,7 @@ async function performNativeShutdown() {
     generationMetadata: () => generationMetadataService.shutdown(),
     generationKeys: () => generationKeyIndexer.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),
+    sequenceRenderer: () => sequenceRenderer.shutdown(),
     proxyManager: () => proxyManager.shutdown(),
     thumbnailCache: () => thumbnailCache.shutdown(),
     settingsWriter: () => settingsWriter.dispose(),

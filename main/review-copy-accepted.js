@@ -40,7 +40,13 @@ const ACCEPTED_COPY_CODES = Object.freeze({
   SOURCE_INVALID: "ACCEPTED_COPY_SOURCE_INVALID",
   SYMLINK_UNSUPPORTED: "ACCEPTED_COPY_SYMLINK_UNSUPPORTED",
   LINK_MISMATCH: "ACCEPTED_COPY_LINK_MISMATCH",
+  SEQUENCE_BLOCKED: "SEQUENCE_EXPORT_BLOCKED",
+  SEQUENCE_MODE: "SEQUENCE_EXPORT_COPY_ONLY",
 });
+
+// A numbered sequence copy writes this beside the clips: ffmpeg's concat
+// demuxer input, in sequence order (clip-sequences.md, Section 6).
+const SEQUENCE_CONCAT_FILE_NAME = "concat.txt";
 
 class AcceptedCopyError extends Error {
   constructor(message, code = "ACCEPTED_COPY_ERROR") {
@@ -104,6 +110,58 @@ function normalizeSelectionInstanceIds(value) {
     );
   }
   return ids;
+}
+
+/**
+ * A sequence export names a sequence rather than rows or a review scope. Its
+ * rows (one per position, repeats included) come from the caller's query.
+ */
+function normalizeSequenceId(value) {
+  if (value === undefined || value === null) return null;
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new AcceptedCopyError(
+      "The sequence id must be a positive integer",
+      ACCEPTED_COPY_CODES.PLAN_INVALID
+    );
+  }
+  return id;
+}
+
+/** A numbered target is one plain file name inside the destination. */
+function normalizeSequenceTargetName(value) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > 255 ||
+    value === "." ||
+    value === ".." ||
+    /[\\/\0]/u.test(value) ||
+    value === SEQUENCE_CONCAT_FILE_NAME
+  ) {
+    throw new AcceptedCopyError(
+      "A sequence copy target name is invalid",
+      ACCEPTED_COPY_CODES.SOURCE_INVALID
+    );
+  }
+  return value;
+}
+
+/**
+ * ffmpeg concat demuxer input. Names are relative to the list's own folder,
+ * which is how the demuxer resolves them, and quoted with ffmpeg's escaping
+ * for a single quote. `-safe 0` is still needed for names outside
+ * [A-Za-z0-9_.-], so the header says so.
+ */
+function buildSequenceConcatList(targetNames) {
+  const quote = (name) => `'${String(name).replace(/'/gu, "'\\''")}'`;
+  return [
+    "# Written by Video Swarm in sequence order. Join the clips with:",
+    "#   ffmpeg -f concat -safe 0 -i concat.txt -c copy sequence.mp4",
+    "# (stream copy needs every clip to share codec, size and frame rate)",
+    ...targetNames.map((name) => `file ${quote(name)}`),
+    "",
+  ].join("\n");
 }
 
 function normalizeRootPath(value, pathImpl = path) {
@@ -204,6 +262,28 @@ function destinationForRelative(
   return destination;
 }
 
+function sequenceDestination(
+  destinationRoot,
+  targetName,
+  pathImpl = path,
+  { allowConcat = false } = {}
+) {
+  const name = allowConcat && targetName === SEQUENCE_CONCAT_FILE_NAME
+    ? targetName
+    : normalizeSequenceTargetName(targetName);
+  const destination = pathImpl.resolve(destinationRoot, name);
+  if (
+    pathImpl.dirname(destination) !== pathImpl.resolve(destinationRoot) ||
+    !isPathInside(destinationRoot, destination, pathImpl)
+  ) {
+    throw new AcceptedCopyError(
+      "A copy target escapes the selected destination",
+      ACCEPTED_COPY_CODES.DESTINATION_UNSAFE
+    );
+  }
+  return destination;
+}
+
 function fileIdentity(stats) {
   if (!stats?.isFile?.() || stats?.isSymbolicLink?.()) {
     throw new AcceptedCopyError(
@@ -274,6 +354,11 @@ function safeErrorCode(error, fallback = "ACCEPTED_COPY_ERROR") {
 
 function publicErrorMessage(error, fallback = "Copy Accepted could not be completed") {
   if (error instanceof AcceptedCopyError || error instanceof ReviewExportError) {
+    return error.message;
+  }
+  // Errors raised by a caller's query (a sequence refusing to export while a
+  // clip is missing, say) mark their message as written for people.
+  if (error?.expose === true && typeof error.message === "string") {
     return error.message;
   }
   const messages = {
@@ -435,6 +520,9 @@ function normalizeAcceptedRecords(records, resolveSourceRoot, pathImpl) {
       mtimeMs: Number(record?.mtimeMs),
       fingerprint:
         typeof record?.fingerprint === "string" ? record.fingerprint : null,
+      ...(record?.targetName !== undefined
+        ? { targetName: normalizeSequenceTargetName(record.targetName) }
+        : {}),
     };
   });
 }
@@ -754,6 +842,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       jobs.push({
         sourcePath: record.sourcePath,
         relativePath: record.relativePath,
+        ...(record.targetName ? { targetName: record.targetName } : {}),
         identity,
         size: Number(mediaStats.size) || 0,
       });
@@ -815,12 +904,14 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           ACCEPTED_COPY_CODES.QUERY_TOO_LARGE
         );
       }
-      const destinationPath = destinationForRelative(
-        plan.destinationRoot,
-        job.relativePath,
-        pathImpl,
-        plan.layout
-      );
+      const destinationPath = plan.layout === "sequence"
+        ? sequenceDestination(plan.destinationRoot, job.targetName, pathImpl)
+        : destinationForRelative(
+          plan.destinationRoot,
+          job.relativePath,
+          pathImpl,
+          plan.layout
+        );
       const destinationKey = platformPathKey(destinationPath, caseInsensitivePaths);
       // Destination case sensitivity may differ from the source volume (for
       // example, a Linux library copied to a case-insensitive removable disk).
@@ -836,7 +927,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         collisionCount += 1;
         boundedPush(
           collisions,
-          sampleCollision(job.relativePath, "in-plan")
+          sampleCollision(job.targetName || job.relativePath, "in-plan")
         );
       } else {
         byDestination.set(destinationKey, { sourceKey, job: completedJob });
@@ -861,7 +952,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             collisionCount += 1;
             boundedPush(
               collisions,
-              sampleCollision(job.relativePath, "exists")
+              sampleCollision(job.targetName || job.relativePath, "exists")
             );
           } catch (error) {
             if (!isMissingError(error)) throw error;
@@ -876,6 +967,22 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       plan.controller.signal
     );
     assertPlanActive(plan, "preflight:destinations-complete");
+
+    if (plan.layout === "sequence") {
+      plan.concatPath = sequenceDestination(
+        plan.destinationRoot,
+        SEQUENCE_CONCAT_FILE_NAME,
+        pathImpl,
+        { allowConcat: true }
+      );
+      try {
+        await fsPromises.lstat(plan.concatPath);
+        collisionCount += 1;
+        boundedPush(collisions, sampleCollision(SEQUENCE_CONCAT_FILE_NAME, "exists"));
+      } catch (error) {
+        if (!isMissingError(error)) throw error;
+      }
+    }
 
     const jobs = deduplicated.filter((job) => !job.invalid);
     const totalBytes = jobs.reduce(
@@ -961,9 +1068,15 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       // may also span roots, or come from a rootless collection with no active
       // root at all, so its source roots are derived from the resolved rows
       // rather than supplied.
-      const instanceIds = normalizeSelectionInstanceIds(request?.instanceIds);
-      const selectionDriven = instanceIds !== null;
-      const rootPath = selectionDriven && !request?.rootPath
+      const sequenceId = normalizeSequenceId(request?.sequenceId);
+      const sequenceDriven = sequenceId !== null;
+      const instanceIds = sequenceDriven
+        ? null
+        : normalizeSelectionInstanceIds(request?.instanceIds);
+      // A sequence is a selection whose rows the caller resolves by position:
+      // no review scope, and roots derived from the rows.
+      const selectionDriven = instanceIds !== null || sequenceDriven;
+      const rootPath = sequenceDriven || (selectionDriven && !request?.rootPath)
         ? null
         : normalizeRootPath(request?.rootPath, pathImpl);
       const scope = selectionDriven
@@ -983,6 +1096,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         directory,
         scope,
         instanceIds,
+        sequenceId,
+        sequenceDriven,
         selectionDriven,
         state: "preparing",
         controller: new AbortController(),
@@ -1045,6 +1160,8 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
           directory,
           scope,
           instanceIds,
+          sequenceId,
+          request,
           limit: ACCEPTED_COPY_MAX_MEDIA + 1,
           maxRecords: ACCEPTED_COPY_MAX_MEDIA,
           maxPathBytes: ACCEPTED_COPY_MAX_PATH_BYTES,
@@ -1061,7 +1178,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         ];
         if (contributing.length === 0) {
           throw new AcceptedCopyError(
-            "None of the selected clips are still available to transfer",
+            sequenceDriven
+              ? "None of this sequence's clips are available to copy"
+              : "None of the selected clips are still available to transfer",
             ACCEPTED_COPY_CODES.PLAN_INVALID
           );
         }
@@ -1138,7 +1257,9 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         );
       }
       plan.destinationRoot = destination.path;
-      plan.layout = normalizeTransferLayout(request?.layout);
+      plan.layout = sequenceDriven
+        ? "sequence"
+        : normalizeTransferLayout(request?.layout);
       plan.destinationIdentity = destination.identity;
       plan.destinationLabel = pathImpl.basename(destination.path) || "Destination";
 
@@ -1221,6 +1342,23 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         (count, job) => count + Number(!job.collision),
         0
       );
+      // A numbered copy with a clip skipped is a different story, and a
+      // concat.txt naming someone else's file would join the wrong clip, so a
+      // sequence copy starts only when every position can be written.
+      let blockedReason = null;
+      if (plan.sequenceDriven) {
+        if (plan.collisionCount > 0) {
+          blockedReason =
+            `${plan.collisionCount.toLocaleString()} of these names already ` +
+            `exist${plan.collisionCount === 1 ? "s" : ""} in ` +
+            `${plan.destinationLabel}. Nothing is overwritten; choose an ` +
+            "empty folder.";
+        } else if (plan.missingCount > 0 || plan.preflightFailureCount > 0) {
+          blockedReason =
+            "Some clips changed on disk or could not be read since they " +
+            "were indexed, so the copy would not be the whole sequence.";
+        }
+      }
       return {
         success: true,
         cancelled: false,
@@ -1235,7 +1373,17 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
         totalFiles:
           plan.jobs.length + plan.preflightFailureCount + plan.missingCount,
         copyableCount,
-        canStart: copyableCount > 0,
+        canStart: copyableCount > 0 && !blockedReason,
+        sequence: plan.sequenceDriven
+          ? {
+            id: plan.sequenceId,
+            concatFileName: SEQUENCE_CONCAT_FILE_NAME,
+            blockedReason,
+            targetNames: plan.jobs
+              .slice(0, ACCEPTED_COPY_MAX_SAMPLES)
+              .map((job) => job.targetName),
+          }
+          : null,
         totalBytes: plan.totalBytes,
         collisionCount: plan.collisionCount,
         collisionSamples: [...plan.collisions],
@@ -1573,7 +1721,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
             if (!repeatedUnsupported) {
               boundedPush(
                 failures,
-                sampleFailure(job.relativePath, error)
+                sampleFailure(job.targetName || job.relativePath, error)
               );
             }
             logger?.warn?.("[copy-accepted] File copy failed", {
@@ -1602,6 +1750,31 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
 
     flushRemovedSources(plan);
 
+    let concatWritten = false;
+    if (
+      plan.sequenceDriven &&
+      !plan.controller.signal.aborted &&
+      failureCount === 0 &&
+      missingCount === 0 &&
+      skippedCollisions === 0 &&
+      copiedMedia === plan.jobs.length
+    ) {
+      try {
+        assertPlanActive(plan, "copy:concat-list");
+        // "wx": never replace a concat.txt that appeared during the copy.
+        await fsPromises.writeFile(
+          plan.concatPath,
+          buildSequenceConcatList(plan.jobs.map((job) => job.targetName)),
+          { encoding: "utf8", flag: "wx" }
+        );
+        concatWritten = true;
+      } catch (error) {
+        if (plan.controller.signal.aborted) throw error;
+        failureCount += 1;
+        boundedPush(failures, sampleFailure(SEQUENCE_CONCAT_FILE_NAME, error));
+      }
+    }
+
     const cancelled = plan.controller.signal.aborted;
     const result = {
       success: !cancelled && failureCount === 0 && missingCount === 0,
@@ -1621,6 +1794,7 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       linkedCount: linking ? copiedMedia : 0,
       linkedMedia: linking ? copiedMedia : 0,
       symlinkUnsupported: Boolean(linkUnsupported),
+      concatWritten,
       bytesCopied,
       skippedCount: skippedCollisions,
       skippedCollisions,
@@ -1742,6 +1916,23 @@ function createReviewCopyAcceptedCoordinator(options = {}) {
       return unavailableResult(
         ACCEPTED_COPY_CODES.PLAN_NOT_FOUND,
         "The Copy Accepted plan is unavailable or expired"
+      );
+    }
+    if (plan.sequenceDriven && transferMode !== "copy") {
+      return unavailableResult(
+        ACCEPTED_COPY_CODES.SEQUENCE_MODE,
+        "A sequence is exported as a numbered copy; its originals stay where they are"
+      );
+    }
+    if (
+      plan.sequenceDriven &&
+      (plan.collisionCount > 0 ||
+        plan.missingCount > 0 ||
+        plan.preflightFailureCount > 0)
+    ) {
+      return unavailableResult(
+        ACCEPTED_COPY_CODES.SEQUENCE_BLOCKED,
+        "This sequence copy cannot start: not every position can be written"
       );
     }
     if (plan.expiresAt <= now()) {
@@ -1893,6 +2084,8 @@ module.exports = {
   ACCEPTED_COPY_PLAN_TTL_MS,
   TRANSFER_MODES,
   AcceptedCopyError,
+  SEQUENCE_CONCAT_FILE_NAME,
+  buildSequenceConcatList,
   createReviewCopyAcceptedCoordinator,
   destinationForRelative,
   isPathInside,

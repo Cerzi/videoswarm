@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { ActionIds } from "../actions/actions";
 import { isEnabledForToolbar } from "../actions/actionPolicies";
 import {
+  ADD_TO_SEQUENCE_KEYS,
   FOLDER_DIRECTION_BY_KEY,
   REVIEW_CLEAR_RATING_KEYS,
   REVIEW_RATING_BY_KEY,
@@ -34,6 +35,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     onNextFolder,
     onOpenHelp,
     onOpenDetails,
+    onAddToSequence,
     enabled = true,
   } = opts;
 
@@ -72,6 +74,19 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         ) {
           e.preventDefault();
           onOpenDetails();
+          return;
+        }
+        if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          !e.repeat &&
+          onAddToSequence &&
+          ADD_TO_SEQUENCE_KEYS.includes(e.key.toLowerCase())
+        ) {
+          e.preventDefault();
+          onAddToSequence(sel);
           return;
         }
         if (e.key === "Enter") {
@@ -199,6 +214,7 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     onNextFolder,
     onOpenHelp,
     onOpenDetails,
+    onAddToSequence,
     enabled,
   ]);
 

@@ -57,6 +57,25 @@ describe("FolderViewStateCache", () => {
     );
   });
 
+  it("resets a saved scroll offset without dropping the rest of the snapshot", () => {
+    const cache = new FolderViewStateCache();
+    cache.set("/root", "runs/a", "current-folder", {
+      scrollTop: 412,
+      selectedIds: ["one"],
+      sortKey: "created",
+    });
+
+    expect(cache.resetScroll("/root", "runs/a", "current-folder")).toBe(true);
+    expect(cache.get("/root", "runs/a", "current-folder")).toMatchObject({
+      scrollTop: 0,
+      selectedIds: ["one"],
+      sortKey: "created",
+    });
+    expect(cache.resetScroll("/root", "runs/missing", "current-folder")).toBe(
+      false
+    );
+  });
+
   it("uses normalized cross-platform keys", () => {
     expect(makeFolderViewKey(" C:\\root ", "a\\b/../c", "invalid")).toBe(
       JSON.stringify(["C:\\root", "a/c", "all-descendants"])

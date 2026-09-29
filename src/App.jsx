@@ -25,6 +25,12 @@ import PreferencesDialog from "./components/preferences/PreferencesDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
+import SequencePanel from "./components/SequencePanel";
+import SequenceRenumberDialog from "./components/sequences/SequenceRenumberDialog";
+import SequenceExportCopyDialog from "./components/sequences/SequenceExportCopyDialog";
+import SequenceExportFileDialog from "./components/sequences/SequenceExportFileDialog";
+import { describeSequenceBlocker } from "./app/sequenceFileActions";
+import { orderSelectedFingerprints } from "./sorting/selectionOrder";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
 import TransferSelectionDialog from "./components/TransferSelectionDialog";
 import {
@@ -71,6 +77,7 @@ import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
+import { useSequences } from "./app/hooks/useSequences";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
@@ -539,6 +546,21 @@ function App() {
     createSavedView,
     deleteSavedView,
   } = useSavedViews();
+
+  // The Sequences panel opens by itself the first time clips are added in a
+  // session, so the result of that first add is visible; after that an add
+  // only reports itself and never pulls the sidebar away from another panel.
+  const sequencePanelShownRef = useRef(false);
+  // The open sequence file action:
+  // { kind: "renumber" | "export-copy" | "export-file", ... }.
+  const [sequenceAction, setSequenceAction] = useState(null);
+  const [sequenceRenderProgress, setSequenceRenderProgress] = useState(null);
+  // Whether ffmpeg can join a sequence into one video; null until asked.
+  const [sequenceRenderAvailability, setSequenceRenderAvailability] =
+    useState(null);
+  const [sequencePlayback, setSequencePlayback] = useState(null);
+  const pendingSequenceOpenRef = useRef(null);
+  const sequences = useSequences({ preferredRootPath: activeRootPath });
 
   const currentDirectory =
     folderLocation.rootPath === activeRootPath
@@ -1214,6 +1236,11 @@ function App() {
     []
   );
 
+  const selectedFingerprintsInSortOrder = useMemo(
+    () => orderSelectedFingerprints(orderedVideos, selection.selected),
+    [orderedVideos, selection.selected]
+  );
+
   const selectedFingerprints = useMemo(() => {
     const set = new Set();
     selectedVideos.forEach((video) => {
@@ -1300,7 +1327,11 @@ function App() {
         previousMetadataSelectionKeyRef.current = metadataSelectionKey;
         setMetadataDismissedSelectionKey(null);
         if (isLibrarySidebarOpen) {
-          setWorkspaceSidebarTab((tab) => (tab === "generation" ? tab : "details"));
+          // Sequences stays in front too: selecting clips to add is how
+          // that panel is used.
+          setWorkspaceSidebarTab((tab) =>
+            tab === "generation" || tab === "sequences" ? tab : "details"
+          );
         }
       }
       return;
@@ -2237,9 +2268,292 @@ function App() {
     return cancel(planId);
   }, []);
 
+  /**
+   * Append clips to the active sequence, creating one if there is none.
+   *
+   * Auto-naming rather than prompting keeps the context menu a single click.
+   * The name is easy to change in the panel, and a wrong name costs nothing.
+   */
+  const handleAddToSequence = useCallback(
+    async (fingerprints) => {
+      const list = (
+        Array.isArray(fingerprints) ? fingerprints : [fingerprints]
+      ).filter(Boolean);
+      if (!list.length) {
+        notify("These clips are not indexed yet", "warning");
+        return;
+      }
+      if (!sequencePanelShownRef.current) {
+        sequencePanelShownRef.current = true;
+        setLibrarySidebarOpen(true);
+        setWorkspaceSidebarTab("sequences");
+      }
+      try {
+        let sequenceId = sequences.activeSequenceId;
+        let sequenceName = sequences.activeSequence?.name || null;
+        if (!sequenceId) {
+          const taken = new Set(
+            sequences.sequences.map((entry) => entry.name.toLowerCase())
+          );
+          let ordinal = sequences.sequences.length + 1;
+          while (taken.has(`sequence ${ordinal}`)) ordinal += 1;
+          const created = await sequences.createSequence(`Sequence ${ordinal}`);
+          sequenceId = created?.id ?? null;
+          sequenceName = created?.name || null;
+        }
+        if (!sequenceId) return;
+        await sequences.appendFingerprints(list, sequenceId);
+        const target = sequenceName ? `“${sequenceName}”` : "the sequence";
+        notify(
+          list.length === 1
+            ? `Added 1 clip to ${target}`
+            : `Added ${list.length} clips to ${target}`,
+          "success"
+        );
+      } catch (error) {
+        notify(error?.message || "Could not add these clips", "error");
+      }
+    },
+    [notify, sequences]
+  );
+
+  /**
+   * Renumber in place (clip-sequences.md, Section 5): ask main for the exact
+   * list of renames, show it, and rename only once it is confirmed.
+   */
+  const handleRenumberSequence = useCallback(async () => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "renumber");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    const prepare = window.electronAPI?.sequences?.renumber?.prepare;
+    if (typeof prepare !== "function") {
+      notify("Renaming files is unavailable", "error");
+      return;
+    }
+    try {
+      const result = await prepare(sequence.id, {
+        preferredRootPath: activeRootPath,
+      });
+      if (result?.success === false) {
+        notify(result.error || "The files could not be checked", "error");
+        return;
+      }
+      setSequenceAction({
+        kind: "renumber",
+        sequenceName: sequence.name,
+        plan: result,
+        applying: false,
+        error: "",
+      });
+    } catch (error) {
+      notify(error?.message || "The files could not be checked", "error");
+    }
+  }, [activeRootPath, notify, sequences.activeSequence]);
+
+  const handleConfirmRenumber = useCallback(
+    async (planId) => {
+      const apply = window.electronAPI?.sequences?.renumber?.apply;
+      if (!planId || typeof apply !== "function") return;
+      setSequenceAction((previous) =>
+        previous?.kind === "renumber"
+          ? { ...previous, applying: true, error: "" }
+          : previous
+      );
+      let result;
+      try {
+        result = await apply(planId);
+      } catch (error) {
+        result = { success: false, error: error?.message };
+      }
+      if (result?.success === false) {
+        // The plan is spent either way; a retry starts from a fresh check.
+        setSequenceAction((previous) =>
+          previous?.kind === "renumber"
+            ? {
+                ...previous,
+                applying: false,
+                plan: { ...previous.plan, planId: null },
+                error:
+                  `${result.error || "The files could not be renamed"} ` +
+                  "Close this and choose Rename originals again to retry.",
+              }
+            : previous
+        );
+        return;
+      }
+      setSequenceAction(null);
+      const count = Number(result?.renamedCount) || 0;
+      notify(
+        count === 1
+          ? "Renamed 1 file to sequence order"
+          : `Renamed ${count.toLocaleString()} files to sequence order`,
+        "success"
+      );
+      sequences.refreshActiveSequence();
+    },
+    [notify, sequences]
+  );
+
+  // Numbered copy (Section 6, tier 1) through the transfer coordinator.
+  const handleExportSequenceCopy = useCallback(() => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "export");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    setAcceptedCopyProgress(null);
+    setSequenceAction({
+      kind: "export-copy",
+      sequenceId: sequence.id,
+      sequenceName: sequence.name,
+      clipCount: sequence.entries.length,
+    });
+  }, [notify, sequences.activeSequence]);
+
+  const handlePrepareSequenceCopy = useCallback(
+    async ({ destinationPath, reusePlanId }) => {
+      const prepare = window.electronAPI?.sequences?.exportCopy?.prepare;
+      const sequenceId = sequenceAction?.sequenceId;
+      if (typeof prepare !== "function" || !sequenceId) {
+        throw new Error("Exporting is unavailable");
+      }
+      setAcceptedCopyProgress(null);
+      return prepare(sequenceId, {
+        preferredRootPath: activeRootPath,
+        destinationPath: typeof destinationPath === "string" ? destinationPath : null,
+        reusePlanId: typeof reusePlanId === "string" ? reusePlanId : null,
+      });
+    },
+    [activeRootPath, sequenceAction?.sequenceId]
+  );
+
+  const handleStartSequenceCopy = useCallback(
+    async (planId) => {
+      const start = window.electronAPI?.review?.copyAccepted?.start;
+      if (typeof start !== "function") throw new Error("Exporting is unavailable");
+      setAcceptedCopyProgress(null);
+      const result = await start(planId, "copy");
+      const copied = Number(result?.copiedCount ?? result?.copiedMedia ?? 0);
+      if (result?.cancelled) {
+        notify(`Copy cancelled after ${copied.toLocaleString()} file(s)`, "info");
+      } else if (result?.success && result?.concatWritten) {
+        notify(
+          `Copied ${copied.toLocaleString()} numbered file(s) and concat.txt`,
+          "success"
+        );
+      } else if (result?.success === false || !result?.concatWritten) {
+        notify(result?.error || "The numbered copy finished with issues", "warning");
+      }
+      return result;
+    },
+    [notify]
+  );
+
+  // One-video export (Section 6, tier 2). ffmpeg is asked for once, the
+  // first time a sequence with clips is on screen, so the Files menu can
+  // say why the export is unavailable instead of failing later.
+  const hasSequenceEntries = Boolean(sequences.activeSequence?.entries?.length);
+  useEffect(() => {
+    if (!hasSequenceEntries || sequenceRenderAvailability) return undefined;
+    const check = window.electronAPI?.sequences?.render?.availability;
+    if (typeof check !== "function") return undefined;
+    let cancelled = false;
+    Promise.resolve(check())
+      .then((state) => {
+        if (!cancelled && state) {
+          setSequenceRenderAvailability({
+            available: Boolean(state.available),
+            reason: state.reason || null,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSequenceEntries, sequenceRenderAvailability]);
+
+  useEffect(() => {
+    const subscribe = window.electronAPI?.sequences?.render?.onProgress;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((progress) => {
+      if (progress && typeof progress === "object") {
+        setSequenceRenderProgress(progress);
+      }
+    });
+  }, []);
+
+  const handleExportSequenceFile = useCallback(() => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "export");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    setSequenceRenderProgress(null);
+    setSequenceAction({
+      kind: "export-file",
+      sequenceId: sequence.id,
+      sequenceName: sequence.name,
+      clipCount: sequence.entries.length,
+    });
+  }, [notify, sequences.activeSequence]);
+
+  const handlePrepareSequenceFile = useCallback(async () => {
+    const prepare = window.electronAPI?.sequences?.render?.prepare;
+    const sequenceId = sequenceAction?.sequenceId;
+    if (typeof prepare !== "function" || !sequenceId) {
+      throw new Error("Exporting is unavailable");
+    }
+    setSequenceRenderProgress(null);
+    return prepare(sequenceId, { preferredRootPath: activeRootPath });
+  }, [activeRootPath, sequenceAction?.sequenceId]);
+
+  const handleStartSequenceFile = useCallback(
+    async (planId) => {
+      const start = window.electronAPI?.sequences?.render?.start;
+      if (typeof start !== "function") throw new Error("Exporting is unavailable");
+      const result = await start(planId);
+      if (result?.success !== false && !result?.cancelled && result?.outputName) {
+        notify(`Exported “${result.outputName}”`, "success");
+      }
+      return result;
+    },
+    [notify]
+  );
+
+  const handleCancelSequenceFile = useCallback(async (planId) => {
+    const cancel = window.electronAPI?.sequences?.render?.cancel;
+    if (typeof cancel === "function") await cancel(planId);
+  }, []);
+
+  // The selection goes in the grid's sort order (clip-sequences.md,
+  // Section 2), whichever way the add is asked for.
+  const handleAddSelectionToSequence = useCallback(
+    () => handleAddToSequence(selectedFingerprintsInSortOrder),
+    [handleAddToSequence, selectedFingerprintsInSortOrder]
+  );
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
+      if (actionId === "sequence:add") {
+        // A multi-clip selection keeps sort order rather than click order;
+        // one clip is the clip that was right-clicked.
+        handleAddToSequence(
+          selection.size > 1
+            ? selectedFingerprintsInSortOrder
+            : contextMetadataFingerprints
+        );
+        return;
+      }
       if (actionId === "metadata:open") {
         const contextId = contextMenu.contextId;
         const useContextTarget =
@@ -2312,6 +2626,8 @@ function App() {
       openMetadataPanel,
       metadataAnchorId,
       contextMetadataFingerprints,
+      handleAddToSequence,
+      selectedFingerprintsInSortOrder,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
       reviewModeEnabled,
@@ -2324,11 +2640,28 @@ function App() {
     ]
   );
 
+  const sequencePlaybackVideos = useMemo(
+    () =>
+      (sequences.activeSequence?.entries || [])
+        .map((entry) => entry.video)
+        .filter(Boolean),
+    [sequences.activeSequence]
+  );
+  const isSequenceSession = Boolean(sequencePlayback);
+
   // Fullscreen is a bounded controller over the complete visual order. The
   // modal owns its media element separately from the virtualized grid.
+  //
+  // A sequence session swaps the controller's inputs rather than adding a
+  // second controller: it is one more ordered array with its own owner key, the
+  // same shape a rootless tag collection already takes. Replacing the owner key
+  // is a session boundary, so an open grid session is torn down properly rather
+  // than silently adopting a different collection.
   const fullscreenController = useFullScreenModal({
-    collectionOwnerKey: fullscreenCollectionOwnerKey,
-    orderedVideos,
+    collectionOwnerKey: isSequenceSession
+      ? `sequence:${sequencePlayback.sequenceId}`
+      : fullscreenCollectionOwnerKey,
+    orderedVideos: isSequenceSession ? sequencePlaybackVideos : orderedVideos,
   });
   const fullscreenGenerationVersions = useMemo(
     () => ({
@@ -2958,7 +3291,10 @@ function App() {
     !fullScreenVideo &&
     !contextMenu.visible &&
     !isFiltersOpen &&
-    !isProcessResultsOpen;
+    !isProcessResultsOpen &&
+    // A sequence rename or export is open: Delete must not trash clips
+    // behind it, even if focus has left the dialog.
+    !sequenceAction;
 
   useHotkeys(runForHotkeys, () => selection.selected, {
     enabled: appHotkeysEnabled,
@@ -2978,6 +3314,7 @@ function App() {
         ? () => handleNextFolder(siblingFolders.next)
         : null,
     onOpenDetails: () => openMetadataPanel(),
+    onAddToSequence: () => handleAddSelectionToSequence(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
   });
 
@@ -3001,13 +3338,22 @@ function App() {
         const authorizedRootPath = authorization?.rootPath || rootPath;
         captureFolderViewState();
         const saved = folderViewStateRef.current.getLocation(authorizedRootPath);
+        const savedDirectory = saved?.directory || "";
+        const savedScope = saved?.scope || FolderScope.ALL_DESCENDANTS;
+        // Opening a root from the library or recent list always starts at the
+        // top; only in-root folder navigation restores a scroll offset.
+        folderViewStateRef.current.resetScroll(
+          authorizedRootPath,
+          savedDirectory,
+          savedScope
+        );
         setFolderLocation({
           rootPath: authorizedRootPath,
-          directory: saved?.directory || "",
-          scope: saved?.scope || FolderScope.ALL_DESCENDANTS,
+          directory: savedDirectory,
+          scope: savedScope,
         });
         setExpandedFolderPaths((previous) =>
-          expandFolderAncestors(previous, saved?.directory || "")
+          expandFolderAncestors(previous, savedDirectory)
         );
         restoredFolderViewKeyRef.current = null;
         await handleElectronFolderSelection(authorizedRootPath);
@@ -3257,8 +3603,46 @@ function App() {
     });
   }, []);
 
+  /**
+   * Start a sequence session in the loupe.
+   *
+   * The open is deferred to an effect because the controller for the sequence
+   * order does not exist until the session state has rendered; opening inline
+   * would ask the grid's controller for a clip it does not have.
+   */
+  const handlePlaySequence = useCallback(
+    (entry = null) => {
+      const sequence = sequences.activeSequence;
+      if (!sequence) return;
+      const playable = sequence.entries
+        .map((item) => item.video)
+        .filter(Boolean);
+      if (!playable.length) {
+        notify("This sequence has no playable clips", "warning");
+        return;
+      }
+      if (sequence.missingCount > 0) {
+        notify(
+          `Playing ${playable.length} of ${sequence.entries.length} clips; ${sequence.missingCount} are missing`,
+          "warning"
+        );
+      }
+      pendingSequenceOpenRef.current = entry?.video || playable[0];
+      setSequencePlayback({ sequenceId: sequence.id, name: sequence.name });
+    },
+    [notify, sequences.activeSequence]
+  );
+
+  useEffect(() => {
+    if (!sequencePlayback) return;
+    const target = pendingSequenceOpenRef.current;
+    pendingSequenceOpenRef.current = null;
+    if (target) openFullScreen(target);
+  }, [openFullScreen, sequencePlayback]);
+
   const handleCloseFullScreen = useCallback(() => {
     cancelFullScreenFocus();
+    setSequencePlayback(null);
     const controller = fullScreenControllerRef.current;
     const current = controller?.currentVideo || null;
     const currentIndex = controller?.currentViewIndex ?? -1;
@@ -4798,6 +5182,36 @@ function App() {
             acceptedCopyProgress={acceptedCopyProgress}
             trashProgress={trashProgress}
           />
+          <SequenceRenumberDialog
+            open={sequenceAction?.kind === "renumber"}
+            sequenceName={sequenceAction?.sequenceName}
+            plan={sequenceAction?.kind === "renumber" ? sequenceAction.plan : null}
+            applying={Boolean(sequenceAction?.applying)}
+            error={sequenceAction?.error || ""}
+            onConfirm={handleConfirmRenumber}
+            onClose={() => setSequenceAction(null)}
+          />
+          <SequenceExportCopyDialog
+            open={sequenceAction?.kind === "export-copy"}
+            sequenceName={sequenceAction?.sequenceName}
+            clipCount={sequenceAction?.clipCount || 0}
+            onPrepare={handlePrepareSequenceCopy}
+            onStart={handleStartSequenceCopy}
+            onCancel={handleCancelAcceptedCopy}
+            onListDestinations={handleListTransferDestinations}
+            progress={acceptedCopyProgress}
+            onClose={() => setSequenceAction(null)}
+          />
+          <SequenceExportFileDialog
+            open={sequenceAction?.kind === "export-file"}
+            sequenceName={sequenceAction?.sequenceName}
+            clipCount={sequenceAction?.clipCount || 0}
+            onPrepare={handlePrepareSequenceFile}
+            onStart={handleStartSequenceFile}
+            onCancel={handleCancelSequenceFile}
+            progress={sequenceRenderProgress}
+            onClose={() => setSequenceAction(null)}
+          />
           <TransferSelectionDialog
             open={transferDialogOpen}
             videos={transferSelection}
@@ -5067,6 +5481,7 @@ function App() {
                           generationVersions={gridGenerationVersions}
                           onFocusSelection={focusSelection}
                           onTransferSelection={handleRequestTransfer}
+                          onAddToSequence={handleAddSelectionToSequence}
                           onUndock={handleUndockMetadataPanel}
                         />
                       ) : null,
@@ -5076,6 +5491,35 @@ function App() {
                           generationMetadataState={generationMetadataState}
                         />
                       ) : null,
+                      sequenceEntryCount:
+                        sequences.activeSequence?.entries?.length || 0,
+                      sequencesContent: (
+                        <SequencePanel
+                          sequences={sequences.sequences}
+                          activeSequence={sequences.activeSequence}
+                          activeSequenceId={sequences.activeSequenceId}
+                          error={sequences.error}
+                          selectedCount={selection.size}
+                          onSelectSequence={sequences.selectSequence}
+                          onCreateSequence={sequences.createSequence}
+                          onRenameSequence={sequences.renameSequence}
+                          onDeleteSequence={sequences.deleteSequence}
+                          onAddSelection={handleAddSelectionToSequence}
+                          onRemoveEntries={sequences.removeEntries}
+                          onMoveEntry={sequences.moveEntry}
+                          onPlaySequence={handlePlaySequence}
+                          onExportCopy={handleExportSequenceCopy}
+                          onExportFile={handleExportSequenceFile}
+                          exportFileUnavailableReason={
+                            sequenceRenderAvailability &&
+                            !sequenceRenderAvailability.available
+                              ? sequenceRenderAvailability.reason ||
+                                "FFmpeg is not available"
+                              : null
+                          }
+                          onRenumber={handleRenumberSequence}
+                        />
+                      ),
                     })}
                   />
                 )}
@@ -5222,6 +5666,7 @@ function App() {
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
                 onTransferSelection={handleRequestTransfer}
+                onAddToSequence={handleAddSelectionToSequence}
                 onDock={activeRootPath ? handleDockMetadataPanel : undefined}
                 />
               ) : null}
@@ -5237,9 +5682,14 @@ function App() {
               showFilenames={showFilenames}
               mediaScheduler={mediaScheduler}
               workSuspended={workSuspended}
-              collectionOwnerKey={fullscreenCollectionOwnerKey}
+              collectionOwnerKey={
+                isSequenceSession
+                  ? `sequence:${sequencePlayback.sequenceId}`
+                  : fullscreenCollectionOwnerKey
+              }
               canNavigatePrevious={fullscreenController.hasPrevious}
               canNavigateNext={fullscreenController.hasNext}
+              advanceOnEnd={isSequenceSession}
               positionLabel={fullscreenPositionLabel}
               dialogLabel={fullScreenVideo.name || "Fullscreen"}
               headerContent={
