@@ -16,7 +16,7 @@ import TopBar from "./components/TopBar";
 import FiltersPopover from "./components/FiltersPopover";
 import LibrarySidebar from "./components/LibrarySidebar";
 import WorkspaceSidebar, { buildWorkspacePanels } from "./components/WorkspaceSidebar";
-import DockedMetadataInspector from "./components/DockedMetadataInspector";
+import DockedMetadataInspector, { DockedGenerationPanel } from "./components/DockedMetadataInspector";
 import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
@@ -1289,7 +1289,8 @@ function App() {
 
     // Docked Details follows the selection the way the floating panel does:
     // a new selection brings its tab forward unless the user went back to
-    // the Library for this one. A hidden sidebar stays hidden.
+    // the Library for this one. Generation, the other clip panel, stays put,
+    // so prompts can be read clip after clip. A hidden sidebar stays hidden.
     if (metadataInspectorMode === "docked") {
       setMetadataPanelOpen(false);
       if (
@@ -1298,7 +1299,9 @@ function App() {
       ) {
         previousMetadataSelectionKeyRef.current = metadataSelectionKey;
         setMetadataDismissedSelectionKey(null);
-        if (isLibrarySidebarOpen) setWorkspaceSidebarTab("details");
+        if (isLibrarySidebarOpen) {
+          setWorkspaceSidebarTab((tab) => (tab === "generation" ? tab : "details"));
+        }
       }
       return;
     }
@@ -2364,16 +2367,18 @@ function App() {
 
   const selectedGenerationInstanceId =
     selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
-  const metadataInspectorVisible =
+  // Reading a clip's embedded graph costs a file read, so it runs only while
+  // the generation details are on screen: the Generation panel when Details
+  // is docked, or the expanded section at the foot of floating Details.
+  const generationDetailsVisible =
     metadataInspectorMode === "floating"
-      ? isMetadataPanelOpen
-      : isLibrarySidebarOpen && workspaceSidebarTab === "details";
+      ? isMetadataPanelOpen && metadataGenerationExpanded
+      : isLibrarySidebarOpen && workspaceSidebarTab === "generation";
   const generationMetadata = useGenerationMetadata({
     instanceId: selectedGenerationInstanceId,
     enabled: Boolean(
       !fullScreenVideo &&
-        metadataInspectorVisible &&
-        metadataGenerationExpanded &&
+        generationDetailsVisible &&
         selectedGenerationInstanceId
     ),
   });
@@ -5059,13 +5064,16 @@ function App() {
                           onClearRating={() => reviewWorkflow.applyRating(null)}
                           onSetReviewState={reviewWorkflow.applyReviewState}
                           reviewModeEnabled={reviewModeEnabled}
-                          generationMetadataState={generationMetadataState}
-                          generationExpanded={metadataGenerationExpanded}
-                          onGenerationExpandedChange={setMetadataGenerationExpanded}
                           generationVersions={gridGenerationVersions}
                           onFocusSelection={focusSelection}
                           onTransferSelection={handleRequestTransfer}
                           onUndock={handleUndockMetadataPanel}
+                        />
+                      ) : null,
+                      generationContent: selection.size === 1 ? (
+                        <DockedGenerationPanel
+                          filename={selectedVideos[0]?.name}
+                          generationMetadataState={generationMetadataState}
                         />
                       ) : null,
                     })}

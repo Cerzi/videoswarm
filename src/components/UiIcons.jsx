@@ -165,3 +165,12 @@ export function DetailsIcon(props) {
     </Icon>
   );
 }
+
+export function GenerationIcon(props) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8Z" />
+      <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8Z" />
+    </Icon>
+  );
+}

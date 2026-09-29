@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen, act, waitFor } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
 import { ActionIds } from "./hooks/actions/actions";
 
 const selectionMock = {
@@ -1314,6 +1314,14 @@ describe("App hook composition", () => {
     // Its rail icon brings it back.
     fireEvent.click(detailsTab());
     expect(screen.getByRole("tabpanel", { name: /Details/ })).toBeVisible();
+
+    // Reading Generation, the next clip keeps Generation in front.
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    select("follow-b");
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Generation" })).toHaveAttribute("aria-selected", "true")
+    );
+    expect(detailsTab()).toHaveAttribute("aria-selected", "false");
   });
 
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
@@ -1365,24 +1373,21 @@ describe("App hook composition", () => {
       "aria-selected",
       "true"
     );
-    expect(screen.getByRole("region", { name: "Docked selection details" }))
-      .toHaveTextContent("dock.mp4");
-    expect(useGenerationMetadataMock.mock.calls
+    const generationCall = () => useGenerationMetadataMock.mock.calls
       .filter(([options]) => options.instanceId === 91)
-      .at(-1)?.[0]).toMatchObject({
-      instanceId: 91,
-      enabled: true,
-    });
+      .at(-1)?.[0];
+    // Docked Details keeps review and tags in view; the generation readout
+    // has its own panel and is read only while that panel shows.
+    const dockedDetails = screen.getByRole("region", { name: "Docked selection details" });
+    expect(dockedDetails).toHaveTextContent("dock.mp4");
+    expect(within(dockedDetails).queryByText("Generation")).toBeNull();
+    expect(generationCall()).toMatchObject({ instanceId: 91, enabled: false });
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Collapse Generation details",
-    }));
-    expect(useGenerationMetadataMock.mock.calls
-      .filter(([options]) => options.instanceId === 91)
-      .at(-1)?.[0]).toMatchObject({ enabled: false });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Expand Generation details",
-    }));
+    fireEvent.click(screen.getByRole("tab", { name: "Generation" }));
+    expect(screen.getByRole("region", { name: "Docked generation details" }))
+      .toHaveTextContent("dock.mp4");
+    expect(screen.queryByRole("button", { name: /Collapse Generation details/ })).toBeNull();
+    expect(generationCall()).toMatchObject({ instanceId: 91, enabled: true });
 
     fireEvent.click(screen.getByRole("tab", { name: "Library" }));
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute(
