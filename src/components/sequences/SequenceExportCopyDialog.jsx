@@ -204,8 +204,8 @@ export default function SequenceExportCopyDialog({
               disabled={!plan.canStart}
               onClick={() => transfer.start("copy")}
             >
-              Copy {plan.copyableCount.toLocaleString()} file
-              {plan.copyableCount === 1 ? "" : "s"}
+              Copy {plan.mediaCount.toLocaleString()} file
+              {plan.mediaCount === 1 ? "" : "s"}
             </button>
           </div>
         </div>
