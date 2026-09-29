@@ -827,6 +827,30 @@ describe("FullScreenModal media ownership", () => {
       expect(screen.getByText("Frame copied")).toBeInTheDocument();
     });
 
+    it("leaves Ctrl+C, ⌘C and Alt chords to the system instead of copying a frame", async () => {
+      const onCopyFrame = vi.fn().mockResolvedValue(true);
+      render(
+        <FullScreenModal
+          video={frameVideo}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+          onCopyFrame={onCopyFrame}
+        />
+      );
+      const element = document.body.querySelector("video");
+      installFakeTimeline(element);
+      act(() => fireEvent.loadedMetadata(element));
+
+      for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+        const event = new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true, ...modifier });
+        await act(async () => {
+          document.dispatchEvent(event);
+        });
+        expect(event.defaultPrevented).toBe(false);
+      }
+      expect(onCopyFrame).not.toHaveBeenCalled();
+    });
+
     it("reports a failed copy without claiming success", async () => {
       const onCopyFrame = vi.fn().mockResolvedValue({ success: false });
       render(

@@ -29,6 +29,25 @@ describe('useHotkeys', () => {
     expect(run).toHaveBeenCalledWith(ActionIds.COPY_PATH, new Set(['x']));
   });
 
+  test('Ctrl/Cmd + C copies highlighted text instead of the selection path', () => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = 'a cinematic prompt';
+    document.body.append(paragraph);
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+
+    renderHook(() => useHotkeys(run, getSelection));
+    const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(run).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+
+    window.getSelection().removeAllRanges();
+    paragraph.remove();
+  });
+
   test('Delete triggers MOVE_TO_TRASH (multi allowed)', () => {
     renderHook(() => useHotkeys(run, getSelection));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));

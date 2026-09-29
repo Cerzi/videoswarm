@@ -13,6 +13,11 @@ import { ZOOM_LEVEL_STEP } from "../../zoom/config";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
 
+const hasTextSelection = () => {
+  const text = typeof window !== "undefined" ? window.getSelection?.()?.toString() : "";
+  return Boolean(text && text.trim());
+};
+
 export default function useHotkeys(run, getSelection, opts = {}) {
   const {
     getZoomIndex,
@@ -76,6 +81,8 @@ export default function useHotkeys(run, getSelection, opts = {}) {
           return;
         }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+          // Highlighted text, such as a prompt in Details, copies as text.
+          if (hasTextSelection()) return;
           e.preventDefault();
           run(ActionIds.COPY_PATH, sel);
           return;

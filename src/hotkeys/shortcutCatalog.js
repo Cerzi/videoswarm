@@ -320,6 +320,12 @@ export const FULLSCREEN_SHORTCUT_BY_KEY = Object.freeze(
   Object.fromEntries(fullscreenBindings)
 );
 
+// Fullscreen and grid shortcuts are single keys. Ctrl, ⌘ or Alt held means a
+// system chord (Ctrl+C copies highlighted text), never the plain key's
+// command: Ctrl+C is not "copy frame" and Ctrl+A is not Accept.
+export const hasCommandModifier = (event) =>
+  Boolean(event?.ctrlKey || event?.metaKey || event?.altKey);
+
 export const resolveFullscreenShortcut = (keyOrEvent) => {
   const key = normalizeFullscreenKey(keyOrEvent);
   return key ? FULLSCREEN_SHORTCUT_BY_KEY[key] || null : null;
