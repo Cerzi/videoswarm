@@ -3291,7 +3291,10 @@ function App() {
     !fullScreenVideo &&
     !contextMenu.visible &&
     !isFiltersOpen &&
-    !isProcessResultsOpen;
+    !isProcessResultsOpen &&
+    // A sequence rename or export is open: Delete must not trash clips
+    // behind it, even if focus has left the dialog.
+    !sequenceAction;
 
   useHotkeys(runForHotkeys, () => selection.selected, {
     enabled: appHotkeysEnabled,

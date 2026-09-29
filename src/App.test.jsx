@@ -1474,6 +1474,95 @@ describe("App hook composition", () => {
     );
   });
 
+  test("renames originals only after the listed renames are confirmed, with grid hotkeys off meanwhile", async () => {
+    const videos = ["ren-a", "ren-b"].map((id, index) => ({
+      id: `/ren-root/${id}.mp4`,
+      instanceId: 400 + index,
+      name: `${id}.mp4`,
+      fingerprint: `fingerprint-${id}`,
+      reviewState: "unreviewed",
+      tags: [],
+    }));
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/ren-root",
+      libraryRoot: { rootPath: "/ren-root", name: "ren-root", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "ren-root" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    const snapshot = {
+      id: 9,
+      name: "Act one",
+      entryCount: 2,
+      updatedAt: 5,
+      entries: videos.map((video, index) => ({
+        id: index + 1,
+        position: index,
+        fingerprint: video.fingerprint,
+        video,
+      })),
+      missingCount: 0,
+    };
+    const sequenceApi = {
+      list: vi.fn().mockResolvedValue({
+        success: true,
+        sequences: [{ id: 9, name: "Act one", entryCount: 2, updatedAt: 5 }],
+      }),
+      snapshot: vi.fn().mockResolvedValue({ success: true, sequence: snapshot }),
+      renumber: {
+        prepare: vi.fn().mockResolvedValue({
+          success: true,
+          planId: "renumber-plan-1",
+          total: 2,
+          unchangedCount: 0,
+          renames: [
+            { position: 1, directory: "/ren-root", fromName: "ren-a.mp4", toName: "010_ren-a.mp4" },
+            { position: 2, directory: "/ren-root", fromName: "ren-b.mp4", toName: "020_ren-b.mp4" },
+          ],
+        }),
+        apply: vi.fn().mockResolvedValue({ success: true, renamedCount: 2 }),
+      },
+      render: {
+        availability: vi.fn().mockResolvedValue({ success: true, available: true }),
+      },
+    };
+    window.electronAPI = { saveSettingsPartial: vi.fn(), sequences: sequenceApi };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: /^Sequences/ }));
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem").map((item) => item.getAttribute("aria-label")))
+        .toEqual(expect.arrayContaining(["1. ren-a.mp4", "2. ren-b.mp4"]))
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Sequence file actions" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Rename originals to this order…" }));
+    });
+    expect(sequenceApi.renumber.prepare).toHaveBeenCalledWith(9, {
+      preferredRootPath: "/ren-root",
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Rename originals to this order" });
+    expect(dialog).toHaveTextContent("010_ren-a.mp4");
+    expect(sequenceApi.renumber.apply).not.toHaveBeenCalled();
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2].enabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rename 2 files" }));
+    });
+    expect(sequenceApi.renumber.apply).toHaveBeenCalledWith("renumber-plan-1");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Rename originals to this order" })).toBeNull()
+    );
+    expect(useHotkeysMock.mock.calls.at(-1)?.[2].enabled).toBe(true);
+  });
+
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
     const video = {
       id: "dock-video",
