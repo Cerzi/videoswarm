@@ -9,7 +9,10 @@ const basename = (value) => {
 };
 
 /**
- * One clip in the list.
+ * One clip in the list. A thumbnail column appears only when the caller has
+ * images to give: grid thumbnails exist only for clips that were hovered or
+ * dragged, and decoding a frame per entry would cost the decoder budget the
+ * grid depends on, so none is supplied yet.
  *
  * These are deliberately plain DOM. Grid cards hand their drag to Electron's
  * native startDrag so clips can be dropped into other applications, and that
@@ -23,6 +26,7 @@ function SequenceEntry({
   index,
   count,
   thumbnail,
+  showThumbnail = false,
   isDragging,
   isDropTarget,
   onDragStart,
@@ -77,15 +81,11 @@ function SequenceEntry({
       aria-label={`${index + 1}. ${name}`}
     >
       <span className="sequence-panel__ordinal">{index + 1}</span>
-      <span className="sequence-panel__thumb" aria-hidden="true">
-        {thumbnail ? (
-          <img src={thumbnail} alt="" draggable={false} />
-        ) : (
-          <span className="sequence-panel__thumb-placeholder">
-            {missing ? "?" : ""}
-          </span>
-        )}
-      </span>
+      {showThumbnail && (
+        <span className="sequence-panel__thumb" aria-hidden="true">
+          {thumbnail ? <img src={thumbnail} alt="" draggable={false} /> : null}
+        </span>
+      )}
       <span className="sequence-panel__name" title={entry.video?.id || ""}>
         {name}
       </span>
@@ -410,6 +410,7 @@ export default function SequencePanel({
               index={index}
               count={entries.length}
               thumbnail={thumbnails?.[entry.id] || null}
+              showThumbnail={Boolean(thumbnails)}
               isDragging={draggingIndex === index}
               isDropTarget={dropIndex === index && draggingIndex !== index}
               onDragStart={handleDragStart}
