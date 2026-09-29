@@ -1,6 +1,6 @@
 # Outstanding Work
 
-Last updated: 2026-09-28
+Last updated: 2026-09-29
 
 Written at a machine change, so it is a handover rather than a roadmap: what is
 genuinely unfinished, what is finished but unverified by a human, and where the
@@ -56,22 +56,35 @@ them and lost nothing the previous parser found. A MiniMax prompt is still
 shown as its composer's fields (candidate fragments, Partial), because the
 composer builds the final text at run time.
 
-## 1c. Re-rendering inside Video Swarm: Phases 1–2 done, 3–4 open
+## 1c. Re-rendering inside Video Swarm: engine safety built, interface open
 
-Status: **Accepted**; Phases 1 and 2 **Implemented** (2026-09-28), Phases 3
-and 4 **Unimplemented** — see
+Status: **Accepted**; Phases 1 and 2 **Implemented** (2026-09-28); the
+"never silently wrong" safety net **Implemented** (2026-09-29); the interface
+(Phase 3), two-pass rendering (Phase 4) and the detached engine
+**Unimplemented** — see
 [`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md)
 
-Recipes learned from two or more draft/final pairs replace the standalone
-app's per-workflow code. The user decided the three open questions: a
-loopback-only, opt-in ComfyUI connection; the engine in Video Swarm's main
-process with a tray icon while a queue runs; single-pass only for version 1.
-Phase 1, the learner, matcher and apply as pure modules
-(`main/comfy-recipe.js`), reproduces real Omni and long-form finals from
-held-out drafts. Phase 2 adds the connection, checks, queue and runner in the
-main process with its IPC, but no interface yet. Next is Phase 3, the
-interface (see 5b first), then Phase 4: out-of-memory retries, RAM and time
-estimates, two-pass rendering.
+- **Phases 1 and 2.** The recipe learner, matcher and apply are pure modules
+  (`main/comfy-recipe.js`) and reproduce real Omni and long-form finals from
+  held-out drafts. The connection, checks, queue and runner run in the main
+  process with their IPC. Decided by the user: a loopback-only, opt-in
+  ComfyUI connection, a tray icon while a queue runs, single-pass only for
+  version 1.
+- **Safety net (Section 10).** `main/comfy-safety.js` walks downstream from
+  every input a recipe changes and holds the clip when the change reaches an
+  unknown node carrying literal data. That is how the V2V hybrid's SAM3
+  clicks are caught. It also flags save nodes other than `SaveVideo`, nodes
+  that write files, continuation runs and missing inputs. Each clip is sorted
+  into *declared*, *known* or *review*. The runner never sends a held clip;
+  `comfy:queue:confirm` records a person's confirmation of a hold that can be
+  confirmed.
+- **Waiting for the user:** five questions about how strict the net is
+  (Section 7 below), and the go-ahead for the detached engine (Section 9 of
+  the architecture doc).
+- **Next:** the interface: Queue and Finished panels on the sidebar's
+  activity rail, the recipe screen, "Queue with recipe…" and badges. Then
+  Phase 4: out-of-memory retries, RAM and time estimates, two-pass rendering.
+  Both may land in the detached engine rather than the main process.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 
@@ -106,149 +119,209 @@ no resume point because resume points belong to a folder; Process results is
 disabled with a reason. Previously the toolbar was hidden entirely there.
 `library-tag-views.md` Section 3 describes it.
 
-## 4. Unverified by a human
+## 4. Unverified by a human: the rc.6 checklist
 
-Everything below ships in `0.6.0-rc.5` and is built and tested, but nobody has
-confirmed it feels right. **This is the reason rc.5 exists rather than a stable
-`v0.6.0`:** every one of these was exercised by a human for the first time in
-the days before the release, and every one of them had a defect that a
-1,165-test suite had passed. Treat rc.5 as the first genuine soak of this
-feature set.
+`0.6.0-rc.6` (the version on `main`, built locally, not yet tagged) carries
+the UX redesign and the features finished since rc.5. All of it passes
+`npm run verify`: lint, unit tests, the Electron-ABI suites, the build and
+the Electron smoke specs. **None of it has been used by a person.** Every
+feature in rc.5 had a defect that the automated suite passed, so treat rc.6
+as a soak before `v0.6.0`.
 
-- **Transfer affordances.** Copy is the filled primary, Move is outlined amber
-  until hover, and the layout toggle fills the option actually selected. The
-  colouring was reported as inverted twice, so this deserves a look rather than
-  an assumption.
-- **The clear-filter control.** An × inside the filters button, shown on hover
-  and focus only. Discoverability is untested; it may be too hidden at rest.
-- **Requiring a tag before a library search.** The scope control is disabled
-  until an include tag is selected. Reasonable on a 24k-clip profile, possibly
-  annoying on a small one.
-- **Library smart views** (after rc.5). A view saved during a library
-  search is marked ◇ *Library* in the sidebar and can be applied from the
-  home screen. Check the marker is clear and the badge fits narrow sidebars.
-- **The review toolbar in a library view** (after rc.5). It used to be hidden
-  there; it now shows, with a line explaining there is no resume point. Check
-  it reads as helpful rather than as clutter.
-- **Generation versions and Link** (after rc.5). Driven headless in the real
-  app on copies of real clips, not yet used by a person: whether the badge
-  earns its place on every card, whether *Best version* is the right name for
-  "no higher-resolution version exists", and whether **Transfer** is findable
-  as the new name of the Move/Copy button.
+Things to try, and what to judge:
+
+- **The top bar.**
+  - Open a folder from **Open**, then use ‹ › and the breadcrumb.
+  - Narrow the window: zoom, sort, scope and Include subfolders should fold
+    into **⋯** and come back when it widens.
+  - Is anything you use daily now a click too far?
+- **View and ⋯.** Is the split between display settings (View) and app
+  things (⋯) where you would look?
+- **The status line.** Is it enough to show just the clip count and sort?
+  View › Playback details brings back the decoder figures.
+- **Preferences** (Ctrl+,): playback, profiles, data location and the
+  ComfyUI connection. Try switching and creating a profile.
+- **The sidebar's activity rail: Library, Details, Generation, Sequences.**
+  - Clicking the open icon collapses the sidebar.
+  - Details comes forward when you select a clip. Generation stays in
+    front while you step through clips reading prompts.
+  - Is four icons comfortable?
+- **Details.** Review, rating and tags come first, then versions and file
+  facts. Try **Copy** on the prompts, and highlighting a prompt then
+  pressing Ctrl+C.
+- **Ctrl chords.** In fullscreen, Ctrl+C, Ctrl+A, Ctrl+S and Ctrl+D no
+  longer act as C, A, S and D.
+- **The review bar.** It stays one row and folds into its own ⋯. At your
+  usual window size, is anything you rely on folded away?
+- **Opening folders.** New folders open at the top, including with
+  subfolders, Name ↓ or Random.
+- **Clip sequences.**
+  - Add clips with **B**, the context menu or **+ Sequence**.
+  - Reorder by drag or Alt+↑/↓, then Play.
+  - Try the three exports under **Files**: numbered copy, one video, and
+    renaming the originals. Rename on copies of real clips first.
+
+Still unconfirmed from rc.5:
+
+- **Transfer affordances.** Copy is the filled primary, Move is outlined
+  amber until hover, and the layout toggle fills the option actually
+  selected. The colouring was reported as inverted twice, so this deserves
+  a look rather than an assumption.
+- **The clear-filter control.** An × inside the filters button, shown on
+  hover and focus only; it may be too hidden at rest.
+- **Requiring a tag before a library search.** Reasonable on a 24k-clip
+  profile, possibly annoying on a small one.
+- **Library smart views.** Marked ◇ *Library*; check the marker is clear and
+  the badge fits a narrow sidebar.
+- **Generation versions and Link.** Whether the badge earns its place on
+  every card, and whether *Best version* is the right name.
 
 ## 5. Smaller known gaps
 
-Fixed on 2026-09-28: the dead `dateModifiedFormatted` field is no longer
-built for every scanned record, and lint and Vitest now ignore `.claude/**`,
-so running the gate from the repository root no longer walks into agent
-worktrees' built bundles.
+Fixed on 2026-09-29: the Playwright transfer-affordance specs have now run
+here, including the Link checks, and `npm run verify` runs the whole gate
+(lint, unit tests, Electron-ABI suites, build and Electron smoke specs) in
+one command. CI already ran the smoke specs on every push to `main`.
 
-- **The Playwright CSS spec now covers Link but has not run with it.** The
-  transfer-affordance spec needs Playwright's own Chromium, which was not
-  installed on the machine that added the Link button; the same checks were
-  run inside Electron instead.
-- **The Playwright suite is not in the standard gate.** `npm test`,
-  `test:electron-abi`, lint, `node --check` and `vite build` are what runs
-  routinely. `test:electron-smoke` — which now includes the transfer-affordance
-  CSS checks — has to be run deliberately, so a cascade regression would not be
-  caught by the usual gate.
-- **jsdom cannot verify CSS.** It does not implement specificity. Asked about
-  the inverted layout toggle it reported the unselected pill as correctly
-  unstyled while a real browser painted it solid green. Any assertion about what
-  a control actually looks like belongs in the Playwright suite.
-- **`v0.6.0` is not cut yet, deliberately.** rc.5 carries 21 commits of
-  user-facing work that was never in any earlier release candidate, including
-  the content-identity change. Promote to stable only after rc.5 has been used
-  in earnest — see Section 4 for why.
+- **jsdom cannot verify CSS.** It does not implement specificity: asked
+  about the inverted layout toggle, it reported the unselected pill as
+  correctly unstyled while a real browser painted it solid green. The review
+  bar's 16 px buttons (fixed on 2026-09-29) were the same class of bug. Any
+  assertion about what a control actually looks like belongs in the
+  Playwright suite.
+- **`v0.6.0` is not cut yet, deliberately.** Promote to stable only after
+  rc.6 has been used in earnest; see Section 4.
+- **Releasing rc.6** is the user's step: update the rc.5 links in
+  `README.md`, `.github/ISSUE_TEMPLATE/config.yml` and
+  `.github/ISSUE_TEMPLATE/bug_report.yml`, push the `v0.6.0-rc.6` tag, then
+  inspect and publish the draft release the workflow creates.
 
-## 5a. Clip sequences are rebased, not finished
+## 5a. Clip sequences
 
-Status: **Rebased** (2026-09-28); the feature is **Partially implemented**
+Status: **Implemented** (2026-09-29), merged into `main` — see
+[`architecture/clip-sequences.md`](architecture/clip-sequences.md)
 
-The unfinished clip-sequences work (`docs/architecture/clip-sequences.md`,
-`SequencePanel`, `main/sequence-view.js`, `useSequences`, `selectionOrder`;
-last active 2026-09-01) now sits on **`claude/clip-sequences`**, replayed
-onto current `main`. Only the Electron-ABI suite list conflicted. On that
-branch the full suite, lint, the build, the Electron-ABI suites (including
-the 15 sequence-store and 6 sequence-view tests) and the Electron smoke
-specs pass. `wip/clip-sequences` (`02106f2`) is kept unchanged as the
-original; it exists on this machine only.
+Sequences are a panel on the activity rail. Clips are added with **B**, the
+context menu or **+ Sequence** in Details, and reordered by drag or
+Alt+↑/↓. Three exports sit under **Files**:
 
-Still to build, per its own doc: writing the order onto disk (Section 5),
-exporting (Section 6) and the rest of missing-entry handling (Section 7).
-Where the Sequence panel lives is a question for the UX pass (5b), so it
-waits for that. Not merged into `main`.
+- **Numbered copy.** Copies with `010_` prefixes plus an ffmpeg
+  `concat.txt`.
+- **One video.** Stream copy when every clip matches, otherwise a re-encode
+  that lists each mismatch first. It can be cancelled and never leaves a
+  partial file.
+- **Rename originals.** Two-phase and all-or-nothing, never overwrites, and
+  renames everything back if a step fails.
 
-## 5b. Feature bloat: a UX pass, audited
+Export and rename refuse while a clip is missing, naming the positions.
 
-Status: **Decided** (2026-09-28); the redesign is in progress — see
+Two bugs were found and fixed on the way:
+
+- New and Rename used `window.prompt`, which Electron does not implement,
+  so both did nothing in the real app.
+- A multi-clip add went in click order instead of sort order.
+
+Left open:
+
+- **Thumbnails in the panel.** Decoding a frame per entry would compete
+  with the grid's decoder budget.
+- **Single-clip rename.** The module supports it, but there is no UI.
+- **Copy frame during sequence playback** uses a canvas capture, as tag
+  views already do.
+- **One unavoidable race in rename.** Node's `rename` replaces an existing
+  file, so a file created between the last check and the rename itself
+  could still be replaced.
+
+`wip/clip-sequences` (`02106f2`) is kept unchanged as the original.
+
+## 5b. Feature bloat: the UX redesign
+
+Status: **Implemented** (2026-09-29) — see
 [`architecture/ux-redesign.md`](architecture/ux-redesign.md) and the audit
 page, https://claude.ai/artifact/MgNRWMjGDcVKyzJeBStmsu (private to the user)
 
-The audit also found plain bugs, **fixed on 2026-09-28**: the header, review
-bar, fullscreen review rail and docked Details header now wrap instead of
-clipping (at 1280 px Filters and Keyboard shortcuts had fallen off the
-header; the wrapping is the interim form until D6 is decided); a resolution
-sort is named and remembered; the Properties stub is gone; file actions use
-each platform's words (Show in File Manager / Finder / Explorer, Move to
-Trash / Recycle Bin); the transfer picker title fits any selection; the
-resolution filter has summary chips; toasts stack instead of overlapping,
-and the memory warning moved clear of them and no longer blocks clicks.
-The decisions (D1–D10) cover where Details, diagnostics, playback settings,
-Donate, review mode, narrow windows, new features and a Preferences dialog
-should live, and a naming glossary.
+All ten decisions and every slice have landed:
 
-The app has grown a feature at a time (review mode, saved and smart views,
-generation versions, the Generation panel, transfers, and now re-rendering),
-and each added its own entry points. Do one deliberate UX pass over the
-whole app rather than another feature:
+- the glossary;
+- one top bar that folds into ⋯;
+- the View and ⋯ menus;
+- the short status line;
+- Preferences;
+- Details docked by default and following the selection;
+- the activity rail;
+- Generation as its own panel.
 
-- Map how every feature is presented today: menus, toolbar, sidebar tabs,
-  context menus, popovers, hotkeys (`src/hotkeys/shortcutCatalog.js`).
-- Decide which features are core daily work and keep those one step away;
-  move niche ones behind a clear secondary place instead of the main surface.
-- Rework the flow between them for the common paths (open a folder, review,
-  filter, transfer, re-render), not screen by screen.
-- Review the fundamental UI itself (layout, density, typography,
-  consistency between panels) for improvements, keeping it a dense working
-  tool.
+Two bugs found on the way are fixed too: folders opened scrolled far down,
+and the review bar wrapped to two rows with 16 px buttons. How it feels in
+use is Section 4's job.
 
-Phase 3 of re-rendering (its Queue and Finished tabs, recipe screen and
-badges) should be designed with this pass in mind rather than adding another
-top-level surface first.
+## 6. Local branches and pushes
 
-## 6. Local branches: audited
+Status: **Tidied** (2026-09-29)
 
-Status: **Audited** (2026-09-28); the actions below are the user's to take
+`main`, `claude/clip-sequences` and `wip/clip-sequences` are pushed to
+GitHub. Local Claude branches that were fully merged into `main` were
+deleted, along with finished agent worktrees; every commit they held is on
+`main`.
 
-This section used to say roughly thirty old branches existed only on this
-machine. **They do not**: every one of the 28 older unmerged branches is on
-GitHub under `archive/<name>`, at exactly the same commit (checked against
-the remote-tracking refs from the last fetch, 2026-08-31). Of the 67 local
-branches, 36 are fully merged into `main` and 31 are not; of those 31, only
-one exists nowhere else.
+Two branches are kept on purpose:
 
-What is genuinely only on this machine:
+- **`claude/variant-grouping`** holds only the superseded variant-grouping
+  doc (Section 1). Delete it, or archive it as `archive/variant-grouping`
+  like the older branches, rather than merging it.
+- **`agent/remove-appimage-release`** has one commit whose change reached
+  `main` through pull request #82.
 
-- **`main` itself** — 21 commits ahead of `origin/main` at the last fetch:
-  generation versions, link transfer, the socket-type Generation reader,
-  re-render phases 1 and 2, and the fixes since. **Push `main` before the
-  machine change.**
-- **`wip/clip-sequences`** and its rebased copy **`claude/clip-sequences`**
-  (see 5a).
-- Local-only Claude branches (`claude/sad-mclean-f38fe4`,
-  `claude/comfy-typeflow-design`, `claude/type-flow-switchover`,
-  `claude/recipe-learner`, `claude/comfy-runner`,
-  `claude/outstanding-small-fixes`) — all fully merged into `main`, so they
-  are safe to delete once `main` is pushed.
+Unmerged work from before March 2026 is archived on GitHub under
+`archive/<name>`: the timeline scroll rail, the "All Known" library browsing
+and the native Linux decoder. The backup refs (`backup/main-before-squash`,
+`backup/pre-filter-20250810`, `backup-pre-prune`) should stay.
 
-Work that never reached `main` but is archived: a custom **timeline scroll
-rail** (three iterations, Oct 2025), the March 2026 **“All Known” library
-browsing** (superseded by the library index and tag views), and a
-**native Linux decoder** its own last commit calls unworkable. The backup
-refs (`backup/main-before-squash`, `backup/pre-filter-20250810`,
-`backup-pre-prune`) should stay. The full per-branch table is in the audit
-page.
+## 7. Decisions waiting for the user
+
+From the overnight work on 2026-09-29.
+
+**Re-render safety net** (`comfy-queue-integration.md` Section 10):
+
+1. **"Anything downstream unknown" is read narrowly:** unknown *and*
+   carrying literal data. Read literally, every Omni and long-form clip
+   would be held, because custom nodes sit downstream of every change.
+2. **The changed node's own other inputs are trusted** to the example pairs,
+   because every pair shows that node before and after. Keep this, or
+   tighten it?
+3. **Should a dependency hold be confirmable?** For V2V, confirming means
+   rendering with the draft's clicks. The alternative is refusing until an
+   adapter exists.
+4. **Confirmation is a separate call** (`comfy:queue:confirm`), not a rule
+   choice, because choices define what counts as the same render and apply
+   to a whole batch.
+5. **Known gaps:**
+   - Scalars that are not named as geometry (a frame index, a time) are not
+     caught.
+   - Declared quality mode cannot be seen in API-only or subgraph workflows.
+   - Only absolute paths are checked.
+   - V2V still needs its own adapter to actually re-render.
+
+**Clip sequences:**
+
+6. **B** adds to the sequence. E, Final Cut's "append", clashes with
+   fullscreen's next-clip key.
+7. **Numbered copy is all-or-nothing:** any name already taken blocks it,
+   where other transfers skip. Make it skip instead?
+8. **A clip used twice** is copied twice by the numbered copy, but renaming
+   the originals refuses.
+9. **Re-encode defaults:**
+   - the most common frame size and rate;
+   - clips of other sizes letterboxed;
+   - silence added where a clip lacks sound;
+   - the output named after the sequence.
+
+**Other:**
+
+10. **Changing the sort while scrolled down** still keeps the top card in
+    view, wherever it moves to. Should a new sort always return to the top?
+11. **The detached re-render engine** (Section 9) waits for the go-ahead.
+12. **Releasing rc.6:** see Section 5.
 
 ## References
 
