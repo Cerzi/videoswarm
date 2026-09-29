@@ -604,6 +604,44 @@ describe("preload sequences bridge", () => {
     });
   });
 
+  it("bridges one-video export with fixed payloads and a removable progress listener", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.render.availability();
+    await api.sequences.render.prepare(3, { preferredRootPath: "/library" });
+    await api.sequences.render.start("plan-1234");
+    await api.sequences.render.cancel("plan-1234");
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:availability");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:prepare", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:start", {
+      planId: "plan-1234",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:cancel", {
+      planId: "plan-1234",
+    });
+
+    const callback = vi.fn();
+    const unsubscribe = api.sequences.render.onProgress(callback);
+    expect(ipcRenderer.on).toHaveBeenCalledWith(
+      "sequences:render-progress",
+      expect.any(Function)
+    );
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "sequences:render-progress"
+    )[1];
+    handler({}, { planId: "plan-1234", phase: "joining" });
+    expect(callback).toHaveBeenCalledWith({ planId: "plan-1234", phase: "joining" });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "sequences:render-progress",
+      handler
+    );
+  });
+
   it("nulls a missing preferred root rather than forwarding undefined", async () => {
     const { api, ipcRenderer } = loadPreload();
 
