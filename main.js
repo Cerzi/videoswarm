@@ -1576,6 +1576,7 @@ let comfyQuitConfirmed = false;
 let comfyQuitPrompt = null;
 const COMFY_MAX_QUEUE_ADD = 512;
 const COMFY_MAX_EXAMPLES = 16;
+const COMFY_MAX_CONFIRM = 32;
 
 function comfyConnectionSetting() {
   return normalizeComfyConnection(currentSettings?.comfyConnection);
@@ -5158,6 +5159,22 @@ ipcMain.handle("comfy:queue:order", async (_event, payload = {}) => {
   if (!COMFY_QUEUE_ORDERS.includes(order)) throw new TypeError(`Unknown queue order: ${order}`);
   requireComfyRunner().setOrder(order);
   return requireComfyRunner().snapshot();
+});
+
+// Confirm holds on one clip by the ids its last check reported (main/
+// comfy-safety.js, "never silently wrong"). The runner accepts only holds
+// that clip reported and that can be confirmed; a refusal never can.
+ipcMain.handle("comfy:queue:confirm", async (_event, payload = {}) => {
+  assertPlainObject(payload, "hold confirmation");
+  assertPayloadSize(payload, 16 * 1024);
+  const id = assertComfyId(payload.id, "Queue item id");
+  const holds = assertStringArray(payload.holds, {
+    name: "Holds to confirm",
+    minEntries: 1,
+    maxEntries: COMFY_MAX_CONFIRM,
+    item: { minChars: 1, maxChars: 200 },
+  });
+  return { ok: requireComfyRunner().confirm(id, holds) };
 });
 
 for (const [channel, action] of [

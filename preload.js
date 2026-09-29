@@ -444,6 +444,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setOrder: async (order) => ipcRenderer.invoke("comfy:queue:order", { order }),
     retry: async (id) => ipcRenderer.invoke("comfy:queue:retry", { id }),
     renderAgain: async (id) => ipcRenderer.invoke("comfy:queue:render-again", { id }),
+    // Confirm a held clip's holds by the ids its `review.holds` listed.
+    confirm: async (id, holds) =>
+      ipcRenderer.invoke("comfy:queue:confirm", {
+        id,
+        holds: Array.isArray(holds) ? holds.filter((hold) => typeof hold === "string") : [],
+      }),
     remove: async (id) => ipcRenderer.invoke("comfy:queue:remove", { id }),
     onChanged: (callback) => {
       const handler = (_event, payload) => callback(payload);

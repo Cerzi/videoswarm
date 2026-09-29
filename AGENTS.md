@@ -79,6 +79,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
   - `generation-key.js`, `container-tags.js`, `generation-key-indexer.js`: graph-free generation-version keys, the in-process MP4/MOV tag reader and the bounded background indexer (see `docs/architecture/generation-versions.md`).
   - `comfy-recipe.js`, `comfy-graph-json.js`: re-render recipes learned from draft/final example pairs (learn, match, apply; pure, no network) and exact 64-bit graph JSON (see `docs/architecture/comfy-queue-integration.md`).
   - `comfy-connection.js`, `comfy-client.js`, `comfy-checks.js`, `comfy-queue-store.js`, `comfy-runner.js`, `comfy-tray.js`: the opt-in, loopback-only ComfyUI connection, pre-queue checks, the re-render queue in the profile database, its runner and the tray that keeps an active queue alive. Tests use the fake ComfyUI in `main/__tests__/helpers/fakeComfyUi.cjs`; never point a test at a real ComfyUI.
+  - `comfy-safety.js`: the "never silently wrong" net the runner applies before sending a re-render (dependency check, red flags, declared/known/review buckets, per-clip confirmation; Section 10 of `docs/architecture/comfy-queue-integration.md`). It names no custom node class; keep it that way.
 - `src/App.jsx`: top-level renderer orchestration and state wiring.
 - `src/components/`: React UI components. `VideoCard/` contains the most sensitive playback/DOM handling.
 - `src/hooks/video-collection/`: progressive rendering, playback orchestration, and resource/memory limits.
