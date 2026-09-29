@@ -1,9 +1,9 @@
 {
   "donationUrl": "https://ko-fi.com/videoswarm",
-  "donationTooltip": "Support VideoSwarm’s development",
+  "donationTooltip": "Support Video Swarm’s development",
   "donationButtonLabel": "Donate",
-  "donationLinkLabel": "Support VideoSwarm on Ko-fi",
-  "donationBlurb": "VideoSwarm is maintained by a solo developer. If it saves you time or makes your workflow nicer, you can chip in to help keep updates coming.",
+  "donationLinkLabel": "Support Video Swarm on Ko-fi",
+  "donationBlurb": "Video Swarm is maintained by a solo developer. If it saves you time or makes your workflow nicer, you can chip in to help keep updates coming.",
   "credits": [
     "Concept & development: Ben Pateman",
     "Open-source libraries & tooling: countless upstream contributors"

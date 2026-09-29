@@ -24,6 +24,12 @@ describe("re-render queue main-process integration", () => {
     expect(source).toContain("comfyConnection: normalizeComfyConnection(source.comfyConnection)");
   });
 
+  it("picks the output folder without granting it", () => {
+    const choose = section('ipcMain.handle("comfy:connection:choose-output-dir"', 'ipcMain.handle("comfy:connection:test"');
+    expect(choose).toContain('properties: ["openDirectory"]');
+    expect(choose).not.toMatch(/grantRendererRoot|saveSettingsPartial/u);
+  });
+
   it("tests the connection read-only", () => {
     const test = section('ipcMain.handle("comfy:connection:test"', "const comfyQueueStore");
     expect(test).toContain("parseComfyUrl(");

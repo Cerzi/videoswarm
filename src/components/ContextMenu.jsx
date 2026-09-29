@@ -195,22 +195,22 @@ const ContextMenu = ({
         children: [
           {
             id: 'metadata-review-pick',
-            label: '✓ Mark as accepted',
+            label: '✓ Accept',
             action: 'metadata:review:pick',
           },
           {
             id: 'metadata-review-reviewed',
-            label: '● Mark reviewed',
+            label: '● Reviewed',
             action: 'metadata:review:reviewed',
           },
           {
             id: 'metadata-review-reject',
-            label: '× Mark as reject',
+            label: '× Reject',
             action: 'metadata:review:reject',
           },
           {
             id: 'metadata-review-unreviewed',
-            label: '○ Reset to unreviewed (clears rating)',
+            label: '○ Unreviewed (clears rating)',
             action: 'metadata:review:unreviewed',
           },
         ],
@@ -268,11 +268,6 @@ const ContextMenu = ({
         id: 'transfer-files',
         label: `📁 ${menuLabel('transfer-files')}`,
         action: 'transfer-files',
-      },
-      {
-        id: 'file-properties',
-        label: `📊 ${menuLabel('file-properties')}`,
-        action: 'file-properties',
       },
     ]);
 

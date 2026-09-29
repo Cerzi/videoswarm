@@ -54,6 +54,14 @@ body {
   align-items: center;
   gap: 1rem;
   margin-left: auto;
+  /* Fill what the left group leaves and wrap only what does not fit, rather
+     than letting controls fall off the right edge (at 1280 px, Filters and
+     Keyboard shortcuts did). */
+  flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 0.4rem;
 }
 
 .file-input-wrapper {
@@ -220,75 +228,6 @@ body {
   background-position: right 0.5rem center;
   background-size: 0.8rem;
   padding-right: 1.5rem;
-}
-
-.playback-mode-control {
-  display: flex;
-  flex-direction: column;
-  min-width: 250px;
-  gap: 0.2rem;
-}
-
-.playback-mode-control__row,
-.playback-mode-control__label {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.playback-mode-control__label > span {
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.playback-mode-control__select {
-  max-width: 160px;
-  font-size: 0.78rem;
-}
-
-.playback-mode-control__budget {
-  color: var(--color-accent);
-  font-size: 0.72rem;
-  white-space: nowrap;
-}
-
-.playback-mode-control--strained .playback-mode-control__budget {
-  color: #ffd166;
-}
-
-.playback-mode-control--critical .playback-mode-control__budget,
-.playback-mode-control--suspended .playback-mode-control__budget {
-  color: #ff8b8b;
-}
-
-.playback-mode-control__proxy {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 0.22rem 0.5rem;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.72);
-  cursor: pointer;
-  font-size: 0.7rem;
-}
-
-.playback-mode-control__proxy.active {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  background: rgba(81, 207, 102, 0.1);
-}
-
-.playback-mode-control__proxy:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.playback-mode-control__capability {
-  color: rgba(255, 255, 255, 0.54);
-  font-size: 0.66rem;
-  line-height: 1.2;
-  max-width: 390px;
 }
 
 .filters-button-label {
@@ -816,7 +755,6 @@ body {
 .zoom-control input[type="range"] {
   accent-color: var(--color-accent);
 }
-
 
 .subfolders-option {
   display: flex;
@@ -1648,4 +1586,15 @@ body {
 .filters-button-clear:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+/* The short status line (UX redesign D2); the detailed one sets its own. */
+.debug-info--short {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.75rem;
+  color: #8f979b;
+  background: #1a1a1a;
 }

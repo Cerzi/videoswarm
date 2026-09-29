@@ -56,7 +56,9 @@
 
 .fullscreen-review-panel__review-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* One per row: the rail is at most 190 px, too narrow for two labelled
+     buttons such as "Unreviewed (F)". */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.4rem;
 }
 

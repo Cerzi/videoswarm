@@ -12,16 +12,16 @@ import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
 import MetadataPanel from "./components/MetadataPanel";
-import HeaderBar from "./components/HeaderBar";
+import TopBar from "./components/TopBar";
 import FiltersPopover from "./components/FiltersPopover";
-import CollectionNavigationBar from "./components/CollectionNavigationBar";
 import LibrarySidebar from "./components/LibrarySidebar";
-import WorkspaceSidebar from "./components/WorkspaceSidebar";
-import DockedMetadataInspector from "./components/DockedMetadataInspector";
+import WorkspaceSidebar, { buildWorkspacePanels } from "./components/WorkspaceSidebar";
+import DockedMetadataInspector, { DockedGenerationPanel } from "./components/DockedMetadataInspector";
 import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
+import PreferencesDialog from "./components/preferences/PreferencesDialog";
 import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
@@ -55,7 +55,9 @@ import useReviewWorkflow from "./hooks/review/useReviewWorkflow";
 import useReviewSessions from "./hooks/review/useReviewSessions";
 
 import { SortKey } from "./sorting/sorting.js";
-import { parseSortValue, formatSortValue } from "./sorting/sortOption.js";
+import { describeSort, parseSortValue, formatSortValue } from "./sorting/sortOption.js";
+import { showToast } from "./app/toastStack";
+import { openDonationPage } from "./utils/support";
 
 import { zoomClassForLevel, clampZoomIndex } from "./zoom/utils.js";
 import useHotkeys from "./hooks/selection/useHotkeys";
@@ -182,6 +184,9 @@ function App() {
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
+  // UX redesign D2: the status line shows counts and sort unless asked for
+  // the playback diagnostics.
+  const [playbackDetailsVisible, setPlaybackDetailsVisible] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
@@ -203,6 +208,7 @@ function App() {
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
+  const [isPreferencesOpen, setPreferencesOpen] = useState(false);
   const [isHotkeyHelpOpen, setHotkeyHelpOpen] = useState(false);
   const [isProcessResultsOpen, setProcessResultsOpen] = useState(false);
   const [acceptedCopyProgress, setAcceptedCopyProgress] = useState(null);
@@ -225,7 +231,7 @@ function App() {
   const [profilePromptRequest, setProfilePromptRequest] = useState(null);
   const [profilePromptValue, setProfilePromptValue] = useState("");
   const [reviewProfileEpoch, setReviewProfileEpoch] = useState(0);
-  const [webCollectionEpoch, setWebCollectionEpoch] = useState(0);
+  const [webCollectionEpoch] = useState(0);
   const [reviewResume, setReviewResume] = useState(() =>
     createIdleReviewResume()
   );
@@ -362,6 +368,17 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenPreferences?.(() => {
+      setPreferencesOpen(true);
+    });
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI?.onOpenDataLocation?.(() => {
       setDataLocationOpen(true);
     });
@@ -438,12 +455,14 @@ function App() {
     clear: clearRecentFolders,
   } = useRecentFolders();
 
+  // A saved mode sets where Details appears, not which sidebar tab shows:
+  // docked is the default (UX redesign D1), and switching to Details on every
+  // launch would hide the Library just when a folder is being chosen. Docking
+  // by hand, I and Open details still bring the Details tab forward.
   const applyMetadataInspectorModeFromSettings = useCallback((value) => {
     const next = value === "docked" ? "docked" : "floating";
     setMetadataInspectorMode(next);
     if (next === "docked") {
-      setWorkspaceSidebarTab("details");
-      setLibrarySidebarOpen(true);
       setMetadataPanelOpen(false);
     }
   }, []);
@@ -471,13 +490,13 @@ function App() {
     handleElectronFolderSelection,
     reloadCurrentRoot,
     handleFolderSelect,
-    handleWebFileSelection,
   } = useElectronFolderLifecycle({
     selection,
     recursiveMode,
     setRecursiveMode,
     setShowFilenames,
     setHoverAudioEnabled,
+    setPlaybackDetailsVisible,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -607,6 +626,7 @@ function App() {
     filteredVideos,
     filtersActiveCount,
     ratingSummary,
+    resolutionSummary,
     handleRemoveIncludeFilter,
     handleRemoveExcludeFilter,
     clearReviewFilter,
@@ -730,8 +750,8 @@ function App() {
     const labels = {
       [REVIEW_FILTERS.UNREVIEWED]: "Unreviewed",
       [REVIEW_FILTERS.REVIEWED]: "Reviewed",
-      [REVIEW_FILTERS.PICK]: "Accepted",
-      [REVIEW_FILTERS.REJECT]: "Rejects",
+      [REVIEW_FILTERS.PICK]: "Accept",
+      [REVIEW_FILTERS.REJECT]: "Reject",
     };
     return labels[value] || null;
   }, [filters.reviewFilter]);
@@ -1280,10 +1300,22 @@ function App() {
       return;
     }
 
+    // Docked Details follows the selection the way the floating panel does:
+    // a new selection brings its tab forward unless the user went back to
+    // the Library for this one. Generation, the other clip panel, stays put,
+    // so prompts can be read clip after clip. A hidden sidebar stays hidden.
     if (metadataInspectorMode === "docked") {
-      previousMetadataSelectionKeyRef.current = metadataSelectionKey;
       setMetadataPanelOpen(false);
-      setMetadataDismissedSelectionKey(null);
+      if (
+        metadataSelectionKey !== previousKey &&
+        metadataDismissedSelectionKey !== metadataSelectionKey
+      ) {
+        previousMetadataSelectionKeyRef.current = metadataSelectionKey;
+        setMetadataDismissedSelectionKey(null);
+        if (isLibrarySidebarOpen) {
+          setWorkspaceSidebarTab((tab) => (tab === "generation" ? tab : "details"));
+        }
+      }
       return;
     }
 
@@ -1302,6 +1334,7 @@ function App() {
       }));
     }
   }, [
+    isLibrarySidebarOpen,
     metadataAnchorId,
     metadataDismissedSelectionKey,
     metadataInspectorMode,
@@ -1309,44 +1342,34 @@ function App() {
     selection.size,
   ]);
 
-  const sortStatus = useMemo(() => {
-    const keyLabels = {
-      [SortKey.NAME]: "Name",
-      [SortKey.CREATED]: "Created",
-      [SortKey.RANDOM]: "Random",
-    };
-    const arrow =
-      sortKey === SortKey.RANDOM ? "" : sortDir === "asc" ? "↑" : "↓";
-    const base = `Sorted by ${keyLabels[sortKey]}${arrow ? ` ${arrow}` : ""}`;
-    return groupByFolders ? `${base} • Grouped by folders` : base;
-  }, [sortKey, sortDir, groupByFolders]);
+  const handleWorkspaceSidebarTabChange = useCallback(
+    (tab) => {
+      setWorkspaceSidebarTab(tab);
+      if (tab === "library" && metadataInspectorMode === "docked" && selection.size > 0) {
+        setMetadataDismissedSelectionKey(metadataSelectionKey);
+      }
+    },
+    [metadataInspectorMode, metadataSelectionKey, selection.size]
+  );
+
+  // The rail's icons open their panel; the open panel's icon collapses the
+  // sidebar (WorkspaceSidebar calls onCollapse for that).
+  const handleSidebarPanelSelect = useCallback(
+    (panel) => {
+      setLibrarySidebarOpen(true);
+      handleWorkspaceSidebarTabChange(panel);
+    },
+    [handleWorkspaceSidebarTabChange]
+  );
+
+  const sortStatus = useMemo(
+    () => describeSort(sortKey, sortDir, groupByFolders),
+    [sortKey, sortDir, groupByFolders]
+  );
 
   // Simple toast used by actions layer
   const notify = useCallback((message, type = "info") => {
-    const colors = {
-      error: "#ff4444",
-      success: "#4CAF50",
-      warning: "#ff9800",
-      info: "#007acc",
-    };
-    const icons = { error: "❌", success: "✅", warning: "⚠️", info: "ℹ️" };
-    const el = document.createElement("div");
-    el.style.cssText = `
-      position: fixed; top: 80px; right: 20px;
-      background: ${colors[type] || colors.info};
-      color: white; padding: 12px 16px; border-radius: 8px; z-index: 10001;
-      font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 300px; display:flex; gap:8px;
-      animation: slideInFromRight 0.2s ease-out;
-    `;
-    el.setAttribute("role", type === "error" ? "alert" : "status");
-    el.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
-    el.setAttribute("aria-atomic", "true");
-    el.textContent = `${icons[type] || icons.info} ${message}`;
-    document.body.appendChild(el);
-    setTimeout(() => {
-      if (document.body.contains(el)) document.body.removeChild(el);
-    }, 3000);
+    showToast(message, type);
   }, []);
 
   const reviewOwnershipKey = useMemo(
@@ -1572,25 +1595,6 @@ function App() {
     cancelReviewResume();
     captureFolderViewState();
   };
-
-  const handleWebDirectorySelection = useCallback(
-    async (event) => {
-      const files = event?.target?.files;
-      closeFullScreenRef.current?.();
-      setWebCollectionEpoch((epoch) => epoch + 1);
-      libraryOpenRequestRef.current += 1;
-      await reviewSessions.flush();
-      cancelReviewResume();
-      captureFolderViewState();
-      return handleWebFileSelection({ target: { files } });
-    },
-    [
-      cancelReviewResume,
-      captureFolderViewState,
-      handleWebFileSelection,
-      reviewSessions.flush,
-    ]
-  );
 
   const focusReviewTarget = useCallback(
     (videoId, token, onMounted, onMissing) => {
@@ -1936,7 +1940,7 @@ function App() {
     async (destinationPath = null, layout = "structured", reusePlanId = null) => {
       const prepare = window.electronAPI?.review?.copyAccepted?.prepare;
       if (typeof prepare !== "function") {
-        throw new Error("Copy Accepted is unavailable");
+        throw new Error("Transfer is unavailable");
       }
       setAcceptedCopyProgress(null);
       const result = await prepare({
@@ -2187,7 +2191,7 @@ function App() {
     async (planId, requestedMode = "copy") => {
       const start = window.electronAPI?.review?.copyAccepted?.start;
       if (typeof start !== "function") {
-        throw new Error("Copy Accepted is unavailable");
+        throw new Error("Transfer is unavailable");
       }
       setAcceptedCopyProgress(null);
       const transferMode =
@@ -2440,16 +2444,18 @@ function App() {
 
   const selectedGenerationInstanceId =
     selectedVideos.length === 1 ? selectedVideos[0]?.instanceId : null;
-  const metadataInspectorVisible =
+  // Reading a clip's embedded graph costs a file read, so it runs only while
+  // the generation details are on screen: the Generation panel when Details
+  // is docked, or the expanded section at the foot of floating Details.
+  const generationDetailsVisible =
     metadataInspectorMode === "floating"
-      ? isMetadataPanelOpen
-      : isLibrarySidebarOpen && workspaceSidebarTab === "details";
+      ? isMetadataPanelOpen && metadataGenerationExpanded
+      : isLibrarySidebarOpen && workspaceSidebarTab === "generation";
   const generationMetadata = useGenerationMetadata({
     instanceId: selectedGenerationInstanceId,
     enabled: Boolean(
       !fullScreenVideo &&
-        metadataInspectorVisible &&
-        metadataGenerationExpanded &&
+        generationDetailsVisible &&
         selectedGenerationInstanceId
     ),
   });
@@ -2926,10 +2932,6 @@ function App() {
     zoomLevel,
   ]);
 
-  const toggleRecursive = useCallback(() => {
-    handleRecursiveChange(!recursiveMode);
-  }, [handleRecursiveChange, recursiveMode]);
-
   const handleFolderNavigate = useCallback(
     async (relativePath) => {
       if (!activeRootPath) return;
@@ -3277,6 +3279,14 @@ function App() {
     setHoverAudioEnabled((previous) => {
       const next = !previous;
       window.electronAPI?.saveSettingsPartial?.({ hoverAudioEnabled: next });
+      return next;
+    });
+  }, []);
+
+  const togglePlaybackDetails = useCallback(() => {
+    setPlaybackDetailsVisible((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({ playbackDetailsVisible: next });
       return next;
     });
   }, []);
@@ -4104,7 +4114,7 @@ function App() {
               phase: "index-required",
               scanId: activeScanId,
               message:
-                "Index subfolders before continuing this saved review scope.",
+                "Include subfolders before continuing this saved review scope.",
             }
           : previous
       );
@@ -4777,18 +4787,48 @@ function App() {
             onCancel={cancelFolderLoad}
           />
 
-          <HeaderBar
+          <TopBar
             isLoadingFolder={isLoadingFolder}
-            handleFolderSelect={handleChooseFolder}
-            handleWebFileSelection={handleWebDirectorySelection}
-            recursiveMode={recursiveMode}
-            toggleRecursive={toggleRecursive}
-            showFilenames={showFilenames}
-            toggleFilenames={toggleFilenames}
-            hoverAudioEnabled={hoverAudioEnabled}
-            onHoverAudioToggle={toggleHoverAudio}
+            onOpenFolder={handleChooseFolder}
+            recentFolders={recentFolders}
+            pinnedFolders={pinnedRoots}
+            onOpenLocation={handleOpenLibraryRoot}
+            hasOpenFolder={Boolean(activeRootPath)}
+            breadcrumb={folderBreadcrumb}
+            onBreadcrumbSelect={handleFolderNavigate}
+            previousSibling={siblingFolders.previous}
+            nextSibling={siblingFolders.next}
+            onPreviousFolder={handlePreviousFolder}
+            onNextFolder={handleNextFolder}
+            matchingCount={scopedFilteredVideos.length}
+            totalCount={videos.length}
+            scope={folderScope}
+            onScopeChange={handleFolderScopeChange}
+            recursive={recursiveMode}
+            onRecursiveChange={handleRecursiveChange}
+            isRefreshingFolder={isRefreshingFolder}
+            onFiltersToggle={() => setFiltersOpen((open) => !open)}
+            filtersActiveCount={filtersActiveCount}
+            onFiltersClear={resetFilters}
+            filtersAreOpen={isFiltersOpen}
+            filtersButtonRef={filtersButtonRef}
+            sortKey={sortKey}
+            sortSelection={formatSortValue(sortKey, sortDir)}
+            onSortChange={handleSortChange}
+            onReshuffle={reshuffleRandom}
+            zoomLevel={zoomLevel}
+            onZoomChange={handleZoomChangeSafe}
+            minimumZoomLevel={getMinimumZoomLevel()}
             reviewModeEnabled={reviewModeEnabled}
             onReviewModeToggle={toggleReviewMode}
+            showFilenames={showFilenames}
+            onFilenamesToggle={toggleFilenames}
+            hoverAudioEnabled={hoverAudioEnabled}
+            onHoverAudioToggle={toggleHoverAudio}
+            groupByFolders={groupByFolders}
+            onGroupByFoldersToggle={toggleGroupByFolders}
+            showFolderHeaders={showFolderHeaders}
+            onFolderHeadersToggle={setShowFolderHeaders}
             playbackMode={playbackMode}
             onPlaybackModeChange={handlePlaybackModeChange}
             playbackDecision={playbackDecision}
@@ -4797,49 +4837,15 @@ function App() {
             onProxyPlaybackToggle={toggleProxyPlayback}
             proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
             workSuspended={workSuspended}
-            isRefreshingFolder={isRefreshingFolder}
+            playbackDetailsVisible={playbackDetailsVisible}
+            onPlaybackDetailsToggle={togglePlaybackDetails}
             onHotkeyHelp={() => setHotkeyHelpOpen(true)}
-            zoomLevel={zoomLevel}
-            handleZoomChangeSafe={handleZoomChangeSafe}
-            getMinimumZoomLevel={getMinimumZoomLevel}
-            sortKey={sortKey}
-            sortSelection={formatSortValue(sortKey, sortDir)}
-            groupByFolders={groupByFolders}
-            onSortChange={handleSortChange}
-            onGroupByFoldersToggle={toggleGroupByFolders}
-            onReshuffle={reshuffleRandom}
-            recentFolders={recentFolders}
-            onRecentOpen={handleOpenLibraryRoot}
-            hasOpenFolder={Boolean(activeRootPath) || videos.length > 0}
-            onFiltersToggle={() => setFiltersOpen((open) => !open)}
-            filtersActiveCount={filtersActiveCount}
-            onFiltersClear={resetFilters}
-            filtersAreOpen={isFiltersOpen}
-            filtersButtonRef={filtersButtonRef}
+            onOpenAbout={() => setAboutOpen(true)}
+            onOpenPreferences={() => setPreferencesOpen(true)}
+            onOpenSupport={() => {
+              void openDonationPage();
+            }}
           />
-
-          {activeRootPath && (
-            <CollectionNavigationBar
-              breadcrumb={folderBreadcrumb}
-              onBreadcrumbSelect={handleFolderNavigate}
-              scope={folderScope}
-              onScopeChange={handleFolderScopeChange}
-              previousSibling={siblingFolders.previous}
-              nextSibling={siblingFolders.next}
-              onPreviousFolder={handlePreviousFolder}
-              onNextFolder={handleNextFolder}
-              recursive={recursiveMode}
-              onRecursiveChange={handleRecursiveChange}
-              sidebarOpen={isLibrarySidebarOpen}
-              onSidebarToggle={setLibrarySidebarOpen}
-              showFolderHeaders={showFolderHeaders}
-              onFolderHeadersToggle={setShowFolderHeaders}
-              folderHeadersAvailable={groupByFolders}
-              matchingCount={scopedFilteredVideos.length}
-              totalCount={videos.length}
-              disabled={isLoadingFolder}
-            />
-          )}
 
           {(activeRootPath || tagCollection) && reviewModeEnabled && (
             <ReviewToolbar
@@ -4928,6 +4934,23 @@ function App() {
             onTransferLayoutChange={handleTransferLayoutChange}
             transferProgress={acceptedCopyProgress}
           />
+          <PreferencesDialog
+            open={isPreferencesOpen}
+            onClose={() => setPreferencesOpen(false)}
+            suspended={isDataLocationOpen}
+            dataLocationOpen={isDataLocationOpen}
+            onOpenDataLocation={() => setDataLocationOpen(true)}
+            playbackMode={playbackMode}
+            onPlaybackModeChange={handlePlaybackModeChange}
+            proxyPlaybackEnabled={proxyPlaybackEnabled}
+            proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
+            onProxyPlaybackToggle={toggleProxyPlayback}
+            hoverAudioEnabled={hoverAudioEnabled}
+            onHoverAudioToggle={toggleHoverAudio}
+            playbackDetailsVisible={playbackDetailsVisible}
+            onPlaybackDetailsToggle={togglePlaybackDetails}
+            playbackCapabilityStatus={playbackCapabilityStatus}
+          />
           <DataLocationDialog
             open={isDataLocationOpen}
             onClose={() => setDataLocationOpen(false)}
@@ -5002,6 +5025,26 @@ function App() {
                 </div>
               )}
 
+              {resolutionSummary?.length > 0 && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Resolution</span>
+                  <div className="filters-summary__chips">
+                    {resolutionSummary.map((chip) => (
+                      <button
+                        key={chip.key}
+                        type="button"
+                        className="filters-summary__chip filters-summary__chip--rating"
+                        onClick={chip.onClear}
+                        title="Clear this resolution bound"
+                      >
+                        {chip.label}
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {reviewModeEnabled && reviewFilterSummary && (
                 <div className="filters-summary__section">
                   <span className="filters-summary__label">Review</span>
@@ -5039,6 +5082,7 @@ function App() {
           )}
 
           <DebugSummary
+            detailed={playbackDetailsVisible}
             total={videoCollection.stats.total}
             rendered={virtualItems.length}
             playing={videoCollection.stats.playing}
@@ -5090,7 +5134,7 @@ function App() {
                     Open a directory, or choose a pinned library root to continue reviewing.
                   </p>
                   <p>
-                    Index subfolders to browse large generation runs as a tree while keeping the flattened swarm available.
+                    Include subfolders to browse large generation runs as a tree while keeping the flattened swarm available.
                   </p>
                   {window.innerWidth > 2560 && (
                     <p style={{ color: "#ffa726", fontSize: "0.9rem" }}>
@@ -5104,13 +5148,16 @@ function App() {
           ) : (
             <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
-                {activeRootPath && isLibrarySidebarOpen && (
-                  metadataInspectorMode === "docked" ? (
-                    <WorkspaceSidebar
-                      activeTab={workspaceSidebarTab}
-                      onTabChange={setWorkspaceSidebarTab}
-                      selectionCount={selection.size}
-                      libraryProps={{
+                {activeRootPath && (
+                  <WorkspaceSidebar
+                    open={isLibrarySidebarOpen}
+                    activePanel={workspaceSidebarTab}
+                    onSelectPanel={handleSidebarPanelSelect}
+                    onCollapse={() => setLibrarySidebarOpen(false)}
+                    panels={buildWorkspacePanels({
+                      detailsDocked: metadataInspectorMode === "docked",
+                      selectionCount: selection.size,
+                      libraryProps: {
                         tree: folderTree,
                         currentPath: currentDirectory,
                         expandedPaths: expandedFolderPaths,
@@ -5127,52 +5174,34 @@ function App() {
                         onDeleteSavedView: handleDeleteSavedView,
                         disabled: isLoadingFolder,
                         reviewModeEnabled,
-                      }}
-                      detailsContent={
-                        selection.size > 0 ? (
-                          <DockedMetadataInspector
-                            selectionKey={metadataSelectionKey}
-                            selectionCount={selection.size}
-                            selectedVideos={selectedVideos}
-                            availableTags={availableTags}
-                            onAddTag={handleAddTags}
-                            onRemoveTag={handleRemoveTag}
-                            onApplyTagToSelection={handleApplyExistingTag}
-                            onSetRating={reviewWorkflow.applyRating}
-                            onClearRating={() => reviewWorkflow.applyRating(null)}
-                            onSetReviewState={reviewWorkflow.applyReviewState}
-                            reviewModeEnabled={reviewModeEnabled}
-                            generationMetadataState={generationMetadataState}
-                            generationExpanded={metadataGenerationExpanded}
-                            onGenerationExpandedChange={setMetadataGenerationExpanded}
-                            generationVersions={gridGenerationVersions}
-                            onFocusSelection={focusSelection}
-                            onTransferSelection={handleRequestTransfer}
-                            onUndock={handleUndockMetadataPanel}
-                          />
-                        ) : null
-                      }
-                    />
-                  ) : (
-                    <LibrarySidebar
-                      tree={folderTree}
-                      currentPath={currentDirectory}
-                      expandedPaths={expandedFolderPaths}
-                      onToggleExpanded={handleFolderExpandedToggle}
-                      onSelectFolder={handleFolderNavigate}
-                      pinnedRoots={pinnedRoots}
-                      currentRoot={catalogCurrentRoot || libraryRoot}
-                      onOpenRoot={handleOpenLibraryRoot}
-                      onTogglePin={handleToggleLibraryPin}
-                      rootCountStateByPath={rootCountStateByPath}
-                      savedViews={savedViews}
-                      onApplySavedView={handleApplySavedView}
-                      onSaveCurrentView={handleSaveCurrentView}
-                      onDeleteSavedView={handleDeleteSavedView}
-                      disabled={isLoadingFolder}
-                      reviewModeEnabled={reviewModeEnabled}
-                    />
-                  )
+                      },
+                      detailsContent: selection.size > 0 ? (
+                        <DockedMetadataInspector
+                          selectionKey={metadataSelectionKey}
+                          selectionCount={selection.size}
+                          selectedVideos={selectedVideos}
+                          availableTags={availableTags}
+                          onAddTag={handleAddTags}
+                          onRemoveTag={handleRemoveTag}
+                          onApplyTagToSelection={handleApplyExistingTag}
+                          onSetRating={reviewWorkflow.applyRating}
+                          onClearRating={() => reviewWorkflow.applyRating(null)}
+                          onSetReviewState={reviewWorkflow.applyReviewState}
+                          reviewModeEnabled={reviewModeEnabled}
+                          generationVersions={gridGenerationVersions}
+                          onFocusSelection={focusSelection}
+                          onTransferSelection={handleRequestTransfer}
+                          onUndock={handleUndockMetadataPanel}
+                        />
+                      ) : null,
+                      generationContent: selection.size === 1 ? (
+                        <DockedGenerationPanel
+                          filename={selectedVideos[0]?.name}
+                          generationMetadataState={generationMetadataState}
+                        />
+                      ) : null,
+                    })}
+                  />
                 )}
 
                 <div className="content-region__gallery" ref={galleryRef}>
@@ -5361,7 +5390,7 @@ function App() {
               canNavigateNext={fullscreenController.hasNext}
               advanceOnEnd={isSequenceSession}
               positionLabel={fullscreenPositionLabel}
-              dialogLabel={fullScreenVideo.name || "Fullscreen review"}
+              dialogLabel={fullScreenVideo.name || "Fullscreen"}
               headerContent={
                 <FullscreenHeaderContent
                   video={fullScreenVideo}

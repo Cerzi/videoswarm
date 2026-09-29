@@ -112,6 +112,22 @@ describe("useFilterState resolution filters", () => {
     ]);
     expect(result.current.filtersActiveCount).toBe(2);
   });
+
+  it("shows one summary chip per bound, each clearing only its own", () => {
+    const { result } = renderFilters();
+    expect(result.current.resolutionSummary).toEqual([]);
+    act(() =>
+      result.current.updateFilters({ minMegapixels: 0.5, maxMegapixels: 2 })
+    );
+    expect(result.current.resolutionSummary.map((chip) => chip.label)).toEqual([
+      "≥ 0.5 MP",
+      "≤ 2 MP",
+    ]);
+    act(() => result.current.resolutionSummary[0].onClear());
+    expect(result.current.filters.minMegapixels).toBeNull();
+    expect(result.current.filters.maxMegapixels).toBe(2);
+    expect(result.current.resolutionSummary.map((chip) => chip.label)).toEqual(["≤ 2 MP"]);
+  });
 });
 
 describe("useFilterState tag match mode", () => {

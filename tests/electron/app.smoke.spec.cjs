@@ -14,7 +14,7 @@ async function waitForVideoTotal(page, expected) {
   await page.waitForFunction(
     (count) =>
       document.querySelector(".debug-info")?.textContent?.includes(
-        `🎬 ${count} videos`
+        `${count.toLocaleString()} clips`
       ),
     expected
   );
@@ -173,7 +173,7 @@ test("production app covers its critical Electron lifecycle", async ({ browserNa
 
     await page.getByTitle("Open filters").click();
     const filters = page.getByRole("dialog", { name: "Video filters" });
-    await filters.getByRole("button", { name: "Rejects", exact: true }).click();
+    await filters.getByRole("button", { name: "Reject", exact: true }).click();
     await expect(page.getByText("No videos match the active filters")).toBeVisible();
     await filters.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(page.locator(".video-item").first()).toBeVisible();

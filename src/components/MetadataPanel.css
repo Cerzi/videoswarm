@@ -546,6 +546,30 @@ body.metadata-panel-drag-active {
   grid-column: 1 / -1;
 }
 
+.metadata-panel__generation-copyable dt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.metadata-panel__generation-copyable dt .metadata-panel__copy {
+  min-height: 22px;
+  padding: 0.12rem 0.42rem;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.metadata-panel__copy.is-copied {
+  border-color: rgba(81, 207, 102, 0.5);
+  color: #b2f2bb;
+}
+
+.metadata-panel__copy.is-failed {
+  border-color: rgba(250, 82, 82, 0.5);
+  color: #ffc9c9;
+}
+
 .metadata-panel__generation-prompt dd {
   overflow-wrap: anywhere;
   line-height: 1.35;

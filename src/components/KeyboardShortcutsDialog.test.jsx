@@ -63,6 +63,6 @@ describe("KeyboardShortcutsDialog", () => {
     expect(screen.getByRole("heading", { name: "Rating" })).toBeVisible();
     expect(screen.getByText("Set star rating")).toBeVisible();
     expect(screen.getByText("Clear star rating")).toBeVisible();
-    expect(screen.queryByText("Mark as Accept")).toBeNull();
+    expect(screen.queryByText("Accept")).toBeNull();
   });
 });

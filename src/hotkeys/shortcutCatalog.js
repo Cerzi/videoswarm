@@ -12,7 +12,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-pick",
     keys: ["A", "P"],
     keyJoiner: "or",
-    label: "Mark as Accept",
+    label: "Accept",
     detail: "Applies to every selected clip.",
     state: "pick",
   }),
@@ -20,7 +20,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-reviewed",
     keys: ["S", "R"],
     keyJoiner: "or",
-    label: "Mark as Reviewed",
+    label: "Reviewed",
     detail: "Applies to every selected clip.",
     state: "reviewed",
   }),
@@ -28,7 +28,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-reject",
     keys: ["D", "X"],
     keyJoiner: "or",
-    label: "Mark as Reject",
+    label: "Reject",
     detail: "Applies to every selected clip.",
     state: "reject",
   }),
@@ -36,7 +36,7 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-unreviewed",
     keys: ["F", "U"],
     keyJoiner: "or",
-    label: "Reset to Unreviewed",
+    label: "Unreviewed",
     detail: "Also clears ratings; tags are kept.",
     state: "unreviewed",
   }),
@@ -158,7 +158,7 @@ export const FULLSCREEN_NAVIGATION_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "fullscreen-details",
     keys: ["I"],
-    label: "Toggle clip details",
+    label: "Show or hide Details",
     command: FULLSCREEN_COMMANDS.DETAILS,
   }),
 ]);
@@ -320,6 +320,12 @@ export const FULLSCREEN_SHORTCUT_BY_KEY = Object.freeze(
   Object.fromEntries(fullscreenBindings)
 );
 
+// Fullscreen and grid shortcuts are single keys. Ctrl, ⌘ or Alt held means a
+// system chord (Ctrl+C copies highlighted text), never the plain key's
+// command: Ctrl+C is not "copy frame" and Ctrl+A is not Accept.
+export const hasCommandModifier = (event) =>
+  Boolean(event?.ctrlKey || event?.metaKey || event?.altKey);
+
 export const resolveFullscreenShortcut = (keyOrEvent) => {
   const key = normalizeFullscreenKey(keyOrEvent);
   return key ? FULLSCREEN_SHORTCUT_BY_KEY[key] || null : null;
@@ -336,6 +342,12 @@ const APPLICATION_SHORTCUTS = Object.freeze([
     keys: ["Ctrl / ⌘", "O"],
     label: "Open folder",
     detail: "Uses the native folder picker.",
+  }),
+  freezeShortcut({
+    id: "open-preferences",
+    keys: ["Ctrl / ⌘", ","],
+    label: "Open Preferences",
+    detail: "Playback, profiles, data location and ComfyUI.",
   }),
   freezeShortcut({
     id: "cancel-folder-scan",
@@ -369,7 +381,7 @@ const SELECTION_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "open-selection-details",
     keys: ["I"],
-    label: "Open selection details",
+    label: "Open Details",
     detail: "Available when one or more clips are selected.",
   }),
   freezeShortcut({
@@ -443,7 +455,7 @@ export const HOTKEY_SECTIONS = Object.freeze([
   }),
   Object.freeze({
     id: "fullscreen",
-    title: "Fullscreen player",
+    title: "Fullscreen",
     description: "Review keys above also apply to the current fullscreen clip.",
     shortcuts: FULLSCREEN_PLAYER_SHORTCUTS,
   }),

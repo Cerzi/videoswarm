@@ -127,7 +127,7 @@ describe("ReviewSessionControls", () => {
       />
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Index subfolders to continue" })
+      screen.getByRole("button", { name: "Include subfolders to continue" })
     );
     expect(onIndexSubfolders).toHaveBeenCalledOnce();
   });
