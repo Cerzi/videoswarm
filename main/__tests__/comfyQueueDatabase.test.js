@@ -69,5 +69,39 @@ if (!database || databaseLoadError) {
         raw.close();
       }
     });
+
+    it("adds the confirmed holds column to a queue made before it", () => {
+      const BetterSqlite = require("better-sqlite3");
+      const raw = new BetterSqlite(path.join(tempDir, "videoswarm-meta.db"));
+      try {
+        raw.exec(`
+          CREATE TABLE comfy_queue_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL,
+            draft_path TEXT NOT NULL,
+            recipe_id INTEGER NOT NULL,
+            knobs_json TEXT NOT NULL,
+            knobs_key TEXT NOT NULL,
+            added_at INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('ready', 'waiting', 'rendering', 'done', 'failed', 'held', 'blocked')),
+            prompt_id TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            detail TEXT,
+            final_path TEXT,
+            seconds REAL,
+            render_again INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL
+          );
+          INSERT INTO comfy_queue_items (fingerprint, draft_path, recipe_id, knobs_json, knobs_key, added_at, state, updated_at)
+            VALUES ('fp', '/d.mp4', 1, '{"choices":{},"settings":{}}', '{"choices":{},"settings":{}}', 1, 'blocked', 1);
+        `);
+      } finally {
+        raw.close();
+      }
+      initMetadataStore({ getPath: () => tempDir }, tempDir);
+      const store = getMetadataStore().comfyQueue;
+      expect(store.getQueueItem(1)).toMatchObject({ state: "blocked", confirmed: [] });
+      expect(store.updateQueueItem(1, { confirmed: ["save:9:CustomSave"] }).confirmed).toEqual(["save:9:CustomSave"]);
+    });
   });
 }

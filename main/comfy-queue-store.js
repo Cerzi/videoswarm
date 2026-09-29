@@ -1,4 +1,5 @@
 const { parseComfyGraphJson, stringifyComfyGraphJson } = require('./comfy-graph-json');
+const { normalizeConfirmed } = require('./comfy-safety');
 
 // Recipes, the re-render queue and the history of finals, in the profile's
 // SQLite database. The same contract is available in memory for tests of the
@@ -90,7 +91,18 @@ const UPDATABLE = {
   seconds: (value) => (Number.isFinite(value) ? value : null),
   renderAgain: (value) => value === true,
   draftPath: (value) => assertPath(value, 'The draft'),
+  // Holds a person confirmed for this clip (main/comfy-safety.js). Kept out
+  // of the knobs: confirming does not make it another render.
+  confirmed: (value) => normalizeConfirmed(value),
 };
+
+function parseConfirmed(json) {
+  try {
+    return normalizeConfirmed(JSON.parse(json || '[]'));
+  } catch {
+    return [];
+  }
+}
 
 // --- memory ---------------------------------------------------------------
 
@@ -133,6 +145,7 @@ function createMemoryComfyQueueStore({ now = () => Date.now() } = {}) {
         finalPath: text(input.finalPath, LIMITS.maxPathLength),
         seconds: null,
         renderAgain: false,
+        confirmed: [],
         updatedAt: now(),
       };
       items.set(item.id, item);
@@ -222,6 +235,7 @@ function migrateComfyQueueTables(db) {
       final_path TEXT,
       seconds REAL,
       render_again INTEGER NOT NULL DEFAULT 0,
+      confirmed_json TEXT NOT NULL DEFAULT '[]',
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_comfy_queue_items_draft
@@ -242,6 +256,11 @@ function migrateComfyQueueTables(db) {
     CREATE INDEX IF NOT EXISTS idx_comfy_finals_draft
       ON comfy_finals(fingerprint, recipe_id, knobs_key);
   `);
+  // Databases made before holds could be confirmed.
+  const columns = db.prepare('PRAGMA table_info(comfy_queue_items)').all().map((column) => column.name);
+  if (!columns.includes('confirmed_json')) {
+    db.exec("ALTER TABLE comfy_queue_items ADD COLUMN confirmed_json TEXT NOT NULL DEFAULT '[]'");
+  }
 }
 
 function createComfyQueueStore(db, { now = () => Date.now() } = {}) {
@@ -282,6 +301,7 @@ function createComfyQueueStore(db, { now = () => Date.now() } = {}) {
     seconds: 'seconds',
     renderAgain: 'render_again',
     draftPath: 'draft_path',
+    confirmed: 'confirmed_json',
   };
 
   const mapItem = (row) =>
@@ -301,6 +321,7 @@ function createComfyQueueStore(db, { now = () => Date.now() } = {}) {
           finalPath: row.final_path,
           seconds: row.seconds,
           renderAgain: row.render_again === 1,
+          confirmed: parseConfirmed(row.confirmed_json),
           updatedAt: row.updated_at,
         }
       : null;
@@ -365,7 +386,9 @@ function createComfyQueueStore(db, { now = () => Date.now() } = {}) {
         if (!UPDATABLE[key]) continue;
         const normalized = UPDATABLE[key](value);
         sets.push(`${COLUMNS[key]} = ?`);
-        values.push(key === 'renderAgain' ? Number(normalized) : normalized);
+        values.push(
+          key === 'renderAgain' ? Number(normalized) : key === 'confirmed' ? JSON.stringify(normalized) : normalized
+        );
       }
       sets.push('updated_at = ?');
       values.push(now());

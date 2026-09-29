@@ -193,6 +193,8 @@ describe("preload native-work bridge", () => {
     await api.comfyQueue.setOrder("last-added");
     await api.comfyQueue.retry(4);
     await api.comfyQueue.renderAgain(4);
+    await api.comfyQueue.confirm(4, ["save:9:CustomSave", 7, { id: "x" }]);
+    await api.comfyQueue.confirm(4, "save:9:CustomSave");
     await api.comfyQueue.remove(4);
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["comfy:connection:get"],
@@ -213,6 +215,8 @@ describe("preload native-work bridge", () => {
       ["comfy:queue:order", { order: "last-added" }],
       ["comfy:queue:retry", { id: 4 }],
       ["comfy:queue:render-again", { id: 4 }],
+      ["comfy:queue:confirm", { id: 4, holds: ["save:9:CustomSave"] }],
+      ["comfy:queue:confirm", { id: 4, holds: [] }],
       ["comfy:queue:remove", { id: 4 }],
     ]);
     const callback = vi.fn();

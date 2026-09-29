@@ -46,6 +46,15 @@ describe("re-render queue main-process integration", () => {
     expect(add).not.toMatch(/payload\.(prompt|graph|url)/u);
   });
 
+  it("confirms holds only by bounded ids, through the runner's own check", () => {
+    const confirm = section('ipcMain.handle("comfy:queue:confirm"', "for (const [channel, action] of [");
+    expect(confirm).toContain('assertComfyId(payload.id, "Queue item id")');
+    expect(confirm).toContain("assertStringArray(payload.holds");
+    expect(confirm).toContain("maxEntries: COMFY_MAX_CONFIRM");
+    expect(confirm).toContain("requireComfyRunner().confirm(id, holds)");
+    expect(confirm).not.toMatch(/payload\.(prompt|graph|url|choices|settings)/u);
+  });
+
   it("gives each profile its own runner, disposed before the profile changes and at shutdown", () => {
     const runtime = section("async function initializeProfileRuntime", "async function performProfileReconfiguration");
     expect(runtime).toContain("startComfyRunnerForProfile(settings)");
