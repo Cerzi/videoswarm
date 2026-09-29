@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import {
   FULLSCREEN_COMMANDS,
   FULLSCREEN_PLAYER_SHORTCUTS,
+  hasCommandModifier,
   resolveFullscreenShortcut,
 } from "../hotkeys/shortcutCatalog";
 import { getOpaqueMediaSource, getWebMediaSource } from "../utils/mediaSource";
@@ -936,7 +937,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     if (!video || typeof document === "undefined") return undefined;
 
     const handleKeyDown = (event) => {
-      const binding = resolveFullscreenShortcut(event);
+      const binding = hasCommandModifier(event)
+        ? null
+        : resolveFullscreenShortcut(event);
 
       if (binding?.command === FULLSCREEN_COMMANDS.CLOSE) {
         event.preventDefault();

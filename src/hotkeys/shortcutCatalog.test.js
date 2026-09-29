@@ -13,6 +13,7 @@ import {
   REVIEW_SHORTCUTS,
   REVIEW_STATE_BY_KEY,
   REVIEW_UNDO_KEYS,
+  hasCommandModifier,
   resolveFullscreenShortcut,
 } from "./shortcutCatalog";
 
@@ -121,5 +122,15 @@ describe("fullscreen review loupe shortcut catalog", () => {
     expect(resolveFullscreenShortcut(null)).toBeNull();
     expect(Object.isFrozen(FULLSCREEN_SHORTCUT_BY_KEY)).toBe(true);
     expect(Object.isFrozen(resolveFullscreenShortcut("q"))).toBe(true);
+  });
+});
+
+describe("command modifiers", () => {
+  it("treats Ctrl, ⌘ and Alt as system chords and Shift as part of the key", () => {
+    expect(hasCommandModifier({ key: "c", ctrlKey: true })).toBe(true);
+    expect(hasCommandModifier({ key: "c", metaKey: true })).toBe(true);
+    expect(hasCommandModifier({ key: "c", altKey: true })).toBe(true);
+    expect(hasCommandModifier({ key: "?", shiftKey: true })).toBe(false);
+    expect(hasCommandModifier({ key: "c" })).toBe(false);
   });
 });
