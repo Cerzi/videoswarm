@@ -11,6 +11,7 @@ const { createMemoryComfyQueueStore } = require("../comfy-queue-store");
 const { createComfyRunner, finalPrefix, knobSummary } = require("../comfy-runner");
 const { createComfyClient } = require("../comfy-client");
 const { createFakeComfyUi, historyEntry } = require("./helpers/fakeComfyUi.cjs");
+const { nodeInfoFor, v2vDraft, v2vRecipe } = require("./helpers/comfySafetyFixtures.cjs");
 
 // The runner against a fake ComfyUI, with the Omni recipe learned in Phase 1
 // and the real (sanitized) Omni drafts of its acceptance fixtures. Ported
@@ -119,6 +120,8 @@ describe("comfy runner", () => {
     runner.addClips({ clips: [clip], recipeId, knobs: {} });
     await runner.tick();
     expect(stateOf(runner, clip).state).toBe("ready");
+    // A known family: the Omni recipe trips nothing in the safety net.
+    expect(stateOf(runner, clip).review).toMatchObject({ bucket: "known", held: false, holds: [] });
     expect(comfy.state.posted).toEqual([]); // nothing runs before Start
 
     await runner.start();
@@ -137,7 +140,7 @@ describe("comfy runner", () => {
       choices: {},
       passes: "single",
       phase: "single",
-      videoswarm: { fingerprint: "fp-213533" },
+      videoswarm: { fingerprint: "fp-213533", review: { bucket: "known", confirmed: [] } },
     });
     expect(pnginfo.requeue.source_prompt).toEqual(JSON.parse(stringifyComfyGraphJson(drafts.get(clip.draftPath).prompt)));
     expect(pnginfo.requeue.source_prompt["667"].class_type).toBe("LoraLoaderModelOnly"); // the draft's graph, turbo LoRA and all
@@ -357,6 +360,106 @@ describe("comfy runner", () => {
     expect(runner.snapshot().running).toBe(false); // the queue had finished
     await runner.start();
     expect(stateOf(runner, third).state).toBe("waiting");
+  });
+
+  // The V2V hybrid, with the recipe the learner would make of it: its clicks
+  // depend on the frame size and it saves through a continuation node.
+  function v2vClip(name, change = () => {}) {
+    const draftPath = path.join(outputDir, "video", `${name}_00001_.mp4`);
+    fs.mkdirSync(path.dirname(draftPath), { recursive: true });
+    fs.writeFileSync(draftPath, "mp4");
+    const graphs = v2vDraft();
+    change(graphs.prompt);
+    drafts.set(draftPath, graphs);
+    comfy.state.info = nodeInfoFor([graphs.prompt]);
+    return { fingerprint: `fp-${name}`, draftPath };
+  }
+
+  it("never sends a held clip, and sends it once each hold is confirmed for it", async () => {
+    const v2vRecipeId = store.saveRecipe({ name: "V2V quality", recipe: v2vRecipe() }).id;
+    const runner = newRunner();
+    const clip = v2vClip("v2v");
+    runner.addClips({ clips: [clip], recipeId: v2vRecipeId, knobs: {} });
+    await runner.start();
+    await ticks(runner, 2);
+    expect(comfy.state.posted).toEqual([]);
+    const held = stateOf(runner, clip);
+    expect(held.state).toBe("blocked");
+    expect(held.detail).toMatch(/^Held for review: The final would be saved by H3HybridSaveRun #82:68/);
+    expect(held.review).toMatchObject({ bucket: "review", held: true });
+    expect(held.review.holds.map((hold) => hold.id)).toEqual(["save:82:68:H3HybridSaveRun", "dependency:97:PointsEditor"]);
+    expect(held.problems.map((problem) => problem.hold)).toEqual(["save:82:68:H3HybridSaveRun", "dependency:97:PointsEditor"]);
+
+    // Only the holds this clip reported, and only by their ids.
+    expect(() => runner.confirm(held.id, ["save:1:Other"])).toThrow(/no hold save:1:Other/);
+    expect(() => runner.confirm(held.id, [])).toThrow(/Name each hold/);
+    expect(() => runner.confirm(held.id, ["save:82:68:H3HybridSaveRun", 5])).toThrow(/Name each hold/);
+    expect(runner.confirm(held.id, ["save:82:68:H3HybridSaveRun"])).toBe(true);
+    await runner.tick();
+    expect(comfy.state.posted).toEqual([]);
+    expect(stateOf(runner, clip)).toMatchObject({ state: "blocked", confirmed: ["save:82:68:H3HybridSaveRun"] });
+    expect(stateOf(runner, clip).detail).toMatch(
+      /^Held for review: Changing output_megapixels on MiniMaxH3Ref2VAComposer #76 reaches PointsEditor #97/
+    );
+
+    expect(runner.confirm(held.id, ["dependency:97:PointsEditor"])).toBe(true);
+    await runner.tick();
+    expect(stateOf(runner, clip)).toMatchObject({ state: "ready", review: { bucket: "review", held: false } });
+    // With nothing it could send, the queue had finished; Start sends it.
+    expect(comfy.state.posted).toEqual([]);
+    await runner.start();
+    expect(comfy.state.posted).toHaveLength(1);
+    expect(comfy.state.posted[0].extra_data.extra_pnginfo.requeue.videoswarm.review).toEqual({
+      bucket: "review",
+      confirmed: ["save:82:68:H3HybridSaveRun", "dependency:97:PointsEditor"],
+    });
+    expect(stateOf(runner, clip).state).toBe("waiting");
+    // Confirmations belong to the clip, not the render's settings.
+    expect(store.getQueueItem(held.id).knobs).toEqual({ choices: {}, settings: {} });
+  });
+
+  it("refuses a continuation draft, whatever is confirmed", async () => {
+    const v2vRecipeId = store.saveRecipe({ name: "V2V quality", recipe: v2vRecipe() }).id;
+    const runner = newRunner();
+    const clip = v2vClip("continued", (prompt) => {
+      prompt["4"].inputs.accepted_chunks = 2;
+    });
+    runner.addClips({ clips: [clip], recipeId: v2vRecipeId, knobs: {} });
+    await runner.start();
+    const item = stateOf(runner, clip);
+    expect(item).toMatchObject({
+      state: "blocked",
+      detail: "A continuation run: H3HybridRunPlan #4 has accepted_chunks 2. Only a fresh run can be re-rendered",
+    });
+    expect(() => runner.confirm(item.id, ["continuation:4:H3HybridRunPlan"])).toThrow(/cannot be confirmed/);
+    runner.confirm(item.id, ["save:82:68:H3HybridSaveRun", "dependency:97:PointsEditor"]);
+    await ticks(runner, 2);
+    expect(stateOf(runner, clip).state).toBe("blocked");
+    expect(comfy.state.posted).toEqual([]);
+  });
+
+  it("blocks a draft whose source video is gone, until it is back", async () => {
+    const v2vRecipeId = store.saveRecipe({ name: "V2V quality", recipe: v2vRecipe() }).id;
+    const source = path.join(outputDir, "sources", "take-1.mp4");
+    const runner = newRunner();
+    const clip = v2vClip("sourced", (prompt) => {
+      prompt["1"].inputs.value = source;
+    });
+    runner.addClips({ clips: [clip], recipeId: v2vRecipeId, knobs: {} });
+    await runner.tick();
+    const item = stateOf(runner, clip);
+    expect(item.detail).toBe(`PrimitiveStringMultiline #1 value names ${source}, which no longer exists`);
+    runner.confirm(item.id, ["save:82:68:H3HybridSaveRun", "dependency:97:PointsEditor"]);
+    await runner.start();
+    expect(comfy.state.posted).toEqual([]);
+
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, "mp4");
+    clock += 61_000;
+    await runner.tick();
+    expect(stateOf(runner, clip).state).toBe("ready");
+    await runner.start();
+    expect(comfy.state.posted).toHaveLength(1);
   });
 
   it("does nothing while the connection is off, and never talks to ComfyUI", async () => {
