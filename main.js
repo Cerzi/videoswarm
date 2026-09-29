@@ -90,6 +90,13 @@ const {
 } = require("./main/cached-library-snapshot");
 const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
 const { buildSequenceSnapshotResponse } = require("./main/sequence-view");
+const { buildSequenceCopyRecords } = require("./main/sequence-export");
+const {
+  assertEntriesResolvable,
+  createSequenceRenumberCoordinator,
+} = require("./main/sequence-renumber");
+// Renumber plans awaiting confirmation, bound to the renderer that asked.
+const sequenceRenumberCoordinator = createSequenceRenumberCoordinator();
 const {
   IPC_LIMITS,
   assertBoolean,
@@ -988,6 +995,7 @@ function invalidateNativeWorkOwner(sender) {
   reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
+  sequenceRenumberCoordinator.discardOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -1015,6 +1023,7 @@ function disposeNativeWorkOwner(sender) {
   reviewCopyAcceptedCoordinator.cancelOwner(sender);
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
+  sequenceRenumberCoordinator.discardOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -4363,13 +4372,22 @@ const reviewCopyAcceptedCoordinator =
       directory,
       scope,
       instanceIds,
+      sequenceId,
+      request,
       maxRecords,
       maxPathBytes,
       assertActive,
     }) =>
-      // An explicit selection resolves rows by id; otherwise the review state
-      // is still the only thing that decides what gets transferred.
-      Array.isArray(instanceIds)
+      // A sequence resolves one row per position, repeats included, and
+      // refuses while any position is missing. An explicit selection
+      // resolves rows by id; otherwise the review state is still the only
+      // thing that decides what gets transferred.
+      sequenceId
+        ? resolveSequenceCopyRecords(context, sequenceId, {
+            preferredRootPath: request?.preferredRootPath || null,
+            assertActive,
+          })
+        : Array.isArray(instanceIds)
         ? context.metadataStore.getSelectionExportSnapshot({
             instanceIds,
             maxRecords: Math.min(
@@ -4542,7 +4560,14 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
   // Naming rows is not the same as asserting what they contain: the ids are
   // bounded here and resolved against the catalog in the main process, so a
   // renderer still cannot introduce a path of its own choosing.
-  const instanceIds = payload?.instanceIds === undefined ||
+  // A sequence names positions; its rows are resolved from the catalog here
+  // in the main process, exactly like a selection's ids.
+  const sequenceId = payload?.sequenceId === undefined ||
+    payload?.sequenceId === null
+    ? null
+    : assertInteger(payload.sequenceId, { name: "sequence id", min: 1 });
+  const instanceIds = sequenceId !== null ||
+    payload?.instanceIds === undefined ||
     payload?.instanceIds === null
     ? null
     : assertInstanceIdArray(payload.instanceIds, {
@@ -4555,6 +4580,9 @@ ipcMain.handle("review:copy-accepted:prepare", async (event, payload = {}) => {
     directory,
     scope,
     instanceIds,
+    sequenceId,
+    preferredRootPath:
+      sequenceId !== null ? normalizeSequencePreferredRoot(payload) : null,
     destinationPath,
     layout,
     reusePlanId,
@@ -4836,6 +4864,191 @@ ipcMain.handle("sequences:move-entry", async (_event, payload = {}) =>
     ),
   }))
 );
+
+function normalizeSequencePreferredRoot(payload) {
+  return typeof payload?.preferredRootPath === "string" &&
+    payload.preferredRootPath
+    ? assertPathString(payload.preferredRootPath, {
+        name: "preferred root path",
+      })
+    : null;
+}
+
+function sequenceNotFoundError() {
+  return Object.assign(new Error("This sequence no longer exists"), {
+    code: "SEQUENCE_NOT_FOUND",
+    expose: true,
+  });
+}
+
+function resolveSequenceCopyRecords(
+  context,
+  sequenceId,
+  { preferredRootPath = null, assertActive } = {}
+) {
+  const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
+    preferredRootPath,
+  });
+  assertActive?.();
+  if (!snapshot) throw sequenceNotFoundError();
+  return { records: buildSequenceCopyRecords(snapshot) };
+}
+
+/**
+ * Like runLibraryCatalogOperation, for the sequence operations that touch the
+ * filesystem and so have to await. A refusal keeps its code and the positions
+ * or names it is about, which is what the renderer shows.
+ */
+async function runSequenceFileOperation(operation, defaultErrorCode) {
+  let context = null;
+  try {
+    context = captureMetadataContext();
+    const result = await operation(context);
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      profileId: context.profileId,
+      generation: context.generation,
+      ...(result || {}),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      profileId: context?.profileId || getActiveProfileId(),
+      generation: context?.generation ?? metadataProfileGeneration,
+      error: error?.message || String(error),
+      code: error?.code || defaultErrorCode,
+      ...(Array.isArray(error?.positions) ? { positions: error.positions } : {}),
+      ...(Array.isArray(error?.names) ? { names: error.names.slice(0, 100) } : {}),
+    };
+  }
+}
+
+// Renumber-in-place (clip-sequences.md, Section 5). Prepare resolves the
+// sequence, authorizes every file the way other native file actions are
+// authorized, and checks the disk; nothing is renamed until apply names the
+// plan the renderer confirmed. The coordinator is created with the other
+// native services near the top of this file.
+
+ipcMain.handle("sequences:renumber:prepare", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence renumber request");
+  const sequenceId = normalizeSequenceIpcId(payload);
+  const preferredRootPath = normalizeSequencePreferredRoot(payload);
+  return runSequenceFileOperation(async (context) => {
+    const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
+      preferredRootPath,
+    });
+    if (!snapshot) throw sequenceNotFoundError();
+    const instances = snapshot.entries.map((entry) => entry.instance);
+    assertEntriesResolvable(
+      instances.map((instance) => ({
+        absolutePath: instance?.absolutePath || null,
+      }))
+    );
+    const entries = [];
+    for (const [index, instance] of instances.entries()) {
+      let authorized;
+      try {
+        authorized = await assertRendererPath(
+          event,
+          instance.absolutePath,
+          "file"
+        );
+      } catch (error) {
+        if (error?.code === "PROFILE_RECONFIGURATION_IN_PROGRESS") throw error;
+        throw Object.assign(
+          new Error(
+            `Position ${index + 1} (${path.basename(instance.absolutePath)}) ` +
+              "is not in a folder open in this window, or is no longer on " +
+              "disk. Open its folder first; nothing was renamed."
+          ),
+          { code: "SEQUENCE_RENUMBER_UNAUTHORIZED", positions: [index + 1] }
+        );
+      }
+      entries.push({
+        absolutePath: authorized.path,
+        catalogPath: instance.absolutePath,
+        rootPath: instance.rootPath,
+      });
+    }
+    assertMetadataContextActive(context);
+    const prepared = await sequenceRenumberCoordinator.prepare({
+      ownerId: event.sender.id,
+      entries,
+      context,
+    });
+    return { sequenceName: snapshot.name, ...prepared };
+  }, "SEQUENCE_RENUMBER_ERROR");
+});
+
+ipcMain.handle("sequences:renumber:apply", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence renumber confirmation");
+  const planId = assertString(payload?.planId, {
+    name: "renumber plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  return runSequenceFileOperation(async (context) => {
+    const result = await sequenceRenumberCoordinator.apply({
+      ownerId: event.sender.id,
+      planId,
+      // A profile switch between the confirmation and now means the plan
+      // was made against another catalog; refuse it.
+      assertActive: (planContext) => {
+        assertMetadataContextActive(planContext);
+        if (planContext.generation !== context.generation) {
+          throw new ProfileOperationInvalidatedError();
+        }
+      },
+    });
+    await recordRenumberInCatalog(context, result.renamed);
+    return {
+      renamedCount: result.renamed.length,
+      unchangedCount: result.unchangedCount,
+    };
+  }, "SEQUENCE_RENUMBER_ERROR");
+});
+
+/**
+ * Tell the catalog now rather than waiting for the watcher, which may not be
+ * watching every root a sequence spans. The content rows are untouched --
+ * metadata is keyed by fingerprint -- so this only moves each instance to its
+ * new name. The watcher, where it runs, repeats the same idempotent update.
+ */
+async function recordRenumberInCatalog(context, renamed) {
+  const store = context.metadataStore;
+  const roots = new Set();
+  for (const item of renamed) {
+    const catalogPath = item.entry?.catalogPath || item.from;
+    const newCatalogPath = path.join(path.dirname(catalogPath), item.toName);
+    try {
+      await store.indexFile({
+        filePath: newCatalogPath,
+        rootPath: item.entry?.rootPath || undefined,
+        assertActive: () => assertMetadataContextActive(context),
+        refreshDirectoryCounts: false,
+      });
+      if (item.entry?.rootPath) roots.add(item.entry.rootPath);
+    } catch (error) {
+      if (isDirectoryScanCancelled(error)) throw error;
+      console.warn("[sequences] Could not index a renumbered clip", {
+        code: error?.code || null,
+      });
+    }
+  }
+  try {
+    store.markFilesMissing(
+      renamed.map((item) => item.entry?.catalogPath || item.from),
+      { assertActive: () => assertMetadataContextActive(context) }
+    );
+    for (const rootPath of roots) store.refreshDirectoryCounts(rootPath);
+  } catch (error) {
+    if (isDirectoryScanCancelled(error)) throw error;
+    console.warn("[sequences] Could not retire renumbered paths", {
+      code: error?.code || null,
+    });
+  }
+}
 
 function normalizeFingerprintArray(fingerprints) {
   return assertStringArray(fingerprints, {

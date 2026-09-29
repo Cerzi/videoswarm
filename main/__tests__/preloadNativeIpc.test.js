@@ -560,6 +560,50 @@ describe("preload sequences bridge", () => {
     });
   });
 
+  it("bridges renumber and numbered-copy export with fixed, normalized payloads", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.renumber.prepare(3, { preferredRootPath: "/library" });
+    await api.sequences.renumber.apply("plan-1234");
+    await api.sequences.renumber.apply(42);
+    await api.sequences.exportCopy.prepare(3, {
+      preferredRootPath: "/library",
+      destinationPath: "/exports",
+      reusePlanId: "plan-5678",
+    });
+    await api.sequences.exportCopy.prepare(5);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:prepare", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:apply", {
+      planId: "plan-1234",
+    });
+    // A non-string plan id is never forwarded as-is.
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:apply", {
+      planId: "",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("review:copy-accepted:prepare", {
+      rootPath: null,
+      directory: "",
+      scope: "all-descendants",
+      sequenceId: 3,
+      preferredRootPath: "/library",
+      destinationPath: "/exports",
+      reusePlanId: "plan-5678",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("review:copy-accepted:prepare", {
+      rootPath: null,
+      directory: "",
+      scope: "all-descendants",
+      sequenceId: 5,
+      preferredRootPath: null,
+      destinationPath: null,
+      reusePlanId: null,
+    });
+  });
+
   it("nulls a missing preferred root rather than forwarding undefined", async () => {
     const { api, ipcRenderer } = loadPreload();
 

@@ -109,5 +109,7 @@ describe("accepted transfer root requirement", () => {
     // Even an empty array is a selection-shaped request and is rejected later
     // by the coordinator's own bounds, not by demanding a root here.
     expect(acceptedTransferRequiresRoot({ instanceIds: [] })).toBe(false);
+    // A sequence names positions, and its rows name their roots too.
+    expect(acceptedTransferRequiresRoot({ sequenceId: 4 })).toBe(false);
   });
 });
