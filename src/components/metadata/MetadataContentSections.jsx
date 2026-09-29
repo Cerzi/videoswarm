@@ -3,9 +3,10 @@ import React, {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { PlusIcon, RefreshIcon } from "../UiIcons";
+import { CopyIcon, PlusIcon, RefreshIcon } from "../UiIcons";
 import {
   MAX_METADATA_SUGGESTION_TAGS,
   buildGenerationMetadataDiagnostics,
@@ -49,6 +50,56 @@ export function MetadataFileFactsSection({
         ))}
       </div>
     </section>
+  );
+}
+
+async function writeClipboardText(text) {
+  const api = typeof window !== "undefined" ? window.electronAPI : null;
+  if (api?.copyToClipboard) {
+    const result = await api.copyToClipboard(text);
+    return result?.success !== false;
+  }
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  return false;
+}
+
+// A prompt can be long and Ctrl+C is often taken by the grid, so each one
+// gets its own copy button that says for a moment whether it worked.
+export function CopyTextButton({ text, label }) {
+  const [status, setStatus] = useState(null);
+  const timerRef = useRef(null);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const copy = async () => {
+    let copied = false;
+    try {
+      copied = await writeClipboardText(text);
+    } catch {
+      copied = false;
+    }
+    setStatus(copied ? "copied" : "failed");
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setStatus(null), 1600);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`metadata-panel__button metadata-panel__button--compact metadata-panel__copy${
+        status ? ` is-${status}` : ""
+      }`}
+      onClick={copy}
+      aria-label={label}
+      title={label}
+    >
+      <CopyIcon />
+      <span aria-live="polite">
+        {status === "copied" ? "Copied" : status === "failed" ? "Failed" : "Copy"}
+      </span>
+    </button>
   );
 }
 
@@ -230,13 +281,19 @@ export function MetadataGenerationSection({
               <dl className="metadata-panel__generation-grid">
                 {prompt ? (
                   <div className="metadata-panel__generation-prompt">
-                    <dt>Positive prompt</dt>
+                    <dt>
+                      <span>Positive prompt</span>
+                      <CopyTextButton text={prompt} label="Copy positive prompt" />
+                    </dt>
                     <dd>{prompt}</dd>
                   </div>
                 ) : null}
                 {negativePrompt ? (
                   <div className="metadata-panel__generation-prompt metadata-panel__generation-prompt--negative">
-                    <dt>Negative prompt</dt>
+                    <dt>
+                      <span>Negative prompt</span>
+                      <CopyTextButton text={negativePrompt} label="Copy negative prompt" />
+                    </dt>
                     <dd>{negativePrompt}</dd>
                   </div>
                 ) : null}
