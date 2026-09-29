@@ -55,11 +55,13 @@ describe("sequence file actions in the main process", () => {
   it("applies only a confirmed plan and records the new names in the catalog", () => {
     const apply = section(
       'ipcMain.handle("sequences:renumber:apply"',
-      "async function recordRenumberInCatalog"
+      "async function authorizeSequenceFiles"
     );
     expect(apply).toContain("sequenceRenumberCoordinator.apply");
     expect(apply).toContain("assertMetadataContextActive(planContext)");
-    expect(apply).toContain("recordRenumberInCatalog(context, result.renamed)");
+    expect(apply).toContain(
+      "recordRenumberInCatalog(context.metadataStore, result.renamed"
+    );
   });
 
   it("drops a renderer's pending renumber when the renderer goes away", () => {
