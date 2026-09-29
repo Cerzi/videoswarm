@@ -1,9 +1,10 @@
 # Clip Sequences
 
-Status: **Partially implemented** — the store, its IPC surface, the panel and
-loupe play-through are built. Renumber and export are open. See Implementation
-order.
-Last updated: 2026-09-01
+Status: **Implemented** — the store, the Sequences panel on the activity rail,
+loupe play-through, renumber-in-place, numbered-copy export and one-video
+export are built and verified. A few smaller items stay open; see *Open
+items* below.
+Last updated: 2026-09-29
 
 ## Summary
 
@@ -17,7 +18,7 @@ present, so it can express neither an arbitrary permutation nor a subset — and
 story order is always both. The grid orders *what you have*; a sequence orders
 *what you chose*.
 
-Sections 1 to 4 are built.
+Sections 1 to 7 are built.
 
 ## Status convention
 
@@ -127,9 +128,10 @@ Entries append to the end. Nothing about adding ever reorders existing entries.
 
 ## 3. The panel, and the constraint that shapes it
 
-Status: **Implemented**
+Status: **Implemented** — as a **Sequences panel on the activity rail**
+(`ux-redesign.md`, D7), not the strip under the grid it started as.
 
-The sequence is a **bounded strip**, not a mode over the grid.
+The sequence is a **bounded list**, not a mode over the grid.
 
 **Reordering cannot use the grid's drag.** `VideoCard`'s `handleDragStart` calls
 `preventDefault()` and hands off to Electron's native `startDrag` so clips can be
@@ -140,23 +142,30 @@ the drag-out that already exists.
 
 So the two directions are split:
 
-- **Into the sequence:** context menu, a hotkey, and a button in the selection
-  inspector. No drag.
+- **Into the sequence:** the card context menu, the **B** hotkey, and a
+  **+ Sequence** button in Details (docked and floating). All three add the
+  selection in the grid's sort order. No drag.
 - **Within the sequence:** panel entries are plain DOM with no native drag
-  binding, so ordinary HTML5 drag-and-drop reorders them.
+  binding, so ordinary HTML5 drag-and-drop reorders them. **Alt+↑ / Alt+↓**
+  move the focused entry for anyone not using a pointer.
 
-The strip is also what keeps this clear of the virtualized masonry. Reordering
+The panel is also what keeps this clear of the virtualized masonry. Reordering
 inside a virtualized layout means dragging against a layout that re-flows and
-recycles nodes underneath the pointer; a bounded strip of at most 500 items,
-scrolled horizontally, does not have that problem and does not touch the grid
-renderer at all.
+recycles nodes underneath the pointer; a bounded list of at most 500 items,
+scrolled inside the sidebar, does not have that problem and does not touch
+the grid renderer at all.
 
 ### Acceptance
 
 - Dragging a grid card still drops a real file into an external application.
-- Dragging a panel entry never starts a native OS drag.
+  **Unchanged**: `VideoCard` is not modified by this feature.
+- Dragging a panel entry never starts a native OS drag. **Verified**
+  (`SequencePanel.test.jsx`).
 - Reordering one entry leaves every other entry's relative order unchanged.
-- The masonry renderer is unmodified by this feature.
+  **Verified**, by drag and by Alt+arrow, in unit tests and in the real app
+  (`tests/electron/sequences.smoke.spec.cjs`).
+- The masonry renderer is unmodified by this feature. **Verified**: no change
+  under `src/hooks/video-collection/` or to `useMasonryLayout`.
 
 ## 4. Playing it through
 
@@ -200,7 +209,8 @@ purpose; see Deferred.
 
 ## 5. Writing the order onto disk
 
-Status: **Unimplemented**
+Status: **Implemented**, except the single-clip rename (see the end of this
+section).
 
 **Renumber** writes sequence positions into filenames. It is how the order
 leaves the app for tools that only understand names.
@@ -222,18 +232,63 @@ workflows may already reference. The default is Section 6's numbered copy, which
 produces the same downstream benefit without touching the source folder;
 renumber-in-place stays available as an explicit choice.
 
-This section also supplies the single-clip rename the application currently
-lacks entirely — the only `rename` IPC today is `profiles:rename`.
+This section was also meant to supply the single-clip rename the application
+lacks — the only `rename` IPC is still `profiles:rename`. **That is not
+built.** `main/sequence-renumber.js` plans and executes any batch of
+renames, so a single-clip rename is one caller away, but it needs its own
+UI and was left out rather than bolted on.
 
 ### Acceptance
 
 - Renumbering a permutation of existing numbered files succeeds.
+  **Verified**, swaps and a longer cycle included
+  (`main/__tests__/sequenceRenumber.test.js`).
 - A collision with a file outside the sequence aborts with nothing renamed.
-- Tags, ratings and review state are unchanged by a renumber.
+  **Verified**, both at confirmation and when the name appears after it.
+- Tags, ratings and review state are unchanged by a renumber. **Verified**
+  against the real SQLite store (`sequenceRenumberCatalog.test.js`, in
+  `test:electron-abi`), which also checks the sequence resolves to the new
+  names in order with nothing missing.
+
+### Implementation notes
+
+- `main/sequence-renumber.js`. Numbers are `(position + 1) × 10`, three
+  digits until a sequence needs four (100+ entries). A prefix is replaced
+  only when it looks like one this feature wrote — three to five digits, a
+  multiple of ten, then `_` — so `2024_take.mp4` and `001_take.mp4` keep
+  their digits and a renumbered folder does not become `020_010_…`.
+- **Refusals**, each naming positions: a missing entry (Section 7), and a
+  file at two positions (a file carries one number; the numbered copy is
+  the way to repeat a shot).
+- **Two-phase with rollback.** Sources are renamed beside themselves to
+  `<name>.vs-renumber-<tag>-<i>` (not a video extension, so scanners ignore
+  it), then to their finals. Any failure renames every completed step
+  back; if even that fails, the error names the folders and the temporary
+  suffix to look for.
+- **No overwrite.** Targets are checked at confirmation, again at apply,
+  and again immediately before each final rename, by device and inode, so
+  a case-insensitive volume or a hard link counts as "itself". Node's
+  `rename` replaces an existing file, so a file created in the instant
+  between that last check and the rename could still be replaced; no
+  portable no-replace rename exists to close that gap.
+- **Authorization.** Paths come from the catalog, never the renderer, and
+  every one is checked with `assertRendererPath(event, path, "file")`, as
+  other native file actions are. A clip in a root this window has not
+  opened is refused with its position. Plans are bound to the renderer
+  that asked, expire after five minutes, are spent by one apply, and are
+  dropped when the renderer goes away.
+- **Confirmation.** `sequences:renumber:prepare` returns every rename; the
+  dialog lists them folder by folder and says the old names stop working
+  for other tools. Nothing changes until `sequences:renumber:apply` names
+  that plan.
+- **Catalog.** After renaming, main indexes each new path and marks the old
+  one missing (`recordRenumberInCatalog`) instead of waiting for a watcher
+  that may not cover every root the sequence spans. Content rows are
+  untouched.
 
 ## 6. Exporting
 
-Status: **Unimplemented**
+Status: **Implemented** — both tiers.
 
 Two tiers, cheapest first.
 
@@ -260,16 +315,67 @@ proxy generation, which already runs in-process through
 ### Acceptance
 
 - A stream-copy export of uniform clips produces a file whose duration equals
-  the summed entry durations within one frame.
-- Mixed formats are reported before any work starts.
-- Cancelling leaves no partial output file.
+  the summed entry durations within one frame. **Verified** with the real
+  ffmpeg (`main/__tests__/sequenceRender.test.js`; skipped where ffmpeg is
+  not installed).
+- Mixed formats are reported before any work starts. **Verified**: the plan
+  lists each property that differs and at which positions, and the dialog
+  shows it before the run.
+- Cancelling leaves no partial output file. **Verified** for the one-video
+  export, including a cancel that kills a running ffmpeg. The numbered copy
+  keeps the transfer flow's rule instead: files already copied stay (they
+  are complete files, not partial ones) and `concat.txt` is not written.
 - Export is unavailable, with a stated reason, when ffmpeg is absent.
+  **Verified**: the menu item is disabled and the reason is shown under it.
+
+### Implementation notes — numbered copy
+
+- A **sequence mode of the transfer coordinator**
+  (`main/review-copy-accepted.js`), so the destination picker, recent
+  folders, destination-inside-source refusal, symlink and identity checks,
+  progress and cancel are the ones every transfer uses. Rows come from
+  `buildSequenceCopyRecords` (`main/sequence-export.js`), resolved in main:
+  one per position, so a recurring shot is copied once per position under
+  each number.
+- **All-or-nothing**, which is stricter than a transfer's skip-collisions
+  rule: any taken name, `concat.txt` included, blocks the start with the
+  reason, because a copy missing a shot is a different story and
+  `concat.txt` would name someone else's file. Copy only; move and link are
+  refused for a sequence.
+- `concat.txt` is written with `wx` after every file has copied, with
+  ffmpeg's quoting and a header giving the command to join it.
+
+### Implementation notes — one video
+
+- `main/sequence-render.js`, through `child-process-runner` like proxy
+  generation: one run at a time, per-step timeouts, bounded output.
+- **Why ffprobe, not `media_content`.** The catalog has frame size, frame
+  rate and duration but no codec, pixel format or audio layout, and stream
+  copy fails on any of those. So every clip is probed first; the plan is
+  *copy* only when codec, frame size, frame rate, pixel format and audio all
+  match.
+- **Re-encode** normalizes each clip to the most common frame size and rate
+  (H.264 + AAC; MPEG-4 Part 2 if this FFmpeg has no libx264), letterboxed,
+  with silence for clips without sound when any clip has sound, then joins
+  the results by stream copy. Clip-by-clip keeps command lines short and
+  gives progress per clip.
+- **Output** goes to a hidden `.<name>.partial-<id>` beside the target and
+  takes its final name by hard link, which fails rather than replaces, with
+  a checked rename where links are unsupported. The name is the sequence's,
+  with ` (2)`, ` (3)` … if taken. Cancel or failure removes the partial and
+  the temporary folder of intermediates.
+- **Availability** is learned by running `ffmpeg -version` and `ffprobe
+  -version`, the way `proxy-manager.js` learns it (ENOENT means absent).
+  `ProxyManager.ffmpegAvailable` itself is not reused because it stays
+  `null` until a proxy has been attempted.
+- Sources are authorized like renumber's; the folder comes from the native
+  picker. Missing entries refuse, naming positions.
 
 ## 7. Missing entries
 
-Status: **Partially implemented** — entries keep their slot, the strip draws
-the gap, and playback skips it after saying how many are missing. The export
-refusal below is open because there is no export yet.
+Status: **Implemented** — entries keep their slot, the panel draws the gap,
+playback skips it after saying how many are missing, and every export and
+renumber refuses while any entry is missing, naming the positions.
 
 An entry whose content has no present instance **keeps its position and renders
 as a gap**. It is never silently dropped, because a sequence that quietly
@@ -278,14 +384,17 @@ shortens itself is a story edited by accident.
 **Export refuses to run while any entry is missing.** This is the one place the
 failure is invisible in the output: a shortened render looks like a finished
 render. Playback is more forgiving and skips the gap with it marked in the
-strip.
+panel.
 
 ### Acceptance
 
 - Deleting a clip on disk leaves a visible gap at its position, not a shorter
   sequence.
 - Restoring the file to any indexed location refills the same position.
-- Export refuses, naming the missing positions.
+- Export refuses, naming the missing positions. **Verified** in main (the
+  query behind the numbered copy, the one-video prepare and renumber all go
+  through `assertEntriesResolvable`) and in the renderer, which says so
+  before opening a folder picker (`src/app/sequenceFileActions.js`).
 
 ## Deferred
 
@@ -323,8 +432,7 @@ strip.
    context menu, which creates a sequence on first use rather than prompting.
    The sort-order rule is `orderSelectedFingerprints` in
    `src/sorting/selectionOrder.js`, extracted so it is testable away from
-   `App.jsx`. **Panel visibility is not persisted** — it opens on first add and
-   closes with the session.
+   `App.jsx`. Since moved onto the activity rail; see the 2026-09-29 notes.
 4. ~~Loupe play-through, with the end-of-clip disposition change scoped to
    sequence sessions.~~ Done. A sequence session swaps the controller's inputs
    rather than adding a second controller, and `advanceOnEnd` turns the loop
@@ -333,14 +441,52 @@ strip.
    wire records through `createTaggedLibraryFiles`, pairing by resolved path so
    a record the projection refuses cannot slide every later entry onto the
    wrong clip.
-5. Renumber, two-phase and all-or-nothing, including the single-clip rename.
-   **Not built.**
-6. Numbered copy export, then single-file concat behind `ffmpegAvailable`.
-   **Not built.**
+5. ~~Renumber, two-phase and all-or-nothing~~. Done; the single-clip rename
+   is not (see Section 5).
+6. ~~Numbered copy export, then single-file concat behind ffmpeg
+   availability.~~ Done.
 
 Steps 1–4 are independently useful and should land before 5–6 are designed in
 detail: play-through is what proves the ordering surface is right, and it is
 cheaper to change the panel before anything writes to disk.
+
+## Implementation notes
+
+### 2026-09-29 — Sequences on the rail, renumber and export
+
+- **The panel is a rail panel.** `buildWorkspacePanels` gains a Sequences
+  entry whenever a folder is open, in both Details modes, with a badge
+  counting the active sequence's clips. It is a vertical list at the
+  sidebar's width; the strip under the grid is gone.
+  - The first add in a session opens it; later adds only report which
+    sequence they went to, so an add never pulls the sidebar away from
+    another panel.
+  - A new grid selection keeps Sequences in front, as it keeps Generation,
+    because selecting clips to add is how the panel is used.
+  - With sequences stored but none chosen (launch, profile switch), the most
+    recently changed one is shown, so the next add continues it.
+  - New and Rename name a sequence inline. They used `window.prompt`,
+    which Electron does not implement, so both did nothing in the app.
+  - The context menu used click order for a multi-clip selection; it now
+    uses sort order, as Section 2 requires.
+- **B** adds the selection; it is in `shortcutCatalog.js`, so the shortcut
+  guide lists it.
+- **Files menu** in the panel: *Copy as numbered files…*, *Export as one
+  video…*, *Rename originals to this order…*.
+
+### Open items
+
+- **Thumbnails in the panel.** The list has a thumbnail column that appears
+  only when images are supplied, and none are yet. The grid's thumbnail
+  cache holds only clips that were hovered or dragged, and decoding a frame
+  per entry would spend the decoder budget the grid depends on. A frame
+  grab through the ffmpeg runner, cached per fingerprint, is the likely
+  route.
+- **Single-clip rename** (Section 5).
+- **Sequence playback has no `fullPath`.** Entries are built by the same
+  catalog projection as tag views, which carries no native path, so in a
+  sequence session Copy frame falls back to the canvas capture. Tag views
+  share the limitation.
 
 ## References
 

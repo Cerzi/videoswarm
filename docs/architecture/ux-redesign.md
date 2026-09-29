@@ -188,6 +188,15 @@ sidebar for the readout.
   key presses with Ctrl, ⌘ or Alt held; before, Ctrl+C copied a frame and
   Ctrl+A marked the clip Accepted.
 
+### 2026-09-29 — Sequences joins the rail
+
+Clip sequences' panel moved from a strip under the grid to a **Sequences**
+panel on the activity rail, the first feature after Library, Details and
+Generation to take a slot there. It is present whenever a folder is open, in
+both Details modes, with a clip-count badge; a new selection keeps it in
+front, as it keeps Generation. See `clip-sequences.md`, Section 3 and its
+2026-09-29 notes.
+
 ## References
 
 - The audit: outstanding work 5b in [`../outstanding-work.md`](../outstanding-work.md).
