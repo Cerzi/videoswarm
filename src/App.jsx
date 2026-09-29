@@ -26,6 +26,9 @@ import ProfilePromptDialog from "./components/ProfilePromptDialog";
 import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog";
 import ReviewToolbar from "./components/ReviewToolbar";
 import SequencePanel from "./components/SequencePanel";
+import SequenceRenumberDialog from "./components/sequences/SequenceRenumberDialog";
+import SequenceExportCopyDialog from "./components/sequences/SequenceExportCopyDialog";
+import { describeSequenceBlocker } from "./app/sequenceFileActions";
 import { orderSelectedFingerprints } from "./sorting/selectionOrder";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
 import TransferSelectionDialog from "./components/TransferSelectionDialog";
@@ -547,6 +550,8 @@ function App() {
   // session, so the result of that first add is visible; after that an add
   // only reports itself and never pulls the sidebar away from another panel.
   const sequencePanelShownRef = useRef(false);
+  // The open sequence file action: { kind: "renumber" | "export-copy", ... }.
+  const [sequenceAction, setSequenceAction] = useState(null);
   const [sequencePlayback, setSequencePlayback] = useState(null);
   const pendingSequenceOpenRef = useRef(null);
   const sequences = useSequences({ preferredRootPath: activeRootPath });
@@ -2304,6 +2309,144 @@ function App() {
       }
     },
     [notify, sequences]
+  );
+
+  /**
+   * Renumber in place (clip-sequences.md, Section 5): ask main for the exact
+   * list of renames, show it, and rename only once it is confirmed.
+   */
+  const handleRenumberSequence = useCallback(async () => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "renumber");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    const prepare = window.electronAPI?.sequences?.renumber?.prepare;
+    if (typeof prepare !== "function") {
+      notify("Renaming files is unavailable", "error");
+      return;
+    }
+    try {
+      const result = await prepare(sequence.id, {
+        preferredRootPath: activeRootPath,
+      });
+      if (result?.success === false) {
+        notify(result.error || "The files could not be checked", "error");
+        return;
+      }
+      setSequenceAction({
+        kind: "renumber",
+        sequenceName: sequence.name,
+        plan: result,
+        applying: false,
+        error: "",
+      });
+    } catch (error) {
+      notify(error?.message || "The files could not be checked", "error");
+    }
+  }, [activeRootPath, notify, sequences.activeSequence]);
+
+  const handleConfirmRenumber = useCallback(
+    async (planId) => {
+      const apply = window.electronAPI?.sequences?.renumber?.apply;
+      if (!planId || typeof apply !== "function") return;
+      setSequenceAction((previous) =>
+        previous?.kind === "renumber"
+          ? { ...previous, applying: true, error: "" }
+          : previous
+      );
+      let result;
+      try {
+        result = await apply(planId);
+      } catch (error) {
+        result = { success: false, error: error?.message };
+      }
+      if (result?.success === false) {
+        // The plan is spent either way; a retry starts from a fresh check.
+        setSequenceAction((previous) =>
+          previous?.kind === "renumber"
+            ? {
+                ...previous,
+                applying: false,
+                plan: { ...previous.plan, planId: null },
+                error:
+                  `${result.error || "The files could not be renamed"} ` +
+                  "Close this and choose Rename originals again to retry.",
+              }
+            : previous
+        );
+        return;
+      }
+      setSequenceAction(null);
+      const count = Number(result?.renamedCount) || 0;
+      notify(
+        count === 1
+          ? "Renamed 1 file to sequence order"
+          : `Renamed ${count.toLocaleString()} files to sequence order`,
+        "success"
+      );
+      sequences.refreshActiveSequence();
+    },
+    [notify, sequences]
+  );
+
+  // Numbered copy (Section 6, tier 1) through the transfer coordinator.
+  const handleExportSequenceCopy = useCallback(() => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "export");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    setAcceptedCopyProgress(null);
+    setSequenceAction({
+      kind: "export-copy",
+      sequenceId: sequence.id,
+      sequenceName: sequence.name,
+      clipCount: sequence.entries.length,
+    });
+  }, [notify, sequences.activeSequence]);
+
+  const handlePrepareSequenceCopy = useCallback(
+    async ({ destinationPath, reusePlanId }) => {
+      const prepare = window.electronAPI?.sequences?.exportCopy?.prepare;
+      const sequenceId = sequenceAction?.sequenceId;
+      if (typeof prepare !== "function" || !sequenceId) {
+        throw new Error("Exporting is unavailable");
+      }
+      setAcceptedCopyProgress(null);
+      return prepare(sequenceId, {
+        preferredRootPath: activeRootPath,
+        destinationPath: typeof destinationPath === "string" ? destinationPath : null,
+        reusePlanId: typeof reusePlanId === "string" ? reusePlanId : null,
+      });
+    },
+    [activeRootPath, sequenceAction?.sequenceId]
+  );
+
+  const handleStartSequenceCopy = useCallback(
+    async (planId) => {
+      const start = window.electronAPI?.review?.copyAccepted?.start;
+      if (typeof start !== "function") throw new Error("Exporting is unavailable");
+      setAcceptedCopyProgress(null);
+      const result = await start(planId, "copy");
+      const copied = Number(result?.copiedCount ?? result?.copiedMedia ?? 0);
+      if (result?.cancelled) {
+        notify(`Copy cancelled after ${copied.toLocaleString()} file(s)`, "info");
+      } else if (result?.success && result?.concatWritten) {
+        notify(
+          `Copied ${copied.toLocaleString()} numbered file(s) and concat.txt`,
+          "success"
+        );
+      } else if (result?.success === false || !result?.concatWritten) {
+        notify(result?.error || "The numbered copy finished with issues", "warning");
+      }
+      return result;
+    },
+    [notify]
   );
 
   // The selection goes in the grid's sort order (clip-sequences.md,
@@ -4951,6 +5094,26 @@ function App() {
             acceptedCopyProgress={acceptedCopyProgress}
             trashProgress={trashProgress}
           />
+          <SequenceRenumberDialog
+            open={sequenceAction?.kind === "renumber"}
+            sequenceName={sequenceAction?.sequenceName}
+            plan={sequenceAction?.kind === "renumber" ? sequenceAction.plan : null}
+            applying={Boolean(sequenceAction?.applying)}
+            error={sequenceAction?.error || ""}
+            onConfirm={handleConfirmRenumber}
+            onClose={() => setSequenceAction(null)}
+          />
+          <SequenceExportCopyDialog
+            open={sequenceAction?.kind === "export-copy"}
+            sequenceName={sequenceAction?.sequenceName}
+            clipCount={sequenceAction?.clipCount || 0}
+            onPrepare={handlePrepareSequenceCopy}
+            onStart={handleStartSequenceCopy}
+            onCancel={handleCancelAcceptedCopy}
+            onListDestinations={handleListTransferDestinations}
+            progress={acceptedCopyProgress}
+            onClose={() => setSequenceAction(null)}
+          />
           <TransferSelectionDialog
             open={transferDialogOpen}
             videos={transferSelection}
@@ -5247,6 +5410,8 @@ function App() {
                           onRemoveEntries={sequences.removeEntries}
                           onMoveEntry={sequences.moveEntry}
                           onPlaySequence={handlePlaySequence}
+                          onExportCopy={handleExportSequenceCopy}
+                          onRenumber={handleRenumberSequence}
                         />
                       ),
                     })}

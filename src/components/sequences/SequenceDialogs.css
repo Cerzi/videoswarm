@@ -1,0 +1,158 @@
+/* Sequence file actions: renumber, numbered copy, one-file export. They sit
+   in the review dialogs' frame and only add what those do not have. */
+.sequence-dialog {
+  width: min(640px, 100%);
+}
+
+.sequence-dialog__lead {
+  margin: 0 0 0.6rem;
+  color: #c9cfd3;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.sequence-dialog__lead code {
+  font-size: 0.76rem;
+  color: #e8ebed;
+}
+
+.sequence-dialog__facts {
+  margin: 0 0 0.8rem;
+  padding-left: 1.1rem;
+  color: #9ba2a7;
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.sequence-dialog__group {
+  margin-top: 0.75rem;
+}
+
+.sequence-dialog__group h3 {
+  margin: 0 0 0.3rem;
+  overflow: hidden;
+  color: #858c91;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.sequence-dialog__renames,
+.sequence-dialog__names {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  list-style: none;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sequence-dialog__renames li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.18rem 0;
+}
+
+.sequence-dialog__from,
+.sequence-dialog__to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sequence-dialog__from {
+  color: #9ba2a7;
+}
+
+.sequence-dialog__to {
+  color: #e8ebed;
+}
+
+.sequence-dialog__arrow {
+  color: #6c757d;
+}
+
+.sequence-dialog__names {
+  margin-top: 0.6rem;
+}
+
+.sequence-dialog__names li {
+  padding: 0.12rem 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sequence-dialog__more {
+  color: #858c91;
+}
+
+.sequence-dialog__row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.sequence-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.8rem 1.2rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.sequence-dialog button.sequence-dialog__secondary {
+  min-height: 2.1rem;
+  padding: 0.4rem 0.78rem;
+  color: #e8ebed;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sequence-dialog button.sequence-dialog__primary,
+.sequence-dialog button.sequence-dialog__danger {
+  min-height: 2.1rem;
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sequence-dialog button.sequence-dialog__primary {
+  color: #101512;
+  background: var(--color-accent, #51cf66);
+}
+
+.sequence-dialog button.sequence-dialog__danger {
+  color: #fff;
+  background: #c92a2a;
+}
+
+.sequence-dialog__choice {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.7rem 0;
+  font-size: 0.76rem;
+}
+
+.sequence-dialog__mismatches {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
