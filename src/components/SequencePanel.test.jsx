@@ -244,4 +244,120 @@ describe("SequencePanel", () => {
     expect(screen.getByText(/already exists/i)).toBeTruthy();
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
   });
+
+  it("names a new sequence inline, since Electron has no window.prompt", () => {
+    const onCreateSequence = vi.fn().mockResolvedValue({ id: 9 });
+    render(<SequencePanel sequences={[]} onCreateSequence={onCreateSequence} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    const input = screen.getByRole("textbox", { name: "Sequence name" });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "  Act two  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(onCreateSequence).toHaveBeenCalledWith("Act two");
+    expect(screen.queryByRole("textbox", { name: "Sequence name" })).toBeNull();
+  });
+
+  it("renames inline with the current name filled in, and Escape cancels", () => {
+    const onRenameSequence = vi.fn().mockResolvedValue({});
+    render(
+      <SequencePanel
+        sequences={[{ id: 7, name: "Act one", entryCount: 1 }]}
+        activeSequenceId={7}
+        activeSequence={sequence([entry(1, "a.mp4")])}
+        onRenameSequence={onRenameSequence}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Sequence name" });
+    expect(input).toHaveValue("Act one");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Sequence name" })).toBeNull();
+    expect(onRenameSequence).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Sequence name" }), {
+      target: { value: "Opening" },
+    });
+    fireEvent.submit(screen.getByRole("textbox", { name: "Sequence name" }));
+    expect(onRenameSequence).toHaveBeenCalledWith(7, "Opening");
+  });
+
+  it("moves the focused entry with Alt+arrow keys and stops at the ends", () => {
+    const onMoveEntry = vi.fn();
+    render(
+      <SequencePanel
+        sequences={[{ id: 7, name: "Act one", entryCount: 3 }]}
+        activeSequenceId={7}
+        activeSequence={sequence([
+          entry(1, "a.mp4"),
+          entry(2, "b.mp4"),
+          entry(3, "c.mp4"),
+        ])}
+        onMoveEntry={onMoveEntry}
+      />
+    );
+
+    const items = screen.getAllByRole("listitem");
+    fireEvent.keyDown(items[1], { key: "ArrowUp", altKey: true });
+    expect(onMoveEntry).toHaveBeenLastCalledWith(2, 0);
+    fireEvent.keyDown(items[1], { key: "ArrowDown", altKey: true });
+    expect(onMoveEntry).toHaveBeenLastCalledWith(2, 2);
+    onMoveEntry.mockClear();
+    fireEvent.keyDown(items[0], { key: "ArrowUp", altKey: true });
+    fireEvent.keyDown(items[2], { key: "ArrowDown", altKey: true });
+    fireEvent.keyDown(items[1], { key: "ArrowDown" });
+    expect(onMoveEntry).not.toHaveBeenCalled();
+  });
+
+  it("offers export and renumber from the Files menu, stating why a one-file export is unavailable", () => {
+    const onExportCopy = vi.fn();
+    const onExportFile = vi.fn();
+    const onRenumber = vi.fn();
+    render(
+      <SequencePanel
+        sequences={[{ id: 7, name: "Act one", entryCount: 2 }]}
+        activeSequenceId={7}
+        activeSequence={sequence([entry(1, "a.mp4"), entry(2, "b.mp4")])}
+        onExportCopy={onExportCopy}
+        onExportFile={onExportFile}
+        onRenumber={onRenumber}
+        exportFileUnavailableReason="FFmpeg was not found"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Sequence file actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Export as one video…" })
+    ).toBeDisabled();
+    expect(screen.getByText("FFmpeg was not found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy as numbered files…" }));
+    expect(onExportCopy).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sequence file actions" }));
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Rename originals to this order…" })
+    );
+    expect(onRenumber).toHaveBeenCalled();
+    expect(onExportFile).not.toHaveBeenCalled();
+  });
+
+  it("shows a cached thumbnail beside the name when one is supplied", () => {
+    render(
+      <SequencePanel
+        sequences={[{ id: 7, name: "Act one", entryCount: 2 }]}
+        activeSequenceId={7}
+        activeSequence={sequence([entry(1, "a.mp4"), entry(2, "b.mp4")])}
+        thumbnails={{ 2: "data:image/jpeg;base64,AAAA" }}
+      />
+    );
+    const items = screen.getAllByRole("listitem");
+    expect(items[0].querySelector("img")).toBeNull();
+    expect(items[1].querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/jpeg;base64,AAAA"
+    );
+  });
 });

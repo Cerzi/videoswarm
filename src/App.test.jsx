@@ -1385,6 +1385,95 @@ describe("App hook composition", () => {
     expect(detailsTab()).toHaveAttribute("aria-selected", "false");
   });
 
+  test("B adds the selection in sort order, opening Sequences once and keeping it in front", async () => {
+    const videos = ["seq-a", "seq-b", "seq-c"].map((id, index) => ({
+      id,
+      instanceId: 300 + index,
+      name: `${id}.mp4`,
+      fingerprint: `fingerprint-${id}`,
+      reviewState: "unreviewed",
+      tags: [],
+    }));
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/seq-root",
+      libraryRoot: { rootPath: "/seq-root", name: "seq-root", recursive: true },
+      directorySummaries: [{ relativePath: "", name: "seq-root" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      virtualItems: videos.map((video) => ({ id: video.id, item: video, style: {} })),
+    });
+    const sequenceApi = {
+      list: vi.fn().mockResolvedValue({ success: true, sequences: [] }),
+      create: vi.fn().mockResolvedValue({
+        success: true,
+        sequence: { id: 4, name: "Sequence 1", entryCount: 0 },
+      }),
+      snapshot: vi.fn().mockResolvedValue({
+        success: true,
+        sequence: {
+          id: 4,
+          name: "Sequence 1",
+          entryCount: 0,
+          entries: [],
+          missingCount: 0,
+        },
+      }),
+      append: vi.fn().mockResolvedValue({ success: true, entries: [] }),
+    };
+    window.electronAPI = { saveSettingsPartial: vi.fn(), sequences: sequenceApi };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    const rendered = render(<App />);
+    act(() => useElectronLifecycleMock.mock.calls.at(-1)?.[0].setMetadataInspectorMode("docked"));
+    const select = (ids) =>
+      act(() => {
+        // Click order: c before a. The sequence must get grid order.
+        selectionMock.selected = new Set(ids);
+        selectionMock.size = ids.length;
+        selectionMock.anchorId = ids[0] ?? null;
+        rendered.rerender(<App />);
+      });
+    const sequencesTab = () => screen.getByRole("tab", { name: /^Sequences/ });
+
+    select(["seq-c", "seq-a"]);
+    await act(async () => {
+      await useHotkeysMock.mock.calls.at(-1)?.[2].onAddToSequence();
+    });
+
+    expect(sequenceApi.create).toHaveBeenCalledWith("Sequence 1");
+    expect(sequenceApi.append).toHaveBeenCalledWith(4, [
+      "fingerprint-seq-a",
+      "fingerprint-seq-c",
+    ]);
+    await waitFor(() => expect(sequencesTab()).toHaveAttribute("aria-selected", "true"));
+
+    // A new selection does not pull Details over the Sequences panel.
+    select(["seq-b"]);
+    expect(sequencesTab()).toHaveAttribute("aria-selected", "true");
+
+    // Only the first add opens the panel.
+    fireEvent.click(screen.getByRole("tab", { name: "Library" }));
+    await act(async () => {
+      await useHotkeysMock.mock.calls.at(-1)?.[2].onAddToSequence();
+    });
+    expect(sequenceApi.append).toHaveBeenLastCalledWith(4, ["fingerprint-seq-b"]);
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+  });
+
   test("docks selection details, keeps Library user-controlled, and suspends hidden generation work", async () => {
     const video = {
       id: "dock-video",
