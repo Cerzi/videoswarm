@@ -102,7 +102,10 @@ export default function SequenceRenumberDialog({
 
       {groups.map(([directory, items]) => (
         <section key={directory} className="sequence-dialog__group">
-          <h3 title={directory}>{directory}</h3>
+          <h3 title={directory}>
+            {/* Truncated from the start, so the folder name stays visible. */}
+            <bdi dir="ltr">{directory}</bdi>
+          </h3>
           <ol className="sequence-dialog__renames" aria-label={`Renames in ${directory}`}>
             {items.map((rename) => (
               <li key={`${rename.position}:${rename.fromName}`}>
