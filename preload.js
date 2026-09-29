@@ -515,6 +515,46 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
     moveEntry: async (id, entryId, position) =>
       ipcRenderer.invoke("sequences:move-entry", { id, entryId, position }),
+    // Write the order onto disk by renaming the originals. Prepare lists
+    // every rename; nothing changes until apply names that plan.
+    renumber: {
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("sequences:renumber:prepare", {
+          id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+        }),
+      apply: async (planId) =>
+        ipcRenderer.invoke("sequences:renumber:apply", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+    },
+    // A numbered copy runs through the transfer coordinator, so start,
+    // cancel and progress are review.copyAccepted's; only the request that
+    // names a sequence differs.
+    exportCopy: {
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("review:copy-accepted:prepare", {
+          rootPath: null,
+          directory: "",
+          scope: "all-descendants",
+          sequenceId: id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+          destinationPath:
+            typeof options?.destinationPath === "string"
+              ? options.destinationPath
+              : null,
+          reusePlanId:
+            typeof options?.reusePlanId === "string"
+              ? options.reusePlanId
+              : null,
+        }),
+    },
   },
 
   review: {
