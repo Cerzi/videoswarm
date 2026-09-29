@@ -363,6 +363,52 @@ async function executeSequenceRenumber(plan, options = {}) {
 }
 
 /**
+ * Move each renamed instance to its new name in the catalog.
+ *
+ * The content rows are untouched -- tags, ratings and review state are keyed
+ * by fingerprint -- so indexing the new path finds the same content and the
+ * old path is retired. The watcher, where one runs, repeats the same
+ * idempotent update. A failure for one file is logged rather than thrown:
+ * the files are already renamed, and the next scan repairs the index.
+ */
+async function recordRenumberInCatalog(store, renamed, options = {}) {
+  const pathImpl = options.pathImpl || path;
+  const isCancelled = options.isCancelled || (() => false);
+  const logger = options.logger || console;
+  const roots = new Set();
+  for (const item of renamed) {
+    const catalogPath = item.entry?.catalogPath || item.from;
+    const newCatalogPath = pathImpl.join(pathImpl.dirname(catalogPath), item.toName);
+    try {
+      await store.indexFile({
+        filePath: newCatalogPath,
+        rootPath: item.entry?.rootPath || undefined,
+        assertActive: options.assertActive,
+        refreshDirectoryCounts: false,
+      });
+      if (item.entry?.rootPath) roots.add(item.entry.rootPath);
+    } catch (error) {
+      if (isCancelled(error)) throw error;
+      logger.warn?.("[sequences] Could not index a renumbered clip", {
+        code: error?.code || null,
+      });
+    }
+  }
+  try {
+    store.markFilesMissing(
+      renamed.map((item) => item.entry?.catalogPath || item.from),
+      { assertActive: options.assertActive }
+    );
+    for (const rootPath of roots) store.refreshDirectoryCounts(rootPath);
+  } catch (error) {
+    if (isCancelled(error)) throw error;
+    logger.warn?.("[sequences] Could not retire renumbered paths", {
+      code: error?.code || null,
+    });
+  }
+}
+
+/**
  * Plans awaiting confirmation. A plan is bound to the renderer that asked for
  * it, expires, and is replaced by that renderer's next request, so a stale
  * confirmation dialog cannot apply an old plan.
@@ -471,6 +517,7 @@ module.exports = {
   numberedName,
   planSequenceRenumber,
   preflightSequenceRenumber,
+  recordRenumberInCatalog,
   sequenceNumberPrefix,
   sequenceNumberWidth,
   stripSequenceNumber,

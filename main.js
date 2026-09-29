@@ -94,6 +94,7 @@ const { buildSequenceCopyRecords } = require("./main/sequence-export");
 const {
   assertEntriesResolvable,
   createSequenceRenumberCoordinator,
+  recordRenumberInCatalog,
 } = require("./main/sequence-renumber");
 // Renumber plans awaiting confirmation, bound to the renderer that asked.
 const sequenceRenumberCoordinator = createSequenceRenumberCoordinator();
@@ -4975,7 +4976,12 @@ ipcMain.handle("sequences:renumber:apply", async (event, payload = {}) => {
         }
       },
     });
-    await recordRenumberInCatalog(context, result.renamed);
+    // Tell the catalog now rather than waiting for the watcher, which may
+    // not be watching every root a sequence spans.
+    await recordRenumberInCatalog(context.metadataStore, result.renamed, {
+      assertActive: () => assertMetadataContextActive(context),
+      isCancelled: isDirectoryScanCancelled,
+    });
     return {
       renamedCount: result.renamed.length,
       unchangedCount: result.unchangedCount,
@@ -5114,46 +5120,6 @@ ipcMain.handle("sequences:render:cancel", async (event, payload = {}) => {
   return { success: true, ...sequenceRenderer.cancel({ ownerId: event.sender.id, planId }) };
 });
 
-/**
- * Tell the catalog now rather than waiting for the watcher, which may not be
- * watching every root a sequence spans. The content rows are untouched --
- * metadata is keyed by fingerprint -- so this only moves each instance to its
- * new name. The watcher, where it runs, repeats the same idempotent update.
- */
-async function recordRenumberInCatalog(context, renamed) {
-  const store = context.metadataStore;
-  const roots = new Set();
-  for (const item of renamed) {
-    const catalogPath = item.entry?.catalogPath || item.from;
-    const newCatalogPath = path.join(path.dirname(catalogPath), item.toName);
-    try {
-      await store.indexFile({
-        filePath: newCatalogPath,
-        rootPath: item.entry?.rootPath || undefined,
-        assertActive: () => assertMetadataContextActive(context),
-        refreshDirectoryCounts: false,
-      });
-      if (item.entry?.rootPath) roots.add(item.entry.rootPath);
-    } catch (error) {
-      if (isDirectoryScanCancelled(error)) throw error;
-      console.warn("[sequences] Could not index a renumbered clip", {
-        code: error?.code || null,
-      });
-    }
-  }
-  try {
-    store.markFilesMissing(
-      renamed.map((item) => item.entry?.catalogPath || item.from),
-      { assertActive: () => assertMetadataContextActive(context) }
-    );
-    for (const rootPath of roots) store.refreshDirectoryCounts(rootPath);
-  } catch (error) {
-    if (isDirectoryScanCancelled(error)) throw error;
-    console.warn("[sequences] Could not retire renumbered paths", {
-      code: error?.code || null,
-    });
-  }
-}
 
 function normalizeFingerprintArray(fingerprints) {
   return assertStringArray(fingerprints, {
