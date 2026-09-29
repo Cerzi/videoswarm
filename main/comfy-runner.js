@@ -1,6 +1,8 @@
+const fs = require('fs');
 const path = require('path');
 const { applyRecipe } = require('./comfy-recipe');
 const { checkPrompt, classesToCheck } = require('./comfy-checks');
+const { absolutePathsIn, assessRerender, heldProblems, normalizeConfirmed } = require('./comfy-safety');
 const { classifyHistoryEntry, createComfyClient } = require('./comfy-client');
 const { parseComfyGraphJson, stringifyComfyGraphJson } = require('./comfy-graph-json');
 const { normalizeKnobs } = require('./comfy-queue-store');
@@ -11,7 +13,10 @@ const { normalizeKnobs } = require('./comfy-queue-store');
 // is sent: its recipe applied to the draft, the checks run against ComfyUI's
 // node definitions, and the final named to land beside its draft. The runner
 // polls ComfyUI's /queue and /history; it never restarts ComfyUI.
-// See docs/architecture/comfy-queue-integration.md, Section 6.
+// Before anything is sent, main/comfy-safety.js decides whether the result
+// could be silently wrong; a held clip stays blocked until each hold is
+// confirmed for it, and a refused one is never sent.
+// See docs/architecture/comfy-queue-integration.md, Sections 6 and 10.
 
 const ORDERS = Object.freeze(['first-added', 'last-added', 'shortest', 'longest']);
 const IN_FLIGHT = new Set(['waiting', 'rendering']);
@@ -21,6 +26,18 @@ const LOST_POLLS = 3;
 const MAX_CHECKS_PER_TICK = 16;
 const MAX_ADD = 512;
 const LOST_REASON = 'ComfyUI stopped during it (crashed or restarted?)';
+const HELD_PREFIX = 'Held for review: ';
+
+// Whether a path the draft reads is there: true, false, or undefined when
+// the answer is not "missing" (no permission, say), which is not flagged.
+async function statPath(filePath) {
+  try {
+    await fs.promises.stat(filePath);
+    return true;
+  } catch (error) {
+    return error?.code === 'ENOENT' || error?.code === 'ENOTDIR' ? false : undefined;
+  }
+}
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 
@@ -94,6 +111,7 @@ function createComfyRunner({
   clearTimer = (handle) => clearTimeout(handle),
   emit = () => {},
   logger = console,
+  pathExists = statPath,
 }) {
   let client = null;
   let clientUrl = null;
@@ -105,7 +123,7 @@ function createComfyRunner({
   let timer = null;
   let ticking = null;
   const lost = new Map(); // item id -> polls missing from /queue and /history
-  const checks = new Map(); // item id -> { at, problems }
+  const checks = new Map(); // item id -> { at, problems, review }
   const drafts = new Map(); // draft path -> { prompt, workflow }
   const log = [];
 
@@ -180,7 +198,24 @@ function createComfyRunner({
     });
     if (applied.error) return { problems: [{ code: applied.error.code, message: applied.error.message }] };
     const info = await comfy.getNodeInfo(classesToCheck(applied.prompt));
-    const problems = checkPrompt(applied.prompt, info);
+    const checked = checkPrompt(applied.prompt, info);
+    // Never silently wrong: refusals first, then what the checks found, then
+    // holds nobody has confirmed for this clip.
+    const paths = absolutePathsIn(applied.prompt, info);
+    const existing = new Map(await Promise.all(paths.map(async (entry) => [entry, await pathExists(entry)])));
+    const review = assessRerender({
+      draft,
+      prompt: applied.prompt,
+      info,
+      confirmed: item.confirmed,
+      pathExists: (entry) => existing.get(entry),
+    });
+    const held = heldProblems(review);
+    const problems = [
+      ...held.filter((problem) => !problem.confirmable),
+      ...checked,
+      ...held.filter((problem) => problem.confirmable),
+    ];
     const requeue = {
       source_path: sourcePathFor(item.draftPath, outputDir),
       source_prompt: draft.prompt,
@@ -190,18 +225,26 @@ function createComfyRunner({
       choices: item.knobs?.choices || {},
       passes: 'single',
       phase: 'single',
-      videoswarm: { item: item.id, fingerprint: item.fingerprint },
+      videoswarm: {
+        item: item.id,
+        fingerprint: item.fingerprint,
+        review: { bucket: review.bucket, confirmed: review.holds.filter((hold) => hold.confirmed).map((hold) => hold.id) },
+      },
     };
     const extraPnginfo = { requeue };
     if (applied.workflow) extraPnginfo.workflow = applied.workflow;
-    return { problems, prompt: applied.prompt, extraPnginfo, prefix };
+    return { problems, review, prompt: applied.prompt, extraPnginfo, prefix };
   }
 
-  function recordChecks(item, problems) {
-    checks.set(item.id, { at: now(), problems });
+  function recordChecks(item, problems, review = null) {
+    checks.set(item.id, { at: now(), problems, review });
     const blocked = problems.length > 0;
+    const detail = blocked ? `${problems[0].confirmable ? HELD_PREFIX : ''}${problems[0].message}` : null;
     if (blocked && item.state === 'ready') {
-      store.updateQueueItem(item.id, { state: 'blocked', detail: problems[0].message });
+      store.updateQueueItem(item.id, { state: 'blocked', detail });
+      changed('blocked', { id: item.id });
+    } else if (blocked && item.state === 'blocked' && item.detail !== detail) {
+      store.updateQueueItem(item.id, { detail });
       changed('blocked', { id: item.id });
     } else if (!blocked && item.state === 'blocked') {
       store.updateQueueItem(item.id, { state: 'ready', detail: null });
@@ -218,7 +261,7 @@ function createComfyRunner({
       .slice(0, MAX_CHECKS_PER_TICK);
     for (const item of stale) {
       const prepared = await prepare(item, comfy);
-      recordChecks(store.getQueueItem(item.id), prepared.problems);
+      recordChecks(store.getQueueItem(item.id), prepared.problems, prepared.review);
     }
   }
 
@@ -338,7 +381,7 @@ function createComfyRunner({
     if (inFlight().length) return;
     for (const item of ordered(store.listQueueItems())) {
       const prepared = await prepare(item, comfy);
-      recordChecks(item, prepared.problems);
+      recordChecks(item, prepared.problems, prepared.review);
       if (prepared.problems.length) continue;
       try {
         const promptId = await comfy.submitPrompt({ prompt: prepared.prompt, extraPnginfo: prepared.extraPnginfo });
@@ -452,6 +495,8 @@ function createComfyRunner({
         attempts: item.attempts,
         position: position.get(item.id) ?? null,
         problems: checks.get(item.id)?.problems ?? null,
+        review: checks.get(item.id)?.review ?? null,
+        confirmed: item.confirmed ?? [],
       })),
       log: log.slice(-40),
     };
@@ -553,6 +598,34 @@ function createComfyRunner({
     return true;
   }
 
+  // Confirm holds on one clip, by the ids its last check reported. Only a
+  // hold that can be confirmed is accepted (a continuation run or a missing
+  // source never can), and the clip is checked again before it is sent.
+  function confirm(id, holdIds) {
+    const item = store.getQueueItem(id);
+    if (!item || (item.state !== 'blocked' && item.state !== 'ready')) return false;
+    const wanted = normalizeConfirmed(holdIds);
+    if (!wanted.length || wanted.length !== (Array.isArray(holdIds) ? new Set(holdIds).size : 0)) {
+      throw Object.assign(new Error('Name each hold to confirm by its id'), { code: 'COMFY_HOLD_INVALID' });
+    }
+    const reported = new Map((checks.get(item.id)?.review?.holds || []).map((hold) => [hold.id, hold]));
+    for (const holdId of wanted) {
+      const hold = reported.get(holdId);
+      if (!hold) {
+        throw Object.assign(new Error(`This clip has no hold ${holdId}`), { code: 'COMFY_HOLD_UNKNOWN' });
+      }
+      if (!hold.confirmable) {
+        throw Object.assign(new Error(`This cannot be confirmed: ${hold.message}`), { code: 'COMFY_HOLD_REFUSED' });
+      }
+    }
+    store.updateQueueItem(id, { confirmed: [...(item.confirmed || []), ...wanted] });
+    checks.delete(item.id);
+    note(`Confirmed ${wanted.join(', ')} for ${path.basename(item.draftPath)}`);
+    changed('confirmed', { id });
+    schedule();
+    return true;
+  }
+
   function retry(id) {
     const item = store.getQueueItem(id);
     if (!item || (item.state !== 'failed' && item.state !== 'blocked')) return false;
@@ -605,6 +678,7 @@ function createComfyRunner({
     stop,
     setOrder,
     renderAgain,
+    confirm,
     retry,
     remove,
     reconfigure,
