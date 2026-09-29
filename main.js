@@ -97,6 +97,9 @@ const {
 } = require("./main/sequence-renumber");
 // Renumber plans awaiting confirmation, bound to the renderer that asked.
 const sequenceRenumberCoordinator = createSequenceRenumberCoordinator();
+const { createSequenceRenderer } = require("./main/sequence-render");
+// One-video sequence export through ffmpeg: one run at a time, cancellable.
+const sequenceRenderer = createSequenceRenderer();
 const {
   IPC_LIMITS,
   assertBoolean,
@@ -996,6 +999,7 @@ function invalidateNativeWorkOwner(sender) {
   nativeOwnerLifecycle.invalidate(sender);
   const ownerId = sender.id;
   sequenceRenumberCoordinator.discardOwner(ownerId);
+  sequenceRenderer.cancelOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -1024,6 +1028,7 @@ function disposeNativeWorkOwner(sender) {
   nativeOwnerLifecycle.dispose(sender);
   const ownerId = sender.id;
   sequenceRenumberCoordinator.discardOwner(ownerId);
+  sequenceRenderer.cancelOwner(ownerId);
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
@@ -4935,43 +4940,12 @@ ipcMain.handle("sequences:renumber:prepare", async (event, payload = {}) => {
   const sequenceId = normalizeSequenceIpcId(payload);
   const preferredRootPath = normalizeSequencePreferredRoot(payload);
   return runSequenceFileOperation(async (context) => {
-    const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
-      preferredRootPath,
-    });
-    if (!snapshot) throw sequenceNotFoundError();
-    const instances = snapshot.entries.map((entry) => entry.instance);
-    assertEntriesResolvable(
-      instances.map((instance) => ({
-        absolutePath: instance?.absolutePath || null,
-      }))
+    const { snapshot, entries } = await authorizeSequenceFiles(
+      event,
+      context,
+      sequenceId,
+      { preferredRootPath, action: "renumber" }
     );
-    const entries = [];
-    for (const [index, instance] of instances.entries()) {
-      let authorized;
-      try {
-        authorized = await assertRendererPath(
-          event,
-          instance.absolutePath,
-          "file"
-        );
-      } catch (error) {
-        if (error?.code === "PROFILE_RECONFIGURATION_IN_PROGRESS") throw error;
-        throw Object.assign(
-          new Error(
-            `Position ${index + 1} (${path.basename(instance.absolutePath)}) ` +
-              "is not in a folder open in this window, or is no longer on " +
-              "disk. Open its folder first; nothing was renamed."
-          ),
-          { code: "SEQUENCE_RENUMBER_UNAUTHORIZED", positions: [index + 1] }
-        );
-      }
-      entries.push({
-        absolutePath: authorized.path,
-        catalogPath: instance.absolutePath,
-        rootPath: instance.rootPath,
-      });
-    }
-    assertMetadataContextActive(context);
     const prepared = await sequenceRenumberCoordinator.prepare({
       ownerId: event.sender.id,
       entries,
@@ -5007,6 +4981,137 @@ ipcMain.handle("sequences:renumber:apply", async (event, payload = {}) => {
       unchangedCount: result.unchangedCount,
     };
   }, "SEQUENCE_RENUMBER_ERROR");
+});
+
+/**
+ * Resolve a sequence to files this window may read: every position present,
+ * each one authorized like any other native file action. Shared by renumber
+ * and one-video export.
+ */
+async function authorizeSequenceFiles(event, context, sequenceId, options = {}) {
+  const snapshot = context.metadataStore.getSequenceSnapshot(sequenceId, {
+    preferredRootPath: options.preferredRootPath || null,
+  });
+  if (!snapshot) throw sequenceNotFoundError();
+  const instances = snapshot.entries.map((entry) => entry.instance);
+  assertEntriesResolvable(
+    instances.map((instance) => ({
+      absolutePath: instance?.absolutePath || null,
+    })),
+    { action: options.action || "renumber" }
+  );
+  const entries = [];
+  for (const [index, instance] of instances.entries()) {
+    let authorized;
+    try {
+      authorized = await assertRendererPath(event, instance.absolutePath, "file");
+    } catch (error) {
+      if (error?.code === "PROFILE_RECONFIGURATION_IN_PROGRESS") throw error;
+      throw Object.assign(
+        new Error(
+          `Position ${index + 1} (${path.basename(instance.absolutePath)}) ` +
+            "is not in a folder open in this window, or is no longer on " +
+            "disk. Open its folder first."
+        ),
+        { code: "SEQUENCE_FILE_UNAUTHORIZED", positions: [index + 1] }
+      );
+    }
+    entries.push({
+      absolutePath: authorized.path,
+      catalogPath: instance.absolutePath,
+      rootPath: instance.rootPath,
+    });
+  }
+  assertMetadataContextActive(context);
+  return { snapshot, entries };
+}
+
+// One-video export (clip-sequences.md, Section 6, tier 2). Availability is
+// learned by running ffmpeg, as proxy generation learns it; the panel shows
+// the reason instead of a control that cannot work.
+ipcMain.handle("sequences:render:availability", async () => {
+  const state = await sequenceRenderer.checkAvailability();
+  return {
+    success: true,
+    available: Boolean(state.available),
+    reason: state.available ? null : state.reason,
+  };
+});
+
+ipcMain.handle("sequences:render:prepare", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export request");
+  const sequenceId = normalizeSequenceIpcId(payload);
+  const preferredRootPath = normalizeSequencePreferredRoot(payload);
+  return runSequenceFileOperation(async (context) => {
+    const { snapshot, entries } = await authorizeSequenceFiles(
+      event,
+      context,
+      sequenceId,
+      { preferredRootPath, action: "export" }
+    );
+    const availability = await sequenceRenderer.checkAvailability();
+    if (!availability.available) {
+      throw Object.assign(new Error(availability.reason), {
+        code: "SEQUENCE_RENDER_UNAVAILABLE",
+      });
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) throw new ProfileOperationInvalidatedError();
+    const [lastDestination] = getRecentTransferDestinations();
+    const picked = await dialog.showOpenDialog(win, {
+      title: "Choose where to save the sequence video",
+      buttonLabel: "Save here",
+      defaultPath: lastDestination || app.getPath("videos"),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    assertMetadataContextActive(context);
+    const destination = picked?.canceled ? null : picked?.filePaths?.[0];
+    if (!destination) return { cancelled: true };
+    const plan = await sequenceRenderer.prepare({
+      ownerId: event.sender.id,
+      entries,
+      destinationDirectory: await fsPromises.realpath(destination),
+      name: snapshot.name,
+      context,
+    });
+    return { cancelled: false, sequenceName: snapshot.name, ...plan };
+  }, "SEQUENCE_RENDER_ERROR");
+});
+
+ipcMain.handle("sequences:render:start", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export start");
+  const planId = assertString(payload?.planId, {
+    name: "sequence export plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  const owner = event.sender;
+  return runSequenceFileOperation(async (context) => {
+    const result = await sequenceRenderer.start({
+      ownerId: owner.id,
+      planId,
+      assertActive: (planContext) => {
+        assertMetadataContextActive(planContext);
+        if (planContext.generation !== context.generation) {
+          throw new ProfileOperationInvalidatedError();
+        }
+      },
+      onProgress: (progress) => {
+        if (!owner.isDestroyed?.()) owner.send("sequences:render-progress", progress);
+      },
+    });
+    return result;
+  }, "SEQUENCE_RENDER_ERROR");
+});
+
+ipcMain.handle("sequences:render:cancel", async (event, payload = {}) => {
+  assertPlainObject(payload, "sequence export cancel");
+  const planId = assertString(payload?.planId, {
+    name: "sequence export plan id",
+    minChars: 8,
+    maxChars: 128,
+  });
+  return { success: true, ...sequenceRenderer.cancel({ ownerId: event.sender.id, planId }) };
 });
 
 /**
@@ -5932,6 +6037,7 @@ async function performNativeShutdown() {
     generationMetadata: () => generationMetadataService.shutdown(),
     generationKeys: () => generationKeyIndexer.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),
+    sequenceRenderer: () => sequenceRenderer.shutdown(),
     proxyManager: () => proxyManager.shutdown(),
     thumbnailCache: () => thumbnailCache.shutdown(),
     settingsWriter: () => settingsWriter.dispose(),

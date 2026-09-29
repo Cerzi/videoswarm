@@ -28,6 +28,7 @@ import ReviewToolbar from "./components/ReviewToolbar";
 import SequencePanel from "./components/SequencePanel";
 import SequenceRenumberDialog from "./components/sequences/SequenceRenumberDialog";
 import SequenceExportCopyDialog from "./components/sequences/SequenceExportCopyDialog";
+import SequenceExportFileDialog from "./components/sequences/SequenceExportFileDialog";
 import { describeSequenceBlocker } from "./app/sequenceFileActions";
 import { orderSelectedFingerprints } from "./sorting/selectionOrder";
 import ProcessReviewResultsDialog from "./components/ProcessReviewResultsDialog";
@@ -550,8 +551,13 @@ function App() {
   // session, so the result of that first add is visible; after that an add
   // only reports itself and never pulls the sidebar away from another panel.
   const sequencePanelShownRef = useRef(false);
-  // The open sequence file action: { kind: "renumber" | "export-copy", ... }.
+  // The open sequence file action:
+  // { kind: "renumber" | "export-copy" | "export-file", ... }.
   const [sequenceAction, setSequenceAction] = useState(null);
+  const [sequenceRenderProgress, setSequenceRenderProgress] = useState(null);
+  // Whether ffmpeg can join a sequence into one video; null until asked.
+  const [sequenceRenderAvailability, setSequenceRenderAvailability] =
+    useState(null);
   const [sequencePlayback, setSequencePlayback] = useState(null);
   const pendingSequenceOpenRef = useRef(null);
   const sequences = useSequences({ preferredRootPath: activeRootPath });
@@ -2448,6 +2454,85 @@ function App() {
     },
     [notify]
   );
+
+  // One-video export (Section 6, tier 2). ffmpeg is asked for once, the
+  // first time a sequence with clips is on screen, so the Files menu can
+  // say why the export is unavailable instead of failing later.
+  const hasSequenceEntries = Boolean(sequences.activeSequence?.entries?.length);
+  useEffect(() => {
+    if (!hasSequenceEntries || sequenceRenderAvailability) return undefined;
+    const check = window.electronAPI?.sequences?.render?.availability;
+    if (typeof check !== "function") return undefined;
+    let cancelled = false;
+    Promise.resolve(check())
+      .then((state) => {
+        if (!cancelled && state) {
+          setSequenceRenderAvailability({
+            available: Boolean(state.available),
+            reason: state.reason || null,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSequenceEntries, sequenceRenderAvailability]);
+
+  useEffect(() => {
+    const subscribe = window.electronAPI?.sequences?.render?.onProgress;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((progress) => {
+      if (progress && typeof progress === "object") {
+        setSequenceRenderProgress(progress);
+      }
+    });
+  }, []);
+
+  const handleExportSequenceFile = useCallback(() => {
+    const sequence = sequences.activeSequence;
+    if (!sequence) return;
+    const blocker = describeSequenceBlocker(sequence, "export");
+    if (blocker) {
+      notify(blocker, "warning");
+      return;
+    }
+    setSequenceRenderProgress(null);
+    setSequenceAction({
+      kind: "export-file",
+      sequenceId: sequence.id,
+      sequenceName: sequence.name,
+      clipCount: sequence.entries.length,
+    });
+  }, [notify, sequences.activeSequence]);
+
+  const handlePrepareSequenceFile = useCallback(async () => {
+    const prepare = window.electronAPI?.sequences?.render?.prepare;
+    const sequenceId = sequenceAction?.sequenceId;
+    if (typeof prepare !== "function" || !sequenceId) {
+      throw new Error("Exporting is unavailable");
+    }
+    setSequenceRenderProgress(null);
+    return prepare(sequenceId, { preferredRootPath: activeRootPath });
+  }, [activeRootPath, sequenceAction?.sequenceId]);
+
+  const handleStartSequenceFile = useCallback(
+    async (planId) => {
+      const start = window.electronAPI?.sequences?.render?.start;
+      if (typeof start !== "function") throw new Error("Exporting is unavailable");
+      const result = await start(planId);
+      if (result?.success !== false && !result?.cancelled && result?.outputName) {
+        notify(`Exported “${result.outputName}”`, "success");
+      }
+      return result;
+    },
+    [notify]
+  );
+
+  const handleCancelSequenceFile = useCallback(async (planId) => {
+    const cancel = window.electronAPI?.sequences?.render?.cancel;
+    if (typeof cancel === "function") await cancel(planId);
+  }, []);
 
   // The selection goes in the grid's sort order (clip-sequences.md,
   // Section 2), whichever way the add is asked for.
@@ -5114,6 +5199,16 @@ function App() {
             progress={acceptedCopyProgress}
             onClose={() => setSequenceAction(null)}
           />
+          <SequenceExportFileDialog
+            open={sequenceAction?.kind === "export-file"}
+            sequenceName={sequenceAction?.sequenceName}
+            clipCount={sequenceAction?.clipCount || 0}
+            onPrepare={handlePrepareSequenceFile}
+            onStart={handleStartSequenceFile}
+            onCancel={handleCancelSequenceFile}
+            progress={sequenceRenderProgress}
+            onClose={() => setSequenceAction(null)}
+          />
           <TransferSelectionDialog
             open={transferDialogOpen}
             videos={transferSelection}
@@ -5411,6 +5506,14 @@ function App() {
                           onMoveEntry={sequences.moveEntry}
                           onPlaySequence={handlePlaySequence}
                           onExportCopy={handleExportSequenceCopy}
+                          onExportFile={handleExportSequenceFile}
+                          exportFileUnavailableReason={
+                            sequenceRenderAvailability &&
+                            !sequenceRenderAvailability.available
+                              ? sequenceRenderAvailability.reason ||
+                                "FFmpeg is not available"
+                              : null
+                          }
                           onRenumber={handleRenumberSequence}
                         />
                       ),

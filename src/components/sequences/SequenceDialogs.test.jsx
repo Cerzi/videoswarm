@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { describe, expect, it, vi } from "vitest";
 import SequenceRenumberDialog from "./SequenceRenumberDialog";
 import SequenceExportCopyDialog from "./SequenceExportCopyDialog";
+import SequenceExportFileDialog from "./SequenceExportFileDialog";
 
 const renumberPlan = {
   planId: "plan-0001",
@@ -190,5 +191,141 @@ describe("SequenceExportCopyDialog", () => {
       fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("position 2");
+  });
+});
+
+describe("SequenceExportFileDialog", () => {
+  const renderDialog = (props = {}) =>
+    render(
+      <SequenceExportFileDialog
+        open
+        sequenceName="Act one"
+        clipCount={3}
+        onClose={vi.fn()}
+        {...props}
+      />
+    );
+
+  it("says before running that uniform clips are joined without re-encoding", async () => {
+    const onPrepare = vi.fn().mockResolvedValue({
+      success: true,
+      cancelled: false,
+      planId: "render-plan-1",
+      mode: "copy",
+      mismatches: [],
+      outputName: "Act one.mp4",
+      destinationLabel: "exports",
+      totalDurationMs: 75_000,
+      target: { width: 320, height: 240, frameRate: 25, hasAudio: false },
+    });
+    const onStart = vi.fn().mockResolvedValue({
+      success: true,
+      cancelled: false,
+      outputName: "Act one.mp4",
+      mode: "copy",
+    });
+    renderDialog({ onPrepare, onStart });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("joined as they are");
+    expect(screen.getByText("Act one.mp4")).toBeTruthy();
+    expect(screen.getByText("1:15")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    });
+    expect(onStart).toHaveBeenCalledWith("render-plan-1");
+    expect(screen.getByRole("status")).toHaveTextContent("Saved “Act one.mp4” in exports.");
+  });
+
+  it("reports mixed formats and what re-encoding will do before it runs", async () => {
+    const onPrepare = vi.fn().mockResolvedValue({
+      success: true,
+      planId: "render-plan-2",
+      mode: "reencode",
+      mismatches: ["Frame size differs: 320×240 (positions 1, 2); 160×120 (position 3)"],
+      outputName: "Act one.mp4",
+      destinationLabel: "exports",
+      target: { width: 320, height: 240, frameRate: 25, hasAudio: true },
+      encoder: "libx264",
+    });
+    renderDialog({ onPrepare, onStart: vi.fn() });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("re-encoded to 320×240 at 25 fps");
+    expect(status).toHaveTextContent("clips without sound get silence");
+    expect(status).toHaveTextContent("160×120 (position 3)");
+    expect(screen.getByRole("button", { name: "Re-encode and export" })).toBeEnabled();
+  });
+
+  it("cancels a running export and says nothing was written", async () => {
+    let finish;
+    const onStart = vi.fn(
+      () => new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const onCancel = vi.fn().mockResolvedValue({ cancelled: true });
+    const { rerender } = renderDialog({
+      onPrepare: vi.fn().mockResolvedValue({
+        success: true,
+        planId: "render-plan-3",
+        mode: "reencode",
+        mismatches: ["Codec differs: h264 (position 1); hevc (position 2)"],
+        outputName: "Act one.mp4",
+        destinationLabel: "exports",
+        target: { width: 320, height: 240, frameRate: 25, hasAudio: false },
+      }),
+      onStart,
+      onCancel,
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Re-encode and export" }));
+    });
+    rerender(
+      <SequenceExportFileDialog
+        open
+        sequenceName="Act one"
+        clipCount={3}
+        onClose={vi.fn()}
+        onStart={onStart}
+        onCancel={onCancel}
+        progress={{ planId: "render-plan-3", phase: "encoding", index: 2, total: 3 }}
+      />
+    );
+    expect(screen.getByText("Re-encoding clip 2 of 3…")).toBeTruthy();
+    // Work in progress cannot be closed by accident.
+    expect(screen.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel export" }));
+    });
+    expect(onCancel).toHaveBeenCalledWith("render-plan-3");
+    await act(async () => {
+      finish({ success: true, cancelled: true, outputName: null });
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Nothing was written");
+  });
+
+  it("shows why the export cannot be prepared", async () => {
+    renderDialog({
+      onPrepare: vi.fn().mockResolvedValue({
+        success: false,
+        error: "Cannot export while clips are missing: position 2.",
+      }),
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("position 2");
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
   });
 });

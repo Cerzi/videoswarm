@@ -531,6 +531,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
           planId: normalizeAcceptedCopyPlanId(planId),
         }),
     },
+    // One video joined by ffmpeg. Prepare opens the native folder picker and
+    // reports copy-or-re-encode before anything runs.
+    render: {
+      availability: async () =>
+        ipcRenderer.invoke("sequences:render:availability"),
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("sequences:render:prepare", {
+          id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+        }),
+      start: async (planId) =>
+        ipcRenderer.invoke("sequences:render:start", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      cancel: async (planId) =>
+        ipcRenderer.invoke("sequences:render:cancel", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      onProgress: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on("sequences:render-progress", handler);
+        return () =>
+          ipcRenderer.removeListener("sequences:render-progress", handler);
+      },
+    },
     // A numbered copy runs through the transfer coordinator, so start,
     // cancel and progress are review.copyAccepted's; only the request that
     // names a sequence differs.
