@@ -56,6 +56,11 @@ Run focused tests for the area changed, then run the full suite before handing o
 - Full test suite: `npm test -- --run`
 - Zero-warning lint: `npm run lint`
 - Renderer build smoke test: `npm run vite:build`
+- Electron-ABI SQLite suites: `npm run test:electron-abi`
+- Electron smoke specs against the built renderer: `npm run test:electron-smoke`
+  (set `VIDEOSWARM_E2E_HEADLESS=1` to keep windows off screen; the
+  transfer-affordance specs need `npx playwright install chromium` once)
+- Everything above in one command, the same set CI runs: `npm run verify`
 - Native/Electron dependency check after dependency changes: `npm run postinstall`
 - Package smoke test after packaging or Electron config changes: `npm run electron:pack` or `npm run electron:build`
 

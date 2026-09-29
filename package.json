@@ -55,6 +55,7 @@
     "test:electron-abi": "node scripts/run-electron-vitest.cjs run main/__tests__/databaseProfiles.test.js main/__tests__/metadataTags.test.js main/__tests__/libraryIndex.test.js main/__tests__/reviewLibrary.test.js main/__tests__/reviewCheckpoints.test.js main/__tests__/acceptedExportDatabase.test.js main/__tests__/libraryTagViews.test.js main/__tests__/generationVersionsDatabase.test.js main/__tests__/generationMetadataQuality.test.js main/__tests__/comfyQueueDatabase.test.js",
     "test:coverage": "node scripts/run-electron-vitest.cjs run --coverage",
     "test:electron-smoke": "playwright test --config=playwright.electron.config.cjs",
+    "verify": "npm run lint && npm test -- --run && npm run test:electron-abi && npm run vite:build && npm run test:electron-smoke",
     "profile:linux": "node scripts/performance/linux-soak.cjs",
     "profile:folder-revisit": "node scripts/performance/folder-revisit.cjs"
   },
