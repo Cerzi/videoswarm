@@ -199,11 +199,6 @@
   pointer-events: none;
 }
 
-.sequence-panel__thumb-placeholder {
-  color: #e8b64c;
-  font-size: 0.72rem;
-}
-
 .sequence-panel__name {
   flex: 1 1 auto;
   min-width: 0;
