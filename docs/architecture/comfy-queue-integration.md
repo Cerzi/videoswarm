@@ -457,6 +457,99 @@ says so. It supersedes Decision 2's in-process engine and tray when it lands.
   - estimates;
   - the system monitor.
 
+## 10. Never silently wrong: how the queue engine decides what to run
+
+Status: **Planned**, not started; the user approved the design. Recorded
+2026-09-29 from the comfy-requeue session. It applies to the engine phases
+(Sections 6 and 9) and changes the recipe learner's role (Section 2).
+
+### Why: a diff shows what changed, not why
+
+The user queued a draft from a new workflow in comfy-requeue, the **V2V
+hybrid**. It replaces one person in a source video: SAM3 tracks them from
+clicks on frame 1, and crop-to-mask renders only their box and pastes it
+back. Supporting it took a hand-written adapter. Checked against it, the
+Phase 1 learner (a diff of a draft against a hand-made final) would have
+done this:
+
+- **Learned correctly:** the acceleration LoRA removed; steps 8 → 35;
+  switch 6 → 27.
+- **Maybe:** crop render 0.45 → 0.9, if a ratio rule exists; otherwise
+  learned as a constant.
+- **Wrong, as a constant:** the frame size. The real rule is "up to the
+  source video's native size, never past it", and the source video is not
+  in the graph diff.
+- **Silently wrong: the SAM3 clicks.** They are stored in frame pixels, so
+  a new frame size must scale them. Otherwise SAM3 tracks the wrong spot
+  and the run still reports success. The learner would keep each draft's
+  clicks.
+- **Silently wrong: the save node.** `H3HybridSaveRun` registers every save
+  as the project's latest continuation run. Unless it is swapped for a
+  plain `SaveVideo`, each final hijacks the user's continuation chain.
+- **Not learnable: RIFE.** It cannot go before that save, which checks the
+  frame count against the latent, so it has to be a second pass.
+  Continuation drafts (`accepted_chunks > 0`) must be refused.
+
+The dangerous failures come from how inputs relate to each other and from
+what nodes do outside the render, not from the values a diff shows.
+
+### Goal
+
+Not "re-render any workflow correctly": an open node ecosystem always has
+an exception. The goal is that the engine is **never silently wrong**.
+Every clip lands in one of three buckets:
+
+1. **Declared quality mode.** The workflow exposes its own turbo/quality
+   switch. An example is the long-form's "TURBO PATH — Set Group Nodes to
+   Never for the quality run" group, with rgthree Any Switches falling
+   through to quality primitives. The engine flips only what the author
+   built, so this is robust by construction. It is worth promoting as a
+   convention in Video Swarm's docs and UI. The V2V workflow's author has
+   been asked for one.
+2. **Known family.** A small adapter per workflow family, as comfy-requeue
+   has for Omni, long-form and V2V (`requeue.py`: `find_roles`, the
+   `*_roles` functions, `convert_v2v`). Each is about 50–150 lines and
+   reliable in practice.
+3. **Everything else is held for review with a reason**, never guessed.
+
+### The safety net: a dependency check, not a list of exceptions
+
+When a recipe changes a value (a size, steps, a model), walk the graph
+downstream from that input. **Hold the clip if the change reaches a node
+the engine does not understand**, especially one carrying literal data such
+as JSON strings or coordinates. In the V2V case, `output_megapixels` feeds
+math nodes that feed `PointsEditor` width and height, so the clicks depend
+on the changed size and the clip is held. That is detectable without
+knowing what a `PointsEditor` is.
+
+A few structural **red flags**, each held or handled explicitly:
+
+- save nodes other than `SaveVideo` (side effects such as registries);
+- continuation or resume planners that are not on a fresh run;
+- inputs read from paths outside ComfyUI's input folder that no longer
+  exist;
+- nodes that write files.
+
+A clip with a red flag runs only once an adapter or the user has confirmed
+it.
+
+### Where the recipe learner fits
+
+Keep it, but as a tool for writing adapters and for suggesting recipes that
+a person confirms, not as the engine. A learned recipe that touches size
+inputs always goes through the dependency check, and is held if anything
+downstream is unknown.
+
+### Reference
+
+`~/Work/comfy-requeue`:
+
+- `requeue.py`: `v2v_roles`, `convert_v2v`, `v2v_output_mp`, `v2v_frame`;
+- `tests/test_requeue.py`, class `V2VHybrid`;
+- `tests/v2v_turbo.json`: a real V2V draft's API prompt, with the prompt
+  text blanked;
+- the README section "V2V hybrid", which lists each change and why.
+
 ## Decisions
 
 Made by the user on 2026-09-28, replacing the three open questions this
@@ -492,6 +585,9 @@ proposal was written with.
 4. **Two-pass rendering, RAM cap and estimates** (after version 1, Decision 3).
 5. **The detached engine** (Section 9). Planned; starts only when the user
    says so. Items 3 and 4 may land inside it rather than in the main process.
+6. **Never silently wrong** (Section 10): the three buckets, the downstream
+   dependency check and the red flags. Recipes from the learner become
+   suggestions a person confirms. Planned with the engine phases.
 
 ## Implementation notes and decisions
 
