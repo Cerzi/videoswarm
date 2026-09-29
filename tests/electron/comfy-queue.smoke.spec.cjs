@@ -170,7 +170,17 @@ test("re-render queue: connect, learn, send, stay in the tray, ask before quitti
     expect(Object.keys(posted)).toEqual(["prompt", "extra_data"]);
     expect(posted.prompt["957"].inputs.filename_prefix).toBe("213533_00001_final_omni-quality");
     expect(posted.prompt["667"]).toBeUndefined(); // the turbo LoRA the recipe removes
-    expect(posted.extra_data.extra_pnginfo.requeue).toMatchObject({ source_path: "213533_00001_.mp4", recipe: { name: "Omni quality" } });
+    expect(posted.extra_data.extra_pnginfo.requeue).toMatchObject({
+      source_path: "213533_00001_.mp4",
+      recipe: { name: "Omni quality" },
+      videoswarm: { review: { bucket: "known", confirmed: [] } },
+    });
+    // A known family: the safety net held nothing, and the listing says so.
+    const sent = (await page.evaluate(() => window.electronAPI.comfyQueue.list())).items[0];
+    expect(sent.review).toMatchObject({ bucket: "known", held: false, holds: [] });
+    // Holds are confirmed by id on a held clip only; an empty list is refused.
+    expect(await page.evaluate((id) => window.electronAPI.comfyQueue.confirm(id, ["save:1:Other"]), sent.id)).toEqual({ ok: false });
+    await expect(page.evaluate((id) => window.electronAPI.comfyQueue.confirm(id, []), sent.id)).rejects.toThrow();
 
     // With the window closed while it renders, Video Swarm stays running.
     comfy.startNext();
