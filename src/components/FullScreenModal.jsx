@@ -233,6 +233,10 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     collectionOwnerKey = "default",
     canNavigatePrevious = true,
     canNavigateNext = true,
+    // Sequence sessions play one clip after another instead of looping the
+    // current one. Scoped to the session rather than made a mode: ordinary
+    // grid review still loops, which is what a single-clip loupe is for.
+    advanceOnEnd = false,
     onBoundary,
     onPlaybackFeedback,
     onRetry,
@@ -299,6 +303,8 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   videoRef.current = video;
   const workSuspendedRef = useRef(Boolean(workSuspended));
   workSuspendedRef.current = Boolean(workSuspended);
+  const advanceOnEndRef = useRef(Boolean(advanceOnEnd));
+  advanceOnEndRef.current = Boolean(advanceOnEnd);
   const persistedAudioEnabledRef = useRef(Boolean(audioEnabled));
   persistedAudioEnabledRef.current = Boolean(audioEnabled);
   const mutedPreferenceRef = useRef(!audioEnabled);
@@ -690,6 +696,23 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     [canNavigateNext, canNavigatePrevious, stopFrameHold]
   );
 
+  /**
+   * End of clip, in a sequence session.
+   *
+   * Advancing reuses the ordinary navigation path, so the decoder lease is
+   * handed over exactly as a Next press hands it over -- this changes when the
+   * loupe moves on, never how. The last entry ends the session instead of
+   * wrapping: a story that silently restarts reads as a bug, not a loop.
+   */
+  const handleMediaEnded = useCallback(() => {
+    if (!advanceOnEndRef.current) return;
+    if (canNavigateNext === false) {
+      requestClose("sequence-complete");
+      return;
+    }
+    requestNavigate("next");
+  }, [canNavigateNext, requestClose, requestNavigate]);
+
   // Owner replacement is a session boundary even if a caller accidentally
   // reuses the same record ID and keeps this component mounted.
   useLayoutEffect(() => {
@@ -811,7 +834,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     element.addEventListener("error", handleMediaError);
     element.preload = "auto";
     element.crossOrigin = "anonymous";
-    element.loop = true;
+    element.loop = !advanceOnEndRef.current;
     element.playsInline = true;
     element.muted = mutedPreferenceRef.current;
     setIsMuted(mutedPreferenceRef.current);
@@ -1427,8 +1450,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
               <video
                 ref={setMediaElement}
                 className="fullscreen-review__video"
-                loop
+                loop={!advanceOnEnd}
                 controls
+                onEnded={handleMediaEnded}
                 playsInline
                 tabIndex={-1}
                 onFocus={handleMediaFocus}

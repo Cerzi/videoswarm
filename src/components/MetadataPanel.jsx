@@ -83,6 +83,7 @@ const MetadataPanel = forwardRef((
     focusToken,
     onFocusSelection,
     onTransferSelection,
+    onAddToSequence,
     onDock,
     selectionKey,
     anchorId,
@@ -718,6 +719,20 @@ const MetadataPanel = forwardRef((
                 title="Transfer the selection: move, copy or link it into another folder"
               >
                 <span>Transfer</span>
+              </button>
+            ) : null}
+            {typeof onAddToSequence === "function" &&
+            derivedSelectionCount > 0 ? (
+              <button
+                type="button"
+                className="metadata-panel__button metadata-panel__button--compact"
+                onClick={() => onAddToSequence()}
+                aria-label={`Add ${derivedSelectionCount} selected clip${
+                  derivedSelectionCount === 1 ? "" : "s"
+                } to the sequence`}
+                title="Append to the active sequence in the grid's sort order (B)"
+              >
+                <span>+ Sequence</span>
               </button>
             ) : null}
           </div>

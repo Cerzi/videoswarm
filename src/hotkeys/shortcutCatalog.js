@@ -103,6 +103,9 @@ export const REVIEW_UNDO_KEYS = Object.freeze(
     .map((key) => key.toLowerCase())
 );
 
+// Appends the selection to the active sequence in the grid's sort order.
+export const ADD_TO_SEQUENCE_KEYS = Object.freeze(["b"]);
+
 export const FOLDER_DIRECTION_BY_KEY = Object.freeze({
   "[": "previous",
   "]": "next",
@@ -389,6 +392,12 @@ const SELECTION_SHORTCUTS = Object.freeze([
     keys: ["Enter"],
     label: "Open selected clip",
     detail: "Available when exactly one clip is selected.",
+  }),
+  freezeShortcut({
+    id: "add-to-sequence",
+    keys: ["B"],
+    label: "Add selected clips to the sequence",
+    detail: "Appends them in the grid's sort order; starts a sequence if there is none.",
   }),
   freezeShortcut({
     id: "copy-path",

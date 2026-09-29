@@ -1,0 +1,224 @@
+/* The Sequences panel on the activity rail: a vertical list at the
+   sidebar's full width (270-340 px). */
+.sequence-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: #e8ebed;
+}
+
+.sequence-panel__header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+  background: #202428;
+}
+
+.sequence-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.sequence-panel__picker {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  padding: 0.28rem 0.35rem;
+  font-size: 0.8rem;
+}
+
+.sequence-panel__actions button,
+.sequence-panel__name-form button,
+.sequence-panel__menu-button {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 0.24rem 0.55rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.sequence-panel__actions .menu-button {
+  margin-left: auto;
+}
+
+.sequence-panel__actions button:hover:not(:disabled),
+.sequence-panel__name-form button:hover:not(:disabled),
+.sequence-panel__menu-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sequence-panel__actions button:disabled,
+.sequence-panel__name-form button:disabled,
+.sequence-panel__menu-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sequence-panel__actions .sequence-panel__primary:not(:disabled) {
+  background: var(--color-accent, #2f9e63);
+  border-color: transparent;
+  color: #0f1a12;
+  font-weight: 600;
+}
+
+.sequence-panel__name-form {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sequence-panel__name-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  border: 1px solid rgba(81, 207, 102, 0.45);
+  border-radius: 4px;
+  padding: 0.24rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+.sequence-panel__status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+}
+
+.sequence-panel__warning {
+  color: #e8b64c;
+}
+
+.sequence-panel__error {
+  color: #e2726e;
+  overflow-wrap: anywhere;
+}
+
+.sequence-panel__empty {
+  margin: 0;
+  padding: 0.85rem 0.8rem;
+  color: #aeb5b9;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.sequence-panel__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.4rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.sequence-panel__entry {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.22rem 0.3rem;
+  background: rgba(0, 0, 0, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  cursor: grab;
+  min-width: 0;
+}
+
+.sequence-panel__entry:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.sequence-panel__entry:focus-visible {
+  outline: 2px solid rgba(81, 207, 102, 0.8);
+  outline-offset: 1px;
+}
+
+.sequence-panel__entry--dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.sequence-panel__entry--drop-target {
+  border-color: var(--color-accent, #2f9e63);
+  box-shadow: inset 0 2px 0 var(--color-accent, #2f9e63);
+}
+
+.sequence-panel__entry--missing {
+  border-style: dashed;
+  border-color: rgba(232, 182, 76, 0.6);
+}
+
+.sequence-panel__entry--missing .sequence-panel__name {
+  color: #e8b64c;
+  font-style: italic;
+}
+
+.sequence-panel__ordinal {
+  flex: 0 0 auto;
+  min-width: 1.6rem;
+  text-align: right;
+  color: #858e93;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sequence-panel__thumb {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 27px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+}
+
+.sequence-panel__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.sequence-panel__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+
+.sequence-panel__remove {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: #858e93;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.sequence-panel__remove:hover {
+  color: #e2726e;
+}

@@ -86,6 +86,16 @@ export class FolderViewStateCache {
     };
   }
 
+  // Re-opening a location should land at the top of the grid, while the rest
+  // of its snapshot (selection, sort, filters) still comes back.
+  resetScroll(rootPath, directory, scope) {
+    const key = makeFolderViewKey(rootPath, directory, scope);
+    const snapshot = this.views.get(key);
+    if (!snapshot) return false;
+    snapshot.scrollTop = 0;
+    return true;
+  }
+
   setLocation(rootPath, directory, scope = FolderScope.ALL_DESCENDANTS) {
     const root = normalizeRootPath(rootPath);
     if (!root) return;

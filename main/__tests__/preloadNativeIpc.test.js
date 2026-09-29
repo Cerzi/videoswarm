@@ -503,3 +503,157 @@ describe("preload native-work bridge", () => {
   });
 
 });
+
+describe("preload sequences bridge", () => {
+  it("invokes each sequence channel with a normalized payload", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.list();
+    await api.sequences.create("Act one");
+    await api.sequences.rename(3, "Act two");
+    await api.sequences.remove(3);
+    await api.sequences.snapshot(3, { preferredRootPath: "/library" });
+    await api.sequences.moveEntry(3, 9, 0);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:list");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:create", {
+      name: "Act one",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:rename", {
+      id: 3,
+      name: "Act two",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:delete", {
+      id: 3,
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:snapshot", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:move-entry", {
+      id: 3,
+      entryId: 9,
+      position: 0,
+    });
+  });
+
+  it("passes list arguments through as arrays without collapsing repeats", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    // A story may return to a shot, so a repeated fingerprint is meaningful.
+    await api.sequences.append(1, ["fp-a", "fp-b", "fp-a"]);
+    await api.sequences.append(1, "fp-c");
+    await api.sequences.removeEntries(1, 7);
+    await api.sequences.reorder(1, [2, 1]);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:append", {
+      id: 1,
+      fingerprints: ["fp-a", "fp-b", "fp-a"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:append", {
+      id: 1,
+      fingerprints: ["fp-c"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:remove-entries", {
+      id: 1,
+      entryIds: [7],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:reorder", {
+      id: 1,
+      entryIds: [2, 1],
+    });
+  });
+
+  it("bridges renumber and numbered-copy export with fixed, normalized payloads", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.renumber.prepare(3, { preferredRootPath: "/library" });
+    await api.sequences.renumber.apply("plan-1234");
+    await api.sequences.renumber.apply(42);
+    await api.sequences.exportCopy.prepare(3, {
+      preferredRootPath: "/library",
+      destinationPath: "/exports",
+      reusePlanId: "plan-5678",
+    });
+    await api.sequences.exportCopy.prepare(5);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:prepare", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:apply", {
+      planId: "plan-1234",
+    });
+    // A non-string plan id is never forwarded as-is.
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:renumber:apply", {
+      planId: "",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("review:copy-accepted:prepare", {
+      rootPath: null,
+      directory: "",
+      scope: "all-descendants",
+      sequenceId: 3,
+      preferredRootPath: "/library",
+      destinationPath: "/exports",
+      reusePlanId: "plan-5678",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("review:copy-accepted:prepare", {
+      rootPath: null,
+      directory: "",
+      scope: "all-descendants",
+      sequenceId: 5,
+      preferredRootPath: null,
+      destinationPath: null,
+      reusePlanId: null,
+    });
+  });
+
+  it("bridges one-video export with fixed payloads and a removable progress listener", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.render.availability();
+    await api.sequences.render.prepare(3, { preferredRootPath: "/library" });
+    await api.sequences.render.start("plan-1234");
+    await api.sequences.render.cancel("plan-1234");
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:availability");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:prepare", {
+      id: 3,
+      preferredRootPath: "/library",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:start", {
+      planId: "plan-1234",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:render:cancel", {
+      planId: "plan-1234",
+    });
+
+    const callback = vi.fn();
+    const unsubscribe = api.sequences.render.onProgress(callback);
+    expect(ipcRenderer.on).toHaveBeenCalledWith(
+      "sequences:render-progress",
+      expect.any(Function)
+    );
+    const handler = ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "sequences:render-progress"
+    )[1];
+    handler({}, { planId: "plan-1234", phase: "joining" });
+    expect(callback).toHaveBeenCalledWith({ planId: "plan-1234", phase: "joining" });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "sequences:render-progress",
+      handler
+    );
+  });
+
+  it("nulls a missing preferred root rather than forwarding undefined", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.sequences.snapshot(4);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("sequences:snapshot", {
+      id: 4,
+      preferredRootPath: null,
+    });
+  });
+});

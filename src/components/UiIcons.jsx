@@ -174,3 +174,14 @@ export function GenerationIcon(props) {
     </Icon>
   );
 }
+
+// Three frames in a row: an ordered run of clips.
+export function SequenceIcon(props) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M9 6v12" />
+      <path d="M15 6v12" />
+    </Icon>
+  );
+}

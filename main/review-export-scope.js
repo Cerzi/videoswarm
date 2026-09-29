@@ -120,9 +120,15 @@ function assertReviewExportCoverage(root, directory, scope) {
  * runtime: the coordinator accepted a missing root while the IPC validator in
  * front of it still rejected one, and no test executed that handler.
  */
+// Only a review-scoped transfer names a root. A selection names rows and a
+// sequence names positions; both derive their roots from what they resolve.
 function acceptedTransferRequiresRoot(payload) {
   const instanceIds = payload?.instanceIds;
-  return instanceIds === undefined || instanceIds === null;
+  const sequenceId = payload?.sequenceId;
+  return (
+    (instanceIds === undefined || instanceIds === null) &&
+    (sequenceId === undefined || sequenceId === null)
+  );
 }
 
 module.exports = {

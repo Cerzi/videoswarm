@@ -488,6 +488,110 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("library:delete-saved-view", { id }),
   },
 
+  sequences: {
+    list: async () => ipcRenderer.invoke("sequences:list"),
+    snapshot: async (id, options = {}) =>
+      ipcRenderer.invoke("sequences:snapshot", {
+        id,
+        preferredRootPath:
+          typeof options?.preferredRootPath === "string"
+            ? options.preferredRootPath
+            : null,
+      }),
+    create: async (name) => ipcRenderer.invoke("sequences:create", { name }),
+    rename: async (id, name) =>
+      ipcRenderer.invoke("sequences:rename", { id, name }),
+    remove: async (id) => ipcRenderer.invoke("sequences:delete", { id }),
+    append: async (id, fingerprints = []) =>
+      ipcRenderer.invoke("sequences:append", {
+        id,
+        fingerprints: Array.isArray(fingerprints)
+          ? fingerprints
+          : [fingerprints],
+      }),
+    removeEntries: async (id, entryIds = []) =>
+      ipcRenderer.invoke("sequences:remove-entries", {
+        id,
+        entryIds: Array.isArray(entryIds) ? entryIds : [entryIds],
+      }),
+    reorder: async (id, entryIds = []) =>
+      ipcRenderer.invoke("sequences:reorder", {
+        id,
+        entryIds: Array.isArray(entryIds) ? entryIds : [entryIds],
+      }),
+    moveEntry: async (id, entryId, position) =>
+      ipcRenderer.invoke("sequences:move-entry", { id, entryId, position }),
+    // Write the order onto disk by renaming the originals. Prepare lists
+    // every rename; nothing changes until apply names that plan.
+    renumber: {
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("sequences:renumber:prepare", {
+          id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+        }),
+      apply: async (planId) =>
+        ipcRenderer.invoke("sequences:renumber:apply", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+    },
+    // One video joined by ffmpeg. Prepare opens the native folder picker and
+    // reports copy-or-re-encode before anything runs.
+    render: {
+      availability: async () =>
+        ipcRenderer.invoke("sequences:render:availability"),
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("sequences:render:prepare", {
+          id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+        }),
+      start: async (planId) =>
+        ipcRenderer.invoke("sequences:render:start", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      cancel: async (planId) =>
+        ipcRenderer.invoke("sequences:render:cancel", {
+          planId: normalizeAcceptedCopyPlanId(planId),
+        }),
+      onProgress: (callback) => {
+        if (typeof callback !== "function") return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on("sequences:render-progress", handler);
+        return () =>
+          ipcRenderer.removeListener("sequences:render-progress", handler);
+      },
+    },
+    // A numbered copy runs through the transfer coordinator, so start,
+    // cancel and progress are review.copyAccepted's; only the request that
+    // names a sequence differs.
+    exportCopy: {
+      prepare: async (id, options = {}) =>
+        ipcRenderer.invoke("review:copy-accepted:prepare", {
+          rootPath: null,
+          directory: "",
+          scope: "all-descendants",
+          sequenceId: id,
+          preferredRootPath:
+            typeof options?.preferredRootPath === "string"
+              ? options.preferredRootPath
+              : null,
+          destinationPath:
+            typeof options?.destinationPath === "string"
+              ? options.destinationPath
+              : null,
+          reusePlanId:
+            typeof options?.reusePlanId === "string"
+              ? options.reusePlanId
+              : null,
+        }),
+    },
+  },
+
   review: {
     copyAccepted: {
       prepare: async (payload = {}) =>
