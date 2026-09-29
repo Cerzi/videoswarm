@@ -105,6 +105,7 @@ test("clip sequences: add, reorder, export a numbered copy and one video, renumb
     const copyDialog = page.getByRole("dialog", { name: "Copy as numbered files" });
     await copyDialog.getByRole("button", { name: "Choose folder…" }).click();
     await expect(copyDialog.getByRole("list", { name: "Names in the destination" })).toBeVisible();
+    await page.screenshot({ path: path.join(shots, "sequences-copy-dialog.png") });
     await copyDialog.getByRole("button", { name: "Copy 3 files" }).click();
     await expect(copyDialog.getByText("Numbered copy complete")).toBeVisible();
     const expectedCopies = ordered.map(
