@@ -2,9 +2,11 @@
 
 Status: **Accepted** (decisions recorded 2026-09-28). Phase 1, the recipe
 learner and matcher, and Phase 2, the ComfyUI connection, checks and runner,
-are **Implemented** and **Verified**; Phases 3 (interface) and 4 (two-pass,
-RAM and estimates) are **Unimplemented**.
-Last updated: 2026-09-28
+are **Implemented** and **Verified**, and so is the safety net of Section 10
+("never silently wrong"); Phases 3 (interface) and 4 (two-pass, RAM and
+estimates) are **Unimplemented**, and the detached engine (Section 9) is
+**Planned**.
+Last updated: 2026-09-29
 
 ## Summary
 
@@ -286,7 +288,10 @@ on the user's install, too much to parse in the main process every minute.
   (`media_settings`). Real drafts name deleted media in bypassed slots and
   render fine, so without this they were blocked;
 - a draft already rendered with the same recipe and settings is **held**
-  (Section 6), and one already queued runs once.
+  (Section 6), and one already queued runs once;
+- then the safety net of Section 10 (`main/comfy-safety.js`): the dependency
+  check and the red flags, on the prompt about to be sent. A clip it holds
+  is blocked with "Held for review" until each hold is confirmed for it.
 
 A clip that fails a check is **blocked** with the first reason on its row and
 every problem in the listing; nothing is submitted to find out. Checks re-run
@@ -343,7 +348,8 @@ Ported from the standalone app's `Runner`, with its behaviour kept:
   learned from this machine's own finished renders of the same recipe.
 
 The queue item states are ready, waiting, rendering, done, failed, held, and
-**blocked** (a failed check).
+**blocked** (a failed check, or held for review by Section 10; the listing's
+`review` says which).
 
 ### Memory: single pass first
 
@@ -404,7 +410,8 @@ profile switch disposes it without withdrawing anything.
 `recipes.list/get/delete/learn` (examples are a draft and its quality
 version, or a comfy-requeue final alone), `add` (clips, recipe, settings,
 rule choices), `list` (the queue in run order with each clip's check
-results), `history`, `start`, `stop`, `setOrder`, `retry`, `renderAgain`,
+results and its Section 10 `review`), `history`, `start`, `stop`,
+`setOrder`, `retry`, `renderAgain`, `confirm` (a clip's holds, by id),
 `remove`, and `onChanged` events.
 
 A **separate runner service** owning the queue, with Video Swarm as its front
@@ -459,9 +466,14 @@ says so. It supersedes Decision 2's in-process engine and tray when it lands.
 
 ## 10. Never silently wrong: how the queue engine decides what to run
 
-Status: **Planned**, not started; the user approved the design. Recorded
-2026-09-29 from the comfy-requeue session. It applies to the engine phases
-(Sections 6 and 9) and changes the recipe learner's role (Section 2).
+Status: the safety net is **Implemented** and **Verified**
+(`main/comfy-safety.js`, wired into the runner; 2026-09-29): the three
+buckets, the dependency check, the red flags and per-clip confirmation. Not
+started: adapters per family beyond what the learned recipes cover, the
+interface for reviewing and confirming holds (Phase 3), and the detached
+engine (Section 9). Recorded 2026-09-29 from the comfy-requeue session; the
+user approved the design. It applies to the engine phases (Sections 6 and 9)
+and changes the recipe learner's role (Section 2).
 
 ### Why: a diff shows what changed, not why
 
@@ -533,6 +545,88 @@ A few structural **red flags**, each held or handled explicitly:
 A clip with a red flag runs only once an adapter or the user has confirmed
 it.
 
+### What is built
+
+`assessRerender` in `main/comfy-safety.js` judges the prompt the recipe made
+for one draft, with ComfyUI's node definitions deciding which nodes run.
+It knows no workflow family and names no custom node class.
+
+- **What changed** is read from the draft and the prompt to send, not from
+  the recipe: every input whose value differs, so settings, rule choices and
+  kept *varies* operations count as they will render. A literal the recipe
+  set is a `value` change; a rewired input (a removed or added node shows up
+  as its consumers' links) is a `link` change; a new node is a `node` change.
+  The runner's own output name is not a change.
+- **The dependency check** walks downstream from each change, through every
+  link. A node **holds** the clip when it runs, is not on the explicit
+  *understood* list, and carries **literal data**: a JSON list or object,
+  inline or in a string, with a number or a non-empty string in it (`[{}]`
+  and a list of switches hold nothing), or non-zero pixel geometry (`x`,
+  `y`, `width`, `crop_*` and the like; zero is the same at any size). The
+  understood list is primitives, pass-through and math nodes, the core
+  samplers and schedulers, the model, LoRA, CLIP and VAE loaders (rgthree's
+  Power Lora Loader included), VAE encode and decode, `CreateVideo` and
+  `SaveVideo`: nodes whose literal inputs do not depend on what feeds them.
+  The reason names the path; for the V2V hybrid: "Changing
+  output_megapixels on MiniMaxH3Ref2VAComposer #76 reaches PointsEditor #97
+  (width) through ComfyMathExpression #131. PointsEditor is not a node the
+  engine understands, and it carries literal data (points_store,
+  coordinates, neg_coordinates) …". The step count or the LoRA removal alone
+  reaches no such node there.
+- The node whose own setting the recipe changes is **not** judged on its
+  other inputs: every example pair showed that node before and after, and
+  what follows the change there is an operation or a rule of the recipe (the
+  composer's `slot_overrides` and `lift-overrides`). A rewired node is judged.
+- **"Anything downstream unknown" is read narrowly**: unknown *and* carrying
+  literal data. Read literally, every Omni and long-form clip would be held,
+  because custom nodes sit downstream of every change they make.
+- **Red flags**, on the nodes that run:
+  - a node naming an output file (`filename_prefix` and the like) that is
+    not `SaveVideo`: held, confirmable (the V2V's `H3HybridSaveRun`);
+  - any other node naming a place to write (`output_dir`, `save_path`, …) or
+    switching writing on (`save_output`): held, confirmable;
+  - a continuation: a count of work done (`accepted_*`, `completed_*`,
+    `resumed_*`, `continued_*`, `start_window`) above zero, followed through
+    primitives and switches, or a `resume`/`continue` switch on: **refused**,
+    never confirmable;
+  - an absolute path that no longer exists (the runner asks the file system,
+    at most 32 paths per clip): **refused** until the file is back. Files in
+    ComfyUI's input folder are Section 5's.
+- **Buckets**: any hold makes the clip `review`. Otherwise it is `declared`
+  when the UI workflow has a group whose title asks to set it to Never,
+  bypass or mute it for the *quality* run (the long-form's "TURBO PATH —
+  right-click > Set Group Nodes to Never for the 25-step quality run") and
+  every node of that group in the draft is gone from the prompt to send;
+  membership is a node's position inside the group's box, as rgthree
+  decides it. Otherwise it is `known`: a recipe matched and nothing held it.
+  Declared mode never skips the checks.
+- **Confirmation** is per clip, by hold id (`dependency:97:PointsEditor`,
+  `save:82:68:H3HybridSaveRun`), through `comfyQueue.confirm(id, holds)`.
+  The runner accepts only ids that clip's last check reported and that can
+  be confirmed, stores them on the queue item beside its settings (not in
+  them, so confirming does not make it another render), and checks the clip
+  again before it is sent. A hold that appears later, or on another clip,
+  is not covered. The provenance tag records the bucket and the confirmed
+  holds. Rule choices were not used for this: they are part of what makes
+  two renders the same, and they apply to every clip of an add.
+- A held clip is `blocked`, its detail "Held for review: …", refusals
+  first. `list` carries `review` (`bucket`, `held`, `declared`, `changes`,
+  `holds` with ids, reasons and paths) and `confirmed`. As with any blocked
+  clip, a confirmed clip becomes ready and runs at the next Start.
+
+What it does not do:
+
+- A hold is only as good as the literal-data test: a scalar written for the
+  draft that is not named as geometry (a frame index, a time in seconds)
+  downstream of a change is not caught.
+- Literal data on the changed node itself is trusted to the examples.
+- The V2V needs more than a confirmation: the frame size rule (up to the
+  source's own size), moving the clicks and swapping the save are adapter
+  work (comfy-requeue's `convert_v2v`). Confirming only accepts the draft's
+  clicks and save as they are.
+- Declared mode is read from UI groups and node positions, so an API-only
+  draft, or one whose switch sits inside a subgraph, is never `declared`.
+
 ### Where the recipe learner fits
 
 Keep it, but as a tool for writing adapters and for suggesting recipes that
@@ -586,8 +680,10 @@ proposal was written with.
 5. **The detached engine** (Section 9). Planned; starts only when the user
    says so. Items 3 and 4 may land inside it rather than in the main process.
 6. **Never silently wrong** (Section 10): the three buckets, the downstream
-   dependency check and the red flags. Recipes from the learner become
-   suggestions a person confirms. Planned with the engine phases.
+   dependency check and the red flags, with per-clip confirmation.
+   **Implemented, Verified** (2026-09-29) in the main-process engine.
+   Adapters per family and the review interface are not started; a learned
+   recipe still runs as a known family when nothing holds it.
 
 ## Implementation notes and decisions
 
@@ -699,6 +795,47 @@ proposal was written with.
   (Phase 4); drafts in containers other than MP4/MOV; a UI-only mirror of a
   setting keeps the example's value (Phase 1 note). Python's NaN in a draft
   is resubmitted as `null`.
+
+### 2026-09-29 — Never silently wrong: the safety net
+
+- `main/comfy-safety.js`: `assessRerender`, `heldProblems`,
+  `changedInputs`, `literalDataInputs`, `absolutePathsIn`,
+  `declaredQualitySwitch`. Pure; whether a path exists is asked of the
+  caller. The runner runs it after the Section 5 checks on every prepare,
+  stats the absolute paths it names, and blocks what it holds.
+  `comfy-queue-store.js` gains `confirmed` per queue item (a
+  `confirmed_json` column, added in place to existing profile databases);
+  `comfy:queue:confirm` and `comfyQueue.confirm` carry an item id and up to
+  32 hold ids of at most 200 characters.
+- Fixtures (`main/__tests__/fixtures/safety/`): `v2v-01.json`, the V2V
+  hybrid draft from comfy-requeue's `tests/v2v_turbo.json`, sanitized like
+  the recipe fixtures (models, media, hashes, the save prefix and project
+  name replaced; classes, links, titles and numbers kept); and
+  `longform-layout.json`, the long-form workflow's group titles and boxes
+  and node positions from comfy-requeue's `tests/longform_turbo.json`, a
+  real draft of the same workflow file, because the recipe fixtures dropped
+  the layout. The V2V recipe in the tests is learned from two pairs made
+  from that draft the way a hand-made final would differ (LoRA bypassed,
+  steps 35 and switch 27, frames 0.9 MP), keeping the draft's clicks and
+  save, as the learner would.
+- Results: the V2V draft is held by the dependency check (the path above)
+  and by the `H3HybridSaveRun` flag; a steps-only or LoRA-only change holds
+  only the save; `accepted_chunks = 2` is refused whatever is confirmed; a
+  deleted source video is refused until it is back. The runner, against the
+  fake ComfyUI, posts nothing until both holds are confirmed. The four
+  held-out Omni drafts, with and without the `lift-overrides` rule, and the
+  long-form draft with its RTX upscale kept, removed or rescaled, have no
+  holds and are `known`; with its layout put back the long-form is
+  `declared`.
+- False positives: none on the fixtures with the rules above. Walking every
+  link downstream, the long-form's TURBO PATH removal reaches rgthree's Power
+  Lora Loader, whose LoRA entries are objects; it is on the understood list
+  as a loader. The Omni and long-form composers carry JSON
+  (`slot_overrides`, `media_settings`) beside the sizes the recipes change;
+  they are the changed node, so they are not judged. Otherwise literal data
+  was found only in the V2V's `PointsEditor`.
+- The queue smoke test also checks the Omni draft's `review` and the
+  confirm IPC in the real app.
 
 ## References
 
