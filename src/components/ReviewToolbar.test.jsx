@@ -1,7 +1,7 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
-import ReviewToolbar from "./ReviewToolbar";
+import ReviewToolbar, { REVIEW_FOLD_ORDER } from "./ReviewToolbar";
 
 const progress = {
   total: 6000,
@@ -98,5 +98,50 @@ describe("ReviewToolbar", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find next Unreviewed" }));
     expect(onStartSession).toHaveBeenCalledOnce();
+  });
+
+  it("keeps every control reachable when the bar is folded to fit", () => {
+    const onAutoAdvanceChange = vi.fn();
+    const onUndo = vi.fn();
+    const onSetReviewState = vi.fn();
+    render(
+      <ReviewToolbar
+        progress={progress}
+        selectedCount={1}
+        canUndo
+        session={{ mode: "none" }}
+        initialFolded={[...REVIEW_FOLD_ORDER]}
+        onSetReviewState={onSetReviewState}
+        onAutoAdvanceChange={onAutoAdvanceChange}
+        onUndo={onUndo}
+      />
+    );
+
+    // Review buttons keep their names and keys, without the visible words.
+    const accept = screen.getByRole("button", { name: "Accept" });
+    expect(accept).not.toHaveTextContent("Accept");
+    fireEvent.click(accept);
+    expect(onSetReviewState).toHaveBeenCalledWith("pick");
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Advance after marking" })).toBeNull();
+    // The session hint becomes the summary's tooltip.
+    expect(document.querySelector(".review-session__summary")).toHaveAttribute(
+      "title",
+      expect.stringContaining("your first review or rating saves this position")
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "More review controls" }));
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByText("Reviewed 1,250 / 6,000")).toBeInTheDocument();
+    expect(within(menu).getByText("Accept 700 · Reject 50")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Advance after marking" }));
+    expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Undo/ }));
+    expect(onUndo).toHaveBeenCalled();
+  });
+
+  it("shows no ⋯ menu while everything fits", () => {
+    render(<ReviewToolbar progress={progress} selectedCount={1} />);
+    expect(screen.queryByRole("button", { name: "More review controls" })).toBeNull();
   });
 });

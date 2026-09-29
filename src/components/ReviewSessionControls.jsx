@@ -49,6 +49,7 @@ export default function ReviewSessionControls({
   onReviewAllUnreviewed,
   onShowTarget,
   onIndexSubfolders,
+  compact = false,
 }) {
   const [confirmation, setConfirmation] = useState(null);
   const confirmationInvokedByRef = useRef(null);
@@ -88,27 +89,34 @@ export default function ReviewSessionControls({
     closeConfirmation();
   };
 
+  // The hint under the status. A narrow review bar keeps only the status and
+  // offers the hint as a tooltip (and to screen readers) instead.
+  const details = [
+    session.savedAtLabel,
+    session.locationLabel && mode === "elsewhere" ? session.locationLabel : null,
+    mode === "none" ? "Marks work now; your first review or rating saves this position." : null,
+    mode === "unavailable" ? session.reason : null,
+  ].filter(Boolean);
+
   const announcement =
     session.message ||
     (session.candidateName ? `Review target: ${session.candidateName}` : status);
 
   return (
     <div
-      className={`review-session review-session--${mode}`}
+      className={`review-session review-session--${mode}${compact ? " review-session--compact" : ""}`}
       aria-busy={isRestoring || undefined}
     >
-      <div className="review-session__summary">
+      <div
+        className="review-session__summary"
+        title={compact && details.length ? details.join(" · ") : undefined}
+      >
         <span className="review-session__indicator" aria-hidden="true" />
         <span className="review-session__copy">
           <strong>{status}</strong>
-          {session.savedAtLabel ? <span>{session.savedAtLabel}</span> : null}
-          {session.locationLabel && mode === "elsewhere" ? (
-            <span>{session.locationLabel}</span>
-          ) : null}
-          {mode === "none" ? (
-            <span>Marks work now; your first review or rating saves this position.</span>
-          ) : null}
-          {mode === "unavailable" && session.reason ? <span>{session.reason}</span> : null}
+          {details.map((detail) => (
+            <span key={detail} className="review-session__detail">{detail}</span>
+          ))}
         </span>
       </div>
 

@@ -1,9 +1,13 @@
 .review-toolbar {
   min-width: 0;
+  font-size: 0.72rem;
   color: #e8ebed;
   background: linear-gradient(90deg, rgba(42, 46, 47, 0.98), rgba(34, 37, 38, 0.98));
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  overflow: hidden;
+  /* Not clipped: the ⋯ menu hangs below the bar. The row itself never
+     overflows, because what does not fit folds. */
+  position: relative;
+  z-index: 5;
 }
 
 .review-toolbar__scroller {
@@ -14,10 +18,13 @@
   align-items: center;
   gap: 0.65rem;
   padding: 0.42rem 0.75rem;
-  /* Wrap rather than scroll: Undo and Process results were off-screen at
-     1440 px behind a horizontal scrollbar. */
-  flex-wrap: wrap;
-  row-gap: 0.4rem;
+  /* One row: what does not fit folds (ReviewToolbar.jsx, REVIEW_FOLD_ORDER)
+     rather than wrapping into a second row or scrolling. */
+  flex-wrap: nowrap;
+}
+
+.review-toolbar__scroller > * {
+  flex-shrink: 0;
 }
 
 .review-toolbar__progress {
@@ -95,8 +102,15 @@
   color: #ff8585;
 }
 
-.review-toolbar button {
+/* Zero specificity, so each control's own font-size still applies. A plain
+   `.review-toolbar button { font: inherit }` outranked them and drew the
+   bar's buttons at 16 px. */
+:where(.review-toolbar) :where(button) {
   font: inherit;
+}
+
+.review-toolbar__more {
+  min-width: 2rem;
 }
 
 .review-toolbar__action,

@@ -1,5 +1,6 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useRef } from "react";
 import MenuButton from "./menu/MenuButton";
+import useFoldToFit from "./menu/useFoldToFit";
 import { FolderScope } from "../library/folderModel";
 import { SortKey } from "../sorting/sorting.js";
 import { ZOOM_LEVEL_STEP, ZOOM_MAX_INDEX } from "../zoom/config.js";
@@ -122,7 +123,6 @@ export default function TopBar({
   initialFolded = [],
 }) {
   const barRef = useRef(null);
-  const [folded, setFolded] = useState(initialFolded);
   const busy = isLoadingFolder;
 
   const foldable = {
@@ -132,46 +132,19 @@ export default function TopBar({
     subfolders: true,
     siblings: hasOpenFolder,
   };
-  const isFolded = (key) => folded.includes(key);
-
-  // Fold one more control while the bar's contents are wider than the bar.
-  // Measured from the children, not the bar's scroll width, so an open menu
-  // hanging below the bar never counts.
-  useLayoutEffect(() => {
-    const bar = barRef.current;
-    if (!bar || !bar.clientWidth) return;
-    const style = window.getComputedStyle(bar);
-    const gap = parseFloat(style.columnGap || style.gap) || 0;
-    const children = [...bar.children];
-    const needed =
-      children.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0) +
-      gap * Math.max(0, children.length - 1) +
-      (parseFloat(style.paddingLeft) || 0) +
-      (parseFloat(style.paddingRight) || 0);
-    // The breadcrumb shrinks instead of overflowing, so a name squeezed below
-    // MIN_NAME_WIDTH counts as overflow too, rather than vanishing.
-    const crumbs = bar.querySelector(".topbar__breadcrumb");
-    const nameSqueezed = Boolean(
-      crumbs && crumbs.scrollWidth > crumbs.clientWidth && crumbs.clientWidth < MIN_NAME_WIDTH
-    );
-    if (needed <= bar.clientWidth + 1 && !nameSqueezed) return;
-    const next = FOLD_ORDER.find((key) => foldable[key] && !folded.includes(key));
-    if (next) setFolded((previous) => [...previous, next]);
+  // The breadcrumb shrinks instead of overflowing, so a name squeezed below
+  // MIN_NAME_WIDTH counts as overflow too, rather than vanishing.
+  const { isFolded } = useFoldToFit(barRef, {
+    order: FOLD_ORDER,
+    foldable,
+    initialFolded,
+    isSqueezed: (bar) => {
+      const crumbs = bar.querySelector(".topbar__breadcrumb");
+      return Boolean(
+        crumbs && crumbs.scrollWidth > crumbs.clientWidth && crumbs.clientWidth < MIN_NAME_WIDTH
+      );
+    },
   });
-
-  // A wider window unfolds everything and lets the pass above fold again.
-  useEffect(() => {
-    const bar = barRef.current;
-    if (!bar || typeof ResizeObserver === "undefined") return undefined;
-    let lastWidth = bar.clientWidth;
-    const observer = new ResizeObserver(() => {
-      const width = bar.clientWidth;
-      if (width > lastWidth + 1) setFolded([]);
-      lastWidth = width;
-    });
-    observer.observe(bar);
-    return () => observer.disconnect();
-  }, []);
 
   const zoomSlider = (
     <input
