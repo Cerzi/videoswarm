@@ -257,12 +257,18 @@ use is Section 4's job.
 
 ## 6. Local branches and pushes
 
-Status: **Tidied** (2026-09-29)
+Status: **Tidied** (2026-09-29); the push is the user's to do
 
-`main`, `claude/clip-sequences` and `wip/clip-sequences` are pushed to
-GitHub. Local Claude branches that were fully merged into `main` were
-deleted, along with finished agent worktrees; every commit they held is on
-`main`.
+**Not pushed yet.** `main`, `claude/clip-sequences` and
+`wip/clip-sequences` exist only on this machine; `main` is dozens of commits
+ahead of `origin/main`. Pushing is the user's step:
+
+    git -C /home/cerzi/Work/clip_browser_html push origin main claude/clip-sequences wip/clip-sequences
+
+Local Claude branches that were fully merged into `main` were deleted
+(2026-09-29), along with the finished agent worktrees. Every commit they
+held is on `main`. `claude/library-tag-views` stays, because it tracks a
+GitHub branch.
 
 Two branches are kept on purpose:
 
