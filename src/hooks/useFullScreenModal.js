@@ -192,6 +192,19 @@ const resolveDirectionalIndex = (
   return -1;
 };
 
+/**
+ * The first available record, for wrapping back to the start. A collection
+ * whose only available record is the current one has nowhere to wrap to.
+ */
+const resolveFirstIndex = (session, videos) => {
+  if (!session) return -1;
+  const index = videos.findIndex(isAvailableRecord);
+  if (index < 0) return -1;
+  return getFullscreenRecordIdentity(videos[index]) === session.currentIdentity
+    ? -1
+    : index;
+};
+
 const normalizeArguments = (input, secondArgument) => {
   if (Array.isArray(input)) {
     return {
@@ -328,10 +341,23 @@ export const useFullScreenModal = (input = [], secondArgument) => {
     return activateIndex(targetIndex);
   }, [activateIndex]);
 
+  const first = useCallback(() => {
+    const index = resolveFirstIndex(
+      activeSessionRef.current,
+      orderedVideosRef.current
+    );
+    if (index < 0) return null;
+    return activateIndex(index);
+  }, [activateIndex]);
+
   const peekNavigation = useCallback((direction, options) => {
     const session = activeSessionRef.current;
     if (!session) return null;
     const videos = orderedVideosRef.current;
+    if (direction === "first") {
+      const firstIndex = resolveFirstIndex(session, videos);
+      return firstIndex >= 0 ? videos[firstIndex] || null : null;
+    }
     const index = resolveDirectionalIndex(
       session,
       videos,
@@ -420,9 +446,10 @@ export const useFullScreenModal = (input = [], secondArgument) => {
       if (direction === "previous" || direction === "prev") {
         return previous(options);
       }
+      if (direction === "first") return first();
       return null;
     },
-    [next, previous]
+    [first, next, previous]
   );
 
   return {
@@ -445,6 +472,7 @@ export const useFullScreenModal = (input = [], secondArgument) => {
     goTo,
     previous,
     next,
+    first,
     peekNavigation,
     close,
     sourceRemoved,

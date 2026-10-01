@@ -1505,3 +1505,129 @@ describe("FullScreenModal sequence play-through", () => {
     expect(element.getAttribute("src")).toBeNull();
   });
 });
+
+describe("FullScreenModal auto-continue", () => {
+  let playSpy;
+
+  const clip = (id) => ({
+    id,
+    instanceId: 91,
+    name: `${id}.mp4`,
+    fullPath: `/library/${id}.mp4`,
+    sourceUrl: "videoswarm-media://instance/91?v=1",
+    isElectronFile: true,
+  });
+
+  const renderModal = (props = {}) =>
+    render(
+      <FullScreenModal
+        video={clip("one")}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        showFilenames={false}
+        onAutoContinueChange={vi.fn()}
+        {...props}
+      />
+    );
+
+  beforeEach(() => {
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("reports the toggle and keeps looping while it is off", () => {
+    const onAutoContinueChange = vi.fn();
+    const onNavigate = vi.fn();
+    const rendered = renderModal({ onAutoContinueChange, onNavigate });
+    const element = document.body.querySelector("video");
+    const toggle = screen.getByRole("button", { name: "Auto-continue" });
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(element.loop).toBe(true);
+    fireEvent.ended(element);
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    fireEvent.click(toggle);
+    expect(onAutoContinueChange).toHaveBeenCalledWith(true);
+
+    rendered.rerender(
+      <FullScreenModal
+        video={clip("one")}
+        onClose={vi.fn()}
+        onNavigate={onNavigate}
+        showFilenames={false}
+        onAutoContinueChange={onAutoContinueChange}
+        autoContinue
+      />
+    );
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    // Takes effect on the clip already playing, not only the next one.
+    expect(element.loop).toBe(false);
+
+    fireEvent.click(toggle);
+    expect(onAutoContinueChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("plays the next clip as soon as this one ends", () => {
+    const onNavigate = vi.fn(() => clip("two"));
+    renderModal({ onNavigate, autoContinue: true, canNavigateNext: true });
+
+    fireEvent.ended(document.body.querySelector("video"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("next");
+  });
+
+  it("wraps from the last clip to the first without a boundary notice", () => {
+    const onNavigate = vi.fn(() => clip("first"));
+    const onBoundary = vi.fn();
+    renderModal({
+      onNavigate,
+      onBoundary,
+      autoContinue: true,
+      canNavigateNext: false,
+    });
+
+    fireEvent.ended(document.body.querySelector("video"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("first");
+    expect(onBoundary).not.toHaveBeenCalled();
+  });
+
+  it("replays a lone clip in place when there is nothing to wrap to", () => {
+    const onNavigate = vi.fn(() => null);
+    renderModal({ onNavigate, autoContinue: true, canNavigateNext: false });
+    const element = document.body.querySelector("video");
+    playSpy.mockClear();
+    element.currentTime = 3;
+
+    fireEvent.ended(element);
+    expect(onNavigate).toHaveBeenCalledWith("first");
+    expect(element.currentTime).toBe(0);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a sequence session's own end rule in charge", () => {
+    const onClose = vi.fn();
+    const onNavigate = vi.fn();
+    renderModal({
+      onClose,
+      onNavigate,
+      autoContinue: true,
+      advanceOnEnd: true,
+      canNavigateNext: false,
+    });
+
+    expect(screen.queryByRole("button", { name: "Auto-continue" })).toBeNull();
+    fireEvent.ended(document.body.querySelector("video"));
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith("sequence-complete");
+  });
+});

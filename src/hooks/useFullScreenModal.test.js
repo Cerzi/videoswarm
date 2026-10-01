@@ -315,4 +315,31 @@ describe("useFullScreenModal", () => {
     );
     expect(rendered.result.current.currentVideo).toBe(videos[2]);
   });
+
+  it("wraps to the first available clip only when there is somewhere to go", () => {
+    const videos = [
+      { id: "missing", present: false },
+      ...makeVideos(),
+    ];
+    const { result } = renderController(videos);
+    act(() => result.current.open("three"));
+    expect(result.current.canGoNext).toBe(false);
+
+    expect(result.current.peekNavigation("first")).toBe(videos[1]);
+    let wrapped;
+    act(() => {
+      wrapped = result.current.navigateFullScreen("first");
+    });
+    expect(wrapped).toBe(videos[1]);
+    expect(result.current.currentVideo).toBe(videos[1]);
+
+    // Already at the first clip: wrapping would only reload the same one.
+    expect(result.current.peekNavigation("first")).toBeNull();
+    let again;
+    act(() => {
+      again = result.current.first();
+    });
+    expect(again).toBeNull();
+    expect(result.current.currentVideo).toBe(videos[1]);
+  });
 });

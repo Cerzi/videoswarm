@@ -149,6 +149,7 @@ export function useElectronFolderLifecycle({
   setReviewModeEnabled,
   setFullscreenDetailsOpen,
   setFullscreenAudioEnabled,
+  setFullscreenAutoContinue,
   setTransferLayout,
   setMetadataInspectorMode,
   setZoomLevelFromSettings,
@@ -203,6 +204,7 @@ export function useElectronFolderLifecycle({
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setFullscreenAutoContinue,
     setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
@@ -224,6 +226,7 @@ export function useElectronFolderLifecycle({
       setReviewModeEnabled,
       setFullscreenDetailsOpen,
       setFullscreenAudioEnabled,
+      setFullscreenAutoContinue,
       setTransferLayout,
       setMetadataInspectorMode,
       setZoomLevelFromSettings,
@@ -243,6 +246,7 @@ export function useElectronFolderLifecycle({
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setFullscreenAutoContinue,
     setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
@@ -1126,6 +1130,7 @@ export function useElectronFolderLifecycle({
       setReviewModeEnabled: applyReviewModeEnabled,
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
       setFullscreenAudioEnabled: applyFullscreenAudioEnabled,
+      setFullscreenAutoContinue: applyFullscreenAutoContinue,
       setTransferLayout: applyTransferLayout,
       setMetadataInspectorMode: applyMetadataInspectorMode,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
@@ -1164,6 +1169,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.fullscreenAudioEnabled !== undefined) {
       applyFullscreenAudioEnabled?.(settings.fullscreenAudioEnabled === true);
+    }
+    if (settings.fullscreenAutoContinue !== undefined) {
+      applyFullscreenAutoContinue?.(settings.fullscreenAutoContinue === true);
     }
     if (settings.transferLayout !== undefined) {
       applyTransferLayout?.(settings.transferLayout === "flat" ? "flat" : "structured");

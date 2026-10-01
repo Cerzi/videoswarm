@@ -133,6 +133,11 @@
   cursor: default;
 }
 
+.fullscreen-review__button--toggle[aria-pressed="true"] {
+  border-color: #6ea8fe;
+  background: rgba(110, 168, 254, 0.24);
+}
+
 .fullscreen-review__button--close {
   width: 38px;
   padding: 0;

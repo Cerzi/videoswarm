@@ -237,6 +237,11 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     // current one. Scoped to the session rather than made a mode: ordinary
     // grid review still loops, which is what a single-clip loupe is for.
     advanceOnEnd = false,
+    // The viewer's own play-through: the next clip starts as soon as this one
+    // ends, and the last wraps back to the first. A sequence session's own
+    // end-of-clip rule takes precedence, so the toggle is hidden there.
+    autoContinue = false,
+    onAutoContinueChange,
     onBoundary,
     onPlaybackFeedback,
     onRetry,
@@ -284,6 +289,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   const callbackRef = useRef({});
   callbackRef.current = {
     onAudioEnabledChange,
+    onAutoContinueChange,
     onBoundary,
     onClose,
     onCopyFrame,
@@ -305,6 +311,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   workSuspendedRef.current = Boolean(workSuspended);
   const advanceOnEndRef = useRef(Boolean(advanceOnEnd));
   advanceOnEndRef.current = Boolean(advanceOnEnd);
+  const autoContinueRef = useRef(Boolean(autoContinue));
+  autoContinueRef.current = Boolean(autoContinue);
+  const continuesOnEnd = Boolean(advanceOnEnd || autoContinue);
   const persistedAudioEnabledRef = useRef(Boolean(audioEnabled));
   persistedAudioEnabledRef.current = Boolean(audioEnabled);
   const mutedPreferenceRef = useRef(!audioEnabled);
@@ -705,13 +714,37 @@ const FullScreenModal = forwardRef(function FullScreenModal(
    * wrapping: a story that silently restarts reads as a bug, not a loop.
    */
   const handleMediaEnded = useCallback(() => {
-    if (!advanceOnEndRef.current) return;
-    if (canNavigateNext === false) {
-      requestClose("sequence-complete");
+    if (advanceOnEndRef.current) {
+      if (canNavigateNext === false) {
+        requestClose("sequence-complete");
+        return;
+      }
+      requestNavigate("next");
       return;
     }
-    requestNavigate("next");
-  }, [canNavigateNext, requestClose, requestNavigate]);
+    if (!autoContinueRef.current || closeRequestedRef.current) return;
+    if (canNavigateNext !== false) {
+      requestNavigate("next");
+      return;
+    }
+    // Wrapping is not a boundary, so it bypasses `requestNavigate` and its
+    // "End of current view" notice. With nothing else to wrap to, the one
+    // clip simply plays again.
+    stopFrameHold();
+    if (callbackRef.current.onNavigate?.("first")) return;
+    const element = mediaRef.current;
+    if (!element || !activeReleaseRef.current) return;
+    try {
+      element.currentTime = 0;
+    } catch {}
+    void attemptPlay(element, activeReleaseRef.current);
+  }, [attemptPlay, canNavigateNext, requestClose, requestNavigate, stopFrameHold]);
+
+  const toggleAutoContinue = useCallback(() => {
+    const next = !autoContinueRef.current;
+    setNotice(next ? "Auto-continue on" : "Auto-continue off");
+    callbackRef.current.onAutoContinueChange?.(next);
+  }, []);
 
   // Owner replacement is a session boundary even if a caller accidentally
   // reuses the same record ID and keeps this component mounted.
@@ -834,7 +867,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     element.addEventListener("error", handleMediaError);
     element.preload = "auto";
     element.crossOrigin = "anonymous";
-    element.loop = !advanceOnEndRef.current;
+    element.loop = !(advanceOnEndRef.current || autoContinueRef.current);
     element.playsInline = true;
     element.muted = mutedPreferenceRef.current;
     setIsMuted(mutedPreferenceRef.current);
@@ -1371,6 +1404,18 @@ const FullScreenModal = forwardRef(function FullScreenModal(
             >
               {isMuted ? "Muted" : "Audio on"}
             </button>
+            {onAutoContinueChange && !advanceOnEnd ? (
+              <button
+                type="button"
+                className="fullscreen-review__button fullscreen-review__button--toggle"
+                onClick={toggleAutoContinue}
+                aria-pressed={Boolean(autoContinue)}
+                aria-label="Auto-continue"
+                title="Play the next clip when this one ends, looping back to the first"
+              >
+                Auto-continue
+              </button>
+            ) : null}
             {onToggleDetails || renderedDetailsDock ? (
               <button
                 type="button"
@@ -1450,7 +1495,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
               <video
                 ref={setMediaElement}
                 className="fullscreen-review__video"
-                loop={!advanceOnEnd}
+                loop={!continuesOnEnd}
                 controls
                 onEnded={handleMediaEnded}
                 playsInline

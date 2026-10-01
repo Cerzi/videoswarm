@@ -197,6 +197,7 @@ function App() {
   const [reviewModeEnabled, setReviewModeEnabled] = useState(true);
   const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
   const [fullscreenAudioEnabled, setFullscreenAudioEnabled] = useState(false);
+  const [fullscreenAutoContinue, setFullscreenAutoContinue] = useState(false);
   const [metadataInspectorMode, setMetadataInspectorMode] = useState("floating");
   const [workspaceSidebarTab, setWorkspaceSidebarTab] = useState("library");
   const [metadataGenerationExpanded, setMetadataGenerationExpanded] =
@@ -512,6 +513,7 @@ function App() {
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
+    setFullscreenAutoContinue,
     setTransferLayout,
     setMetadataInspectorMode: applyMetadataInspectorModeFromSettings,
     setZoomLevelFromSettings: (value) =>
@@ -2778,7 +2780,10 @@ function App() {
     (direction, options) => {
       const controller = fullScreenControllerRef.current;
       const candidate = controller?.peekNavigation?.(direction, options);
+      // Wrapping to the first clip is auto-continue's, and finding nothing to
+      // wrap to is not a boundary the viewer asked to hear about.
       if (!candidate) {
+        if (direction === "first") return null;
         notify(
           direction === "next"
             ? "End of current view"
@@ -3600,6 +3605,14 @@ function App() {
     setFullscreenAudioEnabled(next);
     window.electronAPI?.saveSettingsPartial?.({
       fullscreenAudioEnabled: next,
+    });
+  }, []);
+
+  const handleFullscreenAutoContinueChange = useCallback((value) => {
+    const next = value === true;
+    setFullscreenAutoContinue(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      fullscreenAutoContinue: next,
     });
   }, []);
 
@@ -5731,6 +5744,8 @@ function App() {
               }
               audioEnabled={fullscreenAudioEnabled}
               onAudioEnabledChange={handleFullscreenAudioEnabledChange}
+              autoContinue={fullscreenAutoContinue}
+              onAutoContinueChange={handleFullscreenAutoContinueChange}
               onCopyFrame={handleCopyFullscreenFrame}
               detailsDock={
                 <FullscreenDetailsDock

@@ -3133,6 +3133,16 @@ describe("App hook composition", () => {
     });
     expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].audioEnabled).toBe(false);
 
+    act(() => lifecycleArgs.setFullscreenAutoContinue(true));
+    expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].autoContinue).toBe(true);
+    act(() =>
+      fullScreenModalSpy.mock.calls.at(-1)?.[0].onAutoContinueChange(false)
+    );
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      fullscreenAutoContinue: false,
+    });
+    expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].autoContinue).toBe(false);
+
     await act(async () => {
       await lifecycleArgs.beforeExternalFolderSelection("/next");
     });

@@ -350,6 +350,18 @@ describe("useElectronFolderLifecycle", () => {
     expect(setFullscreenAudioEnabled).toHaveBeenCalledWith(false);
   });
 
+  it("treats only a literal true auto-continue setting as enabled", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      fullscreenAutoContinue: "true",
+    });
+    const setFullscreenAutoContinue = vi.fn();
+
+    const { result } = renderDefaultLifecycle({ setFullscreenAutoContinue });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setFullscreenAutoContinue).toHaveBeenCalledWith(false);
+  });
+
   it("allows only the docked metadata inspector mode", async () => {
     window.electronAPI.getSettings.mockResolvedValueOnce({
       metadataInspectorMode: "detached-window",
