@@ -1,4 +1,27 @@
+const fs = require("fs");
 const { createTaggedLibraryFiles } = require("./cached-library-snapshot");
+
+/**
+ * Library roots whose folder can no longer be opened.
+ *
+ * A folder that was moved or deleted is never rescanned, so the catalog keeps
+ * reporting its clips as present and a tag view would list them as broken
+ * links. This is checked per request rather than recorded, so a drive that is
+ * merely unmounted reappears in tag views as soon as it is back.
+ */
+async function findUnavailableRootPaths(rootPaths, { stat = fs.promises.stat } = {}) {
+  const checks = await Promise.all(
+    (Array.isArray(rootPaths) ? rootPaths : []).map(async (rootPath) => {
+      try {
+        const stats = await stat(rootPath);
+        return stats.isDirectory() ? null : rootPath;
+      } catch {
+        return rootPath;
+      }
+    })
+  );
+  return checks.filter(Boolean);
+}
 
 /**
  * Build the renderer's answer to a library-wide tag search.
@@ -14,10 +37,12 @@ const { createTaggedLibraryFiles } = require("./cached-library-snapshot");
  * as an error.
  */
 function buildTaggedSnapshotResponse(metadataStore, options = {}) {
-  const { tagNames, matchMode, generation, assertActive } = options;
+  const { tagNames, matchMode, unavailableRootPaths, generation, assertActive } =
+    options;
   const snapshot = metadataStore.getTaggedLibrarySnapshot({
     tagNames,
     matchMode,
+    unavailableRootPaths,
     assertActive,
   });
   return {
@@ -29,4 +54,4 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
   };
 }
 
-module.exports = { buildTaggedSnapshotResponse };
+module.exports = { buildTaggedSnapshotResponse, findUnavailableRootPaths };

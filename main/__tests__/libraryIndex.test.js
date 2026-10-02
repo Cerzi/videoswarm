@@ -912,6 +912,183 @@ if (!database || databaseLoadError) {
         expect(reindexed.rating).toBeNull();
       });
 
+      describe('content moved before its old folder was rescanned', () => {
+        let archiveRoot;
+
+        beforeEach(() => {
+          archiveRoot = path.join(tempDir, 'archive');
+          fs.mkdirSync(archiveRoot, { recursive: true });
+        });
+
+        function archiveEntry(relativePath) {
+          const filePath = path.join(archiveRoot, relativePath);
+          return { filePath, stats: fs.statSync(filePath) };
+        }
+
+        // The v1 identity the file had when it was first indexed, at a creation
+        // time a later cross-device move or restore no longer preserves.
+        async function legacyFingerprintAt(filePath, createdMs) {
+          const { legacyFingerprint } = await computeFingerprint(filePath, {
+            size: fs.statSync(filePath).size,
+            birthtimeMs: createdMs,
+          });
+          return legacyFingerprint;
+        }
+
+        // The state an upgrade left behind when a folder moved before it was
+        // rescanned: metadata on a v1 row, the old instances still pointing at
+        // it, and the new location already indexed under its v2 identity with
+        // nothing attached.
+        function strandMetadataOnLegacyRow(
+          currentFingerprint,
+          legacyFingerprint,
+          oldInstancePaths
+        ) {
+          const raw = openProfileDatabase();
+          try {
+            raw.pragma('foreign_keys = OFF');
+            raw.transaction(() => {
+              for (const table of ['files', 'media_content']) {
+                const columns = raw
+                  .prepare(`PRAGMA table_info(${table});`)
+                  .all()
+                  .map((column) => column.name);
+                const selected = columns.map((column) =>
+                  column === 'fingerprint' ? '?' : column
+                );
+                raw
+                  .prepare(
+                    `INSERT INTO ${table} (${columns.join(', ')})
+                     SELECT ${selected.join(', ')} FROM ${table}
+                     WHERE fingerprint = ?;`
+                  )
+                  .run(legacyFingerprint, currentFingerprint);
+              }
+              for (const table of ['content_review', 'ratings', 'file_tags']) {
+                raw
+                  .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
+                  .run(legacyFingerprint, currentFingerprint);
+              }
+              for (const instancePath of oldInstancePaths) {
+                raw
+                  .prepare(
+                    'UPDATE file_instances SET fingerprint = ? WHERE absolute_path = ?;'
+                  )
+                  .run(legacyFingerprint, instancePath);
+              }
+            })();
+          } finally {
+            raw.close();
+          }
+        }
+
+        function countFileRecords(fingerprint) {
+          const raw = openProfileDatabase();
+          try {
+            return raw
+              .prepare('SELECT COUNT(*) AS count FROM files WHERE fingerprint = ?;')
+              .get(fingerprint).count;
+          } finally {
+            raw.close();
+          }
+        }
+
+        function instanceFingerprint(filePath) {
+          const raw = openProfileDatabase();
+          try {
+            return raw
+              .prepare('SELECT fingerprint FROM file_instances WHERE absolute_path = ?;')
+              .get(filePath).fingerprint;
+          } finally {
+            raw.close();
+          }
+        }
+
+        it('carries v1 metadata to a file renamed into another root', async () => {
+          const entry = createFile('clip.mp4', 'moved-clip-payload');
+          const [indexed] = await store.indexFiles({ rootPath, entries: [entry] });
+          store.setReviewState([indexed.fingerprint], 'pick');
+          store.setRating([indexed.fingerprint], 4);
+          store.assignTags([indexed.fingerprint], ['keeper']);
+          const { legacyFingerprint } = await computeFingerprint(entry.filePath);
+          demoteToLegacyFingerprint(indexed.fingerprint, legacyFingerprint);
+
+          // A rename keeps the inode, so the creation time survives the move.
+          fs.renameSync(entry.filePath, path.join(archiveRoot, 'clip.mp4'));
+          const [moved] = await store.indexFiles({
+            rootPath: archiveRoot,
+            entries: [archiveEntry('clip.mp4')],
+          });
+
+          expect(moved.fingerprint).toBe(indexed.fingerprint);
+          expect(moved.reviewState).toBe('pick');
+          expect(moved.rating).toBe(4);
+          expect(moved.tags).toContain('keeper');
+          expect(countFileRecords(legacyFingerprint)).toBe(0);
+          // The stale instance at the old path follows the content identity.
+          expect(instanceFingerprint(entry.filePath)).toBe(indexed.fingerprint);
+        });
+
+        it('relinks a file already indexed at its new location', async () => {
+          const entry = createFile('clip.mp4', 'archived-clip-payload');
+          const [indexed] = await store.indexFiles({ rootPath, entries: [entry] });
+          store.setReviewState([indexed.fingerprint], 'reject');
+          store.setRating([indexed.fingerprint], 2);
+          store.assignTags([indexed.fingerprint], ['archived']);
+
+          // A copy gets a new creation time, which is what a move across
+          // devices does too, so the file's own v1 digest cannot match.
+          fs.copyFileSync(entry.filePath, path.join(archiveRoot, 'clip.mp4'));
+          await store.indexFiles({
+            rootPath: archiveRoot,
+            entries: [archiveEntry('clip.mp4')],
+          });
+          const legacyFingerprint = await legacyFingerprintAt(
+            entry.filePath,
+            1_600_000_000_000
+          );
+          strandMetadataOnLegacyRow(indexed.fingerprint, legacyFingerprint, [
+            entry.filePath,
+          ]);
+
+          const [relinked] = await store.indexFiles({
+            rootPath: archiveRoot,
+            entries: [archiveEntry('clip.mp4')],
+          });
+
+          // The persisted v2 identity is reused; only the legacy proof reads.
+          expect(relinked.fingerprintReused).toBe(true);
+          expect(relinked.fingerprint).toBe(indexed.fingerprint);
+          expect(relinked.reviewState).toBe('reject');
+          expect(relinked.rating).toBe(2);
+          expect(relinked.tags).toContain('archived');
+          expect(countFileRecords(legacyFingerprint)).toBe(0);
+          expect(instanceFingerprint(entry.filePath)).toBe(indexed.fingerprint);
+        });
+
+        it('leaves a v1 row alone when a same-size file has different bytes', async () => {
+          const entry = createFile('clip.mp4', 'payload-number-one');
+          const [indexed] = await store.indexFiles({ rootPath, entries: [entry] });
+          store.setRating([indexed.fingerprint], 5);
+          store.assignTags([indexed.fingerprint], ['keeper']);
+          const { legacyFingerprint } = await computeFingerprint(entry.filePath);
+          demoteToLegacyFingerprint(indexed.fingerprint, legacyFingerprint);
+
+          fs.writeFileSync(
+            path.join(archiveRoot, 'clip.mp4'),
+            'payload-number-two'
+          );
+          const [stranger] = await store.indexFiles({
+            rootPath: archiveRoot,
+            entries: [archiveEntry('clip.mp4')],
+          });
+
+          expect(stranger.rating).toBeNull();
+          expect(stranger.tags).toEqual([]);
+          expect(countFileRecords(legacyFingerprint)).toBe(1);
+        });
+      });
+
       it('merges two legacy rows that collapse onto one content identity', async () => {
         const first = createFile('dup-a.mp4', 'duplicate-content-payload');
         const [firstIndexed] = await store.indexFiles({

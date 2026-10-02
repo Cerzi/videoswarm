@@ -1,9 +1,14 @@
+import fs from "fs";
+import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { buildTaggedSnapshotResponse } = require("../library-tag-view");
+const {
+  buildTaggedSnapshotResponse,
+  findUnavailableRootPaths,
+} = require("../library-tag-view");
 
 const rootA = path.resolve("/roots/a");
 const rootB = path.resolve("/roots/b");
@@ -115,6 +120,7 @@ describe("library tag view response", () => {
     const response = buildTaggedSnapshotResponse(store, {
       tagNames: ["keeper", "sleep"],
       matchMode: "any",
+      unavailableRootPaths: [rootB],
       generation: 2,
       assertActive,
     });
@@ -122,6 +128,7 @@ describe("library tag view response", () => {
     expect(store.getTaggedLibrarySnapshot).toHaveBeenCalledWith({
       tagNames: ["keeper", "sleep"],
       matchMode: "any",
+      unavailableRootPaths: [rootB],
       assertActive,
     });
     // A clipped library has to say so; silently short results read as a wrong
@@ -149,5 +156,37 @@ describe("library tag view response", () => {
 
     expect(response.records).toEqual([]);
     expect(response.truncated).toBe(false);
+  });
+});
+
+describe("unavailable library roots", () => {
+  it("names roots whose folder is missing or no longer a folder", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "videoswarm-roots-"));
+    try {
+      const present = path.join(tempDir, "present");
+      const moved = path.join(tempDir, "moved");
+      const replacedByFile = path.join(tempDir, "now-a-file");
+      fs.mkdirSync(present);
+      fs.writeFileSync(replacedByFile, "not a folder");
+
+      await expect(
+        findUnavailableRootPaths([present, moved, replacedByFile])
+      ).resolves.toEqual([moved, replacedByFile]);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a folder that cannot be inspected as unavailable", async () => {
+    const stat = vi.fn(async (rootPath) => {
+      if (rootPath === rootB) {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      }
+      return { isDirectory: () => true };
+    });
+
+    await expect(
+      findUnavailableRootPaths([rootA, rootB], { stat })
+    ).resolves.toEqual([rootB]);
   });
 });

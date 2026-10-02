@@ -81,10 +81,79 @@ async function computeFingerprint(filePath, stats) {
   return { fingerprint, legacyFingerprint, size, createdMs };
 }
 
+// A v1 identity spells out everything its digest absorbed besides the sampled
+// bytes. That lets a stored v1 row be proven against any file using the
+// creation time recorded in the row rather than the file's current one, which
+// a move across devices, a copy, or a restore from backup resets.
+const LEGACY_FINGERPRINT_PATTERN = /^v1-([0-9a-f]+)-(-?\d+)-([0-9a-f]{64})$/;
+
+function parseLegacyFingerprint(value) {
+  const match =
+    typeof value === 'string' ? LEGACY_FINGERPRINT_PATTERN.exec(value) : null;
+  if (!match) return null;
+  return {
+    size: parseInt(match[1], 16),
+    // Kept as written: the digest absorbed this exact decimal string.
+    createdMs: match[2],
+    digest: match[3],
+  };
+}
+
+/**
+ * Return the v1 fingerprints among `candidates` whose digest the file's
+ * current bytes reproduce.
+ *
+ * Unlike computeFingerprint there is no error fallback: a file that cannot be
+ * read proves nothing, so it matches nothing.
+ */
+async function matchLegacyFingerprints(filePath, stats, candidates) {
+  const size = Number(stats?.size || 0);
+  const parsedCandidates = (Array.isArray(candidates) ? candidates : [])
+    .map((fingerprint) => ({ fingerprint, parsed: parseLegacyFingerprint(fingerprint) }))
+    .filter(({ parsed }) => parsed && parsed.size === size);
+  if (!parsedCandidates.length) return [];
+
+  const samples = [];
+  let handle;
+  try {
+    if (size > 0) {
+      handle = await fs.promises.open(filePath, 'r');
+      const sampleSize = Math.min(DEFAULT_SAMPLE_SIZE, size);
+      const head = await readSample(handle, 0, sampleSize);
+      samples.push(head);
+      samples.push(
+        size > sampleSize
+          ? await readSample(handle, Math.max(0, size - sampleSize), sampleSize)
+          : head
+      );
+    }
+  } catch {
+    return [];
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {}
+    }
+  }
+
+  return parsedCandidates
+    .filter(({ parsed }) => {
+      const hash = crypto.createHash('sha256');
+      samples.forEach((sample) => hash.update(sample));
+      hash.update(Buffer.from(String(size)));
+      hash.update(Buffer.from(parsed.createdMs));
+      return hash.digest('hex') === parsed.digest;
+    })
+    .map(({ fingerprint }) => fingerprint);
+}
+
 module.exports = {
   FINGERPRINT_VERSION,
   LEGACY_FINGERPRINT_VERSION,
   computeFingerprint,
   isCurrentFingerprint,
   isLegacyFingerprint,
+  matchLegacyFingerprints,
+  parseLegacyFingerprint,
 };

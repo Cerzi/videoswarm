@@ -88,7 +88,10 @@ const {
 const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
-const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
+const {
+  buildTaggedSnapshotResponse,
+  findUnavailableRootPaths,
+} = require("./main/library-tag-view");
 const { buildSequenceSnapshotResponse } = require("./main/sequence-view");
 const { buildSequenceCopyRecords } = require("./main/sequence-export");
 const {
@@ -4460,10 +4463,20 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     dedupe: true,
   });
   const matchMode = payload?.matchMode === "any" ? "any" : "all";
+  // Folder checks are filesystem work, so they run before the synchronous
+  // catalog read rather than inside it.
+  const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
+    rootPaths: metadataStore.getLibraryRoots().map((root) => root.rootPath),
+  }));
+  if (rootsResult?.success === false) return rootsResult;
+  const unavailableRootPaths = await findUnavailableRootPaths(
+    rootsResult.rootPaths
+  );
   return runLibraryCatalogOperation((metadataStore, context) =>
     buildTaggedSnapshotResponse(metadataStore, {
       tagNames,
       matchMode,
+      unavailableRootPaths,
       generation: context.generation,
       assertActive: () => assertMetadataContextActive(context),
     })

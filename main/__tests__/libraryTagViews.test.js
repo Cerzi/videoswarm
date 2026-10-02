@@ -142,6 +142,27 @@ if (!database || databaseLoadError) {
       ]);
     });
 
+    it('leaves out roots the caller reports as unavailable', async () => {
+      // A folder moved away is never rescanned, so its rows still read as
+      // present. Only the caller can see that the folder itself is gone.
+      const moved = await indexInto('alpha', 'moved.mp4', 'moved');
+      const kept = await indexInto('beta', 'kept.mp4', 'kept');
+      store.assignTags(
+        [moved.indexed.fingerprint, kept.indexed.fingerprint],
+        ['keeper']
+      );
+
+      const snapshot = store.getTaggedLibrarySnapshot({
+        tagNames: ['keeper'],
+        unavailableRootPaths: [moved.rootPath],
+      });
+
+      expect(snapshot.records.map((record) => record.absolutePath)).toEqual([
+        kept.filePath,
+      ]);
+      expect(snapshot.rootPaths).toEqual([kept.rootPath]);
+    });
+
     it('reports truncation rather than silently clipping the library', async () => {
       const entries = [];
       for (const name of ['a.mp4', 'b.mp4', 'c.mp4']) {

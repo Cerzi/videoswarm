@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { BoundedAsyncCache } = require('./bounded-async-cache');
-const { computeFingerprint, isLegacyFingerprint } = require('./fingerprint');
+const {
+  computeFingerprint,
+  isLegacyFingerprint,
+  matchLegacyFingerprints,
+} = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
 const {
   ACCEPTED_COPY_MAX_MEDIA,
@@ -1505,7 +1509,9 @@ function createMetadataStore(db) {
   // The library-wide projection is deliberately the cached-grid projection with
   // the root predicate swapped for a tag join, so a clip looks identical however
   // it was reached. Directory presence is checked too: a retired directory's
-  // instances must not reappear just because they carry a tag.
+  // instances must not reappear just because they carry a tag. A root whose
+  // folder is gone from disk is never rescanned, so its rows still read as
+  // present; the caller names those roots and they are left out.
   const taggedInstancesAcrossRoots = db.prepare(`
     SELECT fi.*,
       lr.root_path AS owner_root_path,
@@ -1530,6 +1536,7 @@ function createMetadataStore(db) {
     WHERE fi.is_present != 0
       AND d.is_present != 0
       AND fi.fingerprint IS NOT NULL
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
       -- tags.name is declared COLLATE NOCASE, so matching and DISTINCT are
       -- already case-insensitive without restating it here. Counting the
       -- distinct matches and requiring the full tag count is what makes a
@@ -1833,6 +1840,16 @@ function createMetadataStore(db) {
   const fileRecordByFingerprint = db.prepare(
     'SELECT fingerprint FROM files WHERE fingerprint = ?;'
   );
+  // v1 identities begin `v1-<size hex>-`, so a primary-key range finds every
+  // legacy row of one byte size without needing a size index. '.' sorts
+  // directly after '-', which makes the upper bound exact.
+  const anyLegacyFileRecord = db.prepare(`
+    SELECT 1 FROM files WHERE fingerprint >= 'v1-' AND fingerprint < 'v1.' LIMIT 1;
+  `);
+  const legacyFileRecordsBySize = db.prepare(`
+    SELECT fingerprint FROM files
+    WHERE fingerprint >= @lower AND fingerprint < @upper;
+  `);
 
   const getReviewState = db.prepare(`
     SELECT state FROM content_review WHERE fingerprint = ?;
@@ -2641,6 +2658,40 @@ function createMetadataStore(db) {
   }
 
   /**
+   * Every stored v1 row whose digest this file's bytes reproduce.
+   *
+   * The upgrade used to consult only the instance previously indexed at the
+   * same path, so content moved or copied before its old folder was rescanned
+   * left its review state, rating and tags on a v1 row nothing could reach.
+   * Any v1 row of the same byte size is now a candidate. Proof recomputes the
+   * row's digest from these bytes and the creation time recorded in the row,
+   * so a different file that merely shares the size never matches.
+   */
+  async function findProvenLegacyFingerprints(
+    filePath,
+    stats,
+    fingerprintResult,
+    assertActive
+  ) {
+    const prefix = `v1-${normalizeStatSize(stats).toString(16)}`;
+    const candidates = legacyFileRecordsBySize
+      .all({ lower: `${prefix}-`, upper: `${prefix}.` })
+      .map((row) => row.fingerprint);
+    if (!candidates.length) return [];
+
+    // A fresh read already reproduced one digest under the file's own creation
+    // time; that is the common in-place upgrade and needs no second read.
+    const freshLegacy = fingerprintResult.legacyFingerprint || null;
+    const proven = candidates.filter((candidate) => candidate === freshLegacy);
+    const unproven = candidates.filter((candidate) => candidate !== freshLegacy);
+    if (unproven.length) {
+      proven.push(...(await matchLegacyFingerprints(filePath, stats, unproven)));
+      assertOperationActive(assertActive);
+    }
+    return proven;
+  }
+
+  /**
    * Move every fingerprint-keyed row from one content identity to another.
    *
    * This exists for the v1 -> v2 content-digest migration, where the caller has
@@ -3161,8 +3212,12 @@ function createMetadataStore(db) {
     );
 
     const matchMode = options.matchMode === 'any' ? 'any' : 'all';
+    const unavailableRootPaths = (
+      Array.isArray(options.unavailableRootPaths) ? options.unavailableRootPaths : []
+    ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
     const rows = taggedInstancesAcrossRoots.all({
       tag_names: JSON.stringify(tagNames),
+      unavailable_root_paths: JSON.stringify(unavailableRootPaths),
       required_matches:
         tagNames.length === 0 ? 0 : matchMode === 'any' ? 1 : tagNames.length,
       limit: maxRecords + 1,
@@ -4330,6 +4385,8 @@ function createMetadataStore(db) {
     const sourceEntries = Array.isArray(entries) ? entries : [];
     let completedEntryCount = 0;
     let fingerprintsReused = 0;
+    // Once a profile holds no v1 rows the per-file legacy lookup is skipped.
+    const legacyRowsRemain = Boolean(anyLegacyFileRecord.get());
 
     const notifyProgress = (filePath = null) => {
       if (typeof onProgress !== 'function') return;
@@ -4388,6 +4445,14 @@ function createMetadataStore(db) {
         );
       }
       assertOperationActive(assertActive);
+      const provenLegacyFingerprints = legacyRowsRemain
+        ? await findProvenLegacyFingerprints(
+          location.absolutePath,
+          safeStats,
+          fingerprintResult,
+          assertActive
+        )
+        : [];
 
       const prepared = {
         filePath: location.absolutePath,
@@ -4397,8 +4462,7 @@ function createMetadataStore(db) {
         fingerprint: fingerprintResult.fingerprint,
         createdMs: fingerprintResult.createdMs,
         fingerprintReused: reusedPersistedFingerprint,
-        previousFingerprint: existingInstance?.fingerprint || null,
-        legacyFingerprint: fingerprintResult.legacyFingerprint || null,
+        provenLegacyFingerprints,
       };
       preparedEntries[index] = prepared;
 
@@ -4443,19 +4507,15 @@ function createMetadataStore(db) {
     const instanceRows = [];
     const txn = db.transaction(() => {
       preparedEntries.forEach((entry) => {
-        // Carry v1 metadata forward only when the recomputed legacy digest
-        // still matches what was stored. That equality is exact proof the
-        // bytes are unchanged, so a genuinely edited file is never allowed to
-        // inherit the previous content's review state, rating, or tags.
-        if (
-          entry.previousFingerprint &&
-          entry.legacyFingerprint &&
-          entry.previousFingerprint !== entry.fingerprint &&
-          isLegacyFingerprint(entry.previousFingerprint) &&
-          entry.previousFingerprint === entry.legacyFingerprint
-        ) {
-          rekeyContentFingerprint(entry.previousFingerprint, entry.fingerprint);
-        }
+        // Carry v1 metadata forward only when these bytes reproduce the
+        // stored legacy digest, wherever that row was last seen. That equality
+        // is exact proof the content is unchanged, so a genuinely edited file
+        // is never allowed to inherit the previous content's review state,
+        // rating, or tags. Two copies proving one row in the same batch share
+        // a v2 identity, so the second re-key finds nothing left to move.
+        entry.provenLegacyFingerprints.forEach((legacyFingerprint) => {
+          rekeyContentFingerprint(legacyFingerprint, entry.fingerprint);
+        });
         writeFileRecord(
           entry.fingerprint,
           entry.filePath,
