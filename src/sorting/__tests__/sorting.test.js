@@ -37,7 +37,6 @@ describe("sorting module", () => {
   it("sorts decimal numbers correctly when leading digits match", () => {
     // localeCompare+numeric compares digit *groups* as integers, so 0.7 vs 0.64
     // becomes [0,7] vs [0,64] → 7 < 64 → 0.7 sorts before 0.64 (wrong).
-    // The float-path in buildComparator fixes this.
     const items = [
       makeItem("1", "video_0.9", "", 0),
       makeItem("2", "video_0.64", "", 0),
@@ -68,7 +67,7 @@ describe("sorting module", () => {
   });
 
   it("sorts multiple numbers correctly (multi-key alphanumeric)", () => {
-    // tokenize splits into [text, num, text, num...] and compares pairwise.
+    // Names split into alternating text and number segments compared pairwise.
     const items = [
       makeItem("1", "clip_1.2_pass3", "", 0),
       makeItem("2", "clip_1.10_pass1", "", 0),
@@ -85,12 +84,7 @@ describe("sorting module", () => {
     const sorted = groupAndSort(items, { groupByFolders: false, comparator: asc }).map(
       (i) => i.basename
     );
-    // Multi-key numeric order:
-    // clip_1.2_pass1 (1 < 1.2 → no; pass1=1 < pass3=3 → yes)
-    // clip_1.2_pass3 (pass3=3 < pass10=10)
-    // clip_1.2_pass10 (pass10=10)
-    // clip_1.10_pass1 (1.10 > 1.2? No: 1.10 > 1.2 is false → 1.10 < 1.2)
-    // Wait: parseFloat("1.10") === 1.1, parseFloat("1.2") === 1.2 → 1.1 < 1.2
+    // "1.10" reads as the decimal 1.1, so it sorts before 1.2.
     expect(sorted).toEqual([
       "clip_1.10_pass1",
       "clip_1.2_pass1",
@@ -117,6 +111,34 @@ describe("sorting module", () => {
       (i) => i.basename
     );
     expect(sorted).toEqual(["2clip", "10clip", "clip2", "clip10"]);
+  });
+
+  it("orders long digit runs exactly instead of rounding them", () => {
+    // Both seeds round to the same double, so a float comparison ties them.
+    const items = [
+      makeItem("1", "seed_18446744073709551615", "", 0),
+      makeItem("2", "seed_18446744073709551614", "", 0),
+      makeItem("3", "seed_0.30000000000000001", "", 0),
+      makeItem("4", "seed_0.3", "", 0),
+      makeItem("5", "seed_007", "", 0),
+      makeItem("6", "seed_8", "", 0),
+    ];
+    const asc = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const desc = buildComparator({ sortKey: SortKey.NAME, sortDir: "desc" });
+    const order = [
+      "seed_0.3",
+      "seed_0.30000000000000001",
+      "seed_007",
+      "seed_8",
+      "seed_18446744073709551614",
+      "seed_18446744073709551615",
+    ];
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: asc }).map((i) => i.basename)
+    ).toEqual(order);
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: desc }).map((i) => i.basename)
+    ).toEqual([...order].reverse());
   });
 
   it("sorts by created time asc/desc", () => {
