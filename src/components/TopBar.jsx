@@ -29,6 +29,8 @@ export const SORT_OPTIONS = Object.freeze([
   { value: "created-desc", label: "Created ↓", hint: "Falls back to Modified time if creation time is unavailable." },
   { value: "resolution-asc", label: "Resolution ↑", hint: "Clips whose dimensions have not been read yet sort first." },
   { value: "resolution-desc", label: "Resolution ↓", hint: "Clips whose dimensions have not been read yet sort last." },
+  { value: "rating-asc", label: "Rating ↑", hint: "Unrated clips sort before rated clips." },
+  { value: "rating-desc", label: "Rating ↓", hint: "Highest-rated clips sort first; unrated clips sort last." },
   { value: "random", label: "Random" },
 ]);
 

@@ -34,6 +34,113 @@ describe("sorting module", () => {
     ).toEqual(["file10", "file2", "file1"]);
   });
 
+  it("sorts decimal numbers correctly when leading digits match", () => {
+    // localeCompare+numeric compares digit *groups* as integers, so 0.7 vs 0.64
+    // becomes [0,7] vs [0,64] → 7 < 64 → 0.7 sorts before 0.64 (wrong).
+    const items = [
+      makeItem("1", "video_0.9", "", 0),
+      makeItem("2", "video_0.64", "", 0),
+      makeItem("3", "video_0.7", "", 0),
+      makeItem("4", "video_0.66", "", 0),
+      makeItem("5", "video_0.68", "", 0),
+      makeItem("6", "video_0.72", "", 0),
+      makeItem("7", "video_0.92", "", 0),
+      makeItem("8", "video_0.94", "", 0),
+      makeItem("9", "video_0.96", "", 0),
+    ];
+    const asc = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const sorted = groupAndSort(items, { groupByFolders: false, comparator: asc }).map(
+      (i) => i.basename
+    );
+    // Correct numeric order for decimals with matching leading digits:
+    expect(sorted).toEqual([
+      "video_0.64",
+      "video_0.66",
+      "video_0.68",
+      "video_0.7",
+      "video_0.72",
+      "video_0.9",
+      "video_0.92",
+      "video_0.94",
+      "video_0.96",
+    ]);
+  });
+
+  it("sorts multiple numbers correctly (multi-key alphanumeric)", () => {
+    // Names split into alternating text and number segments compared pairwise.
+    const items = [
+      makeItem("1", "clip_1.2_pass3", "", 0),
+      makeItem("2", "clip_1.10_pass1", "", 0),
+      makeItem("3", "clip_1.2_pass1", "", 0),
+      makeItem("4", "clip_1.2_pass10", "", 0),
+      makeItem("5", "clip_A10_B1", "", 0),
+      makeItem("6", "clip_A2_B5", "", 0),
+      makeItem("7", "clip_A1_B20", "", 0),
+      makeItem("8", "step_3_pass12", "", 0),
+      makeItem("9", "step_3_pass3", "", 0),
+      makeItem("10", "step_12_pass1", "", 0),
+    ];
+    const asc = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const sorted = groupAndSort(items, { groupByFolders: false, comparator: asc }).map(
+      (i) => i.basename
+    );
+    // "1.10" reads as the decimal 1.1, so it sorts before 1.2.
+    expect(sorted).toEqual([
+      "clip_1.10_pass1",
+      "clip_1.2_pass1",
+      "clip_1.2_pass3",
+      "clip_1.2_pass10",
+      "clip_A1_B20",
+      "clip_A2_B5",
+      "clip_A10_B1",
+      "step_3_pass3",
+      "step_3_pass12",
+      "step_12_pass1",
+    ]);
+  });
+
+  it("sorts names when only one side starts with a number", () => {
+    const items = [
+      makeItem("1", "clip2", "", 0),
+      makeItem("2", "2clip", "", 0),
+      makeItem("3", "clip10", "", 0),
+      makeItem("4", "10clip", "", 0),
+    ];
+    const asc = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const sorted = groupAndSort(items, { groupByFolders: false, comparator: asc }).map(
+      (i) => i.basename
+    );
+    expect(sorted).toEqual(["2clip", "10clip", "clip2", "clip10"]);
+  });
+
+  it("orders long digit runs exactly instead of rounding them", () => {
+    // Both seeds round to the same double, so a float comparison ties them.
+    const items = [
+      makeItem("1", "seed_18446744073709551615", "", 0),
+      makeItem("2", "seed_18446744073709551614", "", 0),
+      makeItem("3", "seed_0.30000000000000001", "", 0),
+      makeItem("4", "seed_0.3", "", 0),
+      makeItem("5", "seed_007", "", 0),
+      makeItem("6", "seed_8", "", 0),
+    ];
+    const asc = buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" });
+    const desc = buildComparator({ sortKey: SortKey.NAME, sortDir: "desc" });
+    const order = [
+      "seed_0.3",
+      "seed_0.30000000000000001",
+      "seed_007",
+      "seed_8",
+      "seed_18446744073709551614",
+      "seed_18446744073709551615",
+    ];
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: asc }).map((i) => i.basename)
+    ).toEqual(order);
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: desc }).map((i) => i.basename)
+    ).toEqual([...order].reverse());
+  });
+
   it("sorts by created time asc/desc", () => {
     const items = [
       makeItem("a", "a", "", 300),
@@ -52,6 +159,44 @@ describe("sorting module", () => {
         (i) => i.id
       )
     ).toEqual(["a", "c", "b"]);
+  });
+
+  it("sorts by rating with newest clips first inside each rating", () => {
+    const items = [
+      { ...makeItem("old-five", "old-five", "", 100), rating: 5 },
+      { ...makeItem("new-four", "new-four", "", 500), rating: 4 },
+      { ...makeItem("new-five", "new-five", "", 400), rating: 5 },
+      { ...makeItem("unrated", "unrated", "", 900), rating: null },
+      { ...makeItem("same-rating-b", "b", "", 300), rating: 5 },
+      { ...makeItem("same-rating-a", "a", "", 300), rating: 5 },
+    ];
+    const desc = buildComparator({ sortKey: SortKey.RATING, sortDir: "desc" });
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: desc }).map(
+        (i) => i.id
+      )
+    ).toEqual([
+      "new-five",
+      "same-rating-a",
+      "same-rating-b",
+      "old-five",
+      "new-four",
+      "unrated",
+    ]);
+
+    const asc = buildComparator({ sortKey: SortKey.RATING, sortDir: "asc" });
+    expect(
+      groupAndSort(items, { groupByFolders: false, comparator: asc }).map(
+        (i) => i.id
+      )
+    ).toEqual([
+      "unrated",
+      "new-four",
+      "new-five",
+      "same-rating-a",
+      "same-rating-b",
+      "old-five",
+    ]);
   });
 
   it("random order is stable for same seed", () => {
