@@ -9,7 +9,7 @@ const REVIEW_FILTERS = new Set([
   'pick',
   'reject',
 ]);
-const REVIEW_SORT_KEYS = new Set(['name', 'created', 'resolution', 'random']);
+const REVIEW_SORT_KEYS = new Set(['name', 'created', 'resolution', 'rating', 'random']);
 const FOLDER_SCOPE_MODES = new Set([
   'all-descendants',
   'current-folder',

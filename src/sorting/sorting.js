@@ -16,11 +16,58 @@ const pixelCount = (video) => {
   return width * height;
 };
 
+// One shared collator: localeCompare with an options object builds a new
+// collator on every call, which dominated name sorts of large folders.
+const nameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+// Digit runs, with an optional decimal part, so "0.64" is one segment.
+const NUMBER_RUN = /(\d+(?:\.\d+)?)/;
+
+const isDigitRun = (token) => {
+  const code = token.charCodeAt(0);
+  return code >= 48 && code <= 57;
+};
+
+// Compares two digit runs by exact decimal value. Converting to floats would
+// make long runs, such as 64-bit generation seeds, compare as equal.
+function compareDigitRuns(a, b) {
+  const [intA, fracA = ""] = a.split(".");
+  const [intB, fracB = ""] = b.split(".");
+  const wholeA = intA.replace(/^0+(?=\d)/, "");
+  const wholeB = intB.replace(/^0+(?=\d)/, "");
+  if (wholeA.length !== wholeB.length) return wholeA.length - wholeB.length;
+  if (wholeA !== wholeB) return wholeA < wholeB ? -1 : 1;
+  const fractionA = fracA.replace(/0+$/, "");
+  const fractionB = fracB.replace(/0+$/, "");
+  if (fractionA === fractionB) return 0;
+  return fractionA < fractionB ? -1 : 1;
+}
+
+// Natural order that reads numbers as decimals: "0.64" < "0.7" < "0.72", and
+// "clip_1.10" < "clip_1.2" because 1.1 < 1.2. Names split into alternating
+// text and digit runs that are compared pairwise.
+function compareNamesNatural(nameA, nameB) {
+  const tokensA = nameA ? nameA.split(NUMBER_RUN).filter(Boolean) : [];
+  const tokensB = nameB ? nameB.split(NUMBER_RUN).filter(Boolean) : [];
+  const shared = Math.min(tokensA.length, tokensB.length);
+  for (let i = 0; i < shared; i++) {
+    const tA = tokensA[i];
+    const tB = tokensB[i];
+    // A text segment never contains digits, so a digit run on only one side
+    // means one name starts with a number where the other has text.
+    const cmp = isDigitRun(tA) && isDigitRun(tB)
+      ? compareDigitRuns(tA, tB)
+      : nameCollator.compare(tA, tB);
+    if (cmp !== 0) return cmp;
+  }
+  return tokensA.length - tokensB.length;
+}
+
 const compareNameAsc = (a, b) =>
-  (a.basename || a.name || "").localeCompare(b.basename || b.name || "", undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
+  compareNamesNatural(a.basename || a.name || "", b.basename || b.name || "");
 
 const compareCreatedDesc = (a, b) =>
   (b.createdMs || 0) - (a.createdMs || 0);
@@ -83,51 +130,8 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
       return (ra - rb) * dir;
     };
   }
-  // default NAME — true multi-key alphanumeric sort.
-  // Splits each name into alternating text/number segments and compares them
-  // pairwise, so "clip_1.2_pass3" < "clip_1.10_pass1" (segment 2: 2 < 10).
-  return (a, b) => {
-    const tokensA = tokenize(a.basename);
-    const tokensB = tokenize(b.basename);
-    const len = Math.max(tokensA.length, tokensB.length);
-    for (let i = 0; i < len; i++) {
-      const tA = tokensA[i];
-      const tB = tokensB[i];
-      // One string exhausted → shorter name sorts first.
-      if (tA === undefined) return -dir;
-      if (tB === undefined) return dir;
-      // Both numbers → compare as floats.
-      if (typeof tA === "number" && typeof tB === "number") {
-        const diff = tA - tB;
-        if (diff !== 0) return diff * dir;
-      } else {
-        // Both text or mixed → use localeCompare+numeric. Mixed values can
-        // happen when one filename starts with digits and the other starts with
-        // text, so coerce before using the string API.
-        const cmp = String(tA).localeCompare(String(tB), undefined, {
-          numeric: true,
-          sensitivity: "base",
-        });
-        if (cmp !== 0) return cmp * dir;
-      }
-    }
-    return 0;
-  };
-}
-
-export function tokenize(str) {
-  // Split into alternating text/number segments for multi-key comparison.
-  // ["clip", 1.2, "_pass", 3] → compare pairwise: text vs text, number vs number.
-  if (!str) return [];
-  const tokens = [];
-  const parts = str.split(/(\d+(?:\.\d+)?)/);
-  for (const part of parts) {
-    if (part === "") continue;
-    // Try parsing as a number (int or float).
-    const num = Number(part);
-    tokens.push(Number.isFinite(num) && part !== "" ? num : part);
-  }
-  return tokens;
+  // default NAME
+  return (a, b) => compareNamesNatural(a.basename, b.basename) * dir;
 }
 
 // A folder view has one root, so a relative dirname identifies a folder on its
