@@ -9,7 +9,9 @@ export function parseSortValue(value) {
     ? SortKey.CREATED
     : key === 'resolution'
       ? SortKey.RESOLUTION
-      : SortKey.NAME;
+      : key === 'rating'
+        ? SortKey.RATING
+        : SortKey.NAME;
   const sortDir = dir === 'desc' ? 'desc' : 'asc';
   return { sortKey, sortDir };
 }
@@ -18,6 +20,7 @@ const SORT_LABELS = {
   [SortKey.NAME]: 'Name',
   [SortKey.CREATED]: 'Created',
   [SortKey.RESOLUTION]: 'Resolution',
+  [SortKey.RATING]: 'Rating',
   [SortKey.RANDOM]: 'Random',
 };
 

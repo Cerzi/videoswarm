@@ -106,6 +106,8 @@ describe("TopBar", () => {
     expect(zoom).toHaveAttribute("aria-valuetext", "200px cards");
     fireEvent.change(zoom, { target: { value: "1.5" } });
     expect(props.onZoomChange).toHaveBeenCalledWith(1.5);
+    expect(screen.getByRole("option", { name: "Rating ↑" })).toHaveValue("rating-asc");
+    expect(screen.getByRole("option", { name: "Rating ↓" })).toHaveValue("rating-desc");
     fireEvent.change(screen.getByRole("combobox", { name: "Sort order" }), { target: { value: "resolution-desc" } });
     expect(props.onSortChange).toHaveBeenCalledWith("resolution-desc");
   });
@@ -166,6 +168,8 @@ describe("TopBar", () => {
     expect(within(menu).getByRole("slider", { name: "Grid zoom" })).toBeInTheDocument();
     fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Created ↓" }));
     expect(props.onSortChange).toHaveBeenCalledWith("created-desc");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Rating ↓" }));
+    expect(props.onSortChange).toHaveBeenCalledWith("rating-desc");
     fireEvent.click(within(menu).getByRole("menuitemradio", { name: "All descendants" }));
     expect(props.onScopeChange).toHaveBeenCalledWith(FolderScope.ALL_DESCENDANTS);
     fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Include subfolders" }));
