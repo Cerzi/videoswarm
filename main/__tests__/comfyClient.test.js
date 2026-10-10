@@ -56,7 +56,9 @@ describe("ComfyUI connection setting", () => {
         validateComfyConnection({ enabled: true, url: "http://127.0.0.1:8188", outputDir: path.join(folder, "gone") })
       ).rejects.toMatchObject({ code: "COMFY_OUTPUT_DIR_MISSING" });
       const value = await validateComfyConnection({ enabled: true, url: "http://127.0.0.1:8188/", outputDir: folder });
-      expect(value).toEqual({ enabled: true, url: "http://127.0.0.1:8188", outputDir: fs.realpathSync(folder) });
+      // The native realpath matches fs.promises.realpath; the JS one keeps
+      // Windows 8.3 names such as RUNNER~1 in os.tmpdir().
+      expect(value).toEqual({ enabled: true, url: "http://127.0.0.1:8188", outputDir: fs.realpathSync.native(folder) });
       await expect(validateComfyConnection({ enabled: false, url: "http://8.8.8.8" })).rejects.toMatchObject({
         code: "COMFY_URL_NOT_LOOPBACK",
       });

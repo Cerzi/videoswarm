@@ -192,7 +192,8 @@ if (!database || databaseLoadError) {
       const fromCopy = store.getGenerationVersionSiblings(finalCopy.instance.id);
       expect(fromCopy.versions[0]).toMatchObject({
         instanceId: finalCopy.instance.id,
-        relativePath: path.join("backup", "final.mp4"),
+        // The catalog stores relative paths with "/" on every platform.
+        relativePath: "backup/final.mp4",
         isSelf: true,
       });
     });
