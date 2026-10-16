@@ -302,6 +302,16 @@ generation. Check by hand:
   and resumes on focus or uncovering.
 - `npm run test:electron-smoke` passes.
 
+Also on `main` since (2026-10-16): prompt stacks merged from
+`claude/prompt-stacks`; generation key version 3 and prompt key version 2,
+so cuts from different starts of one video are no longer versions; tag
+matches under the tag input, including in fullscreen. Check by hand:
+
+- **G** toggles stacks; a stack card's pill or a double-click opens it.
+- After opening a library, version badges and stacks come back once the
+  one-time background re-key finishes.
+- Typing a tag in fullscreen lists matches; arrows and Enter add one.
+
 Decision waiting for the user:
 
 - **Proxies on by default?** For portrait WAN/A1 clips they cut decoded
