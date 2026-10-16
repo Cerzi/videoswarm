@@ -27,6 +27,14 @@ const DEFAULT_ASPECT_RATIO = 16 / 9;
 const LAYOUT_PADDING = 16;
 const LAYOUT_GAP = 4;
 const MAX_ACTIVATION_TARGET = 600;
+// Card positions are absolute, so while the mounted window is unchanged a
+// scroll needs no React work. The window keeps a full viewport of overscan on
+// each side, so the scroll position is committed only after it moves this
+// fraction of a viewport (enough to stay covered), and once more, exactly,
+// when scrolling settles.
+const SCROLL_COMMIT_FRACTION = 0.25;
+const SCROLL_COMMIT_MIN_PX = 64;
+const SCROLL_SETTLE_MS = 100;
 export const MAX_MASONRY_ASPECT_OVERRIDES = 4096;
 
 const setBoundedLruEntry = (map, key, value, limit) => {
@@ -146,6 +154,13 @@ export function useMasonryLayout({
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
+  const committedScrollTopRef = useRef(0);
+  const commitScrollTop = useCallback((value) => {
+    const next = Math.max(0, Number(value) || 0);
+    if (Math.abs(committedScrollTopRef.current - next) <= 0.5) return;
+    committedScrollTopRef.current = next;
+    setScrollTop(next);
+  }, []);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [aspectRevision, setAspectRevision] = useState(0);
   const [layoutHoldCount, setLayoutHoldCount] = useState(0);
@@ -209,13 +224,8 @@ export function useMasonryLayout({
         : { width, height }
     );
 
-    if (scrollEl) {
-      const nextScrollTop = Math.max(0, Number(scrollEl.scrollTop) || 0);
-      setScrollTop((previous) =>
-        Math.abs(previous - nextScrollTop) > 0.5 ? nextScrollTop : previous
-      );
-    }
-  }, [gridElement, gridRef, scrollContainerElement, scrollContainerRef]);
+    if (scrollEl) commitScrollTop(scrollEl.scrollTop);
+  }, [commitScrollTop, gridElement, gridRef, scrollContainerElement, scrollContainerRef]);
 
   useEffect(() => {
     const scrollEl = scrollContainerElement || scrollContainerRef?.current;
@@ -246,12 +256,24 @@ export function useMasonryLayout({
     const scrollEl = scrollContainerElement || scrollContainerRef?.current;
     if (!scrollEl) return undefined;
 
+    let settleTimer = null;
+    const readScrollTop = () => Math.max(0, Number(scrollEl.scrollTop) || 0);
+    const commitSettled = () => {
+      settleTimer = null;
+      commitScrollTop(readScrollTop());
+    };
     const updateScrollTop = () => {
       scrollFrameRef.current = null;
-      const next = Math.max(0, Number(scrollEl.scrollTop) || 0);
-      setScrollTop((previous) =>
-        Math.abs(previous - next) > 0.5 ? next : previous
+      const next = readScrollTop();
+      const quantum = Math.max(
+        SCROLL_COMMIT_MIN_PX,
+        viewportHeightRef.current * SCROLL_COMMIT_FRACTION
       );
+      if (Math.abs(next - committedScrollTopRef.current) >= quantum) {
+        commitScrollTop(next);
+      }
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(commitSettled, SCROLL_SETTLE_MS);
     };
     const handleScroll = () => {
       if (!scrollFrameRef.current) {
@@ -264,8 +286,9 @@ export function useMasonryLayout({
       scrollEl.removeEventListener("scroll", handleScroll);
       cancelFrame(scrollFrameRef.current);
       scrollFrameRef.current = null;
+      if (settleTimer !== null) clearTimeout(settleTimer);
     };
-  }, [scrollContainerElement, scrollContainerRef]);
+  }, [commitScrollTop, scrollContainerElement, scrollContainerRef]);
 
   const randomOrderMap = useMemo(
     () =>
@@ -405,13 +428,13 @@ export function useMasonryLayout({
         );
         if (Math.abs(adjusted - currentScrollTop) > 0.5) {
           scrollEl.scrollTop = adjusted;
-          setScrollTop(adjusted);
+          commitScrollTop(adjusted);
         }
       }
     }
 
     previousLayoutRef.current = layout;
-  }, [layout, scrollContainerElement, scrollContainerRef, viewportHeight]);
+  }, [commitScrollTop, layout, scrollContainerElement, scrollContainerRef, viewportHeight]);
 
   const activationPositions = useMemo(
     () =>
@@ -601,10 +624,10 @@ export function useMasonryLayout({
       });
       if (next == null) return false;
       scrollEl.scrollTop = next;
-      setScrollTop(next);
+      commitScrollTop(next);
       return true;
     },
-    [scrollContainerElement, scrollContainerRef]
+    [commitScrollTop, scrollContainerElement, scrollContainerRef]
   );
 
   const getCacheDebugSnapshot = useCallback(

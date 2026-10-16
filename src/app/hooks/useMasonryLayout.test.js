@@ -399,6 +399,50 @@ describe("useMasonryLayout virtual layout", () => {
     ).toBe(true);
   });
 
+  it("commits scrolling in steps that keep the viewport covered, then exactly", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const rendered = renderLayout({ videos: makeVideos(1000) });
+      const { scrollElement } = rendered;
+      const scrollTo = (top) => {
+        scrollElement.scrollTop = top;
+        act(() => {
+          scrollElement.dispatchEvent(new Event("scroll"));
+          flushFrames();
+        });
+      };
+      const coversViewport = () => {
+        const top = scrollElement.scrollTop;
+        const bottom = top + scrollElement.clientHeight;
+        const items = rendered.result.current.virtualItems;
+        return (
+          Math.min(...items.map((item) => item.y)) <= top &&
+          Math.max(...items.map((item) => item.y + item.height)) >= bottom
+        );
+      };
+      const settled = rendered.result.current.virtualItems;
+
+      // A quarter of the 600px viewport is 150px: smaller moves render nothing.
+      scrollTo(60);
+      scrollTo(140);
+      expect(rendered.result.current.virtualItems).toBe(settled);
+      expect(rendered.result.current.viewportMetrics.scrollTop).toBe(0);
+      expect(coversViewport()).toBe(true);
+
+      scrollTo(400);
+      expect(rendered.result.current.viewportMetrics.scrollTop).toBe(400);
+      expect(coversViewport()).toBe(true);
+
+      scrollTo(520);
+      expect(rendered.result.current.viewportMetrics.scrollTop).toBe(400);
+      expect(coversViewport()).toBe(true);
+      act(() => vi.advanceTimersByTime(100));
+      expect(rendered.result.current.viewportMetrics.scrollTop).toBe(520);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("plateaus aspect overrides and removes stale A/B generation entries", () => {
     const count = MAX_MASONRY_ASPECT_OVERRIDES + 128;
     let videos = makeVideos(count);
