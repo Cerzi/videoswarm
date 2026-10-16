@@ -351,6 +351,20 @@ loading, thumbnail capture, and high-frequency polling.
 Optional generated proxies are stored under a bounded disk quota and never
 replace originals.
 
+An optional Preferences setting, off by default, freezes grid playback while
+other windows fully cover the app (`main/window-cover-monitor.js`). Chromium
+tracks occlusion only on Windows and macOS, so on X11 the main process reads
+the window manager's stacking order (`_NET_CLIENT_LIST_STACKING`) and each
+client's geometry and map state with `xprop` and `xwininfo`. It checks only
+while the setting is on and the window is visible but unfocused, every 1.5 s;
+the window counts as covered when mapped windows above it leave under 1%
+visible on two consecutive checks, and any visible part resumes playback at
+once, so a grid in view on another monitor keeps playing. Anything it cannot
+establish counts as visible. Covered uses the same decoder-zero pause as
+fullscreen: clips freeze on their frame and stay resident, unlike the
+hidden/minimized teardown. Wayland, Windows, macOS and a missing
+`x11-utils` report the setting unavailable.
+
 One collection-wide sampler measures p95 animation-frame delay, long-task
 occupancy, decoded/dropped frame deltas from the exact registered media
 elements, source pixel area, whole-application working-set growth, and

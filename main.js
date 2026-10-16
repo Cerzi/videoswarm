@@ -81,6 +81,7 @@ const {
   attachWindowActivity,
   readWindowActivity,
 } = require("./main/window-activity");
+const { createWindowCoverMonitor } = require("./main/window-cover-monitor");
 const {
   createDirectoryScanProgressReporter,
   createPeriodicEventLoopYielder,
@@ -298,6 +299,7 @@ const defaultSettings = {
   recursiveMode: false,
   playbackMode: "balanced",
   proxyPlaybackEnabled: false,
+  pauseWhenCovered: false,
   reviewAutoAdvance: false,
   reviewModeEnabled: true,
   fullscreenDetailsOpen: true,
@@ -329,6 +331,10 @@ const defaultSettings = {
 let mainWindow;
 let currentSettings = null;
 let disposeMainWindowActivity = null;
+// Optional "pause while covered": watches the main window only while the
+// preference is on and the window is visible but unfocused.
+const windowCoverMonitor = createWindowCoverMonitor();
+let disposeWindowCoverWatch = null;
 let applicationInitializationPromise = null;
 let applicationInitializationComplete = false;
 let windowCreationPromise = null;
@@ -1754,6 +1760,7 @@ function normaliseLoadedSettings(rawSettings) {
     recursiveMode: Boolean(source.recursiveMode),
     playbackMode: normalizePlaybackMode(source.playbackMode),
     proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
+    pauseWhenCovered: source.pauseWhenCovered === true,
     reviewAutoAdvance: source.reviewAutoAdvance === true,
     reviewModeEnabled:
       source.reviewModeEnabled === undefined
@@ -2343,6 +2350,13 @@ async function createWindow() {
     }
   });
   disposeMainWindowActivity = createdWindowActivityDisposer;
+
+  disposeWindowCoverWatch?.();
+  disposeWindowCoverWatch = windowCoverMonitor.attach(createdWindow, (covered) => {
+    if (!createdWindow.isDestroyed()) {
+      createdWebContents.send("playback:window-covered", { covered });
+    }
+  });
 
   // set the dock icon explicitly on macOS
   if (process.platform === "darwin") {
@@ -3391,13 +3405,23 @@ ipcMain.handle("save-settings-partial", async (_event, partialSettings) => {
   return { success: true };
 });
 
-ipcMain.handle("playback:get-capabilities", async () =>
-  createPlaybackCapabilities({
+ipcMain.handle("playback:get-capabilities", async () => {
+  const coverPause = await windowCoverMonitor.getAvailability();
+  return createPlaybackCapabilities({
     platform: process.platform,
     gpuFeatureStatus: app.getGPUFeatureStatus(),
     proxyAvailable: proxyManager.getSnapshot().ffmpegAvailable !== false,
-  })
-);
+    coverPauseAvailable: coverPause.available,
+    coverPauseUnavailableReason: coverPause.reason,
+  });
+});
+
+ipcMain.handle("playback:set-pause-when-covered", async (_event, enabled) => {
+  const normalizedEnabled = assertBoolean(enabled, "pause when covered");
+  windowCoverMonitor.setEnabled(normalizedEnabled);
+  const availability = await windowCoverMonitor.getAvailability();
+  return { success: true, enabled: normalizedEnabled, ...availability };
+});
 
 ipcMain.handle("playback:get-window-activity", (event) => {
   const window = BrowserWindow.fromWebContents(event.sender) || mainWindow;

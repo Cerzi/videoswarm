@@ -39,6 +39,8 @@ function createPlaybackCapabilities({
   logicalCores = os.cpus()?.length || 1,
   totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024),
   proxyAvailable = true,
+  coverPauseAvailable = false,
+  coverPauseUnavailableReason = null,
 } = {}) {
   const videoDecodeStatus = normalizeVideoDecodeStatus(
     gpuFeatureStatus?.video_decode
@@ -52,6 +54,10 @@ function createPlaybackCapabilities({
     hardwareDecodeDetected: isHardwareDecodeDetected(videoDecodeStatus),
     hardwareDecodeGuaranteed: false,
     proxyAvailable: Boolean(proxyAvailable),
+    coverPauseAvailable: Boolean(coverPauseAvailable),
+    coverPauseUnavailableReason: coverPauseAvailable
+      ? null
+      : coverPauseUnavailableReason || "Not available on this system.",
   };
 }
 

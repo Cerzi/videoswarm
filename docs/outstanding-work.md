@@ -296,6 +296,10 @@ generation. Check by hand:
   still frames and the switch from still to motion.
 - Startup goes straight to the dark app; Static + Hover still starts on
   hover; new clips written into an open folder appear.
+- With Preferences › Pause while other windows cover it on: the grid
+  freezes about 2-3 s after another window fully covers it, keeps
+  playing while it is visible on another monitor or partly uncovered,
+  and resumes on focus or uncovering.
 - `npm run test:electron-smoke` passes.
 
 Decision waiting for the user:

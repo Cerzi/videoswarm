@@ -8,6 +8,8 @@ const fallbackCapabilities = () => ({
   hardwareDecodeDetected: false,
   hardwareDecodeGuaranteed: false,
   proxyAvailable: true,
+  coverPauseAvailable: false,
+  coverPauseUnavailableReason: "Not available on this system.",
 });
 
 export function describeDecodeCapability(capabilities) {

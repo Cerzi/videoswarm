@@ -927,6 +927,40 @@ describe("App hook composition", () => {
     expect(setThumbSuspendedMock).toHaveBeenCalledWith(true);
   });
 
+  test("freezes grid playback only while the covered pause is on and the window is covered", async () => {
+    let reportCovered = () => {};
+    const setPauseWhenCovered = vi.fn(() => Promise.resolve({ success: true }));
+    window.electronAPI = {
+      saveSettingsPartial: vi.fn(),
+      playback: {
+        setPauseWhenCovered,
+        onWindowCovered: vi.fn((callback) => {
+          reportCovered = callback;
+          return () => {};
+        }),
+      },
+    };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    const suspended = () =>
+      useVideoCollectionMock.mock.calls.at(-1)?.[0].playbackSuspended;
+    expect(setPauseWhenCovered).toHaveBeenLastCalledWith(false);
+
+    act(() => reportCovered(true));
+    expect(suspended()).toBe(false);
+
+    // Loading a profile with the setting on tells main to start watching.
+    act(() => useElectronLifecycleMock.mock.calls.at(-1)[0].setPauseWhenCovered(true));
+    expect(setPauseWhenCovered).toHaveBeenLastCalledWith(true);
+    act(() => reportCovered(true));
+    expect(suspended()).toBe(true);
+
+    act(() => reportCovered(false));
+    expect(suspended()).toBe(false);
+  });
+
   test("persists explicit playback and proxy controls", async () => {
     const saveSettingsPartial = vi.fn();
     window.electronAPI = { saveSettingsPartial };

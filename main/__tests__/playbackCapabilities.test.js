@@ -51,6 +51,26 @@ describe("playback capabilities", () => {
       hardwareDecodeDetected: true,
       hardwareDecodeGuaranteed: false,
       proxyAvailable: false,
+      coverPauseAvailable: false,
+      coverPauseUnavailableReason: "Not available on this system.",
+    });
+  });
+
+  test("reports whether pausing while covered can work here", () => {
+    expect(
+      createPlaybackCapabilities({
+        coverPauseAvailable: true,
+        coverPauseUnavailableReason: "ignored when available",
+      })
+    ).toMatchObject({ coverPauseAvailable: true, coverPauseUnavailableReason: null });
+    expect(
+      createPlaybackCapabilities({
+        coverPauseAvailable: false,
+        coverPauseUnavailableReason: "Wayland does not report covered windows.",
+      })
+    ).toMatchObject({
+      coverPauseAvailable: false,
+      coverPauseUnavailableReason: "Wayland does not report covered windows.",
     });
   });
 

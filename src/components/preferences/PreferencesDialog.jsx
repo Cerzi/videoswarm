@@ -53,6 +53,10 @@ function PlaybackSection({
   proxyPlaybackEnabled,
   proxyPlaybackAvailable,
   onProxyPlaybackToggle,
+  pauseWhenCovered,
+  pauseWhenCoveredAvailable,
+  pauseWhenCoveredUnavailableReason,
+  onPauseWhenCoveredToggle,
   hoverAudioEnabled,
   onHoverAudioToggle,
   playbackDetailsVisible,
@@ -95,6 +99,24 @@ function PlaybackSection({
               {proxyPlaybackAvailable
                 ? "Plays large clips from a smaller cached copy, so more of them can play at once."
                 : "Needs FFmpeg, which was not found on this computer."}
+            </span>
+          </span>
+        </label>
+        <label className="preferences__choice">
+          <input
+            type="checkbox"
+            checked={Boolean(pauseWhenCovered) && Boolean(pauseWhenCoveredAvailable)}
+            disabled={!pauseWhenCoveredAvailable}
+            onChange={() => onPauseWhenCoveredToggle?.()}
+          />
+          <span>
+            <span className="preferences__choice-label">
+              Pause while other windows cover it
+            </span>
+            <span className="preferences__hint">
+              {pauseWhenCoveredAvailable
+                ? "Clips freeze while Video Swarm is hidden behind other windows and resume when any of it shows. It keeps playing while visible, such as on another monitor."
+                : pauseWhenCoveredUnavailableReason || "Not available on this system."}
             </span>
           </span>
         </label>

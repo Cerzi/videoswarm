@@ -678,5 +678,28 @@ describe("preload sequences bridge", () => {
     );
     expect(api.onZoomWheel(null)()).toBeUndefined();
   });
+
+  it("toggles the covered-window pause and forwards covered changes", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.playback.setPauseWhenCovered("yes");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "playback:set-pause-when-covered",
+      true
+    );
+
+    const callback = vi.fn();
+    const unsubscribe = api.playback.onWindowCovered(callback);
+    const [[, handler]] = ipcRenderer.on.mock.calls.filter(
+      ([name]) => name === "playback:window-covered"
+    );
+    handler({}, { covered: true });
+    handler({}, { covered: "maybe" });
+    expect(callback.mock.calls).toEqual([[true], [false]]);
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "playback:window-covered",
+      handler
+    );
+  });
 });
 

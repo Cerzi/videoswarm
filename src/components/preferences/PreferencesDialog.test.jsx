@@ -94,6 +94,42 @@ describe("PreferencesDialog", () => {
     expect(screen.getByText(/Needs FFmpeg/)).toBeInTheDocument();
   });
 
+  it("offers the covered-window pause where it works and explains where it does not", () => {
+    const onPauseWhenCoveredToggle = vi.fn();
+    const { unmount } = render(
+      <PreferencesDialog
+        open
+        onClose={vi.fn()}
+        {...playbackProps()}
+        pauseWhenCovered={false}
+        pauseWhenCoveredAvailable
+        onPauseWhenCoveredToggle={onPauseWhenCoveredToggle}
+      />
+    );
+    const toggle = screen.getByRole("checkbox", { name: /Pause while other windows cover it/ });
+    expect(toggle).toBeEnabled();
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/keeps playing while visible/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(onPauseWhenCoveredToggle).toHaveBeenCalledOnce();
+    unmount();
+
+    render(
+      <PreferencesDialog
+        open
+        onClose={vi.fn()}
+        {...playbackProps()}
+        pauseWhenCovered
+        pauseWhenCoveredAvailable={false}
+        pauseWhenCoveredUnavailableReason="Wayland does not report covered windows."
+      />
+    );
+    const unavailable = screen.getByRole("checkbox", { name: /Pause while other windows cover it/ });
+    expect(unavailable).toBeDisabled();
+    expect(unavailable).not.toBeChecked();
+    expect(screen.getByText("Wayland does not report covered windows.")).toBeInTheDocument();
+  });
+
   it("moves between sections with the arrow keys", () => {
     render(<PreferencesDialog open onClose={vi.fn()} {...playbackProps()} />);
     fireEvent.keyDown(screen.getByRole("tab", { name: "Playback" }), { key: "ArrowDown" });

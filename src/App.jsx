@@ -194,6 +194,9 @@ function App() {
   const [playbackDetailsVisible, setPlaybackDetailsVisible] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
   const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
+  // Optional: freeze the grid while other windows fully cover the app (X11).
+  const [pauseWhenCovered, setPauseWhenCovered] = useState(false);
+  const [windowCovered, setWindowCovered] = useState(false);
   const [reviewAutoAdvance, setReviewAutoAdvance] = useState(false);
   const [reviewModeEnabled, setReviewModeEnabled] = useState(true);
   const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
@@ -321,6 +324,23 @@ function App() {
     perFrame: 6,
     suspended: workSuspended,
   });
+
+  // Main watches for covering only while this is on; it reports changes.
+  useEffect(() => {
+    window.electronAPI?.playback?.setPauseWhenCovered?.(pauseWhenCovered)?.catch?.(
+      () => {}
+    );
+    if (!pauseWhenCovered) setWindowCovered(false);
+  }, [pauseWhenCovered]);
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.playback?.onWindowCovered?.((covered) =>
+      setWindowCovered(covered === true)
+    );
+    return () => unsubscribe?.();
+  }, []);
+  // Covered or showing fullscreen: grid clips freeze on their frame and stay
+  // loaded, so they resume at once.
+  const gridPlaybackPaused = pauseWhenCovered && windowCovered;
 
   useEffect(() => {
     thumbService.setSuspended(workSuspended);
@@ -516,6 +536,7 @@ function App() {
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setPauseWhenCovered,
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
@@ -2907,7 +2928,7 @@ function App() {
     telemetry: playbackTelemetry,
     capabilities: playbackCapabilities,
     averagePixelArea: visibleAveragePixelArea,
-    suspended: workSuspended || Boolean(fullScreenVideo),
+    suspended: workSuspended || Boolean(fullScreenVideo) || gridPlaybackPaused,
   });
 
   // --- Composite Video Collection Hook ---
@@ -2933,7 +2954,7 @@ function App() {
     suspendEvictions: isLayoutTransitioning,
     hoverAudioEnabled,
     mediaScheduler,
-    playbackSuspended: Boolean(fullScreenVideo),
+    playbackSuspended: Boolean(fullScreenVideo) || gridPlaybackPaused,
     workSuspended,
     playbackMode,
     decoderTarget: playbackDecision.target,
@@ -3583,6 +3604,14 @@ function App() {
     const next = normalizePlaybackMode(value);
     setPlaybackMode(next);
     window.electronAPI?.saveSettingsPartial?.({ playbackMode: next });
+  }, []);
+
+  const togglePauseWhenCovered = useCallback(() => {
+    setPauseWhenCovered((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({ pauseWhenCovered: next });
+      return next;
+    });
   }, []);
 
   const toggleProxyPlayback = useCallback(() => {
@@ -5249,6 +5278,12 @@ function App() {
             proxyPlaybackEnabled={proxyPlaybackEnabled}
             proxyPlaybackAvailable={playbackCapabilities.proxyAvailable}
             onProxyPlaybackToggle={toggleProxyPlayback}
+            pauseWhenCovered={pauseWhenCovered}
+            pauseWhenCoveredAvailable={playbackCapabilities.coverPauseAvailable}
+            pauseWhenCoveredUnavailableReason={
+              playbackCapabilities.coverPauseUnavailableReason
+            }
+            onPauseWhenCoveredToggle={togglePauseWhenCovered}
             hoverAudioEnabled={hoverAudioEnabled}
             onHoverAudioToggle={toggleHoverAudio}
             playbackDetailsVisible={playbackDetailsVisible}
@@ -5611,7 +5646,7 @@ function App() {
                               isLoaded={loadedVideos.has(video.id)}
                               isVisible={visibleVideos.has(video.id)}
                               isPlaying={videoCollection.isVideoPlaying(video.id)}
-                              playbackSuspended={Boolean(fullScreenVideo)}
+                              playbackSuspended={Boolean(fullScreenVideo) || gridPlaybackPaused}
                               workSuspended={workSuspended}
                               proxyPlaybackEnabled={proxyPlaybackEnabled}
                               isNear={ioRegistry.isNear}

@@ -148,6 +148,7 @@ export function useElectronFolderLifecycle({
   setRandomSeed,
   setPlaybackMode,
   setProxyPlaybackEnabled,
+  setPauseWhenCovered,
   setReviewAutoAdvance,
   setReviewModeEnabled,
   setFullscreenDetailsOpen,
@@ -203,6 +204,7 @@ export function useElectronFolderLifecycle({
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setPauseWhenCovered,
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
@@ -225,6 +227,7 @@ export function useElectronFolderLifecycle({
       setRandomSeed,
       setPlaybackMode,
       setProxyPlaybackEnabled,
+      setPauseWhenCovered,
       setReviewAutoAdvance,
       setReviewModeEnabled,
       setFullscreenDetailsOpen,
@@ -245,6 +248,7 @@ export function useElectronFolderLifecycle({
     setRandomSeed,
     setPlaybackMode,
     setProxyPlaybackEnabled,
+    setPauseWhenCovered,
     setReviewAutoAdvance,
     setReviewModeEnabled,
     setFullscreenDetailsOpen,
@@ -1129,6 +1133,7 @@ export function useElectronFolderLifecycle({
       setRandomSeed: applyRandomSeed,
       setPlaybackMode: applyPlaybackMode,
       setProxyPlaybackEnabled: applyProxyPlaybackEnabled,
+      setPauseWhenCovered: applyPauseWhenCovered,
       setReviewAutoAdvance: applyReviewAutoAdvance,
       setReviewModeEnabled: applyReviewModeEnabled,
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
@@ -1160,6 +1165,9 @@ export function useElectronFolderLifecycle({
     }
     if (settings.proxyPlaybackEnabled !== undefined) {
       applyProxyPlaybackEnabled?.(Boolean(settings.proxyPlaybackEnabled));
+    }
+    if (settings.pauseWhenCovered !== undefined) {
+      applyPauseWhenCovered?.(settings.pauseWhenCovered === true);
     }
     if (settings.reviewAutoAdvance !== undefined) {
       applyReviewAutoAdvance?.(settings.reviewAutoAdvance === true);

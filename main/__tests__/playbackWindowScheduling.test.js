@@ -33,5 +33,19 @@ describe("playback window scheduling", () => {
     expect(mainSource).toMatch(/setTimeout\(showWhenPainted, \d+\)/);
     expect(appCss).toMatch(/:root\s*{[^}]*color-scheme:\s*dark;/);
   });
+
+  it("watches the main window for covering and lets the renderer toggle it", () => {
+    const mainSource = fs.readFileSync(
+      path.resolve(process.cwd(), "main.js"),
+      "utf8"
+    );
+    expect(mainSource).toMatch(
+      /windowCoverMonitor\.attach\(createdWindow,[\s\S]{0,200}"playback:window-covered"/
+    );
+    expect(mainSource).toMatch(
+      /ipcMain\.handle\("playback:set-pause-when-covered"[\s\S]{0,200}windowCoverMonitor\.setEnabled/
+    );
+    expect(mainSource).toMatch(/pauseWhenCovered: source\.pauseWhenCovered === true/);
+  });
 });
 

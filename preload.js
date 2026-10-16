@@ -285,6 +285,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return () =>
         ipcRenderer.removeListener("playback:window-activity", handler);
     },
+    setPauseWhenCovered: (enabled) =>
+      ipcRenderer.invoke("playback:set-pause-when-covered", Boolean(enabled)),
+    onWindowCovered: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, payload) => callback(payload?.covered === true);
+      ipcRenderer.on("playback:window-covered", handler);
+      return () =>
+        ipcRenderer.removeListener("playback:window-covered", handler);
+    },
   },
 
   // Additional file operations (from your main.js)
