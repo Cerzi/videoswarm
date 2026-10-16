@@ -966,7 +966,7 @@ body {
 }
 
 .video-item-audio.with-filename {
-  bottom: 48px;
+  bottom: 30px;
 }
 
 .video-item-review {
@@ -1033,7 +1033,7 @@ body {
 }
 
 .video-item-tags.with-filename {
-  bottom: 44px;
+  bottom: 30px;
 }
 
 .video-item-tag {
@@ -1074,21 +1074,22 @@ body {
   border-radius: inherit;
 }
 
-/* Filename ribbon */
+/* Filename ribbon, laid over the bottom of the video */
 .video-filename {
   position: absolute;
   inset-inline: 0;
   bottom: 0;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  z-index: 2;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  border-radius: 0 0 var(--card-inner-radius, 7px) var(--card-inner-radius, 7px);
   color: #fff;
-  padding: 0.5rem;
+  padding: 10px 8px 6px;
   font-size: 0.75rem;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  display: flex;
-  align-items: flex-end;
 }
 .video-grid.hide-filenames .video-filename { display: none; }
 

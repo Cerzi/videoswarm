@@ -1185,6 +1185,28 @@ describe("VideoCard", () => {
     expect(containerEl?.contains(created)).toBe(true);
   });
 
+  it("lays the file name over a full-height video instead of shrinking it", async () => {
+    const video = { id: "named", name: "named-clip.mp4", fullPath: "/named.mp4" };
+    const rendered = render(
+      <VideoCard {...baseProps} video={video} showFilenames />
+    );
+    await act(async () => {});
+
+    const container = rendered.container.querySelector(".video-container");
+    expect(container.getAttribute("style")).toBeNull();
+    const name = rendered.container.querySelector(".video-filename");
+    expect(name.textContent).toBe("named-clip.mp4");
+    expect(name.getAttribute("style")).toBeNull();
+
+    rendered.rerender(
+      <VideoCard {...baseProps} video={video} showFilenames={false} />
+    );
+    expect(rendered.container.querySelector(".video-filename")).toBeNull();
+    expect(
+      rendered.container.querySelector(".video-container").getAttribute("style")
+    ).toBeNull();
+  });
+
   it("does not emit hover-audio callbacks when hover audio is disabled", () => {
     const onHoverAudioStart = vi.fn();
     const onHoverAudioEnd = vi.fn();

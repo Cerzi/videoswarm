@@ -1582,46 +1582,18 @@ const VideoCard = memo(function VideoCard({
         </div>
       )}
 
+      {/* The video always fills the card; a file name is laid over its
+          bottom edge rather than taking 40 px from it, which cropped every
+          clip. */}
       {loaded && videoRef.current ? (
-        <div
-          className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
-          ref={videoContainerRef}
-        />
+        <div className="video-container" ref={videoContainerRef} />
       ) : (
-        <div
-          className="video-container"
-          style={{ width: "100%", height: showFilenames ? "calc(100% - 40px)" : "100%" }}
-          ref={videoContainerRef}
-        >
+        <div className="video-container" ref={videoContainerRef}>
           {renderPlaceholder()}
         </div>
       )}
 
-      {showFilenames && (
-        <div
-          className="video-filename"
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: "40px",
-            background: "rgba(0, 0, 0, 0.8)",
-            color: "#fff",
-            padding: "8px",
-            fontSize: "0.75rem",
-            lineHeight: "1.2",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            display: "flex",
-            alignItems: "center",
-          }}
-        >
-          {video.name}
-        </div>
-      )}
+      {showFilenames && <div className="video-filename">{video.name}</div>}
     </div>
   );
 });
