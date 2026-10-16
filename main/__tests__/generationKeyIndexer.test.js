@@ -9,6 +9,12 @@ const {
 
 const KEY_A = `gk1-${"a".repeat(32)}`;
 const KEY_B = `gk1-${"b".repeat(32)}`;
+const PROMPT_A = `pk1-${"a".repeat(32)}`;
+const PROMPT_B = `pk1-${"b".repeat(32)}`;
+const KEYS_BY_PROMPT = {
+  "prompt-a": { generationKey: KEY_A, promptKey: PROMPT_A },
+  "prompt-b": { generationKey: KEY_B, promptKey: PROMPT_B },
+};
 
 function candidate(instanceId, fingerprint, name = `${fingerprint}.mp4`, extra = {}) {
   return {
@@ -24,8 +30,10 @@ function candidate(instanceId, fingerprint, name = `${fingerprint}.mp4`, extra =
 
 function createStore(candidates) {
   const evaluated = new Map();
+  const promptKeys = new Map();
   return {
     evaluated,
+    promptKeys,
     writes: [],
     countGenerationKeyCandidates: vi.fn(({ instanceIds }) =>
       new Set(
@@ -47,11 +55,18 @@ function createStore(candidates) {
     listEvaluatedGenerationKeys: vi.fn((instanceIds) =>
       candidates
         .filter((row) => instanceIds.includes(row.instanceId) && evaluated.has(row.fingerprint))
-        .map((row) => ({ fingerprint: row.fingerprint, generationKey: evaluated.get(row.fingerprint) }))
+        .map((row) => ({
+          fingerprint: row.fingerprint,
+          generationKey: evaluated.get(row.fingerprint),
+          promptKey: promptKeys.get(row.fingerprint) ?? null,
+        }))
     ),
     setGenerationKeys: vi.fn(function setGenerationKeys(entries, { assertActive }) {
       assertActive();
-      entries.forEach((entry) => evaluated.set(entry.fingerprint, entry.generationKey));
+      entries.forEach((entry) => {
+        evaluated.set(entry.fingerprint, entry.generationKey);
+        promptKeys.set(entry.fingerprint, entry.promptKey);
+      });
       this.writes.push(entries);
     }),
   };
@@ -70,7 +85,7 @@ function setup({ candidates, results = {}, probe, fsPromises, limits, active = (
   const readIsoPayload = vi.fn(async (filePath) => results[filePath] || { status: "not-found" });
   const indexer = createGenerationKeyIndexer({
     readIsoPayload,
-    computeKey: (prompt) => (prompt === "prompt-a" ? KEY_A : prompt === "prompt-b" ? KEY_B : null),
+    computeKeys: (prompt) => KEYS_BY_PROMPT[prompt] || { generationKey: null, promptKey: null },
     fsPromises: fsPromises || createFs(),
     probeFactory: () => probe,
     yieldToEventLoop: () => Promise.resolve(),
@@ -112,14 +127,15 @@ describe("generation key indexer", () => {
     await indexer.drain();
 
     expect(Object.fromEntries(store.evaluated)).toEqual({ fa: KEY_A, fb: null, fc: null });
+    expect(Object.fromEntries(store.promptKeys)).toEqual({ fa: PROMPT_A, fb: null, fc: null });
     const last = published.at(-1);
     expect(last).toMatchObject({ jobId: started.jobId, done: true, processed: 4, keyed: 1 });
     const updates = published.flatMap((payload) => payload.updates);
     expect(updates).toEqual([
-      { fingerprint: "fa", generationKey: KEY_A, checked: true },
-      { fingerprint: "fb", generationKey: null, checked: true },
-      { fingerprint: "fc", generationKey: null, checked: true },
-      { fingerprint: "fd", generationKey: null, checked: false },
+      { fingerprint: "fa", generationKey: KEY_A, promptKey: PROMPT_A, checked: true },
+      { fingerprint: "fb", generationKey: null, promptKey: null, checked: true },
+      { fingerprint: "fc", generationKey: null, promptKey: null, checked: true },
+      { fingerprint: "fd", generationKey: null, promptKey: null, checked: false },
     ]);
   });
 
@@ -128,10 +144,16 @@ describe("generation key indexer", () => {
       candidates: [candidate(1, "fa"), candidate(2, "fb")],
     });
     store.evaluated.set("fa", KEY_A);
+    store.promptKeys.set("fa", PROMPT_A);
     start();
     await indexer.drain();
     expect(readIsoPayload).toHaveBeenCalledTimes(1);
-    expect(published[0].updates[0]).toEqual({ fingerprint: "fa", generationKey: KEY_A, checked: true });
+    expect(published[0].updates[0]).toEqual({
+      fingerprint: "fa",
+      generationKey: KEY_A,
+      promptKey: PROMPT_A,
+      checked: true,
+    });
   });
 
   it("publishes and writes in bounded batches", async () => {

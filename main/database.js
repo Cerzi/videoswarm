@@ -29,7 +29,9 @@ const profileManager = require('./profile-manager');
 const { createComfyQueueStore } = require('./comfy-queue-store');
 const {
   GENERATION_KEY_VERSION,
+  PROMPT_KEY_VERSION,
   isGenerationKey,
+  isPromptKey,
 } = require('./generation-key');
 
 let dbInstance = null;
@@ -40,14 +42,27 @@ const DB_FILE_NAME = 'videoswarm-meta.db';
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
 const REVIEW_STATES = new Set(['unreviewed', 'reviewed', 'pick', 'reject']);
 
-// Record fields for a content's generation key. A key from an older
-// algorithm version is not "checked": it is due for re-evaluation, and the
-// renderer treats it as pending rather than grouping with it.
-function mapGenerationKeyFields(generationKey, generationKeyVersion) {
-  if (Number(generationKeyVersion) !== GENERATION_KEY_VERSION) return {};
-  return isGenerationKey(generationKey)
-    ? { generationKey, generationKeyChecked: true }
-    : { generationKeyChecked: true };
+// Record fields for a content's generation and prompt keys. A key from an
+// older algorithm version is not used: the content is due for re-evaluation,
+// and the renderer treats it as pending rather than grouping with it. Both
+// keys come from one evaluation, so the content counts as checked only when
+// both are current; a current generation key is still delivered while its
+// prompt key is pending, so version badges stay put during that catch-up.
+function mapGenerationKeyFields(
+  generationKey,
+  generationKeyVersion,
+  promptKey,
+  promptKeyVersion
+) {
+  const generationCurrent = Number(generationKeyVersion) === GENERATION_KEY_VERSION;
+  const promptCurrent = Number(promptKeyVersion) === PROMPT_KEY_VERSION;
+  const fields = {};
+  if (generationCurrent && isGenerationKey(generationKey)) {
+    fields.generationKey = generationKey;
+  }
+  if (promptCurrent && isPromptKey(promptKey)) fields.promptKey = promptKey;
+  if (generationCurrent && promptCurrent) fields.generationKeyChecked = true;
+  return fields;
 }
 // Absences the user caused on purpose. Anything else stays unexplained and is
 // reported as missing, which is the state worth drawing attention to.
@@ -983,6 +998,32 @@ function initDatabase(app, profilePath) {
         ON media_content(generation_key)
         WHERE generation_key IS NOT NULL;
     `);
+    // Prompt stacks: the prompt key is the generation key without its seeds
+    // (docs/architecture/prompt-stacks.md). Same rule: derived key only.
+    if (!mediaContentColumns.has('prompt_key')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN prompt_key TEXT;');
+    }
+    if (!mediaContentColumns.has('prompt_key_version')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN prompt_key_version INTEGER;');
+      // Both keys come from the same parts and are absent under the same
+      // conditions, so content already found to have no generation key has
+      // no prompt key either. Recording that here spares re-reading every
+      // file without embedded metadata just to learn nothing.
+      db.prepare(`
+        UPDATE media_content
+        SET prompt_key = NULL, prompt_key_version = @prompt_version
+        WHERE generation_key_version = @generation_version
+          AND generation_key IS NULL;
+      `).run({
+        prompt_version: PROMPT_KEY_VERSION,
+        generation_version: GENERATION_KEY_VERSION,
+      });
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_media_content_prompt_key
+        ON media_content(prompt_key)
+        WHERE prompt_key IS NOT NULL;
+    `);
 
     const libraryRootColumns = new Set(
       db
@@ -1488,6 +1529,8 @@ function createMetadataStore(db) {
       mc.frame_rate AS content_frame_rate,
       mc.generation_key AS content_generation_key,
       mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1517,6 +1560,8 @@ function createMetadataStore(db) {
       mc.frame_rate AS content_frame_rate,
       mc.generation_key AS content_generation_key,
       mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
       r.value AS rating_value,
       COALESCE(cr.state,
         CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
@@ -1734,10 +1779,12 @@ function createMetadataStore(db) {
   const rekeyMediaContent = db.prepare(`
     INSERT INTO media_content (
       fingerprint, size, created_ms, width, height, has_audio, duration_ms,
-      frame_rate, generation_key, generation_key_version, created_at, updated_at
+      frame_rate, generation_key, generation_key_version, prompt_key,
+      prompt_key_version, created_at, updated_at
     )
     SELECT @to, size, created_ms, width, height, has_audio, duration_ms,
-      frame_rate, generation_key, generation_key_version, created_at, updated_at
+      frame_rate, generation_key, generation_key_version, prompt_key,
+      prompt_key_version, created_at, updated_at
     FROM media_content WHERE fingerprint = @from
     ON CONFLICT(fingerprint) DO UPDATE SET
       created_ms=MIN(
@@ -1757,6 +1804,15 @@ function createMetadataStore(db) {
       generation_key_version=COALESCE(
         media_content.generation_key_version,
         excluded.generation_key_version
+      ),
+      prompt_key=CASE
+        WHEN media_content.prompt_key_version IS NULL
+          THEN excluded.prompt_key
+        ELSE media_content.prompt_key
+      END,
+      prompt_key_version=COALESCE(
+        media_content.prompt_key_version,
+        excluded.prompt_key_version
       ),
       updated_at=MAX(media_content.updated_at, excluded.updated_at);
   `);
@@ -3100,7 +3156,9 @@ function createMetadataStore(db) {
           hasAudio: mapHasAudio(instance.content_has_audio),
           ...mapGenerationKeyFields(
             instance.content_generation_key,
-            instance.content_generation_key_version
+            instance.content_generation_key_version,
+            instance.content_prompt_key,
+            instance.content_prompt_key_version
           ),
         };
       });
@@ -3222,7 +3280,9 @@ function createMetadataStore(db) {
         hasAudio: mapHasAudio(instance.content_has_audio),
         ...mapGenerationKeyFields(
           instance.content_generation_key,
-          instance.content_generation_key_version
+          instance.content_generation_key_version,
+          instance.content_prompt_key,
+          instance.content_prompt_key_version
         ),
       };
     });
@@ -4654,12 +4714,13 @@ function createMetadataStore(db) {
   // stored; the graphs they come from never reach SQLite.
 
   const generationKeysForFingerprints = db.prepare(`
-    SELECT fingerprint, generation_key, generation_key_version
+    SELECT fingerprint, generation_key, generation_key_version, prompt_key,
+      prompt_key_version
     FROM media_content
     WHERE fingerprint IN (SELECT value FROM json_each(@fingerprints));
   `);
   // Candidates are present instances in present directories whose content
-  // has not been evaluated under the current key version. Pages advance by
+  // has not been evaluated under the current versions of both keys. Pages advance by
   // instance id, so a transient failure is retried by a later request rather
   // than looped on within this one.
   const generationKeyCandidates = db.prepare(`
@@ -4675,6 +4736,8 @@ function createMetadataStore(db) {
       AND (
         mc.generation_key_version IS NULL
         OR mc.generation_key_version != @version
+        OR mc.prompt_key_version IS NULL
+        OR mc.prompt_key_version != @prompt_version
       )
       AND (
         @instance_ids IS NULL
@@ -4693,6 +4756,8 @@ function createMetadataStore(db) {
       AND (
         mc.generation_key_version IS NULL
         OR mc.generation_key_version != @version
+        OR mc.prompt_key_version IS NULL
+        OR mc.prompt_key_version != @prompt_version
       )
       AND (
         @instance_ids IS NULL
@@ -4700,16 +4765,19 @@ function createMetadataStore(db) {
       );
   `);
   const evaluatedGenerationKeysForInstances = db.prepare(`
-    SELECT DISTINCT mc.fingerprint, mc.generation_key
+    SELECT DISTINCT mc.fingerprint, mc.generation_key, mc.prompt_key
     FROM file_instances fi
     INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
     WHERE fi.id IN (SELECT value FROM json_each(@instance_ids))
-      AND mc.generation_key_version = @version;
+      AND mc.generation_key_version = @version
+      AND mc.prompt_key_version = @prompt_version;
   `);
   const setGenerationKeyStmt = db.prepare(`
     UPDATE media_content
     SET generation_key = @generation_key,
       generation_key_version = @version,
+      prompt_key = @prompt_key,
+      prompt_key_version = @prompt_version,
       updated_at = @updated_at
     WHERE fingerprint = @fingerprint;
   `);
@@ -4733,7 +4801,8 @@ function createMetadataStore(db) {
     GROUP BY mc.generation_key;
   `);
   const generationKeyForInstance = db.prepare(`
-    SELECT fi.fingerprint, mc.generation_key, mc.generation_key_version
+    SELECT fi.fingerprint, mc.generation_key, mc.generation_key_version,
+      mc.prompt_key, mc.prompt_key_version
     FROM file_instances fi
     INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
     WHERE fi.id = ?;
@@ -4779,7 +4848,12 @@ function createMetadataStore(db) {
       .forEach((row) => {
         result.set(
           row.fingerprint,
-          mapGenerationKeyFields(row.generation_key, row.generation_key_version)
+          mapGenerationKeyFields(
+            row.generation_key,
+            row.generation_key_version,
+            row.prompt_key,
+            row.prompt_key_version
+          )
         );
       });
     return result;
@@ -4802,6 +4876,7 @@ function createMetadataStore(db) {
       .all({
         after_id: afterId,
         version: GENERATION_KEY_VERSION,
+        prompt_version: PROMPT_KEY_VERSION,
         instance_ids: normalizeInstanceIdList(options.instanceIds),
         limit,
       })
@@ -4821,23 +4896,31 @@ function createMetadataStore(db) {
     const ids = normalizeInstanceIdList(instanceIds);
     if (ids === null) return [];
     return evaluatedGenerationKeysForInstances
-      .all({ instance_ids: ids, version: GENERATION_KEY_VERSION })
+      .all({
+        instance_ids: ids,
+        version: GENERATION_KEY_VERSION,
+        prompt_version: PROMPT_KEY_VERSION,
+      })
       .map((row) => ({
         fingerprint: row.fingerprint,
         generationKey: isGenerationKey(row.generation_key) ? row.generation_key : null,
+        promptKey: isPromptKey(row.prompt_key) ? row.prompt_key : null,
       }));
   }
 
   function countGenerationKeyCandidates(options = {}) {
     const row = generationKeyCandidateCount.get({
       version: GENERATION_KEY_VERSION,
+      prompt_version: PROMPT_KEY_VERSION,
       instance_ids: normalizeInstanceIdList(options.instanceIds),
     });
     return Number(row?.pending || 0);
   }
 
-  // `entries` are `{ fingerprint, generationKey }` where a null key records a
-  // definitive "not keyable". Invalid keys are refused rather than stored.
+  // `entries` are `{ fingerprint, generationKey, promptKey }` where null keys
+  // record a definitive "not keyable". Both keys come from one evaluation and
+  // exist together, so an entry with only one of them is refused, as are
+  // invalid keys, rather than stored.
   function setGenerationKeys(entries, options = {}) {
     if (!Array.isArray(entries)) throw new TypeError('Entries must be an array');
     if (entries.length > GENERATION_VERSION_LIMITS.maxWriteBatch) {
@@ -4846,13 +4929,20 @@ function createMetadataStore(db) {
     const normalized = entries.map((entry) => {
       const fingerprint = entry?.fingerprint;
       const generationKey = entry?.generationKey ?? null;
+      const promptKey = entry?.promptKey ?? null;
       if (typeof fingerprint !== 'string' || !fingerprint) {
         throw new TypeError('A fingerprint is required');
       }
       if (generationKey !== null && !isGenerationKey(generationKey)) {
         throw new TypeError('Invalid generation key');
       }
-      return { fingerprint, generationKey };
+      if (promptKey !== null && !isPromptKey(promptKey)) {
+        throw new TypeError('Invalid prompt key');
+      }
+      if ((generationKey === null) !== (promptKey === null)) {
+        throw new TypeError('Generation and prompt keys must be stored together');
+      }
+      return { fingerprint, generationKey, promptKey };
     });
     assertOperationActive(options.assertActive);
     const updatedAt = Date.now();
@@ -4863,6 +4953,8 @@ function createMetadataStore(db) {
           fingerprint: entry.fingerprint,
           generation_key: entry.generationKey,
           version: GENERATION_KEY_VERSION,
+          prompt_key: entry.promptKey,
+          prompt_version: PROMPT_KEY_VERSION,
           updated_at: updatedAt,
         }).changes;
       });
@@ -4897,7 +4989,12 @@ function createMetadataStore(db) {
     }
     const self = generationKeyForInstance.get(instanceId);
     const selfFields = self
-      ? mapGenerationKeyFields(self.generation_key, self.generation_key_version)
+      ? mapGenerationKeyFields(
+        self.generation_key,
+        self.generation_key_version,
+        self.prompt_key,
+        self.prompt_key_version
+      )
       : {};
     if (!selfFields.generationKey) {
       return {

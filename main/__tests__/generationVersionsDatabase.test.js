@@ -28,6 +28,8 @@ const sqliteDescribe = requireSqliteSuite(
 
 const KEY_A = `gk1-${"a".repeat(32)}`;
 const KEY_B = `gk1-${"b".repeat(32)}`;
+const PROMPT_A = `pk1-${"a".repeat(32)}`;
+const PROMPT_B = `pk1-${"b".repeat(32)}`;
 
 if (!database || databaseLoadError) {
   sqliteDescribe("generation version storage", () => {});
@@ -104,16 +106,16 @@ if (!database || databaseLoadError) {
       const b = await indexClip(rootPath, "b.mp4", "content-b");
       expect(
         store.setGenerationKeys([
-          { fingerprint: a.fingerprint, generationKey: KEY_A },
-          { fingerprint: b.fingerprint, generationKey: null },
+          { fingerprint: a.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+          { fingerprint: b.fingerprint, generationKey: null, promptKey: null },
         ])
       ).toBe(2);
 
       expect(store.countGenerationKeyCandidates({ instanceIds: null })).toBe(0);
       expect(store.listEvaluatedGenerationKeys([a.instance.id, b.instance.id, 999])).toEqual(
         expect.arrayContaining([
-          { fingerprint: a.fingerprint, generationKey: KEY_A },
-          { fingerprint: b.fingerprint, generationKey: null },
+          { fingerprint: a.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+          { fingerprint: b.fingerprint, generationKey: null, promptKey: null },
         ])
       );
       const snapshot = store.getCachedLibrarySnapshot(rootPath);
@@ -122,24 +124,48 @@ if (!database || databaseLoadError) {
       );
       expect(byName["a.mp4"]).toMatchObject({
         generationKey: KEY_A,
+        promptKey: PROMPT_A,
         generationKeyChecked: true,
       });
       expect(byName["b.mp4"].generationKeyChecked).toBe(true);
       expect(byName["b.mp4"].generationKey).toBeUndefined();
+      expect(byName["b.mp4"].promptKey).toBeUndefined();
 
       const copy = await indexClip(otherRootPath, "copy.mp4", "content-a");
-      expect(copy).toMatchObject({ generationKey: KEY_A, generationKeyChecked: true });
+      expect(copy).toMatchObject({
+        generationKey: KEY_A,
+        promptKey: PROMPT_A,
+        generationKeyChecked: true,
+      });
 
       store.assignTags([a.fingerprint], ["draft"]);
       const tagged = store.getTaggedLibrarySnapshot({ tagNames: ["draft"] });
       expect(tagged.records.map((record) => record.generationKey)).toEqual([KEY_A, KEY_A]);
+      expect(tagged.records.map((record) => record.promptKey)).toEqual([PROMPT_A, PROMPT_A]);
     });
 
     it("refuses malformed keys and oversized requests", async () => {
       const a = await indexClip(rootPath, "a.mp4", "content-a");
       expect(() =>
-        store.setGenerationKeys([{ fingerprint: a.fingerprint, generationKey: "raw prompt" }])
+        store.setGenerationKeys([
+          { fingerprint: a.fingerprint, generationKey: "raw prompt", promptKey: PROMPT_A },
+        ])
       ).toThrow(TypeError);
+      expect(() =>
+        store.setGenerationKeys([
+          { fingerprint: a.fingerprint, generationKey: KEY_A, promptKey: "raw prompt" },
+        ])
+      ).toThrow(TypeError);
+      // The two keys come from one evaluation; one alone is never stored.
+      expect(() =>
+        store.setGenerationKeys([{ fingerprint: a.fingerprint, generationKey: KEY_A }])
+      ).toThrow(TypeError);
+      expect(() =>
+        store.setGenerationKeys([
+          { fingerprint: a.fingerprint, generationKey: null, promptKey: PROMPT_A },
+        ])
+      ).toThrow(TypeError);
+      expect(store.countGenerationKeyCandidates({})).toBe(1);
       expect(() =>
         store.listGenerationKeyCandidates({
           instanceIds: Array.from({ length: 20_001 }, (_, index) => index + 1),
@@ -159,9 +185,9 @@ if (!database || databaseLoadError) {
       const finalCopy = await indexClip(otherRootPath, "backup/final.mp4", "final");
       const other = await indexClip(rootPath, "other.mp4", "other", { width: 320, height: 240 });
       store.setGenerationKeys([
-        { fingerprint: draft.fingerprint, generationKey: KEY_A },
-        { fingerprint: final.fingerprint, generationKey: KEY_A },
-        { fingerprint: other.fingerprint, generationKey: KEY_B },
+        { fingerprint: draft.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: final.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: other.fingerprint, generationKey: KEY_B, promptKey: PROMPT_B },
       ]);
 
       expect(store.getGenerationVersionSummaries([KEY_A, KEY_B, "junk"])).toEqual({
@@ -202,8 +228,8 @@ if (!database || databaseLoadError) {
       const draft = await indexClip(rootPath, "draft.mp4", "draft", { width: 640, height: 360 });
       const final = await indexClip(otherRootPath, "final.mp4", "final", { width: 1280, height: 720 });
       store.setGenerationKeys([
-        { fingerprint: draft.fingerprint, generationKey: KEY_A },
-        { fingerprint: final.fingerprint, generationKey: KEY_A },
+        { fingerprint: draft.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: final.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
       ]);
       store.markFilesMissing([path.join(otherRootPath, "final.mp4")]);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
@@ -223,7 +249,7 @@ if (!database || databaseLoadError) {
         versions: [],
         truncated: false,
       });
-      store.setGenerationKeys([{ fingerprint: a.fingerprint, generationKey: null }]);
+      store.setGenerationKeys([{ fingerprint: a.fingerprint, generationKey: null, promptKey: null }]);
       expect(store.getGenerationVersionSiblings(a.instance.id).checked).toBe(true);
       expect(store.getGenerationVersionSiblings(999_999).generationKey).toBeNull();
     });
@@ -236,8 +262,11 @@ if (!database || databaseLoadError) {
       let raw = new BetterSqlite(dbPath);
       raw.exec(`
         DROP INDEX idx_media_content_generation_key;
+        DROP INDEX idx_media_content_prompt_key;
         ALTER TABLE media_content DROP COLUMN generation_key;
         ALTER TABLE media_content DROP COLUMN generation_key_version;
+        ALTER TABLE media_content DROP COLUMN prompt_key;
+        ALTER TABLE media_content DROP COLUMN prompt_key_version;
       `);
       raw.close();
 
@@ -253,10 +282,77 @@ if (!database || databaseLoadError) {
       const columns = raw.prepare("PRAGMA table_info(media_content);").all().map((row) => row.name);
       const indexes = raw.prepare("PRAGMA index_list(media_content);").all().map((row) => row.name);
       raw.close();
-      expect(columns).toEqual(expect.arrayContaining(["generation_key", "generation_key_version"]));
-      expect(indexes).toContain("idx_media_content_generation_key");
+      expect(columns).toEqual(
+        expect.arrayContaining([
+          "generation_key",
+          "generation_key_version",
+          "prompt_key",
+          "prompt_key_version",
+        ])
+      );
+      expect(indexes).toEqual(
+        expect.arrayContaining([
+          "idx_media_content_generation_key",
+          "idx_media_content_prompt_key",
+        ])
+      );
       initMetadataStore({ getPath: () => tempDir }, tempDir);
       store = getMetadataStore();
+    });
+
+    it("adds prompt keys to a database that only has generation keys", async () => {
+      const keyed = await indexClip(rootPath, "keyed.mp4", "keyed-content");
+      const unkeyed = await indexClip(rootPath, "unkeyed.mp4", "unkeyed-content");
+      const pending = await indexClip(rootPath, "pending.mp4", "pending-content");
+      store.setGenerationKeys([
+        { fingerprint: keyed.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: unkeyed.fingerprint, generationKey: null, promptKey: null },
+      ]);
+      resetDatabase();
+      // The state an older build leaves: generation keys evaluated, no
+      // prompt key columns at all.
+      const BetterSqlite = require("better-sqlite3");
+      const raw = new BetterSqlite(path.join(tempDir, "videoswarm-meta.db"));
+      raw.exec(`
+        DROP INDEX idx_media_content_prompt_key;
+        ALTER TABLE media_content DROP COLUMN prompt_key;
+        ALTER TABLE media_content DROP COLUMN prompt_key_version;
+      `);
+      raw.close();
+
+      initMetadataStore({ getPath: () => tempDir }, tempDir);
+      store = getMetadataStore();
+      const byName = Object.fromEntries(
+        store
+          .getCachedLibrarySnapshot(rootPath)
+          .records.map((record) => [path.basename(record.absolutePath), record])
+      );
+      // A clip with no generation key cannot have a prompt key, so it is
+      // settled without re-reading the file.
+      expect(byName["unkeyed.mp4"].generationKeyChecked).toBe(true);
+      // A keyed clip keeps its version badge while its prompt key is due.
+      expect(byName["keyed.mp4"].generationKey).toBe(KEY_A);
+      expect(byName["keyed.mp4"].promptKey).toBeUndefined();
+      expect(byName["keyed.mp4"].generationKeyChecked).toBeUndefined();
+      expect(
+        store.listGenerationKeyCandidates({}).map((row) => row.fingerprint).sort()
+      ).toEqual([keyed.fingerprint, pending.fingerprint].sort());
+      expect(store.countGenerationKeyCandidates({})).toBe(2);
+      expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
+        [KEY_A]: { versionCount: 1, maxPixels: 0 },
+      });
+
+      store.setGenerationKeys([
+        { fingerprint: keyed.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+      ]);
+      const [record] = store
+        .getCachedLibrarySnapshot(rootPath)
+        .records.filter((entry) => entry.fingerprint === keyed.fingerprint);
+      expect(record).toMatchObject({
+        generationKey: KEY_A,
+        promptKey: PROMPT_A,
+        generationKeyChecked: true,
+      });
     });
   });
 }

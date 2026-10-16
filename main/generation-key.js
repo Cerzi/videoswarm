@@ -8,6 +8,13 @@ const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 
 const GENERATION_KEY_VERSION = 1;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
+// The prompt key is the generation key without its seeds: every run of one
+// prompt, whatever its seed, sampler settings or model. It is derived from
+// the same parts, so a clip has a prompt key exactly when it has a
+// generation key, and each version group sits inside one prompt stack.
+// See docs/architecture/prompt-stacks.md.
+const PROMPT_KEY_VERSION = 1;
+const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
 const GENERATION_KEY_LIMITS = Object.freeze({
   maxPayloadBytes: 2 * 1024 * 1024,
@@ -223,25 +230,54 @@ function hashGenerationKeyParts(parts) {
   return `${GENERATION_KEY_PREFIX}${digest.slice(0, 32)}`;
 }
 
+// The leading tag keeps the two hashes in separate domains even if their
+// version numbers and lists ever coincide.
+function hashPromptKeyParts(parts) {
+  const canonical = JSON.stringify(["prompt", PROMPT_KEY_VERSION, parts.texts, parts.media]);
+  const digest = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+  return `${PROMPT_KEY_PREFIX}${digest.slice(0, 32)}`;
+}
+
 function computeGenerationKey(payload, options) {
   const parts = deriveGenerationKeyParts(payload, options);
   return parts ? hashGenerationKeyParts(parts) : null;
 }
 
-function isGenerationKey(value) {
+// Both keys from one parse, so indexing reads and decodes each payload once.
+function computeGenerationKeys(payload, options) {
+  const parts = deriveGenerationKeyParts(payload, options);
+  if (!parts) return { generationKey: null, promptKey: null };
+  return {
+    generationKey: hashGenerationKeyParts(parts),
+    promptKey: hashPromptKeyParts(parts),
+  };
+}
+
+function hasHexKeyShape(value, prefix) {
   return (
     typeof value === "string" &&
-    value.length === GENERATION_KEY_PREFIX.length + 32 &&
-    value.startsWith(GENERATION_KEY_PREFIX) &&
-    /^[0-9a-f]{32}$/.test(value.slice(GENERATION_KEY_PREFIX.length))
+    value.length === prefix.length + 32 &&
+    value.startsWith(prefix) &&
+    /^[0-9a-f]{32}$/.test(value.slice(prefix.length))
   );
+}
+
+function isGenerationKey(value) {
+  return hasHexKeyShape(value, GENERATION_KEY_PREFIX);
+}
+
+function isPromptKey(value) {
+  return hasHexKeyShape(value, PROMPT_KEY_PREFIX);
 }
 
 module.exports = {
   GENERATION_KEY_LIMITS,
   GENERATION_KEY_VERSION,
   MEDIA_EXTENSIONS,
+  PROMPT_KEY_VERSION,
   computeGenerationKey,
+  computeGenerationKeys,
   deriveGenerationKeyParts,
   isGenerationKey,
+  isPromptKey,
 };

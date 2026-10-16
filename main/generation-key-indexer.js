@@ -1,13 +1,15 @@
 const fs = require("fs");
 const path = require("path");
-const { computeGenerationKey } = require("./generation-key");
+const { computeGenerationKeys } = require("./generation-key");
 const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./container-tags");
 const { createEmbeddedMetadataProbe } = require("./embedded-metadata-probe");
 
-// Background evaluation of generation keys for catalogued content. One job
-// per renderer owner, latest wins; one file at a time; results are written
-// in small transactions and published per written batch. See
-// docs/architecture/generation-versions.md, Section 4.
+// Background evaluation of generation and prompt keys for catalogued
+// content. One job per renderer owner, latest wins; one file at a time;
+// results are written in small transactions and published per written batch.
+// Both keys come from one read of the file. See
+// docs/architecture/generation-versions.md, Section 4, and
+// docs/architecture/prompt-stacks.md.
 
 const GENERATION_KEY_INDEXER_LIMITS = Object.freeze({
   pageSize: 256,
@@ -50,7 +52,7 @@ class GenerationKeyIndexer {
     this.limits = { ...GENERATION_KEY_INDEXER_LIMITS, ...(options.limits || {}) };
     this.fsPromises = options.fsPromises || fs.promises;
     this.readIsoPayload = options.readIsoPayload || readIsoBmffEmbeddedPayload;
-    this.computeKey = options.computeKey || computeGenerationKey;
+    this.computeKeys = options.computeKeys || computeGenerationKeys;
     this.probeFactory =
       options.probeFactory ||
       (() => createEmbeddedMetadataProbe({ limits: { maxPending: 2 } }));
@@ -113,6 +115,7 @@ class GenerationKeyIndexer {
       initialUpdates: known.map((entry) => ({
         fingerprint: entry.fingerprint,
         generationKey: entry.generationKey,
+        promptKey: entry.promptKey,
         checked: true,
       })),
       cancelled: false,
@@ -195,11 +198,13 @@ class GenerationKeyIndexer {
             pendingWrites.push({
               fingerprint: candidate.fingerprint,
               generationKey: outcome.generationKey,
+              promptKey: outcome.promptKey,
             });
           }
           pendingUpdates.push({
             fingerprint: candidate.fingerprint,
             generationKey: outcome.definitive ? outcome.generationKey : null,
+            promptKey: outcome.definitive ? outcome.promptKey : null,
             checked: outcome.definitive,
           });
           if (
@@ -240,10 +245,20 @@ class GenerationKeyIndexer {
     return cache.get(rootPath);
   }
 
-  // Returns `{ definitive, generationKey }`. Never throws for per-file
-  // failures; only cancellation escapes.
+  // Both keys from the payload's prompt, or none when there is no payload.
+  _keysFor(payload) {
+    const keys = this.computeKeys(payload?.prompt);
+    return {
+      generationKey: keys?.generationKey || null,
+      promptKey: keys?.promptKey || null,
+    };
+  }
+
+  // Returns `{ definitive, generationKey, promptKey }`. Never throws for
+  // per-file failures; only cancellation escapes.
   async _evaluate(job, candidate, rootRealPaths) {
-    const transient = { definitive: false, generationKey: null };
+    const transient = { definitive: false, generationKey: null, promptKey: null };
+    const unkeyed = { definitive: true, generationKey: null, promptKey: null };
     const filePath = candidate.absolutePath;
     if (typeof filePath !== "string" || !filePath) return transient;
     try {
@@ -260,11 +275,9 @@ class GenerationKeyIndexer {
           mtimeMs: candidate.mtimeMs,
         });
         if (result.status === "found") {
-          return { definitive: true, generationKey: this.computeKey(result.payload?.prompt) };
+          return { definitive: true, ...this._keysFor(result.payload) };
         }
-        if (result.status === "not-found") {
-          return { definitive: true, generationKey: null };
-        }
+        if (result.status === "not-found") return unkeyed;
         return transient;
       }
 
@@ -277,10 +290,9 @@ class GenerationKeyIndexer {
       const after = await this.fsPromises.lstat(filePath);
       if (!after.isFile() || !sameSignature(after, candidate)) return transient;
       if (!DEFINITIVE_PROBE_STATUSES.has(result?.status)) return transient;
-      return {
-        definitive: true,
-        generationKey: result.status === "found" ? this.computeKey(result.payload?.prompt) : null,
-      };
+      return result.status === "found"
+        ? { definitive: true, ...this._keysFor(result.payload) }
+        : unkeyed;
     } catch (error) {
       if (error instanceof GenerationKeyIndexerCancelled || job.cancelled) throw error;
       // Ownership failures must stop the job, not be swallowed per file.

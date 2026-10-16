@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Background generation-key indexing for the open collection. Keys that are
 // already stored arrive with records; this hook asks the main process to
 // evaluate the rest once the collection has settled, and applies the results
-// by fingerprint. See docs/architecture/generation-versions.md, Section 4.
+// by fingerprint. Each evaluation yields a generation key and a prompt key
+// together. See docs/architecture/generation-versions.md, Section 4, and
+// docs/architecture/prompt-stacks.md.
 
 export const GENERATION_INDEX_REQUEST_LIMIT = 20_000;
 export const GENERATION_INDEX_SETTLE_MS = 750;
@@ -42,19 +44,26 @@ export function applyGenerationKeyUpdates(videos, updates) {
   const byFingerprint = new Map();
   for (const update of updates) {
     if (update?.checked === true && typeof update.fingerprint === "string") {
-      byFingerprint.set(update.fingerprint, update.generationKey || null);
+      byFingerprint.set(update.fingerprint, {
+        generationKey: update.generationKey || null,
+        promptKey: update.promptKey || null,
+      });
     }
   }
   if (byFingerprint.size === 0) return videos;
   let changed = false;
   const next = videos.map((video) => {
     if (!video?.fingerprint || !byFingerprint.has(video.fingerprint)) return video;
-    const generationKey = byFingerprint.get(video.fingerprint);
-    if (video.generationKeyChecked === true && (video.generationKey || null) === generationKey) {
+    const { generationKey, promptKey } = byFingerprint.get(video.fingerprint);
+    if (
+      video.generationKeyChecked === true &&
+      (video.generationKey || null) === generationKey &&
+      (video.promptKey || null) === promptKey
+    ) {
       return video;
     }
     changed = true;
-    return { ...video, generationKey, generationKeyChecked: true };
+    return { ...video, generationKey, promptKey, generationKeyChecked: true };
   });
   return changed ? next : videos;
 }

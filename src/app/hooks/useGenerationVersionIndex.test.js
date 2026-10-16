@@ -80,6 +80,29 @@ describe("generation key helpers", () => {
     expect(applyGenerationKeyUpdates(next, [{ fingerprint: "fa", generationKey: KEY_A, checked: true }])).toBe(next);
     expect(applyGenerationKeyUpdates(videos, [{ fingerprint: "zz", checked: true }])).toBe(videos);
   });
+
+  it("applies the prompt key that arrives with each generation key", () => {
+    const PROMPT_A = `pk1-${"a".repeat(32)}`;
+    const videos = [clip(1, "fa", { generationKey: KEY_A })];
+    const next = applyGenerationKeyUpdates(videos, [
+      { fingerprint: "fa", generationKey: KEY_A, promptKey: PROMPT_A, checked: true },
+    ]);
+    expect(next[0]).toMatchObject({
+      generationKey: KEY_A,
+      promptKey: PROMPT_A,
+      generationKeyChecked: true,
+    });
+    const same = [
+      { fingerprint: "fa", generationKey: KEY_A, promptKey: PROMPT_A, checked: true },
+    ];
+    expect(applyGenerationKeyUpdates(next, same)).toBe(next);
+    // A checked clip whose prompt key was still missing is updated, not skipped.
+    const caughtUp = applyGenerationKeyUpdates(
+      [clip(1, "fa", { generationKey: KEY_A, generationKeyChecked: true })],
+      same
+    );
+    expect(caughtUp[0].promptKey).toBe(PROMPT_A);
+  });
 });
 
 describe("useGenerationVersionIndex", () => {

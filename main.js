@@ -1264,6 +1264,7 @@ async function createVideoFileObject(
     let hasAudio = null;
     let instanceId = null;
     let generationKey = null;
+    let promptKey = null;
     let generationKeyChecked = false;
 
     const isValidDimensions = (dims) =>
@@ -1305,6 +1306,7 @@ async function createVideoFileObject(
         typeof info?.hasAudio === "boolean" ? info.hasAudio : null;
       generationKey =
         typeof info?.generationKey === "string" ? info.generationKey : null;
+      promptKey = typeof info?.promptKey === "string" ? info.promptKey : null;
       generationKeyChecked = info?.generationKeyChecked === true;
 
       if (isValidDimensions(info?.dimensions)) {
@@ -1387,6 +1389,7 @@ async function createVideoFileObject(
       // Always stated, so a merge can never keep a key that belonged to the
       // content this path held before it was rewritten.
       generationKey,
+      promptKey,
       generationKeyChecked,
       enrichmentState: "ready",
       dimensions: dimensions

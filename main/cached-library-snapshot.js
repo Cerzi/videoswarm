@@ -58,6 +58,9 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
   if (typeof record.generationKey === "string" && record.generationKey) {
     file.generationKey = record.generationKey;
   }
+  if (typeof record.promptKey === "string" && record.promptKey) {
+    file.promptKey = record.promptKey;
+  }
   if (record.generationKeyChecked === true) file.generationKeyChecked = true;
   return file;
 }
