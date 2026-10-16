@@ -320,7 +320,7 @@ describe("reusable metadata content sections", () => {
       />
     );
 
-    expect(screen.getByText("Popular tags (up to 15)")).toBeInTheDocument();
+    expect(screen.getByText(/Popular tags · type above to find any other/)).toBeInTheDocument();
     expect(container.querySelectorAll(".metadata-panel__suggestion")).toHaveLength(
       15
     );

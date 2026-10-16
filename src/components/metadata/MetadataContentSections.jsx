@@ -580,7 +580,7 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
           aria-live="polite"
         >
           <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-            {`Popular tags (up to ${suggestionLimit})`}
+            Popular tags · type above to find any other
           </div>
           <div className="metadata-panel__suggestion-list">
             {suggestionTags.map((suggestion) => (

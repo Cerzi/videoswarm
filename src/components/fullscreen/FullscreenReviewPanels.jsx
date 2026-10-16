@@ -15,7 +15,6 @@ import {
   MetadataTagsSection,
 } from "../metadata/MetadataContentSections";
 import {
-  MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS,
   deriveSingleSelectionInfo,
 } from "../metadata/metadataContent";
 import "./FullscreenReviewPanels.css";
@@ -366,7 +365,6 @@ export function FullscreenDetailsDock({
         selectedVideos={[video]}
         selectionCount={1}
         availableTags={availableTags}
-        suggestionLimit={MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS}
         resetKey={`${video.id}:${video.fingerprint || ""}`}
         onAddTag={onAddTags}
         onRemoveTag={onRemoveTag}

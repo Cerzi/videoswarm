@@ -1,5 +1,6 @@
+// Popular tags shown while nothing is typed, in every inspector. Any other
+// tag is a few keystrokes away through the matches under the input.
 export const MAX_METADATA_SUGGESTION_TAGS = 15;
-export const MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS = 100;
 
 const asFiniteNumber = (value) => {
   const number = Number(value);

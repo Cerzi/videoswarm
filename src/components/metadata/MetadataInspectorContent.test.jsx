@@ -99,7 +99,7 @@ describe("MetadataInspectorContent", () => {
     const rendered = render(<MetadataInspectorContent {...props} />);
 
     expect(screen.queryByText("A prompt that starts collapsed")).toBeNull();
-    expect(screen.getByText("Popular tags (up to 2)")).toBeVisible();
+    expect(screen.getByText(/Popular tags · type above/)).toBeVisible();
     expect(screen.getByText("#highest")).toBeVisible();
     expect(screen.getByText("#second")).toBeVisible();
     expect(screen.queryByText("#hidden")).toBeNull();

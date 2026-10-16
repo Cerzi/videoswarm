@@ -142,7 +142,7 @@ describe("FullscreenReviewPanels", () => {
     expect(onRemoveTag).toHaveBeenCalledWith("candidate");
   });
 
-  it("offers a larger bounded popular-tag set in the details dock", () => {
+  it("shows the same short popular-tag set as the other inspectors", () => {
     const availableTags = Array.from({ length: 120 }, (_, index) => ({
       name: `tag-${String(index).padStart(3, "0")}`,
       usageCount: 120 - index,
@@ -157,12 +157,12 @@ describe("FullscreenReviewPanels", () => {
       />
     );
 
-    expect(screen.getByText("Popular tags (up to 100)")).toBeTruthy();
+    expect(screen.getByText(/Popular tags · type above to find any other/)).toBeTruthy();
     expect(container.querySelectorAll(".metadata-panel__suggestion")).toHaveLength(
-      100
+      15
     );
     expect(screen.getByText("#tag-000")).toBeTruthy();
-    expect(screen.queryByText("#tag-100")).toBeNull();
+    expect(screen.queryByText("#tag-015")).toBeNull();
   });
 
   it("shows tag matches under the input in the fullscreen dock", () => {

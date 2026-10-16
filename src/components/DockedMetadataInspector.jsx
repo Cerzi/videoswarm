@@ -2,7 +2,6 @@ import React, { memo, useMemo } from "react";
 import {
   deriveMetadataSelectionCount,
   deriveSingleSelectionInfo,
-  MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS,
 } from "./metadata/metadataContent";
 import MetadataInspectorContent from "./metadata/MetadataInspectorContent";
 import { MetadataGenerationSection } from "./metadata/MetadataContentSections";
@@ -117,7 +116,6 @@ function DockedMetadataInspector({
           availableTags={availableTags}
           active
           selectionKey={selectionKey}
-          suggestionLimit={MAX_FULLSCREEN_METADATA_SUGGESTION_TAGS}
           generationVersions={generationVersions}
           showGeneration={false}
           onAddTag={onAddTag}
