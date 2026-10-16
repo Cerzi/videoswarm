@@ -1,6 +1,7 @@
 import { normalizeReviewState } from "../review/reviewState";
 
 const GENERATION_KEY_PATTERN = /^gk\d+-[0-9a-f]{32}$/;
+const PROMPT_KEY_PATTERN = /^pk\d+-[0-9a-f]{32}$/;
 
 export const normalizeVideoFromMain = (video) => {
   if (!video || typeof video !== "object") return video;
@@ -80,6 +81,12 @@ export const normalizeVideoFromMain = (video) => {
       typeof video.generationKey === "string" &&
       GENERATION_KEY_PATTERN.test(video.generationKey)
         ? video.generationKey
+        : null;
+  }
+  if ("promptKey" in video) {
+    normalized.promptKey =
+      typeof video.promptKey === "string" && PROMPT_KEY_PATTERN.test(video.promptKey)
+        ? video.promptKey
         : null;
   }
   if ("generationKeyChecked" in video) {

@@ -172,3 +172,70 @@ describe('useSelectionState (range + anchor)', () => {
     expect(result.current.anchorId).toBe(null);
   });
 });
+
+describe('useSelectionState with selection units', () => {
+  // A collapsed stack: s1 (its cover), s2 and s3 select together.
+  const stackUnits = {
+    unitOf: (id) => (['s1', 's2', 's3'].includes(id) ? 'stack' : null),
+    membersOf: (key) => (key === 'stack' ? ['s1', 's2', 's3'] : []),
+    representativeOf: (key) => (key === 'stack' ? 's1' : null),
+  };
+  const renderWithUnits = (units = stackUnits) => {
+    const unitsRef = { current: units };
+    const hook = renderHook(() => useSelectionState({ unitsRef }));
+    return { ...hook, unitsRef };
+  };
+
+  test('selecting any run of a stack selects the whole stack', () => {
+    const { result } = renderWithUnits();
+    act(() => result.current.selectOnly('s1'));
+    expect(result.current.selected).toEqual(new Set(['s1', 's2', 's3']));
+    act(() => result.current.selectExactly('s3'));
+    expect(result.current.selected).toEqual(new Set(['s1', 's2', 's3']));
+    act(() => result.current.setSelectedIds(['s2', 'x']));
+    expect(result.current.selected).toEqual(new Set(['s1', 's2', 's3', 'x']));
+  });
+
+  test('clicking a selected stack again clears it, as for one clip', () => {
+    const { result } = renderWithUnits();
+    act(() => result.current.selectOnly('s1'));
+    act(() => result.current.selectOnly('s1'));
+    expect(result.current.selected.size).toBe(0);
+  });
+
+  test('ctrl-click toggles a stack as one item', () => {
+    const { result } = renderWithUnits();
+    act(() => result.current.selectOnly('x'));
+    act(() => result.current.toggle('s1'));
+    expect(result.current.selected).toEqual(new Set(['x', 's1', 's2', 's3']));
+    act(() => result.current.toggle('s1'));
+    expect(result.current.selected).toEqual(new Set(['x']));
+  });
+
+  test('a range spans stacks through their covers', () => {
+    const { result } = renderWithUnits();
+    act(() => result.current.selectExactly('s3'));
+    act(() => result.current.selectRange(['a', 's1', 'b'], 'b'));
+    expect(result.current.selected).toEqual(new Set(['s1', 's2', 's3', 'b']));
+  });
+
+  test('widens a partly selected stack after the units change', () => {
+    const { result, unitsRef } = renderWithUnits(null);
+    act(() => result.current.setSelectedIds(['s2', 'x']));
+    expect(result.current.selected).toEqual(new Set(['s2', 'x']));
+    unitsRef.current = stackUnits;
+    act(() => result.current.expandToUnits());
+    expect(result.current.selected).toEqual(new Set(['s1', 's2', 's3', 'x']));
+    const before = result.current.selected;
+    act(() => result.current.expandToUnits());
+    expect(result.current.selected).toBe(before);
+  });
+
+  test('without units every id stands alone', () => {
+    const { result } = renderWithUnits(null);
+    act(() => result.current.selectOnly('s1'));
+    expect(result.current.selected).toEqual(new Set(['s1']));
+    act(() => result.current.toggle('s2'));
+    expect(result.current.selected).toEqual(new Set(['s1', 's2']));
+  });
+});

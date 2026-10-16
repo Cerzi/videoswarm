@@ -2,12 +2,22 @@ const crypto = require("crypto");
 const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 
 // A deliberately dumb identity for "versions of the same generation". It
-// never traces the graph: it collects seeds, long free text and input media
+// never traces the graph: it collects seeds, free text and input media
 // wherever they sit, so custom nodes, switches and wrappers cannot break it.
 // See docs/architecture/generation-versions.md.
-
-const GENERATION_KEY_VERSION = 1;
+//
+// Version 2 also hashes texts of two or three words. Version 1 read only
+// texts of four or more, so same-seed runs of "a cat" and "a dog" sharing a
+// long negative prompt counted as versions of one generation.
+const GENERATION_KEY_VERSION = 2;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
+// The prompt key is the generation key without its seeds: every run of one
+// prompt, whatever its seed, sampler settings or model. It is hashed from the
+// same parts, so a clip has a prompt key exactly when it has a generation key
+// and each version group sits inside one prompt stack. See
+// docs/architecture/prompt-stacks.md.
+const PROMPT_KEY_VERSION = 1;
+const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
 const GENERATION_KEY_LIMITS = Object.freeze({
   maxPayloadBytes: 2 * 1024 * 1024,
@@ -16,10 +26,12 @@ const GENERATION_KEY_LIMITS = Object.freeze({
   maxInputsPerNode: 256,
   maxSeeds: 256,
   maxTexts: 512,
+  maxShortTexts: 512,
   maxMedia: 256,
 });
 
 const MIN_TEXT_WORDS = 4;
+const MIN_SHORT_TEXT_WORDS = 2;
 const MEDIA_EXTENSIONS = Object.freeze([
   ".mp4",
   ".mov",
@@ -135,10 +147,13 @@ function mediaBasename(value) {
   return basename.length > 0 ? basename : null;
 }
 
-function normalizeText(value) {
+// A text of four or more words, or `short` for two or three, normalized;
+// null for anything else.
+function classifyText(value) {
   const words = value.trim().split(/\s+/);
-  if (words.length < MIN_TEXT_WORDS || words[0] === "") return null;
-  return words.join(" ").toLowerCase();
+  if (words[0] === "" || words.length < MIN_SHORT_TEXT_WORDS) return null;
+  const text = words.join(" ").toLowerCase();
+  return { text, short: words.length < MIN_TEXT_WORDS };
 }
 
 function collectParts(graph, limits) {
@@ -153,6 +168,7 @@ function collectParts(graph, limits) {
 
   const seeds = new Set();
   const texts = new Set();
+  const shortTexts = new Set();
   const media = new Set();
   const add = (set, value, limit) => {
     set.add(value);
@@ -183,8 +199,9 @@ function collectParts(graph, limits) {
         add(media, basename, limits.maxMedia);
         continue;
       }
-      const text = normalizeText(value);
-      if (text !== null) add(texts, text, limits.maxTexts);
+      const text = classifyText(value);
+      if (text?.short) add(shortTexts, text.text, limits.maxShortTexts);
+      else if (text) add(texts, text.text, limits.maxTexts);
     }
   }
 
@@ -192,6 +209,7 @@ function collectParts(graph, limits) {
   return {
     seeds: [...seeds].sort(byCodePoint),
     texts: [...texts].sort(byCodePoint),
+    shortTexts: [...shortTexts].sort(byCodePoint),
     media: [...media].sort(byCodePoint),
   };
 }
@@ -217,10 +235,25 @@ function hashGenerationKeyParts(parts) {
     GENERATION_KEY_VERSION,
     parts.seeds,
     parts.texts,
+    parts.shortTexts,
     parts.media,
   ]);
   const digest = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
   return `${GENERATION_KEY_PREFIX}${digest.slice(0, 32)}`;
+}
+
+// The leading tag keeps the two hashes in separate domains even if their
+// version numbers and lists ever coincide.
+function hashPromptKeyParts(parts) {
+  const canonical = JSON.stringify([
+    "prompt",
+    PROMPT_KEY_VERSION,
+    parts.texts,
+    parts.shortTexts,
+    parts.media,
+  ]);
+  const digest = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+  return `${PROMPT_KEY_PREFIX}${digest.slice(0, 32)}`;
 }
 
 function computeGenerationKey(payload, options) {
@@ -228,20 +261,41 @@ function computeGenerationKey(payload, options) {
   return parts ? hashGenerationKeyParts(parts) : null;
 }
 
-function isGenerationKey(value) {
+// Both keys from one parse, so indexing reads and decodes each payload once.
+function computeGenerationKeys(payload, options) {
+  const parts = deriveGenerationKeyParts(payload, options);
+  if (!parts) return { generationKey: null, promptKey: null };
+  return {
+    generationKey: hashGenerationKeyParts(parts),
+    promptKey: hashPromptKeyParts(parts),
+  };
+}
+
+function hasHexKeyShape(value, prefix) {
   return (
     typeof value === "string" &&
-    value.length === GENERATION_KEY_PREFIX.length + 32 &&
-    value.startsWith(GENERATION_KEY_PREFIX) &&
-    /^[0-9a-f]{32}$/.test(value.slice(GENERATION_KEY_PREFIX.length))
+    value.length === prefix.length + 32 &&
+    value.startsWith(prefix) &&
+    /^[0-9a-f]{32}$/.test(value.slice(prefix.length))
   );
+}
+
+function isGenerationKey(value) {
+  return hasHexKeyShape(value, GENERATION_KEY_PREFIX);
+}
+
+function isPromptKey(value) {
+  return hasHexKeyShape(value, PROMPT_KEY_PREFIX);
 }
 
 module.exports = {
   GENERATION_KEY_LIMITS,
   GENERATION_KEY_VERSION,
   MEDIA_EXTENSIONS,
+  PROMPT_KEY_VERSION,
   computeGenerationKey,
+  computeGenerationKeys,
   deriveGenerationKeyParts,
   isGenerationKey,
+  isPromptKey,
 };

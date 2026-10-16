@@ -314,6 +314,8 @@ const defaultSettings = {
   hoverAudioEnabled: false,
   // The status line's playback diagnostics, off unless asked for.
   playbackDetailsVisible: false,
+  // Prompt stacks (docs/architecture/prompt-stacks.md): off unless asked for.
+  stackByPrompt: false,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1274,6 +1276,7 @@ async function createVideoFileObject(
     let hasAudio = null;
     let instanceId = null;
     let generationKey = null;
+    let promptKey = null;
     let generationKeyChecked = false;
 
     const isValidDimensions = (dims) =>
@@ -1315,6 +1318,7 @@ async function createVideoFileObject(
         typeof info?.hasAudio === "boolean" ? info.hasAudio : null;
       generationKey =
         typeof info?.generationKey === "string" ? info.generationKey : null;
+      promptKey = typeof info?.promptKey === "string" ? info.promptKey : null;
       generationKeyChecked = info?.generationKeyChecked === true;
 
       if (isValidDimensions(info?.dimensions)) {
@@ -1397,6 +1401,7 @@ async function createVideoFileObject(
       // Always stated, so a merge can never keep a key that belonged to the
       // content this path held before it was rewritten.
       generationKey,
+      promptKey,
       generationKeyChecked,
       enrichmentState: "ready",
       dimensions: dimensions
@@ -1792,6 +1797,7 @@ function normaliseLoadedSettings(rawSettings) {
         ? defaultSettings.showFilenames
         : Boolean(source.showFilenames),
     playbackDetailsVisible: source.playbackDetailsVisible === true,
+    stackByPrompt: source.stackByPrompt === true,
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled

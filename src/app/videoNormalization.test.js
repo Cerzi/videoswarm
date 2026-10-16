@@ -82,6 +82,15 @@ describe("normalizeVideoFromMain", () => {
     ).toMatchObject({ generationKey: null, generationKeyChecked: false });
     const silent = normalizeVideoFromMain({ id: "a" });
     expect(silent).not.toHaveProperty("generationKey");
+    expect(silent).not.toHaveProperty("promptKey");
     expect(silent).not.toHaveProperty("generationKeyChecked");
+  });
+
+  it("keeps valid prompt keys and refuses anything else", () => {
+    const promptKey = `pk1-${"e".repeat(32)}`;
+    expect(normalizeVideoFromMain({ id: "a", promptKey })).toMatchObject({ promptKey });
+    for (const value of ["red car driving through the desert", `gk1-${"e".repeat(32)}`, 7, null]) {
+      expect(normalizeVideoFromMain({ id: "a", promptKey: value }).promptKey).toBeNull();
+    }
   });
 });

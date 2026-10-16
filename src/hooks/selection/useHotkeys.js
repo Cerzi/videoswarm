@@ -9,6 +9,8 @@ import {
   REVIEW_RATING_BY_KEY,
   REVIEW_STATE_BY_KEY,
   REVIEW_UNDO_KEYS,
+  STACK_REJECT_UNREVIEWED_KEYS,
+  STACK_TOGGLE_KEYS,
 } from "../../hotkeys/shortcutCatalog";
 import { ZOOM_LEVEL_STEP } from "../../zoom/config";
 
@@ -43,6 +45,12 @@ const readOptions = ({ run, getSelection, opts }) => {
     onOpenHelp,
     onOpenDetails,
     onAddToSequence,
+    // Prompt stacks: `onOpenStack(selection)` returns true when Enter opened
+    // a stack, so a selected stack never falls through to opening clips.
+    onToggleStacks,
+    onOpenStack,
+    onCloseStack,
+    onRejectUnreviewedInStack,
   } = opts;
   return {
     run,
@@ -62,6 +70,10 @@ const readOptions = ({ run, getSelection, opts }) => {
     onOpenHelp,
     onOpenDetails,
     onAddToSequence,
+    onToggleStacks,
+    onOpenStack,
+    onCloseStack,
+    onRejectUnreviewedInStack,
   };
 };
 
@@ -105,6 +117,10 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         onOpenHelp,
         onOpenDetails,
         onAddToSequence,
+        onToggleStacks,
+        onOpenStack,
+        onCloseStack,
+        onRejectUnreviewedInStack,
       } = readOptions(latestRef.current);
       const target = e.target;
       if (target) {
@@ -152,6 +168,10 @@ export default function useHotkeys(run, getSelection, opts = {}) {
           return;
         }
         if (e.key === "Enter") {
+          if (!e.repeat && onOpenStack?.(sel) === true) {
+            e.preventDefault();
+            return;
+          }
           if (!isEnabledForToolbar(ActionIds.OPEN_EXTERNAL, size)) return;
           e.preventDefault();
           run(ActionIds.OPEN_EXTERNAL, sel);
@@ -208,6 +228,27 @@ export default function useHotkeys(run, getSelection, opts = {}) {
       }
 
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (!e.shiftKey && !e.repeat && onToggleStacks && STACK_TOGGLE_KEYS.includes(key)) {
+          e.preventDefault();
+          onToggleStacks();
+          return;
+        }
+        if (
+          e.shiftKey &&
+          !e.repeat &&
+          onRejectUnreviewedInStack &&
+          STACK_REJECT_UNREVIEWED_KEYS.includes(key)
+        ) {
+          e.preventDefault();
+          onRejectUnreviewedInStack();
+          return;
+        }
+        if (e.key === "Escape" && onCloseStack) {
+          e.preventDefault();
+          onCloseStack();
+          return;
+        }
         if (
           !e.shiftKey &&
           !e.repeat &&
