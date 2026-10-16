@@ -16,7 +16,9 @@ import {
   formatGenerationLora,
   parseMetadataTagInput,
   selectMetadataTagCompletion,
+  selectMetadataTagMatches,
   selectMetadataTagSuggestions,
+  splitMetadataTagInput,
 } from "./metadataContent";
 
 export function MetadataFileFactsSection({
@@ -369,27 +371,51 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
   inputRef
 ) {
   const [inputValue, setInputValue] = useState("");
+  const [highlightedMatch, setHighlightedMatch] = useState(-1);
+  const matchListId = useId();
   const hasSelection = selectionCount > 0;
   const { sharedTags, partialTags } = useMemo(
     () => deriveMetadataTagSummary(selectedVideos, selectionCount),
     [selectedVideos, selectionCount]
   );
+  const { earlier: typedTags, current: currentTag } = useMemo(
+    () => splitMetadataTagInput(inputValue),
+    [inputValue]
+  );
+  // Matches for the tag being typed sit directly under the input, inside the
+  // tags section, so no surrounding layout (fullscreen's height-bounded dock
+  // among them) can squeeze them out of view.
+  const tagMatches = useMemo(
+    () =>
+      active && currentTag
+        ? selectMetadataTagMatches({
+            availableTags,
+            excludeTags: [...sharedTags, ...typedTags],
+            query: currentTag,
+          })
+        : [],
+    [active, availableTags, currentTag, sharedTags, typedTags]
+  );
+  // Popular tags show while nothing is being typed.
   const suggestionTags = useMemo(
     () =>
-      active
+      active && !currentTag
         ? selectMetadataTagSuggestions({
             availableTags,
             sharedTags,
-            query: inputValue,
             limit: suggestionLimit,
           })
         : [],
-    [active, availableTags, inputValue, sharedTags, suggestionLimit]
+    [active, availableTags, currentTag, sharedTags, suggestionLimit]
   );
 
   useEffect(() => {
     setInputValue("");
   }, [active, resetKey]);
+
+  useEffect(() => {
+    setHighlightedMatch(-1);
+  }, [currentTag]);
 
   const submit = () => {
     const tags = parseMetadataTagInput(inputValue);
@@ -398,7 +424,28 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
     setInputValue("");
   };
 
+  // Adds the chosen tag together with any finished ones typed before it.
+  const addWithTyped = (tag) => {
+    onAddTag?.([...typedTags, tag]);
+    setInputValue("");
+  };
+
   const handleKeyDown = (event) => {
+    if (tagMatches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setHighlightedMatch((index) =>
+        index < 0
+          ? step > 0 ? 0 : tagMatches.length - 1
+          : (index + step + tagMatches.length) % tagMatches.length
+      );
+      return;
+    }
+    if (event.key === "Enter" && tagMatches[highlightedMatch]) {
+      event.preventDefault();
+      addWithTyped(tagMatches[highlightedMatch].name);
+      return;
+    }
     if (event.key === "Enter" || event.key === ",") {
       event.preventDefault();
       submit();
@@ -406,12 +453,12 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
     }
     if (event.key !== "Tab") return;
 
-    const query = inputValue.split(",").at(-1) || "";
-    const completion = selectMetadataTagCompletion(availableTags, query);
+    const completion =
+      tagMatches[highlightedMatch]?.name ||
+      selectMetadataTagCompletion(availableTags, currentTag);
     if (!completion) return;
     event.preventDefault();
-    onAddTag?.([completion]);
-    setInputValue("");
+    addWithTyped(completion);
   };
 
   return (
@@ -469,6 +516,15 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={tagMatches.length > 0}
+            aria-controls={tagMatches.length ? matchListId : undefined}
+            aria-activedescendant={
+              tagMatches[highlightedMatch]
+                ? `${matchListId}-${highlightedMatch}`
+                : undefined
+            }
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={handleKeyDown}
@@ -485,6 +541,37 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
             <span>Add</span>
           </button>
         </div>
+        {tagMatches.length ? (
+          <div
+            id={matchListId}
+            className="metadata-panel__matches"
+            role="listbox"
+            aria-label="Matching tags"
+          >
+            {tagMatches.map((match, index) => (
+              <button
+                key={match.name}
+                id={`${matchListId}-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === highlightedMatch}
+                className={`metadata-panel__suggestion metadata-panel__match${
+                  index === highlightedMatch ? " is-highlighted" : ""
+                }`}
+                // Keep focus in the input so typing can carry on.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => addWithTyped(match.name)}
+              >
+                <span>#{match.name}</span>
+                {match.usageCount ? (
+                  <span className="metadata-panel__suggestion-count">
+                    {match.usageCount}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       {suggestionTags.length ? (
@@ -493,9 +580,7 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
           aria-live="polite"
         >
           <div className="metadata-panel__section-subtitle metadata-panel__suggestions-title">
-            {inputValue.trim()
-              ? "Matching tags"
-              : `Popular tags (up to ${suggestionLimit})`}
+            {`Popular tags (up to ${suggestionLimit})`}
           </div>
           <div className="metadata-panel__suggestion-list">
             {suggestionTags.map((suggestion) => (

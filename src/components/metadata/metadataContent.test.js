@@ -8,7 +8,9 @@ import {
   deriveSingleSelectionInfo,
   parseMetadataTagInput,
   selectMetadataTagCompletion,
+  selectMetadataTagMatches,
   selectMetadataTagSuggestions,
+  splitMetadataTagInput,
 } from "./metadataContent";
 
 describe("shared metadata content helpers", () => {
@@ -157,4 +159,33 @@ describe("shared metadata content helpers", () => {
       { label: "Source", value: "source.png" },
     ]);
   });
+
+  it("matches the tag being typed, prefixes first, without repeating tags", () => {
+    expect(splitMetadataTagInput("keeper, Ba")).toEqual({
+      earlier: ["keeper"],
+      current: "Ba",
+    });
+    expect(splitMetadataTagInput("keeper,")).toEqual({ earlier: ["keeper"], current: "" });
+
+    const availableTags = [
+      { name: "abandoned", usageCount: 50 },
+      { name: "bar", usageCount: 2 },
+      { name: "basement", usageCount: 9 },
+      { name: "beach", usageCount: 30 },
+      { name: "kebab", usageCount: 40 },
+    ];
+    expect(
+      selectMetadataTagMatches({ availableTags, query: "BA" }).map((tag) => tag.name)
+    ).toEqual(["basement", "bar", "abandoned", "kebab"]);
+    expect(
+      selectMetadataTagMatches({
+        availableTags,
+        excludeTags: ["Basement", "kebab"],
+        query: "ba",
+        limit: 2,
+      }).map((tag) => tag.name)
+    ).toEqual(["bar", "abandoned"]);
+    expect(selectMetadataTagMatches({ availableTags, query: " " })).toEqual([]);
+  });
 });
+

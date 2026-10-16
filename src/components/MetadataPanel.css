@@ -648,6 +648,27 @@ body.metadata-panel-drag-active {
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* Matches for the tag being typed, directly under the input. */
+.metadata-panel__matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.metadata-panel__match {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.58rem;
+  font-size: 0.72rem;
+}
+
+.metadata-panel__match.is-highlighted {
+  border-color: var(--color-accent, #51cf66);
+  background: rgba(81, 207, 102, 0.18);
+}
+
 .metadata-panel__chip--ghost {
   border: 1px dashed rgba(255, 255, 255, 0.17);
   background: rgba(255, 255, 255, 0.035);

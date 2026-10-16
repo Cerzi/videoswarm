@@ -314,6 +314,45 @@ export const selectMetadataTagCompletion = (availableTags, query) => {
   );
 };
 
+export const MAX_METADATA_TAG_MATCHES = 6;
+
+/** Tags typed before the last comma, and the one still being typed. */
+export const splitMetadataTagInput = (value) => {
+  const parts = String(value || "").split(",");
+  return {
+    earlier: parts
+      .slice(0, -1)
+      .map((token) => token.trim())
+      .filter(Boolean),
+    current: (parts.at(-1) || "").trim(),
+  };
+};
+
+/**
+ * Known tags matching what is being typed: prefix matches first, then other
+ * matches, each by usage. Tags already applied or already typed are left out.
+ */
+export const selectMetadataTagMatches = ({
+  availableTags = [],
+  excludeTags = [],
+  query = "",
+  limit = MAX_METADATA_TAG_MATCHES,
+} = {}) => {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) return [];
+  const excluded = new Set(excludeTags.map((tag) => String(tag).toLowerCase()));
+  const candidates = normalizeMetadataAvailableTags(availableTags).filter(
+    (entry) =>
+      !excluded.has(entry.name.toLowerCase()) &&
+      entry.name.toLowerCase().includes(normalizedQuery)
+  );
+  const startsWith = (entry) => entry.name.toLowerCase().startsWith(normalizedQuery);
+  return [
+    ...candidates.filter(startsWith).sort(tagRank),
+    ...candidates.filter((entry) => !startsWith(entry)).sort(tagRank),
+  ].slice(0, Math.max(0, Number(limit) || 0));
+};
+
 export const parseMetadataTagInput = (value) =>
   String(value || "")
     .split(",")

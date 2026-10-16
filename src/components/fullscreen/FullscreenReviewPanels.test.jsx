@@ -164,4 +164,27 @@ describe("FullscreenReviewPanels", () => {
     expect(screen.getByText("#tag-000")).toBeTruthy();
     expect(screen.queryByText("#tag-100")).toBeNull();
   });
+
+  it("shows tag matches under the input in the fullscreen dock", () => {
+    const onAddTags = vi.fn();
+    render(
+      <FullscreenDetailsDock
+        video={{ id: "clip", name: "clip.mp4", tags: [] }}
+        availableTags={[{ name: "favorite", usageCount: 5 }]}
+        onAddTags={onAddTags}
+        onRemoveTag={vi.fn()}
+        onApplyTag={vi.fn()}
+      />
+    );
+    const input = screen.getByPlaceholderText("Add tag and press Enter");
+    fireEvent.change(input, { target: { value: "fav" } });
+    // The matches belong to the tags section itself, which the dock never
+    // shrinks, unlike the separate suggestions section.
+    const list = screen.getByRole("listbox", { name: "Matching tags" });
+    expect(list.closest(".metadata-panel__section--tags")).not.toBeNull();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onAddTags).toHaveBeenCalledWith(["favorite"]);
+  });
 });
+

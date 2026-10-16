@@ -327,4 +327,55 @@ describe("reusable metadata content sections", () => {
     expect(screen.getByText("#tag-00")).toBeInTheDocument();
     expect(screen.queryByText("#tag-15")).not.toBeInTheDocument();
   });
+
+  it("offers matches for the tag being typed and adds them with the keyboard or a click", () => {
+    const onAddTag = vi.fn();
+    render(
+      <MetadataTagsSection
+        selectedVideos={[{ tags: ["shared"] }]}
+        selectionCount={1}
+        availableTags={[
+          { name: "shared", usageCount: 99 },
+          { name: "basement", usageCount: 9 },
+          { name: "bar", usageCount: 2 },
+          { name: "kebab", usageCount: 40 },
+        ]}
+        onAddTag={onAddTag}
+      />
+    );
+    const input = screen.getByPlaceholderText("Add tag and press Enter");
+
+    fireEvent.change(input, { target: { value: "keeper, ba" } });
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "#basement9",
+      "#bar2",
+      "#kebab40",
+    ]);
+    // Popular tags give way to the matches while typing.
+    expect(screen.queryByText(/Popular tags/)).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onAddTag).toHaveBeenLastCalledWith(["keeper", "bar"]);
+    expect(input).toHaveValue("");
+
+    // Tab completes the best prefix match and keeps earlier tags.
+    fireEvent.change(input, { target: { value: "one, bas" } });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(onAddTag).toHaveBeenLastCalledWith(["one", "basement"]);
+
+    fireEvent.change(input, { target: { value: "keb" } });
+    fireEvent.click(screen.getByRole("option", { name: /kebab/ }));
+    expect(onAddTag).toHaveBeenLastCalledWith(["kebab"]);
+
+    // Enter without a highlighted match still adds exactly what was typed.
+    fireEvent.change(input, { target: { value: "brand new" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onAddTag).toHaveBeenLastCalledWith(["brand new"]);
+  });
 });
+
