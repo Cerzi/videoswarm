@@ -6,8 +6,8 @@
   place-items: center;
   padding: 1rem;
   box-sizing: border-box;
-  background: rgba(8, 10, 9, 0.68);
-  backdrop-filter: blur(3px);
+  /* No backdrop blur: over a grid of live video it re-blurs every frame. */
+  background: rgba(8, 10, 9, 0.76);
 }
 
 .loading-progress {

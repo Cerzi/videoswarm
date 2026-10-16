@@ -8,8 +8,7 @@
   padding: clamp(0.75rem, 3vw, 2rem);
   background:
     radial-gradient(circle at 50% 20%, rgba(81, 207, 102, 0.08), transparent 38%),
-    rgba(5, 7, 8, 0.78);
-  backdrop-filter: blur(5px);
+    rgba(5, 7, 8, 0.84);
 }
 
 .shortcuts-dialog {
