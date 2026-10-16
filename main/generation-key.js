@@ -9,10 +9,11 @@ const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 const GENERATION_KEY_VERSION = 1;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
 // The prompt key is the generation key without its seeds: every run of one
-// prompt, whatever its seed, sampler settings or model. It is derived from
-// the same parts, so a clip has a prompt key exactly when it has a
-// generation key, and each version group sits inside one prompt stack.
-// See docs/architecture/prompt-stacks.md.
+// prompt, whatever its seed, sampler settings or model. Without the seed,
+// two short prompts sharing a long negative prompt would collide, so it also
+// reads texts of two or three words, which the generation key ignores. It
+// exists under the same conditions, so a clip has a prompt key exactly when
+// it has a generation key. See docs/architecture/prompt-stacks.md.
 const PROMPT_KEY_VERSION = 1;
 const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
@@ -23,10 +24,12 @@ const GENERATION_KEY_LIMITS = Object.freeze({
   maxInputsPerNode: 256,
   maxSeeds: 256,
   maxTexts: 512,
+  maxShortTexts: 512,
   maxMedia: 256,
 });
 
 const MIN_TEXT_WORDS = 4;
+const MIN_SHORT_TEXT_WORDS = 2;
 const MEDIA_EXTENSIONS = Object.freeze([
   ".mp4",
   ".mov",
@@ -142,10 +145,13 @@ function mediaBasename(value) {
   return basename.length > 0 ? basename : null;
 }
 
-function normalizeText(value) {
+// A text of four or more words, or `short` for two or three, normalized;
+// null for anything else.
+function classifyText(value) {
   const words = value.trim().split(/\s+/);
-  if (words.length < MIN_TEXT_WORDS || words[0] === "") return null;
-  return words.join(" ").toLowerCase();
+  if (words[0] === "" || words.length < MIN_SHORT_TEXT_WORDS) return null;
+  const text = words.join(" ").toLowerCase();
+  return { text, short: words.length < MIN_TEXT_WORDS };
 }
 
 function collectParts(graph, limits) {
@@ -160,6 +166,7 @@ function collectParts(graph, limits) {
 
   const seeds = new Set();
   const texts = new Set();
+  const shortTexts = new Set();
   const media = new Set();
   const add = (set, value, limit) => {
     set.add(value);
@@ -190,8 +197,9 @@ function collectParts(graph, limits) {
         add(media, basename, limits.maxMedia);
         continue;
       }
-      const text = normalizeText(value);
-      if (text !== null) add(texts, text, limits.maxTexts);
+      const text = classifyText(value);
+      if (text?.short) add(shortTexts, text.text, limits.maxShortTexts);
+      else if (text) add(texts, text.text, limits.maxTexts);
     }
   }
 
@@ -199,6 +207,7 @@ function collectParts(graph, limits) {
   return {
     seeds: [...seeds].sort(byCodePoint),
     texts: [...texts].sort(byCodePoint),
+    shortTexts: [...shortTexts].sort(byCodePoint),
     media: [...media].sort(byCodePoint),
   };
 }
@@ -233,7 +242,13 @@ function hashGenerationKeyParts(parts) {
 // The leading tag keeps the two hashes in separate domains even if their
 // version numbers and lists ever coincide.
 function hashPromptKeyParts(parts) {
-  const canonical = JSON.stringify(["prompt", PROMPT_KEY_VERSION, parts.texts, parts.media]);
+  const canonical = JSON.stringify([
+    "prompt",
+    PROMPT_KEY_VERSION,
+    parts.texts,
+    parts.shortTexts,
+    parts.media,
+  ]);
   const digest = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
   return `${PROMPT_KEY_PREFIX}${digest.slice(0, 32)}`;
 }

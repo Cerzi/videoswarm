@@ -360,6 +360,41 @@ describe("prompt key", () => {
     expect(promptKeyOf(fixture("seedless-masking-1"))).toBeNull();
   });
 
+  it("keeps short prompts that share a long negative prompt apart", () => {
+    const negative = "blurry, low quality, watermark, text overlay";
+    const run = (positive, seed) =>
+      graph({
+        3: { class_type: "KSampler", inputs: { seed, positive: ["6", 0], negative: ["7", 0] } },
+        6: { class_type: "CLIPTextEncode", inputs: { text: positive } },
+        7: { class_type: "CLIPTextEncode", inputs: { text: negative } },
+      });
+    expect(promptKeyOf(run("a cat", 1))).not.toBe(promptKeyOf(run("a dog", 2)));
+    expect(promptKeyOf(run("a cat", 1))).toBe(promptKeyOf(run("A  cat", 2)));
+    // Single words stay out: they are indistinguishable from settings.
+    expect(promptKeyOf(run("cat", 1))).toBe(promptKeyOf(run("dog", 2)));
+    expect(deriveGenerationKeyParts(run("a cat", 1)).shortTexts).toEqual(["a cat"]);
+  });
+
+  it("leaves the generation key exactly as it was", () => {
+    const withShort = samplerGraph({
+      extra: { 8: { class_type: "Note", inputs: { label: "two words" } } },
+    });
+    expect(computeGenerationKey(withShort)).toBe(computeGenerationKey(samplerGraph()));
+    expect(promptKeyOf(withShort)).not.toBe(promptKeyOf(samplerGraph()));
+  });
+
+  it("returns no keys when short texts exceed their bound", () => {
+    const many = { 1: { inputs: { seed: 1, text: TEXT_A } } };
+    for (let index = 0; index < 5; index += 1) {
+      many[index + 2] = { inputs: { label: `short ${index}` } };
+    }
+    expect(computeGenerationKeys(JSON.stringify(many), { maxShortTexts: 4 })).toEqual({
+      generationKey: null,
+      promptKey: null,
+    });
+    expect(computeGenerationKeys(JSON.stringify(many)).promptKey).not.toBeNull();
+  });
+
   it("recognizes only well-formed prompt keys", () => {
     for (const value of [null, "", "pk1-xyz", "pk2-" + "0".repeat(32), "pk1-" + "A".repeat(32)]) {
       expect(isPromptKey(value)).toBe(false);
