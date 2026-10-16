@@ -3406,6 +3406,8 @@ ipcMain.handle("save-settings-partial", async (_event, partialSettings) => {
 });
 
 ipcMain.handle("playback:get-capabilities", async () => {
+  // Before the GPU process reports, every feature reads as software.
+  await app.getGPUInfo("basic").catch(() => null);
   const coverPause = await windowCoverMonitor.getAvailability();
   return createPlaybackCapabilities({
     platform: process.platform,
@@ -6138,7 +6140,12 @@ applicationInitializationPromise = app.whenReady().then(async () => {
   await dataLocationManager.ensureReady();
   profileManager.initializeProfileManager(app.getPath("userData"));
   activeProfileId = profileManager.getActiveProfile();
-  console.log("GPU status:", app.getGPUFeatureStatus());
+  // Feature status reads "disabled_software" everywhere until the GPU
+  // process has reported in, so log it only once GPU info is available.
+  app
+    .getGPUInfo("basic")
+    .then(() => console.log("GPU status:", app.getGPUFeatureStatus()))
+    .catch((error) => console.warn("GPU status unavailable:", error?.message || error));
   await reconfigureForProfile(activeProfileId, { broadcast: false });
   mediaProtocolService.register(protocol);
   applicationInitializationComplete = true;

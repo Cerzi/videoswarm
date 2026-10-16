@@ -47,5 +47,20 @@ describe("playback window scheduling", () => {
     );
     expect(mainSource).toMatch(/pauseWhenCovered: source\.pauseWhenCovered === true/);
   });
+
+  it("reads GPU feature status only after the GPU process reports", () => {
+    const mainSource = fs.readFileSync(
+      path.resolve(process.cwd(), "main.js"),
+      "utf8"
+    );
+    // Read before the GPU process starts, every feature says software.
+    expect(mainSource).toMatch(
+      /getGPUInfo\("basic"\)\s*\.then\(\(\) => console\.log\("GPU status:", app\.getGPUFeatureStatus\(\)\)\)/
+    );
+    expect(mainSource).toMatch(
+      /"playback:get-capabilities"[\s\S]{0,200}await app\.getGPUInfo\("basic"\)[\s\S]{0,400}getGPUFeatureStatus/
+    );
+    expect(mainSource).not.toMatch(/console\.log\("GPU status:", app\.getGPUFeatureStatus\(\)\);/);
+  });
 });
 
