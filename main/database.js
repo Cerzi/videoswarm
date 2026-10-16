@@ -1750,10 +1750,19 @@ function createMetadataStore(db) {
   `);
 
   const tagSelect = db.prepare(`SELECT id, name FROM tags WHERE name = ? COLLATE NOCASE`);
+  // A tag counts the clips it is on that the library has present: content
+  // whose every known file is missing, or that no scan has located, is left
+  // out, so deleted clips do not inflate counts. Opening a folder locates its
+  // clips and their tags count again. Each link is one indexed probe.
   const tagUsage = db.prepare(`
     SELECT t.name AS name, COUNT(ft.fingerprint) AS usageCount
     FROM tags t
-    LEFT JOIN file_tags ft ON ft.tag_id = t.id
+    LEFT JOIN file_tags ft
+      ON ft.tag_id = t.id
+      AND EXISTS (
+        SELECT 1 FROM file_instances fi
+        WHERE fi.fingerprint = ft.fingerprint AND fi.is_present = 1
+      )
     GROUP BY t.id
     ORDER BY t.name COLLATE NOCASE;
   `);

@@ -60,7 +60,9 @@ if (!hasNativeDriver || databaseLoadError) {
       const filePath = path.join(tempDir, `file-${nameSuffix}.mp4`);
       fs.writeFileSync(filePath, `content-${nameSuffix}-${Date.now()}`);
       const stats = fs.statSync(filePath);
-      const { fingerprint } = await store.indexFile({ filePath, stats });
+      // Indexed under a library root, as every scan does, so the clip is
+      // present in the catalog and its tags count.
+      const { fingerprint } = await store.indexFile({ filePath, stats, rootPath: tempDir });
       return fingerprint;
     }
 
@@ -89,6 +91,41 @@ if (!hasNativeDriver || databaseLoadError) {
       const entry = store.listTags().find((tag) => tag.name === tagName);
       expect(entry).toBeTruthy();
       expect(Number(entry?.usageCount || 0)).toBeGreaterThan(0);
+    });
+
+    it("counts a tag only on clips whose file is present", async () => {
+      const tagName = `tag-${Date.now()}-presence`;
+      const keptPath = path.join(tempDir, `kept-${Math.random()}.mp4`);
+      const gonePath = path.join(tempDir, `gone-${Math.random()}.mp4`);
+      fs.writeFileSync(keptPath, `kept-${Math.random()}`);
+      fs.writeFileSync(gonePath, `gone-${Math.random()}`);
+      const kept = await store.indexFile({
+        filePath: keptPath,
+        stats: fs.statSync(keptPath),
+        rootPath: tempDir,
+      });
+      const gone = await store.indexFile({
+        filePath: gonePath,
+        stats: fs.statSync(gonePath),
+        rootPath: tempDir,
+      });
+      const usage = () =>
+        store.listTags().find((tag) => tag.name === tagName)?.usageCount;
+
+      store.assignTags([kept.fingerprint, gone.fingerprint], [tagName]);
+      expect(usage()).toBe(2);
+
+      store.markFileMissing(gonePath, { rootPath: tempDir });
+      expect(usage()).toBe(1);
+      // The tag itself stays; only the missing clip stops counting.
+      expect(store.listTags().some((tag) => tag.name === tagName)).toBe(true);
+
+      await store.indexFile({
+        filePath: gonePath,
+        stats: fs.statSync(gonePath),
+        rootPath: tempDir,
+      });
+      expect(usage()).toBe(2);
     });
   });
 }
