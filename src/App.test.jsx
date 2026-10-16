@@ -675,6 +675,7 @@ describe("App hook composition", () => {
     expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({
       suspended: false,
       detailed: true,
+      publishDiagnostics: false,
     });
     expect(useInitGateMock).toHaveBeenCalledWith({
       perFrame: 6,
@@ -901,6 +902,7 @@ describe("App hook composition", () => {
     expect(usePlaybackTelemetryMock).toHaveBeenCalledWith({
       suspended: true,
       detailed: true,
+      publishDiagnostics: false,
     });
     expect(useInitGateMock).toHaveBeenCalledWith({
       perFrame: 6,
@@ -955,7 +957,15 @@ describe("App hook composition", () => {
     expect(usePlaybackTelemetryMock).toHaveBeenLastCalledWith({
       suspended: false,
       detailed: false,
+      publishDiagnostics: false,
     });
+
+    // Per-sample diagnostics re-render the app, so they are published only
+    // while the Playback details status line shows them.
+    act(() => topBarSpy.mock.calls.at(-1)?.[0].onPlaybackDetailsToggle());
+    expect(usePlaybackTelemetryMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ publishDiagnostics: true })
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Toggle proxy playback" })

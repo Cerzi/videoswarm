@@ -246,4 +246,60 @@ describe("work suspension", () => {
     });
     expect(result.current.memoryStatus.pollingSuspended).toBe(true);
   });
+
+  test("does not re-render for memory polls that barely move", async () => {
+    vi.useFakeTimers();
+    try {
+      const props = {
+        progressiveVideos: makeVideos(4),
+        visibleVideos: new Set(),
+        loadedVideos: new Set(),
+        loadingVideos: new Set(),
+        playingVideos: new Set(),
+        isNear: () => false,
+        maxDecoders: 2,
+      };
+      let renders = 0;
+      const { result } = renderHook(() => {
+        renders += 1;
+        return useVideoResourceManager(props);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const settledRenders = renders;
+      expect(result.current.memoryStatus.currentMemoryMB).toBe(512);
+
+      window.appMem.get.mockResolvedValue({
+        totals: { wsMB: 520, totalMB: 8192 },
+        processes: [],
+      });
+      // One act per poll, so React cannot batch several polls into a render.
+      const poll = () =>
+        act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+      // React may run the component once more before it starts bailing out
+      // of identical updates; after that, unchanged polls render nothing.
+      await poll();
+      await poll();
+      expect(renders).toBeLessThanOrEqual(settledRenders + 1);
+      const quietRenders = renders;
+      const pollsBefore = window.appMem.get.mock.calls.length;
+      for (let index = 0; index < 5; index += 1) await poll();
+      expect(window.appMem.get.mock.calls.length).toBe(pollsBefore + 5);
+      expect(renders).toBe(quietRenders);
+
+      window.appMem.get.mockResolvedValue({
+        totals: { wsMB: 600, totalMB: 8192 },
+        processes: [],
+      });
+      await poll();
+      expect(renders).toBeGreaterThan(quietRenders);
+      expect(result.current.memoryStatus.currentMemoryMB).toBe(600);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+

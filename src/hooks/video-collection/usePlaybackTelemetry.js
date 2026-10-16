@@ -28,6 +28,39 @@ const initialTelemetry = () => ({
   availableMemoryMB: null,
 });
 
+// Below these changes a sample cannot move the structural playback cap, so
+// it is not worth re-rendering the app for while no one is reading it.
+const AVAILABLE_MEMORY_PUBLISH_STEP_MB = 256;
+const PIXEL_AREA_PUBLISH_FRACTION = 0.05;
+
+/**
+ * True when a sample changes what the playback policy's decoder target is
+ * built from. The remaining fields are diagnostics for the status line.
+ */
+export function changesPolicyInputs(previous, next) {
+  if (!previous || !next) return true;
+  if (previous.sampleCount === 0) return true;
+  if (previous.suspended !== next.suspended) return true;
+  if (previous.detailed !== next.detailed) return true;
+  if (previous.systemMemoryMB !== next.systemMemoryMB) return true;
+
+  const previousAvailable = finite(previous.availableMemoryMB);
+  const nextAvailable = finite(next.availableMemoryMB);
+  if ((previousAvailable === null) !== (nextAvailable === null)) return true;
+  if (
+    previousAvailable !== null &&
+    Math.abs(nextAvailable - previousAvailable) >= AVAILABLE_MEMORY_PUBLISH_STEP_MB
+  ) {
+    return true;
+  }
+
+  const previousArea = finite(previous.averagePixelArea) ?? 0;
+  const nextArea = finite(next.averagePixelArea) ?? 0;
+  if ((previousArea > 0) !== (nextArea > 0)) return true;
+  return previousArea > 0 &&
+    Math.abs(nextArea - previousArea) / previousArea >= PIXEL_AREA_PUBLISH_FRACTION;
+}
+
 const now = () => {
   if (typeof performance !== "undefined" && performance?.now) {
     return performance.now();
@@ -192,7 +225,13 @@ export function usePlaybackTelemetry({
   suspended = false,
   sampleIntervalMs = DEFAULT_SAMPLE_INTERVAL_MS,
   detailed = true,
+  // Publish every sample only while diagnostics are on screen. Otherwise a
+  // sample becomes state, and re-renders the owner, only when it changes an
+  // input of the playback policy's decoder target.
+  publishDiagnostics = true,
 } = {}) {
+  const publishDiagnosticsRef = useRef(publishDiagnostics);
+  publishDiagnosticsRef.current = publishDiagnostics;
   const safeIntervalMs = Math.max(
     100,
     Math.floor(Number(sampleIntervalMs) || DEFAULT_SAMPLE_INTERVAL_MS)
@@ -385,23 +424,28 @@ export function usePlaybackTelemetry({
         (frameDelayMs !== null && frameDelayMs >= HITCH_THRESHOLD_MS);
 
       setHadLongTaskRecently(unhealthyWindow);
-      setTelemetry((previous) => ({
-        suspended: false,
-        detailed: true,
-        sampleCount: previous.sampleCount + 1,
-        sampledAt: Date.now(),
-        frameDelayMs,
-        longTaskRate,
-        droppedFrameRatio: media.droppedFrameRatio,
-        averagePixelArea: media.averagePixelArea,
-        activeMedia: media.activeMedia,
-        registeredMedia: registryRef.current.size,
-        qualitySupportedMedia: media.qualitySupportedMedia,
-        workingSetMB,
-        workingSetDeltaMB,
-        systemMemoryMB: memory?.systemMemoryMB ?? 0,
-        availableMemoryMB: memory?.availableMemoryMB ?? null,
-      }));
+      setTelemetry((previous) => {
+        const next = {
+          suspended: false,
+          detailed: true,
+          sampleCount: previous.sampleCount + 1,
+          sampledAt: Date.now(),
+          frameDelayMs,
+          longTaskRate,
+          droppedFrameRatio: media.droppedFrameRatio,
+          averagePixelArea: media.averagePixelArea,
+          activeMedia: media.activeMedia,
+          registeredMedia: registryRef.current.size,
+          qualitySupportedMedia: media.qualitySupportedMedia,
+          workingSetMB,
+          workingSetDeltaMB,
+          systemMemoryMB: memory?.systemMemoryMB ?? 0,
+          availableMemoryMB: memory?.availableMemoryMB ?? null,
+        };
+        return publishDiagnosticsRef.current || changesPolicyInputs(previous, next)
+          ? next
+          : previous;
+      });
       sampling = false;
     };
 

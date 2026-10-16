@@ -5,6 +5,21 @@ import {
   normalizePlaybackMode,
 } from "../../playback/playbackPolicy";
 
+const sameReasons = (left = [], right = []) =>
+  left.length === right.length &&
+  left.every((reason, index) => reason === right[index]);
+
+// Each telemetry window produces a fresh decision object. Keeping the
+// previous one when nothing changed spares the owner a re-render.
+export const sameDecision = (previous, next) =>
+  Boolean(previous && next) &&
+  previous.mode === next.mode &&
+  previous.target === next.target &&
+  previous.safetyCap === next.safetyCap &&
+  previous.cleanWindows === next.cleanWindows &&
+  previous.health === next.health &&
+  sameReasons(previous.reasons, next.reasons);
+
 export default function useAdaptivePlaybackPolicy({
   mode = DEFAULT_PLAYBACK_MODE,
   visibleCount = 0,
@@ -62,9 +77,10 @@ export default function useAdaptivePlaybackPolicy({
   useEffect(() => {
     const advanceHealth = lastProcessedSampleRef.current !== sampleCount;
     lastProcessedSampleRef.current = sampleCount;
-    setDecision((previous) =>
-      nextPlaybackDecision(previous, { ...input, advanceHealth })
-    );
+    setDecision((previous) => {
+      const next = nextPlaybackDecision(previous, { ...input, advanceHealth });
+      return sameDecision(previous, next) ? previous : next;
+    });
   }, [input, sampleCount]);
 
   return decision;

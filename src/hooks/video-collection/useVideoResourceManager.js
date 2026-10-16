@@ -42,6 +42,7 @@ async function readAppMemorySafe() {
 const CONFIG = {
   ESTIMATED_VIDEO_MEMORY_MB: 8,         // ~8MB per loaded <video> ≤1080p
   MONITOR_INTERVAL_MS: 2000,            // memory poll freq
+  MEMORY_PUBLISH_STEP_MB: 16,           // smaller moves don't re-render
   SAFE_FRACTION_OF_SYS: 0.25,           // target ≤25% of system RAM
   MAX_SAFE_MB_CAP: 2048,                // but never budget more than 2GB
   HEADROOM_MB_UP: 256,                  // hysteresis: allow growth before clamp
@@ -112,12 +113,20 @@ export default function useVideoResourceManager({
       const total = res.totalMB || 8192; // default 8GB if unknown
       const curr = res.currentMB || 0;
       const pressure = total > 0 ? curr / total : 0;
-      setMem({
-        source: res.source,
-        currentMemoryMB: curr,
-        totalMemoryMB: total,
-        memoryPressure: Math.max(0, Math.min(1, pressure)),
-      });
+      // A fresh object every poll would re-render the whole app every two
+      // seconds while idle; keep the previous reading until it moves.
+      setMem((previous) =>
+        previous.source === res.source &&
+        previous.totalMemoryMB === total &&
+        Math.abs(previous.currentMemoryMB - curr) < CONFIG.MEMORY_PUBLISH_STEP_MB
+          ? previous
+          : {
+              source: res.source,
+              currentMemoryMB: curr,
+              totalMemoryMB: total,
+              memoryPressure: Math.max(0, Math.min(1, pressure)),
+            }
+      );
     };
     tick(); // initial
     const id = setInterval(tick, CONFIG.MONITOR_INTERVAL_MS);

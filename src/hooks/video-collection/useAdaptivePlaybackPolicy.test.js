@@ -155,4 +155,31 @@ describe("useAdaptivePlaybackPolicy", () => {
       health: "unrestricted",
     });
   });
+
+  it("keeps the same decision object when a sample changes nothing", () => {
+    const rendered = renderHook((props) => useAdaptivePlaybackPolicy(props), {
+      initialProps: base,
+    });
+    const settled = rendered.result.current;
+
+    for (let sampleCount = 2; sampleCount <= 4; sampleCount += 1) {
+      act(() => {
+        rendered.rerender({
+          ...base,
+          telemetry: { ...base.telemetry, sampleCount },
+        });
+      });
+    }
+    expect(rendered.result.current).toBe(settled);
+
+    act(() => {
+      rendered.rerender({
+        ...base,
+        telemetry: { ...base.telemetry, sampleCount: 5, droppedFrameRatio: 0.2 },
+      });
+    });
+    expect(rendered.result.current).not.toBe(settled);
+    expect(rendered.result.current.health).toBe("critical");
+  });
 });
+

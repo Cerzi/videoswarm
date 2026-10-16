@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import usePlaybackTelemetry, {
   MAX_REGISTERED_MEDIA,
+  changesPolicyInputs,
 } from "./usePlaybackTelemetry";
 
 class MockPerformanceObserver {
@@ -288,4 +289,68 @@ describe("usePlaybackTelemetry", () => {
     expect(result.current.hadLongTaskRecently).toBe(false);
     expect(result.current.telemetry.workingSetDeltaMB).toBe(0);
   });
+
+  it("keeps one telemetry object while hidden diagnostics cannot move the target", async () => {
+    const { result, rerender } = renderHook(
+      (props) => usePlaybackTelemetry(props),
+      { initialProps: { publishDiagnostics: false } }
+    );
+    await flushAsync();
+    const settled = result.current.telemetry;
+    expect(settled).toMatchObject({ systemMemoryMB: 8192, availableMemoryMB: 6144 });
+
+    await advanceSample();
+    await advanceSample();
+    expect(result.current.telemetry).toBe(settled);
+
+    window.appMem.get.mockResolvedValue({
+      totals: { wsMB: 640, totalMB: 8192, availableMB: 5632 },
+    });
+    await advanceSample();
+    expect(result.current.telemetry).not.toBe(settled);
+    expect(result.current.telemetry.availableMemoryMB).toBe(5632);
+
+    rerender({ publishDiagnostics: true });
+    const shown = result.current.telemetry;
+    await advanceSample();
+    expect(result.current.telemetry).not.toBe(shown);
+    expect(result.current.telemetry.sampleCount).toBe(shown.sampleCount + 1);
+  });
 });
+
+describe("changesPolicyInputs", () => {
+  const sample = {
+    sampleCount: 4,
+    suspended: false,
+    detailed: true,
+    systemMemoryMB: 8192,
+    availableMemoryMB: 4096,
+    averagePixelArea: 1280 * 720,
+  };
+
+  it("ignores diagnostic-only and small policy-input changes", () => {
+    expect(
+      changesPolicyInputs(sample, {
+        ...sample,
+        sampleCount: 5,
+        frameDelayMs: 40,
+        droppedFrameRatio: 0.2,
+        availableMemoryMB: 4096 - 255,
+        averagePixelArea: 1280 * 720 * 1.04,
+      })
+    ).toBe(false);
+  });
+
+  it("reports changes that can move the structural cap", () => {
+    expect(changesPolicyInputs({ ...sample, sampleCount: 0 }, sample)).toBe(true);
+    expect(changesPolicyInputs(sample, { ...sample, availableMemoryMB: 3840 })).toBe(true);
+    expect(changesPolicyInputs(sample, { ...sample, availableMemoryMB: null })).toBe(true);
+    expect(changesPolicyInputs(sample, { ...sample, systemMemoryMB: 16384 })).toBe(true);
+    expect(changesPolicyInputs(sample, { ...sample, averagePixelArea: 0 })).toBe(true);
+    expect(
+      changesPolicyInputs(sample, { ...sample, averagePixelArea: 1920 * 1080 })
+    ).toBe(true);
+    expect(changesPolicyInputs(sample, { ...sample, suspended: true })).toBe(true);
+  });
+});
+

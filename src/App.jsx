@@ -313,6 +313,7 @@ function App() {
   } = usePlaybackTelemetry({
     suspended: workSuspended,
     detailed: !uncappedAllMotion,
+    publishDiagnostics: playbackDetailsVisible,
   });
   const { scheduleInit } = useInitGate({
     perFrame: 6,
