@@ -52,7 +52,6 @@ const CONFIG = {
     4: 160, 6: 210, 8: 260, 12: 320, 16: 380,
   },
   MIN_MAX_LOADED: 24,                   // never drop below this when list is big
-  LONG_TASK_DERATE: 0.6,                // when hadLongTaskRecently
   ACTIVE_MIN_CLAMP: 100,
   ACTIVE_MAX_CLAMP: 600,
   ACTIVE_BUFFER_RATIO: 0.5,
@@ -182,14 +181,14 @@ export default function useVideoResourceManager({
       Math.floor(hysteresisHeadroom / CONFIG.ESTIMATED_VIDEO_MEMORY_MB)
     );
 
-    // Scale down when under pressure or a recent long task
+    // Scale down under memory pressure. A recent long task does not shrink
+    // the resident cap: a slow frame (often a render, not decoding) would
+    // otherwise evict loaded clips that then reload, adding more slow frames.
+    // It only slows new loads below.
     const pressure = smoothPressureRef.current;
     const pressureScale = Math.max(0.4, 1 - 0.6 * pressure);
-    const longTaskScale = hadLongTaskRecently ? CONFIG.LONG_TASK_DERATE : 1;
 
-    const want = Math.floor(
-      Math.min(baseByDM, maxByMem) * pressureScale * longTaskScale
-    );
+    const want = Math.floor(Math.min(baseByDM, maxByMem) * pressureScale);
 
     const totalCount = progressiveVideos?.length || 0;
     const schedulerVisible = Number.isFinite(progressiveVisibleCount)

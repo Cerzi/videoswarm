@@ -301,5 +301,35 @@ describe("work suspension", () => {
       vi.useRealTimers();
     }
   });
+
+  test("a recent long task slows new loads without shrinking the resident cap", async () => {
+    const props = {
+      progressiveVideos: makeVideos(400),
+      desiredActiveCount: 120,
+      visibleVideos: new Set(),
+      loadedVideos: new Set(),
+      loadingVideos: new Set(),
+      playingVideos: new Set(),
+      isNear: () => false,
+      maxDecoders: 4,
+      hadLongTaskRecently: false,
+    };
+    const { result, rerender } = renderHook(
+      (current) => useVideoResourceManager(current),
+      { initialProps: props }
+    );
+    await flushAsync();
+    // Let the smoothed cap settle at its target.
+    for (let index = 0; index < 20; index += 1) {
+      rerender({ ...props, desiredActiveCount: 120 + (index % 2) });
+    }
+    rerender(props);
+    const calm = result.current.limits;
+
+    rerender({ ...props, hadLongTaskRecently: true });
+    const strained = result.current.limits;
+    expect(strained.maxLoaded).toBe(calm.maxLoaded);
+    expect(strained.maxConcurrentLoading).toBeLessThan(calm.maxConcurrentLoading);
+  });
 });
 
