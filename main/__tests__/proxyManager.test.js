@@ -5,7 +5,11 @@ import { createRequire } from "module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createProxyManager, sourceSignature } = require("../proxy-manager");
+const {
+  createProxyManager,
+  proxyReducesDecode,
+  sourceSignature,
+} = require("../proxy-manager");
 
 const fsPromises = fs.promises;
 
@@ -211,6 +215,21 @@ describe("ProxyManager", () => {
     expect(runner.run.mock.calls[0][1]).toContain(
       "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
     );
+    // Background encodes are polite: two threads each way, below normal.
+    expect(runner.run.mock.calls[0][1].filter((arg) => arg === "-threads")).toHaveLength(2);
+    expect(runner.run.mock.calls[0][2]).toMatchObject({
+      priority: os.constants.priority.PRIORITY_BELOW_NORMAL,
+    });
+
+    const small = await manager.resolveSource({
+      filePath: sourcePath,
+      enabled: true,
+      ownerId: "window-1",
+      sourceWidth: 1056,
+      sourceHeight: 608,
+    });
+    expect(small).toMatchObject({ status: "not-needed", usingProxy: false });
+    expect(runner.run).toHaveBeenCalledTimes(1);
 
     await runner.completeAll();
     await waitForIdle(manager);
@@ -727,3 +746,16 @@ describe("ProxyManager", () => {
     await manager.shutdown();
   });
 });
+
+describe("proxyReducesDecode", () => {
+  it("proxies only sources the 1280x720 box shrinks by a quarter or more", () => {
+    expect(proxyReducesDecode(544, 960)).toBe(true); // portrait: 408x720
+    expect(proxyReducesDecode(864, 1120)).toBe(true);
+    expect(proxyReducesDecode(3840, 2160)).toBe(true);
+    expect(proxyReducesDecode(1056, 608)).toBe(false); // fits the box already
+    expect(proxyReducesDecode(1280, 720)).toBe(false);
+    expect(proxyReducesDecode(1366, 768)).toBe(false); // about 12% smaller
+    expect(proxyReducesDecode(null, null)).toBe(true); // unknown: as before
+  });
+});
+

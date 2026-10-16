@@ -1,3 +1,4 @@
+const os = require("os");
 const { spawn: defaultSpawn } = require("child_process");
 
 const DEFAULTS = Object.freeze({
@@ -132,6 +133,8 @@ class ChildProcessRunner {
       args: Array.isArray(args) ? args.slice() : [],
       ownerId: normalizeOwnerId(options.ownerId),
       spawnOptions: options.spawnOptions || {},
+      // Optional os.setPriority value for background work, e.g. proxies.
+      priority: Number.isInteger(options.priority) ? options.priority : null,
       timeoutMs: finiteInteger(options.timeoutMs, this.timeoutMs, 1),
       maxStdoutBytes: finiteInteger(
         options.maxStdoutBytes,
@@ -236,6 +239,13 @@ class ChildProcessRunner {
     try {
       child = this.spawn(job.command, job.args, job.spawnOptions);
       job.process = child;
+      if (job.priority !== null && Number.isInteger(child?.pid)) {
+        try {
+          os.setPriority(child.pid, job.priority);
+        } catch {
+          // Priority is a courtesy; the work still runs at normal priority.
+        }
+      }
     } catch (cause) {
       this.#settle(
         job,

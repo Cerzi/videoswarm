@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import os from "os";
 import { createRequire } from "module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -164,4 +165,43 @@ describe("ChildProcessRunner", () => {
     await activeRejected;
     await expect(shutdown).resolves.toMatchObject({ closed: true, active: 0 });
   });
+
+  it("lowers a child's priority when asked, and tolerates refusal", async () => {
+    const setPriority = vi.spyOn(os, "setPriority").mockImplementation(() => {});
+    try {
+      const children = [];
+      const runner = createChildProcessRunner({
+        spawn: vi.fn(() => {
+          const child = new FakeChild();
+          child.pid = 4242 + children.length;
+          children.push(child);
+          return child;
+        }),
+      });
+
+      const polite = runner.run("tool", [], { priority: 10 });
+      await flush();
+      expect(setPriority).toHaveBeenCalledWith(4242, 10);
+      children[0].close(0);
+      await polite;
+
+      setPriority.mockImplementation(() => {
+        throw new Error("EACCES");
+      });
+      const refused = runner.run("tool", [], { priority: 10 });
+      await flush();
+      children[1].close(0);
+      await expect(refused).resolves.toMatchObject({ code: 0 });
+
+      setPriority.mockClear();
+      const normal = runner.run("tool", []);
+      await flush();
+      expect(setPriority).not.toHaveBeenCalled();
+      children[2].close(0);
+      await normal;
+    } finally {
+      setPriority.mockRestore();
+    }
+  });
 });
+

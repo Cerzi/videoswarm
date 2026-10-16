@@ -3428,10 +3428,20 @@ ipcMain.handle("playback:resolve-source", async (event, payload = {}) => {
     version: `${instance.size}-${instance.mtimeMs}`,
     generation: context.generation,
   });
+  const enabled = Boolean(payload?.enabled);
+  // Catalogued dimensions let the proxy manager skip sources a proxy would
+  // barely shrink.
+  const dimensions = enabled && instance.fingerprint
+    ? context.metadataStore.getMetadataForFingerprints([instance.fingerprint])?.[
+        instance.fingerprint
+      ]?.dimensions
+    : null;
   const resolved = await proxyManager.resolveSource({
     filePath: authorized.path,
-    enabled: Boolean(payload?.enabled),
+    enabled,
     ownerId: registerNativeWorkOwner(event.sender),
+    sourceWidth: dimensions?.width ?? null,
+    sourceHeight: dimensions?.height ?? null,
   });
   assertMetadataContextActive(context);
   return {

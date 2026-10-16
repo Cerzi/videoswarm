@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const { createChildProcessRunner } = require("./child-process-runner");
@@ -55,13 +56,39 @@ function sourceSignature(filePath, stats) {
     .digest("hex");
 }
 
+// The proxy box. A source it would barely shrink gains nothing from a
+// proxy and only loses quality to the re-encode.
+const PROXY_MAX_WIDTH = 1280;
+const PROXY_MAX_HEIGHT = 720;
+const PROXY_MIN_PIXEL_SAVING = 0.25;
+
+/**
+ * Whether a proxy of these source dimensions would decode meaningfully
+ * fewer pixels. Unknown dimensions keep the previous behaviour (proxy).
+ */
+function proxyReducesDecode(width, height) {
+  const sourceWidth = Number(width);
+  const sourceHeight = Number(height);
+  if (!(sourceWidth > 0) || !(sourceHeight > 0)) return true;
+  const scale = Math.min(
+    1,
+    PROXY_MAX_WIDTH / sourceWidth,
+    PROXY_MAX_HEIGHT / sourceHeight
+  );
+  return scale * scale <= 1 - PROXY_MIN_PIXEL_SAVING;
+}
+
 function defaultProxyArguments(sourcePath, outputPath) {
+  // Two decode and two encode threads: a background proxy should not
+  // briefly occupy every core, as x264's automatic threading would.
   return [
     "-hide_banner",
     "-loglevel",
     "error",
     "-nostdin",
     "-y",
+    "-threads",
+    "2",
     "-i",
     sourcePath,
     "-map",
@@ -77,6 +104,8 @@ function defaultProxyArguments(sourcePath, outputPath) {
     "30",
     "-pix_fmt",
     "yuv420p",
+    "-threads",
+    "2",
     "-movflags",
     "+faststart",
     outputPath,
@@ -171,6 +200,7 @@ class ProxyManager {
       evicted: 0,
       busy: 0,
       resolveBusy: 0,
+      notNeeded: 0,
     };
     this.lastError = null;
   }
@@ -189,7 +219,13 @@ class ProxyManager {
     return this.#initialize(normalized);
   }
 
-  async resolveSource({ filePath, enabled = false, ownerId = null } = {}) {
+  async resolveSource({
+    filePath,
+    enabled = false,
+    ownerId = null,
+    sourceWidth = null,
+    sourceHeight = null,
+  } = {}) {
     const originalPath =
       typeof filePath === "string" && filePath.trim().length > 0
         ? path.resolve(filePath.trim())
@@ -199,6 +235,10 @@ class ProxyManager {
     }
     if (!enabled) {
       return this.#resolution(originalPath, "disabled");
+    }
+    if (!proxyReducesDecode(sourceWidth, sourceHeight)) {
+      this.totals.notNeeded += 1;
+      return this.#resolution(originalPath, "not-needed");
     }
     if (this.closed) {
       return this.#resolution(originalPath, "shutdown");
@@ -721,6 +761,7 @@ class ProxyManager {
     const args = this.buildArguments(task.originalPath, task.tempPath);
     await this.runner.run(this.ffmpegPath, args, {
       ownerId: task.runnerOwnerId,
+      priority: os.constants.priority.PRIORITY_BELOW_NORMAL,
       timeoutMs: this.timeoutMs,
       maxStdoutBytes: this.maxStdoutBytes,
       maxStderrBytes: this.maxStderrBytes,
@@ -992,5 +1033,6 @@ module.exports = {
   ProxyManager,
   createProxyManager,
   defaultProxyArguments,
+  proxyReducesDecode,
   sourceSignature,
 };
