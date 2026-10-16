@@ -496,7 +496,9 @@ possible future cross-check, nothing more.
 
 - **Collapsing a group into one card** in the grid. The *Best version* filter
   gives the collapsed view; a true stack with expand-in-place needs layout
-  support the masonry grid does not have.
+  support the masonry grid does not have. Prompt stacks
+  ([`prompt-stacks.md`](prompt-stacks.md)) collapse the wider group, every run
+  of one prompt, and open a stack as its own view instead of in place.
 - **Side-by-side comparison** of a group's versions.
 - **Revealing a sibling outside the collection** in its own folder from the
   details panel.
