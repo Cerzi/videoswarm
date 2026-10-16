@@ -2,19 +2,25 @@
 // Generation-panel coverage over a real library: for every clip, what the
 // panel would store and show - output, checkpoint, prompt, seed, steps - and
 // with which evidence (Direct / Graph-derived / Partial). A development tool,
-// not part of `npm test`: it reads your own files. Prints counts and field
-// presence only, never prompt text. See
+// not part of `npm test`: it reads your own files. See
 // docs/architecture/generation-type-flow.md, Section 7.
 //
 //   node scripts/generation-coverage.cjs <folder> [--baseline <parser.js>]
-//        [--fast] [--limit N] [--spot N]
+//        [--fast] [--limit N] [--spot N] [--details <file>]
+//
+// The terminal output is counts only: folders are numbered rather than named,
+// and no clip path, seed, model or prompt text is printed, so it is safe to
+// paste into a chat. --details writes the folder names, the spot checks and
+// the paths of clips that lost a field to a local file outside the
+// repository. That file is for its owner: don't share it or have an AI
+// assistant read it.
 //
 // By default tags are read with the ffprobe probe the Generation panel uses,
 // and each result goes through the metadata service's own support check and
 // persistence mapping. --fast reads ISO-BMFF tags in-process instead.
 // --baseline names another module exporting parseComfyGenerationPayload (for
 // example the previous parser, extracted from git) to compare against; a
-// field the baseline found and the current reader lost is listed as LOST.
+// field the baseline found and the current reader lost is counted as lost.
 
 const fs = require("fs");
 const path = require("path");
@@ -29,24 +35,44 @@ const {
 const VIDEO = /\.(mp4|mov|m4v|webm|mkv)$/i;
 const FIELDS = ["output", "checkpoint", "prompt", "seed", "steps"];
 const QUALITIES = ["exact", "derived", "partial", "none"];
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+const ROOT_GROUP = ".";
+
+function usage() {
+  return "usage: generation-coverage.cjs <folder> [--baseline <parser.js>] [--fast] [--limit N] [--spot N] [--details <file>]";
+}
 
 function parseArgs(argv) {
-  const args = { root: null, baseline: null, fast: false, limit: Infinity, spot: 12 };
+  const args = {
+    root: null,
+    baseline: null,
+    fast: false,
+    limit: Infinity,
+    spot: 12,
+    details: null,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--limit") args.limit = Number(argv[++index]);
     else if (arg === "--spot") args.spot = Number(argv[++index]);
-    else if (arg === "--baseline") args.baseline = path.resolve(argv[++index]);
+    else if (arg === "--baseline") args.baseline = path.resolve(argv[++index] || "");
+    else if (arg === "--details") args.details = argv[++index] || null;
     else if (arg === "--fast") args.fast = true;
-    else args.root = arg;
+    else if (!args.root) args.root = arg;
+    else return { error: `unexpected argument (${index + 1})` };
   }
-  if (!args.root) {
-    console.error(
-      "usage: generation-coverage.cjs <folder> [--baseline <parser.js>] [--fast] [--limit N] [--spot N]"
-    );
-    process.exit(2);
+  if (!args.root) return { error: "a folder is required" };
+  if (!(args.limit > 0)) return { error: "--limit must be a positive number" };
+  if (!(args.spot >= 0)) return { error: "--spot must be zero or more" };
+  if (argv.includes("--details") && !args.details) {
+    return { error: "--details needs a file path" };
   }
   return args;
+}
+
+function isInside(parent, target) {
+  const relative = path.relative(parent, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function* walk(directory) {
@@ -117,23 +143,117 @@ async function readPayload(file, probe, fast) {
 const percent = (count, total) =>
   total ? `${Math.round((count / total) * 100)}%`.padStart(4) : "  - ";
 
+const emptyBucket = () => ({ total: 0, tagged: 0, base: {}, current: {}, quality: {} });
+
+// Folder names say what a library holds, so the shareable output numbers the
+// folders instead; the --details file maps the numbers back to names.
+function labelFolders(groupNames) {
+  const labels = new Map();
+  let next = 1;
+  for (const name of [...groupNames].sort()) {
+    labels.set(name, name === ROOT_GROUP ? "top level" : `folder ${next++}`);
+  }
+  return labels;
+}
+
+/**
+ * The shareable summary: the coverage table with numbered folders and the
+ * count of clips that lost a field. `groups` maps a folder name to its counts.
+ * Never includes a folder name, a path, a seed, a model or prompt text.
+ */
+function renderCoverageSummary({
+  groups,
+  baseline = false,
+  lostCount = 0,
+  spotCount = 0,
+  detailsWritten = false,
+}) {
+  const labels = labelFolders(groups.keys());
+  const cell = (bucket, field) =>
+    baseline
+      ? `${percent(bucket.base[field] || 0, bucket.tagged)}->${percent(bucket.current[field] || 0, bucket.tagged)}`
+      : percent(bucket.current[field] || 0, bucket.tagged);
+  const width = baseline ? 11 : 6;
+  const lines = [
+    `${"folder".padEnd(16)} ${"clips".padStart(5)} ${"tagged".padStart(6)}  ` +
+      FIELDS.map((field) => field.padEnd(width)).join(" ") +
+      `  ${QUALITIES.map((quality) => quality.padStart(7)).join("")}` +
+      (baseline ? "   (baseline -> current, % of tagged)" : "   (% of tagged)"),
+  ];
+  const totals = emptyBucket();
+  const row = (name, bucket) =>
+    `${name.slice(0, 16).padEnd(16)} ${String(bucket.total).padStart(5)} ${String(bucket.tagged).padStart(6)}  ` +
+    FIELDS.map((field) => cell(bucket, field).padEnd(width)).join(" ") +
+    `  ${QUALITIES.map((quality) => String(bucket.quality[quality] || 0).padStart(7)).join("")}`;
+  for (const [group, bucket] of [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    totals.total += bucket.total;
+    totals.tagged += bucket.tagged;
+    for (const field of FIELDS) {
+      totals.base[field] = (totals.base[field] || 0) + (bucket.base[field] || 0);
+      totals.current[field] = (totals.current[field] || 0) + (bucket.current[field] || 0);
+    }
+    for (const quality of QUALITIES) {
+      totals.quality[quality] = (totals.quality[quality] || 0) + (bucket.quality[quality] || 0);
+    }
+    lines.push(row(labels.get(group), bucket));
+  }
+  lines.push(row("ALL", totals));
+  if (baseline) lines.push("", `${lostCount} clip(s) lost a field the baseline found.`);
+  lines.push(
+    "",
+    detailsWritten
+      ? `Folder names, ${spotCount} spot check(s) and lost-field paths were written to the --details file.`
+      : "Folder names, spot checks and lost-field paths: rerun with --details <file> to list them."
+  );
+  return lines;
+}
+
+// The owner's file: folder names for the numbers, then the spot checks and
+// lost-field lines, which name clips and show seeds.
+function renderCoverageDetails({ groups, spots }) {
+  const labels = labelFolders(groups.keys());
+  return [
+    "Generation coverage details",
+    "",
+    "This file names your folders and clips and shows seeds. Keep it on this machine:",
+    "don't share it or have an AI assistant read it.",
+    "",
+    "folders:",
+    ...[...labels.entries()].map(([name, label]) => `  ${label.padEnd(12)} ${name}`),
+    "",
+    spots.length ? "spot checks:" : "no spot checks",
+    ...spots,
+    "",
+  ].join("\n");
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.error) {
+    console.error(`${args.error}\n${usage()}`);
+    process.exit(2);
+  }
+  const details = args.details ? path.resolve(args.details) : null;
+  if (details && isInside(REPOSITORY_ROOT, details)) {
+    console.error(
+      "Choose a --details path outside the Video Swarm repository, so the file can never be committed."
+    );
+    process.exit(2);
+  }
   const root = path.resolve(args.root);
   const baseline = args.baseline ? require(args.baseline).parseComfyGenerationPayload : null;
   const probe = createEmbeddedMetadataProbe();
   const groups = new Map();
   const spots = [];
   let seen = 0;
+  let lostCount = 0;
 
   for (const file of walk(root)) {
     if (seen >= args.limit) break;
     seen += 1;
     const relative = path.relative(root, file);
-    const group = relative.includes(path.sep) ? relative.split(path.sep)[0] : ".";
-    if (!groups.has(group)) {
-      groups.set(group, { total: 0, tagged: 0, base: {}, current: {}, quality: {} });
-    }
+    const group = relative.includes(path.sep) ? relative.split(path.sep)[0] : ROOT_GROUP;
+    if (!groups.has(group)) groups.set(group, emptyBucket());
     const bucket = groups.get(group);
     bucket.total += 1;
     const payload = await readPayload(file, probe, args.fast).catch(() => null);
@@ -148,8 +268,9 @@ async function main() {
     }
     const lost = base ? FIELDS.filter((field) => base.fields[field] && !current.fields[field]) : [];
     if (lost.length) {
+      lostCount += 1;
       spots.push(`  LOST ${lost.join(",").padEnd(22)} ${relative}`);
-    } else if (spots.length < args.spot && seen % 97 === 0) {
+    } else if (spots.length - lostCount < args.spot && seen % 97 === 0) {
       const finalStage = current.stored?.samplingParameters || {};
       spots.push(
         `  seen ${current.quality.padEnd(8)} seed=${current.stored?.seed ?? "-"} steps=${finalStage.steps ?? "-"} ` +
@@ -159,44 +280,34 @@ async function main() {
   }
   await probe.shutdown();
 
-  const cell = (bucket, field) =>
-    baseline
-      ? `${percent(bucket.base[field] || 0, bucket.tagged)}->${percent(bucket.current[field] || 0, bucket.tagged)}`
-      : percent(bucket.current[field] || 0, bucket.tagged);
-  const width = baseline ? 11 : 6;
+  if (details) {
+    fs.writeFileSync(details, renderCoverageDetails({ groups, spots }), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+  }
   console.log(
-    `${"folder".padEnd(16)} ${"clips".padStart(5)} ${"tagged".padStart(6)}  ` +
-      FIELDS.map((field) => field.padEnd(width)).join(" ") +
-      `  ${QUALITIES.map((quality) => quality.padStart(7)).join("")}` +
-      (baseline ? "   (baseline -> current, % of tagged)" : "   (% of tagged)")
+    renderCoverageSummary({
+      groups,
+      baseline: Boolean(baseline),
+      lostCount,
+      spotCount: spots.length,
+      detailsWritten: Boolean(details),
+    }).join("\n")
   );
-  const totals = { total: 0, tagged: 0, base: {}, current: {}, quality: {} };
-  const row = (name, bucket) =>
-    `${name.slice(0, 16).padEnd(16)} ${String(bucket.total).padStart(5)} ${String(bucket.tagged).padStart(6)}  ` +
-    FIELDS.map((field) => cell(bucket, field).padEnd(width)).join(" ") +
-    `  ${QUALITIES.map((quality) => String(bucket.quality[quality] || 0).padStart(7)).join("")}`;
-  for (const [group, bucket] of [...groups.entries()].sort()) {
-    totals.total += bucket.total;
-    totals.tagged += bucket.tagged;
-    for (const field of FIELDS) {
-      totals.base[field] = (totals.base[field] || 0) + (bucket.base[field] || 0);
-      totals.current[field] = (totals.current[field] || 0) + (bucket.current[field] || 0);
-    }
-    for (const quality of QUALITIES) {
-      totals.quality[quality] = (totals.quality[quality] || 0) + (bucket.quality[quality] || 0);
-    }
-    console.log(row(group, bucket));
-  }
-  console.log(row("ALL", totals));
-  const lostCount = spots.filter((line) => line.startsWith("  LOST")).length;
-  if (baseline) console.log(`\n${lostCount} clip(s) lost a field the baseline found.`);
-  if (spots.length) {
-    console.log("\nspot checks:");
-    spots.slice(0, Math.max(args.spot, lostCount)).forEach((line) => console.log(line));
-  }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    // Only the error's code or name: its message or stack could carry a path.
+    console.error(`generation-coverage failed: ${error?.code || error?.name || "error"}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  labelFolders,
+  parseArgs,
+  renderCoverageDetails,
+  renderCoverageSummary,
+};

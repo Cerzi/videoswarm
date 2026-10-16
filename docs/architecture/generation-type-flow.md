@@ -319,8 +319,14 @@ Reliability is a number, not an impression. `scripts/generation-coverage.cjs`
 walks a folder, reads each clip's embedded tags in-process (ffprobe for
 non-ISO containers), runs **both** the shipped parser and the type-flow
 reader, and reports per top-level folder the share of clips with a
-checkpoint, a prompt (direct or fragments), a seed and steps, plus a sample of
-spot-check lines. It prints counts and field presence, never prompt text.
+checkpoint, a prompt (direct or fragments), a seed and steps.
+
+Its terminal output is counts only, safe to paste into a chat: folders are
+numbered rather than named, and no clip path, seed, model or prompt text is
+printed (2026-10-16; it previously printed folder names and, in its spot
+checks, clip paths and seeds). `--details <file>` writes the folder names, the
+spot-check lines and the paths of clips that lost a field to a local file
+outside the repository, for its owner only.
 
 It is a development tool, not part of `npm test`: it reads the user's own
 library. The corpus is the user's ComfyUI output folder (A1, A1-Long, video,
