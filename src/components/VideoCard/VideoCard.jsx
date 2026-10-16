@@ -1456,58 +1456,17 @@ const VideoCard = memo(function VideoCard({
       );
     }
 
-    const canLoad = checkCanLoad(
-      isVisible ? { assumeVisible: true } : undefined
-    ) ?? true;
-    const statusText = loading
-      ? "Loading video…"
-      : canLoad
-      ? "Scroll to load"
-      : "Waiting for next chunk";
-    const subtext = loading
-      ? "Preparing playback"
-      : canLoad
-      ? "Keep scrolling to fetch more clips"
-      : "All caught up for now";
-
-    if (!isNearViewport || !loading) {
-      return (
-        <div
-          className="video-placeholder video-placeholder--static"
-          role="status"
-          aria-live="polite"
-        >
-          <div className="video-placeholder__media" aria-hidden="true">
-            <div className="video-placeholder__static-block" />
-          </div>
-          <div className="video-placeholder__text">
-            <span className="video-placeholder__message">
-              {!isNearViewport && canLoad ? "Scroll closer to load" : statusText}
-            </span>
-            <span className="video-placeholder__subtext">
-              {!isNearViewport
-                ? "Thumbnails idle until you're nearby"
-                : subtext}
-            </span>
-          </div>
-        </div>
-      );
-    }
-
-    const spinnerClassName = `video-placeholder__spinner${
-      loading ? "" : " video-placeholder__spinner--paused"
-    }`;
-
+    // A quiet tile; the clip appears in place when it loads. The spinner is
+    // CSS-delayed, so it shows only for a slow load near the viewport.
+    const showSpinner = loading && isNearViewport;
     return (
-      <div className="video-placeholder" role="status" aria-live="polite">
-        <div className="video-placeholder__media" aria-hidden="true">
-          <div className="video-placeholder__sheen" />
-          <div className={spinnerClassName} />
-        </div>
-        <div className="video-placeholder__text">
-          <span className="video-placeholder__message">{statusText}</span>
-          <span className="video-placeholder__subtext">{subtext}</span>
-        </div>
+      <div className="video-placeholder">
+        {showSpinner && (
+          <div className="video-placeholder__spinner" aria-hidden="true" />
+        )}
+        <span className="video-placeholder__label">
+          {showSpinner ? "Loading video" : "Video not loaded"}
+        </span>
       </div>
     );
   };

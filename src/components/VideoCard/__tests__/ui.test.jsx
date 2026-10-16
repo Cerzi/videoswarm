@@ -1004,7 +1004,7 @@ describe("VideoCard", () => {
       <VideoCard
         {...baseProps}
         video={video}
-        isVisible={false}
+        isVisible={true}
         canLoadVideo={gate}
         canLoadMoreVideos={() => {
           throw new Error("legacy admission callback should not run");
@@ -1017,6 +1017,37 @@ describe("VideoCard", () => {
     expect(gate).toHaveBeenCalled();
     expect(gate.mock.calls.every(([id]) => id === "layout-check")).toBe(true);
     expect(lastVideoEl).toBeUndefined();
+  });
+
+  it("shows a quiet tile until a load starts, then only a delayed spinner", async () => {
+    const video = {
+      id: "quiet",
+      name: "quiet",
+      fullPath: "/quiet.mp4",
+      isElectronFile: false,
+    };
+    const rendered = render(
+      <VideoCard {...baseProps} video={video} canLoadVideo={() => false} />
+    );
+    await act(async () => {});
+
+    const idle = rendered.container.querySelector(".video-placeholder");
+    expect(idle).toBeTruthy();
+    expect(idle.querySelector(".video-placeholder__spinner")).toBeNull();
+    expect(idle.textContent).toBe("Video not loaded");
+    expect(idle.getAttribute("aria-live")).toBeNull();
+    rendered.unmount();
+
+    render(
+      <VideoCard {...baseProps} video={video} canLoadMoreVideos={() => true} />
+    );
+    await act(async () => {});
+
+    const card = document.querySelector('[data-video-id="quiet"]');
+    expect(card.getAttribute("data-loading")).toBe("true");
+    const loading = card.querySelector(".video-placeholder");
+    expect(loading.querySelector(".video-placeholder__spinner")).toBeTruthy();
+    expect(loading.textContent).toBe("Loading video");
   });
 
   it("rehydrates when flagged as loaded but missing a video element", async () => {
