@@ -308,6 +308,8 @@ const defaultSettings = {
   hoverAudioEnabled: false,
   // The status line's playback diagnostics, off unless asked for.
   playbackDetailsVisible: false,
+  // Prompt stacks (docs/architecture/prompt-stacks.md): off unless asked for.
+  stackByPrompt: false,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1783,6 +1785,7 @@ function normaliseLoadedSettings(rawSettings) {
         ? defaultSettings.showFilenames
         : Boolean(source.showFilenames),
     playbackDetailsVisible: source.playbackDetailsVisible === true,
+    stackByPrompt: source.stackByPrompt === true,
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled

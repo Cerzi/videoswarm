@@ -103,6 +103,58 @@ describe("useReviewWorkflow", () => {
     expect(props.selectExactly).not.toHaveBeenCalled();
   });
 
+  it("advances past a whole selected stack like one clip", async () => {
+    // s1, s2, s3 are the runs of one collapsed prompt stack, s1 its cover.
+    const units = {
+      unitOf: (id) => (["s1", "s2", "s3"].includes(id) ? "stack" : null),
+      membersOf: () => ["s1", "s2", "s3"],
+      representativeOf: () => "s1",
+    };
+    const props = makeProps({
+      scopeVideos: [
+        video("a", "fp-a"),
+        video("s1", "fp-s1"),
+        video("s2", "fp-s2"),
+        video("s3", "fp-s3"),
+        video("b", "fp-b"),
+      ],
+      orderedVideoIds: ["a", "s1", "b"],
+      selectedIds: new Set(["s1", "s2", "s3"]),
+      autoAdvance: true,
+      selectionUnitsRef: { current: units },
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+
+    await act(async () => {
+      await result.current.applyReviewState("reject");
+    });
+
+    expect(props.setReviewState).toHaveBeenCalledWith("reject", ["fp-s1", "fp-s2", "fp-s3"]);
+    expect(props.selectExactly).toHaveBeenCalledWith("b");
+  });
+
+  it("does not advance from part of a stack or from a stack and a clip", async () => {
+    const units = {
+      unitOf: (id) => (["s1", "s2"].includes(id) ? "stack" : null),
+      membersOf: () => ["s1", "s2"],
+      representativeOf: () => "s1",
+    };
+    for (const selectedIds of [new Set(["s2", "a"]), new Set(["s1", "s2", "a"])]) {
+      const props = makeProps({
+        scopeVideos: [video("a", "fp-a"), video("s1", "fp-s1"), video("s2", "fp-s2")],
+        orderedVideoIds: ["a", "s1"],
+        selectedIds,
+        autoAdvance: true,
+        selectionUnitsRef: { current: units },
+      });
+      const { result } = renderHook(() => useReviewWorkflow(props));
+      await act(async () => {
+        await result.current.applyReviewState("reject");
+      });
+      expect(props.selectExactly).not.toHaveBeenCalled();
+    }
+  });
+
   it.each([
     ["resetting to Unreviewed", "review", "unreviewed"],
     ["clearing a rating", "rating", null],

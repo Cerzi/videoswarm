@@ -8,6 +8,7 @@ import React, {
   useMemo,
 } from "react";
 import VideoCard from "./components/VideoCard/VideoCard";
+import StackBar from "./components/StackBar";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
@@ -55,7 +56,7 @@ import { ActionIds, actionRegistry } from "./hooks/actions/actions";
 import { releaseVideoHandlesForAsync } from "./utils/releaseVideoHandles";
 import { updateSetMembership, removeManyFromSet } from "./utils/updateSetMembership";
 import useTrashIntegration from "./hooks/actions/useTrashIntegration";
-import useReviewWorkflow from "./hooks/review/useReviewWorkflow";
+import useReviewWorkflow, { singleSelectionUnit } from "./hooks/review/useReviewWorkflow";
 import useReviewSessions from "./hooks/review/useReviewSessions";
 
 import { SortKey } from "./sorting/sorting.js";
@@ -112,6 +113,15 @@ import {
   buildGenerationVersionIndex,
   normalizeVersionFilter,
 } from "./app/filters/generationVersions";
+import {
+  buildPromptStacks,
+  collapsePromptStacks,
+  createStackSelectionUnits,
+  emptyPromptStacks,
+  neighbouringStack,
+  stackOrderOf,
+  unreviewedStackFingerprints,
+} from "./app/stacks/promptStacks";
 import {
   REVIEW_FILTERS,
   REVIEW_STATES,
@@ -183,8 +193,11 @@ const expandFolderAncestors = (previous, relativePath) => {
 };
 
 function App() {
-  // Selection state (SOLID)
-  const selection = useSelectionState(); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
+  // Selection state (SOLID). While prompt stacks are collapsed, every run of
+  // a stack selects together; the units are filled in once stacks are known
+  // (docs/architecture/prompt-stacks.md, Section 5).
+  const selectionUnitsRef = useRef(null);
+  const selection = useSelectionState({ unitsRef: selectionUnitsRef }); // { selected, size, selectOnly, toggle, clear, setSelected, selectRange, anchorId }
   const [recursiveMode, setRecursiveMode] = useState(false);
   const [showFilenames, setShowFilenames] = useState(true);
   const [hoverAudioEnabled, setHoverAudioEnabled] = useState(false);
@@ -209,6 +222,11 @@ function App() {
   const [sortKey, setSortKey] = useState(SortKey.NAME);
   const [sortDir, setSortDir] = useState("asc");
   const [groupByFolders, setGroupByFolders] = useState(true);
+  // Prompt stacks: collapse every run of one prompt into one card, and the
+  // stack open in its own view with the stack order it was opened from.
+  const [stackByPrompt, setStackByPrompt] = useState(false);
+  const [openStackKey, setOpenStackKey] = useState(null);
+  const [openStackOrder, setOpenStackOrder] = useState([]);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
@@ -501,6 +519,7 @@ function App() {
     setShowFilenames,
     setHoverAudioEnabled,
     setPlaybackDetailsVisible,
+    setStackByPrompt,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -708,6 +727,37 @@ function App() {
       }),
     [currentDirectory, folderScope, videos]
   );
+
+  // Prompt stacks are formed from what the grid would show, so a stack only
+  // stands for clips that pass the filters; the folder scope gives the
+  // "5 of 20" total. See docs/architecture/prompt-stacks.md, Section 3.
+  const promptStacks = useMemo(
+    () =>
+      stackByPrompt
+        ? buildPromptStacks(scopedFilteredVideos, reviewScopeVideos)
+        : emptyPromptStacks(),
+    [reviewScopeVideos, scopedFilteredVideos, stackByPrompt]
+  );
+  const openStack = openStackKey ? promptStacks.stacks.get(openStackKey) || null : null;
+  const gridVideos = useMemo(() => {
+    if (openStack) return openStack.members;
+    return collapsePromptStacks(scopedFilteredVideos, promptStacks);
+  }, [openStack, promptStacks, scopedFilteredVideos]);
+  // Inside an open stack every clip selects on its own.
+  const stackSelectionUnits = useMemo(
+    () => (openStack ? null : createStackSelectionUnits(promptStacks)),
+    [openStack, promptStacks]
+  );
+  selectionUnitsRef.current = stackSelectionUnits;
+  // A stack is never left partly selected, so an action on it can never
+  // touch some of its runs and silently skip the rest.
+  useLayoutEffect(() => {
+    if (stackSelectionUnits) selection.expandToUnits();
+  }, [selection.expandToUnits, stackSelectionUnits]);
+  // A stack whose runs are all filtered out or gone closes by itself.
+  useEffect(() => {
+    if (openStackKey && !openStack) setOpenStackKey(null);
+  }, [openStack, openStackKey]);
   const reviewScopeLabel = useMemo(() => {
     const location = currentDirectory
       ? `${rootDisplayName} / ${currentDirectory}`
@@ -977,7 +1027,7 @@ function App() {
     isLayoutTransitioning,
   } = useMasonryLayout({
     videos,
-    filteredVideos: scopedFilteredVideos,
+    filteredVideos: gridVideos,
     sortKey,
     sortDir,
     groupByFolders,
@@ -1566,7 +1616,164 @@ function App() {
     autoAdvance: reviewAutoAdvance,
     notify,
     onMutationCommitted: handleReviewMutationCommitted,
+    selectionUnitsRef,
   });
+
+  // ----- Prompt stacks: toggle, open, step and close ------------------------
+  // See docs/architecture/prompt-stacks.md, Sections 3 to 5.
+
+  // The order of stacks in the collapsed grid, kept while that grid is shown
+  // so an open stack can step to its neighbours.
+  const collapsedStackOrder = useMemo(
+    () => (stackByPrompt && !openStack ? stackOrderOf(orderedVideos, promptStacks) : null),
+    [openStack, orderedVideos, promptStacks, stackByPrompt]
+  );
+  const collapsedStackOrderRef = useRef([]);
+  if (collapsedStackOrder) collapsedStackOrderRef.current = collapsedStackOrder;
+  const pendingStackRevealRef = useRef(null);
+
+  const toggleStackByPrompt = useCallback(() => {
+    setOpenStackKey(null);
+    setStackByPrompt((previous) => {
+      const next = !previous;
+      window.electronAPI?.saveSettingsPartial?.({ stackByPrompt: next });
+      return next;
+    });
+  }, []);
+
+  const showStack = useCallback(
+    (key) => {
+      const stack = promptStacks.stacks.get(key);
+      if (!stack) return false;
+      setOpenStackKey(key);
+      // Inside a stack each run selects on its own. The units go now rather
+      // than at the next render, so the cover is selected alone and becomes
+      // the anchor for shift-range selection inside the stack.
+      selectionUnitsRef.current = null;
+      selection.selectExactly(stack.cover.id);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      return true;
+    },
+    [promptStacks, selection.selectExactly]
+  );
+
+  // Opens the stack a collapsed card stands for; false for any other card.
+  const handleOpenStack = useCallback(
+    (videoId) => {
+      if (openStackKey) return false;
+      const key = promptStacks.keyById.get(videoId);
+      if (!key) return false;
+      setOpenStackOrder(collapsedStackOrderRef.current);
+      return showStack(key);
+    },
+    [openStackKey, promptStacks, showStack]
+  );
+
+  // Cards get a stable callback, so stacks recomputing on every metadata
+  // update never re-renders every mounted card.
+  const handleOpenStackRef = useRef(handleOpenStack);
+  handleOpenStackRef.current = handleOpenStack;
+  const handleOpenStackFromCard = useCallback(
+    (videoId) => handleOpenStackRef.current(videoId),
+    []
+  );
+
+  const handleStepStack = useCallback(
+    (direction) => {
+      if (!openStackKey) return;
+      const next = neighbouringStack(
+        openStackOrder,
+        openStackKey,
+        direction,
+        promptStacks.stacks
+      );
+      if (!next) {
+        notify(direction < 0 ? "This is the first stack" : "This is the last stack", "info");
+        return;
+      }
+      showStack(next);
+    },
+    [notify, openStackKey, openStackOrder, promptStacks, showStack]
+  );
+
+  const handleCloseStack = useCallback(() => {
+    if (!openStackKey) return;
+    const cover = promptStacks.stacks.get(openStackKey)?.cover;
+    setOpenStackKey(null);
+    if (!cover) return;
+    // Back in the collapsed grid the stack's card is selected again, widened
+    // to the whole stack once its units return, and scrolled into view once
+    // it is laid out.
+    selection.selectExactly(cover.id);
+    pendingStackRevealRef.current = cover.id;
+  }, [openStackKey, promptStacks, selection.selectExactly]);
+
+  useEffect(() => {
+    const id = pendingStackRevealRef.current;
+    if (id == null || openStack) return;
+    if (!orderedVideos.some((video) => video.id === id)) return;
+    pendingStackRevealRef.current = null;
+    scrollToId(id, { align: "center" });
+  }, [openStack, orderedVideos, scrollToId]);
+
+  // Another folder, scope or collection is a different set of stacks.
+  useEffect(() => {
+    setOpenStackKey(null);
+  }, [activeRootPath, currentDirectory, folderScope, tagCollection]);
+
+  const openStackUnreviewed = useMemo(
+    () => (openStack ? unreviewedStackFingerprints(openStack) : []),
+    [openStack]
+  );
+  // Pick the best run, then reject the rest: one undoable step that leaves
+  // picks, ratings and earlier rejects alone.
+  const handleRejectUnreviewedInStack = useCallback(() => {
+    if (!openStack || !reviewModeEnabled) return;
+    const fingerprints = openStackUnreviewed;
+    if (fingerprints.length === 0) {
+      notify("Every run in this stack already has a decision", "info");
+      return;
+    }
+    void reviewWorkflow
+      .applyReviewState(REVIEW_STATES.REJECT, { fingerprints, allowAdvance: false })
+      .then((applied) => {
+        if (applied) {
+          notify(
+            `Rejected ${fingerprints.length} unreviewed run${fingerprints.length === 1 ? "" : "s"} · Z undoes`,
+            "success"
+          );
+        }
+      });
+  }, [notify, openStack, openStackUnreviewed, reviewModeEnabled, reviewWorkflow.applyReviewState]);
+
+  const openStackSummary = useMemo(() => {
+    if (!openStack) return null;
+    const live = openStackOrder.filter((key) => promptStacks.stacks.has(key));
+    const seeds = new Set(
+      openStack.members.map((video) => video.generationKey).filter(Boolean)
+    ).size;
+    return {
+      position: live.indexOf(openStack.key) + 1,
+      count: live.length,
+      runs: openStack.members.length,
+      total: openStack.total,
+      seeds,
+      hasPrevious:
+        neighbouringStack(openStackOrder, openStack.key, -1, promptStacks.stacks) != null,
+      hasNext:
+        neighbouringStack(openStackOrder, openStack.key, 1, promptStacks.stacks) != null,
+    };
+  }, [openStack, openStackOrder, promptStacks]);
+
+  // Enter on exactly one selected stack opens it.
+  const handleOpenSelectedStack = useCallback(
+    (selected) => {
+      if (!stackSelectionUnits || !(selected instanceof Set)) return false;
+      const id = singleSelectionUnit(selected, stackSelectionUnits);
+      return id != null && handleOpenStack(id);
+    },
+    [handleOpenStack, stackSelectionUnits]
+  );
 
   useLayoutEffect(() => {
     if (
@@ -3305,14 +3512,22 @@ function App() {
     onSetReviewState: reviewModeEnabled ? handleReviewHotkey : null,
     onSetRating: handleRatingHotkey,
     onUndoReview: reviewModeEnabled ? handleReviewUndo : null,
-    onPreviousFolder:
-      !isLoadingFolder && siblingFolders.previous
+    // While a stack is open, the folder keys step between stacks.
+    onPreviousFolder: openStack
+      ? () => handleStepStack(-1)
+      : !isLoadingFolder && siblingFolders.previous
         ? () => handlePreviousFolder(siblingFolders.previous)
         : null,
-    onNextFolder:
-      !isLoadingFolder && siblingFolders.next
+    onNextFolder: openStack
+      ? () => handleStepStack(1)
+      : !isLoadingFolder && siblingFolders.next
         ? () => handleNextFolder(siblingFolders.next)
         : null,
+    onToggleStacks: !isLoadingFolder ? toggleStackByPrompt : null,
+    onOpenStack: stackSelectionUnits ? handleOpenSelectedStack : null,
+    onCloseStack: openStack && !isLoadingFolder ? handleCloseStack : null,
+    onRejectUnreviewedInStack:
+      openStack && reviewModeEnabled ? handleRejectUnreviewedInStack : null,
     onOpenDetails: () => openMetadataPanel(),
     onAddToSequence: () => handleAddSelectionToSequence(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
@@ -4727,6 +4942,7 @@ function App() {
     selectRange: selection.selectRange,
     toggle: selection.toggle,
     selectOnly: selection.selectOnly,
+    openStack: handleOpenStack,
   };
 
   // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
@@ -4750,6 +4966,8 @@ function App() {
         }
       }
       if (isDoubleClick && video) {
+        // A collapsed stack opens as its own view; any other card plays.
+        if (current?.openStack?.(videoId)) return;
         collectionCallbacksRef.current?.openFullScreen?.(video);
         return;
       }
@@ -5087,6 +5305,8 @@ function App() {
             onHoverAudioToggle={toggleHoverAudio}
             groupByFolders={groupByFolders}
             onGroupByFoldersToggle={toggleGroupByFolders}
+            stackByPrompt={stackByPrompt}
+            onStackByPromptToggle={toggleStackByPrompt}
             showFolderHeaders={showFolderHeaders}
             onFolderHeadersToggle={setShowFolderHeaders}
             playbackMode={playbackMode}
@@ -5374,6 +5594,8 @@ function App() {
           <DebugSummary
             detailed={playbackDetailsVisible}
             total={videoCollection.stats.total}
+            stackedClips={stackSelectionUnits ? scopedFilteredVideos.length : null}
+            stackCount={stackSelectionUnits ? promptStacks.stacks.size : 0}
             rendered={virtualItems.length}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
@@ -5536,6 +5758,18 @@ function App() {
                       />
                     )}
 
+                  {openStackSummary && (
+                    <StackBar
+                      {...openStackSummary}
+                      unreviewedCount={openStackUnreviewed.length}
+                      reviewModeEnabled={reviewModeEnabled}
+                      onClose={handleCloseStack}
+                      onPrevious={() => handleStepStack(-1)}
+                      onNext={() => handleStepStack(1)}
+                      onRejectUnreviewed={handleRejectUnreviewedInStack}
+                    />
+                  )}
+
                   <div
                     className="content-region__viewport"
                     ref={attachScrollContainer}
@@ -5620,6 +5854,19 @@ function App() {
                               versionSuperseded={
                                 generationVersionIndex.get(video.id)?.superseded === true
                               }
+                              stackCount={
+                                stackSelectionUnits
+                                  ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
+                                      ?.members.length || 0
+                                  : 0
+                              }
+                              stackTotal={
+                                stackSelectionUnits
+                                  ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
+                                      ?.total || 0
+                                  : 0
+                              }
+                              onOpenStack={handleOpenStackFromCard}
                               isHoverAudioActive={
                                 hoverAudioEnabled &&
                                 videoCollection.activeHoverAudioId === video.id

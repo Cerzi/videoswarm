@@ -17,14 +17,25 @@ export default function DebugSummary({
   playbackMode,
   playbackTelemetry,
   workSuspensionReason,
+  // While prompt stacks are collapsed: the clips the cards stand for, and
+  // how many of the cards are stacks.
+  stackedClips = null,
+  stackCount = 0,
 }) {
   if (!detailed) {
-    const count = Math.max(0, Number(total) || 0);
+    const stacked = stackCount > 0 && Number.isFinite(stackedClips);
+    const count = Math.max(0, Number(stacked ? stackedClips : total) || 0);
     return (
       <div className="debug-info debug-info--short">
         <span>
           {count.toLocaleString()} {count === 1 ? "clip" : "clips"}
         </span>
+        {stacked && <span aria-hidden="true">·</span>}
+        {stacked && (
+          <span>
+            {stackCount.toLocaleString()} {stackCount === 1 ? "stack" : "stacks"}
+          </span>
+        )}
         {sortStatus && <span aria-hidden="true">·</span>}
         {sortStatus && <span>{sortStatus}</span>}
       </div>

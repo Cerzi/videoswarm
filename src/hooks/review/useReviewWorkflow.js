@@ -60,6 +60,23 @@ export const buildReviewProgress = (videos) => {
   return progress;
 };
 
+// The id auto-advance moves on from: the one selected clip, or the cover of
+// the one selected stack, whose runs all select together. Null when the
+// selection is anything else.
+export const singleSelectionUnit = (selection, units) => {
+  if (selection.size === 1) return selection.values().next().value;
+  if (!units || selection.size === 0) return null;
+  let key = null;
+  for (const id of selection) {
+    const unit = units.unitOf(id);
+    if (unit == null || (key !== null && unit !== key)) return null;
+    key = unit;
+  }
+  const members = units.membersOf(key);
+  if (members.length !== selection.size) return null;
+  return units.representativeOf(key) ?? null;
+};
+
 const mutationSucceeded = (result) =>
   result !== false && result?.success !== false && !result?.error;
 
@@ -146,6 +163,7 @@ export default function useReviewWorkflow({
   autoAdvance = false,
   notify,
   onMutationCommitted,
+  selectionUnitsRef = null,
 } = {}) {
   const [isBusy, setIsBusy] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
@@ -174,6 +192,7 @@ export default function useReviewWorkflow({
     autoAdvance,
     notify,
     onMutationCommitted,
+    selectionUnitsRef,
   };
 
   useEffect(() => {
@@ -383,15 +402,19 @@ export default function useReviewWorkflow({
       videosById,
     });
     let advance = null;
+    const advanceFromId = singleSelectionUnit(
+      selection,
+      current.selectionUnitsRef?.current || null
+    );
 
     if (
       allowAdvance &&
       !targetFingerprints &&
       current.autoAdvance &&
       mayAdvance &&
-      selection.size === 1
+      advanceFromId != null
     ) {
-      const selectedId = selection.values().next().value;
+      const selectedId = advanceFromId;
       const selectedVideo = videosById.get(selectedId);
       const selectedIndex = (current.orderedVideoIds || []).indexOf(selectedId);
       if (selectedIndex >= 0) {

@@ -32,6 +32,22 @@ const AudioStreamIcon = () => (
   </svg>
 );
 
+// Three offset sheets: a stack of runs of one prompt.
+const StackIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="12"
+    height="12"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path
+      fill="currentColor"
+      d="M7 3h12a2 2 0 0 1 2 2v10h-2V5H7V3Zm-3 4h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Zm0 2v10h12V9H4Z"
+    />
+  </svg>
+);
+
 const waitForPlayableData = (
   element,
   timeoutMs = RECOVERY_TIMEOUT_MS,
@@ -119,6 +135,11 @@ const VideoCard = memo(function VideoCard({
   // only when its own group changes.
   versionCount = 0,
   versionSuperseded = false,
+  // Prompt stacks (docs/architecture/prompt-stacks.md): the runs this card
+  // stands for, and how many the collection has when filters hide some.
+  stackCount = 0,
+  stackTotal = 0,
+  onOpenStack,
 
   // limits & callbacks (owned by parent/orchestrator)
   canLoadVideo,           // (id, options?) => boolean
@@ -263,6 +284,8 @@ const VideoCard = memo(function VideoCard({
   const hasReviewBadge =
     reviewModeEnabled && reviewState !== REVIEW_STATES.UNREVIEWED;
   const hasAudio = video?.hasAudio === true;
+  const isStack = stackCount >= 2;
+  const stackHidden = isStack ? Math.max(0, stackTotal - stackCount) : 0;
 
   const aspectRatioHint = (() => {
     const direct = Number(video?.aspectRatio);
@@ -1399,6 +1422,12 @@ const VideoCard = memo(function VideoCard({
     onContextMenu?.(e, video);
   }, [onContextMenu, video]);
 
+  // The pill opens the stack; it never also selects or toggles the card.
+  const handleOpenStackClick = useCallback((e) => {
+    e.stopPropagation();
+    onOpenStack?.(videoId);
+  }, [onOpenStack, videoId]);
+
   const handleMouseEnter = useCallback(() => {
     onHover?.(videoId);
     // Drag thumbnails are interaction affordances, not playback work. Capture
@@ -1515,7 +1544,9 @@ const VideoCard = memo(function VideoCard({
   return (
     <div
       ref={cardRef}
-      className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}`}
+      className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}${
+        isStack ? " video-item--stack" : ""
+      }`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -1564,6 +1595,24 @@ const VideoCard = memo(function VideoCard({
         >
           {versionCount} versions
         </div>
+      )}
+
+      {isStack && (
+        <button
+          type="button"
+          className={`video-item-stack${ratingValue !== null ? " with-rating" : ""}`}
+          title={
+            stackHidden > 0
+              ? `${stackCount} of ${stackTotal} runs of this prompt match the filters · open the stack`
+              : `${stackCount} runs of this prompt · open the stack`
+          }
+          aria-label={`Open the stack of ${stackCount} runs of this prompt`}
+          onClick={handleOpenStackClick}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <StackIcon />
+          {stackHidden > 0 ? `${stackCount}/${stackTotal}` : stackCount}
+        </button>
       )}
 
       {ratingValue !== null && (

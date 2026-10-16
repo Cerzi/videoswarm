@@ -15,6 +15,7 @@ const selectionMock = {
   selectExactly: vi.fn(),
   setSelectedIds: vi.fn(),
   selectRange: vi.fn(),
+  expandToUnits: vi.fn(),
 };
 
 const useSelectionStateMock = vi.fn(() => selectionMock);
@@ -2724,6 +2725,105 @@ describe("App hook composition", () => {
     ));
     expect(screen.queryByRole("dialog", { name: "Process review results" }))
       .not.toBeInTheDocument();
+  });
+
+  test("stacks runs of one prompt, opens, steps through and closes stacks", async () => {
+    const PK_A = `pk1-${"a".repeat(32)}`;
+    const PK_B = `pk1-${"b".repeat(32)}`;
+    const clip = (id, promptKey, createdMs) => ({
+      id,
+      name: `${id}.mp4`,
+      dirname: "",
+      fingerprint: `fp-${id}`,
+      promptKey,
+      reviewState: "unreviewed",
+      createdMs,
+    });
+    const videos = [
+      clip("a1", PK_A, 1),
+      clip("a2", PK_A, 2),
+      clip("solo", null, 3),
+      clip("b1", PK_B, 4),
+      clip("b2", PK_B, 6),
+      clip("b3", PK_B, 5),
+    ];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    // The grid lays out whatever it is given, in that order.
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({
+        id: video.id,
+        item: video,
+        style: {},
+      })),
+    }));
+    const saveSettingsPartial = vi.fn();
+    window.electronAPI = { saveSettingsPartial };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      expect(gridIds()).toEqual(["a1", "a2", "solo", "b1", "b2", "b3"]);
+
+      await act(async () => hotkeys().onToggleStacks());
+      expect(saveSettingsPartial).toHaveBeenCalledWith({ stackByPrompt: true });
+      // Each stack shows its newest run where that run sorts.
+      await waitFor(() => expect(gridIds()).toEqual(["a2", "solo", "b2"]));
+      expect(cardProps("a2")).toMatchObject({ stackCount: 2, stackTotal: 2 });
+      expect(cardProps("b2")).toMatchObject({ stackCount: 3, stackTotal: 3 });
+      expect(cardProps("solo").stackCount).toBe(0);
+      // Collapsed runs select together.
+      const { unitsRef } = useSelectionStateMock.mock.calls[0][0];
+      expect(unitsRef.current.membersOf(unitsRef.current.unitOf("a1"))).toEqual(["a1", "a2"]);
+
+      await act(async () => cardProps("a2").onOpenStack("a2"));
+      await waitFor(() => expect(gridIds()).toEqual(["a1", "a2"]));
+      expect(screen.getByText("Stack 1 of 2 · 2 runs")).toBeInTheDocument();
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith("a2");
+      // Inside a stack each run selects on its own.
+      expect(unitsRef.current).toBeNull();
+
+      await act(async () => hotkeys().onNextFolder());
+      await waitFor(() => expect(gridIds()).toEqual(["b1", "b2", "b3"]));
+      expect(screen.getByText("Stack 2 of 2 · 3 runs")).toBeInTheDocument();
+
+      await act(async () => hotkeys().onRejectUnreviewedInStack());
+      await waitFor(() =>
+        expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith(
+          "reject",
+          ["fp-b1", "fp-b2", "fp-b3"]
+        )
+      );
+
+      await act(async () => hotkeys().onCloseStack());
+      await waitFor(() => expect(gridIds()).toEqual(["a2", "solo", "b2"]));
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith("b2");
+      expect(screen.queryByRole("toolbar", { name: "Open prompt stack" })).toBeNull();
+
+      await act(async () => hotkeys().onToggleStacks());
+      await waitFor(() => expect(gridIds()).toEqual(["a1", "a2", "solo", "b1", "b2", "b3"]));
+      expect(saveSettingsPartial).toHaveBeenLastCalledWith({ stackByPrompt: false });
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
   });
 
   test("restores recursive scope when navigating from a child folder to the root", async () => {

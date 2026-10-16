@@ -281,4 +281,49 @@ describe('useHotkeys', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '=' }));
     expect(setZoomIndexSafe).toHaveBeenCalledWith(1.5);
   });
+
+  test('stack keys: G toggles, Shift+D or Shift+X rejects the rest, Esc closes', () => {
+    const onToggleStacks = vi.fn();
+    const onRejectUnreviewedInStack = vi.fn();
+    const onCloseStack = vi.fn();
+    const onSetReviewState = vi.fn();
+    renderHook(() =>
+      useHotkeys(run, getSelection, {
+        onToggleStacks,
+        onRejectUnreviewedInStack,
+        onCloseStack,
+        onSetReviewState,
+      })
+    );
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g' }));
+    expect(onToggleStacks).toHaveBeenCalledOnce();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
+    expect(onToggleStacks).toHaveBeenCalledOnce();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', shiftKey: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', shiftKey: true }));
+    expect(onRejectUnreviewedInStack).toHaveBeenCalledTimes(2);
+    // Plain D is still Reject for the selection.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+    expect(onSetReviewState).toHaveBeenCalledWith('reject', new Set(['x']));
+    expect(onRejectUnreviewedInStack).toHaveBeenCalledTimes(2);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onCloseStack).toHaveBeenCalledOnce();
+  });
+
+  test('Enter opens a selected stack instead of opening clips', () => {
+    getSelection.mockReturnValue(new Set(['s1', 's2']));
+    const onOpenStack = vi.fn(() => true);
+    renderHook(() => useHotkeys(run, getSelection, { onOpenStack }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(onOpenStack).toHaveBeenCalledWith(new Set(['s1', 's2']));
+    expect(run).not.toHaveBeenCalled();
+
+    // A selection that is not one stack still opens a single clip as before.
+    onOpenStack.mockReturnValue(false);
+    getSelection.mockReturnValue(new Set(['x']));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(run).toHaveBeenCalledWith(ActionIds.OPEN_EXTERNAL, new Set(['x']));
+  });
 });

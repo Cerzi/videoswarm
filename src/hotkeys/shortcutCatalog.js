@@ -111,6 +111,11 @@ export const FOLDER_DIRECTION_BY_KEY = Object.freeze({
   "]": "next",
 });
 
+// Prompt stacks (docs/architecture/prompt-stacks.md). While a stack is open,
+// the folder keys move between stacks instead.
+export const STACK_TOGGLE_KEYS = Object.freeze(["g"]);
+export const STACK_REJECT_UNREVIEWED_KEYS = Object.freeze(["d", "x"]);
+
 export const FULLSCREEN_COMMANDS = Object.freeze({
   PREVIOUS: "previous",
   NEXT: "next",
@@ -431,6 +436,44 @@ const VIEW_SHORTCUTS = Object.freeze([
   }),
 ]);
 
+const STACK_SHORTCUTS = Object.freeze([
+  freezeShortcut({
+    id: "toggle-stacks",
+    keys: ["G"],
+    label: "Stack runs of one prompt",
+    detail: "Collapses every run of a prompt into one card; press again to show each clip.",
+  }),
+  freezeShortcut({
+    id: "open-stack",
+    keys: ["Enter"],
+    label: "Open the selected stack",
+    detail: "When one collapsed stack is selected; a single clip opens as before.",
+  }),
+  freezeShortcut({
+    id: "previous-stack",
+    keys: ["["],
+    label: "Previous stack",
+    detail: "While a stack is open, in place of the previous folder.",
+  }),
+  freezeShortcut({
+    id: "next-stack",
+    keys: ["]"],
+    label: "Next stack",
+    detail: "While a stack is open, in place of the next folder.",
+  }),
+  freezeShortcut({
+    id: "reject-unreviewed-in-stack",
+    keys: ["Shift", "D"],
+    label: "Reject the rest of the open stack",
+    detail: "Rejects its unreviewed runs; picks and earlier decisions stay. Shift + X also works.",
+  }),
+  freezeShortcut({
+    id: "close-stack",
+    keys: ["Esc"],
+    label: "Close the open stack",
+  }),
+]);
+
 export const HOTKEY_SECTIONS = Object.freeze([
   Object.freeze({
     id: "application",
@@ -455,6 +498,12 @@ export const HOTKEY_SECTIONS = Object.freeze([
     title: "Review",
     description: "Fast triage for one clip or a batch.",
     shortcuts: REVIEW_SHORTCUTS,
+  }),
+  Object.freeze({
+    id: "stacks",
+    title: "Prompt stacks",
+    description: "Every run of one prompt as one card.",
+    shortcuts: STACK_SHORTCUTS,
   }),
   Object.freeze({
     id: "view",

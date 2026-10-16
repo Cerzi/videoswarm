@@ -1,7 +1,7 @@
 # Prompt Stacks
 
-Status: **Implemented** — sections 1, 2 and 6; **Unimplemented** — sections
-3 to 5 (the stack interface)
+Status: **Implemented** — all six sections; deferred items below. Not yet
+run against a real library or in the packaged app (see *Validation*).
 Last updated: 2026-10-16
 
 ## Summary
@@ -146,14 +146,15 @@ Status: **Implemented** (2026-10-16)
 
 ## 3. Stacks in the grid
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-10-16)
 
-- **Toggle.** *View → Stack runs of one prompt*, with a shortcut in the
-  shortcut catalog. Off by default; remembered as a setting.
+- **Toggle.** *View → Stack runs of one prompt*, or `G`. Off by default;
+  remembered as the `stackByPrompt` setting.
 - **Collapse after filtering.** Stacks are formed from the clips that pass the
   current filters and folder scope. A stack card stands for its *matching*
   clips; when filters hide some runs of the prompt, the count reads `5/20`.
-  Acting on a stack never touches a clip the filters hide.
+  Selecting a stack selects only its matching runs. (A selection made before
+  a filter change keeps its hidden clips, as every selection already does.)
 - **Collection-local.** Stacks are formed within the open collection, unlike
   version counts, which are library-wide. A stack is a way of viewing what is
   open; a tag search gives a library-wide collection to stack.
@@ -161,42 +162,56 @@ Status: **Unimplemented**
   rating, else its highest-resolution version, else its newest run. The card
   sits where the cover sorts. Clips that are alone in their stack, and clips
   without a key, look exactly as they do today.
-- **Visual.** Two thin offset edges behind the card, drawn in CSS without
-  changing the masonry layout, and a count pill. No animation.
+- **Visual.** A count pill with a stack icon at the top right (below the
+  rating when there is one), which opens the stack, and an inset double
+  outline. Offset "deck" edges were tried on paper and dropped: the masonry
+  gap is 4 px and the card clips its overflow, so they would touch the
+  neighbouring cards. No animation.
+- **Status line.** While stacks are collapsed it counts the clips the cards
+  stand for and the stacks among them (`18 clips · 3 stacks`), not cards.
 
 ## 4. Opening a stack
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-10-16)
 
 The generation-versions document deferred collapsing because expanding a card
 in place needs layout support the masonry grid lacks. A stack therefore opens
 as its own view rather than in place:
 
-- Opening a stack (its count pill, a double click, or the open shortcut on a
-  selected stack) shows only its runs in the normal grid, with a bar above it:
-  stack position, clip and seed counts, *Previous* and *Next* stack, *Reject
-  unreviewed* and *Close*.
-- Close returns to the collapsed grid with the stack's card selected and
-  scrolled into view.
-- Previous and next stack follow the collapsed grid's order and reuse the
-  previous/next-folder keys while a stack is open.
+- Opening a stack (its count pill, a double click, or `Enter` on a selected
+  stack) shows only its runs in the normal grid, with a bar above it: stack
+  position, run and seed counts, runs hidden by filters, *Reject unreviewed*,
+  *Previous* and *Next* stack, and *All stacks*. The cover is selected alone.
+- *All stacks* or `Esc` returns to the collapsed grid with the stack's card
+  selected and scrolled into view.
+- Previous and next stack follow the collapsed grid's order at the moment the
+  stack was opened, skipping stacks that have since dissolved, and use `[` and
+  `]` in place of the previous/next-folder keys while a stack is open.
+- A stack whose runs are all filtered out or removed closes by itself; another
+  folder, scope or collection closes it too. Inside a stack, a double click
+  plays the clip as usual, and versions of one seed show their usual badge.
 
 ## 5. Selection and review
 
-Status: **Unimplemented**
+Status: **Implemented** (2026-10-16)
 
 - **A collapsed stack selects as all of its clips.** Selecting its card selects
   every matching run; anything done to it (review state, rating, tags,
   transfer, trash) applies to all of them, and the selection count says so.
+  `useSelectionState` takes optional *selection units*: a click, Ctrl-click or
+  Shift-range treats a stack as one item (clicking the only selected stack
+  clears it, as for one clip), and after the stacks change the selection is
+  widened so no stack is ever left partly selected.
   One rule is easier to trust than per-action exceptions, and it is what
   culling needs: rejecting a bad prompt rejects all its runs. Destructive
   actions already confirm with the clip count.
 - **Auto-advance moves by stack.** A review decision on one selected stack
   advances to the next card, as it does for one clip.
 - **Inside a stack**, selection is per clip as everywhere else.
-- **Reject unreviewed** rejects every unreviewed run in the open stack in one
-  undoable step, leaving picks and earlier decisions alone. Pick the best run,
-  then reject the rest.
+- **Reject unreviewed** (`Shift+D` or `Shift+X`, or the bar's button) rejects
+  every unreviewed run in the open stack in one step that `Z` undoes, leaving
+  picks, ratings and earlier rejects alone. Pick the best run, then reject the
+  rest.
 
 ## 6. Checking stacks on your own library
 
@@ -233,7 +248,18 @@ node scripts/prompt-stack-report.cjs <folder> --out <report.html> [--limit N] [-
 Unrun on a real library as of this writing. Run on synthetic clips only:
 three seeds and a re-render of one prompt formed one stack of four, a prompt
 differing by one word was reported as a close pair, and the shared negative
-prompt was ignored.
+prompt was ignored. In Chromium the report's policy let local VP9 previews
+play and refused an injected image and fetch.
+
+The interface was exercised on 2026-10-16 by the built renderer in Chromium
+with a stand-in for the preload bridge serving eighteen synthetic records:
+collapse (18 clips to 8 cards), the pill, `Enter`, double click, `[`/`]`,
+`Shift+D`, `Esc`, Ctrl-click and Shift-range across a stack, a review key on a
+collapsed stack (one call naming all six runs), and the setting saved both
+ways. The packaged Electron app was not run: in that container
+`better-sqlite3` could not be rebuilt for Electron 43, whose headers host was
+not reachable. `src/App.test.jsx` covers the same flow against the real
+`App`.
 
 ## Deferred
 
@@ -256,9 +282,9 @@ prompt was ignored.
 1. ~~Prompt key and fixtures.~~ Done.
 2. ~~Storage, migration, indexing and record delivery.~~ Done.
 3. ~~Local evaluation report.~~ Done.
-4. Collapsed grid, stack cards and the toggle.
-5. Stack view and stack navigation.
-6. Selection, auto-advance by stack and *Reject unreviewed*.
+4. ~~Collapsed grid, stack cards and the toggle.~~ Done.
+5. ~~Stack view and stack navigation.~~ Done.
+6. ~~Selection, auto-advance by stack and *Reject unreviewed*.~~ Done.
 
 ## Implementation notes and decisions
 
@@ -274,3 +300,19 @@ prompt was ignored.
   generation key.
 - The report tool reuses the app's in-process tag reader and key function
   rather than a separate prototype, so what it measures is what the app does.
+
+### 2026-10-16 — Interface
+
+- Collapsing happens before the masonry layout, as a list transform: the grid
+  is given each stack's cover in place of its runs, and an open stack is given
+  only its runs. The layout, virtualization and playback scheduling are
+  untouched, which is why a stack opens as a view rather than in place.
+- Selection units live in `useSelectionState` rather than in each consumer,
+  because review keys, file actions, tags, transfer and the context menu all
+  read the selection directly; a whole-stack selection is simply the set of
+  its runs.
+- Auto-advance treats one selected stack like one clip and moves to the next
+  card; the review workflow learns the units through a ref, as the selection
+  hook does.
+- Cards receive primitives and one stable callback, so stacks recomputing on
+  every metadata update re-render only the cards whose counts change.
