@@ -802,6 +802,24 @@ if (!database || databaseLoadError) {
         }
       }
 
+      // v1 identity includes creation time to the millisecond, but Windows can
+      // stamp creation times from a clock that only ticks every ~15.6ms, so two
+      // identical files written back to back may share one v1 fingerprint.
+      // Rewrite under a fresh name until the creation time differs: reusing a
+      // just-deleted name would inherit its creation time (NTFS tunneling).
+      async function createFileWithDistinctCreation(relativePath, content, otherCreatedMs) {
+        const { dir, name, ext } = path.parse(relativePath);
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const candidate = path.join(dir, attempt === 0 ? `${name}${ext}` : `${name}-${attempt}${ext}`);
+          const file = createFile(candidate, content);
+          const { createdMs } = await computeFingerprint(file.filePath);
+          if (createdMs !== otherCreatedMs) return file;
+          fs.unlinkSync(file.filePath);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        throw new Error(`creation time never moved past ${otherCreatedMs}`);
+      }
+
       it('gives a copied file the same content identity and metadata', async () => {
         const original = createFile('original.mp4', 'shared-content-payload');
         const [indexed] = await store.indexFiles({
@@ -909,7 +927,11 @@ if (!database || databaseLoadError) {
           firstLegacy.legacyFingerprint
         );
 
-        const second = createFile('dup-b.mp4', 'duplicate-content-payload');
+        const second = await createFileWithDistinctCreation(
+          'dup-b.mp4',
+          'duplicate-content-payload',
+          firstLegacy.createdMs
+        );
         const [secondIndexed] = await store.indexFiles({
           rootPath,
           entries: [second],
