@@ -829,6 +829,75 @@ describe("App hook composition", () => {
     );
   });
 
+  test("Go to folder leaves a library view for the clip's folder and lands on it", async () => {
+    const clip = {
+      id: "/library/run-a/clip.mp4",
+      name: "clip.mp4",
+      basename: "clip.mp4",
+      fullPath: "/library/run-a/clip.mp4",
+      rootPath: "/library",
+      dirname: "run-a",
+      isElectronFile: true,
+      tags: ["keeper"],
+    };
+    const handleElectronFolderSelection = vi.fn().mockResolvedValue(undefined);
+    let lifecycle = {
+      ...electronLifecycleReturn,
+      videos: [clip],
+      activeRootPath: null,
+      tagCollection: { tags: ["keeper"], matchMode: "all", loadedAt: 1, truncated: false },
+      handleElectronFolderSelection,
+    };
+    useElectronLifecycleMock.mockImplementation(() => lifecycle);
+    useContextMenuMock.mockImplementation(() => ({
+      ...contextMenuReturn,
+      contextMenu: { visible: true, position: { x: 10, y: 10 }, contextId: clip.id },
+    }));
+    const authorizeRoot = vi.fn().mockResolvedValue({ success: true, rootPath: "/library" });
+    const saveSettingsPartial = vi.fn();
+    window.electronAPI = { library: { authorizeRoot }, saveSettingsPartial };
+    const previousOrdered = masonryReturn.orderedVideos;
+    // The right-clicked clip is on screen, so it is in the laid-out grid.
+    masonryReturn.orderedVideos = [clip];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      const rendered = render(<App />);
+
+      const menu = contextMenuSpy.mock.calls.at(-1)[0];
+      expect(menu.canGoToFolder).toBe(true);
+      await act(async () => {
+        menu.onAction("library:go-to-folder");
+      });
+      await waitFor(() =>
+        expect(handleElectronFolderSelection).toHaveBeenCalledWith("/library")
+      );
+      expect(authorizeRoot).toHaveBeenCalledWith("/library");
+      expect(filterStateReturn.resetFilters).toHaveBeenCalled();
+      // The clip sits in a subfolder, which only a recursive scan reaches.
+      expect(saveSettingsPartial).toHaveBeenCalledWith(
+        expect.objectContaining({ recursiveMode: true })
+      );
+
+      // The folder arrives: the clip is selected and scrolled into view.
+      masonryReturn.scrollToId.mockReturnValue(true);
+      lifecycle = { ...lifecycle, activeRootPath: "/library", tagCollection: null };
+      rendered.rerender(<App />);
+      await waitFor(() =>
+        expect(selectionMock.setSelected).toHaveBeenCalledWith(new Set([clip.id]))
+      );
+      await waitFor(() =>
+        expect(masonryReturn.scrollToId).toHaveBeenCalledWith(clip.id, {
+          align: "center",
+        })
+      );
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+      useContextMenuMock.mockImplementation(() => contextMenuReturn);
+      masonryReturn.scrollToId.mockImplementation(() => false);
+    }
+  });
+
   test("re-opening a library root starts at the top of the grid", async () => {
     const videos = [
       { id: "video-a", name: "a.mp4", fingerprint: "fingerprint-a" },

@@ -273,6 +273,33 @@ a collision exactly like any other rather than resolved by ordering.
 - Two roots yielding the same destination path is reported as a collision.
 - Per-root planning stays inside the existing media and path-byte bounds.
 
+## 5. Going from a library view to a clip's folder
+
+Status: **Implemented, unverified by a human** (2026-10-17)
+
+A card in a library view offers **Go to folder** in its context menu. It
+leaves the library search, drops every filter, opens the clip's root at the
+clip's own folder (current-folder scope), and lands on the clip there,
+selected and scrolled to the centre of the grid. A clip in a subfolder turns
+recursive mode on first, as folder navigation does.
+
+The landing rides on the folder-view snapshot rather than a separate pending
+state. Before opening the root, the clip's folder view is written with
+default filters, the clip selected and a one-shot `revealId`. The existing
+restore step applies that snapshot once the folder has loaded, and scrolls to
+the clip instead of a saved offset. Otherwise that same restore would undo
+any selection or scroll made beforehand. The reveal is then cleared, so
+later visits restore normally.
+
+### Acceptance
+
+- The menu item appears only in a library view, for a clip that names its
+  root.
+- The root is authorized first, and the snapshot is written under the
+  canonical root path the opener reads.
+- After the folder loads, the clip is selected and scrolled into view, and
+  the library filters are gone.
+
 ## Deferred
 
 - **Filtering the library view by anything other than tags** (rating, review

@@ -98,6 +98,8 @@ const ContextMenu = ({
   onAction,
   onPlacementChange,
   reviewModeEnabled = true,
+  // In a library-wide view: offer going to the clip's own folder.
+  canGoToFolder = false,
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
@@ -160,6 +162,16 @@ const ContextMenu = ({
     const localFileUnavailableReason = canSingleFileOps
       ? 'Desktop integration is unavailable'
       : 'Only available for local files';
+
+    if (canGoToFolder && primaryVideo?.rootPath) {
+      pushSection([
+        {
+          id: 'library-go-to-folder',
+          label: '↪ Go to folder',
+          action: 'library:go-to-folder',
+        },
+      ]);
+    }
 
     pushSection([
       {
@@ -284,9 +296,11 @@ const ContextMenu = ({
 
     return items;
   }, [
+    canGoToFolder,
     canSingleFileOps,
     contextId,
     electronAPI,
+    primaryVideo,
     reviewModeEnabled,
     selectionCount,
   ]);

@@ -91,6 +91,7 @@ import {
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
 import { posterFrames } from "./services/posterFrameCache";
+import { createDefaultFilters } from "./app/filters/filtersUtils";
 import { buildTagHierarchy } from "./app/filters/tagHierarchy";
 import {
   DEFAULT_PLAYBACK_MODE,
@@ -281,6 +282,10 @@ function App() {
   );
   const [showFolderHeaders, setShowFolderHeaders] = useState(false);
   const folderViewStateRef = useRef(new FolderViewStateCache());
+  // scrollToId, for restoring a folder view onto one clip; the masonry layout
+  // that provides it is set up further down.
+  const revealScrollRef = useRef(null);
+  const goToFolderRef = useRef(null);
   const restoredFolderViewKeyRef = useRef(null);
   const restoreScrollFrameRef = useRef([]);
   const beforeExternalFolderSelectionRef = useRef(null);
@@ -953,16 +958,28 @@ function App() {
       selection.clear();
     }
 
+    // "Go to folder" from a library view lands on its clip, once.
+    const revealId =
+      snapshot?.revealId != null && videos.some((video) => video.id === snapshot.revealId)
+        ? snapshot.revealId
+        : null;
+    if (snapshot?.revealId != null) {
+      folderViewStateRef.current.clearReveal(activeRootPath, currentDirectory, folderScope);
+    }
     const scrollTop = snapshot?.scrollTop || 0;
-    if (typeof requestAnimationFrame !== "function") {
+    const applyScroll = () => {
+      if (revealId != null && revealScrollRef.current?.(revealId, { align: "center" })) {
+        return;
+      }
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = scrollTop;
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      applyScroll();
       return undefined;
     }
     const firstFrame = requestAnimationFrame(() => {
       const secondFrame = requestAnimationFrame(() => {
-        if (scrollContainerRef.current) {
-          scrollContainerRef.current.scrollTop = scrollTop;
-        }
+        applyScroll();
         restoreScrollFrameRef.current = [];
       });
       restoreScrollFrameRef.current = [secondFrame];
@@ -1076,6 +1093,7 @@ function App() {
     gridElement,
   });
   fullOrderedVideosRef.current = orderedVideos;
+  revealScrollRef.current = scrollToId;
 
   const effectiveProgressiveCap = useMemo(() => {
     if (
@@ -2797,6 +2815,12 @@ function App() {
         );
         return;
       }
+      if (actionId === "library:go-to-folder") {
+        // Declared further down, so reached through a ref.
+        const video = getById(contextMenu.contextId);
+        if (video) void goToFolderRef.current?.(video);
+        return;
+      }
       if (actionId === "metadata:open") {
         const contextId = contextMenu.contextId;
         const useContextTarget =
@@ -3627,6 +3651,58 @@ function App() {
     ]
   );
   openLibraryRootRef.current = handleOpenLibraryRoot;
+
+  // From a library-wide view: leave the search and drop its filters, open
+  // the clip's root at the clip's own folder, and land on the clip there,
+  // selected and scrolled into view (see the folder-view restore above).
+  const handleGoToFolder = useCallback(
+    async (video) => {
+      const rootPath = typeof video?.rootPath === "string" ? video.rootPath : "";
+      if (!rootPath || video?.id == null) return false;
+      let canonicalRoot = rootPath;
+      try {
+        const authorization =
+          await window.electronAPI?.library?.authorizeRoot?.(rootPath);
+        if (authorization?.success === false) throw new Error(authorization.error);
+        canonicalRoot = authorization?.rootPath || rootPath;
+      } catch (error) {
+        console.error("Failed to open the clip's folder:", error);
+        notify("Could not open that clip's folder", "error");
+        return false;
+      }
+      const directory = normalizeRelativePath(video.dirname || "");
+      const scope = FolderScope.CURRENT_FOLDER;
+      const existing = folderViewStateRef.current.get(canonicalRoot, directory, scope);
+      folderViewStateRef.current.set(canonicalRoot, directory, scope, {
+        sortKey: existing?.sortKey ?? sortKey,
+        sortDir: existing?.sortDir ?? sortDir,
+        groupByFolders: existing?.groupByFolders ?? groupByFolders,
+        randomSeed: existing?.randomSeed ?? randomSeed,
+        filters: createDefaultFilters(),
+        selectedIds: [video.id],
+        scrollTop: 0,
+        revealId: video.id,
+      });
+      folderScopeReturnRef.current = null;
+      setLibrarySearchScope("folder");
+      resetFilters();
+      // A subfolder is only scanned in recursive mode, as when navigating.
+      if (directory && !recursiveMode) await handleRecursiveChange(true);
+      await openLibraryRootRef.current?.(canonicalRoot);
+      return true;
+    },
+    [
+      groupByFolders,
+      handleRecursiveChange,
+      notify,
+      randomSeed,
+      recursiveMode,
+      resetFilters,
+      sortDir,
+      sortKey,
+    ]
+  );
+  goToFolderRef.current = handleGoToFolder;
 
   const handleToggleLibraryPin = useCallback(
     async (rootPath, pinned) => {
@@ -6082,6 +6158,7 @@ function App() {
               onAction={handleContextAction}
               onPlacementChange={handleContextMenuPlacementChange}
               reviewModeEnabled={reviewModeEnabled}
+              canGoToFolder={Boolean(tagCollection)}
             />
           )}
         </>

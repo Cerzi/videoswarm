@@ -81,4 +81,29 @@ describe("FolderViewStateCache", () => {
       JSON.stringify(["C:\\root", "a/c", "all-descendants"])
     );
   });
+
+  it("keeps a clip to reveal for one arrival only", () => {
+    const cache = new FolderViewStateCache();
+    cache.set("/library", "run-a", "current-folder", {
+      selectedIds: ["/library/run-a/clip.mp4"],
+      revealId: "/library/run-a/clip.mp4",
+    });
+    expect(cache.get("/library", "run-a", "current-folder").revealId).toBe(
+      "/library/run-a/clip.mp4"
+    );
+    expect(cache.getLocation("/library")).toEqual({
+      directory: "run-a",
+      scope: "current-folder",
+    });
+
+    expect(cache.clearReveal("/library", "run-a", "current-folder")).toBe(true);
+    const after = cache.get("/library", "run-a", "current-folder");
+    expect(after.revealId).toBeNull();
+    expect(after.selectedIds).toEqual(["/library/run-a/clip.mp4"]);
+    expect(cache.clearReveal("/library", "run-a", "current-folder")).toBe(false);
+
+    cache.set("/library", "", "all-descendants", { revealId: { not: "an id" } });
+    expect(cache.get("/library", "", "all-descendants").revealId).toBeNull();
+  });
 });
+

@@ -334,4 +334,38 @@ describe('ContextMenu', () => {
     fireEvent.scroll(screen.getByRole('menu', { name: /Actions for Video a/i }));
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  test('offers Go to folder only for a library-view clip that names its root', () => {
+    const onAction = vi.fn();
+    const libraryClip = (id) => ({ ...getById(id), rootPath: '/library' });
+    const { unmount } = render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={1}
+        getById={libraryClip}
+        onClose={() => {}}
+        onAction={onAction}
+        canGoToFolder
+      />
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: /Go to folder/ }));
+    expect(onAction).toHaveBeenCalledWith('library:go-to-folder');
+    unmount();
+
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={1}
+        getById={libraryClip}
+        onClose={() => {}}
+        onAction={() => {}}
+      />
+    );
+    expect(screen.queryByRole('menuitem', { name: /Go to folder/ })).toBeNull();
+  });
 });
+

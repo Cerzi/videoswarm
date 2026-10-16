@@ -46,6 +46,12 @@ const normalizeSnapshot = (snapshot = {}) => ({
   groupByFolders: Boolean(snapshot.groupByFolders),
   randomSeed: Number.isFinite(snapshot.randomSeed) ? snapshot.randomSeed : null,
   filters: normalizeFilters(snapshot.filters),
+  // A clip to select and scroll to on the next arrival, once: "Go to folder"
+  // from a library view lands on the clip rather than at the top.
+  revealId:
+    typeof snapshot.revealId === "string" || typeof snapshot.revealId === "number"
+      ? snapshot.revealId
+      : null,
 });
 
 export class FolderViewStateCache {
@@ -93,6 +99,14 @@ export class FolderViewStateCache {
     const snapshot = this.views.get(key);
     if (!snapshot) return false;
     snapshot.scrollTop = 0;
+    return true;
+  }
+
+  // The reveal is one arrival's, not the view's: later visits restore normally.
+  clearReveal(rootPath, directory, scope) {
+    const snapshot = this.views.get(makeFolderViewKey(rootPath, directory, scope));
+    if (!snapshot || snapshot.revealId == null) return false;
+    snapshot.revealId = null;
     return true;
   }
 
