@@ -93,7 +93,7 @@ describe('computeMasonryLayout', () => {
         top: '0px',
         width: `${position.width}px`,
         height: `${position.height}px`,
-        transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+        transform: `translate(${position.x}px, ${position.y}px)`,
       });
       maximumBottom = Math.max(maximumBottom, position.bottom);
     });

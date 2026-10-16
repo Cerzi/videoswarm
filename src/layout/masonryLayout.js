@@ -133,7 +133,9 @@ export function computeMasonryLayout(items = [], options = {}) {
       top: '0px',
       width: `${columnWidth}px`,
       height: `${height}px`,
-      transform: `translate3d(${x}px, ${y}px, 0)`,
+      // A 2D translate: a 3D one would give every slot, including those
+      // with no video, its own compositor layer.
+      transform: `translate(${x}px, ${y}px)`,
     };
     const position = {
       id,

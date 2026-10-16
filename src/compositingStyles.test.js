@@ -34,4 +34,24 @@ describe("renderer compositing styles", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("never clips a grid card, which would round-clip its playing video", () => {
+    const css = fs
+      .readFileSync(path.resolve(process.cwd(), "src/App.css"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const cardRules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .map(([, selector, body]) => ({ selector: selector.trim(), body }))
+      .filter(({ selector }) =>
+        selector
+          .split(",")
+          .some((part) => /\.video-item(?![-\w])(?![^\s]*::?(after|before))[^\s]*$/.test(part.trim()))
+      );
+
+    expect(cardRules.length).toBeGreaterThan(0);
+    const offenders = cardRules.filter(({ body }) =>
+      /overflow\s*:\s*(hidden|clip)|contain\s*:[^;]*\bpaint\b|content-visibility/.test(body)
+    );
+    expect(offenders.map(({ selector }) => selector)).toEqual([]);
+  });
 });
+

@@ -1517,15 +1517,7 @@ const VideoCard = memo(function VideoCard({
       data-aspect-ratio={effectiveAspectRatio}
       style={{
         userSelect: "none",
-        position: "relative",
         width: "100%",
-        borderRadius: "8px",
-        overflow: "hidden",
-        cursor: "pointer",
-        border: selected
-          ? "3px solid var(--color-selection, #f59f00)"
-          : "1px solid #333",
-        background: "#1a1a1a",
         aspectRatio: effectiveAspectRatio,
       }}
     >

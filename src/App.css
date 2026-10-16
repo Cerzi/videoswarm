@@ -900,19 +900,32 @@ body {
   contain: layout paint style;
 }
 
-/* Video card */
+/* Video card
+   The card draws its rounded border and background but does not clip what is
+   inside it. A rounded clip around a playing video, with badges over it,
+   costs the compositor an offscreen pass per card on every frame; instead the
+   video and the surfaces in the card round their own corners, which Chromium
+   draws without one. Selection is an overlay ring, so selecting a card does
+   not shrink or re-crop its video. */
 .video-item {
-  content-visibility: auto;
-  contain-intrinsic-size: 140px 250px;
-  contain: layout paint style;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #2d2d2d;
+  --card-radius: 8px;
+  --card-inner-radius: 7px; /* inside the 1px border */
+  contain: layout style;
+  border: 1px solid #333;
+  border-radius: var(--card-radius);
+  background: #1a1a1a;
   cursor: pointer;
   position: relative;
-  /* Consolidated transitions (drop duplicate blocks later in file) */
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.video-item.selected::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 3px solid var(--color-selection, #f59f00);
+  border-radius: var(--card-radius);
+  pointer-events: none;
+  z-index: 3;
 }
 
 .video-item-rating {
@@ -1036,7 +1049,6 @@ body {
   color: rgba(255, 255, 255, 0.7);
 }
 
-.video-item.selected { border-color: var(--color-selection); }
 .video-item.error { border-color: #ff4444; }
 .video-item:focus-visible {
   outline: 3px solid rgba(81, 207, 102, 0.9);
@@ -1046,7 +1058,7 @@ body {
 .video-container {
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  border-radius: var(--card-inner-radius, 7px);
   background: #2d2d2d;
   display: flex;
   align-items: center;
@@ -1059,6 +1071,7 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: inherit;
 }
 
 /* Filename ribbon */
@@ -1094,10 +1107,12 @@ body {
 .video-grid.masonry-vertical,
 .video-grid.masonry-horizontal { position: relative; }
 
-/* Virtual masonry owns geometry through a lightweight absolute slot. */
+/* Virtual masonry owns geometry through a lightweight absolute slot. The
+   slot's rectangular paint containment bounds the card; the card itself has
+   no paint containment, which would clip with its rounded corners. */
 .video-grid.masonry-vertical .video-item,
 .video-grid.masonry-horizontal .video-item {
-  contain: layout paint size;
+  contain: layout size style;
 }
 
 .video-grid.virtualized-masonry {
@@ -1116,7 +1131,6 @@ body {
   opacity: 1;
   pointer-events: auto;
   transform: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
 .video-grid.virtualized-masonry .video-placeholder,
@@ -1179,6 +1193,8 @@ body {
   align-items: center;
   justify-content: center;
   height: 100%;
+  width: 100%;
+  border-radius: inherit;
   background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
   color: #ff6b6b;
   text-align: center;
@@ -1214,25 +1230,6 @@ body {
 .error-indicator.error-format { /* (kept for clarity) */
   background: linear-gradient(135deg, #2d1a1a, #3d2d2d);
   color: #ff6b6b;
-}
-
-/* Playing indicator */
-.video-item.playing { box-shadow: 0 0 0 2px #4caf50; }
-.video-item.playing::after {
-  content: "▶️";
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  font-size: 0.8rem;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 2px 4px;
-  border-radius: 3px;
-  z-index: 2;
-}
-
-/* Debug visibility outline */
-.video-item[data-visible="true"] {
-  border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
 /* ===== Context menu ===== */
@@ -1339,12 +1336,7 @@ body {
   background: #404040;
 }
 
-/* Ensure inner containers inherit radius */
-.video-item .video-element,
-.video-item .video-container { border-radius: 8px 8px 0 0; }
-
 /* ===== Loading feedback / misc ===== */
-.video-item.loading { opacity: 0.7; }
 
 .header button:disabled,
 .header input:disabled { opacity: 0.5; cursor: not-allowed; transition: opacity 0.3s ease; }
