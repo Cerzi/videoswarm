@@ -3052,6 +3052,10 @@ function App() {
     (rating) => reviewWorkflow.applyRating(rating),
     [reviewWorkflow.applyRating]
   );
+  const handleClearRating = useCallback(
+    () => reviewWorkflow.applyRating(null),
+    [reviewWorkflow.applyRating]
+  );
   const handleReviewUndo = useCallback(
     () => (reviewModeEnabled ? reviewWorkflow.undo() : false),
     [reviewModeEnabled, reviewWorkflow.undo]
@@ -5485,7 +5489,7 @@ function App() {
                           onRemoveTag={handleRemoveTag}
                           onApplyTagToSelection={handleApplyExistingTag}
                           onSetRating={reviewWorkflow.applyRating}
-                          onClearRating={() => reviewWorkflow.applyRating(null)}
+                          onClearRating={handleClearRating}
                           onSetReviewState={reviewWorkflow.applyReviewState}
                           reviewModeEnabled={reviewModeEnabled}
                           generationVersions={gridGenerationVersions}

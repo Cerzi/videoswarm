@@ -192,4 +192,51 @@ describe("WorkspaceSidebar", () => {
     expect(onSelectPanel).not.toHaveBeenCalled();
     expect(onCollapse).not.toHaveBeenCalled();
   });
+
+  it("lets unchanged panels skip renders when the app re-renders the sidebar", () => {
+    // Each Library render reads a pinned root's count state from this map.
+    let countReads = 0;
+    const rootCountStateByPath = new Proxy(
+      {},
+      {
+        get(target, property) {
+          if (property === "/roots/pinned") countReads += 1;
+          return target[property];
+        },
+      }
+    );
+    const libraryProps = {
+      tree: null,
+      currentPath: "",
+      expandedPaths: new Set([""]),
+      pinnedRoots: [{ rootPath: "/roots/pinned", label: "Pinned" }],
+      rootCountStateByPath,
+      savedViews: [],
+    };
+    function App({ tick, props = libraryProps }) {
+      return (
+        <div data-tick={tick}>
+          <WorkspaceSidebar
+            panels={buildWorkspacePanels({ libraryProps: props })}
+            activePanel="library"
+            open
+          />
+        </div>
+      );
+    }
+
+    const rendered = render(<App tick={0} />);
+    const afterMount = countReads;
+    expect(afterMount).toBeGreaterThan(0);
+
+    rendered.rerender(<App tick={1} />);
+    rendered.rerender(<App tick={2} />);
+    expect(countReads).toBe(afterMount);
+
+    rendered.rerender(
+      <App tick={3} props={{ ...libraryProps, currentPath: "run-a" }} />
+    );
+    expect(countReads).toBeGreaterThan(afterMount);
+  });
 });
+

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 import MenuButton from "./menu/MenuButton";
 import "./SequencePanel.css";
 
@@ -152,7 +152,7 @@ function NameForm({ initialValue = "", submitLabel, onSubmit, onCancel }) {
   );
 }
 
-export default function SequencePanel({
+function SequencePanel({
   sequences = [],
   activeSequence = null,
   activeSequenceId = null,
@@ -427,3 +427,7 @@ export default function SequencePanel({
     </section>
   );
 }
+
+// Kept mounted (hidden) in the workspace sidebar, which rebuilds its panels
+// on every App render.
+export default memo(SequencePanel);

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { memo, useMemo } from "react";
 import {
   deriveMetadataSelectionCount,
   deriveSingleSelectionInfo,
@@ -8,7 +8,7 @@ import MetadataInspectorContent from "./metadata/MetadataInspectorContent";
 import { MetadataGenerationSection } from "./metadata/MetadataContentSections";
 import { FocusSelectionIcon, UndockPanelIcon } from "./UiIcons";
 
-export default function DockedMetadataInspector({
+function DockedMetadataInspector({
   selectionCount,
   selectedVideos = [],
   selectionKey,
@@ -135,7 +135,7 @@ export default function DockedMetadataInspector({
 
 // The docked Generation panel: how the one selected clip was made, with the
 // whole sidebar to itself, so Details keeps review and tags in view.
-export function DockedGenerationPanel({ filename, generationMetadataState = null }) {
+function DockedGenerationPanelView({ filename, generationMetadataState = null }) {
   if (!generationMetadataState) return null;
   return (
     <section
@@ -159,3 +159,8 @@ export function DockedGenerationPanel({ filename, generationMetadataState = null
     </section>
   );
 }
+
+// Both are kept mounted (hidden) in the workspace sidebar, which rebuilds its
+// panels on every App render.
+export const DockedGenerationPanel = memo(DockedGenerationPanelView);
+export default memo(DockedMetadataInspector);

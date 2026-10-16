@@ -210,7 +210,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
   );
 });
 
-export function LibrarySidebarContent({
+function LibrarySidebarContentView({
   tree = null,
   currentPath = "",
   expandedPaths = new Set([""]),
@@ -504,5 +504,9 @@ function LibrarySidebar(props) {
     </aside>
   );
 }
+
+// Rendered inside the workspace sidebar, which rebuilds its panels on every
+// App render; memo lets the folder tree skip renders whose props are equal.
+export const LibrarySidebarContent = memo(LibrarySidebarContentView);
 
 export default memo(LibrarySidebar);
