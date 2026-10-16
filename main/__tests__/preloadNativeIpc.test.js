@@ -656,4 +656,27 @@ describe("preload sequences bridge", () => {
       preferredRootPath: null,
     });
   });
+
+  it("forwards only in/out zoom-wheel directions and unsubscribes", () => {
+    const { api, ipcRenderer } = loadPreload();
+    const callback = vi.fn();
+
+    const unsubscribe = api.onZoomWheel(callback);
+    const [[channel, handler]] = ipcRenderer.on.mock.calls.filter(
+      ([name]) => name === "ui:zoom-wheel"
+    );
+    expect(channel).toBe("ui:zoom-wheel");
+    handler({}, "in");
+    handler({}, "out");
+    handler({}, "sideways");
+    expect(callback.mock.calls).toEqual([["in"], ["out"]]);
+
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "ui:zoom-wheel",
+      handler
+    );
+    expect(api.onZoomWheel(null)()).toBeUndefined();
+  });
 });
+

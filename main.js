@@ -2300,6 +2300,14 @@ async function createWindow() {
   createdWebContents.on("will-navigate", preventUntrustedNavigation);
   createdWebContents.on("will-redirect", preventUntrustedNavigation);
   createdWebContents.on("will-attach-webview", (event) => event.preventDefault());
+  // Ctrl+wheel reaches the renderer as zoom-changed (Linux and Windows) so it
+  // needs no non-passive wheel listener, which would make every scroll wait
+  // for the renderer's main thread.
+  createdWebContents.on("zoom-changed", (_event, zoomDirection) => {
+    if (createdWindow.isDestroyed()) return;
+    if (zoomDirection !== "in" && zoomDirection !== "out") return;
+    createdWebContents.send("ui:zoom-wheel", zoomDirection);
+  });
   createdWebContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false)
   );

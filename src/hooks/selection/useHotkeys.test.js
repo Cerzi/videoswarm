@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import useHotkeys from '../selection/useHotkeys'; // adjust if path differs
 import { ActionIds } from '../actions/actions';
@@ -280,5 +280,139 @@ describe('useHotkeys', () => {
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '=' }));
     expect(setZoomIndexSafe).toHaveBeenCalledWith(1.5);
+  });
+
+  describe('Ctrl+wheel zoom', () => {
+    let frames;
+    let zoom;
+    let getZoomIndex;
+    let setZoomIndexSafe;
+
+    const flushFrames = () => {
+      const pending = frames.splice(0);
+      pending.forEach((callback) => callback());
+    };
+
+    const wheel = (deltaY, init = {}) => {
+      const event = new WheelEvent('wheel', {
+        deltaY,
+        ctrlKey: true,
+        cancelable: true,
+        ...init,
+      });
+      window.dispatchEvent(event);
+      return event;
+    };
+
+    beforeEach(() => {
+      frames = [];
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+      zoom = 2;
+      getZoomIndex = vi.fn(() => zoom);
+      setZoomIndexSafe = vi.fn((next) => {
+        zoom = next;
+      });
+    });
+
+    afterEach(() => {
+      delete window.electronAPI;
+      vi.restoreAllMocks();
+    });
+
+    const renderZoomHook = () =>
+      renderHook(() =>
+        useHotkeys(run, getSelection, {
+          getZoomIndex,
+          setZoomIndexSafe,
+          minZoomIndex: 0,
+          maxZoomIndex: 4,
+        })
+      );
+
+    test('uses the Electron zoom bridge instead of a blocking wheel listener', () => {
+      let emit = null;
+      const unsubscribe = vi.fn();
+      window.electronAPI = {
+        platform: 'linux',
+        onZoomWheel: vi.fn((callback) => {
+          emit = callback;
+          return unsubscribe;
+        }),
+      };
+      const addListener = vi.spyOn(window, 'addEventListener');
+
+      const { unmount } = renderZoomHook();
+
+      expect(addListener.mock.calls.some(([type]) => type === 'wheel')).toBe(false);
+      expect(wheel(-120).defaultPrevented).toBe(false);
+      flushFrames();
+      expect(setZoomIndexSafe).not.toHaveBeenCalled();
+
+      emit('in');
+      flushFrames();
+      expect(zoom).toBe(2.5);
+
+      emit('out');
+      flushFrames();
+      emit('out');
+      flushFrames();
+      expect(zoom).toBe(1.5);
+
+      unmount();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    test('falls back to a wheel listener on macOS, zooming both ways', () => {
+      window.electronAPI = { platform: 'darwin', onZoomWheel: vi.fn() };
+      renderZoomHook();
+
+      expect(window.electronAPI.onZoomWheel).not.toHaveBeenCalled();
+      expect(wheel(-120).defaultPrevented).toBe(true);
+      flushFrames();
+      expect(zoom).toBe(2.5);
+
+      // Reversing direction must zoom back out rather than repeat the last
+      // direction.
+      wheel(120);
+      flushFrames();
+      wheel(120);
+      flushFrames();
+      expect(zoom).toBe(1.5);
+
+      expect(wheel(120, { ctrlKey: false }).defaultPrevented).toBe(false);
+    });
+
+    test('keeps one set of listeners while callers pass fresh closures', () => {
+      const addDocumentListener = vi.spyOn(document, 'addEventListener');
+      const addWindowListener = vi.spyOn(window, 'addEventListener');
+      const onOpenHelp = vi.fn();
+      const { rerender } = renderHook(
+        ({ tick }) =>
+          useHotkeys(run, () => getSelection(tick), {
+            getZoomIndex: () => zoom,
+            setZoomIndexSafe: (next) => setZoomIndexSafe(next),
+            onOpenHelp: () => onOpenHelp(tick),
+          }),
+        { initialProps: { tick: 0 } }
+      );
+      rerender({ tick: 1 });
+      rerender({ tick: 2 });
+
+      const keydownCount = addDocumentListener.mock.calls.filter(
+        ([type]) => type === 'keydown'
+      ).length;
+      const wheelCount = addWindowListener.mock.calls.filter(
+        ([type]) => type === 'wheel'
+      ).length;
+      expect(keydownCount).toBe(1);
+      expect(wheelCount).toBe(1);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+      expect(onOpenHelp).toHaveBeenCalledWith(2);
+    });
   });
 });

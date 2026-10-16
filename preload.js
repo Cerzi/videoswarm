@@ -200,6 +200,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("ui:open-about", handler);
   },
 
+  onZoomWheel: (callback) => {
+    if (typeof callback !== "function") {
+      return () => {};
+    }
+    const handler = (_event, direction) => {
+      if (direction === "in" || direction === "out") callback(direction);
+    };
+    ipcRenderer.on("ui:zoom-wheel", handler);
+    return () => ipcRenderer.removeListener("ui:zoom-wheel", handler);
+  },
+
   // Settings management - existing methods
   saveSettings: async (settings) => {
     return await ipcRenderer.invoke("save-settings", settings);

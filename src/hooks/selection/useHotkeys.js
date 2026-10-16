@@ -14,12 +14,19 @@ import { ZOOM_LEVEL_STEP } from "../../zoom/config";
 
 const clampIndex = (i, lo, hi) => Math.min(hi, Math.max(lo, i));
 
+const normalizeDelta = (e) => {
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16;     // lines → px
+  else if (e.deltaMode === 2) dy *= 120; // pages → px
+  return dy;
+};
+
 const hasTextSelection = () => {
   const text = typeof window !== "undefined" ? window.getSelection?.()?.toString() : "";
   return Boolean(text && text.trim());
 };
 
-export default function useHotkeys(run, getSelection, opts = {}) {
+const readOptions = ({ run, getSelection, opts }) => {
   const {
     getZoomIndex,
     setZoomIndexSafe,
@@ -36,14 +43,69 @@ export default function useHotkeys(run, getSelection, opts = {}) {
     onOpenHelp,
     onOpenDetails,
     onAddToSequence,
-    enabled = true,
   } = opts;
+  return {
+    run,
+    getSelection,
+    getZoomIndex,
+    setZoomIndexSafe,
+    minZoomIndex,
+    maxZoomIndex,
+    zoomStep,
+    wheelStepUnits,
+    maxStepsPerFrame,
+    onSetReviewState,
+    onSetRating,
+    onUndoReview,
+    onPreviousFolder,
+    onNextFolder,
+    onOpenHelp,
+    onOpenDetails,
+    onAddToSequence,
+  };
+};
+
+// Chromium does not report Ctrl+wheel as a zoom request on macOS, so the
+// renderer keeps its own wheel listener there.
+const electronZoomWheelBridge = () => {
+  if (typeof window === "undefined") return null;
+  const api = window.electronAPI;
+  if (!api || api.platform === "darwin") return null;
+  return typeof api.onZoomWheel === "function" ? api.onZoomWheel : null;
+};
+
+export default function useHotkeys(run, getSelection, opts = {}) {
+  const { enabled = true } = opts;
+  const zoomAvailable = Boolean(opts.getZoomIndex && opts.setZoomIndexSafe);
+
+  // Callers pass fresh closures on every render. Reading them through a ref
+  // keeps one set of listeners for as long as the hook is enabled instead of
+  // removing and re-adding them on every render.
+  const latestRef = useRef(null);
+  latestRef.current = { run, getSelection, opts };
 
   // ----- existing key handling (Enter/Ctrl+C/Delete/+/-) stays the same -----
   useEffect(() => {
     if (!enabled) return undefined;
 
     const onKey = (e) => {
+      const {
+        run,
+        getSelection,
+        getZoomIndex,
+        setZoomIndexSafe,
+        minZoomIndex,
+        maxZoomIndex,
+        zoomStep,
+        onSetReviewState,
+        onSetRating,
+        onUndoReview,
+        onPreviousFolder,
+        onNextFolder,
+        onOpenHelp,
+        onOpenDetails,
+        onAddToSequence,
+      } = readOptions(latestRef.current);
       const target = e.target;
       if (target) {
         const tag = typeof target.tagName === "string" ? target.tagName.toUpperCase() : "";
@@ -199,94 +261,88 @@ export default function useHotkeys(run, getSelection, opts = {}) {
 
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [
-    run,
-    getSelection,
-    getZoomIndex,
-    setZoomIndexSafe,
-    minZoomIndex,
-    maxZoomIndex,
-    zoomStep,
-    onSetReviewState,
-    onSetRating,
-    onUndoReview,
-    onPreviousFolder,
-    onNextFolder,
-    onOpenHelp,
-    onOpenDetails,
-    onAddToSequence,
-    enabled,
-  ]);
+  }, [enabled]);
 
   // ----- Ctrl/⌘ + Wheel → zoom, coalesced per frame -----
-  const accumRef = useRef(0);
-  const rafRef = useRef(0);
-  const lastDirRef = useRef(0); // remember last direction to keep feel consistent within frame
-
-  const normalizeDelta = (e) => {
-    let dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 16;     // lines → px
-    else if (e.deltaMode === 2) dy *= 120; // pages → px
-    return dy;
-  };
-
   useEffect(() => {
-    if (!enabled || !getZoomIndex || !setZoomIndexSafe) return;
+    if (!enabled || !zoomAvailable) return undefined;
+
+    let accumulated = 0;
+    let frame = 0;
 
     const tick = () => {
-      rafRef.current = 0;
+      frame = 0;
+      const {
+        getZoomIndex,
+        setZoomIndexSafe,
+        minZoomIndex,
+        maxZoomIndex,
+        zoomStep,
+        wheelStepUnits,
+        maxStepsPerFrame,
+      } = readOptions(latestRef.current);
+      if (!getZoomIndex || !setZoomIndexSafe) {
+        accumulated = 0;
+        return;
+      }
 
       // Convert accumulated delta into whole steps
       const units = wheelStepUnits || 120;
-      let stepsFloat = accumRef.current / units;
+      const stepsFloat = accumulated / units;
       let steps = stepsFloat < 0 ? Math.floor(stepsFloat) : Math.ceil(stepsFloat);
       // Bound steps per frame to avoid big jumps
       steps = Math.max(-maxStepsPerFrame, Math.min(maxStepsPerFrame, steps));
+      if (steps === 0) return;
 
-      if (steps !== 0) {
-        // consume exactly the units we’re applying
-        accumRef.current -= steps * units;
+      // consume exactly the units we’re applying
+      accumulated -= steps * units;
 
-        let current = getZoomIndex();
-        const dir = steps > 0 ? (lastDirRef.current || 1) : (lastDirRef.current || -1);
-        const sign = steps > 0 ? Math.sign(dir) : Math.sign(dir);
-
-        // apply one-step moves repeatedly; this guarantees we never skip an index
-        const iterations = Math.abs(steps);
-        for (let i = 0; i < iterations; i++) {
-          const next = clampIndex(
-            current + (sign < 0 ? -zoomStep : zoomStep),
-            minZoomIndex,
-            maxZoomIndex
-          );
-          if (next === current) break; // hit a bound
-          setZoomIndexSafe(next);
-          current = next;
-        }
-
-        lastDirRef.current = sign;
+      // apply one-step moves repeatedly; this guarantees we never skip an index
+      let current = getZoomIndex();
+      const delta = steps > 0 ? zoomStep : -zoomStep;
+      for (let i = 0; i < Math.abs(steps); i++) {
+        const next = clampIndex(current + delta, minZoomIndex, maxZoomIndex);
+        if (next === current) break; // hit a bound
+        setZoomIndexSafe(next);
+        current = next;
       }
     };
+
+    const queue = (units) => {
+      accumulated += units;
+      if (!frame) frame = requestAnimationFrame(tick);
+    };
+    const cancel = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      accumulated = 0;
+    };
+
+    // In Electron, Ctrl+wheel arrives from the main process as zoom-changed.
+    // A non-passive wheel listener on window would make Chromium wait for this
+    // renderer's main thread before every scroll, so it is avoided there.
+    const subscribeZoomWheel = electronZoomWheelBridge();
+    if (subscribeZoomWheel) {
+      const unsubscribe = subscribeZoomWheel((direction) => {
+        const units = readOptions(latestRef.current).wheelStepUnits || 120;
+        queue(direction === "in" ? units : -units);
+      });
+      return () => {
+        if (typeof unsubscribe === "function") unsubscribe();
+        cancel();
+      };
+    }
 
     const onWheel = (e) => {
       if (!(e.ctrlKey || e.metaKey)) return; // only when modifier held
       e.preventDefault();
-
-      const dy = normalizeDelta(e);
-      accumRef.current -= dy;
-
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(tick);
-      }
+      queue(-normalizeDelta(e));
     };
 
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       window.removeEventListener("wheel", onWheel, { passive: false });
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = 0;
-      accumRef.current = 0;
-      lastDirRef.current = 0;
+      cancel();
     };
-  }, [enabled, getZoomIndex, setZoomIndexSafe, minZoomIndex, maxZoomIndex, zoomStep, wheelStepUnits, maxStepsPerFrame]);
+  }, [enabled, zoomAvailable]);
 }
