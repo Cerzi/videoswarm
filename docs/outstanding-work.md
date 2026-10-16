@@ -311,6 +311,11 @@ matches under the tag input, including in fullscreen. Check by hand:
 - After opening a library, version badges and stacks come back once the
   one-time background re-key finishes.
 - Typing a tag in fullscreen lists matches; arrows and Enter add one.
+- Tag hierarchy (`architecture/tag-hierarchy.md`): typing
+  `dance/bellydance` nests a tag; Filters › Tags › Parent moves one;
+  filtering or a library view of `dance` includes `bellydance` clips.
+- In a library view, a card's **Go to folder** opens its folder with the
+  clip selected and in view, and the filters cleared.
 
 Decision waiting for the user:
 
