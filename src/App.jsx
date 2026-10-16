@@ -5034,17 +5034,7 @@ function App() {
       onContextMenu={handleBackgroundContextMenu}
     >
       {!settingsLoaded ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100vh",
-            color: "#888",
-          }}
-        >
-          Loading settings...
-        </div>
+        <div className="app-settings-loading">Loading settings...</div>
       ) : (
         <>
           {/* Memory Alert */}

@@ -2261,6 +2261,10 @@ async function createWindow() {
     y: settings.windowBounds.y,
     minWidth: 800,
     minHeight: 600,
+    // Matches --color-bg so the window never flashes white; it is shown on
+    // its first painted frame (see showWhenPainted below).
+    show: false,
+    backgroundColor: "#1e1e1e",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -2292,6 +2296,24 @@ async function createWindow() {
   const createdWebContents = createdWindow.webContents;
   const playbackOwnerId = createdWebContents.id;
   registerNativeWorkOwner(createdWebContents);
+
+  // Show the window once the renderer has painted, so startup goes straight
+  // from nothing to the dark app. The fallback still shows a renderer that
+  // never paints, rather than leaving no window at all.
+  let windowShown = false;
+  const showWhenPainted = () => {
+    clearTimeout(showFallbackTimer);
+    if (windowShown || createdWindow.isDestroyed()) return;
+    windowShown = true;
+    createdWindow.show();
+  };
+  const showFallbackTimer = setTimeout(showWhenPainted, 3000);
+  createdWindow.once("ready-to-show", showWhenPainted);
+  createdWindow.once("show", () => {
+    windowShown = true;
+    clearTimeout(showFallbackTimer);
+  });
+  createdWindow.on("closed", () => clearTimeout(showFallbackTimer));
 
   createdWebContents.setWindowOpenHandler(() => ({ action: "deny" }));
   const preventUntrustedNavigation = (event, url) => {

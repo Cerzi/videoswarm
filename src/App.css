@@ -2,6 +2,8 @@
 
 /* ===== Theme ===== */
 :root {
+  /* Native scrollbars and form controls follow the dark theme. */
+  color-scheme: dark;
   --color-bg: #1e1e1e;
   --color-surface: #2a2a2a;
   --color-border: #3d3d3d;
@@ -14,6 +16,21 @@ html,
 body,
 #root {
   height: 100%;
+}
+
+/* Settings usually arrive within a frame or two; only say so if they don't. */
+.app-settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #888;
+  animation: app-settings-loading-in 0.2s ease 0.4s both;
+}
+
+@keyframes app-settings-loading-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 body {

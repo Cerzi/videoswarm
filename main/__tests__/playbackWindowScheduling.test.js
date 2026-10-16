@@ -13,4 +13,25 @@ describe("playback window scheduling", () => {
     expect(mainSource).not.toContain("setBackgroundThrottling");
     expect(mainSource).not.toContain("playback:set-mode-scheduling");
   });
+
+  it("shows the dark main window on its first paint, with a fallback", () => {
+    const mainSource = fs.readFileSync(
+      path.resolve(process.cwd(), "main.js"),
+      "utf8"
+    );
+    const appCss = fs.readFileSync(
+      path.resolve(process.cwd(), "src/App.css"),
+      "utf8"
+    );
+    const [, colorBg] = appCss.match(/--color-bg:\s*(#[0-9a-f]{6})/i);
+
+    expect(mainSource).toMatch(/show:\s*false,/);
+    expect(mainSource).toContain(`backgroundColor: "${colorBg}"`);
+    expect(mainSource).toMatch(
+      /createdWindow\.once\("ready-to-show", showWhenPainted\)/
+    );
+    expect(mainSource).toMatch(/setTimeout\(showWhenPainted, \d+\)/);
+    expect(appCss).toMatch(/:root\s*{[^}]*color-scheme:\s*dark;/);
+  });
 });
+
