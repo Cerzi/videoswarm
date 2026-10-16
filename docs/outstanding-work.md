@@ -260,41 +260,49 @@ use is Section 4's job.
 Status: **Implemented, unverified by a human** (2026-10-16)
 
 A code review found the weight was mostly renderer main-thread work at
-the moments of interaction, not decoding. Twelve commits from `2e5fde4`
-to `ed383b3` address it:
+the moments of interaction, not decoding. The commits from `2e5fde4` to
+`6b0c36f` address it:
 
 - Scrolling no longer waits on the renderer: Ctrl+wheel zoom comes from
   Electron's `zoom-changed` instead of a non-passive window listener.
 - The app re-renders a few times per screen of scrolling, not every
-  frame, and not at all for hover, idle telemetry or memory polls.
-- A click re-renders only the cards whose selection changed.
+  frame, and not at all for hover, idle telemetry or memory polls; a
+  click re-renders only the cards whose selection changed; hidden
+  sidebar panels skip renders whose props did not change.
 - A slow frame no longer evicts loaded clips.
 - Unloaded cards are quiet tiles that show the clip's first frame once
   captured; startup opens dark; no backdrop blur over live video.
+- Cards no longer clip their playing video through a rounded mask
+  (the video rounds its own corners), slots are 2D-translated, file
+  names overlay the video instead of cropping it, and selection is a
+  ring that leaves the video's size alone.
 - Folder opens write one row per unchanged file instead of 10-15
-  statements, and the media protocol does one read per range request
-  with 512 KiB chunks.
+  statements; the media protocol does one read per range request with
+  512 KiB chunks.
+- The watcher tracks only video files and its events reach the grid
+  in one update per 80 ms; generation-key progress publishes once a
+  second. Measured on real A1 clips, key work is about 1 ms per file,
+  so it stays on the main process.
+- Proxies skip sources the 1280x720 box would barely shrink, and encode
+  with two threads below normal priority.
 
 Nothing was profiled or launched, because the GPU was busy with
 generation. Check by hand:
 
 - **Ctrl+wheel zooms the grid** on Linux. This is the riskiest change:
   the `zoom-changed` path is unit-tested only.
-- Startup goes straight to the dark app; loading tiles, still frames and
-  the overlays look right; Static + Hover still starts on hover.
+- Cards look right: rounded corners on playing video, the selection
+  ring, file names over the video with tags and audio badge above them,
+  still frames and the switch from still to motion.
+- Startup goes straight to the dark app; Static + Hover still starts on
+  hover; new clips written into an open folder appear.
 - `npm run test:electron-smoke` passes.
 
-Left for later, from the same review:
+Decision waiting for the user:
 
-- Per-slot `translate3d` layers and rounded `overflow: hidden` clipping
-  over every video; the redundant `content-visibility: auto` on cards.
-- File names on by default draw a 40 px bar that crops each clip.
-- Proxies are off by default and only warm lazily.
-- The generation-key indexer parses ComfyUI JSON on the main thread
-  after every folder open; chokidar also stats non-video files, and
-  watcher events reach the renderer one file at a time.
-- Wider renderer splits: hidden sidebar panels and dialogs still
-  re-render with `App`.
+- **Proxies on by default?** For portrait WAN/A1 clips they cut decoded
+  pixels by about 1.8-3x, but they are CRF 30 re-encodes, which matters
+  in a tool for judging generated video. They stay off.
 
 ## 6. Local branches and pushes
 
