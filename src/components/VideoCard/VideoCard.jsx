@@ -16,6 +16,8 @@ import {
 } from "../../review/reviewState";
 
 const RECOVERY_TIMEOUT_MS = 4000;
+// Pointer rest before a hover counts as intent to drag (thumbnail capture).
+const HOVER_INTENT_MS = 150;
 
 const AudioStreamIcon = () => (
   <svg
@@ -163,6 +165,7 @@ const VideoCard = memo(function VideoCard({
   const signatureRef = useRef(null);
 
   const clickTimeoutRef = useRef(null);
+  const hoverIntentTimeoutRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const retryTimeoutRef = useRef(null);
   const mountedRef = useRef(true);
@@ -1363,6 +1366,9 @@ const VideoCard = memo(function VideoCard({
       mountedRef.current = false;
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+      if (hoverIntentTimeoutRef.current) {
+        clearTimeout(hoverIntentTimeoutRef.current);
+      }
       cancelThumbnailCapture("card-unmounted");
       cancelLoadAttempt();
       telemetryDisposeRef.current?.();
@@ -1403,8 +1409,13 @@ const VideoCard = memo(function VideoCard({
     onHover?.(videoId);
     // Drag thumbnails are interaction affordances, not playback work. Capture
     // on intent instead of doing canvas/PNG/native I/O for every newly playing
-    // card as the user scrolls through a large collection.
-    requestThumbnail("hover-intent");
+    // card as the user scrolls through a large collection, and only once the
+    // pointer rests, so sweeping across the grid captures nothing.
+    if (hoverIntentTimeoutRef.current) clearTimeout(hoverIntentTimeoutRef.current);
+    hoverIntentTimeoutRef.current = setTimeout(() => {
+      hoverIntentTimeoutRef.current = null;
+      requestThumbnail("hover-intent");
+    }, HOVER_INTENT_MS);
     if (hoverAudioEnabled) {
       onHoverAudioStart?.(videoId);
     }
@@ -1417,6 +1428,10 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   const handleMouseLeave = useCallback(() => {
+    if (hoverIntentTimeoutRef.current) {
+      clearTimeout(hoverIntentTimeoutRef.current);
+      hoverIntentTimeoutRef.current = null;
+    }
     onHover?.(null);
     if (hoverAudioEnabled) {
       onHoverAudioEnd?.(videoId);

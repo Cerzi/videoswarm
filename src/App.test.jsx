@@ -717,8 +717,9 @@ describe("App hook composition", () => {
       decoderTarget: playbackDecision.target,
       selectedIds: selectionMock.selected,
       centerPriorityIds: masonryReturn.centerPriorityIds,
-      hoveredId: null,
     });
+    // Hover reaches the orchestrator through markHover, not as App state.
+    expect(collectionArgs).not.toHaveProperty("hoveredId");
     expect(typeof electronArgs.resetMediaScheduler).toBe("function");
     expect(() => act(() => electronArgs.resetMediaScheduler())).not.toThrow();
     expect(
@@ -1151,18 +1152,15 @@ describe("App hook composition", () => {
     expect(lastProps.onPlayError).toBe(firstProps.onPlayError);
     expect(lastProps.onHover).toBe(firstProps.onHover);
 
+    // Hovering is passed straight to the orchestrator and re-renders nothing.
     const markHover = useVideoCollectionMock.mock.results.at(-1)?.value.markHover;
+    const rendersBeforeHover = useVideoCollectionMock.mock.calls.length;
     act(() => firstProps.onHover("video-1"));
-    expect(useVideoCollectionMock.mock.calls.at(-1)?.[0].hoveredId).toBe(
-      "video-1"
-    );
     expect(markHover).toHaveBeenCalledWith("video-1");
+    expect(useVideoCollectionMock.mock.calls).toHaveLength(rendersBeforeHover);
 
-    const hoverRenderMarkHover =
-      useVideoCollectionMock.mock.results.at(-1)?.value.markHover;
     act(() => firstProps.onUnmount("video-1"));
-    expect(useVideoCollectionMock.mock.calls.at(-1)?.[0].hoveredId).toBeNull();
-    expect(hoverRenderMarkHover).toHaveBeenCalledWith(null);
+    expect(markHover).toHaveBeenCalledWith(null);
 
     act(() => firstProps.onVideoLoad("video-1", 16 / 9));
     const loadedProps = videoCardSpy.mock.calls

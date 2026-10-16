@@ -287,7 +287,21 @@ describe("VideoCard", () => {
 
     expect(requestCapture).not.toHaveBeenCalled();
 
-    fireEvent.mouseEnter(rendered.container.querySelector(".video-item"));
+    // Sweeping across the card captures nothing; resting on it does.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const card = rendered.container.querySelector(".video-item");
+      fireEvent.mouseEnter(card);
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.mouseLeave(card);
+      act(() => vi.advanceTimersByTime(500));
+      expect(requestCapture).not.toHaveBeenCalled();
+
+      fireEvent.mouseEnter(card);
+      act(() => vi.advanceTimersByTime(150));
+    } finally {
+      vi.useRealTimers();
+    }
     expect(requestCapture).toHaveBeenCalledOnce();
     expect(requestCapture).toHaveBeenCalledWith(
       expect.objectContaining({

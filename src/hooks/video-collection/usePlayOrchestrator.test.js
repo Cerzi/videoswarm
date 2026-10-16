@@ -1,13 +1,29 @@
-import { describe, test, expect } from 'vitest';
+import { afterEach, describe, test, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import usePlayOrchestrator, {
+  HOVER_SETTLE_MS,
   MAX_PLAYBACK_START_HISTORY,
 } from './usePlayOrchestrator';
 import { createMediaSlotScheduler } from '../../services/mediaSlotScheduler';
 
 const setOf = (arr) => new Set(arr);
 
+// Hover reconciles after the pointer settles.
+const hoverAndSettle = (result, id) => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => {
+      result.current.markHover(id);
+      vi.advanceTimersByTime(HOVER_SETTLE_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+};
+
 describe('usePlayOrchestrator', () => {
+  afterEach(() => vi.useRealTimers());
+
   test('reportStarted adds to playingSet', () => {
     const visible = setOf(['a', 'b', 'c']);
     const loaded = setOf(['a', 'b', 'c']);
@@ -36,9 +52,7 @@ describe('usePlayOrchestrator', () => {
     expect(result.current.playingSet.has('x')).toBe(true);
     const xLease = result.current.getDecoderLease('x');
 
-    act(() => {
-      result.current.markHover('y'); // requests x -> y handoff
-    });
+    hoverAndSettle(result, 'y'); // requests x -> y handoff
     expect(result.current.playingSet.size).toBe(0);
 
     act(() => {
@@ -201,7 +215,7 @@ describe('usePlayOrchestrator', () => {
     const nextId = firstId === 'a' ? 'b' : 'a';
     const firstLease = result.current.getDecoderLease(firstId);
 
-    act(() => result.current.markHover(nextId));
+    hoverAndSettle(result, nextId);
     expect(result.current.playingSet.size).toBe(0);
     expect(scheduler.getSnapshot()).toMatchObject({
       decoders: 1,
@@ -405,4 +419,47 @@ describe('usePlayOrchestrator', () => {
       maxStartHistoryEntries: MAX_PLAYBACK_START_HISTORY,
     });
   });
+
+  test('hover reconciles once the pointer settles and renders only on change', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const visible = setOf(['x', 'y', 'z']);
+    const loaded = setOf(['x', 'y', 'z']);
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return usePlayOrchestrator({
+        visibleIds: visible,
+        loadedIds: loaded,
+        maxPlaying: 1,
+      });
+    });
+    act(() => {
+      result.current.reportStarted('x');
+    });
+    const settledRenders = renders;
+
+    // Entering the card that already decodes, and leaving it, changes nothing.
+    act(() => {
+      result.current.markHover('x');
+      vi.advanceTimersByTime(HOVER_SETTLE_MS);
+    });
+    expect(renders).toBe(settledRenders);
+
+    // Sweeping across y on the way to z hands nothing to y.
+    act(() => {
+      result.current.markHover('y');
+      vi.advanceTimersByTime(HOVER_SETTLE_MS / 2);
+      result.current.markHover('z');
+    });
+    expect(result.current.playingSet).toEqual(new Set(['x']));
+    act(() => vi.advanceTimersByTime(HOVER_SETTLE_MS));
+    expect(result.current.playingSet.size).toBe(0);
+
+    const xLease = result.current.getDecoderLease('x');
+    act(() => {
+      result.current.reportPaused('x', xLease);
+    });
+    expect(result.current.playingSet).toEqual(new Set(['z']));
+  });
 });
+

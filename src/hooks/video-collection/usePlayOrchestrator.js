@@ -15,6 +15,9 @@ import {
 } from "../../playback/playbackPolicy";
 
 const ERROR_COOLDOWN_MS = 8000;
+// Hover reconciles once the pointer rests this long, so sweeping across the
+// grid does not hand a decoder to every card it crosses.
+export const HOVER_SETTLE_MS = 60;
 export const MAX_PLAYBACK_START_HISTORY = 1024;
 const EMPTY_IDS = Object.freeze([]);
 const EMPTY_SET = new Set();
@@ -266,11 +269,26 @@ export default function usePlayOrchestrator({
     [mirrorScheduler, scheduler]
   );
 
+  // Hover is read through hoveredRef and reconciled imperatively: it causes a
+  // render only when the decoder set actually changes (via mirrorScheduler),
+  // not on every pointer enter and leave.
+  const reconcileRef = useRef(reconcile);
+  reconcileRef.current = reconcile;
+  const hoverSettleTimerRef = useRef(null);
   const markHover = useCallback((id) => {
     if (hoveredRef.current === id) return;
     hoveredRef.current = id;
-    setReconcileRevision((value) => value + 1);
-  }, []);
+    if (hoverSettleTimerRef.current !== null) {
+      clearTimeout(hoverSettleTimerRef.current);
+      hoverSettleTimerRef.current = null;
+    }
+    // Entering a card that already owns a decoder changes nothing.
+    if (id != null && scheduler.getDecoderLease(id)) return;
+    hoverSettleTimerRef.current = setTimeout(() => {
+      hoverSettleTimerRef.current = null;
+      reconcileRef.current();
+    }, HOVER_SETTLE_MS);
+  }, [scheduler]);
 
   const onCardHoverAudioStart = useCallback(
     (id) => {
@@ -300,6 +318,10 @@ export default function usePlayOrchestrator({
 
   useEffect(
     () => () => {
+      if (hoverSettleTimerRef.current !== null) {
+        clearTimeout(hoverSettleTimerRef.current);
+        hoverSettleTimerRef.current = null;
+      }
       for (const timer of errorTimersRef.current.values()) clearTimeout(timer);
       errorTimersRef.current.clear();
       recentlyErroredRef.current.clear();

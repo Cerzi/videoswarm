@@ -204,7 +204,8 @@ function App() {
     useState(true);
   const [fullscreenGenerationExpanded, setFullscreenGenerationExpanded] =
     useState(true);
-  const [hoveredVideoId, setHoveredVideoId] = useState(null);
+  // Hover is not React state: the playback orchestrator reads it through its
+  // own ref, so pointer movement over the grid does not re-render the app.
   const hoveredVideoIdRef = useRef(null);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [sortKey, setSortKey] = useState(SortKey.NAME);
@@ -2933,7 +2934,6 @@ function App() {
     decoderTarget: playbackDecision.target,
     selectedIds: selection.selected,
     centerPriorityIds,
-    hoveredId: hoveredVideoId,
   });
 
   const collectionCallbacksRef = useRef(null);
@@ -3022,7 +3022,6 @@ function App() {
   const handleVideoHover = useCallback((videoId) => {
     const nextId = videoId || null;
     hoveredVideoIdRef.current = nextId;
-    setHoveredVideoId(nextId);
     collectionCallbacksRef.current?.markHover?.(nextId);
   }, []);
   const handleHoverAudioStart = useCallback((videoId) => {
@@ -3145,7 +3144,6 @@ function App() {
       setActualPlaying((prev) => updateSetMembership(prev, videoId, false));
       if (hoveredVideoIdRef.current === videoId) {
         hoveredVideoIdRef.current = null;
-        setHoveredVideoId(null);
         collectionCallbacksRef.current?.markHover?.(null);
       }
     }, []);
