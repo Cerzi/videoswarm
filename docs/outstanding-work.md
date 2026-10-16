@@ -1,6 +1,6 @@
 # Outstanding Work
 
-Last updated: 2026-09-29
+Last updated: 2026-10-16
 
 Written at a machine change, so it is a handover rather than a roadmap: what is
 genuinely unfinished, what is finished but unverified by a human, and where the
@@ -254,6 +254,47 @@ All ten decisions and every slice have landed:
 Two bugs found on the way are fixed too: folders opened scrolled far down,
 and the review bar wrapped to two rows with 16 px buttons. How it feels in
 use is Section 4's job.
+
+## 5c. The app feels heavy: interaction performance pass
+
+Status: **Implemented, unverified by a human** (2026-10-16)
+
+A code review found the weight was mostly renderer main-thread work at
+the moments of interaction, not decoding. Twelve commits from `2e5fde4`
+to `ed383b3` address it:
+
+- Scrolling no longer waits on the renderer: Ctrl+wheel zoom comes from
+  Electron's `zoom-changed` instead of a non-passive window listener.
+- The app re-renders a few times per screen of scrolling, not every
+  frame, and not at all for hover, idle telemetry or memory polls.
+- A click re-renders only the cards whose selection changed.
+- A slow frame no longer evicts loaded clips.
+- Unloaded cards are quiet tiles that show the clip's first frame once
+  captured; startup opens dark; no backdrop blur over live video.
+- Folder opens write one row per unchanged file instead of 10-15
+  statements, and the media protocol does one read per range request
+  with 512 KiB chunks.
+
+Nothing was profiled or launched, because the GPU was busy with
+generation. Check by hand:
+
+- **Ctrl+wheel zooms the grid** on Linux. This is the riskiest change:
+  the `zoom-changed` path is unit-tested only.
+- Startup goes straight to the dark app; loading tiles, still frames and
+  the overlays look right; Static + Hover still starts on hover.
+- `npm run test:electron-smoke` passes.
+
+Left for later, from the same review:
+
+- Per-slot `translate3d` layers and rounded `overflow: hidden` clipping
+  over every video; the redundant `content-visibility: auto` on cards.
+- File names on by default draw a 40 px bar that crops each clip.
+- Proxies are off by default and only warm lazily.
+- The generation-key indexer parses ComfyUI JSON on the main thread
+  after every folder open; chokidar also stats non-video files, and
+  watcher events reach the renderer one file at a time.
+- Wider renderer splits: hidden sidebar panels and dialogs still
+  re-render with `App`.
 
 ## 6. Local branches and pushes
 
