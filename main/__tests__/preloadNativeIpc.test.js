@@ -701,5 +701,21 @@ describe("preload sequences bridge", () => {
       handler
     );
   });
+
+  it("sets a tag's parent through one invoke, with null for top level", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.metadata.setTagParent("bellydance", "dance");
+    await api.metadata.setTagParent("bellydance");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+      "metadata:set-tag-parent",
+      "bellydance",
+      "dance"
+    );
+    expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(
+      "metadata:set-tag-parent",
+      "bellydance",
+      null
+    );
+  });
 });
 

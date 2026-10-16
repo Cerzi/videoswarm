@@ -5251,6 +5251,36 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  "metadata:set-tag-parent",
+  async (_event, tagName, parentName = null) => {
+    try {
+      const store = getMetadataStore();
+      const cleanName = assertString(tagName, {
+        name: "tag name",
+        minChars: 1,
+        maxChars: 256,
+        trim: true,
+      });
+      const cleanParent =
+        parentName === null || parentName === undefined || parentName === ""
+          ? null
+          : assertString(parentName, {
+              name: "parent tag name",
+              minChars: 1,
+              maxChars: 256,
+              trim: true,
+            });
+      return { success: true, tags: store.setTagParent(cleanName, cleanParent) };
+    } catch (error) {
+      if (error?.code !== "TAG_HIERARCHY") {
+        console.error("Failed to set tag parent:", error);
+      }
+      return { success: false, error: error?.message || String(error) };
+    }
+  }
+);
+
+ipcMain.handle(
   "metadata:remove-tag",
   async (_event, fingerprints = [], tagName) => {
     try {

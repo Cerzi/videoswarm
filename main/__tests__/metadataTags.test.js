@@ -93,6 +93,54 @@ if (!hasNativeDriver || databaseLoadError) {
       expect(Number(entry?.usageCount || 0)).toBeGreaterThan(0);
     });
 
+    it("nests tags, counting each clip once toward every tag above it", async () => {
+      const stamp = `${Date.now()}-${Math.random()}`;
+      const dance = `dance-${stamp}`;
+      const belly = `belly-${stamp}`;
+      const tap = `tap-${stamp}`;
+      const a = await createIndexedFile(`nest-a-${stamp}`);
+      const b = await createIndexedFile(`nest-b-${stamp}`);
+      const find = (name) => store.listTags().find((tag) => tag.name === name);
+
+      // The path form applies only the last tag and places it under the rest.
+      store.assignTags([a], [`${dance}/${belly}`]);
+      store.assignTags([b], [`${dance}/${tap}`, belly]);
+      expect(find(belly)).toMatchObject({ parent: dance, usageCount: 2, directCount: 2 });
+      expect(find(tap)).toMatchObject({ parent: dance, usageCount: 1 });
+      // b carries two tags under dance and still counts once.
+      expect(find(dance)).toMatchObject({ parent: null, usageCount: 2, directCount: 0 });
+      expect(store.getMetadataForFingerprints([a])[a].tags).toEqual([belly]);
+
+      expect(() => store.setTagParent(dance, belly)).toThrow(/already inside/);
+      expect(() => store.setTagParent(dance, dance)).toThrow(/own parent/);
+      store.setTagParent(tap, null);
+      expect(find(tap)).toMatchObject({ parent: null });
+      expect(find(dance).usageCount).toBe(2);
+    });
+
+    it("refuses a tree deeper than eight levels", () => {
+      const stamp = `${Date.now()}-${Math.random()}`;
+      const names = Array.from({ length: 9 }, (_, index) => `level${index}-${stamp}`);
+      for (let index = 1; index < 8; index += 1) {
+        store.setTagParent(names[index], names[index - 1]);
+      }
+      expect(() => store.setTagParent(names[8], names[7])).toThrow(/at most 8/);
+    });
+
+    it("keeps a parent while tags sit under it and drops it with the last one", async () => {
+      const stamp = `${Date.now()}-${Math.random()}`;
+      const parent = `genre-${stamp}`;
+      const child = `waltz-${stamp}`;
+      const clip = await createIndexedFile(`prune-${stamp}`);
+      store.assignTags([clip], [`${parent}/${child}`]);
+      expect(store.listTags().some((tag) => tag.name === parent)).toBe(true);
+
+      store.removeTag([clip], child);
+      const names = store.listTags().map((tag) => tag.name);
+      expect(names).not.toContain(child);
+      expect(names).not.toContain(parent);
+    });
+
     it("counts a tag only on clips whose file is present", async () => {
       const tagName = `tag-${Date.now()}-presence`;
       const keptPath = path.join(tempDir, `kept-${Math.random()}.mp4`);

@@ -366,6 +366,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("metadata:add-tags", fingerprints, tagNames),
     removeTag: async (fingerprints, tagName) =>
       ipcRenderer.invoke("metadata:remove-tag", fingerprints, tagName),
+    setTagParent: async (tagName, parentName = null) =>
+      ipcRenderer.invoke("metadata:set-tag-parent", tagName, parentName ?? null),
     setRating: async (fingerprints, rating) =>
       ipcRenderer.invoke("metadata:set-rating", fingerprints, rating),
     setReviewState: async (fingerprints, reviewState) =>

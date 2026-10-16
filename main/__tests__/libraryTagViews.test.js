@@ -107,6 +107,34 @@ if (!database || databaseLoadError) {
       expect(single.records).toHaveLength(2);
     });
 
+    it('matches a tag through the tags under it, counting each requested tag once', async () => {
+      const belly = await indexInto('alpha', 'belly.mp4', 'belly');
+      const tap = await indexInto('alpha', 'tap.mp4', 'tap');
+      const outdoor = await indexInto('beta', 'outdoor-belly.mp4', 'outdoor-belly');
+      const plain = await indexInto('beta', 'plain.mp4', 'plain');
+      store.assignTags([belly.indexed.fingerprint], ['dance/bellydance']);
+      store.assignTags([tap.indexed.fingerprint], ['dance/tap']);
+      store.assignTags([outdoor.indexed.fingerprint], ['bellydance', 'tap', 'outdoor']);
+      store.assignTags([plain.indexed.fingerprint], ['outdoor']);
+
+      const dance = store.getTaggedLibrarySnapshot({ tagNames: ['Dance'] });
+      expect(dance.records.map((record) => record.relativePath).sort()).toEqual([
+        'belly.mp4',
+        'outdoor-belly.mp4',
+        'tap.mp4',
+      ]);
+      // Two tags under "dance" still satisfy only the "dance" half of an "all".
+      const both = store.getTaggedLibrarySnapshot({ tagNames: ['dance', 'outdoor'] });
+      expect(both.records.map((record) => record.relativePath)).toEqual([
+        'outdoor-belly.mp4',
+      ]);
+      const either = store.getTaggedLibrarySnapshot({
+        tagNames: ['tap', 'outdoor'],
+        matchMode: 'any',
+      });
+      expect(either.records).toHaveLength(3);
+    });
+
     it('carries the same projection a folder view would produce', async () => {
       const entry = await indexInto('alpha', 'rated.mp4', 'rated');
       store.assignTags([entry.indexed.fingerprint], ['keeper']);

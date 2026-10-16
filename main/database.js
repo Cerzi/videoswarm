@@ -73,6 +73,18 @@ function mapGenerationKeyFields(
 const MISSING_REASONS = new Set(['trashed', 'moved']);
 // A library view can span every root, so its bounds are its own rather than
 // borrowed from the per-root cached grid.
+// Tag hierarchy depth, root to leaf. Deep enough for any real taxonomy and a
+// hard bound on every walk up or down the tree.
+const MAX_TAG_DEPTH = 8;
+
+class TagHierarchyError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'TagHierarchyError';
+    this.code = 'TAG_HIERARCHY';
+  }
+}
+
 const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
   maxTags: 16,
   maxRecords: 20_000,
@@ -971,6 +983,26 @@ function initDatabase(app, profilePath) {
         ON sequence_entries(fingerprint);
     `);
 
+    // Tag hierarchy: each tag may have one parent ("bellydance" under
+    // "dance"). Ancestors are derived when matching and counting, never
+    // written onto clips. See docs/architecture/tag-hierarchy.md.
+    const tagColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(tags);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!tagColumns.has('parent_id')) {
+      db.exec(
+        'ALTER TABLE tags ADD COLUMN parent_id INTEGER REFERENCES tags(id) ON DELETE SET NULL;'
+      );
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tags_parent
+        ON tags(parent_id)
+        WHERE parent_id IS NOT NULL;
+    `);
+
     const mediaContentColumns = new Set(
       db
         .prepare('PRAGMA table_info(media_content);')
@@ -1626,12 +1658,15 @@ function createMetadataStore(db) {
       -- @required_matches is the tag count for "all" and 1 for "any", so one
       -- statement serves both without a second prepared query. At zero tags it
       -- is zero, which matches every row - the no-constraint case.
+      -- With the tag hierarchy, each requested tag is a group of itself and
+      -- every tag under it (@tag_groups pairs), and distinct groups count.
       AND (
-        SELECT COUNT(DISTINCT t.name)
+        SELECT COUNT(DISTINCT json_extract(g.value, '$[1]'))
         FROM file_tags ft
         INNER JOIN tags t ON t.id = ft.tag_id
+        INNER JOIN json_each(@tag_groups) g
+          ON t.name = json_extract(g.value, '$[0]')
         WHERE ft.fingerprint = fi.fingerprint
-          AND t.name IN (SELECT value FROM json_each(@tag_names))
       ) >= @required_matches
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
@@ -1754,18 +1789,27 @@ function createMetadataStore(db) {
   // whose every known file is missing, or that no scan has located, is left
   // out, so deleted clips do not inflate counts. Opening a folder locates its
   // clips and their tags count again. Each link is one indexed probe.
-  const tagUsage = db.prepare(`
-    SELECT t.name AS name, COUNT(ft.fingerprint) AS usageCount
-    FROM tags t
-    LEFT JOIN file_tags ft
-      ON ft.tag_id = t.id
-      AND EXISTS (
-        SELECT 1 FROM file_instances fi
-        WHERE fi.fingerprint = ft.fingerprint AND fi.is_present = 1
-      )
-    GROUP BY t.id
-    ORDER BY t.name COLLATE NOCASE;
+  const presentTagLinks = db.prepare(`
+    SELECT ft.tag_id AS tagId, ft.fingerprint AS fingerprint
+    FROM file_tags ft
+    WHERE EXISTS (
+      SELECT 1 FROM file_instances fi
+      WHERE fi.fingerprint = ft.fingerprint AND fi.is_present = 1
+    );
   `);
+  const tagRows = db.prepare(`
+    SELECT id, name, parent_id AS parentId
+    FROM tags
+    ORDER BY name COLLATE NOCASE;
+  `);
+  const tagById = db.prepare('SELECT id, name, parent_id AS parentId FROM tags WHERE id = ?;');
+  const setTagParentStmt = db.prepare('UPDATE tags SET parent_id = ? WHERE id = ?;');
+  const tagChildCount = db.prepare(
+    'SELECT COUNT(*) AS count FROM tags WHERE parent_id = ?;'
+  );
+  const reparentTagChildren = db.prepare(
+    'UPDATE tags SET parent_id = ? WHERE parent_id = ?;'
+  );
 
   const fileSelect = db.prepare(
     'SELECT width, height, has_audio, duration_ms, frame_rate FROM files WHERE fingerprint = ?;'
@@ -3401,7 +3445,7 @@ function createMetadataStore(db) {
       Array.isArray(options.unavailableRootPaths) ? options.unavailableRootPaths : []
     ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
     const rows = taggedInstancesAcrossRoots.all({
-      tag_names: JSON.stringify(tagNames),
+      tag_groups: JSON.stringify(expandTagGroups(tagNames)),
       unavailable_root_paths: JSON.stringify(unavailableRootPaths),
       required_matches:
         tagNames.length === 0 ? 0 : matchMode === 'any' ? 1 : tagNames.length,
@@ -5289,8 +5333,157 @@ function createMetadataStore(db) {
     };
   }
 
+  // A clip tagged "bellydance" counts toward "dance" too, once however many
+  // of its tags sit under "dance". directCount is the tag's own clips.
   function listTags() {
-    return tagUsage.all();
+    const rows = tagRows.all();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const direct = new Map();
+    const inclusive = new Map();
+    for (const { tagId, fingerprint } of presentTagLinks.all()) {
+      direct.set(tagId, (direct.get(tagId) || 0) + 1);
+      let id = tagId;
+      for (let depth = 0; id != null && depth <= MAX_TAG_DEPTH; depth += 1) {
+        let clips = inclusive.get(id);
+        if (!clips) inclusive.set(id, (clips = new Set()));
+        clips.add(fingerprint);
+        id = byId.get(id)?.parentId ?? null;
+      }
+    }
+    return rows.map((row) => ({
+      name: row.name,
+      parent: byId.get(row.parentId)?.name ?? null,
+      usageCount: inclusive.get(row.id)?.size || 0,
+      directCount: direct.get(row.id) || 0,
+    }));
+  }
+
+  function tagDepthAbove(id) {
+    let depth = 0;
+    let current = tagById.get(id)?.parentId ?? null;
+    while (current != null && depth <= MAX_TAG_DEPTH) {
+      depth += 1;
+      current = tagById.get(current)?.parentId ?? null;
+    }
+    return depth;
+  }
+
+  function tagSubtreeHeight(id) {
+    const rows = tagRows.all();
+    const children = new Map();
+    for (const row of rows) {
+      if (row.parentId == null) continue;
+      if (!children.has(row.parentId)) children.set(row.parentId, []);
+      children.get(row.parentId).push(row.id);
+    }
+    const height = (tagId, guard) =>
+      guard > MAX_TAG_DEPTH
+        ? guard
+        : Math.max(0, ...(children.get(tagId) || []).map((child) => 1 + height(child, guard + 1)));
+    return height(id, 0);
+  }
+
+  /**
+   * Make `parentName` the parent of `childName`, creating either tag if it
+   * does not exist; a null parent makes the tag top-level. Refuses a cycle
+   * and a tree deeper than MAX_TAG_DEPTH. Runs inside the caller's
+   * transaction when there is one.
+   */
+  function applyTagParent(childName, parentName) {
+    const childId = getTagId(childName);
+    if (!childId) throw new TagHierarchyError('A tag name is required');
+    if (parentName == null || String(parentName).trim() === '') {
+      setTagParentStmt.run(null, childId);
+      return;
+    }
+    const parentId = getTagId(parentName);
+    if (!parentId) throw new TagHierarchyError('A parent tag name is required');
+    if (parentId === childId) {
+      throw new TagHierarchyError('A tag cannot be its own parent');
+    }
+    for (
+      let current = parentId, depth = 0;
+      current != null && depth <= MAX_TAG_DEPTH;
+      current = tagById.get(current)?.parentId ?? null, depth += 1
+    ) {
+      if (current === childId) {
+        throw new TagHierarchyError(
+          `"${tagById.get(parentId)?.name}" is already inside "${tagById.get(childId)?.name}"`
+        );
+      }
+    }
+    if (tagDepthAbove(parentId) + 1 + tagSubtreeHeight(childId) >= MAX_TAG_DEPTH) {
+      throw new TagHierarchyError(`Tags nest at most ${MAX_TAG_DEPTH} levels deep`);
+    }
+    setTagParentStmt.run(parentId, childId);
+  }
+
+  function setTagParent(childName, parentName = null) {
+    db.transaction(() => applyTagParent(childName, parentName))();
+    return listTags();
+  }
+
+  // "dance/latin/bellydance" applies "bellydance", placing it under "latin"
+  // under "dance". Single names pass through unchanged.
+  function resolveTagPath(nameRaw) {
+    const segments = String(nameRaw || '')
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (segments.length <= 1) return segments[0] || null;
+    if (segments.length > MAX_TAG_DEPTH) {
+      throw new TagHierarchyError(`Tags nest at most ${MAX_TAG_DEPTH} levels deep`);
+    }
+    for (let index = 1; index < segments.length; index += 1) {
+      applyTagParent(segments[index], segments[index - 1]);
+    }
+    return segments[segments.length - 1];
+  }
+
+  /**
+   * [tag name, requested group] pairs: each requested tag with every tag
+   * under it, so matching "dance" also matches "bellydance".
+   */
+  function expandTagGroups(tagNames) {
+    const rows = tagRows.all();
+    const byName = new Map(rows.map((row) => [row.name.toLowerCase(), row]));
+    const children = new Map();
+    for (const row of rows) {
+      if (row.parentId == null) continue;
+      if (!children.has(row.parentId)) children.set(row.parentId, []);
+      children.get(row.parentId).push(row);
+    }
+    const pairs = [];
+    for (const group of tagNames) {
+      pairs.push([group, group]);
+      const root = byName.get(group);
+      if (!root) continue;
+      const seen = new Set([root.id]);
+      const queue = [...(children.get(root.id) || [])];
+      while (queue.length) {
+        const row = queue.shift();
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        pairs.push([row.name.toLowerCase(), group]);
+        queue.push(...(children.get(row.id) || []));
+      }
+    }
+    return pairs;
+  }
+
+  // A tag goes once nothing is tagged with it and nothing sits under it; a
+  // parent kept only for its children goes with the last of them.
+  function pruneUnusedTag(id) {
+    let current = id;
+    for (let depth = 0; current != null && depth <= MAX_TAG_DEPTH; depth += 1) {
+      const row = tagById.get(current);
+      if (!row) return;
+      if (Number(countTagUsage.get(current)?.count || 0) > 0) return;
+      if (Number(tagChildCount.get(current)?.count || 0) > 0) return;
+      reparentTagChildren.run(row.parentId ?? null, current);
+      deleteTagById.run(current);
+      current = row.parentId ?? null;
+    }
   }
 
   function assignTags(fingerprints, tagNames) {
@@ -5300,7 +5493,7 @@ function createMetadataStore(db) {
       fingerprints.forEach((fingerprint) => {
         if (!fingerprint) return;
         (tagNames || []).forEach((nameRaw) => {
-          const id = getTagId(nameRaw);
+          const id = getTagId(resolveTagPath(nameRaw));
           if (!id) return;
           addTagLink.run(fingerprint, id, now);
         });
@@ -5325,11 +5518,7 @@ function createMetadataStore(db) {
         removed[fingerprint] = mapMetadataRow(fingerprint);
       });
 
-      const usageRow = countTagUsage.get(id);
-      const usageCount = Number(usageRow?.count || 0);
-      if (usageCount === 0) {
-        deleteTagById.run(id);
-      }
+      pruneUnusedTag(id);
     });
     txn();
     return removed;
@@ -5562,6 +5751,7 @@ function createMetadataStore(db) {
     refreshDirectoryCounts,
     getMetadataForFingerprints,
     listTags,
+    setTagParent,
     assignTags,
     removeTag,
     setRating,
