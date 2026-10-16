@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { createRef } from "react";
 import { useFilterState } from "./useFilterState";
+import { buildTagHierarchy } from "../filters/tagHierarchy";
 
 const videos = [
   { id: "new", tags: ["wan"], rating: null, reviewState: "unreviewed" },
@@ -191,3 +192,44 @@ describe("useFilterState tag match mode", () => {
     expect(result.current.filteredVideos).toHaveLength(4);
   });
 });
+
+describe("useFilterState tag hierarchy", () => {
+  const clips = [
+    { id: "belly", tags: ["bellydance"], reviewState: "unreviewed" },
+    { id: "tap-outdoor", tags: ["tap", "outdoor"], reviewState: "unreviewed" },
+    { id: "plain-dance", tags: ["Dance"], reviewState: "unreviewed" },
+    { id: "outdoor", tags: ["outdoor"], reviewState: "unreviewed" },
+  ];
+  const tagHierarchy = buildTagHierarchy([
+    { name: "dance", parent: null },
+    { name: "bellydance", parent: "dance" },
+    { name: "tap", parent: "dance" },
+  ]);
+  const renderFilters = () =>
+    renderHook(() =>
+      useFilterState({
+        videos: clips,
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+        tagHierarchy,
+      })
+    );
+  const ids = (result) => result.current.filteredVideos.map((video) => video.id);
+
+  it("includes and excludes a tag together with the tags under it", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ includeTags: ["dance"] }));
+    expect(ids(result)).toEqual(["belly", "tap-outdoor", "plain-dance"]);
+
+    act(() => result.current.updateFilters({ includeTags: ["dance", "outdoor"] }));
+    expect(ids(result)).toEqual(["tap-outdoor"]);
+
+    act(() => result.current.updateFilters({ includeTags: [], excludeTags: ["dance"] }));
+    expect(ids(result)).toEqual(["outdoor"]);
+
+    // A child tag still means only itself.
+    act(() => result.current.updateFilters({ excludeTags: [], includeTags: ["tap"] }));
+    expect(ids(result)).toEqual(["tap-outdoor"]);
+  });
+});
+

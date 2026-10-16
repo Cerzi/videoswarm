@@ -664,6 +664,11 @@ body.metadata-panel-drag-active {
   font-size: 0.72rem;
 }
 
+.metadata-panel__match-parent {
+  font-size: 0.62rem;
+  opacity: 0.6;
+}
+
 .metadata-panel__match.is-highlighted {
   border-color: var(--color-accent, #51cf66);
   background: rgba(81, 207, 102, 0.18);

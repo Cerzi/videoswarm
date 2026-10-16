@@ -1,4 +1,4 @@
-import React, { useMemo, useState, forwardRef } from "react";
+import React, { useId, useMemo, useState, forwardRef } from "react";
 import {
   REVIEW_FILTERS,
   normalizeReviewFilter,
@@ -111,6 +111,7 @@ const FiltersPopover = forwardRef(
       versionIndexStatus = null,
       versionPendingCount = 0,
       onFindVersionsInLibrary,
+      onSetTagParent,
     },
     ref
   ) => {
@@ -130,6 +131,32 @@ const FiltersPopover = forwardRef(
       versionIndexStatus?.running === true && versionIndexStatus.scope === "library";
 
     const [tagQuery, setTagQuery] = useState("");
+    // The tag whose parent is being edited, with the draft and any refusal.
+    const [parentEdit, setParentEdit] = useState(null);
+    const tagNames = useMemo(
+      () =>
+        (Array.isArray(availableTags) ? availableTags : [])
+          .map((entry) => (typeof entry === "string" ? entry : entry?.name))
+          .filter(Boolean),
+      [availableTags]
+    );
+    const parentListId = useId();
+
+    const startParentEdit = (tag) =>
+      setParentEdit({ tag: tag.name, draft: tag.parent || "", error: null, saving: false });
+    const saveParent = async (parentName) => {
+      if (!parentEdit || !onSetTagParent) return;
+      const tag = parentEdit.tag;
+      setParentEdit((edit) => edit && { ...edit, saving: true, error: null });
+      const result = await onSetTagParent(tag, parentName?.trim() || null);
+      setParentEdit((edit) =>
+        edit?.tag !== tag
+          ? edit
+          : result?.success
+            ? null
+            : { ...edit, saving: false, error: result?.error || "Could not move the tag" }
+      );
+    };
 
     const normalizedTags = useMemo(() => {
       const source = Array.isArray(availableTags) ? availableTags : [];
@@ -139,6 +166,7 @@ const FiltersPopover = forwardRef(
         if (entry == null) return;
         let name = "";
         let usageCount = 0;
+        let parent = null;
 
         if (typeof entry === "string") {
           name = entry.trim();
@@ -147,6 +175,7 @@ const FiltersPopover = forwardRef(
           if (Number.isFinite(entry.usageCount)) {
             usageCount = Number(entry.usageCount);
           }
+          parent = entry.parent ? String(entry.parent).trim() || null : null;
         } else {
           name = entry.toString().trim();
         }
@@ -154,7 +183,7 @@ const FiltersPopover = forwardRef(
         if (!name) return;
         const existing = deduped.get(name);
         if (!existing || existing.usageCount < usageCount) {
-          deduped.set(name, { name, usageCount });
+          deduped.set(name, { name, usageCount, parent });
         }
       });
 
@@ -349,6 +378,14 @@ const FiltersPopover = forwardRef(
             {hasQuery ? "Matching tags" : `Popular tags (top ${MAX_DEFAULT_TAGS})`}
           </div>
 
+          <datalist id={parentListId}>
+            {tagNames
+              .filter((name) => name !== parentEdit?.tag)
+              .map((name) => (
+                <option key={name} value={name} />
+              ))}
+          </datalist>
+
           <div className="filters-tag-list" role="list">
             {normalizedTags.length === 0 ? (
               <span className="filters-empty-hint">No tags found.</span>
@@ -368,13 +405,36 @@ const FiltersPopover = forwardRef(
                   >
                     <div className="filters-tag-option__info">
                       <span className="filters-tag-option__name">#{tagName}</span>
+                      {tag.parent ? (
+                        <span className="filters-tag-option__parent">in {tag.parent}</span>
+                      ) : null}
                       {typeof tag.usageCount === "number" && tag.usageCount > 0 && (
-                        <span className="filters-tag-option__count">
+                        <span
+                          className="filters-tag-option__count"
+                          title="Clips with this tag or a tag under it"
+                        >
                           {tag.usageCount}
                         </span>
                       )}
                     </div>
                     <div className="filters-tag-option__actions">
+                      {onSetTagParent ? (
+                        <button
+                          type="button"
+                          className={`filters-pill ${
+                            parentEdit?.tag === tagName ? "filters-pill--active" : ""
+                          }`}
+                          aria-expanded={parentEdit?.tag === tagName}
+                          title={`Put #${tagName} under another tag`}
+                          onClick={() =>
+                            parentEdit?.tag === tagName
+                              ? setParentEdit(null)
+                              : startParentEdit(tag)
+                          }
+                        >
+                          Parent
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className={`filters-pill ${
@@ -394,6 +454,62 @@ const FiltersPopover = forwardRef(
                         Exclude
                       </button>
                     </div>
+                    {parentEdit?.tag === tagName ? (
+                      <form
+                        className="filters-tag-parent"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          saveParent(parentEdit.draft);
+                        }}
+                      >
+                        <label className="filters-tag-parent__label">
+                          <span>Put #{tagName} under</span>
+                          <input
+                            type="text"
+                            list={parentListId}
+                            value={parentEdit.draft}
+                            placeholder="parent tag"
+                            autoFocus
+                            disabled={parentEdit.saving}
+                            onChange={(event) =>
+                              setParentEdit((edit) =>
+                                edit && { ...edit, draft: event.target.value, error: null }
+                              )
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                event.stopPropagation();
+                                setParentEdit(null);
+                              }
+                            }}
+                          />
+                        </label>
+                        <div className="filters-tag-parent__actions">
+                          <button
+                            type="submit"
+                            className="filters-pill filters-pill--active"
+                            disabled={parentEdit.saving || !parentEdit.draft.trim()}
+                          >
+                            Save
+                          </button>
+                          {tag.parent ? (
+                            <button
+                              type="button"
+                              className="filters-pill"
+                              disabled={parentEdit.saving}
+                              onClick={() => saveParent(null)}
+                            >
+                              Top level
+                            </button>
+                          ) : null}
+                        </div>
+                        {parentEdit.error ? (
+                          <span className="filters-tag-parent__error" role="alert">
+                            {parentEdit.error}
+                          </span>
+                        ) : null}
+                      </form>
+                    ) : null}
                   </div>
                 );
               })

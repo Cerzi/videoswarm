@@ -529,6 +529,7 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Add tag and press Enter"
+            title="Type parent/child, such as dance/bellydance, to nest a new tag"
             disabled={!hasSelection}
           />
           <button
@@ -563,6 +564,9 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
                 onClick={() => addWithTyped(match.name)}
               >
                 <span>#{match.name}</span>
+                {match.parent ? (
+                  <span className="metadata-panel__match-parent">in {match.parent}</span>
+                ) : null}
                 {match.usageCount ? (
                   <span className="metadata-panel__suggestion-count">
                     {match.usageCount}

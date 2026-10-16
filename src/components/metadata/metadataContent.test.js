@@ -187,5 +187,14 @@ describe("shared metadata content helpers", () => {
     ).toEqual(["bar", "abandoned"]);
     expect(selectMetadataTagMatches({ availableTags, query: " " })).toEqual([]);
   });
+
+  it("keeps a tag's parent for display", () => {
+    expect(
+      selectMetadataTagMatches({
+        availableTags: [{ name: "bellydance", usageCount: 2, parent: "dance" }],
+        query: "belly",
+      })
+    ).toEqual([{ name: "bellydance", usageCount: 2, parent: "dance" }]);
+  });
 });
 

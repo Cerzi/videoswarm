@@ -337,9 +337,32 @@ export function useMetadataActions({
     }
   }, [setAvailableTags]);
 
+  // Moves a tag under another (or to the top level with a null parent). The
+  // hierarchy lives in the tag list, so only the list changes.
+  const handleSetTagParent = useCallback(
+    async (tagName, parentName = null) => {
+      const api = window.electronAPI?.metadata;
+      if (!api?.setTagParent) {
+        return { success: false, error: "Tag service is unavailable" };
+      }
+      try {
+        const result = await api.setTagParent(tagName, parentName || null);
+        if (!result?.success) {
+          return { success: false, error: result?.error || "Could not move the tag" };
+        }
+        if (Array.isArray(result.tags)) setAvailableTags(result.tags);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    },
+    [setAvailableTags]
+  );
+
   return {
     applyMetadataPatch,
     handleAddTags,
+    handleSetTagParent,
     handleRemoveTag,
     handleSetRating,
     handleClearRating,

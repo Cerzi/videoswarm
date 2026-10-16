@@ -148,6 +148,7 @@
 
 .filters-tag-option {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -252,3 +253,50 @@
   gap: 0.3rem;
   margin-bottom: 0.4rem;
 }
+
+/* Tag hierarchy: where a tag sits, and moving it under another. */
+.filters-tag-option__parent {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.filters-tag-parent {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding-top: 0.4rem;
+}
+
+.filters-tag-parent__label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 0.72rem;
+}
+
+.filters-tag-parent__label input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--color-border, #3d3d3d);
+  border-radius: 8px;
+  background: #262a2e;
+  color: inherit;
+  padding: 0.3rem 0.5rem;
+}
+
+.filters-tag-parent__actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.filters-tag-parent__error {
+  flex-basis: 100%;
+  font-size: 0.7rem;
+  color: #ff8787;
+}
+

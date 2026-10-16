@@ -20,6 +20,7 @@ import {
   matchesVersionFilter,
   normalizeVersionFilter,
 } from "../filters/generationVersions";
+import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
 
 const resolveValue = (value, fallback) =>
   value === undefined ? fallback : value;
@@ -55,6 +56,8 @@ export function useFilterState({
   filtersButtonRef,
   filtersPopoverRef,
   generationVersionIndex = null,
+  // Filtering by a tag also matches the tags under it.
+  tagHierarchy = EMPTY_TAG_HIERARCHY,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
@@ -111,7 +114,7 @@ export function useFilterState({
         if (includeTagsMode === "any") {
           let matched = false;
           for (const tag of includeSet) {
-            if (tagList.includes(tag)) {
+            if (tagsMatch(tagList, tag, tagHierarchy)) {
               matched = true;
               break;
             }
@@ -119,7 +122,7 @@ export function useFilterState({
           if (!matched) return false;
         } else {
           for (const tag of includeSet) {
-            if (!tagList.includes(tag)) {
+            if (!tagsMatch(tagList, tag, tagHierarchy)) {
               return false;
             }
           }
@@ -128,7 +131,7 @@ export function useFilterState({
 
       if (excludeSet) {
         for (const tag of excludeSet) {
-          if (tagList.includes(tag)) {
+          if (tagsMatch(tagList, tag, tagHierarchy)) {
             return false;
           }
         }
@@ -166,7 +169,7 @@ export function useFilterState({
 
       return true;
     });
-  }, [videos, filters, generationVersionIndex]);
+  }, [videos, filters, generationVersionIndex, tagHierarchy]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),

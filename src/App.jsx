@@ -91,6 +91,7 @@ import {
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
 import { posterFrames } from "./services/posterFrameCache";
+import { buildTagHierarchy } from "./app/filters/tagHierarchy";
 import {
   DEFAULT_PLAYBACK_MODE,
   PLAYBACK_MODES,
@@ -370,6 +371,8 @@ function App() {
   }, [workSuspended]);
 
   const [availableTags, setAvailableTags] = useState([]);
+  // The tag tree from the tag list: filters and inspectors read it.
+  const tagHierarchy = useMemo(() => buildTagHierarchy(availableTags), [availableTags]);
   const [isMetadataPanelOpen, setMetadataPanelOpen] = useState(false);
   const [metadataDismissedSelectionKey, setMetadataDismissedSelectionKey] =
     useState(null);
@@ -699,6 +702,7 @@ function App() {
     filtersButtonRef,
     filtersPopoverRef,
     generationVersionIndex,
+    tagHierarchy,
   });
   reviewViewStateRef.current = {
     filters,
@@ -1501,6 +1505,7 @@ function App() {
     handleSetReviewState,
     handleRestoreReviewMetadata,
     handleApplyExistingTag: applyExistingTag,
+    handleSetTagParent: setTagParent,
     refreshTagList,
   } = useMetadataActions({
     selectedFingerprints,
@@ -3815,6 +3820,17 @@ function App() {
     }
   }, [cancelReviewResume, reviewModeEnabled, updateFilters]);
 
+  // A library tag view is a snapshot, so it is refreshed when the tree under
+  // its tags changes; a folder view re-filters from the tag list by itself.
+  const handleSetTagParent = useCallback(
+    async (tagName, parentName) => {
+      const result = await setTagParent(tagName, parentName);
+      if (result?.success && tagCollection) refreshTagCollection();
+      return result;
+    },
+    [refreshTagCollection, setTagParent, tagCollection]
+  );
+
   const handlePlaybackModeChange = useCallback((value) => {
     const next = normalizePlaybackMode(value);
     setPlaybackMode(next);
@@ -5418,6 +5434,7 @@ function App() {
                   ? generationIndex.indexLibrary
                   : undefined
               }
+              onSetTagParent={handleSetTagParent}
             />
           )}
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import FiltersPopover from "./FiltersPopover";
 
 describe("FiltersPopover review filters", () => {
@@ -210,6 +210,77 @@ describe("FiltersPopover generation versions", () => {
     );
     expect(screen.getByText(/across the library… 10 of 50/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Search library" }).disabled).toBe(true);
+  });
+});
+
+describe("FiltersPopover tag hierarchy", () => {
+  const filters = {
+    includeTags: [],
+    excludeTags: [],
+    minRating: null,
+    exactRating: null,
+  };
+  const availableTags = [
+    { name: "dance", usageCount: 3, parent: null },
+    { name: "bellydance", usageCount: 2, parent: "dance" },
+    { name: "outdoor", usageCount: 1, parent: null },
+  ];
+  const renderPopover = (onSetTagParent) =>
+    render(
+      <FiltersPopover
+        filters={filters}
+        availableTags={availableTags}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        onSetTagParent={onSetTagParent}
+      />
+    );
+  const row = (name) =>
+    screen.getByText(`#${name}`).closest(".filters-tag-option");
+
+  it("shows where a nested tag sits", () => {
+    renderPopover(vi.fn());
+    expect(within(row("bellydance")).getByText("in dance")).toBeInTheDocument();
+    expect(within(row("dance")).queryByText(/^in /)).toBeNull();
+  });
+
+  it("puts a tag under another and moves it back to the top level", async () => {
+    const onSetTagParent = vi.fn(async () => ({ success: true }));
+    renderPopover(onSetTagParent);
+
+    fireEvent.click(within(row("outdoor")).getByRole("button", { name: "Parent" }));
+    const input = within(row("outdoor")).getByPlaceholderText("parent tag");
+    fireEvent.change(input, { target: { value: "dance" } });
+    fireEvent.click(within(row("outdoor")).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSetTagParent).toHaveBeenCalledWith("outdoor", "dance"));
+    await waitFor(() =>
+      expect(within(row("outdoor")).queryByPlaceholderText("parent tag")).toBeNull()
+    );
+
+    fireEvent.click(within(row("bellydance")).getByRole("button", { name: "Parent" }));
+    fireEvent.click(within(row("bellydance")).getByRole("button", { name: "Top level" }));
+    await waitFor(() => expect(onSetTagParent).toHaveBeenLastCalledWith("bellydance", null));
+  });
+
+  it("keeps the editor open and says why when a move is refused", async () => {
+    const onSetTagParent = vi.fn(async () => ({
+      success: false,
+      error: '"bellydance" is already inside "dance"',
+    }));
+    renderPopover(onSetTagParent);
+    fireEvent.click(within(row("dance")).getByRole("button", { name: "Parent" }));
+    fireEvent.change(within(row("dance")).getByPlaceholderText("parent tag"), {
+      target: { value: "bellydance" },
+    });
+    fireEvent.click(within(row("dance")).getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("already inside");
+    expect(within(row("dance")).getByPlaceholderText("parent tag")).toHaveValue("bellydance");
+  });
+
+  it("offers no parent editing without a handler", () => {
+    renderPopover(undefined);
+    expect(within(row("dance")).queryByRole("button", { name: "Parent" })).toBeNull();
   });
 });
 

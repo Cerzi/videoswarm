@@ -275,9 +275,10 @@ export const normalizeMetadataAvailableTags = (availableTags = []) => {
     const name = entry?.name?.trim();
     if (!name) continue;
     const usageCount = Number.isFinite(entry.usageCount) ? entry.usageCount : 0;
+    const parent = entry?.parent ? String(entry.parent).trim() || null : null;
     const existing = deduped.get(name);
     if (!existing || existing.usageCount < usageCount) {
-      deduped.set(name, { name, usageCount });
+      deduped.set(name, parent ? { name, usageCount, parent } : { name, usageCount });
     }
   }
   return Array.from(deduped.values());
