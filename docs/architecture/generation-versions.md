@@ -2,7 +2,7 @@
 
 Status: **Implemented and Verified** — all seven sections; deferred items
 below
-Last updated: 2026-09-27
+Last updated: 2026-10-16
 
 ## Summary
 
@@ -122,14 +122,20 @@ and never looks at node class names.
 - **Texts.** Every string input value with at least four whitespace-separated
   words, whitespace-collapsed and lowercased. This finds prompt text wherever a
   custom node keeps it, without knowing which node is "the prompt".
+- **Short texts** (since key version 2). Every string input value of two or
+  three words, normalized the same way, kept as a separate list. Without them,
+  same-seed runs of `a cat` and `a dog` sharing a long negative prompt were
+  versions of one generation. Single words stay out: they cannot be told apart
+  from settings such as sampler or scheduler names.
 - **Input media.** Every string input value ending in `.mp4`, `.mov`, `.webm`,
   `.png`, `.jpg`, `.jpeg`, `.webp`, `.wav`, `.mp3` or `.flac`, reduced to its
   basename. This keeps video-to-video runs with the same prompt but a different
   source video apart. A media string is never also counted as text.
-- **Key.** `gk1-` followed by the first 128 bits of SHA-256 over the versioned,
-  sorted, de-duplicated seed, text and media lists. De-duplication means a seed
-  reached both directly and through the hop counts once.
-- **No key** when there is no seed or no text. Seedless processing workflows
+- **Key.** `gk2-` followed by the first 128 bits of SHA-256 over the versioned,
+  sorted, de-duplicated seed, text, short-text and media lists. De-duplication
+  means a seed reached both directly and through the hop counts once.
+- **No key** when there is no seed or no four-word text; short texts alone
+  never key. Seedless processing workflows
   (masking, interpolation-only, upscaling-only graphs) therefore stay
   ungrouped, which is correct: without a seed there is no evidence two runs are
   the same generation.
@@ -178,6 +184,8 @@ following the fixture rule in `embedded-generation-metadata.md`.
 - The one-hop rule takes a sole integer literal and ignores a source node with
   zero or several.
 - Two runs differing only in input media do not share a key.
+- Two same-seed runs differing only in a two- or three-word text do not share
+  a key.
 - `NaN`/`Infinity` payloads key; malformed, oversized and hostile shapes return
   no key without throwing.
 
@@ -629,6 +637,19 @@ possible future cross-check, nothing more.
   `git diff --check` pass. The Playwright affordance spec was extended with
   the Link button but could not run here: its own Chromium build is not
   installed on this machine. The equivalent check was made inside Electron.
+
+### 2026-10-16 — Key version 2: short texts
+
+- Version 1 ignored texts under four words, so same-seed runs of different
+  short prompts with a shared long negative prompt counted as versions of one
+  generation. Version 2 hashes two- and three-word texts too; when a key
+  exists is unchanged.
+- Every stored version 1 key is therefore stale, and keyed content becomes a
+  background candidate again; its version badge returns once re-read. Content
+  that version 1 found unkeyable is carried over to version 2 by the schema
+  migration without reading the file, since its keyability cannot change.
+- The prompt key (`prompt-stacks.md`) is hashed from the same parts minus
+  seeds, so each version group now sits inside exactly one prompt stack.
 
 ## References
 

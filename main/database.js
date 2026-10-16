@@ -998,6 +998,17 @@ function initDatabase(app, profilePath) {
         ON media_content(generation_key)
         WHERE generation_key IS NOT NULL;
     `);
+    // Key version 2 only adds short texts to the hash; a key still needs a
+    // seed and a four-word text. Content version 1 found unkeyable is
+    // therefore unkeyable now, and is carried over rather than every file
+    // without embedded metadata being read again. Keyed content is
+    // re-evaluated. Revisit this when the key version moves again.
+    db.prepare(`
+      UPDATE media_content
+      SET generation_key_version = @version
+      WHERE generation_key_version = 1
+        AND generation_key IS NULL;
+    `).run({ version: GENERATION_KEY_VERSION });
     // Prompt stacks: the prompt key is the generation key without its seeds
     // (docs/architecture/prompt-stacks.md). Same rule: derived key only.
     if (!mediaContentColumns.has('prompt_key')) {

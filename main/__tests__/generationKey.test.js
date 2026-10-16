@@ -90,7 +90,7 @@ describe("generation key fixtures", () => {
 
 describe("computeGenerationKey seeds", () => {
   it("requires a seed and a text", () => {
-    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk1-[0-9a-f]{32}$/);
+    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk2-[0-9a-f]{32}$/);
     expect(computeGenerationKey(samplerGraph({ text: "too short here" }))).toBeNull();
     expect(
       computeGenerationKey(
@@ -281,7 +281,15 @@ describe("computeGenerationKey is total", () => {
 
   it("recognizes only well-formed keys", () => {
     expect(isGenerationKey(computeGenerationKey(samplerGraph()))).toBe(true);
-    for (const value of [null, "", "gk1-xyz", "gk2-" + "0".repeat(32), "gk1-" + "A".repeat(32)]) {
+    // Version 1 keys are no longer current, so they are not recognized either.
+    for (const value of [
+      null,
+      "",
+      "gk2-xyz",
+      "gk1-" + "0".repeat(32),
+      "gk3-" + "0".repeat(32),
+      "gk2-" + "A".repeat(32),
+    ]) {
       expect(isGenerationKey(value)).toBe(false);
     }
   });
@@ -375,12 +383,39 @@ describe("prompt key", () => {
     expect(deriveGenerationKeyParts(run("a cat", 1)).shortTexts).toEqual(["a cat"]);
   });
 
-  it("leaves the generation key exactly as it was", () => {
+  it("keeps same-seed runs of different short prompts out of one version group", () => {
+    const negative = "blurry, low quality, watermark, text overlay";
+    const run = (positive) =>
+      graph({
+        3: { class_type: "KSampler", inputs: { seed: 7, positive: ["6", 0], negative: ["7", 0] } },
+        6: { class_type: "CLIPTextEncode", inputs: { text: positive } },
+        7: { class_type: "CLIPTextEncode", inputs: { text: negative } },
+      });
+    const cat = computeGenerationKeys(run("a cat"));
+    const dog = computeGenerationKeys(run("a dog"));
+    expect(cat.generationKey).not.toBe(dog.generationKey);
+    expect(cat.promptKey).not.toBe(dog.promptKey);
+    // A re-render of the same short prompt and seed is still a version.
+    expect(computeGenerationKeys(run("A  cat")).generationKey).toBe(cat.generationKey);
+  });
+
+  it("nests every version group inside one stack", () => {
     const withShort = samplerGraph({
       extra: { 8: { class_type: "Note", inputs: { label: "two words" } } },
     });
-    expect(computeGenerationKey(withShort)).toBe(computeGenerationKey(samplerGraph()));
-    expect(promptKeyOf(withShort)).not.toBe(promptKeyOf(samplerGraph()));
+    const withOther = samplerGraph({
+      extra: { 8: { class_type: "Note", inputs: { label: "other words" } } },
+    });
+    // Same seed, same long text, different short text: neither key is shared.
+    expect(computeGenerationKey(withShort)).not.toBe(computeGenerationKey(withOther));
+    expect(promptKeyOf(withShort)).not.toBe(promptKeyOf(withOther));
+    // Different seeds only: one stack, two version groups.
+    const reseeded = samplerGraph({
+      seed: 99,
+      extra: { 8: { class_type: "Note", inputs: { label: "two words" } } },
+    });
+    expect(computeGenerationKey(reseeded)).not.toBe(computeGenerationKey(withShort));
+    expect(promptKeyOf(reseeded)).toBe(promptKeyOf(withShort));
   });
 
   it("returns no keys when short texts exceed their bound", () => {

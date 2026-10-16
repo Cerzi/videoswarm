@@ -2,18 +2,20 @@ const crypto = require("crypto");
 const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 
 // A deliberately dumb identity for "versions of the same generation". It
-// never traces the graph: it collects seeds, long free text and input media
+// never traces the graph: it collects seeds, free text and input media
 // wherever they sit, so custom nodes, switches and wrappers cannot break it.
 // See docs/architecture/generation-versions.md.
-
-const GENERATION_KEY_VERSION = 1;
+//
+// Version 2 also hashes texts of two or three words. Version 1 read only
+// texts of four or more, so same-seed runs of "a cat" and "a dog" sharing a
+// long negative prompt counted as versions of one generation.
+const GENERATION_KEY_VERSION = 2;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
 // The prompt key is the generation key without its seeds: every run of one
-// prompt, whatever its seed, sampler settings or model. Without the seed,
-// two short prompts sharing a long negative prompt would collide, so it also
-// reads texts of two or three words, which the generation key ignores. It
-// exists under the same conditions, so a clip has a prompt key exactly when
-// it has a generation key. See docs/architecture/prompt-stacks.md.
+// prompt, whatever its seed, sampler settings or model. It is hashed from the
+// same parts, so a clip has a prompt key exactly when it has a generation key
+// and each version group sits inside one prompt stack. See
+// docs/architecture/prompt-stacks.md.
 const PROMPT_KEY_VERSION = 1;
 const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
@@ -233,6 +235,7 @@ function hashGenerationKeyParts(parts) {
     GENERATION_KEY_VERSION,
     parts.seeds,
     parts.texts,
+    parts.shortTexts,
     parts.media,
   ]);
   const digest = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");

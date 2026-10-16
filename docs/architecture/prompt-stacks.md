@@ -71,9 +71,8 @@ Status: **Implemented** (2026-10-16)
 generation key and the prompt key from one parse. The prompt key reads:
 
 - **Texts** of four or more words, as for the generation key.
-- **Short texts** of two or three words, whitespace-collapsed and lowercased.
-  The generation key ignores them; the prompt key needs them because it drops
-  the seed. Without them, `a cat` and `a dog` sharing a long negative prompt
+- **Short texts** of two or three words, as for the generation key since its
+  version 2. Without them, `a cat` and `a dog` sharing a long negative prompt
   would land in one stack. Single words stay out: they cannot be told apart
   from settings such as sampler or scheduler names.
 - **Input media** basenames, as for the generation key. Image-to-video runs
@@ -88,10 +87,9 @@ versioned canonical form, so it can never equal a generation key.
 the same four-word text, so seedless processing workflows stay unstacked. The
 two keys are written together; the store refuses one without the other.
 
-**Nesting.** Two clips with the same generation key share seeds, texts and
-media, so they share a stack unless a two- or three-word text differs between
-them. That can only split a version group across two stacks, never merge
-anything.
+**Nesting.** The prompt key is hashed from the generation key's parts minus
+its seeds, so two clips with the same generation key always share a stack:
+each version group sits inside exactly one stack.
 
 ### Known ways it can be wrong
 
@@ -104,8 +102,6 @@ for.
 - **Single-word prompts** are invisible to the key, as above.
 - **Prompts without spaces** (for example Chinese or Japanese) are one word, so
   they never key; this is inherited from the generation key.
-- **A same-seed run with a different short prompt** shares a generation key,
-  because the generation key ignores short texts, but gets its own stack.
 
 ### Acceptance
 
@@ -294,10 +290,10 @@ not reachable. `src/App.test.jsx` covers the same flow against the real
   the two cannot drift; only the hash differs. Short texts are collected in the
   same pass under their own bound (512); exceeding it returns no keys at all,
   rather than a key over a truncated graph.
-- The generation key was left byte-for-byte unchanged, so no stored key moves
-  and no version badge changes. Its same-seed short-prompt weakness (Section 1)
-  is recorded rather than fixed here, because fixing it changes every stored
-  generation key.
+- The generation key was first left unchanged, with its same-seed short-prompt
+  weakness recorded here. Later the same day it moved to version 2, which
+  reads short texts too (`generation-versions.md`, implementation notes), so
+  the two keys now differ only by seeds.
 - The report tool reuses the app's in-process tag reader and key function
   rather than a separate prototype, so what it measures is what the app does.
 
