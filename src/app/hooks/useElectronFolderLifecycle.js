@@ -101,6 +101,9 @@ const mergeReadyRecord = (existing, incoming) =>
 
 const snapshotRecordMap = (scan) => [...scan.recordsById.values()];
 
+// Watcher events within this window are applied in one render.
+export const WATCHER_APPLY_DELAY_MS = 80;
+
 const settleRecordSequenceWaiters = (scan, completed = false) => {
   if (!scan?.recordSequenceWaiters?.length) return;
   const remaining = [];
@@ -1278,6 +1281,40 @@ export function useElectronFolderLifecycle({
       return scan;
     };
 
+    // Watcher events arrive one file per IPC message, each its own task, so
+    // applying each as it came re-rendered the app and rebuilt the clip list
+    // once per file: a copy, a trash or a generator writing clips meant one
+    // full render per file. The React updates are applied together once per
+    // short window (scan bookkeeping and media release stay immediate), and
+    // each is dropped if another collection has taken over the grid by then.
+    // Ownership, unlike the active scan, survives a scan completing normally.
+    let pendingWatcherWork = [];
+    let watcherApplyTimer = null;
+    const applyWatcherWork = () => {
+      if (watcherApplyTimer !== null) clearTimeout(watcherApplyTimer);
+      watcherApplyTimer = null;
+      const work = pendingWatcherWork;
+      pendingWatcherWork = [];
+      const snapshotScans = new Set();
+      let tagsChanged = false;
+      for (const item of work) {
+        if (collectionOwnerScanIdRef.current !== item.owner) continue;
+        if (item.scan) snapshotScans.add(item.scan);
+        item.apply?.();
+        tagsChanged = tagsChanged || item.tagsChanged;
+      }
+      snapshotScans.forEach((scan) => {
+        if (!scan.cachedPreviewPending) setVideos(snapshotRecordMap(scan));
+      });
+      if (tagsChanged) refreshTagList();
+    };
+    const deferWatcherWork = (item) => {
+      pendingWatcherWork.push({ ...item, owner: collectionOwnerScanIdRef.current });
+      if (watcherApplyTimer === null) {
+        watcherApplyTimer = setTimeout(applyWatcherWork, WATCHER_APPLY_DELAY_MS);
+      }
+    };
+
     const handleFileAdded = (videoFile, watch) => {
       const normalized = normalizeVideoFromMain(videoFile);
       const scan = resolveWatcherScan(watch);
@@ -1289,28 +1326,28 @@ export function useElectronFolderLifecycle({
           mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
         );
         scan.authoritativeIds.add(normalized.id);
-        if (!scan.cachedPreviewPending) {
-          setVideos(snapshotRecordMap(scan));
-        }
-      } else {
-        setVideos((prev) => {
-          const existingIndex = prev.findIndex((v) => v.id === normalized.id);
-          if (existingIndex !== -1) {
-            const next = prev.slice();
-            next[existingIndex] = normalized;
-            return next;
-          }
-          return [...prev, normalized].sort((a, b) =>
-            a.basename.localeCompare(b.basename, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            })
-          );
-        });
       }
-      if (normalized.tags.length) {
-        refreshTagList();
-      }
+      deferWatcherWork({
+        scan,
+        tagsChanged: normalized.tags.length > 0,
+        apply: scan
+          ? null
+          : () =>
+              setVideos((prev) => {
+                const existingIndex = prev.findIndex((v) => v.id === normalized.id);
+                if (existingIndex !== -1) {
+                  const next = prev.slice();
+                  next[existingIndex] = normalized;
+                  return next;
+                }
+                return [...prev, normalized].sort((a, b) =>
+                  a.basename.localeCompare(b.basename, undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                  })
+                );
+              }),
+      });
     };
 
     const handleFileRemoved = (filePath, watch) => {
@@ -1321,42 +1358,35 @@ export function useElectronFolderLifecycle({
         scan.recordsById.delete(filePath);
         scan.authoritativeIds.delete(filePath);
         scan.authoritativeRemovedIds.add(filePath);
-        if (!scan.cachedPreviewPending) {
-          setVideos(snapshotRecordMap(scan));
-        }
-      } else {
-        setVideos((prev) => prev.filter((v) => v.id !== filePath));
       }
-      if (typeof removeSelection === "function") {
-        removeSelection(filePath);
-      } else {
-        setSelection((prev) => {
-          const next = new Set(prev);
-          next.delete(filePath);
-          return next;
-        });
-      }
-      setActualPlaying((prev) => {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
+      deferWatcherWork({
+        scan,
+        tagsChanged: true,
+        apply: () => {
+          if (!scan) {
+            setVideos((prev) => prev.filter((v) => v.id !== filePath));
+          }
+          if (typeof removeSelection === "function") {
+            removeSelection(filePath);
+          } else {
+            setSelection((prev) => {
+              const next = new Set(prev);
+              next.delete(filePath);
+              return next;
+            });
+          }
+          const without = (prev) => {
+            if (!prev.has(filePath)) return prev;
+            const next = new Set(prev);
+            next.delete(filePath);
+            return next;
+          };
+          setActualPlaying(without);
+          setLoadedVideos(without);
+          setLoadingVideos(without);
+          setVisibleVideos(without);
+        },
       });
-      setLoadedVideos((prev) => {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
-      });
-      setLoadingVideos((prev) => {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
-      });
-      setVisibleVideos((prev) => {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
-      });
-      refreshTagList();
     };
 
     const handleFileChanged = (videoFile, watch) => {
@@ -1370,17 +1400,17 @@ export function useElectronFolderLifecycle({
           mergeReadyRecord(scan.recordsById.get(normalized.id), normalized)
         );
         scan.authoritativeIds.add(normalized.id);
-        if (!scan.cachedPreviewPending) {
-          setVideos(snapshotRecordMap(scan));
-        }
-      } else {
-        setVideos((prev) =>
-          prev.map((v) => (v.id === normalized.id ? normalized : v))
-        );
       }
-      if (normalized.tags.length) {
-        refreshTagList();
-      }
+      deferWatcherWork({
+        scan,
+        tagsChanged: normalized.tags.length > 0,
+        apply: scan
+          ? null
+          : () =>
+              setVideos((prev) =>
+                prev.map((v) => (v.id === normalized.id ? normalized : v))
+              ),
+      });
     };
 
     const disposeAdded = api.onFileAdded?.(handleFileAdded);
@@ -1395,6 +1425,7 @@ export function useElectronFolderLifecycle({
       disposeRemoved?.();
       disposeChanged?.();
       disposeError?.();
+      applyWatcherWork();
       api?.stopFolderWatch?.().catch(() => {});
     };
   }, [

@@ -1,8 +1,16 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
 import {
   CACHED_FIRST_GRID_LIMIT,
+  WATCHER_APPLY_DELAY_MS,
   useElectronFolderLifecycle,
 } from "./useElectronFolderLifecycle";
+
+// Watcher events are applied together after a short window.
+const watcherEvent = (emit) =>
+  act(async () => {
+    emit();
+    await new Promise((resolve) => setTimeout(resolve, WATCHER_APPLY_DELAY_MS + 10));
+  });
 import { SortKey, buildComparator, groupAndSort } from "../../sorting/sorting";
 
 function createSetStateMock() {
@@ -2198,7 +2206,7 @@ describe("useElectronFolderLifecycle", () => {
     expect(typeof onFileRemovedHandler).toBe("function");
     expect(typeof onFileChangedHandler).toBe("function");
 
-    act(() => {
+    await watcherEvent(() => {
       onFileAddedHandler?.({
         id: "file2",
         basename: "file2",
@@ -2211,7 +2219,7 @@ describe("useElectronFolderLifecycle", () => {
       "file2",
     ]);
 
-    act(() => {
+    await watcherEvent(() => {
       onFileChangedHandler?.({
         id: "file2",
         basename: "file2",
@@ -2223,7 +2231,7 @@ describe("useElectronFolderLifecycle", () => {
       "new",
     ]);
 
-    act(() => {
+    await watcherEvent(() => {
       onFileRemovedHandler?.("file1");
     });
 
@@ -2241,6 +2249,62 @@ describe("useElectronFolderLifecycle", () => {
     expect(disposeChanged).toHaveBeenCalled();
     expect(disposeError).toHaveBeenCalled();
     expect(window.electronAPI.stopFolderWatch).toHaveBeenCalled();
+  });
+
+  it("applies a burst of watcher events in one update and drops work for a replaced collection", async () => {
+    const videoVersions = new Set();
+    const { result, unmount } = renderHook(() => {
+      const value = useElectronFolderLifecycle({
+        selection,
+        recursiveMode: false,
+        setRecursiveMode: vi.fn(),
+        setShowFilenames: vi.fn(),
+        setHoverAudioEnabled: vi.fn(),
+        setSortKey: vi.fn(),
+        setSortDir: vi.fn(),
+        groupByFolders: true,
+        setGroupByFolders: vi.fn(),
+        setRandomSeed: vi.fn(),
+        setZoomLevelFromSettings: vi.fn(),
+        setVisibleVideos: setVisibleVideosMock.setter,
+        setLoadedVideos: setLoadedVideosMock.setter,
+        setLoadingVideos: setLoadingVideosMock.setter,
+        setActualPlaying: setActualPlayingMock.setter,
+        refreshTagList,
+        addRecentFolder,
+      });
+      videoVersions.add(value.videos);
+      return value;
+    });
+
+    await waitFor(() => expect(window.electronAPI.getSettings).toHaveBeenCalled());
+    await act(async () => {
+      await result.current.handleElectronFolderSelection("/videos");
+    });
+    const before = result.current.videos.length;
+    const versionsBefore = videoVersions.size;
+
+    // IPC delivers each event as its own task.
+    for (let index = 0; index < 20; index += 1) {
+      act(() => {
+        onFileAddedHandler?.({ id: `burst-${index}`, basename: `burst-${index}`, tags: [] });
+      });
+    }
+    await watcherEvent(() => {});
+    expect(result.current.videos).toHaveLength(before + 20);
+    expect(videoVersions.size).toBe(versionsBefore + 1);
+
+    // An event still waiting when another collection takes over is dropped.
+    act(() => {
+      onFileAddedHandler?.({ id: "late", basename: "late", tags: [] });
+    });
+    act(() => {
+      result.current.openTagCollection({ tags: ["keeper"], matchMode: "all", records: [] });
+    });
+    await watcherEvent(() => {});
+    expect(result.current.videos.map((video) => video.id)).not.toContain("late");
+
+    unmount();
   });
 
   it("keeps watcher subscriptions active when selection identity changes", async () => {
