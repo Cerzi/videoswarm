@@ -12,7 +12,7 @@ import path from "path";
 
 const require = createRequire(import.meta.url);
 const chokidar = require("chokidar");
-const { createFolderWatcher } = require("../watcher");
+const { createFolderWatcher, createWatcherIgnore } = require("../watcher");
 
 class FakeNativeWatcher extends EventEmitter {
   constructor() {
@@ -945,3 +945,51 @@ describe("folder watcher sessions", () => {
     await expect(watcher.start("/library")).rejects.toThrow("disposed");
   });
 });
+
+describe("watcher ignore rules", () => {
+  const isVideoFile = (filePath) => /\.(mp4|mov|webm)$/i.test(filePath);
+  const file = { isFile: () => true };
+  const directory = { isFile: () => false };
+
+  it("skips non-video files, dot entries and system folders", () => {
+    const ignored = createWatcherIgnore(isVideoFile);
+
+    expect(ignored("/library/run/clip.mp4", file)).toBe(false);
+    expect(ignored("/library/run/clip_00001.png", file)).toBe(true);
+    expect(ignored("/library/run/workflow.json", file)).toBe(true);
+    expect(ignored("/library/run", directory)).toBe(false);
+    expect(ignored("/library/run.v2", directory)).toBe(false);
+    // Without stats a path may still be a directory, so it is kept.
+    expect(ignored("/library/run/clip_00001.png")).toBe(false);
+
+    expect(ignored("/library/.cache", directory)).toBe(true);
+    expect(ignored("/library/.hidden.mp4", file)).toBe(true);
+    expect(ignored("/library/node_modules", directory)).toBe(true);
+    expect(ignored("D:\\$RECYCLE.BIN", directory)).toBe(true);
+    // A library inside a dot folder is still watched below its root.
+    expect(ignored("/home/me/.local/clips/a.mp4", file)).toBe(false);
+  });
+
+  it("is what the native watcher receives", async () => {
+    const watchSpy = vi.spyOn(chokidar, "watch").mockImplementation(
+      () => new FakeNativeWatcher()
+    );
+    try {
+      const watcher = createFolderWatcher({
+        isVideoFile,
+        createVideoFileObject: async (filePath) => ({ id: filePath }),
+        scanFolderForChanges: vi.fn(),
+        logger: { log() {}, warn() {}, error() {} },
+      });
+      await watcher.start("/library");
+      const { ignored } = watchSpy.mock.calls.at(-1)[1];
+      expect(typeof ignored).toBe("function");
+      expect(ignored("/library/a.png", file)).toBe(true);
+      expect(ignored("/library/a.mp4", file)).toBe(false);
+      await watcher.stop?.();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+});
+

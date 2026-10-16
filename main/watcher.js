@@ -8,6 +8,25 @@ const { promises: fsPromises } = require("fs");
 const path = require("path");
 
 const EMPTY_CONTEXT = Object.freeze({});
+const IGNORED_ENTRY_NAMES = new Set([
+  "node_modules",
+  "System Volume Information",
+  "$RECYCLE.BIN",
+]);
+
+/**
+ * chokidar 4 `ignored`: it takes no globs, so names are matched here. Dot
+ * entries and system folders are skipped, and so is every file that is not
+ * a video: otherwise chokidar stats, tracks and (while it is written) polls
+ * each image or sidecar a generator saves beside its clips.
+ */
+function createWatcherIgnore(isVideoFile) {
+  return (filePath, stats) => {
+    const name = String(filePath || "").split(/[\\/]/).pop();
+    if (name.startsWith(".") || IGNORED_ENTRY_NAMES.has(name)) return true;
+    return Boolean(stats?.isFile?.()) && !isVideoFile(filePath);
+  };
+}
 const DEFAULT_WATCHER_LIMITS = Object.freeze({
   maxChangeDebouncers: 2048,
   enrichmentConcurrency: 2,
@@ -1015,13 +1034,7 @@ function createFolderWatcher({
     try {
       // Create chokidar watcher (native events)
       nativeWatcher = chokidar.watch(folderPath, {
-        ignored: [
-          /(^|[\/\\])\../,      // ignore dot files/dirs
-          "**/node_modules/**",
-          "**/.git/**",
-          "**/System Volume Information/**",
-          "**/$RECYCLE.BIN/**",
-        ],
+        ignored: createWatcherIgnore(isVideoFile),
         persistent: true,
         // During an initial folder scan, capture chokidar's own observed
         // baseline instead of suppressing it. Signatures matching the main
@@ -1200,4 +1213,8 @@ function createFolderWatcher({
   };
 }
 
-module.exports = { DEFAULT_WATCHER_LIMITS, createFolderWatcher };
+module.exports = {
+  DEFAULT_WATCHER_LIMITS,
+  createFolderWatcher,
+  createWatcherIgnore,
+};
