@@ -1465,6 +1465,16 @@ function createMetadataStore(db) {
       last_seen_at=excluded.last_seen_at,
       missing_since=NULL;
   `);
+  // Folder opens re-index every file. One whose stored rows already match
+  // only records that it was seen again (see indexFiles).
+  const fileInstanceSeen = db.prepare(`
+    UPDATE file_instances SET last_seen_at = ? WHERE id = ?;
+  `);
+  const fileRecordForIndex = db.prepare(`
+    SELECT last_known_path, size, created_ms, width, height, has_audio,
+      duration_ms, frame_rate
+    FROM files WHERE fingerprint = ?;
+  `);
   const fileInstancesForRoot = db.prepare(`
     SELECT fi.*,
       COALESCE(cr.state,
@@ -2775,7 +2785,14 @@ function createMetadataStore(db) {
     return { createdMs, updatedAt: now };
   }
 
-  function ensureDirectoryHierarchy(rootRow, relativeDirectoryPath, now = Date.now()) {
+  // `memo` (path -> row) lets one batch upsert each directory once rather
+  // than once per file beneath it.
+  function ensureDirectoryHierarchy(
+    rootRow,
+    relativeDirectoryPath,
+    now = Date.now(),
+    memo = null
+  ) {
     const normalizedRelativePath = normalizeCatalogRelativePath(relativeDirectoryPath);
     const parts = normalizedRelativePath ? normalizedRelativePath.split('/') : [];
     const paths = [''];
@@ -2785,6 +2802,10 @@ function createMetadataStore(db) {
 
     let finalRow = null;
     paths.forEach((directoryPath) => {
+      if (memo?.has(directoryPath)) {
+        finalRow = memo.get(directoryPath);
+        return;
+      }
       const parentRelativePath = directoryPath
         ? getDirectoryRelativePath(directoryPath)
         : null;
@@ -2800,6 +2821,7 @@ function createMetadataStore(db) {
         now
       );
       finalRow = directoryByPath.get(rootRow.id, directoryPath);
+      memo?.set(directoryPath, finalRow);
     });
     return finalRow;
   }
@@ -2948,9 +2970,9 @@ function createMetadataStore(db) {
     return instance.fingerprint;
   }
 
-  function writeFileInstance(rootRow, entry, now = Date.now()) {
+  function writeFileInstance(rootRow, entry, now = Date.now(), ensuredDirectory = null) {
     const directoryRelativePath = getDirectoryRelativePath(entry.relativePath);
-    const directoryRow = ensureDirectoryHierarchy(
+    const directoryRow = ensuredDirectory || ensureDirectoryHierarchy(
       rootRow,
       directoryRelativePath,
       now
@@ -2985,6 +3007,62 @@ function createMetadataStore(db) {
       generationMetadataDelete.run(existingInstance.id);
     }
     return fileInstanceByRelativePath.get(rootRow.id, entry.relativePath);
+  }
+
+  // True when upserting these dimensions would leave the row as it is: the
+  // upserts keep a stored value wherever the new one is unknown.
+  function keepsStoredDimensions(row, dimensions) {
+    return [
+      ['width', normalizeDimension(dimensions?.width)],
+      ['height', normalizeDimension(dimensions?.height)],
+      ['has_audio', normalizeHasAudio(dimensions?.hasAudio)],
+      ['duration_ms', normalizeDurationMs(dimensions?.durationMs)],
+      ['frame_rate', normalizeFrameRate(dimensions?.frameRate)],
+    ].every(([column, value]) => value === null || row[column] === value);
+  }
+
+  /**
+   * The instance row when re-indexing this entry would change nothing but its
+   * last_seen_at: same instance, path, directory, size, mtime and content,
+   * present, and no new file or media-content facts. Read inside the write
+   * transaction, so a change made after the entry was prepared is never
+   * skipped.
+   */
+  function findUnchangedIndexedInstance(rootRow, entry, directoryRow) {
+    const expected = entry.reusableInstance;
+    if (!expected || !directoryRow) return null;
+    const current = fileInstanceByRelativePath.get(rootRow.id, entry.relativePath);
+    if (
+      !current ||
+      current.id !== expected.id ||
+      !current.is_present ||
+      current.missing_since != null ||
+      current.absolute_path !== entry.filePath ||
+      current.directory_id !== directoryRow.id ||
+      current.fingerprint !== entry.fingerprint ||
+      Number(current.size) !== normalizeStatSize(entry.stats) ||
+      Number(current.mtime_ms) !== normalizeStatMtime(entry.stats)
+    ) {
+      return null;
+    }
+
+    const size = Number(entry.stats.size || 0);
+    const record = fileRecordForIndex.get(entry.fingerprint);
+    const content = mediaContentByFingerprint.get(entry.fingerprint);
+    if (
+      !record ||
+      !content ||
+      record.last_known_path !== entry.filePath ||
+      Number(record.size) !== size ||
+      record.created_ms == null ||
+      record.created_ms !== entry.createdMs ||
+      Number(content.size) !== size ||
+      !keepsStoredDimensions(record, entry.dimensions) ||
+      !keepsStoredDimensions(content, entry.dimensions)
+    ) {
+      return null;
+    }
+    return current;
   }
 
   function refreshDirectoryCountsByRootId(rootId) {
@@ -3038,9 +3116,22 @@ function createMetadataStore(db) {
       }
     });
 
+    // Most recounts after a scan change nothing; only changed rows are
+    // written, and the rows already read are returned when none were.
+    const rowsByPath = new Map(directoryRows.map((row) => [row.relative_path, row]));
+    const changed = [];
+    counts.forEach((value, relativePath) => {
+      const row = rowsByPath.get(relativePath);
+      const same = row && Object.keys(value).every(
+        (column) => column === 'id' || Number(row[column]) === value[column]
+      );
+      if (!same) changed.push(value);
+    });
+    if (!changed.length) return directoryRows.map(mapDirectoryRow);
+
     const now = Date.now();
     const txn = db.transaction(() => {
-      counts.forEach((value) => {
+      changed.forEach((value) => {
         directoryCountsUpdate.run({ ...value, updated_at: now });
       });
     });
@@ -4463,6 +4554,12 @@ function createMetadataStore(db) {
         createdMs: fingerprintResult.createdMs,
         fingerprintReused: reusedPersistedFingerprint,
         provenLegacyFingerprints,
+        // A candidate for the seen-again fast path; the transaction confirms
+        // that nothing else about it would change.
+        reusableInstance:
+          reusedPersistedFingerprint && provenLegacyFingerprints.length === 0
+            ? existingInstance
+            : null,
       };
       preparedEntries[index] = prepared;
 
@@ -4505,6 +4602,8 @@ function createMetadataStore(db) {
     // generations can never resume and write into a newly active profile.
     assertOperationActive(assertActive);
     const instanceRows = [];
+    const now = Date.now();
+    const directoryMemo = new Map();
     const txn = db.transaction(() => {
       preparedEntries.forEach((entry) => {
         // Carry v1 metadata forward only when these bytes reproduce the
@@ -4516,6 +4615,21 @@ function createMetadataStore(db) {
         entry.provenLegacyFingerprints.forEach((legacyFingerprint) => {
           rekeyContentFingerprint(legacyFingerprint, entry.fingerprint);
         });
+        const directoryRow = ensureDirectoryHierarchy(
+          rootRow,
+          getDirectoryRelativePath(entry.relativePath),
+          now,
+          directoryMemo
+        );
+        // Re-opening a folder mostly finds files exactly as indexed. Those
+        // need one write instead of rewriting their file, content and
+        // instance rows, which kept the main process busy and churned the WAL.
+        const unchanged = findUnchangedIndexedInstance(rootRow, entry, directoryRow);
+        if (unchanged) {
+          fileInstanceSeen.run(now, unchanged.id);
+          instanceRows.push({ ...unchanged, last_seen_at: now });
+          return;
+        }
         writeFileRecord(
           entry.fingerprint,
           entry.filePath,
@@ -4523,7 +4637,7 @@ function createMetadataStore(db) {
           entry.createdMs,
           entry.dimensions
         );
-        instanceRows.push(writeFileInstance(rootRow, entry));
+        instanceRows.push(writeFileInstance(rootRow, entry, now, directoryRow));
       });
     });
     txn();

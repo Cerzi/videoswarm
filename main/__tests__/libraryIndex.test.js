@@ -212,6 +212,94 @@ if (!database || databaseLoadError) {
       expect(second.fingerprintReused).toBe(true);
     });
 
+    it('re-indexes an unchanged file with one write and still records new facts', async () => {
+      const clip = createFile('run-a/deep/clip.mp4', 'unchanged-content');
+      const entry = (dimensions) => ({ ...clip, dimensions });
+      const raw = () => new BetterSqlite(path.join(tempDir, 'videoswarm-meta.db'), {
+        readonly: true,
+      });
+      const readRows = (fingerprint) => {
+        const connection = raw();
+        try {
+          return {
+            file: connection
+              .prepare('SELECT * FROM files WHERE fingerprint = ?')
+              .get(fingerprint),
+            content: connection
+              .prepare('SELECT * FROM media_content WHERE fingerprint = ?')
+              .get(fingerprint),
+            instance: connection
+              .prepare('SELECT * FROM file_instances WHERE relative_path = ?')
+              .get('run-a/deep/clip.mp4'),
+            directories: connection
+              .prepare('SELECT relative_path, updated_at FROM directories ORDER BY relative_path')
+              .all(),
+          };
+        } finally {
+          connection.close();
+        }
+      };
+      const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+      const [first] = await store.indexFiles({
+        rootPath,
+        entries: [entry({ width: 640, height: 360 })],
+      });
+      store.reconcileLibraryRoot(rootPath, [clip.filePath], { recursive: true });
+      const before = readRows(first.fingerprint);
+
+      await tick();
+      const [second] = await store.indexFiles({
+        rootPath,
+        entries: [entry({ width: 640, height: 360 })],
+      });
+      store.reconcileLibraryRoot(rootPath, [clip.filePath], { recursive: true });
+      const after = readRows(first.fingerprint);
+
+      expect(second).toMatchObject({
+        fingerprint: first.fingerprint,
+        fingerprintReused: true,
+        dimensions: first.dimensions,
+      });
+      expect(second.instance).toEqual({
+        ...first.instance,
+        lastSeenAt: after.instance.last_seen_at,
+      });
+      expect(after.instance.last_seen_at).toBeGreaterThan(before.instance.last_seen_at);
+      expect(after.instance).toEqual({
+        ...before.instance,
+        last_seen_at: after.instance.last_seen_at,
+      });
+      // Seen again, nothing else rewritten.
+      expect(after.file).toEqual(before.file);
+      expect(after.content).toEqual(before.content);
+
+      // A recount that changes nothing writes no directory rows. (Registering
+      // the root marks its own top-level row seen on every reconcile.)
+      await tick();
+      const recount = store.reconcileLibraryRoot(rootPath, [clip.filePath], {
+        recursive: true,
+      });
+      const belowRoot = (rows) => rows.filter((row) => row.relative_path !== '');
+      expect(belowRoot(readRows(first.fingerprint).directories)).toEqual(
+        belowRoot(after.directories)
+      );
+      expect(recount.directories.map((row) => row.relativePath)).toEqual(
+        after.directories.map((row) => row.relative_path)
+      );
+
+      await tick();
+      const [third] = await store.indexFiles({
+        rootPath,
+        entries: [entry({ width: 640, height: 360, durationMs: 5000 })],
+      });
+      const withFact = readRows(first.fingerprint);
+      expect(third.fingerprint).toBe(first.fingerprint);
+      expect(withFact.file.duration_ms).toBe(5000);
+      expect(withFact.content.duration_ms).toBe(5000);
+      expect(withFact.file.updated_at).toBeGreaterThan(before.file.updated_at);
+    });
+
     it('only marks files missing inside directories successfully scanned', async () => {
       const rootFile = createFile('root.mp4', 'root');
       const scannedFile = createFile('scanned/missing.mp4', 'missing');
