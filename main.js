@@ -935,7 +935,7 @@ const mediaProtocolService = createMediaProtocolService({
   resolveInstance: async (instanceId, { target } = {}) => {
     const context = captureMetadataContext();
     if (target?.generation !== context.generation) return null;
-    const instance = context.metadataStore.getFileInstanceById(instanceId);
+    const instance = context.metadataStore.getFileInstanceLocation(instanceId);
     assertMetadataContextActive(context);
     if (!instance?.present || !instance.absolutePath) return null;
     return { path: instance.absolutePath, present: true, instanceId };

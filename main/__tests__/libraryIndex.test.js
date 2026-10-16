@@ -300,6 +300,23 @@ if (!database || databaseLoadError) {
       expect(withFact.file.updated_at).toBeGreaterThan(before.file.updated_at);
     });
 
+    it('looks up an instance location for media requests', async () => {
+      const clip = createFile('located.mp4', 'located-content');
+      const [indexed] = await store.indexFiles({ rootPath, entries: [clip] });
+
+      expect(store.getFileInstanceLocation(indexed.instance.id)).toEqual({
+        id: indexed.instance.id,
+        absolutePath: clip.filePath,
+        present: true,
+      });
+      store.markFileMissing(clip.filePath, { rootPath });
+      expect(store.getFileInstanceLocation(indexed.instance.id)).toMatchObject({
+        present: false,
+      });
+      expect(store.getFileInstanceLocation(999999)).toBeNull();
+      expect(store.getFileInstanceLocation('nope')).toBeNull();
+    });
+
     it('only marks files missing inside directories successfully scanned', async () => {
       const rootFile = createFile('root.mp4', 'root');
       const scannedFile = createFile('scanned/missing.mp4', 'missing');

@@ -5,6 +5,10 @@ const { Readable } = require("stream");
 const MEDIA_PROTOCOL_SCHEME = "videoswarm-media";
 const MEDIA_PROTOCOL_HOST = "instance";
 const MEDIA_PROTOCOL_PROXY_HOST = "proxy";
+// Every chunk of a video response passes through main-process JavaScript.
+// 512 KiB chunks move a typical clip in about a tenth as many hops as the
+// 64 KiB default.
+const MEDIA_STREAM_HIGH_WATER_MARK = 512 * 1024;
 
 const MEDIA_MIME_TYPES = Object.freeze({
   ".3gp": "video/3gpp",
@@ -490,6 +494,7 @@ function createMediaProtocolService(options = {}) {
 
       assertRequestCurrent(requestEpoch);
       const stream = createReadStream(canonicalPath, {
+        highWaterMark: MEDIA_STREAM_HIGH_WATER_MARK,
         ...(range ? { start: range.start, end: range.end } : {}),
       });
       activeStreams.add(stream);
@@ -581,6 +586,7 @@ function createMediaProtocolService(options = {}) {
 
 module.exports = {
   MEDIA_MIME_TYPES,
+  MEDIA_STREAM_HIGH_WATER_MARK,
   MEDIA_PROTOCOL_HOST,
   MEDIA_PROTOCOL_PROXY_HOST,
   MEDIA_PROTOCOL_SCHEME,

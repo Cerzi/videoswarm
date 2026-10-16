@@ -1446,6 +1446,9 @@ function createMetadataStore(db) {
   const fileInstanceById = db.prepare(`
     SELECT * FROM file_instances WHERE id = ?;
   `);
+  const fileInstanceLocationById = db.prepare(`
+    SELECT id, absolute_path, is_present FROM file_instances WHERE id = ?;
+  `);
   const fileInstanceUpsert = db.prepare(`
     INSERT INTO file_instances (
       root_id, directory_id, relative_path, absolute_path, size, mtime_ms,
@@ -3582,6 +3585,23 @@ function createMetadataStore(db) {
     });
   }
 
+  /**
+   * Where an instance's file is, for the media protocol: one indexed read
+   * per video range request, without the review state getFileInstanceById
+   * also looks up.
+   */
+  function getFileInstanceLocation(instanceId) {
+    const id = Number(instanceId);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    const row = fileInstanceLocationById.get(id);
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      absolutePath: row.absolute_path,
+      present: Boolean(row.is_present),
+    };
+  }
+
   function getGenerationMetadata(instanceId) {
     const instance = getFileInstanceById(instanceId);
     if (!instance) return null;
@@ -5386,6 +5406,7 @@ function createMetadataStore(db) {
     getTaggedLibrarySnapshot,
     getFileInstances,
     getFileInstanceById,
+    getFileInstanceLocation,
     getGenerationMetadata,
     setGenerationMetadata,
     clearGenerationMetadata,

@@ -14,6 +14,7 @@ const {
   parseMediaRequestUrl,
   parseSingleByteRange,
   registerMediaScheme,
+  MEDIA_STREAM_HIGH_WATER_MARK,
 } = require("../media-protocol");
 const { createPathAuthority } = require("../ipc-security");
 
@@ -277,6 +278,26 @@ describe("media protocol service", () => {
     expect(stat).toHaveBeenCalledTimes(1);
     expect(stat).toHaveBeenCalledWith(canonicalFilePath);
     authority.dispose();
+  });
+
+  it("streams ranges in large chunks to limit main-process hops", async () => {
+    const filePath = createMediaFile("clip.mp4", "0123456789");
+    const createReadStream = vi.fn(() => new PassThrough());
+    const service = createMediaProtocolService({
+      resolveInstance: async () => ({ path: filePath, present: true }),
+      createReadStream,
+    });
+    const response = await service.handle(
+      new Request(createMediaInstanceUrl(7), { headers: { Range: "bytes=2-5" } })
+    );
+
+    expect(response.status).toBe(206);
+    expect(MEDIA_STREAM_HIGH_WATER_MARK).toBe(512 * 1024);
+    expect(createReadStream).toHaveBeenCalledWith(fs.realpathSync(filePath), {
+      highWaterMark: MEDIA_STREAM_HIGH_WATER_MARK,
+      start: 2,
+      end: 5,
+    });
   });
 
   it("destroys an in-flight stream when the request is aborted", async () => {
