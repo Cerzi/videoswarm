@@ -3,7 +3,8 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import VideoCard from "../VideoCard";
-import { thumbService } from "../../../services/thumbService";
+import { thumbService, signatureForVideo } from "../../../services/thumbService";
+import { posterFrames } from "../../../services/posterFrameCache";
 
 // Keep a handle to the native createElement so our mocks can delegate safely
 const NATIVE_CREATE_ELEMENT = document.createElement.bind(document);
@@ -1062,6 +1063,43 @@ describe("VideoCard", () => {
     const loading = card.querySelector(".video-placeholder");
     expect(loading.querySelector(".video-placeholder__spinner")).toBeTruthy();
     expect(loading.textContent).toBe("Loading video");
+  });
+
+  it("shows a captured still frame while unloaded and captures on first data", async () => {
+    const video = {
+      id: "poster",
+      name: "poster.mp4",
+      fullPath: "/clips/poster.mp4",
+      sourceUrl: "videoswarm-media://instance/12?v=100-1",
+      size: 100,
+      dateModified: 1,
+      isElectronFile: true,
+    };
+    const capture = vi.spyOn(posterFrames, "capture").mockReturnValue(true);
+    const get = vi
+      .spyOn(posterFrames, "get")
+      .mockImplementation((signature) =>
+        signature === signatureForVideo(video) ? "blob:poster-frame" : null
+      );
+
+    const idle = render(
+      <VideoCard {...baseProps} video={video} canLoadVideo={() => false} />
+    );
+    await act(async () => {});
+    const poster = idle.container.querySelector(".video-placeholder__poster");
+    expect(poster?.getAttribute("src")).toBe("blob:poster-frame");
+    idle.unmount();
+
+    render(<VideoCard {...baseProps} video={video} canLoadMoreVideos={() => true} />);
+    await act(async () => {});
+    expect(capture).not.toHaveBeenCalled();
+    await act(async () => {
+      lastVideoEl.dispatchEvent(new Event("loadeddata"));
+    });
+    expect(capture).toHaveBeenCalledWith(signatureForVideo(video), lastVideoEl);
+
+    capture.mockRestore();
+    get.mockRestore();
   });
 
   it("rehydrates when flagged as loaded but missing a video element", async () => {

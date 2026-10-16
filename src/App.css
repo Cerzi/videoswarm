@@ -1141,7 +1141,18 @@ body {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.video-placeholder__poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 .video-placeholder__spinner {
+  position: relative;
   width: 24px;
   height: 24px;
   border-radius: 50%;

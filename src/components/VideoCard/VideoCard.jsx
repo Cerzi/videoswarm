@@ -4,6 +4,7 @@ import { classifyMediaError } from "./mediaError";
 import { hardDetach } from "./videoDom";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
+import { posterFrames } from "../../services/posterFrameCache";
 import {
   getOpaqueMediaSource,
   getWebMediaSource,
@@ -927,6 +928,7 @@ const VideoCard = memo(function VideoCard({
           }
           setLoaded(true);
           notifyReady();
+          posterFrames.capture(signatureRef.current, el);
         };
 
         let recoveryInFlight = false;
@@ -1471,11 +1473,22 @@ const VideoCard = memo(function VideoCard({
       );
     }
 
-    // A quiet tile; the clip appears in place when it loads. The spinner is
-    // CSS-delayed, so it shows only for a slow load near the viewport.
+    // A quiet tile, or the clip's still frame once one has been captured; the
+    // clip appears in place when it loads. The spinner is CSS-delayed, so it
+    // shows only for a slow load near the viewport.
     const showSpinner = loading && isNearViewport;
+    const posterUrl = posterFrames.get(thumbSignature);
     return (
       <div className="video-placeholder">
+        {posterUrl && (
+          <img
+            className="video-placeholder__poster"
+            src={posterUrl}
+            alt=""
+            draggable={false}
+            decoding="async"
+          />
+        )}
         {showSpinner && (
           <div className="video-placeholder__spinner" aria-hidden="true" />
         )}

@@ -89,6 +89,7 @@ import {
 } from "./app/performance/folderOpenMetrics";
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
+import { posterFrames } from "./services/posterFrameCache";
 import {
   DEFAULT_PLAYBACK_MODE,
   PLAYBACK_MODES,
@@ -323,7 +324,11 @@ function App() {
 
   useEffect(() => {
     thumbService.setSuspended(workSuspended);
-    return () => thumbService.setSuspended(true);
+    posterFrames.setSuspended(workSuspended);
+    return () => {
+      thumbService.setSuspended(true);
+      posterFrames.setSuspended(true);
+    };
   }, [workSuspended]);
 
   const [availableTags, setAvailableTags] = useState([]);

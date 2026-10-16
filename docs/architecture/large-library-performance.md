@@ -452,6 +452,15 @@ by entry count, encoded bytes, decoded pixels, and index bytes. Index failures
 receive three bounded exponential retries before waiting for a later mutation
 or explicit flush.
 
+Grid still frames (`src/services/posterFrameCache.js`) let an unloaded card
+show its clip's first frame instead of an empty tile. One frame per file
+signature is captured soon after the card's first `loadeddata`, one capture
+per idle callback, scaled to at most 480 px wide and JPEG-encoded off the main
+thread. Frames are memory-only, capped at 2,000 entries and 64 MiB of encoded
+bytes with least-recently-used eviction that revokes each object URL. At most
+32 captures wait, newest kept; a hidden or minimized window drops them and
+captures nothing until it is restored.
+
 External `ffmpeg` work has concurrency, stdout/stderr caps, timeouts, and child
 process cancellation on renderer destruction and shutdown. Watcher enrichment,
 change debouncing, overflow reconciliation, playback waiters, proxy ownership,
