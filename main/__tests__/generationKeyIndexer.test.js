@@ -134,7 +134,7 @@ describe("generation key indexer", () => {
     expect(published[0].updates[0]).toEqual({ fingerprint: "fa", generationKey: KEY_A, checked: true });
   });
 
-  it("publishes and writes in bounded batches", async () => {
+  it("writes in bounded batches and publishes on an interval, never ahead of writes", async () => {
     const candidates = Array.from({ length: 5 }, (_, index) => candidate(index + 1, `f${index}`));
     const { store, indexer, published, start } = setup({
       candidates,
@@ -143,7 +143,42 @@ describe("generation key indexer", () => {
     start();
     await indexer.drain();
     expect(store.writes.map((batch) => batch.length)).toEqual([2, 2, 1]);
-    expect(published.map((payload) => payload.done)).toEqual([false, false, true]);
+    // Five quick files fit in one publish interval: a single, final publish.
+    expect(published.map((payload) => payload.done)).toEqual([true]);
+    expect(published[0].updates).toHaveLength(5);
+  });
+
+  it("publishes once per interval while indexing runs", async () => {
+    let clock = 0;
+    const candidates = Array.from({ length: 6 }, (_, index) => candidate(index + 1, `f${index}`));
+    const store = createStore(candidates);
+    const published = [];
+    const indexer = createGenerationKeyIndexer({
+      readIsoPayload: vi.fn(async () => {
+        clock += 400;
+        return { status: "not-found" };
+      }),
+      computeKey: () => null,
+      fsPromises: createFs(),
+      yieldToEventLoop: () => Promise.resolve(),
+      now: () => clock,
+      limits: { writeBatch: 64, publishIntervalMs: 1000 },
+    });
+    indexer.start(1, {
+      context: { metadataStore: store, assertActive: () => {} },
+      scope: { instanceIds: candidates.map((row) => row.instanceId) },
+      publish: (payload) => {
+        expect(store.writes.flat()).toHaveLength(payload.processed);
+        published.push(payload);
+      },
+    });
+    await indexer.drain();
+    // 400 ms per file: publishes after files 3 and 6 (the last is final).
+    expect(published.map((payload) => [payload.processed, payload.done])).toEqual([
+      [3, false],
+      [6, false],
+      [6, true],
+    ]);
   });
 
   it("never keys a file whose real path escapes its root", async () => {

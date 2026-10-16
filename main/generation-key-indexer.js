@@ -9,10 +9,13 @@ const { createEmbeddedMetadataProbe } = require("./embedded-metadata-probe");
 // in small transactions and published per written batch. See
 // docs/architecture/generation-versions.md, Section 4.
 
+// Keys are written in small transactions but published at most once a
+// second: each publish rewrites the renderer's whole clip list, and at about
+// a millisecond per file a 64-file batch filled far faster than that.
 const GENERATION_KEY_INDEXER_LIMITS = Object.freeze({
   pageSize: 256,
   writeBatch: 64,
-  publishIntervalMs: 250,
+  publishIntervalMs: 1000,
   drainTimeoutMs: 2_000,
   maxJobs: 8,
 });
@@ -154,13 +157,19 @@ class GenerationKeyIndexer {
     job.initialUpdates = null;
     let lastPublishedAt = this.now();
 
-    const flush = (done) => {
+    const writePending = () => {
       this._assertActive(job);
       if (pendingWrites.length > 0) {
         store.setGenerationKeys(pendingWrites, {
           assertActive: () => this._assertActive(job),
         });
       }
+      pendingWrites = [];
+    };
+
+    // A publish only ever carries keys that are already written.
+    const flush = (done) => {
+      writePending();
       this._safePublish(job, {
         processed,
         total: job.total,
@@ -168,7 +177,6 @@ class GenerationKeyIndexer {
         updates: pendingUpdates,
         done,
       });
-      pendingWrites = [];
       pendingUpdates = [];
       lastPublishedAt = this.now();
     };
@@ -202,11 +210,10 @@ class GenerationKeyIndexer {
             generationKey: outcome.definitive ? outcome.generationKey : null,
             checked: outcome.definitive,
           });
-          if (
-            pendingUpdates.length >= this.limits.writeBatch ||
-            this.now() - lastPublishedAt >= this.limits.publishIntervalMs
-          ) {
+          if (this.now() - lastPublishedAt >= this.limits.publishIntervalMs) {
             flush(false);
+          } else if (pendingWrites.length >= this.limits.writeBatch) {
+            writePending();
           }
           await this.yieldToEventLoop();
         }

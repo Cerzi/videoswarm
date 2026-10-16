@@ -555,8 +555,9 @@ possible future cross-check, nothing more.
   now states the key; records from `createVideoFileObject` always state it,
   so a merge can never keep a key that belonged to a file's earlier content.
 - `main/generation-key-indexer.js` runs one job per renderer, latest wins,
-  pages candidates 256 at a time, writes and publishes in batches of 64 or
-  every 250 ms, and drains with the generation-metadata service on profile
+  pages candidates 256 at a time, writes in batches of 64, publishes
+  written keys at most once a second (each publish rewrites the renderer's
+  clip list), and drains with the generation-metadata service on profile
   change and shutdown. `generation-versions:index`, `:cancel`, `:summaries`
   and `:siblings` are exposed through `window.electronAPI.generationVersions`.
 - `useGenerationVersionIndex` triggers indexing after the collection settles
