@@ -1002,15 +1002,16 @@ function initDatabase(app, profilePath) {
         ON media_content(generation_key)
         WHERE generation_key IS NOT NULL;
     `);
-    // Key version 2 only adds short texts to the hash; a key still needs a
-    // seed and a four-word text. Content version 1 found unkeyable is
+    // Key versions 2 (short texts) and 3 (where a video-to-video cut starts)
+    // change what is hashed, not what is keyable: a key still needs a seed
+    // and a four-word text. Content an older version found unkeyable is
     // therefore unkeyable now, and is carried over rather than every file
     // without embedded metadata being read again. Keyed content is
-    // re-evaluated. Revisit this when the key version moves again.
+    // re-evaluated. Revisit this if a version ever changes keyability.
     db.prepare(`
       UPDATE media_content
       SET generation_key_version = @version
-      WHERE generation_key_version = 1
+      WHERE generation_key_version < @version
         AND generation_key IS NULL;
     `).run({ version: GENERATION_KEY_VERSION });
     // Prompt stacks: the prompt key is the generation key without its seeds
@@ -1034,6 +1035,18 @@ function initDatabase(app, profilePath) {
         generation_version: GENERATION_KEY_VERSION,
       });
     }
+    // The same carry-over for the prompt key, which exists exactly when the
+    // generation key does.
+    db.prepare(`
+      UPDATE media_content
+      SET prompt_key = NULL, prompt_key_version = @prompt_version
+      WHERE prompt_key_version < @prompt_version
+        AND generation_key_version = @generation_version
+        AND generation_key IS NULL;
+    `).run({
+      prompt_version: PROMPT_KEY_VERSION,
+      generation_version: GENERATION_KEY_VERSION,
+    });
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_media_content_prompt_key
         ON media_content(prompt_key)

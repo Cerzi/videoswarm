@@ -90,7 +90,7 @@ describe("generation key fixtures", () => {
 
 describe("computeGenerationKey seeds", () => {
   it("requires a seed and a text", () => {
-    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk2-[0-9a-f]{32}$/);
+    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk3-[0-9a-f]{32}$/);
     expect(computeGenerationKey(samplerGraph({ text: "too short here" }))).toBeNull();
     expect(
       computeGenerationKey(
@@ -281,14 +281,15 @@ describe("computeGenerationKey is total", () => {
 
   it("recognizes only well-formed keys", () => {
     expect(isGenerationKey(computeGenerationKey(samplerGraph()))).toBe(true);
-    // Version 1 keys are no longer current, so they are not recognized either.
+    // Older versions are no longer current, so they are not recognized either.
     for (const value of [
       null,
       "",
-      "gk2-xyz",
+      "gk3-xyz",
       "gk1-" + "0".repeat(32),
-      "gk3-" + "0".repeat(32),
-      "gk2-" + "A".repeat(32),
+      "gk2-" + "0".repeat(32),
+      "gk4-" + "0".repeat(32),
+      "gk3-" + "A".repeat(32),
     ]) {
       expect(isGenerationKey(value)).toBe(false);
     }
@@ -301,7 +302,7 @@ describe("prompt key", () => {
   it("comes from the same parse as the generation key", () => {
     const keys = computeGenerationKeys(samplerGraph());
     expect(keys.generationKey).toBe(computeGenerationKey(samplerGraph()));
-    expect(keys.promptKey).toMatch(/^pk1-[0-9a-f]{32}$/);
+    expect(keys.promptKey).toMatch(/^pk2-[0-9a-f]{32}$/);
     expect(isPromptKey(keys.promptKey)).toBe(true);
     expect(isGenerationKey(keys.promptKey)).toBe(false);
     expect(isPromptKey(keys.generationKey)).toBe(false);
@@ -431,8 +432,85 @@ describe("prompt key", () => {
   });
 
   it("recognizes only well-formed prompt keys", () => {
-    for (const value of [null, "", "pk1-xyz", "pk2-" + "0".repeat(32), "pk1-" + "A".repeat(32)]) {
+    for (const value of [null, "", "pk2-xyz", "pk1-" + "0".repeat(32), "pk3-" + "0".repeat(32), "pk2-" + "A".repeat(32)]) {
       expect(isPromptKey(value)).toBe(false);
     }
   });
 });
+
+describe("video-to-video cuts", () => {
+  const PROMPT = "a dancer turns slowly under neon light";
+  // A cutter that names the source and the cut, as MovieClipCutter does.
+  const cutGraph = ({ inTime, outTime = "0:00:20.000", seed = 7, extra = {} } = {}) =>
+    JSON.stringify({
+      1: {
+        class_type: "MovieClipCutter",
+        inputs: {
+          video_path: "/sources/Show_Reel.mp4",
+          in_time: inTime,
+          out_time: outTime,
+          crop: "",
+        },
+      },
+      2: { class_type: "KSampler", inputs: { seed, steps: 20 } },
+      3: { class_type: "CLIPTextEncode", inputs: { text: PROMPT } },
+      ...extra,
+    });
+
+  it("keeps cuts that start elsewhere in one source apart", () => {
+    const first = computeGenerationKeys(cutGraph({ inTime: "0:00:00.000" }));
+    const later = computeGenerationKeys(cutGraph({ inTime: "0:00:30.000" }));
+    expect(first.generationKey).not.toBe(later.generationKey);
+    // Different cuts are different shots, so they stack apart too.
+    expect(first.promptKey).not.toBe(later.promptKey);
+  });
+
+  it("keeps a draft cut short with its full-length final", () => {
+    const draft = computeGenerationKey(
+      cutGraph({ inTime: "0:00:30.000", outTime: "0:00:45.208" })
+    );
+    const final = computeGenerationKey(
+      cutGraph({ inTime: "0:00:30.000", outTime: "0:00:50.167" })
+    );
+    expect(draft).toBe(final);
+  });
+
+  it("reads a start however it is written, and a zero start as none", () => {
+    expect(computeGenerationKey(cutGraph({ inTime: "0:00:30.000" }))).toBe(
+      computeGenerationKey(cutGraph({ inTime: "00:30" }))
+    );
+    expect(computeGenerationKey(cutGraph({ inTime: "0:00:00.000" }))).toBe(
+      computeGenerationKey(cutGraph({ inTime: "0" }))
+    );
+  });
+
+  it("follows one hop to a primitive start, as for seeds", () => {
+    const loader = (skip) =>
+      JSON.stringify({
+        1: {
+          class_type: "VHS_LoadVideo",
+          inputs: {
+            video: "Show_Reel.mp4",
+            skip_first_frames: ["9", 0],
+            frame_load_cap: 81,
+          },
+        },
+        9: { class_type: "PrimitiveInt", inputs: { value: skip } },
+        2: { class_type: "KSampler", inputs: { seed: 7 } },
+        3: { class_type: "CLIPTextEncode", inputs: { text: PROMPT } },
+      });
+    expect(computeGenerationKey(loader(0))).not.toBe(computeGenerationKey(loader(240)));
+    expect(computeGenerationKey(loader(240))).toBe(computeGenerationKey(loader(240)));
+  });
+
+  it("ignores start-like inputs on nodes that name no media", () => {
+    const withStart = cutGraph({
+      inTime: "0:00:30.000",
+      extra: { 4: { class_type: "Scheduler", inputs: { start: 0.25 } } },
+    });
+    expect(computeGenerationKey(withStart)).toBe(
+      computeGenerationKey(cutGraph({ inTime: "0:00:30.000" }))
+    );
+  });
+});
+

@@ -131,7 +131,15 @@ and never looks at node class names.
   `.png`, `.jpg`, `.jpeg`, `.webp`, `.wav`, `.mp3` or `.flac`, reduced to its
   basename. This keeps video-to-video runs with the same prompt but a different
   source video apart. A media string is never also counted as text.
-- **Key.** `gk2-` followed by the first 128 bits of SHA-256 over the versioned,
+- **Where a cut starts** (since key version 3). On a node that names input
+  media, an input named like a start (`in_time`, `start_time`, `start`,
+  `start_frame`, `skip_first_frames` and similar) is joined to that media, as
+  `source.mp4@in_time=30`. A wired value follows one hop to a sole primitive,
+  as for seeds; timecodes become seconds, and a start of zero is no start.
+  Without it, video-to-video runs cut from different points of one source
+  were versions of one generation. Where the cut *ends* is left out, so a
+  draft cut short and its full-length final stay versions.
+- **Key.** `gk3-` followed by the first 128 bits of SHA-256 over the versioned,
   sorted, de-duplicated seed, text, short-text and media lists. De-duplication
   means a seed reached both directly and through the hop counts once.
 - **No key** when there is no seed or no four-word text; short texts alone
@@ -184,6 +192,8 @@ following the fixture rule in `embedded-generation-metadata.md`.
 - The one-hop rule takes a sole integer literal and ignores a source node with
   zero or several.
 - Two runs differing only in input media do not share a key.
+- Video-to-video runs cut from different starts of one source do not share a
+  key; runs whose cuts start together but end apart do.
 - Two same-seed runs differing only in a two- or three-word text do not share
   a key.
 - `NaN`/`Infinity` payloads key; malformed, oversized and hostile shapes return
@@ -651,6 +661,21 @@ possible future cross-check, nothing more.
   migration without reading the file, since its keyability cannot change.
 - The prompt key (`prompt-stacks.md`) is hashed from the same parts minus
   seeds, so each version group now sits inside exactly one prompt stack.
+
+### 2026-10-16 — Key version 3: where a cut starts
+
+- On a real library, every one of ten falsely grouped video-to-video version
+  sets was a `MovieClipCutter` cut of one source at different `in_time`s,
+  sharing seed, prompt and source file name. Key version 3 joins a start-like
+  input to the media named on the same node, so those sets split.
+- The end of a cut is deliberately excluded: the one remaining set on that
+  library is a turbo draft capped shorter and its full-length final, which are
+  versions of one generation.
+- The prompt key moves to version 2 with it: cuts from different starts are
+  different shots, so they stack apart too.
+- Content an older version found unkeyable is carried over by the schema
+  check, as for version 2, since neither version changes what is keyable;
+  keyed content is re-read once in the background.
 
 ## References
 

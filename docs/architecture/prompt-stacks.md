@@ -75,12 +75,13 @@ generation key and the prompt key from one parse. The prompt key reads:
   version 2. Without them, `a cat` and `a dog` sharing a long negative prompt
   would land in one stack. Single words stay out: they cannot be told apart
   from settings such as sampler or scheduler names.
-- **Input media** basenames, as for the generation key. Image-to-video runs
-  from different start images stay in different stacks.
+- **Input media** basenames, with where a cut starts, as for the generation
+  key. Image-to-video runs from different start images, and video-to-video
+  runs cut from different points of one source, stay in different stacks.
 - **Not** seeds, numbers, model or LoRA names, node ids or topology. A seed
   sweep, a steps or CFG sweep and a checkpoint swap therefore share a stack.
 
-The key is `pk1-` followed by the first 128 bits of SHA-256 over a tagged,
+The key is `pk2-` followed by the first 128 bits of SHA-256 over a tagged,
 versioned canonical form, so it can never equal a generation key.
 
 **It exists exactly when the generation key does**: it needs the same seed and

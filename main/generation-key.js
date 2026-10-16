@@ -9,14 +9,14 @@ const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 // Version 2 also hashes texts of two or three words. Version 1 read only
 // texts of four or more, so same-seed runs of "a cat" and "a dog" sharing a
 // long negative prompt counted as versions of one generation.
-const GENERATION_KEY_VERSION = 2;
+const GENERATION_KEY_VERSION = 3;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
 // The prompt key is the generation key without its seeds: every run of one
 // prompt, whatever its seed, sampler settings or model. It is hashed from the
 // same parts, so a clip has a prompt key exactly when it has a generation key
 // and each version group sits inside one prompt stack. See
 // docs/architecture/prompt-stacks.md.
-const PROMPT_KEY_VERSION = 1;
+const PROMPT_KEY_VERSION = 2;
 const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
 const GENERATION_KEY_LIMITS = Object.freeze({
@@ -45,6 +45,13 @@ const MEDIA_EXTENSIONS = Object.freeze([
   ".flac",
 ]);
 const INT_LITERAL = /^-?\d+$/;
+// Inputs that, beside an input media name on the same node, say where in that
+// media the generation starts: a video-to-video run from another cut of one
+// source is a different generation. Where the cut ends is left out on
+// purpose, so a draft cut short and its full-length final stay versions.
+const MEDIA_START_INPUT =
+  /^(?:in_time|in_point|start|start_time|start_frame|start_sec|start_seconds|start_index|skip_first_frames|skip_frames)$/;
+const TIMECODE = /^(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/;
 
 class IntLiteral {
   constructor(source) {
@@ -136,6 +143,52 @@ function soleIntLiteral(inputs, limits) {
   return found;
 }
 
+// A start written the same way however it is entered: timecodes become
+// seconds, and a start at zero is no start at all. Anything unrecognised is
+// ignored rather than guessed at.
+function normalizeMediaStart(value) {
+  let number = null;
+  if (value instanceof IntLiteral) {
+    number = Number(value.source);
+    if (!Number.isSafeInteger(number)) return value.source.replace(/^-?0+(?=\d)/, "");
+  } else if (typeof value === "number") {
+    number = value;
+  } else if (typeof value === "string") {
+    const text = value.trim();
+    const timecode = text.match(TIMECODE);
+    if (timecode) {
+      number =
+        Number(timecode[1] || 0) * 3600 + Number(timecode[2]) * 60 + Number(timecode[3]);
+    } else if (/^-?\d+(?:\.\d+)?$/.test(text)) {
+      number = Number(text);
+    }
+  }
+  if (number === null || !Number.isFinite(number) || number === 0) return null;
+  return String(Math.round(number * 1000) / 1000);
+}
+
+// Exactly one hop, as for seeds: a primitive node holding the start.
+function mediaStartValue(value, nodes, limits) {
+  if (!isLink(value)) return normalizeMediaStart(value);
+  const source = nodes.get(linkTarget(value));
+  if (!source) return null;
+  let found;
+  let inspected = 0;
+  for (const name of Object.keys(source)) {
+    inspected += 1;
+    if (inspected > limits.maxInputsPerNode) return null;
+    const literal = source[name];
+    const scalar =
+      literal instanceof IntLiteral ||
+      typeof literal === "number" ||
+      typeof literal === "string";
+    if (!scalar) continue;
+    if (found !== undefined) return null;
+    found = literal;
+  }
+  return found === undefined ? null : normalizeMediaStart(found);
+}
+
 function mediaBasename(value) {
   const trimmed = value.trim();
   const lower = trimmed.toLowerCase();
@@ -180,9 +233,19 @@ function collectParts(graph, limits) {
     if (names.length > limits.maxInputsPerNode) {
       throw new KeyAbandoned("too many inputs");
     }
+    const nodeMedia = [];
+    const nodeStarts = [];
     for (const name of names) {
       const value = inputs[name];
-      if (name.toLowerCase().includes("seed")) {
+      const lowerName = name.toLowerCase();
+      if (MEDIA_START_INPUT.test(lowerName)) {
+        const start = mediaStartValue(value, nodes, limits);
+        if (start !== null) {
+          nodeStarts.push(`${lowerName}=${start}`);
+          continue;
+        }
+      }
+      if (lowerName.includes("seed")) {
         if (value instanceof IntLiteral) {
           add(seeds, value.source, limits.maxSeeds);
         } else if (isLink(value)) {
@@ -196,12 +259,17 @@ function collectParts(graph, limits) {
       if (typeof value !== "string") continue;
       const basename = mediaBasename(value);
       if (basename !== null) {
-        add(media, basename, limits.maxMedia);
+        nodeMedia.push(basename);
         continue;
       }
       const text = classifyText(value);
       if (text?.short) add(shortTexts, text.text, limits.maxShortTexts);
       else if (text) add(texts, text.text, limits.maxTexts);
+    }
+    // A start applies to the media named on its own node only.
+    const startSuffix = nodeStarts.length ? `@${nodeStarts.sort().join(",")}` : "";
+    for (const basename of nodeMedia) {
+      add(media, `${basename}${startSuffix}`, limits.maxMedia);
     }
   }
 

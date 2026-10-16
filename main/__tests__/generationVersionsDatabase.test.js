@@ -26,10 +26,10 @@ const sqliteDescribe = requireSqliteSuite(
     : null
 );
 
-const KEY_A = `gk2-${"a".repeat(32)}`;
-const KEY_B = `gk2-${"b".repeat(32)}`;
-const PROMPT_A = `pk1-${"a".repeat(32)}`;
-const PROMPT_B = `pk1-${"b".repeat(32)}`;
+const KEY_A = `gk3-${"a".repeat(32)}`;
+const KEY_B = `gk3-${"b".repeat(32)}`;
+const PROMPT_A = `pk2-${"a".repeat(32)}`;
+const PROMPT_B = `pk2-${"b".repeat(32)}`;
 
 if (!database || databaseLoadError) {
   sqliteDescribe("generation version storage", () => {});
@@ -174,7 +174,7 @@ if (!database || databaseLoadError) {
       expect(() => store.listGenerationKeyCandidates({ limit: 257 })).toThrow(RangeError);
       expect(() =>
         store.getGenerationVersionSummaries(
-          Array.from({ length: 4097 }, (_, index) => `gk2-${index.toString(16).padStart(32, "0")}`)
+          Array.from({ length: 4097 }, (_, index) => `gk3-${index.toString(16).padStart(32, "0")}`)
         )
       ).toThrow(RangeError);
     });
@@ -353,6 +353,41 @@ if (!database || databaseLoadError) {
         promptKey: PROMPT_A,
         generationKeyChecked: true,
       });
+    });
+
+    it("upgrades version 2 keys for cut starts, keeping unkeyable files settled", async () => {
+      const keyed = await indexClip(rootPath, "keyed.mp4", "keyed-content");
+      const unkeyed = await indexClip(rootPath, "unkeyed.mp4", "unkeyed-content");
+      resetDatabase();
+      // The state the prompt-stacks build leaves: generation key version 2,
+      // prompt key version 1.
+      const BetterSqlite = require("better-sqlite3");
+      const raw = new BetterSqlite(path.join(tempDir, "videoswarm-meta.db"));
+      raw
+        .prepare(
+          "UPDATE media_content SET generation_key = ?, generation_key_version = 2, prompt_key = ?, prompt_key_version = 1 WHERE fingerprint = ?;"
+        )
+        .run(`gk2-${"c".repeat(32)}`, `pk1-${"d".repeat(32)}`, keyed.fingerprint);
+      raw
+        .prepare(
+          "UPDATE media_content SET generation_key = NULL, generation_key_version = 2, prompt_key = NULL, prompt_key_version = 1 WHERE fingerprint = ?;"
+        )
+        .run(unkeyed.fingerprint);
+      raw.close();
+
+      initMetadataStore({ getPath: () => tempDir }, tempDir);
+      store = getMetadataStore();
+      const byName = Object.fromEntries(
+        store
+          .getCachedLibrarySnapshot(rootPath)
+          .records.map((record) => [path.basename(record.absolutePath), record])
+      );
+      expect(byName["unkeyed.mp4"].generationKeyChecked).toBe(true);
+      expect(byName["keyed.mp4"].generationKey).toBeUndefined();
+      expect(byName["keyed.mp4"].promptKey).toBeUndefined();
+      expect(store.listGenerationKeyCandidates({}).map((row) => row.fingerprint)).toEqual([
+        keyed.fingerprint,
+      ]);
     });
 
     it("upgrades a version 1 database without re-reading unkeyable files", async () => {
