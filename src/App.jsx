@@ -772,6 +772,10 @@ function App() {
     return labels[value] || null;
   }, [filters.reviewFilter]);
 
+  // Folder navigation callbacks reach every folder-tree row, so the selection
+  // is read through a ref rather than changing their identity on each click.
+  const selectedIdsRef = useRef(selection.selected);
+  selectedIdsRef.current = selection.selected;
   const captureFolderViewState = useCallback(() => {
     if (!activeRootPath || folderLocation.rootPath !== activeRootPath) return null;
     return folderViewStateRef.current.set(
@@ -780,7 +784,7 @@ function App() {
       folderScope,
       {
         scrollTop: scrollContainerRef.current?.scrollTop || 0,
-        selectedIds: selection.selected,
+        selectedIds: selectedIdsRef.current,
         sortKey,
         sortDir,
         groupByFolders,
@@ -796,7 +800,6 @@ function App() {
     folderScope,
     groupByFolders,
     randomSeed,
-    selection.selected,
     sortDir,
     sortKey,
   ]);
@@ -1263,9 +1266,7 @@ function App() {
       : selectedFingerprints;
   }, [contextMenu?.contextId, getById, selectedFingerprints, selection.size]);
 
-  const selectedIdsRef = useRef(selection.selected);
   const selectedVideosRef = useRef(selectedVideos);
-  selectedIdsRef.current = selection.selected;
   selectedVideosRef.current = selectedVideos;
 
   const handleNativeDragStart = useCallback(
@@ -4733,6 +4734,9 @@ function App() {
     reviewResume.token,
   ]);
 
+  // Every card receives handleVideoSelect, so it must keep one identity:
+  // anything that changes with the selection is read through this ref.
+  // Otherwise each click would re-render every mounted card.
   const videoSelectStateRef = useRef(null);
   videoSelectStateRef.current = {
     getById,
@@ -4740,6 +4744,10 @@ function App() {
     selectRange: selection.selectRange,
     toggle: selection.toggle,
     selectOnly: selection.selectOnly,
+    buildActiveReviewCheckpoint,
+    cancelReviewResume,
+    reviewSessionEngaged: reviewSessions.isEngaged,
+    scheduleReviewCheckpoint: reviewSessions.schedule,
   };
 
   // Selection via clicks on cards (single / ctrl-multi / shift-range / double → fullscreen)
@@ -4752,12 +4760,12 @@ function App() {
           reviewResumeRef.current.phase
         )
       ) {
-        cancelReviewResume();
+        current?.cancelReviewResume?.();
       }
-      if (!isDoubleClick && video && reviewSessions.isEngaged) {
-        const draft = buildActiveReviewCheckpoint({ anchor: video });
+      if (!isDoubleClick && video && current?.reviewSessionEngaged) {
+        const draft = current.buildActiveReviewCheckpoint({ anchor: video });
         if (draft) {
-          reviewSessions.schedule(draft, {
+          current.scheduleReviewCheckpoint(draft, {
             signature: createReviewCheckpointSignature(draft),
           });
         }
@@ -4780,12 +4788,7 @@ function App() {
         current?.selectOnly?.(videoId);
       }
     },
-    [
-      buildActiveReviewCheckpoint,
-      cancelReviewResume,
-      reviewSessions.isEngaged,
-      reviewSessions.schedule,
-    ]
+    []
   );
 
   // Right-click on a card: open the item context menu without altering selection

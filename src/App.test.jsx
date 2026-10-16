@@ -1186,6 +1186,64 @@ describe("App hook composition", () => {
     expect(unmountedProps.isLoading).toBe(false);
   });
 
+  test("selecting a card re-renders only the cards whose selection changed", async () => {
+    const videos = [
+      { id: "video-1", name: "one.mp4" },
+      { id: "video-2", name: "two.mp4" },
+      { id: "video-3", name: "three.mp4" },
+    ];
+    const positions = videos.map((video, index) => ({
+      id: video.id,
+      item: video,
+      style: {
+        position: "absolute",
+        width: "200px",
+        height: "112px",
+        transform: `translate3d(${index * 204}px, 16px, 0)`,
+      },
+    }));
+    Object.assign(masonryReturn, {
+      orderedVideos: videos,
+      displayVideos: videos,
+      orderedIds: videos.map((video) => video.id),
+      orderForRange: videos.map((video) => video.id),
+      activationIds: positions.map((position) => position.id),
+      centerPriorityIds: videos.map((video) => video.id),
+      activationIdSet: new Set(positions.map((position) => position.id)),
+      virtualItems: positions,
+      totalHeight: 1600,
+    });
+
+    const { default: realUseSelectionState } = await vi.importActual(
+      "./hooks/selection/useSelectionState"
+    );
+    useSelectionStateMock.mockImplementation((...args) =>
+      realUseSelectionState(...args)
+    );
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+
+      const propsFor = (id) =>
+        videoCardSpy.mock.calls.filter(([props]) => props.video.id === id);
+      const firstProps = propsFor("video-1").at(-1)?.[0];
+      const untouchedRenders = propsFor("video-3").length;
+
+      act(() => firstProps.onSelect("video-1", false, false, false));
+      expect(propsFor("video-1").at(-1)?.[0].selected).toBe(true);
+
+      act(() => firstProps.onSelect("video-2", false, false, false));
+      expect(propsFor("video-1").at(-1)?.[0].selected).toBe(false);
+      expect(propsFor("video-2").at(-1)?.[0].selected).toBe(true);
+
+      expect(propsFor("video-2").at(-1)?.[0].onSelect).toBe(firstProps.onSelect);
+      expect(propsFor("video-3")).toHaveLength(untouchedRenders);
+    } finally {
+      useSelectionStateMock.mockImplementation(() => selectionMock);
+    }
+  });
+
   test("keeps an empty indexed root open and displays its path", async () => {
     const lifecycle = {
       ...electronLifecycleReturn,
