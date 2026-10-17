@@ -418,6 +418,41 @@ function deriveSearchTexts(payload, options = {}) {
   }
 }
 
+// Weight files a graph loads: checkpoints, diffusion models, LoRAs, VAEs and
+// text encoders are all named by file in their loader's inputs.
+const WEIGHT_FILE = /\.(?:safetensors|ckpt|pt|pth|bin|gguf|sft)$/iu;
+
+/**
+ * The model and LoRA files a prompt's graph loads, as lowercased file names
+ * without folders or extension, for tag suggestions
+ * (prompt-search-and-tag-suggestions.md). Returns null when the payload is
+ * not a graph. The names must never be persisted or logged.
+ */
+function deriveResourceNames(payload, options = {}) {
+  const limits = { ...GENERATION_KEY_LIMITS, ...options };
+  try {
+    const graph = decodeGraph(payload, limits);
+    if (!graph) return null;
+    const names = new Set();
+    let nodes = 0;
+    for (const id of Object.keys(graph)) {
+      if ((nodes += 1) > limits.maxNodes) return null;
+      const inputs = graph[id]?.inputs;
+      if (!isPlainObject(inputs)) continue;
+      for (const value of Object.values(inputs)) {
+        if (typeof value !== "string" || !WEIGHT_FILE.test(value.trim())) continue;
+        const parts = value.trim().split(/[\\/]/u);
+        const name = parts[parts.length - 1].replace(WEIGHT_FILE, "").toLowerCase();
+        if (name) names.add(name);
+        if (names.size > limits.maxMedia) return null;
+      }
+    }
+    return [...names].sort();
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   GENERATION_KEY_LIMITS,
   GENERATION_KEY_VERSION,
@@ -426,6 +461,7 @@ module.exports = {
   computeGenerationKey,
   computeGenerationKeys,
   deriveGenerationKeyParts,
+  deriveResourceNames,
   deriveSearchTexts,
   isGenerationKey,
   isPromptKey,

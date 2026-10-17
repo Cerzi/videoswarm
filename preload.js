@@ -425,6 +425,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
   },
 
+  // Tag suggestions learned from the library's tags and prompts: catalog
+  // rows and tag names in, tag names and rows out. Prompts never cross.
+  tagSuggestions: {
+    status: async () => ipcRenderer.invoke("tag-suggestions:status"),
+    forClips: async (instanceIds) =>
+      ipcRenderer.invoke("tag-suggestions:for-clips", {
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+      }),
+    mightBe: async (instanceIds, tag) =>
+      ipcRenderer.invoke("tag-suggestions:might-be", {
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+        tag: typeof tag === "string" ? tag : "",
+      }),
+    dismiss: async (fingerprints, tag) =>
+      ipcRenderer.invoke("tag-suggestions:dismiss", {
+        fingerprints: Array.isArray(fingerprints) ? fingerprints : [],
+        tag: typeof tag === "string" ? tag : "",
+      }),
+  },
+
   // Similar-prompt stacks: a collection's prompt keys in, a map of prompt
   // key -> keys whose prompts are alike out. Prompts never cross.
   stacks: {
@@ -555,11 +575,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   library: {
-    // A library search: tags, a rating (1 to 5 stars) and/or prompt words.
+    // A library search: tags, a rating (1 to 5 stars), prompt words and/or
+    // a tag the clips might be.
     taggedSnapshot: async (
       tags,
       matchMode,
-      { minRating = null, exactRating = null, promptQuery = "" } = {}
+      { minRating = null, exactRating = null, promptQuery = "", mightBe = "" } = {}
     ) =>
       ipcRenderer.invoke("library:tagged-snapshot", {
         tags: Array.isArray(tags) ? tags : [],
@@ -569,6 +590,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ...(typeof promptQuery === "string" && promptQuery.trim()
           ? { promptQuery: promptQuery.trim() }
           : {}),
+        ...(typeof mightBe === "string" && mightBe.trim() ? { mightBe: mightBe.trim() } : {}),
       }),
     listRoots: async (options = {}) =>
       ipcRenderer.invoke("library:list-roots", options),

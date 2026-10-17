@@ -43,6 +43,7 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
     minRating = null,
     exactRating = null,
     promptKeys = null,
+    mightBeTag = null,
     unavailableRootPaths,
     generation,
     assertActive,
@@ -53,6 +54,7 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
     minRating,
     exactRating,
     ...(promptKeys ? { promptKeys } : {}),
+    ...(mightBeTag ? { mightBeTag } : {}),
     unavailableRootPaths,
     assertActive,
   });

@@ -856,6 +856,20 @@ function initDatabase(app, profilePath) {
         FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE CASCADE
       );
 
+      -- Tag suggestions the user turned down, per content and tag
+      -- (prompt-search-and-tag-suggestions.md, Section 2). Nothing learned
+      -- from prompts is stored.
+      CREATE TABLE IF NOT EXISTS tag_suggestion_dismissals (
+        fingerprint TEXT NOT NULL,
+        tag_id INTEGER NOT NULL,
+        dismissed_at INTEGER NOT NULL,
+        PRIMARY KEY (fingerprint, tag_id),
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_tag_suggestion_dismissals_tag
+        ON tag_suggestion_dismissals(tag_id);
+
       CREATE TABLE IF NOT EXISTS content_review (
         fingerprint TEXT PRIMARY KEY,
         state TEXT NOT NULL CHECK (
@@ -1687,6 +1701,25 @@ function createMetadataStore(db) {
         @prompt_keys IS NULL
         OR mc.prompt_key IN (SELECT value FROM json_each(@prompt_keys))
       )
+      -- "Might be" a tag: not under it already (@might_be_groups is the tag
+      -- and every tag under it) and not having turned its suggestion down.
+      AND (
+        @might_be_groups IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM file_tags mft
+          INNER JOIN tags mt ON mt.id = mft.tag_id
+          WHERE mft.fingerprint = fi.fingerprint
+            AND mt.name IN (SELECT value FROM json_each(@might_be_groups))
+        )
+      )
+      AND (
+        @might_be_tag IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM tag_suggestion_dismissals mds
+          INNER JOIN tags mdt ON mdt.id = mds.tag_id
+          WHERE mds.fingerprint = fi.fingerprint AND mdt.name = @might_be_tag
+        )
+      )
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
@@ -1978,6 +2011,13 @@ function createMetadataStore(db) {
   const rekeyTagLinks = db.prepare(`
     INSERT OR IGNORE INTO file_tags (fingerprint, tag_id, added_at)
     SELECT @to, tag_id, added_at FROM file_tags WHERE fingerprint = @from;
+  `);
+  // Turned-down suggestions are the user's word too; they cascade away with
+  // the source content once it is dropped.
+  const rekeyTagSuggestionDismissals = db.prepare(`
+    INSERT OR IGNORE INTO tag_suggestion_dismissals (fingerprint, tag_id, dismissed_at)
+    SELECT @to, tag_id, dismissed_at FROM tag_suggestion_dismissals
+    WHERE fingerprint = @from;
   `);
   const rekeyInstanceFingerprints = db.prepare(`
     UPDATE file_instances SET fingerprint = @to WHERE fingerprint = @from;
@@ -2886,6 +2926,7 @@ function createMetadataStore(db) {
     rekeyContentReview.run(parameters);
     rekeyRating.run(parameters);
     rekeyTagLinks.run(parameters);
+    rekeyTagSuggestionDismissals.run(parameters);
     rekeyInstanceFingerprints.run(parameters);
     rekeyCheckpointAnchors.run(parameters);
     // Sequence entries cascade from media_content, so carrying them across
@@ -3465,6 +3506,8 @@ function createMetadataStore(db) {
     ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
     const ratingOf = (value) =>
       Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
+    const mightBeTag =
+      typeof options.mightBeTag === 'string' ? options.mightBeTag.trim().toLowerCase() : '';
     const rows = taggedInstancesAcrossRoots.all({
       tag_groups: JSON.stringify(expandTagGroups(tagNames)),
       unavailable_root_paths: JSON.stringify(unavailableRootPaths),
@@ -3475,6 +3518,10 @@ function createMetadataStore(db) {
       prompt_keys: Array.isArray(options.promptKeys)
         ? JSON.stringify(options.promptKeys.filter(isPromptKey))
         : null,
+      might_be_groups: mightBeTag
+        ? JSON.stringify(expandTagGroups([mightBeTag]).map(([name]) => name))
+        : null,
+      might_be_tag: mightBeTag || null,
       limit: maxRecords + 1,
     });
     assertOperationActive(options.assertActive);
@@ -5329,6 +5376,124 @@ function createMetadataStore(db) {
     return summaries;
   }
 
+  // Tag suggestions (prompt-search-and-tag-suggestions.md, Section 2): what
+  // the learning reads, per present content with a current prompt key.
+  const tagSuggestionLinkRows = db.prepare(`
+    SELECT mc.prompt_key AS prompt_key, ft.fingerprint AS fingerprint, ft.tag_id AS tag_id
+    FROM file_tags ft
+    INNER JOIN media_content mc ON mc.fingerprint = ft.fingerprint
+    WHERE mc.prompt_key IS NOT NULL
+      AND mc.prompt_key_version = @prompt_version
+      AND EXISTS (
+        SELECT 1 FROM file_instances fi
+        WHERE fi.fingerprint = ft.fingerprint AND fi.is_present != 0
+      )
+    ORDER BY ft.fingerprint, ft.tag_id;
+  `);
+  const tagSuggestionDismissalRows = db.prepare(`
+    SELECT mc.prompt_key AS prompt_key, ds.fingerprint AS fingerprint, ds.tag_id AS tag_id
+    FROM tag_suggestion_dismissals ds
+    INNER JOIN media_content mc ON mc.fingerprint = ds.fingerprint
+    WHERE mc.prompt_key IS NOT NULL
+      AND mc.prompt_key_version = @prompt_version
+      AND EXISTS (
+        SELECT 1 FROM file_instances fi
+        WHERE fi.fingerprint = ds.fingerprint AND fi.is_present != 0
+      )
+    ORDER BY ds.fingerprint, ds.tag_id;
+  `);
+  const tagSuggestionTargetRows = db.prepare(`
+    SELECT fi.id AS instance_id, fi.fingerprint, mc.prompt_key, mc.prompt_key_version,
+      (SELECT group_concat(ft.tag_id) FROM file_tags ft
+        WHERE ft.fingerprint = fi.fingerprint) AS tag_ids,
+      (SELECT group_concat(ds.tag_id) FROM tag_suggestion_dismissals ds
+        WHERE ds.fingerprint = fi.fingerprint) AS dismissed_tag_ids
+    FROM file_instances fi
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    WHERE fi.id IN (SELECT value FROM json_each(@instance_ids))
+      AND fi.is_present != 0
+      AND fi.fingerprint IS NOT NULL;
+  `);
+  const insertTagSuggestionDismissal = db.prepare(`
+    INSERT INTO tag_suggestion_dismissals (fingerprint, tag_id, dismissed_at)
+    SELECT @fingerprint, @tag_id, @dismissed_at
+    WHERE EXISTS (SELECT 1 FROM media_content WHERE fingerprint = @fingerprint)
+    ON CONFLICT(fingerprint, tag_id) DO NOTHING;
+  `);
+
+  const TAG_SUGGESTION_MAX_TARGETS = 20_000;
+  const idList = (value) =>
+    String(value || '')
+      .split(',')
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+  /**
+   * What tag suggestions learn from: the tag tree, and the tags and turned-
+   * down suggestions of present contents with a prompt key, as
+   * `{ promptKey, fingerprint, tagId }` rows.
+   */
+  function getTagSuggestionLabels() {
+    const toRow = (row) => ({
+      promptKey: row.prompt_key,
+      fingerprint: row.fingerprint,
+      tagId: Number(row.tag_id),
+    });
+    return {
+      tags: tagRows.all().map((row) => ({
+        id: Number(row.id),
+        name: row.name,
+        parentId: row.parentId == null ? null : Number(row.parentId),
+      })),
+      links: tagSuggestionLinkRows.all({ prompt_version: PROMPT_KEY_VERSION }).map(toRow),
+      dismissals: tagSuggestionDismissalRows
+        .all({ prompt_version: PROMPT_KEY_VERSION })
+        .map(toRow),
+    };
+  }
+
+  /** Present catalog rows with their prompt key, tags and turned-down tags. */
+  function getTagSuggestionTargets(instanceIds) {
+    const ids = [...new Set((instanceIds || []).filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return [];
+    if (ids.length > TAG_SUGGESTION_MAX_TARGETS) {
+      throw new RangeError(`At most ${TAG_SUGGESTION_MAX_TARGETS} clips can be checked at once`);
+    }
+    return tagSuggestionTargetRows.all({ instance_ids: JSON.stringify(ids) }).map((row) => ({
+      instanceId: Number(row.instance_id),
+      fingerprint: row.fingerprint,
+      promptKey:
+        Number(row.prompt_key_version) === PROMPT_KEY_VERSION && isPromptKey(row.prompt_key)
+          ? row.prompt_key
+          : null,
+      tagIds: idList(row.tag_ids),
+      dismissedTagIds: idList(row.dismissed_tag_ids),
+    }));
+  }
+
+  /**
+   * Remembers that these contents are not `tagName`, so it is not suggested
+   * for them again. Returns how many were newly turned down; a tag that does
+   * not exist turns nothing down.
+   */
+  function dismissTagSuggestion(fingerprints, tagName) {
+    const tag = tagSelect.get(String(tagName || '').trim());
+    if (!tag?.id) return 0;
+    const now = Date.now();
+    let dismissed = 0;
+    db.transaction(() => {
+      for (const fingerprint of new Set(fingerprints || [])) {
+        if (typeof fingerprint !== 'string' || !fingerprint) continue;
+        dismissed += insertTagSuggestionDismissal.run({
+          fingerprint,
+          tag_id: tag.id,
+          dismissed_at: now,
+        }).changes;
+      }
+    })();
+    return dismissed;
+  }
+
   /**
    * Present catalog rows with their stored first-frame fingerprint, if any of
    * `version`. Rows of contents without one are returned with `frameHash`
@@ -5910,6 +6075,9 @@ function createMetadataStore(db) {
     listLibraryPromptKeys,
     getFrameRows,
     setFrameFingerprint,
+    getTagSuggestionLabels,
+    getTagSuggestionTargets,
+    dismissTagSuggestion,
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,

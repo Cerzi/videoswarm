@@ -13,6 +13,7 @@ describe("library search criteria", () => {
       minRating: null,
       exactRating: null,
       promptQuery: "",
+      mightBe: "",
     });
     expect(librarySearchCriteria({ minRating: 4 })).toMatchObject({ minRating: 4, exactRating: null });
     // An exact rating wins over a minimum, and "unrated" is no search.
@@ -26,6 +27,11 @@ describe("library search criteria", () => {
     // Prompt words alone are a search too.
     expect(hasLibrarySearchCriteria(librarySearchCriteria({ promptQuery: " lighthouse " }))).toBe(true);
     expect(librarySearchCriteria({ promptQuery: " lighthouse " }).promptQuery).toBe("lighthouse");
+    // And so is a tag the clips might be.
+    expect(hasLibrarySearchCriteria(librarySearchCriteria({ mightBe: " dance " }))).toBe(true);
+    expect(librarySearchKey(librarySearchCriteria({ mightBe: "dance" }))).not.toBe(
+      librarySearchKey(librarySearchCriteria({ mightBe: "sea" }))
+    );
   });
 
   it("changes its key when the rating changes", () => {

@@ -26,6 +26,17 @@ describe("saved view search scope", () => {
     ).toBe("folder");
   });
 
+  it("keeps a library scope defined by a rating, prompt words or a tag clips might be", () => {
+    const library = (filters) => saved(view({ searchScope: "library", filters })).searchScope;
+    expect(library({ minRating: 4 })).toBe("library");
+    expect(library({ exactRating: 2 })).toBe("library");
+    expect(library({ exactRating: 0 })).toBe("folder");
+    expect(library({ promptQuery: " lighthouse " })).toBe("library");
+    expect(library({ mightBe: "dance" })).toBe("library");
+    expect(saved(view({ filters: { mightBe: " dance " } })).filters.mightBe).toBe("dance");
+    expect(saved(view()).filters).not.toHaveProperty("mightBe");
+  });
+
   it("is not part of a review checkpoint's view", () => {
     expect(normalizeReviewViewDefinition(view({ searchScope: "library" }))).not.toHaveProperty("searchScope");
   });

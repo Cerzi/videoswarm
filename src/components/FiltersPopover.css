@@ -114,13 +114,18 @@
   font-size: 0.8rem;
 }
 
-.filters-tag-search input {
+.filters-tag-search input,
+.filters-tag-search select {
   width: 100%;
   padding: 0.45rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: rgba(0, 0, 0, 0.25);
   color: var(--color-text);
+}
+
+.filters-tag-search select option {
+  background: #22272b;
 }
 
 .filters-tag-list {

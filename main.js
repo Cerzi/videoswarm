@@ -61,6 +61,11 @@ const generationKeyIndexer = createGenerationKeyIndexer();
 const { isGenerationKey, isPromptKey } = require("./main/generation-key");
 const { createPromptSimilarityService } = require("./main/prompt-similarity");
 const promptSimilarityService = createPromptSimilarityService();
+const { createTagSuggestionService } = require("./main/tag-suggestions");
+// Tags suggested from what the library's tagged clips' prompts have in common.
+const tagSuggestionService = createTagSuggestionService({
+  promptService: promptSimilarityService,
+});
 const {
   FRAME_FINGERPRINT_VERSION,
   createStackFrameService,
@@ -2120,6 +2125,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
   await generationKeyIndexer.cancelAllAndDrain();
   stackFrameService.cancelAll("Profile changed while reading stack frames");
   promptSimilarityService.clear();
+  tagSuggestionService.clear();
   // Prompts already in ComfyUI keep rendering; the profile's runner picks
   // them up again when that profile is next active.
   await disposeComfyRunner();
@@ -4614,6 +4620,16 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     payload?.promptQuery === undefined || payload?.promptQuery === null
       ? ""
       : assertString(payload.promptQuery, { name: "prompt search", maxChars: 200, trim: true });
+  // And clips that might be a tag (Section 2 there): suggested it, not
+  // tagged with it.
+  const mightBeTag =
+    payload?.mightBe === undefined || payload?.mightBe === null
+      ? ""
+      : assertString(payload.mightBe, {
+          name: "might-be tag",
+          maxChars: IPC_LIMITS.maxShortStringChars,
+          trim: true,
+        });
   // Folder checks are filesystem work, so they run before the synchronous
   // catalog read rather than inside it.
   const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
@@ -4624,20 +4640,36 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     rootsResult.rootPaths
   );
   let promptKeys = null;
-  if (promptQuery) {
+  if (promptQuery || mightBeTag) {
     let context = null;
     try {
       context = captureMetadataContext();
-      const found = await promptSimilarityService.searchPrompts({
-        store: context.metadataStore,
-        promptKeys: context.metadataStore.listLibraryPromptKeys({ unavailableRootPaths }),
-        query: promptQuery,
-        assertActive: () => assertMetadataContextActive(context),
-      });
-      if (!found) {
-        return { success: false, code: "SUPERSEDED", error: "A newer prompt search replaced this one" };
+      const assertActive = () => assertMetadataContextActive(context);
+      promptKeys = context.metadataStore.listLibraryPromptKeys({ unavailableRootPaths });
+      if (promptQuery) {
+        const found = await promptSimilarityService.searchPrompts({
+          store: context.metadataStore,
+          promptKeys,
+          query: promptQuery,
+          assertActive,
+        });
+        if (!found) {
+          return { success: false, code: "SUPERSEDED", error: "A newer prompt search replaced this one" };
+        }
+        promptKeys = found.matches;
       }
-      promptKeys = found.matches;
+      if (mightBeTag) {
+        const found = await tagSuggestionService.mightBeKeys({
+          store: context.metadataStore,
+          promptKeys,
+          tagName: mightBeTag,
+          assertActive,
+        });
+        if (!found) {
+          return { success: false, code: "SUPERSEDED", error: "The library changed while it was searched" };
+        }
+        promptKeys = found.matches;
+      }
     } catch (error) {
       return {
         success: false,
@@ -4653,6 +4685,7 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
       minRating,
       exactRating,
       promptKeys,
+      mightBeTag: mightBeTag || null,
       unavailableRootPaths,
       generation: context.generation,
       assertActive: () => assertMetadataContextActive(context),
@@ -5810,6 +5843,111 @@ ipcMain.handle("prompts:search", async (_event, payload = {}) => {
     };
   } catch (error) {
     return { success: false, code: error?.code || "PROMPT_SEARCH_ERROR", error: error?.message || String(error) };
+  }
+});
+
+// ===== Tag suggestion IPC =====
+// prompt-search-and-tag-suggestions.md, Section 2. The renderer names catalog
+// rows and tags; main learns from prompts it reads itself and answers with
+// tag names and rows. Prompts never cross.
+const TAG_SUGGESTION_MAX_ROWS = 2_000;
+const TAG_MIGHT_BE_MAX_ROWS = 20_000;
+
+const tagSuggestionFailure = (error) => ({
+  success: false,
+  code: error?.code || "TAG_SUGGESTION_ERROR",
+  error: error?.message || String(error),
+});
+const suggestionTagName = (value) =>
+  assertString(value, {
+    name: "tag name",
+    minChars: 1,
+    maxChars: IPC_LIMITS.maxShortStringChars,
+    trim: true,
+  });
+
+// Which tags can be suggested; learning first runs here when needed.
+ipcMain.handle("tag-suggestions:status", async () => {
+  let context = null;
+  try {
+    context = captureMetadataContext();
+    const tags = await tagSuggestionService.status({
+      store: context.metadataStore,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return { success: true, generation: context.generation, tags };
+  } catch (error) {
+    return tagSuggestionFailure(error);
+  }
+});
+
+ipcMain.handle("tag-suggestions:for-clips", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "tag suggestion request");
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "tag suggestion rows",
+      minEntries: 0,
+      maxEntries: TAG_SUGGESTION_MAX_ROWS,
+    });
+    context = captureMetadataContext();
+    const suggestions = await tagSuggestionService.suggest({
+      store: context.metadataStore,
+      instanceIds,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      generation: context.generation,
+      superseded: suggestions === null,
+      suggestions: suggestions || {},
+    };
+  } catch (error) {
+    return tagSuggestionFailure(error);
+  }
+});
+
+ipcMain.handle("tag-suggestions:might-be", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "might-be request");
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "might-be rows",
+      minEntries: 0,
+      maxEntries: TAG_MIGHT_BE_MAX_ROWS,
+    });
+    const tagName = suggestionTagName(payload.tag);
+    context = captureMetadataContext();
+    const found = await tagSuggestionService.mightBe({
+      store: context.metadataStore,
+      instanceIds,
+      tagName,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      generation: context.generation,
+      superseded: found === null,
+      usable: Boolean(found?.usable),
+      matches: found?.matches || [],
+    };
+  } catch (error) {
+    return tagSuggestionFailure(error);
+  }
+});
+
+ipcMain.handle("tag-suggestions:dismiss", async (_event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "turned-down suggestion");
+    const fingerprints = normalizeFingerprintArray(payload.fingerprints);
+    const tagName = suggestionTagName(payload.tag);
+    const dismissed = getMetadataStore().dismissTagSuggestion(fingerprints, tagName);
+    return { success: true, dismissed };
+  } catch (error) {
+    return tagSuggestionFailure(error);
   }
 });
 

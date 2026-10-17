@@ -27,6 +27,7 @@ describe("filtersUtils", () => {
       companionFilters: {},
       companionHideSent: false,
       promptQuery: "",
+      mightBe: "",
     });
   });
 

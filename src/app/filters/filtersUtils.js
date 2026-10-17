@@ -18,11 +18,17 @@ export const createDefaultFilters = () => ({
   companionHideSent: false,
   // Words in the prompt (prompt-search-and-tag-suggestions.md).
   promptQuery: "",
+  // A tag the clips might be: suggested it, not tagged with it (Section 2).
+  mightBe: "",
 });
 
 const MAX_PROMPT_QUERY_CHARS = 200;
 export const normalizePromptQuery = (value) =>
   typeof value === "string" ? value.slice(0, MAX_PROMPT_QUERY_CHARS) : "";
+
+const MAX_TAG_NAME_CHARS = 256;
+export const normalizeMightBe = (value) =>
+  typeof value === "string" ? value.trim().slice(0, MAX_TAG_NAME_CHARS) : "";
 
 // "all" is an intersection, "any" a union. Exclusion stays separate and always
 // means "none of these", so the two controls compose without a query language.
@@ -126,6 +132,7 @@ export const useFiltersActiveCount = (filters) =>
       resolutionCount +
       versionCount +
       companionFilterCount(filters) +
-      (normalizePromptQuery(filters.promptQuery).trim() ? 1 : 0)
+      (normalizePromptQuery(filters.promptQuery).trim() ? 1 : 0) +
+      (normalizeMightBe(filters.mightBe) ? 1 : 0)
     );
   }, [filters]);

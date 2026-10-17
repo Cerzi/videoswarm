@@ -111,6 +111,9 @@ const ContextMenu = ({
   canGoToFolder = false,
   // A connected companion app's actions, as it describes them.
   companionActions = NO_COMPANION_ACTIONS,
+  // While Filters › Might be shows a tag's suggestions: tag them or rule
+  // them out.
+  mightBeTag = '',
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
@@ -223,6 +226,21 @@ const ContextMenu = ({
       }))
     );
 
+    if (mightBeTag) {
+      pushSection([
+        {
+          id: 'likely-tag-accept',
+          label: `🏷 Tag as “${mightBeTag}”${reviewTarget}`,
+          action: 'likely-tag:accept',
+        },
+        {
+          id: 'likely-tag-dismiss',
+          label: `⊘ Not “${mightBeTag}”${reviewTarget}`,
+          action: 'likely-tag:dismiss',
+        },
+      ]);
+    }
+
     pushSection([
       {
         id: 'metadata-open',
@@ -329,6 +347,7 @@ const ContextMenu = ({
     companionActions,
     contextId,
     electronAPI,
+    mightBeTag,
     primaryVideo,
     reviewModeEnabled,
     selectionCount,

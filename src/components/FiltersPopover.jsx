@@ -106,6 +106,58 @@ const COMPANION_FILTER_OPTIONS = [
   })),
 ];
 
+// Clips that might be a tag: its suggestions, not yet tagged or turned down
+// (prompt-search-and-tag-suggestions.md, Section 2).
+function MightBeControl({ value, status, state, onChange }) {
+  const tags = Array.isArray(status?.tags) ? status.tags : null;
+  const usable = (tags || []).filter((tag) => tag.usable);
+  const untellable = (tags || []).filter((tag) => !tag.usable);
+  // A saved view can name a tag that cannot be suggested any more.
+  const listed = value && !usable.some((tag) => tag.name.toLowerCase() === value.toLowerCase());
+  let hint;
+  if (value && state?.pending) hint = "Finding clips…";
+  else if (value && state && !state.usable) hint = `"${value}" cannot be suggested yet.`;
+  else if (value) hint = `Clips not tagged "${value}" whose prompts suggest it. Right-click to tag them, or to rule them out.`;
+  else if (!tags || status?.pending) hint = "Learning from your tags…";
+  else if (usable.length === 0) {
+    hint =
+      "A tag can be suggested once it is on ten clips with different prompts, and other clips carry other tags.";
+  } else {
+    hint = "Tags learned from the prompts of clips you have tagged.";
+  }
+  return (
+    <>
+      <div className="filters-tag-search">
+        <select
+          aria-label="Might be tagged"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={!value && usable.length === 0}
+        >
+          <option value="">Any clip</option>
+          {listed ? <option value={value}>{value}</option> : null}
+          {usable.map((tag) => (
+            <option key={tag.name} value={tag.name}>
+              {tag.name} · right {Math.round((tag.precision || 0) * 100)}%
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="filters-empty-hint" role="status">
+        {hint}
+      </span>
+      {!value && untellable.length ? (
+        <span className="filters-empty-hint">
+          {`Not told by the prompt: ${untellable
+            .slice(0, 6)
+            .map((tag) => tag.name)
+            .join(", ")}${untellable.length > 6 ? ` and ${untellable.length - 6} more` : ""}.`}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 const FiltersPopover = forwardRef(
   (
     {
@@ -130,6 +182,10 @@ const FiltersPopover = forwardRef(
       companion = null,
       // Prompt search status: `{ pending, unread }` (usePromptSearch).
       promptSearch = null,
+      // Which tags can be suggested, `{ tags, pending }`, and the "Might be"
+      // filter's state, `{ pending, usable }` (src/app/tags/likelyTags.js).
+      likelyTagStatus = null,
+      mightBe = null,
     },
     ref
   ) => {
@@ -616,6 +672,16 @@ const FiltersPopover = forwardRef(
                 ? `${promptSearch.unread.toLocaleString()} prompts could not be read (WebM, MKV or missing files).`
                 : "Matches the start of words; every word must appear, -word rules one out. Negative prompts are ignored."}
           </span>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Might be</header>
+          <MightBeControl
+            value={filters?.mightBe || ""}
+            status={likelyTagStatus}
+            state={mightBe}
+            onChange={(tag) => onChange((prev) => ({ ...prev, mightBe: tag }))}
+          />
         </section>
 
         <section className="filters-section">

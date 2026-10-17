@@ -166,6 +166,28 @@ describe("preload native-work bridge", () => {
     unsubscribe();
   });
 
+  it("asks for tag suggestions by catalog row, fingerprint and tag name only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.tagSuggestions.status();
+    await api.tagSuggestions.forClips([4, 5]);
+    await api.tagSuggestions.forClips("bad");
+    await api.tagSuggestions.mightBe([4], "dance");
+    await api.tagSuggestions.mightBe(null, 7);
+    await api.tagSuggestions.dismiss(["fp-1"], "dance");
+    await api.library.taggedSnapshot([], "all", { mightBe: " dance " });
+    await api.library.taggedSnapshot([], "all", { mightBe: "  " });
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["tag-suggestions:status"],
+      ["tag-suggestions:for-clips", { instanceIds: [4, 5] }],
+      ["tag-suggestions:for-clips", { instanceIds: [] }],
+      ["tag-suggestions:might-be", { instanceIds: [4], tag: "dance" }],
+      ["tag-suggestions:might-be", { instanceIds: [], tag: "" }],
+      ["tag-suggestions:dismiss", { fingerprints: ["fp-1"], tag: "dance" }],
+      ["library:tagged-snapshot", { tags: [], matchMode: "all", mightBe: "dance" }],
+      ["library:tagged-snapshot", { tags: [], matchMode: "all" }],
+    ]);
+  });
+
   it("exposes generation-version indexing with ids or library scope only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.generationVersions.index({ instanceIds: [1, 2], rootPath: "/nope" });

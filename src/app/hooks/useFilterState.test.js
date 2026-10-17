@@ -326,3 +326,83 @@ describe("useFilterState prompt search", () => {
     expect(result.current.filteredVideos).toHaveLength(3);
   });
 });
+
+describe("useFilterState might be", () => {
+  const clips = [
+    { id: "a", instanceId: 1, fingerprint: "fp-a", promptKey: "pk-a", tags: [], reviewState: "unreviewed" },
+    { id: "b", instanceId: 2, fingerprint: "fp-b", promptKey: "pk-b", tags: [], reviewState: "unreviewed" },
+    { id: "c", instanceId: 3, fingerprint: "fp-c", promptKey: "pk-c", tags: [], reviewState: "unreviewed" },
+    { id: "plain", instanceId: 4, fingerprint: "fp-d", tags: [], reviewState: "unreviewed" },
+  ];
+  const tagHierarchy = buildTagHierarchy([
+    { name: "dance", parent: null },
+    { name: "bellydance", parent: "dance" },
+  ]);
+  afterEach(async () => {
+    vi.useRealTimers();
+    const { resetTurnedDownTags } = await import("../tags/likelyTags");
+    resetTurnedDownTags();
+    delete window.electronAPI;
+  });
+  const settle = async () => {
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+  };
+
+  it("shows only the rows main says might be the tag, and drops them once tagged or turned down", async () => {
+    vi.useFakeTimers();
+    const mightBe = vi.fn(async () => ({ success: true, usable: true, matches: [1, 2, 3] }));
+    const dismiss = vi.fn(async () => ({ success: true, dismissed: 1 }));
+    window.electronAPI = { tagSuggestions: { mightBe, dismiss } };
+    let videos = clips;
+    const { result, rerender } = renderHook(() =>
+      useFilterState({
+        videos,
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+        tagHierarchy,
+      })
+    );
+    act(() => result.current.updateFilters({ mightBe: " dance " }));
+    // Nothing is known to be the tag before main answers.
+    expect(result.current.filteredVideos).toEqual([]);
+    expect(result.current.mightBe.pending).toBe(true);
+    await settle();
+    // Only clips with a prompt key are asked about.
+    expect(mightBe).toHaveBeenCalledWith([1, 2, 3], "dance");
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["a", "b", "c"]);
+    expect(result.current.filtersActiveCount).toBe(1);
+
+    // Tagged with a tag under it: done with.
+    videos = clips.map((video) => (video.id === "a" ? { ...video, tags: ["bellydance"] } : video));
+    rerender();
+    // The collection changed, so main is asked again; the old answer stays meanwhile.
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["b", "c"]);
+
+    const { turnDownLikelyTag } = await import("../tags/likelyTags");
+    await act(async () => {
+      await turnDownLikelyTag(["fp-b"], "Dance");
+    });
+    expect(dismiss).toHaveBeenCalledWith(["fp-b"], "Dance");
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["c"]);
+
+    act(() => result.current.updateFilters({ mightBe: "" }));
+    expect(result.current.filteredVideos).toHaveLength(4);
+  });
+
+  it("says when the tag cannot be suggested", async () => {
+    vi.useFakeTimers();
+    window.electronAPI = {
+      tagSuggestions: { mightBe: vi.fn(async () => ({ success: true, usable: false, matches: [] })) },
+    };
+    const { result } = renderHook(() =>
+      useFilterState({ videos: clips, filtersButtonRef: createRef(), filtersPopoverRef: createRef() })
+    );
+    act(() => result.current.updateFilters({ mightBe: "keeper" }));
+    await settle();
+    expect(result.current.mightBe.usable).toBe(false);
+    expect(result.current.filteredVideos).toEqual([]);
+  });
+});

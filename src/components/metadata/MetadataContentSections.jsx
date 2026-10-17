@@ -20,6 +20,15 @@ import {
   selectMetadataTagSuggestions,
   splitMetadataTagInput,
 } from "./metadataContent";
+import { turnDownLikelyTag, useLikelyTags } from "../../app/tags/likelyTags";
+
+// What a suggested tag's tooltip says about how far to trust it.
+export function describeLikelyTag(tag, precision) {
+  const right = Number.isFinite(precision) ? Math.round(precision * 100) : null;
+  return right === null
+    ? `Suggested from the prompt`
+    : `Suggested from the prompt: on clips you have tagged, "${tag}" was suggested correctly ${right}% of the time`;
+}
 
 export function MetadataFileFactsSection({
   info,
@@ -392,6 +401,9 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
     () => splitMetadataTagInput(inputValue),
     [inputValue]
   );
+  // Tags learned from the library's tagged clips' prompts, for the clips
+  // they are suggested for (prompt-search-and-tag-suggestions.md).
+  const likelyTags = useLikelyTags(selectedVideos, { active: active && hasSelection });
   // Matches for the tag being typed sit directly under the input, inside the
   // tags section, so no surrounding layout (fullscreen's height-bounded dock
   // among them) can squeeze them out of view.
@@ -517,6 +529,44 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
                     {count}/{selectionCount}
                   </span>
                 </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {likelyTags.length ? (
+          <div className="metadata-panel__partial-group metadata-panel__likely">
+            <div className="metadata-panel__section-subtitle">Suggested from the prompt</div>
+            <div className="metadata-panel__chips" role="group" aria-label="Suggested tags">
+              {likelyTags.map(({ tag, precision, fingerprints }) => (
+                <span
+                  key={tag}
+                  className="metadata-panel__likely-chip"
+                  title={describeLikelyTag(tag, precision)}
+                >
+                  <button
+                    type="button"
+                    className="metadata-panel__likely-apply"
+                    onClick={() => onApplyTagToSelection?.(tag, fingerprints)}
+                    aria-label={`Add suggested tag ${tag}`}
+                  >
+                    <span>#{tag}</span>
+                    {selectionCount > 1 ? (
+                      <span className="metadata-panel__chip-count">
+                        {fingerprints.length}/{selectionCount}
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="metadata-panel__likely-dismiss"
+                    onClick={() => void turnDownLikelyTag(fingerprints, tag)}
+                    aria-label={`Not ${tag}`}
+                    title="Not this: stop suggesting it for these clips"
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </span>
               ))}
             </div>
           </div>

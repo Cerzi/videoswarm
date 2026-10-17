@@ -405,5 +405,69 @@ describe("reusable metadata content sections", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onAddTag).toHaveBeenLastCalledWith(["brand new"]);
   });
-});
 
+  describe("tags suggested from the prompt", () => {
+    afterEach(async () => {
+      vi.useRealTimers();
+      const { resetTurnedDownTags } = await import("../../app/tags/likelyTags");
+      resetTurnedDownTags();
+      delete window.electronAPI;
+    });
+
+    const clip = (id, tags = []) => ({
+      id: `v${id}`,
+      instanceId: id,
+      fingerprint: `fp-${id}`,
+      promptKey: `pk-${id}`,
+      tags,
+    });
+
+    it("offers them for the clips they fit, applies one there, and turns one down", async () => {
+      vi.useFakeTimers();
+      const forClips = vi.fn(async () => ({
+        success: true,
+        suggestions: {
+          1: [{ tag: "dance", precision: 0.9 }, { tag: "stage", precision: 0.85 }],
+          2: [{ tag: "dance", precision: 0.9 }],
+        },
+      }));
+      const dismiss = vi.fn(async () => ({ success: true, dismissed: 1 }));
+      window.electronAPI = { tagSuggestions: { forClips, dismiss } };
+      const onApplyTagToSelection = vi.fn();
+      render(
+        <MetadataTagsSection
+          selectedVideos={[clip(1), clip(2), { id: "no-prompt", tags: [] }]}
+          selectionCount={3}
+          onApplyTagToSelection={onApplyTagToSelection}
+        />
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+      });
+      expect(forClips).toHaveBeenCalledWith([1, 2]);
+      const dance = screen.getByRole("button", { name: "Add suggested tag dance" });
+      expect(dance).toHaveTextContent("#dance2/3");
+      expect(dance.parentElement).toHaveAttribute(
+        "title",
+        expect.stringContaining("suggested correctly 90% of the time")
+      );
+      fireEvent.click(dance);
+      expect(onApplyTagToSelection).toHaveBeenCalledWith("dance", ["fp-1", "fp-2"]);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Not stage" }));
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+      });
+      expect(dismiss).toHaveBeenCalledWith(["fp-1"], "stage");
+      expect(screen.queryByRole("button", { name: "Add suggested tag stage" })).not.toBeInTheDocument();
+    });
+
+    it("shows nothing without suggestions or a desktop bridge", () => {
+      const { container } = render(
+        <MetadataTagsSection selectedVideos={[clip(1)]} selectionCount={1} />
+      );
+      expect(container.querySelector(".metadata-panel__likely")).toBeNull();
+    });
+  });
+});

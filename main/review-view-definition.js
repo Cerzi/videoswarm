@@ -150,6 +150,8 @@ function normalizeReviewViewDefinition(
   };
   const promptQuery =
     typeof filtersInput.promptQuery === 'string' ? filtersInput.promptQuery.trim().slice(0, 200) : '';
+  const mightBe =
+    typeof filtersInput.mightBe === 'string' ? filtersInput.mightBe.trim().slice(0, 256) : '';
 
   const normalized = {
     version: REVIEW_VIEW_VERSION,
@@ -167,6 +169,7 @@ function normalizeReviewViewDefinition(
         : 'any',
       ...companion,
       ...(promptQuery ? { promptQuery } : {}),
+      ...(mightBe ? { mightBe } : {}),
     },
     sort: {
       key: sortKey,
@@ -191,12 +194,17 @@ function normalizeReviewViewDefinition(
     };
     // Where a saved view searches: the open folder (the default, so every
     // view saved before this axis existed means what it meant), or every
-    // indexed root. A library search is defined by its tags, so without an
-    // include tag it stays a folder view.
+    // indexed root. A library search is defined by its tags, a rating, prompt
+    // words or a tag clips might be; with none it stays a folder view.
+    const filters = normalized.filters;
+    const definesLibrarySearch =
+      filters.includeTags.length > 0 ||
+      filters.minRating >= 1 ||
+      filters.exactRating >= 1 ||
+      Boolean(filters.promptQuery) ||
+      Boolean(filters.mightBe);
     normalized.searchScope =
-      input.searchScope === 'library' && normalized.filters.includeTags.length > 0
-        ? 'library'
-        : 'folder';
+      input.searchScope === 'library' && definesLibrarySearch ? 'library' : 'folder';
   }
 
   const serialized = JSON.stringify(normalized);

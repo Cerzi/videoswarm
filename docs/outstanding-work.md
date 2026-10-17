@@ -344,6 +344,19 @@ matches under the tag input, including in fullscreen. Check by hand:
   or **Workflow** (Generation panel) opens it in a ComfyUI window; a second
   clip loads into the same window; with ComfyUI stopped, the error says to
   start it (`architecture/comfy-workflow-window.md`).
+- Tag suggestions (`architecture/prompt-search-and-tag-suggestions.md`,
+  Section 2): Details shows *Suggested from the prompt* for an untagged clip
+  whose prompt fits a tag used on ten or more different prompts; the chip
+  applies, the cross turns it down for good. Quality tags such as "keeper"
+  are listed under Filters › Might be as not told by the prompt. *Might be*
+  with a tag shows clips it is suggested for; right-click *Tag as* or *Not*
+  empties it as you go; with *Entire library* it searches every root. The
+  first learning reads every tagged clip's prompt, so it may take a while
+  on a big library: say if it feels too slow, and whether the suggestions
+  are any good.
+- A smart view saved during a rating-only, prompt-only or *Might be*
+  library search searches the library again when applied (it used to come
+  back as a folder view).
 
 Decided 2026-10-17: **proxies are on by default**, to try. For portrait
 WAN/A1 clips they cut decoded pixels by about 1.8-3x. They are CRF 30

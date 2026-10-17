@@ -891,7 +891,12 @@ if (!database || databaseLoadError) {
                 .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
                 .run(legacyFingerprint, currentFingerprint);
             }
-            for (const table of ['content_review', 'ratings', 'file_tags']) {
+            for (const table of [
+              'content_review',
+              'ratings',
+              'file_tags',
+              'tag_suggestion_dismissals',
+            ]) {
               raw
                 .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
                 .run(legacyFingerprint, currentFingerprint);
@@ -957,6 +962,8 @@ if (!database || databaseLoadError) {
         store.setReviewState([indexed.fingerprint], 'pick');
         store.setRating([indexed.fingerprint], 5);
         store.assignTags([indexed.fingerprint], ['legacy-tag']);
+        // A turned-down tag suggestion is the user's word as much as a tag.
+        expect(store.dismissTagSuggestion([indexed.fingerprint], 'legacy-tag')).toBe(1);
 
         const { fingerprint, legacyFingerprint } = await computeFingerprint(
           entry.filePath
@@ -974,6 +981,8 @@ if (!database || databaseLoadError) {
         expect(remigrated.reviewState).toBe('pick');
         expect(remigrated.rating).toBe(5);
         expect(remigrated.tags).toContain('legacy-tag');
+        const [target] = store.getTagSuggestionTargets([remigrated.instance.id]);
+        expect(target.dismissedTagIds).toHaveLength(1);
 
         const raw = openProfileDatabase();
         try {

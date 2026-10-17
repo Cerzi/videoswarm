@@ -4,6 +4,7 @@ const path = require("path");
 const {
   computeGenerationKeys,
   deriveGenerationKeyParts,
+  deriveResourceNames,
   deriveSearchTexts,
 } = require("./generation-key");
 const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./container-tags");
@@ -65,6 +66,16 @@ function createWordDictionary() {
         words.add(id);
       }
       return Int32Array.from(words).sort();
+    },
+    /** The number of one whole token, such as a model file name. */
+    idOfToken(token) {
+      let id = ids.get(token);
+      if (id === undefined) {
+        id = ids.size;
+        ids.set(token, id);
+        known.push(token);
+      }
+      return id;
     },
     get size() {
       return ids.size;
@@ -314,8 +325,8 @@ class PromptSimilarityService {
     this.readIsoPayload = options.readIsoPayload || readIsoBmffEmbeddedPayload;
     this.yieldToEventLoop = options.yieldToEventLoop || defaultYield;
     this.dictionary = createWordDictionary();
-    // promptKey -> { media, texts: [{ id, words }] } or null (no readable
-    // clip). Memory only.
+    // promptKey -> { media, texts: [{ id, words }], searchWords, features }
+    // or null (no readable clip). Memory only.
     this.cache = new Map();
     this.inFlight = new Map();
     this.ticket = 0;
@@ -360,13 +371,23 @@ class PromptSimilarityService {
         if (!parts) continue;
         // Search reads every text but negative prompts, short ones included.
         const searchable = (deriveSearchTexts(prompt) || []).filter((text) => !text.negative);
+        const searchWords = new Set(
+          searchable.flatMap((text) => [...this.dictionary.idsOf(text.text)])
+        );
+        // Tag suggestions also learn from the weight files the graph loads.
+        // A leading NUL keeps them apart from words, which never contain one.
+        const features = new Set(searchWords);
+        for (const name of deriveResourceNames(prompt) || []) {
+          features.add(this.dictionary.idOfToken(`\u0000${name}`));
+        }
         return {
           media: hash(parts.media.join("\n")),
           texts: parts.texts.map((text) => ({
             id: hash(text),
             words: this.dictionary.idsOf(text),
           })),
-          searchWords: new Set(searchable.flatMap((text) => [...this.dictionary.idsOf(text.text)])),
+          searchWords,
+          features: Int32Array.from(features).sort(),
         };
       } catch {
         // Try the next instance.
@@ -470,6 +491,32 @@ class PromptSimilarityService {
       }
     }
     return { matches, unread };
+  }
+
+  /**
+   * Each prompt key's features for tag suggestions
+   * (prompt-search-and-tag-suggestions.md): the words of its positive prompts
+   * and the weight files its graph loads, as sorted numbers. Keys without a
+   * readable clip map to null. Returns `{ epoch, features }`, or null when the
+   * numbering was reset while reading, so numbers from before mean nothing.
+   */
+  async promptFeatures(promptKeys, { store, assertActive } = {}) {
+    if (this.dictionary.size > this.limits.maxDictionaryWords) this.clear();
+    const epoch = this.epoch;
+    const list = (Array.isArray(promptKeys) ? promptKeys : []).slice(0, this.limits.maxKeys);
+    const features = new Map();
+    for (let index = 0; index < list.length; index += 1) {
+      const prompt = await this._promptFor(list[index], store, assertActive);
+      assertActive?.();
+      if (epoch !== this.epoch) return null;
+      features.set(list[index], prompt?.features || null);
+      if ((index + 1) % this.limits.yieldEvery === 0) {
+        await this.yieldToEventLoop();
+        assertActive?.();
+        if (epoch !== this.epoch) return null;
+      }
+    }
+    return { epoch, features };
   }
 
   // Profile switches clear the cache: whether a key has a readable clip

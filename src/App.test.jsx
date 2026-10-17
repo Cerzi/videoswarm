@@ -4375,7 +4375,7 @@ describe("library search scope", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Every keeper Library" }));
     });
-    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "" }));
+    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "", mightBe: "" }));
     expect(taggedSnapshot).toHaveBeenCalledTimes(1);
     expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(libraryView.definition.filters);
   });
@@ -4393,7 +4393,7 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "" });
+    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "", mightBe: "" });
   });
 
   test("searches the whole library by prompt words alone", async () => {
@@ -4407,6 +4407,7 @@ describe("library search scope", () => {
       minRating: null,
       exactRating: null,
       promptQuery: "lighthouse",
+      mightBe: "",
     });
     expect(openTagCollectionMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ tags: [], promptQuery: "lighthouse" })
@@ -4427,9 +4428,27 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", { minRating: 4, exactRating: null, promptQuery: "" });
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", { minRating: 4, exactRating: null, promptQuery: "", mightBe: "" });
     expect(openTagCollectionMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ tags: [], minRating: 4, exactRating: null })
+    );
+  });
+
+  test("searches the whole library for clips that might be a tag", async () => {
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    window.electronAPI = { library: { taggedSnapshot } };
+    const { props } = await renderWithTags([], { mightBe: " dance " });
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", {
+      minRating: null,
+      exactRating: null,
+      promptQuery: "",
+      mightBe: "dance",
+    });
+    expect(openTagCollectionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tags: [], mightBe: "dance" })
     );
   });
 });

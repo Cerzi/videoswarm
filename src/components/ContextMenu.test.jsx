@@ -389,6 +389,30 @@ describe('ContextMenu', () => {
     expect(onAction).toHaveBeenCalledWith('companion:send:enlarge');
   });
 
+  test('tags or rules out clips while a might-be filter is on', () => {
+    const onAction = vi.fn();
+    const menu = (mightBeTag) => render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={2}
+        getById={getById}
+        onClose={() => {}}
+        onAction={onAction}
+        mightBeTag={mightBeTag}
+      />
+    );
+    const { unmount } = menu('');
+    expect(screen.queryByRole('menuitem', { name: /Tag as/ })).toBeNull();
+    unmount();
+
+    menu('dance');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Tag as “dance” \(2 selected\)$/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Not “dance” \(2 selected\)$/ }));
+    expect(onAction.mock.calls).toEqual([['likely-tag:accept'], ['likely-tag:dismiss']]);
+  });
+
   test('offers the ComfyUI workflow for a clip carrying a prompt', () => {
     const onAction = vi.fn();
     const electronAPI = { comfyQueue: { openWorkflow: vi.fn() } };

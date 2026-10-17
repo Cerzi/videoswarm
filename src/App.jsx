@@ -105,6 +105,11 @@ import { posterFrames } from "./services/posterFrameCache";
 import { createDefaultFilters } from "./app/filters/filtersUtils";
 import { buildTagHierarchy } from "./app/filters/tagHierarchy";
 import {
+  resetTurnedDownTags,
+  turnDownLikelyTag,
+  useLikelyTagStatus,
+} from "./app/tags/likelyTags";
+import {
   DEFAULT_PLAYBACK_MODE,
   PLAYBACK_MODES,
   normalizePlaybackMode,
@@ -754,6 +759,7 @@ function App() {
     clearReviewFilter,
     clearVersionFilter,
     promptSearch,
+    mightBe,
   } = useFilterState({
     videos,
     filtersButtonRef,
@@ -761,6 +767,12 @@ function App() {
     generationVersionIndex,
     tagHierarchy,
     companionEntries: companionActive ? companion.entries : null,
+  });
+  // Which tags can be suggested, for Filters › Might be; asked while Filters
+  // is open and again after a tag edit.
+  const likelyTagStatus = useLikelyTagStatus({
+    enabled: isFiltersOpen,
+    revision: tagRefreshToken,
   });
   reviewViewStateRef.current = {
     filters,
@@ -1175,6 +1187,9 @@ function App() {
       folderViewStateRef.current.clear();
       restoredFolderViewKeyRef.current = null;
       setExpandedFolderPaths(new Set([""]));
+      // Content fingerprints repeat across profiles; what was turned down
+      // in one is not turned down in the next.
+      resetTurnedDownTags();
       setReviewProfileEpoch((epoch) => epoch + 1);
     });
   }, []);
@@ -2520,13 +2535,19 @@ function App() {
     async (
       tags,
       matchMode = "all",
-      { minRating = null, exactRating = null, promptQuery = "" } = {}
+      { minRating = null, exactRating = null, promptQuery = "", mightBe = "" } = {}
     ) => {
       const requested = (Array.isArray(tags) ? tags : [])
         .map((tag) => (tag ?? "").toString().trim())
         .filter(Boolean);
-      // A rating and prompt words narrow the search as tags do.
-      const rating = { minRating, exactRating, promptQuery: (promptQuery || "").trim() };
+      // A rating, prompt words and a tag clips might be narrow the search as
+      // tags do.
+      const rating = {
+        minRating,
+        exactRating,
+        promptQuery: (promptQuery || "").trim(),
+        mightBe: (mightBe || "").trim(),
+      };
 
       // A library search is defined by its tags and its rating, so with
       // neither there is no question to ask. Asking it anyway reads every clip
@@ -2591,6 +2612,7 @@ function App() {
       minRating: tagCollection.minRating ?? null,
       exactRating: tagCollection.exactRating ?? null,
       promptQuery: tagCollection.promptQuery || "",
+      mightBe: tagCollection.mightBe || "",
     });
   }, [loadTagCollection, tagCollection]);
 
@@ -3062,6 +3084,22 @@ function App() {
         if (action && targets.length) setCompanionSend({ action, videos: targets });
         return;
       }
+      if (actionId === "likely-tag:accept" || actionId === "likely-tag:dismiss") {
+        // Working through Filters › Might be: either way the clips leave it.
+        const tag = (filters.mightBe || "").trim();
+        const targets = contextMetadataFingerprints;
+        if (!tag || !targets.length) return;
+        if (actionId === "likely-tag:accept") {
+          void handleApplyExistingTag(tag, targets);
+          return;
+        }
+        void turnDownLikelyTag(targets, tag).then((result) =>
+          result.success
+            ? notify(`Won't suggest "${tag}" for ${targets.length} item(s) again`, "success")
+            : notify("Could not turn the suggestion down", "error")
+        );
+        return;
+      }
       if (actionId === "metadata:open") {
         const contextId = contextMenu.contextId;
         const useContextTarget =
@@ -3141,6 +3179,8 @@ function App() {
       reviewWorkflow.applyReviewState,
       reviewModeEnabled,
       handleApplyExistingTag,
+      filters.mightBe,
+      notify,
       runAction,
       selection.selectOnly,
       selection.size,
@@ -3911,6 +3951,7 @@ function App() {
         minRating: tagCollection.minRating ?? null,
         exactRating: tagCollection.exactRating ?? null,
         promptQuery: tagCollection.promptQuery || "",
+        mightBe: tagCollection.mightBe || "",
       };
       return hasLibrarySearchCriteria(library) ? { library } : null;
     }
@@ -3954,13 +3995,21 @@ function App() {
         since: Date.now(),
       };
       if (location.library) {
-        const { tags, matchMode, minRating, exactRating, promptQuery = "" } = location.library;
+        const {
+          tags,
+          matchMode,
+          minRating,
+          exactRating,
+          promptQuery = "",
+          mightBe: mightBeTag = "",
+        } = location.library;
         updateFilters({
           includeTags: tags,
           includeTagsMode: matchMode,
           minRating,
           exactRating,
           promptQuery,
+          mightBe: mightBeTag,
         });
         if (librarySearchScope !== "library") {
           folderScopeReturnRef.current = activeRootPath || null;
@@ -4106,6 +4155,7 @@ function App() {
           companionFilters: filters.companionFilters || {},
           companionHideSent: filters.companionHideSent === true,
           promptQuery: (filters.promptQuery || "").trim(),
+          mightBe: (filters.mightBe || "").trim(),
         },
         sort: {
           key: sortKey,
@@ -5890,6 +5940,8 @@ function App() {
               onSetTagParent={handleSetTagParent}
             companion={companionPanel}
             promptSearch={promptSearch}
+            likelyTagStatus={likelyTagStatus}
+            mightBe={mightBe}
             />
           )}
 
@@ -6097,6 +6149,23 @@ function App() {
                       title="Clear review-state filter"
                     >
                       {reviewFilterSummary}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {(filters.mightBe || "").trim() && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Might be</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--review"
+                      onClick={() => updateFilters((prev) => ({ ...prev, mightBe: "" }))}
+                      title="Clear the might-be filter"
+                    >
+                      {filters.mightBe.trim()}
                       <span className="filters-summary__chip-remove">×</span>
                     </button>
                   </div>
@@ -6635,6 +6704,7 @@ function App() {
               reviewModeEnabled={reviewModeEnabled}
               canGoToFolder={Boolean(tagCollection)}
               companionActions={companion.status === "online" ? companion.actions : undefined}
+              mightBeTag={(filters.mightBe || "").trim()}
             />
           )}
         </>

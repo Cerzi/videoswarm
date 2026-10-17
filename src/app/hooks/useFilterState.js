@@ -9,6 +9,7 @@ import {
   normalizeIncludeTagsMode,
   formatRatingLabel,
   useFiltersActiveCount,
+  normalizeMightBe,
   normalizePromptQuery,
 } from "../filters/filtersUtils";
 import {
@@ -26,6 +27,11 @@ import {
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
 import { usePromptSearch } from "./usePromptSearch";
+import {
+  isLikelyTagTurnedDown,
+  useMightBe,
+  useTurnedDownVersion,
+} from "../tags/likelyTags";
 import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
 
 const resolveValue = (value, fallback) =>
@@ -60,6 +66,7 @@ const normalizeFiltersDraft = (draft, prev) => {
     companionHideSent:
       resolveValue(draft?.companionHideSent, prev.companionHideSent) === true,
     promptQuery: normalizePromptQuery(resolveValue(draft?.promptQuery, prev.promptQuery)),
+    mightBe: normalizeMightBe(resolveValue(draft?.mightBe, prev.mightBe)),
   };
 };
 
@@ -79,6 +86,11 @@ export function useFilterState({
   // match (prompt-search-and-tag-suggestions.md).
   const promptSearch = usePromptSearch({ videos, query: filters.promptQuery });
   const promptMatches = promptSearch.matches;
+  // Clips that might be a tag: main answers which catalog rows its learned
+  // suggestions pick out (Section 2 there).
+  const mightBe = useMightBe({ videos, tag: filters.mightBe });
+  const mightBeMatches = mightBe.matches;
+  const turnedDownVersion = useTurnedDownVersion();
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
   const updateFilters = useCallback((updater) => {
@@ -110,6 +122,9 @@ export function useFilterState({
       (companionHideSent || Object.keys(companionFilters).length > 0);
     const promptActive =
       normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
+    // Until the first answer arrives nothing is known to match, so nothing
+    // shows: the whole collection would read as "might be" the tag.
+    const mightBeTag = normalizeMightBe(filters.mightBe);
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -128,7 +143,8 @@ export function useFilterState({
       reviewFilter === REVIEW_FILTERS.ANY &&
       versionFilter === VERSION_FILTERS.ANY &&
       !companionActive &&
-      !promptActive
+      !promptActive &&
+      !mightBeTag
     ) {
       return videos;
     }
@@ -189,6 +205,17 @@ export function useFilterState({
         return false;
       }
 
+      // Tagged or turned down since main answered: done with, so gone.
+      if (
+        mightBeTag &&
+        (!(mightBeMatches instanceof Set) ||
+          !mightBeMatches.has(Number(video.instanceId)) ||
+          tagsMatch(tagList, mightBeTag, tagHierarchy) ||
+          isLikelyTagTurnedDown(video.fingerprint, mightBeTag))
+      ) {
+        return false;
+      }
+
       if (
         companionActive &&
         !matchesCompanionFilters(
@@ -212,7 +239,18 @@ export function useFilterState({
 
       return true;
     });
-  }, [videos, filters, generationVersionIndex, tagHierarchy, companionEntries, promptMatches]);
+    // turnedDownVersion: a clip turned down leaves at once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    videos,
+    filters,
+    generationVersionIndex,
+    tagHierarchy,
+    companionEntries,
+    promptMatches,
+    mightBeMatches,
+    turnedDownVersion,
+  ]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),
@@ -339,6 +377,7 @@ export function useFilterState({
   return {
     filters,
     promptSearch,
+    mightBe,
     setFiltersOpen,
     isFiltersOpen,
     updateFilters,

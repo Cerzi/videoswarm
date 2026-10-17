@@ -1,4 +1,5 @@
 import {
+  normalizeMightBe,
   normalizePromptQuery,
   sanitizeExactRating,
   sanitizeMinRating,
@@ -21,8 +22,10 @@ export function librarySearchCriteria(filters = {}) {
     // An exact rating wins over a minimum, as it does in the filters.
     minRating: exactRating === null ? searchRating(sanitizeMinRating(filters.minRating)) : null,
     exactRating,
-    // Prompt words (prompt-search-and-tag-suggestions.md).
+    // Prompt words, and a tag the clips might be
+    // (prompt-search-and-tag-suggestions.md).
     promptQuery: normalizePromptQuery(filters.promptQuery).trim(),
+    mightBe: normalizeMightBe(filters.mightBe),
   };
 }
 
@@ -31,7 +34,8 @@ export const hasLibrarySearchCriteria = (criteria) =>
   (criteria.tags?.length > 0 ||
     criteria.minRating != null ||
     criteria.exactRating != null ||
-    Boolean(criteria.promptQuery));
+    Boolean(criteria.promptQuery) ||
+    Boolean(criteria.mightBe));
 
 export const librarySearchKey = (criteria) =>
   [
@@ -39,5 +43,6 @@ export const librarySearchKey = (criteria) =>
     criteria.minRating ?? "",
     criteria.exactRating ?? "",
     criteria.promptQuery || "",
+    criteria.mightBe || "",
     ...criteria.tags,
   ].join("\u0000");

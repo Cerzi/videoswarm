@@ -679,6 +679,44 @@ body.metadata-panel-drag-active {
   background: rgba(255, 255, 255, 0.035);
 }
 
+/* Suggested from the prompt: outlined, with a click to apply and a cross to
+   turn it down. */
+.metadata-panel__likely-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed var(--color-accent, #51cf66);
+  border-radius: 999px;
+  font-size: 0.65rem;
+  overflow: hidden;
+}
+
+.metadata-panel__likely-apply,
+.metadata-panel__likely-dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.metadata-panel__likely-apply {
+  padding: 0.3rem 0.35rem 0.3rem 0.62rem;
+}
+
+.metadata-panel__likely-dismiss {
+  padding: 0.3rem 0.55rem 0.3rem 0.3rem;
+  opacity: 0.6;
+}
+
+.metadata-panel__likely-apply:hover,
+.metadata-panel__likely-dismiss:hover {
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 1;
+}
+
 .metadata-panel__chip-count,
 .metadata-panel__suggestion-count {
   font-size: 0.59rem;

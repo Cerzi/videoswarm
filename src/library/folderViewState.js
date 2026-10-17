@@ -4,6 +4,7 @@ import {
   normalizeTagList,
   sanitizeMegapixels,
   normalizeIncludeTagsMode,
+  normalizeMightBe,
   normalizePromptQuery,
 } from "../app/filters/filtersUtils";
 import { normalizeReviewFilter } from "../review/reviewState";
@@ -39,6 +40,7 @@ const normalizeFilters = (filters) => ({
   companionFilters: normalizeCompanionFilters(filters?.companionFilters),
   companionHideSent: filters?.companionHideSent === true,
   promptQuery: normalizePromptQuery(filters?.promptQuery),
+  mightBe: normalizeMightBe(filters?.mightBe),
 });
 
 const normalizeSnapshot = (snapshot = {}) => ({

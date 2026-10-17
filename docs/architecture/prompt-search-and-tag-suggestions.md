@@ -1,7 +1,6 @@
 # Prompt Search and Tag Suggestions
 
-Status: **Section 1 implemented, unverified by a human; Section 2 proposed**
-(2026-10-17)
+Status: **Sections 1 and 2 implemented, unverified by a human** (2026-10-17)
 
 ## Summary
 
@@ -74,26 +73,90 @@ Status: **Implemented, unverified by a human** (2026-10-17)
 
 ## 2. Tag suggestions
 
-Status: **Proposed**
+Status: **Implemented, unverified by a human** (2026-10-17); rules deferred
 
-- **Learning.** For each tag with enough examples (say 10), compare how often
-  each prompt word, LoRA and model appears on clips with the tag against
-  clips without it (a naive Bayes or logistic score over word sets). This
-  needs no model and retrains in milliseconds when tags change.
-- **Suggesting.** For an untagged clip, the tags whose score passes a
-  threshold, strongest first, never more than three.
+Suggests tags the user already uses for clips that do not carry them, from
+what the prompts of clips they did tag have in common
+(`main/tag-suggestions.js`).
+
+- **What a clip is described by.** The words of its positive prompts (as
+  search reads them) and the weight files its graph loads: checkpoints,
+  diffusion models, LoRAs, VAEs and text encoders, by file name. A prompt key
+  is read from one of its clips, so a prompt run on several models counts
+  with the models of one of them.
+- **Examples.** A prompt, not a clip, is one example, so a batch of twenty
+  clips from one prompt cannot outvote everything else. A prompt is an
+  example of a tag when one of its clips carries the tag or a tag under it,
+  and an example against it when one of its clips carries other tags and
+  none of these, or turned the suggestion down. Clips with no tags say
+  nothing, since the user may not have got to them, and a clip tagged only
+  "dance" says nothing about "bellydance". Only present clips with a current
+  prompt key count.
+- **Learning.** Naive Bayes over the example prompts' features, for each tag
+  on at least ten prompts with at least ten tagged prompts against it. A
+  feature carries weight only when it is on at least two of those prompts
+  and a one-sided Fisher exact test says chance would lean it that far at
+  most once in a thousand times. Libraries hold tens of thousands of words;
+  most that sit on a few tagged prompts do so by chance, and naive Bayes
+  would trust each of them.
+- **Checking.** Each tag is learned five times, each time without a fifth
+  of the prompts (by prompt key), and scored on the fifth held back. The
+  score a suggestion needs is the lowest at which held-back suggestions were
+  still right at least 8 times in 10 (with at least three right), halfway to
+  the next lower held-back score. A tag that never gets there is never
+  suggested: tags about quality, such as "keeper", cannot be told from a
+  prompt, and Filters lists them as such.
+- **Suggesting.** For each clip, the tags whose score passes that it does
+  not already count under and has not turned down, strongest first (by how
+  far past the bar), at most three; of a tag and one under it, only the one
+  under it.
+- **When.** Learning runs on demand (Details, Filters, a library search)
+  and again whenever the tags, turned-down suggestions or prompt numbering
+  change; reading prompts the first time is the slow part, and counting
+  afterwards takes milliseconds per tag (about 15 ms for a tag over 3,000
+  prompts, yielding between tags). Nothing learned is stored.
 - **Interface.**
-  - In Details, suggested tags show as outlined chips beside the clip's tags:
-    a click applies one, a cross dismisses it, and a dismissal is remembered
-    so it is not offered again.
-  - A per-tag review queue: *clips that might be "dance"*, most likely first,
-    reviewed with the keyboard like review mode. This is the efficient path
-    for a large library.
-- **Rules**, alongside learning: "prompt contains X", "uses LoRA Y" or "is in
-  folder Z" means tag T, applied as suggestions or, if the user says so,
-  automatically on indexing.
-- **Storage.** Dismissals are stored per clip content and tag; scores are not
-  stored.
+  - Details shows *Suggested from the prompt*: outlined chips for the
+    selected clips the tag fits (with a count when several are selected).
+    A click applies the tag to those clips, a cross turns it down for them.
+    The tooltip says how often the tag's suggestions were right on clips
+    the user tagged.
+  - *Filters › Might be* picks a tag and shows the clips it is suggested
+    for, not tagged with it or anything under it and not turned down, in
+    the open collection or, with *Entire library*, across the library.
+    Right-click offers *Tag as "dance"* and *Not "dance"* for the selection;
+    either way the clips leave the filter at once. Saved views and
+    back/forward keep the tag.
+- **Storage.** `tag_suggestion_dismissals` (content, tag, time) records
+  what was turned down; it follows a content re-keyed from a v1 identity and
+  goes with its tag. Scores and models are memory only.
+- **Privacy.** Prompts and weight-file names stay in the main process as
+  numbered features. The renderer sends catalog rows, fingerprints and tag
+  names, and receives tag names, rows and precision.
+- **Verification.** `main/__tests__/tagSuggestions.test.js` covers examples,
+  the hierarchy, learning, the significance test, held-back checking,
+  false suggestions on unseen prompts, LoRA features and the service;
+  `tagSuggestionsDatabase.test.js` covers storage and the library search;
+  renderer tests cover the chips, the filter and the menu; and
+  `tests/electron/tag-suggestions.smoke.spec.cjs` tags made-up clips in the
+  real app, takes a suggestion in Details, finds the other clip with
+  *Might be* and turns it down.
+
+### Acceptance
+
+- With ten or more tagged prompts per tag, an untagged clip whose prompt
+  fits is offered the tag; one whose prompt does not, is not.
+- A tag that cannot be told from prompts is never suggested.
+- A turned-down suggestion is not offered again for that clip.
+- No prompt text or weight-file name reaches the renderer, storage or logs.
+
+### Deferred
+
+- **Rules**: "prompt contains X", "uses LoRA Y" or "is in folder Z" means
+  tag T, as suggestions or applied on indexing.
+- Keyboard keys for *Tag as* and *Not* while *Might be* is on, and sorting
+  that filter most likely first.
+- Undoing a turned-down suggestion other than by applying the tag.
 
 ## 3. Later phases
 

@@ -403,3 +403,77 @@ describe("FiltersPopover companion app", () => {
     expect(screen.getByText("Not answering; showing its last answers.")).toBeInTheDocument();
   });
 });
+
+describe("FiltersPopover might be", () => {
+  const status = {
+    pending: false,
+    tags: [
+      { name: "dance", examples: 14, usable: true, precision: 0.92, recall: 0.6 },
+      { name: "keeper", examples: 30, usable: false, precision: null, recall: null },
+    ],
+  };
+
+  it("lists the tags that can be suggested and names the ones the prompt cannot tell", () => {
+    let current = { reviewFilter: "any" };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    render(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        likelyTagStatus={status}
+      />
+    );
+    const select = screen.getByRole("combobox", { name: "Might be tagged" });
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "Any clip",
+      "dance · right 92%",
+    ]);
+    expect(screen.getByText("Not told by the prompt: keeper.")).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "dance" } });
+    expect(current.mightBe).toBe("dance");
+  });
+
+  it("says while it learns, and what the filter shows once a tag is chosen", () => {
+    const { rerender } = render(
+      <FiltersPopover
+        filters={{}}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        likelyTagStatus={{ tags: null, pending: true }}
+      />
+    );
+    expect(screen.getByText("Learning from your tags…")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Might be tagged" })).toBeDisabled();
+    rerender(
+      <FiltersPopover
+        filters={{ mightBe: "dance" }}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        likelyTagStatus={status}
+        mightBe={{ pending: false, usable: true }}
+      />
+    );
+    expect(screen.getByText(/Clips not tagged "dance" whose prompts suggest it/)).toBeInTheDocument();
+  });
+
+  it("offers a library search for a tag clips might be", () => {
+    const onSearchScopeChange = vi.fn();
+    render(
+      <FiltersPopover
+        filters={{ mightBe: "dance" }}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        onSearchScopeChange={onSearchScopeChange}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Entire library" }));
+    expect(onSearchScopeChange).toHaveBeenCalledWith("library");
+  });
+});

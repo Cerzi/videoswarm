@@ -1079,6 +1079,7 @@ export function useElectronFolderLifecycle({
       minRating = null,
       exactRating = null,
       promptQuery = "",
+      mightBe = "",
       records = [],
       truncated = false,
     } = {}) => {
@@ -1106,6 +1107,7 @@ export function useElectronFolderLifecycle({
         minRating,
         exactRating,
         promptQuery,
+        mightBe,
         truncated: Boolean(truncated),
         // Distinguishes one snapshot from the next so collection ownership
         // changes on refresh and stale per-clip work is discarded.
