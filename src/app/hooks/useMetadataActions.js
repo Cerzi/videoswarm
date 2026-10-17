@@ -320,16 +320,19 @@ export function useMetadataActions({
     [handleAddTags, selectedFingerprints]
   );
 
+  // The tag list belongs to the profile, not to the open collection, so it is
+  // not guarded by collection ownership: the latest request's answer wins.
+  // Main answers in order, and a profile switch always asks again, so the
+  // last answer is the active profile's. (Guarding by collection dropped the
+  // startup answers, because the startup profile broadcast changes it.)
+  const tagListRequestRef = useRef(0);
   const refreshTagList = useCallback(async () => {
-    const requestedOwnership = ownershipKeyRef.current;
+    const request = ++tagListRequestRef.current;
     const api = window.electronAPI?.metadata;
     if (!api?.listTags) return;
     try {
       const res = await api.listTags();
-      if (
-        Object.is(ownershipKeyRef.current, requestedOwnership) &&
-        Array.isArray(res?.tags)
-      ) {
+      if (request === tagListRequestRef.current && Array.isArray(res?.tags)) {
         setAvailableTags(res.tags);
       }
     } catch (error) {

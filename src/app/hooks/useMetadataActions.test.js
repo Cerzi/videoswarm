@@ -168,7 +168,6 @@ describe("useMetadataActions", () => {
       rating: deferredPromise(),
       review: deferredPromise(),
       restore: deferredPromise(),
-      list: deferredPromise(),
     };
     let videos = [
       {
@@ -192,7 +191,6 @@ describe("useMetadataActions", () => {
         setRating: vi.fn(() => writes.rating.promise),
         setReviewState: vi.fn(() => writes.review.promise),
         restoreReview: vi.fn(() => writes.restore.promise),
-        listTags: vi.fn(() => writes.list.promise),
       },
     };
     const { result, rerender } = renderHook(
@@ -217,7 +215,6 @@ describe("useMetadataActions", () => {
         result.current.handleRestoreReviewMetadata([
           { fingerprint: "fp1", reviewState: "reviewed", rating: 3 },
         ]),
-        result.current.refreshTagList(),
       ];
     });
     rerender({ ownershipKey: "owner-b" });
@@ -235,7 +232,6 @@ describe("useMetadataActions", () => {
       writes.rating.resolve(update);
       writes.review.resolve(update);
       writes.restore.resolve(update);
-      writes.list.resolve({ tags: ["late"] });
       results = await Promise.all(pending);
     });
 
@@ -249,6 +245,41 @@ describe("useMetadataActions", () => {
     });
     expect(setAvailableTags).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("keeps the latest tag list whatever collection is open, and drops older answers", async () => {
+    const answers = [deferredPromise(), deferredPromise()];
+    let call = 0;
+    window.electronAPI = { metadata: { listTags: vi.fn(() => answers[call++].promise) } };
+    const setAvailableTags = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ ownershipKey }) =>
+        useMetadataActions({
+          selectedFingerprints: [],
+          setVideos: vi.fn(),
+          setAvailableTags,
+          notify: vi.fn(),
+          ownershipKey,
+        }),
+      { initialProps: { ownershipKey: "startup" } }
+    );
+    let first;
+    let second;
+    act(() => {
+      first = result.current.refreshTagList();
+    });
+    // The startup profile broadcast changes the collection key and asks again.
+    rerender({ ownershipKey: "profile-ready" });
+    act(() => {
+      second = result.current.refreshTagList();
+    });
+    await act(async () => {
+      answers[1].resolve({ tags: [{ name: "dance" }] });
+      answers[0].resolve({ tags: [{ name: "stale" }] });
+      await Promise.all([first, second]);
+    });
+    expect(setAvailableTags).toHaveBeenCalledTimes(1);
+    expect(setAvailableTags).toHaveBeenCalledWith([{ name: "dance" }]);
   });
 
   it("sets normalized review state via electron API", async () => {
