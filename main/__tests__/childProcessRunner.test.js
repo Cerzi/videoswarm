@@ -61,6 +61,46 @@ describe("ChildProcessRunner", () => {
     expect(runner.getSnapshot()).toMatchObject({ active: 0, pending: 0 });
   });
 
+  it("holds queued work while paused and lets running work finish", async () => {
+    const children = [];
+    const spawn = vi.fn(() => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    });
+    const runner = createChildProcessRunner({ spawn, concurrency: 1, maxPending: 4 });
+
+    const running = runner.run("tool", ["running"], { ownerId: "a" });
+    runner.setPaused(true);
+    const held = runner.run("tool", ["held"], { ownerId: "a" });
+    const cancelled = runner.run("tool", ["cancelled"], { ownerId: "b" });
+    expect(runner.getSnapshot()).toMatchObject({ paused: true, active: 1, pending: 2 });
+
+    children[0].close(0);
+    await expect(running).resolves.toMatchObject({ code: 0 });
+    await flush();
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    // Cancelling still reaches held work.
+    runner.cancelOwner("b");
+    await expect(cancelled).rejects.toMatchObject({ code: "OWNER_CANCELLED" });
+
+    // Work someone is waiting for goes ahead of held work.
+    const wanted = runner.run("tool", ["wanted"], { ownerId: "a", holdWhilePaused: false });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[1][1]).toEqual(["wanted"]);
+    children[1].close(0);
+    await expect(wanted).resolves.toMatchObject({ code: 0 });
+    await flush();
+    expect(spawn).toHaveBeenCalledTimes(2);
+
+    runner.setPaused(false);
+    expect(spawn).toHaveBeenCalledTimes(3);
+    expect(spawn.mock.calls[2][1]).toEqual(["held"]);
+    children[2].close(0);
+    await expect(held).resolves.toMatchObject({ code: 0 });
+  });
+
   it("terminates output floods and settles an error/close race exactly once", async () => {
     const child = new FakeChild();
     const runner = createChildProcessRunner({

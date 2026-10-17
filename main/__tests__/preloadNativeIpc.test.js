@@ -277,6 +277,26 @@ describe("preload native-work bridge", () => {
     ]);
   });
 
+  it("reads background activity and pauses it with a plain flag", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.activity.get();
+    await api.activity.setPaused("yes");
+    await api.activity.setPaused(true);
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["activity:get"],
+      ["activity:set-paused", { paused: false }],
+      ["activity:set-paused", { paused: true }],
+    ]);
+    const callback = vi.fn();
+    const unsubscribe = api.activity.onChange(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("activity:changed");
+    handler({}, { paused: true, activities: [] });
+    expect(callback).toHaveBeenCalledWith({ paused: true, activities: [] });
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith("activity:changed", handler);
+  });
+
   it("opens a clip's workflow by catalog row only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.comfyQueue.openWorkflow(12);

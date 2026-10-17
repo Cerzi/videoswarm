@@ -20,6 +20,7 @@ import WorkspaceSidebar, { buildWorkspacePanels } from "./components/WorkspaceSi
 import DockedMetadataInspector, { DockedGenerationPanel } from "./components/DockedMetadataInspector";
 import FolderGroupHeaders from "./components/FolderGroupHeaders";
 import DebugSummary from "./components/DebugSummary";
+import BackgroundActivityStatus from "./components/BackgroundActivityStatus";
 import AboutDialog from "./components/AboutDialog";
 import DataLocationDialog from "./components/DataLocationDialog";
 import PreferencesDialog from "./components/preferences/PreferencesDialog";
@@ -6304,6 +6305,7 @@ function App() {
             playbackMode={playbackMode}
             playbackTelemetry={playbackTelemetry}
             workSuspensionReason={workSuspensionReason}
+            trailing={<BackgroundActivityStatus />}
           />
 
           {/* Home state: pinned library roots and recent locations */}

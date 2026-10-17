@@ -191,6 +191,8 @@ class ProxyManager {
         maxStderrBytes: this.maxStderrBytes,
         killGraceMs: options.killGraceMs,
       });
+    // Reports each proxy being made (main/background-activity.js).
+    this.activity = options.activity || null;
 
     this.profilePath = null;
     this.cacheDir = null;
@@ -538,6 +540,11 @@ class ProxyManager {
     return this.getSnapshot();
   }
 
+  /** Paused, queued proxies wait and one being made finishes. */
+  setPaused(paused) {
+    this.runner.setPaused?.(paused === true);
+  }
+
   getSnapshot() {
     let inactiveOwners = 0;
     let ownerTombstones = 0;
@@ -754,6 +761,7 @@ class ProxyManager {
     };
     this.inFlight.set(signature, task);
     this.totals.queued += 1;
+    this.activity?.queued("playback-proxies");
     task.promise = this.#generate(task)
       .catch(async (error) => {
         await this.#removeFile(task.tempPath);
@@ -768,6 +776,7 @@ class ProxyManager {
         }
       })
       .finally(() => {
+        this.activity?.settled("playback-proxies");
         if (this.inFlight.get(signature) === task) {
           this.inFlight.delete(signature);
         }

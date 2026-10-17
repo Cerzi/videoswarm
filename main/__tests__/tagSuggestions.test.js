@@ -348,6 +348,20 @@ describe("TagSuggestionService", () => {
     expect(sent).not.toMatch(/dancing|harbour|filler/u);
   });
 
+  it("shows learning in the activity line, and a pause does not hold it", async () => {
+    const library = taggedLibrary({ untagged: [{ text: topicText("dance", 7001) }] });
+    const progress = vi.fn();
+    const finish = vi.fn();
+    const begin = vi.fn(() => ({ progress, finish }));
+    library.service.activity = { begin, isPaused: () => true, whenRunnable: () => new Promise(() => {}) };
+    const target = library.rows.at(-1).instanceId;
+    const suggestions = await library.service.suggest({ store: library.store, instanceIds: [target] });
+    expect(suggestions[target].map((entry) => entry.tag)).toEqual(["dance"]);
+    expect(begin).toHaveBeenCalledWith("tag-suggestions", { total: 3 });
+    expect(progress.mock.calls.map(([done]) => done)).toEqual([1, 2, 3]);
+    expect(finish).toHaveBeenCalledTimes(1);
+  });
+
   it("learns once until the tags change, and relearns without reading prompts again", async () => {
     const library = taggedLibrary({ untagged: [{ text: topicText("dance", 6001) }] });
     const target = library.rows.at(-1).instanceId;

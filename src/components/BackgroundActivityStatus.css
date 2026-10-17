@@ -1,0 +1,181 @@
+/* The status line's note of background work (BackgroundActivityStatus.jsx). */
+.background-activity {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.background-activity__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 28rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.background-activity__chip:hover,
+.background-activity__chip.is-open {
+  background: #24272a;
+  border-color: #33383b;
+  color: #c3c9cc;
+}
+
+.background-activity__chip:focus-visible {
+  outline: 2px solid rgba(81, 207, 102, 0.6);
+  outline-offset: 1px;
+}
+
+.background-activity__chip.is-paused {
+  color: #c9b27c;
+}
+
+.background-activity__summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-activity__more {
+  flex: none;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: #2b2f32;
+  color: #a5adb1;
+  font-size: 0.68rem;
+}
+
+.background-activity__spinner {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid #3d4448;
+  border-top-color: #9aa3a7;
+  border-radius: 50%;
+  animation: background-activity-spin 0.9s linear infinite;
+}
+
+@keyframes background-activity-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .background-activity__spinner {
+    animation: none;
+    border-color: #6c757a;
+  }
+}
+
+.background-activity__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1200;
+  width: 20rem;
+  max-width: calc(100vw - 16px);
+  padding: 0.6rem 0.75rem 0.65rem;
+  background: #26292b;
+  border: 1px solid #3d4245;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  cursor: default;
+}
+
+.background-activity__heading {
+  margin-bottom: 0.35rem;
+  color: #dfe3e5;
+  font-weight: 500;
+}
+
+.background-activity__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.background-activity__row {
+  padding: 0.45rem 0;
+  border-top: 1px solid #33383b;
+}
+
+.background-activity__row-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.background-activity__row-label {
+  color: #dfe3e5;
+}
+
+.background-activity__row-count {
+  flex: none;
+  color: #8f979b;
+  font-variant-numeric: tabular-nums;
+}
+
+.background-activity__bar {
+  height: 3px;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #33383b;
+}
+
+.background-activity__bar span {
+  display: block;
+  height: 100%;
+  background: #7d878c;
+  transition: width 0.4s ease;
+}
+
+.background-activity__empty {
+  margin: 0;
+  padding: 0.45rem 0;
+  border-top: 1px solid #33383b;
+  color: #8f979b;
+}
+
+.background-activity__footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #33383b;
+}
+
+.background-activity__note {
+  flex: 1;
+  color: #8f979b;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.background-activity__action {
+  flex: none;
+  padding: 0.2rem 0.75rem;
+  border: 1px solid #4a5054;
+  border-radius: 4px;
+  background: #2f3336;
+  color: #e8eaed;
+  font: inherit;
+  cursor: pointer;
+}
+
+.background-activity__action:hover {
+  background: #383d40;
+}
+
+.background-activity__action:focus-visible {
+  outline: 2px solid rgba(81, 207, 102, 0.6);
+  outline-offset: 1px;
+}

@@ -86,6 +86,9 @@ class ChildProcessRunner {
     this.pending = [];
     this.active = new Map();
     this.closed = false;
+    // Paused, queued work waits and running processes finish
+    // (docs/architecture/background-activity.md).
+    this.paused = false;
     this.shutdownPromise = null;
     this.totals = {
       accepted: 0,
@@ -147,6 +150,8 @@ class ChildProcessRunner {
         0
       ),
       rejectOnNonZero: options.rejectOnNonZero !== false,
+      // Work someone is waiting for on screen runs while paused.
+      holdWhilePaused: options.holdWhilePaused !== false,
       resolve: resolvePromise,
       reject: rejectPromise,
       promise,
@@ -168,6 +173,11 @@ class ChildProcessRunner {
     this.totals.accepted += 1;
     this.#pump();
     return promise;
+  }
+
+  setPaused(value) {
+    this.paused = value === true;
+    if (!this.paused) this.#pump();
   }
 
   cancelOwner(ownerId, reason = "Child-process owner was cancelled") {
@@ -216,6 +226,7 @@ class ChildProcessRunner {
       maxPending: this.maxPending,
       active: this.active.size,
       pending: this.pending.length,
+      paused: this.paused,
       owners,
       totals: { ...this.totals },
     };
@@ -224,7 +235,12 @@ class ChildProcessRunner {
   #pump() {
     if (this.closed) return;
     while (this.active.size < this.concurrency && this.pending.length > 0) {
-      const job = this.pending.shift();
+      let next = 0;
+      if (this.paused) {
+        next = this.pending.findIndex((job) => !job.settled && !job.holdWhilePaused);
+        if (next < 0) return;
+      }
+      const [job] = this.pending.splice(next, 1);
       if (!job || job.settled) continue;
       this.#start(job);
     }

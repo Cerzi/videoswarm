@@ -23,6 +23,8 @@ export default function DebugSummary({
   stackCount = 0,
   // A companion app that stopped answering: its last answers still show.
   companionNote = null,
+  // Shown at the line's right end: the background work note.
+  trailing = null,
 }) {
   if (!detailed) {
     const stacked = stackCount > 0 && Number.isFinite(stackedClips);
@@ -42,6 +44,7 @@ export default function DebugSummary({
         {sortStatus && <span>{sortStatus}</span>}
         {companionNote && <span aria-hidden="true">·</span>}
         {companionNote && <span className="debug-info__warning">{companionNote}</span>}
+        {trailing}
       </div>
     );
   }
@@ -124,6 +127,7 @@ export default function DebugSummary({
           </span>
         </>
       )}
+      {trailing}
     </div>
   );
 }

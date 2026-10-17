@@ -512,6 +512,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
 
+  // Background work for the status line, and its pause: kinds and counts
+  // only (docs/architecture/background-activity.md).
+  activity: {
+    get: async () => ipcRenderer.invoke("activity:get"),
+    setPaused: async (paused) =>
+      ipcRenderer.invoke("activity:set-paused", { paused: paused === true }),
+    onChange: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("activity:changed", handler);
+      return () => ipcRenderer.removeListener("activity:changed", handler);
+    },
+  },
+
   // The local read API: other apps on this computer reading clips' tags,
   // ratings and review states. Preferences reads and changes its setting.
   localApi: {

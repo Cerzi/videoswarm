@@ -83,8 +83,12 @@ const {
 const { initMetadataStore, getMetadataStore, resetDatabase } = require("./main/database");
 const profileManager = require("./main/profile-manager");
 const { thumbnailCache } = require("./main/thumb-cache");
+const { createBackgroundActivity } = require("./main/background-activity");
+// Background work the window's status line shows, and its pause
+// (docs/architecture/background-activity.md).
+const backgroundActivity = createBackgroundActivity();
 const { createProxyManager } = require("./main/proxy-manager");
-const proxyManager = createProxyManager();
+const proxyManager = createProxyManager({ activity: backgroundActivity });
 const {
   createLastFrameCaptureService,
 } = require("./main/last-frame-capture");
@@ -105,7 +109,7 @@ const generationMetadataService = createGenerationMetadataService();
 const {
   createGenerationKeyIndexer,
 } = require("./main/generation-key-indexer");
-const generationKeyIndexer = createGenerationKeyIndexer();
+const generationKeyIndexer = createGenerationKeyIndexer({ activity: backgroundActivity });
 const { isGenerationKey, isPromptKey } = require("./main/generation-key");
 const { createPromptSimilarityService } = require("./main/prompt-similarity");
 const promptSimilarityService = createPromptSimilarityService();
@@ -113,13 +117,18 @@ const { createTagSuggestionService } = require("./main/tag-suggestions");
 // Tags suggested from what the library's tagged clips' prompts have in common.
 const tagSuggestionService = createTagSuggestionService({
   promptService: promptSimilarityService,
+  activity: backgroundActivity,
 });
 const {
   FRAME_FINGERPRINT_VERSION,
   createStackFrameService,
 } = require("./main/stack-frames");
 // First frames of stacked clips: fingerprints and small stills.
-const stackFrameService = createStackFrameService();
+const stackFrameService = createStackFrameService({ activity: backgroundActivity });
+backgroundActivity.onPauseChange((paused) => {
+  proxyManager.setPaused(paused);
+  stackFrameService.setPaused(paused);
+});
 // 1 stacks the exact prompt only; the rest are shares of words in common.
 const STACK_SIMILARITY_LEVELS = new Set([1, 0.9, 0.8, 0.7]);
 const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-runner");
@@ -6210,6 +6219,22 @@ ipcMain.handle("local-api:set", async (_event, payload = {}) => {
 
 ipcMain.handle("local-api:new-token", async () => localApiService.renewToken());
 
+// ===== Background activity =====
+// Kinds and counts only (main/background-activity.js); the pause lasts until
+// resumed or the app restarts.
+backgroundActivity.subscribe((snapshot) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("activity:changed", snapshot);
+  }
+});
+
+ipcMain.handle("activity:get", async () => backgroundActivity.snapshot());
+
+ipcMain.handle("activity:set-paused", async (_event, payload = {}) => {
+  assertPlainObject(payload, "background activity pause");
+  return backgroundActivity.setPaused(payload.paused === true);
+});
+
 // ===== ComfyUI re-render queue IPC =====
 // The renderer sends clip paths it was shown (authorized like every native
 // action), recipe and queue ids, and settings; never a URL beyond the
@@ -6864,6 +6889,7 @@ async function performNativeShutdown() {
     comfyTray: () => comfyTray?.destroy(),
     folderWatcher: () => folderWatcher.dispose(),
     generationMetadata: () => generationMetadataService.shutdown(),
+    backgroundActivity: () => backgroundActivity.shutdown(),
     generationKeys: () => generationKeyIndexer.shutdown(),
     stackFrames: () => stackFrameService.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),

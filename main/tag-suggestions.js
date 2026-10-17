@@ -389,6 +389,10 @@ class TagSuggestionService {
     this.promptService = options.promptService;
     this.limits = { ...TAG_SUGGESTION_LIMITS, ...(options.limits || {}) };
     this.yieldToEventLoop = options.yieldToEventLoop || defaultYield;
+    // Learning shows in the window's activity line; a pause does not hold
+    // it, as someone is waiting for its suggestions
+    // (main/background-activity.js).
+    this.activity = options.activity || null;
     // The last models learned, and learning under way. Memory only.
     this.learned = null;
     this.learning = null;
@@ -440,29 +444,35 @@ class TagSuggestionService {
       for (const key of positives) keys.add(key);
       for (const key of negatives) keys.add(key);
     }
-    const read = await this.promptService.promptFeatures(
-      [...keys].sort().slice(0, this.limits.maxTrainingKeys),
-      { store, assertActive }
-    );
-    if (!read) return null;
-    const featuresOf = (key) => read.features.get(key) || null;
-    const models = new Map();
-    const status = [];
-    for (const example of examples) {
-      const model = trainTagModel({ ...example, featuresOf, limits: this.limits });
-      status.push({
-        name: tree.names.get(example.tagId),
-        examples: model.examples,
-        usable: model.usable,
-        precision: model.usable ? model.precision : null,
-        recall: model.usable ? model.recall : null,
-      });
-      if (model.usable) models.set(example.tagId, model);
-      await this.yieldToEventLoop();
-      assertActive?.();
+    const report = this.activity?.begin("tag-suggestions", { total: examples.length }) || null;
+    try {
+      const read = await this.promptService.promptFeatures(
+        [...keys].sort().slice(0, this.limits.maxTrainingKeys),
+        { store, assertActive }
+      );
+      if (!read) return null;
+      const featuresOf = (key) => read.features.get(key) || null;
+      const models = new Map();
+      const status = [];
+      for (const example of examples) {
+        const model = trainTagModel({ ...example, featuresOf, limits: this.limits });
+        status.push({
+          name: tree.names.get(example.tagId),
+          examples: model.examples,
+          usable: model.usable,
+          precision: model.usable ? model.precision : null,
+          recall: model.usable ? model.recall : null,
+        });
+        if (model.usable) models.set(example.tagId, model);
+        report?.progress(status.length);
+        await this.yieldToEventLoop();
+        assertActive?.();
+      }
+      status.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return { signature, epoch: read.epoch, models, status, tree };
+    } finally {
+      report?.finish();
     }
-    status.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    return { signature, epoch: read.epoch, models, status, tree };
   }
 
   async _features(promptKeys, { store, assertActive, epoch }) {

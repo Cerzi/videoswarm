@@ -324,6 +324,13 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Background work note (`architecture/background-activity.md`): opening a
+  large folder with stacks on shows "Reading prompts in clips · N left" at
+  the right of the status line after a moment, and nothing when idle; the
+  panel lists each kind with a bar; Pause stops new proxy encodes and prompt
+  reading (CPU drops once a running encode finishes) while playback and
+  stack stills carry on; the line then says "Background work paused" until
+  Resume, and a restart forgets the pause.
 - Hover audio (View › Play audio on hover, proxy playback on): every clip
   that has sound plays it on hover, including clips already playing a proxy;
   the first start after the update rebuilds proxies in the background.

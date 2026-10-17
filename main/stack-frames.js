@@ -110,6 +110,8 @@ class StackFrameService {
         maxStderrBytes: this.limits.maxStderrBytes,
         killGraceMs: this.limits.killGraceMs,
       });
+    // Reports each fingerprint grab (main/background-activity.js).
+    this.activity = options.activity || null;
     this.ffmpegAvailable = null;
     this.inFlight = new Map(); // content fingerprint -> Promise<hash|null>
     this.stills = new Map(); // content fingerprint -> data URL, oldest first
@@ -124,11 +126,12 @@ class StackFrameService {
     return Boolean(realRoot && realFile && isInside(realRoot, realFile));
   }
 
-  async _run(args, ownerId) {
+  async _run(args, ownerId, { holdWhilePaused = true } = {}) {
     if (this.ffmpegAvailable === false) return null;
     try {
       const result = await this.runner.run(this.command, args, {
         ownerId,
+        holdWhilePaused,
         priority: os.constants.priority.PRIORITY_BELOW_NORMAL,
         spawnOptions: { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
       });
@@ -150,13 +153,17 @@ class StackFrameService {
     for (const row of rows) {
       if (!row?.fingerprint || !row.absolutePath) continue;
       if (!this.inFlight.has(row.fingerprint)) {
+        this.activity?.queued("stack-frames");
         const task = (async () => {
           if (!(await this._contained(row))) return null;
           const gray = await this._run(fingerprintArgs(row.absolutePath), ownerId);
           return gray ? differenceHash(gray) : null;
         })()
           .catch(() => null)
-          .finally(() => this.inFlight.delete(row.fingerprint));
+          .finally(() => {
+            this.inFlight.delete(row.fingerprint);
+            this.activity?.settled("stack-frames");
+          });
         this.inFlight.set(row.fingerprint, task);
         work.push(
           task.then((hash) => {
@@ -187,7 +194,9 @@ class StackFrameService {
     if (!this.stillsInFlight.has(row.fingerprint)) {
       const task = (async () => {
         if (!(await this._contained(row))) return null;
-        const jpeg = await this._run(stillArgs(row.absolutePath, this.limits.stillWidth), ownerId);
+        const jpeg = await this._run(stillArgs(row.absolutePath, this.limits.stillWidth), ownerId, {
+          holdWhilePaused: false,
+        });
         if (!jpeg || jpeg.length === 0) return null;
         const dataUrl = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
         this._rememberStill(row.fingerprint, dataUrl);
@@ -198,6 +207,14 @@ class StackFrameService {
       this.stillsInFlight.set(row.fingerprint, task);
     }
     return this.stillsInFlight.get(row.fingerprint);
+  }
+
+  /**
+   * Paused, queued fingerprints wait and running ones finish. A strip's
+   * stills are for a card on screen, so they still come.
+   */
+  setPaused(paused) {
+    this.runner.setPaused?.(paused === true);
   }
 
   cancelOwner(ownerId) {

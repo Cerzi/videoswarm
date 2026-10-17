@@ -6,6 +6,10 @@ const {
   GenerationKeyIndexerCancelled,
   createGenerationKeyIndexer,
 } = require("../generation-key-indexer");
+const { createBackgroundActivity } = require("../background-activity");
+
+// Snapshots are read directly; nothing needs publishing.
+const quietClock = { now: () => 0, setTimeout: () => null, clearTimeout: () => {} };
 
 const KEY_A = `gk1-${"a".repeat(32)}`;
 const KEY_B = `gk1-${"b".repeat(32)}`;
@@ -80,7 +84,7 @@ function createFs(overrides = {}) {
   };
 }
 
-function setup({ candidates, results = {}, probe, fsPromises, limits, active = () => true } = {}) {
+function setup({ candidates, results = {}, probe, fsPromises, limits, active = () => true, activity } = {}) {
   const store = createStore(candidates);
   const readIsoPayload = vi.fn(async (filePath) => results[filePath] || { status: "not-found" });
   const indexer = createGenerationKeyIndexer({
@@ -90,6 +94,7 @@ function setup({ candidates, results = {}, probe, fsPromises, limits, active = (
     probeFactory: () => probe,
     yieldToEventLoop: () => Promise.resolve(),
     limits,
+    activity,
   });
   const published = [];
   const context = {
@@ -106,6 +111,42 @@ function setup({ candidates, results = {}, probe, fsPromises, limits, active = (
 const found = (prompt) => ({ status: "found", payload: { prompt } });
 
 describe("generation key indexer", () => {
+  it("reports its progress and waits between files while background work is paused", async () => {
+    const activity = createBackgroundActivity({ clock: quietClock });
+    const { indexer, start, readIsoPayload } = setup({
+      candidates: [candidate(1, "fa"), candidate(2, "fb"), candidate(3, "fc")],
+      activity,
+    });
+    activity.setPaused(true);
+    start();
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    expect(readIsoPayload).not.toHaveBeenCalled();
+    expect(activity.snapshot()).toMatchObject({
+      paused: true,
+      activities: [{ kind: "prompts", pausable: true, done: 0, total: 3 }],
+    });
+
+    activity.setPaused(false);
+    await indexer.drain();
+    expect(readIsoPayload).toHaveBeenCalledTimes(3);
+    expect(activity.snapshot().activities).toEqual([]);
+  });
+
+  it("stops a paused job at once when it is cancelled", async () => {
+    const activity = createBackgroundActivity({ clock: quietClock });
+    const { indexer, start, readIsoPayload } = setup({
+      candidates: [candidate(1, "fa"), candidate(2, "fb")],
+      activity,
+    });
+    activity.setPaused(true);
+    start();
+    await Promise.resolve();
+    const drained = await indexer.cancelAllAndDrain({ timeoutMs: 1000 });
+    expect(drained.drainTimedOut).toBeUndefined();
+    expect(readIsoPayload).not.toHaveBeenCalled();
+    expect(activity.snapshot().activities).toEqual([]);
+  });
+
   it("keys candidates, persists definitive outcomes and publishes them", async () => {
     const { store, indexer, published, start } = setup({
       candidates: [

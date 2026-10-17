@@ -62,6 +62,9 @@ class GenerationKeyIndexer {
     this.probe = options.probe || null;
     this.now = options.now || (() => Date.now());
     this.yieldToEventLoop = options.yieldToEventLoop || defaultYield;
+    // Progress for the window's activity line, and the pause it offers
+    // (main/background-activity.js): a paused job waits between files.
+    this.activity = options.activity || null;
     this.jobs = new Map();
     // Cancelled jobs stay here until their current file settles, so a drain
     // can wait for them before the profile generation advances.
@@ -122,6 +125,8 @@ class GenerationKeyIndexer {
         checked: true,
       })),
       cancelled: false,
+      wake: null,
+      report: this.activity?.begin("prompts", { total }) || null,
       probeOwnerId: `generation-key:${ownerId}:${this.nextJobId}`,
       promise: null,
     };
@@ -129,6 +134,7 @@ class GenerationKeyIndexer {
     job.promise = this._run(job)
       .catch(() => {})
       .finally(() => {
+        job.report?.finish();
         if (this.jobs.get(ownerId) === job) this.jobs.delete(ownerId);
       });
     return { jobId: job.id, scope: job.scope, pending: total };
@@ -137,6 +143,20 @@ class GenerationKeyIndexer {
   _assertActive(job) {
     if (job.cancelled) throw new GenerationKeyIndexerCancelled();
     job.context.assertActive();
+  }
+
+  // While background work is paused, wait here between files; cancelling
+  // the job wakes it.
+  async _waitWhilePaused(job) {
+    if (!this.activity?.isPaused?.()) return;
+    await Promise.race([
+      this.activity.whenRunnable(),
+      new Promise((resolve) => {
+        job.wake = resolve;
+      }),
+    ]);
+    job.wake = null;
+    this._assertActive(job);
   }
 
   _safePublish(job, payload) {
@@ -197,10 +217,12 @@ class GenerationKeyIndexer {
         for (const candidate of page) {
           this._assertActive(job);
           if (!candidate.fingerprint || attempted.has(candidate.fingerprint)) continue;
+          await this._waitWhilePaused(job);
           attempted.add(candidate.fingerprint);
           const outcome = await this._evaluate(job, candidate, rootRealPaths);
           this._assertActive(job);
           processed += 1;
+          job.report?.progress(processed, job.total);
           if (outcome.definitive) {
             if (outcome.generationKey) keyed += 1;
             pendingWrites.push({
@@ -312,6 +334,7 @@ class GenerationKeyIndexer {
     const job = this.jobs.get(ownerId);
     if (!job) return 0;
     job.cancelled = true;
+    job.wake?.();
     this.jobs.delete(ownerId);
     this.probe?.cancelOwner?.(job.probeOwnerId);
     this.draining.add(job.promise);
