@@ -295,7 +295,7 @@ Two tiers, cheapest first.
 **Numbered copy.** Copy the sequence into a destination folder with `010_`,
 `020_` prefixes, plus an ffmpeg `concat.txt`. This reuses the existing transfer
 flow and its no-overwrite policy, adds no native code, and matches the split
-stated in the withdrawn re-queue design: Video Swarm chooses, another tool runs.
+stated in an earlier, withdrawn design: Video Swarm chooses, another tool runs.
 
 **Single file.** ffmpeg's concat demuxer, stream-copying when every entry shares
 codec, resolution and frame rate — checkable from `media_content`, which already
@@ -303,7 +303,7 @@ stores `width`, `height`, `frame_rate` and `duration_ms` — and re-encoding
 otherwise, with the mismatch reported before the run starts rather than
 discovered in the output.
 
-The daemon-shaped objection in the withdrawn re-queue design does not apply here and the
+The daemon-shaped objection in that design does not apply here and the
 distinction is worth stating, because that document is the precedent for
 refusing work like this. Its deciding argument was that a six-hour supervised
 batch cannot live in a GUI you close. Concatenating forty five-second clips is
@@ -501,6 +501,7 @@ cheaper to change the panel before anything writes to disk.
   `handleDragStart` in `src/components/VideoCard/VideoCard.jsx`.
 - Named profile-local catalog precedent: `saved_views` in `main/database.js`.
 - Transfer bounds and collision policy: [`review-workflow.md`](review-workflow.md).
-- Why long batches stay external: an earlier, withdrawn design.
+- Why long batches stay external: a supervised batch of hours is daemon-shaped, and
+  Video Swarm is a GUI the user closes.
 - Grouping re-renders of one shot: `variant-grouping.md` (on
   `claude/variant-grouping`, not yet on `main`).

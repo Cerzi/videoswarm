@@ -88,7 +88,7 @@ describe("the V2V hybrid", () => {
         "(register a run, continue a project), and every final would do it too"
     );
 
-    // As the standalone tool's its V2V conversion does: a plain SaveVideo, its previews gone.
+    // As the standalone tool's V2V conversion does: a plain SaveVideo, its previews gone.
     const swapped = structuredClone(draft.prompt);
     const inputs = swapped["82:68"].inputs;
     swapped["82:68"] = {

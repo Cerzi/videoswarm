@@ -12,7 +12,7 @@ const { parseComfyGraphJson, stringifyComfyGraphJson } = require("../../main/com
 
 /**
  * The re-render queue in the real app, against a fake ComfyUI on loopback:
- * the connection setting, learning a recipe from standalone re-render tool finals,
+ * the connection setting, learning a recipe from a standalone tool's finals,
  * queueing and sending a draft, the tray keeping the app alive while the
  * queue is active with the window closed, and the question before quitting
  * under a render. It never talks to a real ComfyUI.
@@ -100,7 +100,7 @@ test("re-render queue: connect, learn, send, stay in the tray, ask before quitti
   const outputDir = path.join(workspace.tempRoot, "comfy-output");
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Three standalone re-render tool finals (each carries its draft) and a draft.
+  // Three of the standalone tool's finals (each carries its draft) and a draft.
   const finals = ["omni-01", "omni-02", "omni-03"].map((name, index) => {
     const fixture = load(name);
     const finalWorkflow = structuredClone(fixture.draft.workflow);

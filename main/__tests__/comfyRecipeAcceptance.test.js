@@ -84,7 +84,7 @@ const OMNI_EXAMPLES = ["omni-01", "omni-02", "omni-03"];
 const OMNI_HELD_OUT = ["omni-04", "omni-05", "omni-06", "omni-07"];
 const LONGFORM_EXAMPLES = ["longform-01", "longform-02"];
 
-describe("recipes learned from real standalone re-render tool finals", () => {
+describe("recipes learned from a standalone re-render tool's real finals", () => {
   const omni = learnRecipe(OMNI_EXAMPLES.map(loadFixture), { name: "Omni quality" }).recipe;
   const longform = learnRecipe(LONGFORM_EXAMPLES.map(loadFixture), { name: "Long-form quality" }).recipe;
 

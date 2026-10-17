@@ -25,8 +25,7 @@ This document specifies two producer-neutral features:
    tool's watched folder without duplicating them or moving them out of the
    folders they are organised in.
 
-Both were motivated by one ComfyUI re-render loop (see
-an earlier, withdrawn design), and neither depends on it. Nothing
+Both were motivated by one ComfyUI re-render loop, and neither depends on it. Nothing
 here special-cases a producer, a node class or a filename convention.
 
 This is a living implementation record. A slice is marked **Implemented** only
@@ -72,7 +71,7 @@ Specific to this document:
   the word "duplicate" is not used for it anywhere in the UI.
 - **Not a claim of quality.** "Best version" means *no higher-resolution version
   exists*. It does not claim the render is better, and a re-render at the same
-  seed can differ in composition (see the withdrawn re-queue design, "What a re-queue is").
+  seed can differ in composition.
 - **No dependency on the `requeue` tag.** See *Prior art*.
 
 ## Why not the Generation panel's resolver
@@ -498,7 +497,7 @@ finals it produces, carrying `source_seed`, `source_path` and the draft's
 `source_prompt`/`source_workflow`; a final matches its draft when the draft's
 embedded `prompt` equals the tag's `source_prompt`. It is an exact,
 producer-written link from a final to its draft. The tool also keeps its own
-history in `its own history file` (final, draft,
+history in its own history file (final, draft,
 settings, render time), and names each final after its draft's whole name,
 beside it: `213533_00001_.mp4` → `213533_00001_final_1.5mp_35st_00001_.mp4`,
 or `…_nopost_…` when rendered without its RTX and RIFE post-processing.
@@ -685,7 +684,7 @@ possible future cross-check, nothing more.
   [`large-library-performance.md`](large-library-performance.md).
 - Library-wide collections and cross-root transfer:
   [`library-tag-views.md`](library-tag-views.md).
-- The external re-render tool and the split of responsibilities:
-  an earlier, withdrawn design.
+- The external re-render tool and the split of responsibilities: see
+  [`comfy-queue-integration.md`](comfy-queue-integration.md), Summary.
 - Transfer planning, bounds and collision policy:
   [`review-workflow.md`](review-workflow.md).

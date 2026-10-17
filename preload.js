@@ -485,7 +485,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       list: async () => ipcRenderer.invoke("comfy:recipes:list"),
       get: async (id) => ipcRenderer.invoke("comfy:recipes:get", { id }),
       delete: async (id) => ipcRenderer.invoke("comfy:recipes:delete", { id }),
-      // examples: [{ finalPath, draftPath? }]; a standalone re-render tool final alone
+      // examples: [{ finalPath, draftPath? }]; a standalone tool's final alone
       // carries its draft.
       learn: async ({ name, examples } = {}) =>
         ipcRenderer.invoke("comfy:recipes:learn", {

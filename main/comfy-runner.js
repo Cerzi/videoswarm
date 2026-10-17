@@ -90,7 +90,7 @@ function finalPrefix({ draftPath, outputDir, draftPrompt, label }) {
 }
 
 // Where the provenance tag says the draft was: inside ComfyUI's output folder
-// as a relative path, as standalone re-render tool records it; elsewhere only its name, so
+// as a relative path, as the standalone re-render tool records it; elsewhere only its name, so
 // a shared final does not carry the user's folder layout.
 function sourcePathFor(draftPath, outputDir) {
   if (outputDir) {

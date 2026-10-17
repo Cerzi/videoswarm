@@ -1,7 +1,7 @@
 /* global __dirname, structuredClone */
 // Fixtures for the "never silently wrong" checks (main/comfy-safety.js):
 //   safety/v2v-01.json         a real V2V hybrid draft's API prompt (from
-//                              the standalone tool's a real V2V draft), sanitized
+//                              a real V2V draft of the standalone tool's tests), sanitized
 //                              like the recipe fixtures: models, media, hashes,
 //                              the save prefix and project name replaced;
 //                              classes, links, titles and numbers kept. It has

@@ -1258,7 +1258,7 @@ function applyRecipe(recipe, draftSide, options = {}) {
 
 // --- example sources ------------------------------------------------------------
 
-// A pair from a standalone standalone re-render tool final: its own `prompt` and
+// A pair from a standalone re-render tool's final: its own `prompt` and
 // `workflow` tags, and the draft's graphs in its `requeue` provenance tag.
 // @param tags the container's format tags (ffprobe `format.tags`)
 function pairFromRequeueTags(tags, label = '') {

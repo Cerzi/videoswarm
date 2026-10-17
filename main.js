@@ -5890,7 +5890,7 @@ ipcMain.handle("comfy:recipes:delete", async (_event, payload = {}) => {
 });
 
 // Learn a recipe from example pairs: a draft and its quality version, or a
-// standalone re-render tool final alone (it carries its draft's graphs).
+// standalone tool's final alone (it carries its draft's graphs).
 ipcMain.handle("comfy:recipes:learn", async (event, payload = {}) => {
   assertPlainObject(payload, "recipe learning request");
   assertPayloadSize(payload, 256 * 1024);

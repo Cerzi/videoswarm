@@ -71,7 +71,7 @@ work, no network access and no ComfyUI installation required. Also:
 
 ## Evidence: the prototype
 
-A type-flow prototype, kept outside this repository, (74 lines, stdlib) is the proof of concept. With no
+A type-flow prototype (74 lines, stdlib, kept outside this repository) is the proof of concept. With no
 node lists at all, on 2026-09-28 it read, from real renders in the user's
 library:
 
@@ -418,8 +418,8 @@ the column is added later with the current check.
 
 ### 2026-09-28 — Design
 
-- Brief from another session; prototype preserved as
-  A type-flow prototype, kept outside this repository,. The prototype's results and faults above were
+- Brief from another session; the prototype is kept outside this
+  repository. The prototype's results and faults above were
   re-run in this repository on real renders before writing this.
 - Input *names* are allowed as evidence and class *names* are not, because
   ComfyUI standardises the former across custom nodes and not the latter.
@@ -512,4 +512,4 @@ the column is added later with the current check.
   [`generation-versions.md`](generation-versions.md).
 - The optional ComfyUI connection:
   [`comfy-queue-integration.md`](comfy-queue-integration.md).
-- Prototype: a type-flow prototype kept outside this repository.
+- Prototype: kept outside this repository.

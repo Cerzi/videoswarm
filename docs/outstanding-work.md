@@ -419,5 +419,5 @@ From the overnight work on 2026-09-29.
   [`architecture/generation-versions.md`](architecture/generation-versions.md)
 - Scope, matching and the tag-view record contract:
   [`architecture/library-tag-views.md`](architecture/library-tag-views.md)
-- Why re-queueing stays external: an earlier, withdrawn design
+- Why re-queueing stays external: [`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md), Summary
 - Transfer bounds and collision policy: [`architecture/review-workflow.md`](architecture/review-workflow.md)

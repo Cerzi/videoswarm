@@ -10,9 +10,9 @@ Last updated: 2026-09-29
 
 ## Summary
 
-an earlier, withdrawn design specified re-queueing inside Video Swarm
-and then **rejected** it: re-rendering stayed in the standalone
-standalone re-render app, and the two tools split as "Video Swarm chooses, the app
+An earlier, withdrawn design specified re-queueing inside Video Swarm
+and then **rejected** it: re-rendering stayed in a standalone re-render
+app, and the two tools split as "Video Swarm chooses, the app
 runs". That app now works overnight on the user's machine, but only for the
 two Acme workflows it was written for. Every role in it — the composer,
 the turbo LoRA, the `TURBO PATH` group, the switchboard — is code.
@@ -56,7 +56,7 @@ They are now made; see [Decisions](#decisions).
 
 ## Evidence: the prototype
 
-A recipe prototype, kept outside this repository, (66 lines, stdlib) learns a recipe from a
+A recipe prototype (66 lines, stdlib, kept outside this repository) learns a recipe from a
 finished re-render, which carries both graphs: its own `prompt` and the
 draft's as `requeue.source_prompt`. It canonicalises both graphs (only nodes
 reachable from the output; switches, reroutes and primitives followed to what
@@ -265,7 +265,7 @@ saving and the provenance tag are Phase 2 (**Unimplemented**)
 
 Status: **Implemented** (`main/comfy-checks.js`)
 
-Ported from the standalone app's pre-queue checks, with nothing keyed to a node
+Modelled on the standalone app's pre-queue checks, with nothing keyed to a node
 class, against ComfyUI's node definitions. Those are fetched per class
 (`/object_info/{class}`, cached a minute): the full `/object_info` is 103 MB
 on the user's install, too much to parse in the main process every minute.
@@ -321,7 +321,7 @@ Ported from the standalone app's `Runner`, with its behaviour kept:
   when the draft is inside ComfyUI's output folder, otherwise the draft's own
   save folder from its embedded prefix. The label is the recipe's name, then
   each changed setting (`omni-quality_steps50`).
-- **Provenance** — the `requeue` tag as standalone re-render tool writes it
+- **Provenance** — the `requeue` tag as the standalone re-render tool writes it
   (`source_path`, `source_prompt`, `source_workflow`, `passes`, `phase`), plus
   the recipe id and name, the settings and rule choices, and the queue item.
   `source_path` is relative to the output folder, or only the file name for a
@@ -408,7 +408,7 @@ profile switch disposes it without withdrawing anything.
 `window.electronAPI.comfyQueue`: `getConnection`, `setConnection`,
 `testConnection` (read-only: `GET /queue` and two node definitions),
 `recipes.list/get/delete/learn` (examples are a draft and its quality
-version, or a standalone re-render tool final alone), `add` (clips, recipe, settings,
+version, or a standalone tool's final alone), `add` (clips, recipe, settings,
 rule choices), `list` (the queue in run order with each clip's check
 results and its Section 10 `review`), `history`, `start`, `stop`,
 `setOrder`, `retry`, `renderAgain`, `confirm` (a clip's holds, by id),
@@ -433,7 +433,7 @@ Status: **Proposed**
 ## 9. Next engine phase: a detached engine
 
 Status: **Planned**, not started. Recorded 2026-09-28 from the
-re-render tool session, acting for the user. Work starts only when the user
+standalone tool's session, acting for the user. Work starts only when the user
 says so. It supersedes Decision 2's in-process engine and tray when it lands.
 
 - **Process.** The engine runs as its own detached process, started with
@@ -477,7 +477,7 @@ and changes the recipe learner's role (Section 2).
 
 ### Why: a diff shows what changed, not why
 
-The user queued a draft from a new workflow in standalone re-render tool, the **V2V
+The user queued a draft from a new workflow in the standalone tool, the **V2V
 hybrid**. It replaces one person in a source video: SAM3 tracks them from
 clicks on frame 1, and crop-to-mask renders only their box and pastes it
 back. Supporting it took a hand-written adapter. Checked against it, the
@@ -518,8 +518,8 @@ Every clip lands in one of three buckets:
    built, so this is robust by construction. It is worth promoting as a
    convention in Video Swarm's docs and UI. The V2V workflow's author has
    been asked for one.
-2. **Known family.** A small adapter per workflow family, as standalone re-render tool
-   has for Omni, long-form and V2V (its role finders and V2V conversion). Each is about 50–150 lines and
+2. **Known family.** A small adapter per workflow family, as the standalone tool
+   has for Omni, long-form and V2V. Each is about 50–150 lines and
    reliable in practice.
 3. **Everything else is held for review with a reason**, never guessed.
 
@@ -621,7 +621,7 @@ What it does not do:
 - Literal data on the changed node itself is trusted to the examples.
 - The V2V needs more than a confirmation: the frame size rule (up to the
   source's own size), moving the clicks and swapping the save are adapter
-  work (the standalone tool's its V2V conversion). Confirming only accepts the draft's
+  work (the standalone tool's V2V conversion). Confirming only accepts the draft's
   clicks and save as they are.
 - Declared mode is read from UI groups and node positions, so an API-only
   draft, or one whose switch sits inside a subgraph, is never `declared`.
@@ -635,13 +635,9 @@ downstream is unknown.
 
 ### Reference
 
-the standalone re-render tool:
-
-- its V2V adapter;
-- its V2V tests;
-- a real V2V draft: a real V2V draft's API prompt, with the prompt
-  text blanked;
-- the README section "V2V hybrid", which lists each change and why.
+The standalone re-render tool's V2V adapter, its tests, a real V2V draft's
+API prompt with the prompt text blanked, and its README section on the V2V
+hybrid, which lists each change and why.
 
 ## Decisions
 
@@ -688,17 +684,17 @@ proposal was written with.
 
 ### 2026-09-28 — Proposal
 
-- Brief from another session. Prototype preserved as
-  A recipe prototype, kept outside this repository,; its results and the four faults under
+- Brief from another session. The prototype is kept outside this
+  repository; its results and the four faults under
   Evidence come from re-running it here on real finals.
-- The standalone app (the standalone re-render tool, README, its code, tests) is
+- The standalone re-render tool (its code, README and tests) is
   the reference implementation for Sections 5 and 6.
 
 ### 2026-09-28 — Decisions
 
 - The user decided the three open questions (see Decisions): a loopback-only,
   opt-in ComfyUI connection; the engine in the main process with a tray while
-  a queue runs; single-pass version 1. the withdrawn re-queue design records the amended
+  a queue runs; single-pass version 1. The withdrawn design recorded the amended
   network stance.
 
 ### 2026-09-28 — Phase 1: recipe learner and matcher
@@ -807,11 +803,11 @@ proposal was written with.
   `comfy:queue:confirm` and `comfyQueue.confirm` carry an item id and up to
   32 hold ids of at most 200 characters.
 - Fixtures (`main/__tests__/fixtures/safety/`): `v2v-01.json`, the V2V
-  hybrid draft from the standalone tool's a real V2V draft, sanitized like
+  hybrid draft from a real V2V draft of the standalone tool's tests, sanitized like
   the recipe fixtures (models, media, hashes, the save prefix and project
   name replaced; classes, links, titles and numbers kept); and
   `longform-layout.json`, the long-form workflow's group titles and boxes
-  and node positions from the standalone tool's a real long-form draft, a
+  and node positions from a real long-form draft of the standalone tool's tests, a
   real draft of the same workflow file, because the recipe fixtures dropped
   the layout. The V2V recipe in the tests is learned from two pairs made
   from that draft the way a hand-made final would differ (LoRA bypassed,
@@ -838,12 +834,12 @@ proposal was written with.
 
 ## References
 
-- The earlier, rejected design and its reasons:
-  an earlier, withdrawn design.
+- The earlier, rejected design and its reasons: not kept in this
+  repository.
 - Reading graphs by socket type:
   [`generation-type-flow.md`](generation-type-flow.md).
 - What a version is, and what must not change between versions:
   [`generation-versions.md`](generation-versions.md).
 - Bounded native work, confirmations, transfer:
   [`review-workflow.md`](review-workflow.md).
-- Prototype: a recipe prototype kept outside this repository.
+- Prototype: kept outside this repository.
