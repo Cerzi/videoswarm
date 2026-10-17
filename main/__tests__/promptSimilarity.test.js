@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   PromptSimilarityService,
-  clusterSimilarPrompts,
-  clusterSimilarPromptsInSlices,
+  similarPromptPairs,
+  similarPromptPairsInSlices,
   createWordDictionary,
 } = require("../prompt-similarity");
 const { computeGenerationKeys } = require("../generation-key");
@@ -14,10 +14,9 @@ const BASE = "a quiet harbour at dawn with fishing boats and gulls over calm wat
 
 const dictionary = createWordDictionary();
 
-function group(key, count, ...texts) {
+function group(key, ...texts) {
   return {
     key,
-    count,
     texts: texts.map((text) => ({ id: `id:${text}`, words: dictionary.idsOf(text) })),
   };
 }
@@ -28,17 +27,19 @@ function reworded(text, replacements) {
   return result;
 }
 
-describe("clusterSimilarPrompts", () => {
-  it("joins reworded runs to the largest close prompt", () => {
-    const joined = clusterSimilarPrompts(
+const pairsOf = (alike) => Object.fromEntries([...alike].map(([key, keys]) => [key, [...keys].sort()]));
+
+describe("similarPromptPairs", () => {
+  it("pairs reworded prompts both ways and leaves unrelated ones out", () => {
+    const alike = similarPromptPairs(
       [
-        group("pk-small", 1, reworded(BASE, [["gulls", "terns"]])),
-        group("pk-big", 5, BASE),
-        group("pk-other", 2, "neon city street at night in heavy rain with reflections"),
+        group("pk-a", BASE),
+        group("pk-b", reworded(BASE, [["gulls", "terns"]])),
+        group("pk-c", "neon city street at night in heavy rain with reflections"),
       ],
       { threshold: 0.8 }
     );
-    expect(Object.fromEntries(joined)).toEqual({ "pk-small": "pk-big" });
+    expect(pairsOf(alike)).toEqual({ "pk-a": ["pk-b"], "pk-b": ["pk-a"] });
   });
 
   it("respects the threshold", () => {
@@ -47,49 +48,58 @@ describe("clusterSimilarPrompts", () => {
       ["dawn", "dusk"],
       ["calm", "rough"],
     ]);
-    const groups = [group("pk-a", 3, BASE), group("pk-b", 1, changed)];
-    expect(clusterSimilarPrompts(groups, { threshold: 0.8 }).size).toBe(0);
-    expect(clusterSimilarPrompts(groups, { threshold: 0.6 }).get("pk-b")).toBe("pk-a");
+    const groups = [group("pk-a", BASE), group("pk-b", changed)];
+    expect(similarPromptPairs(groups, { threshold: 0.8 }).size).toBe(0);
+    expect(pairsOf(similarPromptPairs(groups, { threshold: 0.6 }))["pk-b"]).toEqual(["pk-a"]);
   });
 
-  it("never chains a run of small edits through joined prompts", () => {
+  it("finds exactly the pairs a direct comparison finds", () => {
     const words = BASE.split(" ");
-    const steps = [0, 1, 2, 3].map((offset) =>
-      words.map((word, index) => (index < offset * 2 ? `${word}x` : word)).join(" ")
+    const groups = Array.from({ length: 30 }, (_, index) =>
+      group(
+        `pk-${String(index).padStart(2, "0")}`,
+        words.map((word, at) => ((at * 7 + index) % 11 < index % 5 ? `${word}${index}` : word)).join(" ")
+      )
     );
-    const joined = clusterSimilarPrompts(
-      steps.map((text, index) => group(`pk-${index}`, 10 - index, text)),
-      { threshold: 0.7 }
-    );
-    // Step 1 is close to step 0 and step 3 to step 2, but step 3 never
-    // reaches step 0 through them.
-    expect(joined.get("pk-1")).toBe("pk-0");
-    expect(joined.get("pk-3")).toBe("pk-2");
-    for (const anchor of joined.values()) expect(joined.has(anchor)).toBe(false);
+    const threshold = 0.7;
+    const expected = {};
+    const sets = groups.map((entry) => new Set(entry.texts[0].words));
+    for (let a = 0; a < groups.length; a += 1) {
+      for (let b = 0; b < groups.length; b += 1) {
+        if (a === b) continue;
+        const shared = [...sets[a]].filter((word) => sets[b].has(word)).length;
+        if (shared / (sets[a].size + sets[b].size - shared) >= threshold) {
+          (expected[groups[a].key] ||= []).push(groups[b].key);
+        }
+      }
+    }
+    Object.values(expected).forEach((keys) => keys.sort());
+    expect(Object.keys(expected).length).toBeGreaterThan(3);
+    expect(pairsOf(similarPromptPairs(groups, { threshold }))).toEqual(expected);
   });
 
   it("ignores a text shared by many prompts", () => {
     const negative = "blurry low quality watermark text distorted extra limbs";
     const groups = [
-      group("pk-1", 1, "red fox running through snow", negative),
-      group("pk-2", 1, "old man reading on a park bench", negative),
-      group("pk-3", 1, "spaceship landing on a desert planet", negative),
-      group("pk-4", 1, "children flying kites on a beach", negative),
+      group("pk-1", "red fox running through snow", negative),
+      group("pk-2", "old man reading on a park bench", negative),
+      group("pk-3", "spaceship landing on a desert planet", negative),
+      group("pk-4", "children flying kites on a beach", negative),
     ];
-    expect(clusterSimilarPrompts(groups, { threshold: 0.7 }).size).toBe(0);
+    expect(similarPromptPairs(groups, { threshold: 0.7 }).size).toBe(0);
   });
 
-  it("joins only prompts over the same input media", () => {
-    const withMedia = (key, count, media) => ({ ...group(key, count, BASE), media });
-    const joined = clusterSimilarPrompts(
+  it("pairs only prompts over the same input media", () => {
+    const withMedia = (key, media) => ({ ...group(key, BASE), media });
+    const alike = similarPromptPairs(
       [
-        withMedia("pk-a", 3, "clip.mp4@in_time=0"),
-        withMedia("pk-b", 1, "clip.mp4@in_time=30"),
-        withMedia("pk-c", 1, "clip.mp4@in_time=0"),
+        withMedia("pk-a", "clip.mp4@in_time=0"),
+        withMedia("pk-b", "clip.mp4@in_time=30"),
+        withMedia("pk-c", "clip.mp4@in_time=0"),
       ],
       { threshold: 0.8 }
     );
-    expect(Object.fromEntries(joined)).toEqual({ "pk-c": "pk-a" });
+    expect(pairsOf(alike)).toEqual({ "pk-a": ["pk-c"], "pk-c": ["pk-a"] });
   });
 
   it("numbers each word once, ignoring case and punctuation", () => {
@@ -100,9 +110,9 @@ describe("clusterSimilarPrompts", () => {
 
   it("gives the same answer in slices as at once", () => {
     const groups = Array.from({ length: 40 }, (_, index) =>
-      group(`pk-${String(index).padStart(2, "0")}`, 40 - index, `${BASE} variant${index % 5}`)
+      group(`pk-${String(index).padStart(2, "0")}`, `${BASE} variant${index % 5}`)
     );
-    const steps = clusterSimilarPromptsInSlices(groups, { threshold: 0.8, clusterSlice: 4 });
+    const steps = similarPromptPairsInSlices(groups, { threshold: 0.8, clusterSlice: 4 });
     let slices = 0;
     let step = steps.next();
     while (!step.done) {
@@ -110,16 +120,12 @@ describe("clusterSimilarPrompts", () => {
       step = steps.next();
     }
     expect(slices).toBeGreaterThan(5);
-    expect(step.value).toEqual(clusterSimilarPrompts(groups, { threshold: 0.8 }));
-    expect(step.value.size).toBe(39);
+    expect(pairsOf(step.value)).toEqual(pairsOf(similarPromptPairs(groups, { threshold: 0.8 })));
+    expect(step.value.size).toBe(40);
   });
 
-  it("leaves very short prompts on their own keys", () => {
-    const joined = clusterSimilarPrompts(
-      [group("pk-a", 2, "a cat"), group("pk-b", 1, "a cat")],
-      { threshold: 0.8 }
-    );
-    expect(joined.size).toBe(0);
+  it("leaves very short prompts out", () => {
+    expect(similarPromptPairs([group("pk-a", "a cat"), group("pk-b", "a cat")], { threshold: 0.8 }).size).toBe(0);
   });
 });
 
@@ -175,20 +181,16 @@ describe("PromptSimilarityService", () => {
     const library = createLibrary([close, closer, far]);
     const similarity = service(library);
     const [keyA, keyB, keyC] = library.keys;
-    const entries = [
-      { promptKey: keyA, count: 4 },
-      { promptKey: keyB, count: 1 },
-      { promptKey: keyC, count: 2 },
-    ];
-    const groups = await similarity.similarGroups({
+    const promptKeys = [keyA, keyB, keyC];
+    const alike = await similarity.similarPrompts({
       store: library.store,
-      entries,
+      promptKeys,
       threshold: 0.8,
     });
-    expect(groups).toEqual({ [keyB]: keyA });
-    expect(JSON.stringify(groups)).not.toContain("harbour");
+    expect(alike).toEqual({ [keyA]: [keyB], [keyB]: [keyA] });
+    expect(JSON.stringify(alike)).not.toContain("harbour");
 
-    await similarity.similarGroups({ store: library.store, entries, threshold: 0.7 });
+    await similarity.similarPrompts({ store: library.store, promptKeys, threshold: 0.7 });
     expect(library.readIsoPayload).toHaveBeenCalledTimes(3);
   });
 
@@ -198,12 +200,9 @@ describe("PromptSimilarityService", () => {
     library.fsPromises.realpath.mockImplementation(async (target) =>
       target.endsWith("clip-1.mp4") ? "/elsewhere/clip-1.mp4" : target
     );
-    const entries = [
-      { promptKey: keyA, count: 4 },
-      { promptKey: keyB, count: 1 },
-    ];
+    const promptKeys = [keyA, keyB];
     expect(
-      await service(library).similarGroups({ store: library.store, entries, threshold: 0.8 })
+      await service(library).similarPrompts({ store: library.store, promptKeys, threshold: 0.8 })
     ).toEqual({});
 
     const edited = createLibrary([close, closer]);
@@ -212,7 +211,7 @@ describe("PromptSimilarityService", () => {
       payload: { prompt: far },
     }));
     expect(
-      await service(edited).similarGroups({ store: edited.store, entries, threshold: 0.8 })
+      await service(edited).similarPrompts({ store: edited.store, promptKeys, threshold: 0.8 })
     ).toEqual({});
   });
 
@@ -227,11 +226,11 @@ describe("PromptSimilarityService", () => {
       limits: { yieldEvery: 1 },
       yieldToEventLoop: () => gate,
     });
-    const entries = [
-      { promptKey: keyA, count: 4 },
-      { promptKey: keyB, count: 1 },
-    ];
-    const first = similarity.similarGroups({ store: library.store, entries, threshold: 0.8 });
+    const first = similarity.similarPrompts({
+      store: library.store,
+      promptKeys: [keyA, keyB],
+      threshold: 0.8,
+    });
     await vi.waitFor(() => expect(library.readIsoPayload).toHaveBeenCalled());
     similarity.clear();
     release();
@@ -244,9 +243,9 @@ describe("PromptSimilarityService", () => {
       throw new Error("inactive");
     });
     await expect(
-      service(library).similarGroups({
+      service(library).similarPrompts({
         store: library.store,
-        entries: [{ promptKey: library.keys[0], count: 1 }],
+        promptKeys: [library.keys[0]],
         threshold: 0.8,
         assertActive,
       })

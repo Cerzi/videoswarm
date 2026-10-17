@@ -415,12 +415,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
 
-  // Similar-prompt stacks: prompt keys with clip counts in, a map of
-  // prompt key -> stack anchor prompt key out. Prompts never cross.
+  // Similar-prompt stacks: a collection's prompt keys in, a map of prompt
+  // key -> keys whose prompts are alike out. Prompts never cross.
   stacks: {
-    similarGroups: async ({ entries, threshold } = {}) =>
-      ipcRenderer.invoke("stacks:similar-groups", {
-        entries: Array.isArray(entries) ? entries : [],
+    similarPrompts: async ({ promptKeys, threshold } = {}) =>
+      ipcRenderer.invoke("stacks:similar-prompts", {
+        promptKeys: Array.isArray(promptKeys) ? promptKeys : [],
         threshold: Number(threshold),
       }),
   },

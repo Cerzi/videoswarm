@@ -145,6 +145,9 @@ export function useMasonryLayout({
   sortDir,
   groupByFolders,
   randomSeed,
+  // The random order, when the caller shares one with other views of the
+  // same sort (prompt stacks walk the grid in exactly this order).
+  randomOrderMap: sharedRandomOrderMap,
   zoomLevel,
   scrollContainerRef,
   gridRef,
@@ -290,16 +293,18 @@ export function useMasonryLayout({
     };
   }, [commitScrollTop, scrollContainerElement, scrollContainerRef]);
 
-  const randomOrderMap = useMemo(
+  const ownRandomOrderMap = useMemo(
     () =>
-      sortKey === SortKey.RANDOM
+      sharedRandomOrderMap === undefined && sortKey === SortKey.RANDOM
         ? buildRandomOrderMap(
             (Array.isArray(videos) ? videos : []).map((video) => video.id),
             randomSeed ?? Date.now()
           )
         : null,
-    [sortKey, randomSeed, videos]
+    [sharedRandomOrderMap, sortKey, randomSeed, videos]
   );
+  const randomOrderMap =
+    sharedRandomOrderMap === undefined ? ownRandomOrderMap : sharedRandomOrderMap;
 
   const comparator = useMemo(
     () => buildComparator({ sortKey, sortDir, randomOrderMap }),

@@ -140,7 +140,7 @@ export function buildComparator({ sortKey, sortDir, randomOrderMap }) {
 // key. Records from a single root carry no rootPath and keep their old
 // grouping exactly. NUL joins the parts because it is the one byte a path
 // cannot contain, so no pair can spell another pair's key.
-function folderGroupKey(item) {
+export function folderGroupKey(item) {
   return `${item?.rootPath || ""}\u0000${item?.dirname || ""}`;
 }
 

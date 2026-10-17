@@ -48,45 +48,63 @@ describe("chooseStackCover", () => {
   });
 });
 
+const stackKey = (promptKey, firstId) => `${promptKey}\u0000${firstId}`;
+
 describe("buildPromptStacks", () => {
-  it("stacks two or more runs of a prompt and leaves the rest alone", () => {
+  it("stacks neighbouring runs of a prompt and leaves the rest alone", () => {
     const videos = [
       clip("a1", PK_A),
-      clip("b1", PK_B),
       clip("a2", PK_A),
-      clip("none", null),
       clip("a3", PK_A),
+      clip("b1", PK_B),
+      clip("none", null),
+      clip("b2", PK_B),
     ];
     const { stacks, keyById } = buildPromptStacks(videos);
-    expect([...stacks.keys()]).toEqual([PK_A]);
-    expect(stacks.get(PK_A).members.map((video) => video.id)).toEqual(["a1", "a2", "a3"]);
-    expect(stacks.get(PK_A).total).toBe(3);
-    expect(stacks.get(PK_A).similar).toBe(false);
+    const key = stackKey(PK_A, "a1");
+    expect([...stacks.keys()]).toEqual([key]);
+    expect(stacks.get(key).members.map((video) => video.id)).toEqual(["a1", "a2", "a3"]);
+    expect(stacks.get(key)).toMatchObject({ total: 3, similar: false });
+    // A clip without a key ends a run; b1 and b2 are not neighbours.
     expect(keyById.has("b1")).toBe(false);
     expect(keyById.has("none")).toBe(false);
   });
 
-  it("counts runs hidden by filters in the total only", () => {
-    const all = [clip("a1", PK_A), clip("a2", PK_A), clip("a3", PK_A), clip("b1", PK_B)];
-    const visible = [all[0], all[2], all[3]];
-    const { stacks } = buildPromptStacks(visible, all);
-    expect(stacks.get(PK_A).members).toHaveLength(2);
-    expect(stacks.get(PK_A).total).toBe(3);
-    // One visible run is not a stack, however many are hidden.
-    expect(buildPromptStacks([all[0]], all).stacks.size).toBe(0);
+  // Far apart in the sort is grouping, not stacking.
+  it("never stacks runs of one prompt that something else sits between", () => {
+    const videos = [clip("a1", PK_A), clip("b1", PK_B), clip("a2", PK_A), clip("b2", PK_B)];
+    expect(buildPromptStacks(videos).stacks.size).toBe(0);
   });
 
-  it("stacks similar prompts under the key they map to", () => {
-    const all = [clip("a1", PK_A), clip("b1", PK_B), clip("c1", PK_C), clip("b2", PK_B)];
-    const groupOf = (key) => (key === PK_B ? PK_A : undefined);
-    const visible = all.slice(0, 3);
-    const { stacks, keyById } = buildPromptStacks(visible, all, groupOf);
-    expect([...stacks.keys()]).toEqual([PK_A]);
-    expect(stacks.get(PK_A).members.map((video) => video.id)).toEqual(["a1", "b1"]);
-    expect(stacks.get(PK_A).total).toBe(3);
-    expect(stacks.get(PK_A).similar).toBe(true);
-    expect(keyById.get("b1")).toBe(PK_A);
-    expect(keyById.has("c1")).toBe(false);
+  it("counts clips hidden by filters in the total, without regrouping", () => {
+    const all = [clip("a1", PK_A), clip("a2", PK_A), clip("a3", PK_A), clip("b1", PK_B)];
+    const { stacks } = buildPromptStacks(all, { visible: new Set(["a1", "a3", "b1"]) });
+    const stack = stacks.get(stackKey(PK_A, "a1"));
+    expect(stack.members.map((video) => video.id)).toEqual(["a1", "a3"]);
+    expect(stack.total).toBe(3);
+    // One visible clip is not a stack, however many are hidden.
+    expect(buildPromptStacks(all, { visible: new Set(["a1", "b1"]) }).stacks.size).toBe(0);
+  });
+
+  it("joins alike prompts to the run's first prompt, without drifting", () => {
+    const alike = (a, b) =>
+      (a === PK_A && b === PK_B) || (a === PK_B && b === PK_C);
+    const videos = [clip("a1", PK_A), clip("b1", PK_B), clip("c1", PK_C), clip("c2", PK_C)];
+    const { stacks, keyById } = buildPromptStacks(videos, { alike });
+    // c1 is alike to b1 but not to a1, which opened the run.
+    expect(stacks.get(stackKey(PK_A, "a1")).members.map((video) => video.id)).toEqual(["a1", "b1"]);
+    expect(stacks.get(stackKey(PK_A, "a1")).similar).toBe(true);
+    expect(keyById.get("c2")).toBe(stackKey(PK_C, "c1"));
+  });
+
+  it("does not run across folder groups", () => {
+    const videos = [
+      clip("a1", PK_A, { dirname: "x" }),
+      clip("a2", PK_A, { dirname: "y" }),
+      clip("a3", PK_A, { dirname: "y" }),
+    ];
+    const { stacks } = buildPromptStacks(videos, { folderOf: (video) => video.dirname });
+    expect([...stacks.keys()]).toEqual([stackKey(PK_A, "a2")]);
   });
 });
 
@@ -94,15 +112,15 @@ describe("collapsePromptStacks", () => {
   it("keeps each stack's cover in place and drops its other runs", () => {
     const videos = [
       clip("a1", PK_A),
-      clip("b1", PK_B),
       clip("a2", PK_A, { reviewState: "pick" }),
+      clip("b1", PK_B),
       clip("b2", PK_B),
       clip("solo", PK_C),
     ];
     const stacks = buildPromptStacks(videos);
     expect(collapsePromptStacks(videos, stacks).map((video) => video.id)).toEqual([
-      "b1",
       "a2",
+      "b1",
       "solo",
     ]);
     const none = buildPromptStacks([clip("x", null)]);
@@ -115,10 +133,11 @@ describe("stack selection units and order", () => {
   it("maps every run to its stack and the stack to its cover", () => {
     const videos = [clip("a1", PK_A), clip("a2", PK_A, { rating: 3 }), clip("solo", PK_C)];
     const units = createStackSelectionUnits(buildPromptStacks(videos));
-    expect(units.unitOf("a1")).toBe(PK_A);
+    const key = stackKey(PK_A, "a1");
+    expect(units.unitOf("a1")).toBe(key);
     expect(units.unitOf("solo")).toBeNull();
-    expect(units.membersOf(PK_A)).toEqual(["a1", "a2"]);
-    expect(units.representativeOf(PK_A)).toBe("a2");
+    expect(units.membersOf(key)).toEqual(["a1", "a2"]);
+    expect(units.representativeOf(key)).toBe("a2");
     expect(createStackSelectionUnits(buildPromptStacks([clip("x", null)]))).toBeNull();
   });
 
@@ -126,11 +145,12 @@ describe("stack selection units and order", () => {
     const videos = [clip("a1", PK_A), clip("a2", PK_A), clip("b1", PK_B), clip("b2", PK_B)];
     const built = buildPromptStacks(videos);
     const order = stackOrderOf(collapsePromptStacks(videos, built), built);
-    expect(order).toEqual([PK_A, PK_B]);
-    expect(neighbouringStack(order, PK_A, 1, built.stacks)).toBe(PK_B);
-    expect(neighbouringStack(order, PK_A, -1, built.stacks)).toBeNull();
-    expect(neighbouringStack([PK_A, PK_C, PK_B], PK_A, 1, built.stacks)).toBe(PK_B);
-    expect(neighbouringStack(order, PK_C, 1, built.stacks)).toBeNull();
+    const [a, b] = [stackKey(PK_A, "a1"), stackKey(PK_B, "b1")];
+    expect(order).toEqual([a, b]);
+    expect(neighbouringStack(order, a, 1, built.stacks)).toBe(b);
+    expect(neighbouringStack(order, a, -1, built.stacks)).toBeNull();
+    expect(neighbouringStack([a, "gone", b], a, 1, built.stacks)).toBe(b);
+    expect(neighbouringStack(order, "gone", 1, built.stacks)).toBeNull();
   });
 
   it("lists the runs still waiting for a decision, once per content", () => {

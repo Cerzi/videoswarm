@@ -7,9 +7,10 @@ const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./container-tags"
 // Similar-prompt stacks (docs/architecture/prompt-stacks.md, Section 7).
 //
 // Exact prompt stacks need identical prompt text, but runs of one idea are
-// often reworded between runs. This groups prompt keys whose prompts share
-// most of their words. Prompt text never leaves this module: words are kept
-// as numbered sets in memory only, and callers send and receive prompt keys.
+// often reworded between runs. This finds which prompt keys' prompts share
+// most of their words; the renderer stacks neighbouring clips with them.
+// Prompt text never leaves this module: words are kept as numbered sets in
+// memory only, and callers send and receive prompt keys.
 
 const PROMPT_SIMILARITY_LIMITS = Object.freeze({
   maxKeys: 20_000,
@@ -23,9 +24,11 @@ const PROMPT_SIMILARITY_LIMITS = Object.freeze({
   boilerplateFraction: 0.25,
   minBoilerplateGroups: 3,
   minBoilerplateCompanions: 3,
-  // Reads and clustering give the event loop back this often.
+  // Reads and pairing give the event loop back this often.
   yieldEvery: 16,
   clusterSlice: 256,
+  // Prompts alike, per prompt; the closest are kept.
+  maxNeighbours: 64,
 });
 
 const WORD = /[\p{L}\p{N}]+/gu;
@@ -98,23 +101,23 @@ function sharedWords(a, b, needed) {
 }
 
 /**
- * Groups prompt keys whose prompts share at least `threshold` of their words
- * (Jaccard similarity of the word sets).
+ * Pairs of prompt keys whose prompts share at least `threshold` of their
+ * words (Jaccard similarity of the word sets).
  *
- * `groups` are `{ key, count, media, texts: [{ id, words }] }`, where `count`
- * is how many clips the key has, `media` names the input media (with any cut
- * start) and `texts` are the prompt's long texts, each a sorted Int32Array
- * of word numbers from one dictionary. Only prompts over the same input media
- * join: the same words over another source clip or segment are another shot.
- * Larger groups become anchors first; every other group joins the anchor it
- * is closest to, and never a group that itself joined, so a prompt edited a
- * word at a time cannot chain a whole session into one stack.
+ * `groups` are `{ key, media, texts: [{ id, words }] }`, where `media` names
+ * the input media (with any cut start) and `texts` are the prompt's long
+ * texts, each a sorted Int32Array of word numbers from one dictionary. Only
+ * prompts over the same input media pair: the same words over another source
+ * clip or segment are another shot.
+ *
+ * This only says which prompts are alike. Which clips stack is decided by the
+ * renderer, from neighbours in the grid's order (prompt-stacks.md, Section 7).
  *
  * A generator, so the caller can give the event loop back between slices;
- * its return value is a Map of joined key -> anchor key. Anchors and unread
- * keys are absent, meaning "stack by your own key".
+ * its return value is a Map of key -> keys alike, closest first, at most
+ * `maxNeighbours` each.
  */
-function* clusterSimilarPromptsInSlices(groups, options = {}) {
+function* similarPromptPairsInSlices(groups, options = {}) {
   const limits = { ...PROMPT_SIMILARITY_LIMITS, ...options };
   const threshold = Math.min(1, Math.max(0.05, Number(options.threshold) || 0.8));
   const readable = (Array.isArray(groups) ? groups : []).filter(
@@ -150,15 +153,12 @@ function* clusterSimilarPromptsInSlices(groups, options = {}) {
     const words = unionOf(kept.map((text) => text.words));
     if (words.length < limits.minWords) continue;
     maxWord = Math.max(maxWord, words[words.length - 1]);
-    profiles.push({
-      key: group.key,
-      count: Number(group.count) || 0,
-      media: String(group.media || ""),
-      words,
-    });
+    profiles.push({ key: group.key, media: String(group.media || ""), words });
   }
+  // Smallest first, so every indexed set is no larger than the one probing.
   profiles.sort(
-    (a, b) => b.count - a.count || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+    (a, b) =>
+      a.words.length - b.words.length || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
   );
   yield;
 
@@ -189,71 +189,71 @@ function* clusterSimilarPromptsInSlices(groups, options = {}) {
   const overlapNeeded = (a, b) => Math.ceil((threshold / (1 + threshold)) * (a + b) - EPSILON);
   yield;
 
-  const joined = new Map();
-  const anchors = []; // profile indexes
-  const postings = new Map(); // word -> [anchor slot, position, ...]
+  const alike = new Map(); // profile index -> [{ index, similarity }]
+  const addPair = (a, b, similarity) => {
+    if (!alike.has(a)) alike.set(a, []);
+    if (!alike.has(b)) alike.set(b, []);
+    alike.get(a).push({ index: b, similarity });
+    alike.get(b).push({ index: a, similarity });
+  };
+  const postings = new Map(); // word -> [profile index, position, ...]
   const overlap = new Int32Array(profiles.length);
   const touched = [];
-  for (let profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
-    if (profileIndex > 0 && profileIndex % limits.clusterSlice === 0) yield;
-    const profile = profiles[profileIndex];
-    const set = sets[profileIndex];
+  for (let probe = 0; probe < profiles.length; probe += 1) {
+    if (probe > 0 && probe % limits.clusterSlice === 0) yield;
+    const set = sets[probe];
     const size = set.length;
     const minSize = Math.ceil(threshold * size - EPSILON);
-    const maxSize = Math.floor(size / threshold + EPSILON);
     const prefix = prefixLength(size);
     for (let position = 0; position < prefix; position += 1) {
       const list = postings.get(set[position]);
       if (!list) continue;
       for (let at = 0; at < list.length; at += 2) {
-        const slot = list[at];
-        if (overlap[slot] < 0) continue; // already ruled out
-        const anchorSize = sets[anchors[slot]].length;
-        if (anchorSize < minSize || anchorSize > maxSize) continue;
+        const other = list[at];
+        if (overlap[other] < 0) continue; // already ruled out
+        const otherSize = sets[other].length;
+        if (otherSize < minSize) continue;
         const reachable =
-          overlap[slot] + 1 + Math.min(size - position - 1, anchorSize - list[at + 1] - 1);
-        if (overlap[slot] === 0) touched.push(slot);
-        overlap[slot] =
-          reachable < overlapNeeded(size, anchorSize) ? -1 : overlap[slot] + 1;
+          overlap[other] + 1 + Math.min(size - position - 1, otherSize - list[at + 1] - 1);
+        if (overlap[other] === 0) touched.push(other);
+        overlap[other] = reachable < overlapNeeded(size, otherSize) ? -1 : overlap[other] + 1;
       }
     }
-
-    let anchor = -1;
-    let best = threshold;
-    for (const slot of touched) {
-      const seen = overlap[slot];
-      overlap[slot] = 0;
-      if (seen <= 0) continue;
-      if (profiles[anchors[slot]].media !== profile.media) continue;
-      const anchorSet = sets[anchors[slot]];
-      const shared = sharedWords(set, anchorSet, overlapNeeded(size, anchorSet.length));
+    for (const other of touched) {
+      const seen = overlap[other];
+      overlap[other] = 0;
+      if (seen <= 0 || profiles[other].media !== profiles[probe].media) continue;
+      const otherSet = sets[other];
+      const shared = sharedWords(set, otherSet, overlapNeeded(size, otherSet.length));
       if (shared < 0) continue;
-      const similarity = shared / (size + anchorSet.length - shared);
-      if (similarity > best || (similarity === best && (anchor < 0 || slot < anchor))) {
-        best = similarity;
-        anchor = slot;
-      }
+      addPair(probe, other, shared / (size + otherSet.length - shared));
     }
     touched.length = 0;
-
-    if (anchor >= 0) {
-      joined.set(profile.key, profiles[anchors[anchor]].key);
-      continue;
-    }
-    const slot = anchors.length;
-    anchors.push(profileIndex);
     for (let position = 0; position < prefix; position += 1) {
       const word = set[position];
       if (!postings.has(word)) postings.set(word, []);
-      postings.get(word).push(slot, position);
+      postings.get(word).push(probe, position);
     }
   }
-  return joined;
+
+  const result = new Map();
+  for (const [index, pairs] of alike) {
+    pairs.sort(
+      (a, b) =>
+        b.similarity - a.similarity ||
+        (profiles[a.index].key < profiles[b.index].key ? -1 : 1)
+    );
+    result.set(
+      profiles[index].key,
+      pairs.slice(0, limits.maxNeighbours).map((pair) => profiles[pair.index].key)
+    );
+  }
+  return result;
 }
 
-/** clusterSimilarPromptsInSlices, run to the end at once. */
-function clusterSimilarPrompts(groups, options) {
-  const steps = clusterSimilarPromptsInSlices(groups, options);
+/** similarPromptPairsInSlices, run to the end at once. */
+function similarPromptPairs(groups, options) {
+  const steps = similarPromptPairsInSlices(groups, options);
   for (;;) {
     const step = steps.next();
     if (step.done) return step.value;
@@ -355,11 +355,11 @@ class PromptSimilarityService {
   }
 
   /**
-   * `entries` are `[{ promptKey, count }]` for one collection. Returns an
-   * object mapping each joined prompt key to its stack's anchor prompt key,
-   * or null when a newer request superseded this one.
+   * `promptKeys` are one collection's prompt keys. Returns an object mapping
+   * each prompt key that has alike prompts to their keys, or null when a
+   * newer request superseded this one.
    */
-  async similarGroups({ store, entries, threshold, assertActive }) {
+  async similarPrompts({ store, promptKeys, threshold, assertActive }) {
     if (this.dictionary.size > this.limits.maxDictionaryWords) this.clear();
     const ticket = ++this.ticket;
     const current = async () => {
@@ -367,17 +367,17 @@ class PromptSimilarityService {
       assertActive?.();
       return ticket === this.ticket;
     };
-    const list = (Array.isArray(entries) ? entries : []).slice(0, this.limits.maxKeys);
+    const list = (Array.isArray(promptKeys) ? promptKeys : []).slice(0, this.limits.maxKeys);
     const groups = [];
     for (let index = 0; index < list.length; index += 1) {
-      const { promptKey, count } = list[index];
+      const promptKey = list[index];
       const prompt = await this._promptFor(promptKey, store, assertActive);
       assertActive?.();
       if (ticket !== this.ticket) return null;
-      if (prompt) groups.push({ key: promptKey, count, ...prompt });
+      if (prompt) groups.push({ key: promptKey, ...prompt });
       if ((index + 1) % this.limits.yieldEvery === 0 && !(await current())) return null;
     }
-    const steps = clusterSimilarPromptsInSlices(groups, {
+    const steps = similarPromptPairsInSlices(groups, {
       threshold,
       clusterSlice: this.limits.clusterSlice,
     });
@@ -406,8 +406,8 @@ function createPromptSimilarityService(options) {
 module.exports = {
   PROMPT_SIMILARITY_LIMITS,
   PromptSimilarityService,
-  clusterSimilarPrompts,
-  clusterSimilarPromptsInSlices,
+  similarPromptPairs,
+  similarPromptPairsInSlices,
   createPromptSimilarityService,
   createWordDictionary,
 };

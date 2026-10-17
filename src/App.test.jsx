@@ -3135,6 +3135,56 @@ describe("App hook composition", () => {
     }
   });
 
+  test("stacks only neighbours in the grid's sort order", async () => {
+    const PK_A = `pk2-${"a".repeat(32)}`;
+    const PK_B = `pk2-${"b".repeat(32)}`;
+    const clip = (name, promptKey, createdMs) => ({
+      id: name,
+      name: `${name}.mp4`,
+      dirname: "",
+      fingerprint: `fp-${name}`,
+      promptKey,
+      reviewState: "unreviewed",
+      createdMs,
+    });
+    // By name the two prompts alternate; by creation time each is a batch.
+    const videos = [clip("001", PK_A, 1), clip("002", PK_B, 3), clip("003", PK_A, 2), clip("004", PK_B, 4)];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: videos }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    const headerProps = () => topBarSpy.mock.calls.at(-1)?.[0];
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await act(async () => hotkeys().onToggleStacks());
+      // Far apart in the sort: no stacks.
+      await waitFor(() => expect(gridIds()).toEqual(["001", "002", "003", "004"]));
+
+      await act(async () => headerProps().onSortChange("created-asc"));
+      // Each batch's newest clip stands for it.
+      await waitFor(() => expect(gridIds()).toEqual(["003", "004"]));
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("the mouse's back button closes an open stack and forward reopens it", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const clip = (id, createdMs) => ({
@@ -3195,7 +3245,7 @@ describe("App hook composition", () => {
     }
   });
 
-  test("stacks similar prompts together once main groups them", async () => {
+  test("stacks neighbouring clips of alike prompts once main says they are alike", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const PK_B = `pk2-${"b".repeat(32)}`;
     const clip = (id, promptKey, createdMs) => ({
@@ -3226,11 +3276,11 @@ describe("App hook composition", () => {
       virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
     }));
     const saveSettingsPartial = vi.fn();
-    const similarGroups = vi.fn(async ({ threshold }) => ({
+    const similarPrompts = vi.fn(async ({ threshold }) => ({
       success: true,
-      groups: threshold <= 0.8 ? { [PK_B]: PK_A } : {},
+      alike: threshold <= 0.8 ? { [PK_A]: [PK_B], [PK_B]: [PK_A] } : {},
     }));
-    window.electronAPI = { saveSettingsPartial, stacks: { similarGroups } };
+    window.electronAPI = { saveSettingsPartial, stacks: { similarPrompts } };
     const gridIds = () =>
       useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
     const headerProps = () => topBarSpy.mock.calls.at(-1)?.[0];
@@ -3249,11 +3299,8 @@ describe("App hook composition", () => {
         stackByPrompt: true,
       });
       await waitFor(() =>
-        expect(similarGroups).toHaveBeenLastCalledWith({
-          entries: [
-            { promptKey: PK_A, count: 2 },
-            { promptKey: PK_B, count: 1 },
-          ],
+        expect(similarPrompts).toHaveBeenLastCalledWith({
+          promptKeys: [PK_A, PK_B],
           threshold: 0.9,
         })
       );

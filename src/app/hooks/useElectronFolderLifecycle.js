@@ -7,7 +7,7 @@ import {
   mergeScanLoadingProgress,
 } from "../loading/scanLoadingStatus";
 import { normalizePlaybackMode } from "../../playback/playbackPolicy";
-import { normalizeStackSimilarity } from "../stacks/useSimilarPromptGroups";
+import { normalizeStackSimilarity } from "../stacks/useSimilarPrompts";
 import {
   FOLDER_OPEN_MILESTONES,
   beginFolderOpenMeasurement,

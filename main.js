@@ -5596,11 +5596,12 @@ ipcMain.handle("generation-versions:cancel", async (event) => ({
 }));
 
 // Similar-prompt stacks: see docs/architecture/prompt-stacks.md, Section 7.
-// The renderer sends prompt keys with clip counts and receives prompt keys;
-// prompts are read and compared here and never cross this boundary.
+// The renderer sends a collection's prompt keys and receives, per key, the
+// keys whose prompts are alike; prompts are read and compared here and never
+// cross this boundary.
 const PROMPT_SIMILARITY_MAX_ENTRIES = 20_000;
 
-ipcMain.handle("stacks:similar-groups", async (_event, payload = {}) => {
+ipcMain.handle("stacks:similar-prompts", async (_event, payload = {}) => {
   let context = null;
   try {
     assertPlainObject(payload, "similar prompt request");
@@ -5609,25 +5610,16 @@ ipcMain.handle("stacks:similar-groups", async (_event, payload = {}) => {
       throw new TypeError("Unsupported prompt similarity");
     }
     if (
-      !Array.isArray(payload.entries) ||
-      payload.entries.length > PROMPT_SIMILARITY_MAX_ENTRIES
+      !Array.isArray(payload.promptKeys) ||
+      payload.promptKeys.length > PROMPT_SIMILARITY_MAX_ENTRIES
     ) {
       throw new TypeError("Prompt keys are outside the allowed bounds");
     }
-    const seen = new Set();
-    const entries = [];
-    for (const entry of payload.entries) {
-      if (!entry || typeof entry !== "object") continue;
-      const { promptKey, count } = entry;
-      if (!isPromptKey(promptKey) || seen.has(promptKey)) continue;
-      if (!Number.isSafeInteger(count) || count < 1) continue;
-      seen.add(promptKey);
-      entries.push({ promptKey, count });
-    }
+    const promptKeys = [...new Set(payload.promptKeys.filter(isPromptKey))];
     context = captureMetadataContext();
-    const groups = await promptSimilarityService.similarGroups({
+    const alike = await promptSimilarityService.similarPrompts({
       store: context.metadataStore,
-      entries,
+      promptKeys,
       threshold,
       assertActive: () => assertMetadataContextActive(context),
     });
@@ -5636,8 +5628,8 @@ ipcMain.handle("stacks:similar-groups", async (_event, payload = {}) => {
       success: true,
       profileId: context.profileId,
       generation: context.generation,
-      superseded: groups === null,
-      groups: groups || {},
+      superseded: alike === null,
+      alike: alike || {},
     };
   } catch (error) {
     return {

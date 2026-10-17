@@ -151,17 +151,26 @@ Status: **Implemented** (2026-10-16)
 - **Toggle.** *View → Stacks → Stack runs of a prompt*, or `G`. Off by
   default; remembered as the `stackByPrompt` setting. How alike prompts must
   be is chosen beside it (Section 7).
-- **Collapse after filtering.** Stacks are formed from the clips that pass the
-  current filters and folder scope. A stack card stands for its *matching*
-  clips; when filters hide some runs of the prompt, the count reads `5/20`.
-  Selecting a stack selects only its matching runs. (A selection made before
-  a filter change keeps its hidden clips, as every selection already does.)
+- **Neighbours, not groups** (2026-10-17). A stack is a run of clips next to
+  each other in the grid's current sort order: walking the folder scope in
+  that order, a clip joins the run before it when its prompt is the run's
+  first prompt, or alike to it (Section 7), within one folder group. A clip
+  without a key ends a run. Runs of one prompt that something else sits
+  between stay separate: collapsing a batch saves scrolling past it, while
+  gathering clips from all over the sort would be grouping, which is a
+  different thing. A new sort regroups at once; under random order there are
+  few stacks.
+- **Collapse after filtering.** Runs are found before filters, so filters never
+  regroup them; a stack card stands for the run's *matching* clips, and when
+  filters hide some the count reads `5/20`. Selecting a stack selects only its
+  matching runs. (A selection made before a filter change keeps its hidden
+  clips, as every selection already does.)
 - **Collection-local.** Stacks are formed within the open collection, unlike
   version counts, which are library-wide. A stack is a way of viewing what is
   open; a tag search gives a library-wide collection to stack.
 - **One card.** The card shows the stack's cover: its pick, else its highest
   rating, else its highest-resolution version, else its newest run. The card
-  sits where the cover sorts. Clips that are alone in their stack, and clips
+  sits where the cover sorts, inside the run's place in the grid. Clips that are alone in their stack, and clips
   without a key, look exactly as they do today.
 - **Visual.** A count pill with a stack icon at the top right (below the
   rating when there is one), which opens the stack, and an inset double
@@ -285,34 +294,38 @@ stack now holds prompts that share most of their words.
   groups (and at least three), beside at least three different other texts,
   is left out of every comparison. That is how a shared negative prompt or
   style suffix looks; one prompt reused over several input clips is not.
-- **Anchors, not chains.** Prompt groups are taken largest first. Each joins
-  the closest earlier *anchor* at or above the threshold, or becomes an anchor
-  itself. A group never joins one that joined, so a prompt refined one word at
-  a time cannot collapse a whole session into one stack. The stack's key is
-  its anchor's prompt key.
-- **Collection-wide grouping, filtered stacks.** Groups are formed over the
-  open collection (the folder scope), so filters do not regroup stacks; stacks
-  are then formed from the clips that pass the filters, as in Section 3.
-- **Asynchronous, exact meanwhile.** The renderer asks main for groups 250 ms
-  after the collection's prompt keys or counts change. Until the answer
-  arrives, and whenever main cannot answer (no readable clip, a WebM or MKV
-  clip, a profile switch), clips stack by exact prompt. An open stack follows
-  its runs when groups change.
+- **Alike, then neighbours** (2026-10-17). Main answers which prompts are
+  alike: for each of the collection's prompt keys, the keys at or above the
+  threshold (64 at most, closest first). The renderer decides which clips
+  stack, from neighbours in the grid's order (Section 3), so a new sort needs
+  no new answer.
+- **No drifting.** A clip joins a run when its prompt is alike to the run's
+  *first* prompt, not merely to the clip before it, so a prompt refined one
+  word at a time cannot collapse a whole session into one stack.
+- **Asynchronous, exact meanwhile.** The renderer asks main 250 ms after the
+  collection's prompt keys change. Until the answer arrives, and whenever main
+  cannot answer (no readable clip, a WebM or MKV clip, a profile switch),
+  clips stack by exact prompt. An open stack follows its clips when runs
+  re-form.
 - **Saying so.** A stack of differing prompts says "runs of similar prompts"
   on its pill, and its bar counts the prompts (`5 runs · 3 similar prompts`).
 
 ### Cost
 
 Main reads one present MP4 or MOV per prompt key, once per session, and checks
-that it still holds the prompt the key came from. Clustering uses prefix
-filtering with positional pruning (PPJoin), which is exact for Jaccard and
-compares only prompts that share a rare word. On the library above (1,897
-groups, about 300 distinct words each) a request took about 70 ms in total, in
-slices of at most 25 ms with the event loop given back between them.
+that it still holds the prompt the key came from. Pairing uses prefix
+filtering with positional pruning (PPJoin), which is exact for Jaccard (a test
+checks it against comparing every pair) and compares only prompts that share
+a rare word. The anchor clustering it replaced took about 70 ms on the library
+above (1,897 groups, about 300 distinct words each), in slices of at most
+25 ms. The all-pairs join was timed on synthetic prompts shaped like it
+(1,907 prompts of 300 words in batches of reworded variants): 40 ms at 90%,
+51 ms at 80% and 101 ms at 70% in total, in slices of at most 18 ms.
 
 ### Measured
 
-On that library, at each level:
+With the earlier, collection-wide grouping (before neighbours-only), on that
+library, at each level:
 
 | Level | Cards (from 1,897) | Stacks | Lone clips | Largest stack |
 |------:|-------------------:|-------:|-----------:|--------------:|
@@ -321,12 +334,14 @@ On that library, at each level:
 | 70%   | 749                | 488    | 261        | 73            |
 
 Measured with a count-only script; no prompt text was printed or kept.
+Neighbour runs give fewer stacks than this by design, depending on the sort.
 
 ### Acceptance
 
 - Reworded runs of one idea share a stack at the default level; unrelated
   prompts do not, and different input media never do.
 - A chain of small edits does not join through intermediate prompts.
+- Clips of one prompt far apart in the sort never stack.
 - Prompt text never reaches the renderer, storage or logs.
 - The grid never waits on the answer.
 
@@ -402,3 +417,13 @@ Measured with a count-only script; no prompt text was printed or kept.
   frequency-only boilerplate rule. It predicted 929 cards at 80% for the
   library above; the app gives 953, the difference being prompts over
   different input media.
+
+### 2026-10-17 — Neighbours only
+
+- The user drew the line: stacking collapses a batch you would otherwise
+  scroll past, so it follows the grid's order; collecting runs of a prompt
+  from across the sort is grouping. Stacks became runs of neighbours, and main
+  now answers which prompts are alike rather than assigning anchors.
+- Runs are found before filters, in the folder scope sorted exactly as the
+  grid sorts it (the random order is shared with the layout), so filtering
+  and the `5/20` total behave as before.

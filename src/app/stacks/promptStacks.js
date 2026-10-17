@@ -1,7 +1,7 @@
-// Prompt stacks in the renderer: every run of one prompt, collapsed into one
-// card. Stacks are formed from the clips the grid would show (after filters
-// and folder scope), so a stack only ever stands for clips the user can see.
-// See docs/architecture/prompt-stacks.md, Sections 3 to 5 and 7.
+// Prompt stacks in the renderer: a run of neighbouring clips of one prompt, or
+// of alike prompts, collapsed into one card. A stack only ever stands for
+// clips the user can see. See docs/architecture/prompt-stacks.md, Sections 3
+// to 5 and 7.
 
 const REVIEW_RANK = Object.freeze({ pick: 2, reject: 0 });
 
@@ -56,50 +56,69 @@ function compareRanks(a, b) {
   return 0;
 }
 
+const exactMatch = (a, b) => a === b;
+
 /**
- * Groups `videos` (in grid order) by prompt key. Only groups of two or more
- * clips are stacks; a clip alone in its group, or without a key, is not.
- * `allVideos` is the whole collection, for the "5 of 20" total when filters
- * hide some runs. `groupOf(promptKey)` may map a prompt key to the key of a
- * similar prompt it stacks with (Section 7); it returns the key itself, or
- * nothing, otherwise.
+ * Stacks are runs of neighbours: walking `ordered` (the folder scope, in the
+ * grid's sort order, before filters), a clip joins the run before it when its
+ * prompt is the run's first prompt or alike to it (`alike(a, b)`), and when
+ * `folderOf` puts it in the same folder group. A clip without a prompt key
+ * ends a run. Clips far apart in the sort never stack: that would be
+ * grouping, not stacking.
+ *
+ * `visible` (a Set of ids, or null for all) is what passes the filters. A run
+ * with two or more visible clips is a stack of those clips; its total is the
+ * whole run, for the "5 of 20" when filters hide some. Runs are formed before
+ * filtering, so filters never regroup stacks.
  *
  * Returns `{ stacks: Map<key, { key, members, cover, total, similar }>,
  * keyById: Map<videoId, key> }`, where `similar` says the members' prompts
  * differ.
  */
-export function buildPromptStacks(videos, allVideos = videos, groupOf = null) {
-  const keyOf = (video) => {
-    const key = video?.promptKey;
-    if (!key) return null;
-    return (groupOf && groupOf(key)) || key;
-  };
-  const groups = new Map();
-  for (const video of videos || []) {
-    const key = keyOf(video);
-    if (!key || video.id == null) continue;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(video);
-  }
-  const totals = new Map();
-  for (const video of allVideos || []) {
-    const key = keyOf(video);
-    if (key && groups.has(key)) totals.set(key, (totals.get(key) || 0) + 1);
-  }
-
+export function buildPromptStacks(
+  ordered,
+  { visible = null, alike = exactMatch, folderOf = null } = {}
+) {
   const stacks = new Map();
   const keyById = new Map();
-  for (const [key, members] of groups) {
-    if (members.length < 2) continue;
-    stacks.set(key, {
-      key,
-      members,
-      cover: chooseStackCover(members),
-      total: Math.max(members.length, totals.get(key) || 0),
-      similar: members.some((member) => member.promptKey !== members[0].promptKey),
-    });
-    for (const member of members) keyById.set(member.id, key);
+  let run = [];
+
+  const close = () => {
+    if (run.length >= 2) {
+      const members = visible ? run.filter((video) => visible.has(video.id)) : run;
+      if (members.length >= 2) {
+        const key = `${run[0].promptKey}\u0000${run[0].id}`;
+        stacks.set(key, {
+          key,
+          members,
+          cover: chooseStackCover(members),
+          total: run.length,
+          similar: members.some((member) => member.promptKey !== members[0].promptKey),
+        });
+        for (const member of members) keyById.set(member.id, key);
+      }
+    }
+    run = [];
+  };
+
+  for (const video of ordered || []) {
+    const promptKey = video?.promptKey;
+    if (!promptKey || video.id == null) {
+      close();
+      continue;
+    }
+    if (run.length) {
+      const first = run[0];
+      const sameFolder = !folderOf || folderOf(first) === folderOf(video);
+      if (sameFolder && (promptKey === first.promptKey || alike(first.promptKey, promptKey))) {
+        run.push(video);
+        continue;
+      }
+      close();
+    }
+    run.push(video);
   }
+  close();
   return { stacks, keyById };
 }
 

@@ -39,12 +39,12 @@ describe("generation versions main-process integration", () => {
 
   it("bounds similar-prompt requests to prompt keys and known thresholds", () => {
     const handler = section(
-      'ipcMain.handle("stacks:similar-groups"',
+      'ipcMain.handle("stacks:similar-prompts"',
       "// ===== Companion app IPC ====="
     );
     expect(handler).toContain("PROMPT_SIMILARITY_MAX_ENTRIES");
     expect(handler).toContain("!(threshold < 1 && STACK_SIMILARITY_LEVELS.has(threshold))");
-    expect(handler).toContain("isPromptKey(promptKey)");
+    expect(handler).toContain("payload.promptKeys.filter(isPromptKey)");
     expect(handler).toContain("assertActive: () => assertMetadataContextActive(context)");
     expect(handler).not.toContain("payload.path");
     const profile = section(

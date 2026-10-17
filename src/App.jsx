@@ -59,7 +59,13 @@ import useTrashIntegration from "./hooks/actions/useTrashIntegration";
 import useReviewWorkflow, { singleSelectionUnit } from "./hooks/review/useReviewWorkflow";
 import useReviewSessions from "./hooks/review/useReviewSessions";
 
-import { SortKey } from "./sorting/sorting.js";
+import {
+  SortKey,
+  buildComparator,
+  buildRandomOrderMap,
+  folderGroupKey,
+  groupAndSort,
+} from "./sorting/sorting.js";
 import { describeSort, parseSortValue, formatSortValue } from "./sorting/sortOption.js";
 import { showToast } from "./app/toastStack";
 import { openDonationPage } from "./utils/support";
@@ -141,8 +147,8 @@ import {
 import {
   DEFAULT_STACK_SIMILARITY,
   normalizeStackSimilarity,
-  useSimilarPromptGroups,
-} from "./app/stacks/useSimilarPromptGroups";
+  useSimilarPrompts,
+} from "./app/stacks/useSimilarPrompts";
 import {
   REVIEW_FILTERS,
   REVIEW_STATES,
@@ -806,29 +812,65 @@ function App() {
     [currentDirectory, folderScope, videos]
   );
 
-  // Prompt stacks are formed from what the grid would show, so a stack only
-  // stands for clips that pass the filters; the folder scope gives the
-  // "5 of 20" total. See docs/architecture/prompt-stacks.md, Section 3.
-  // Similar prompts share a stack too, unless asked for the exact prompt
-  // only (Section 7).
-  const similarGroupOf = useSimilarPromptGroups({
+  // The grid's random order, shared with the masonry layout so stacks walk
+  // exactly the order on screen.
+  const randomFallbackSeedRef = useRef(Date.now());
+  const randomOrderMap = useMemo(
+    () =>
+      sortKey === SortKey.RANDOM
+        ? buildRandomOrderMap(
+            videos.map((video) => video.id),
+            randomSeed ?? randomFallbackSeedRef.current
+          )
+        : null,
+    [randomSeed, sortKey, videos]
+  );
+
+  // Prompt stacks are runs of neighbours in the grid's order: clips of one
+  // prompt, or of alike prompts (Section 7), next to each other. Runs are
+  // found in the folder scope before filters, so filters never regroup them
+  // and give the "5 of 20" total; a stack stands only for the clips that
+  // pass. See docs/architecture/prompt-stacks.md, Section 3.
+  const promptsAlike = useSimilarPrompts({
     videos: reviewScopeVideos,
     enabled: stackByPrompt,
     similarity: stackSimilarity,
   });
-  const promptStacks = useMemo(
+  const stackRunOrder = useMemo(
     () =>
       stackByPrompt
-        ? buildPromptStacks(scopedFilteredVideos, reviewScopeVideos, similarGroupOf)
-        : emptyPromptStacks(),
-    [reviewScopeVideos, scopedFilteredVideos, similarGroupOf, stackByPrompt]
+        ? groupAndSort(reviewScopeVideos, {
+            groupByFolders,
+            comparator: buildComparator({ sortKey, sortDir, randomOrderMap }),
+          })
+        : null,
+    [groupByFolders, randomOrderMap, reviewScopeVideos, sortDir, sortKey, stackByPrompt]
   );
-  // An open stack follows its runs when similar groups arrive or regroup.
-  const openStack = openStackKey
-    ? promptStacks.stacks.get(openStackKey) ||
-      promptStacks.stacks.get(similarGroupOf(openStackKey)) ||
-      null
-    : null;
+  const promptStacks = useMemo(
+    () =>
+      stackRunOrder
+        ? buildPromptStacks(stackRunOrder, {
+            visible: new Set(scopedFilteredVideos.map((video) => video.id)),
+            alike: promptsAlike,
+            folderOf: groupByFolders ? folderGroupKey : null,
+          })
+        : emptyPromptStacks(),
+    [groupByFolders, promptsAlike, scopedFilteredVideos, stackRunOrder]
+  );
+  // An open stack follows its clips when runs re-form (alike prompts arrive,
+  // a clip is added): it is whichever stack now holds them.
+  const openStackMemberIdsRef = useRef([]);
+  const openStack = useMemo(() => {
+    if (!openStackKey) return null;
+    const direct = promptStacks.stacks.get(openStackKey);
+    if (direct) return direct;
+    for (const id of openStackMemberIdsRef.current) {
+      const key = promptStacks.keyById.get(id);
+      if (key) return promptStacks.stacks.get(key) || null;
+    }
+    return null;
+  }, [openStackKey, promptStacks]);
+  if (openStack) openStackMemberIdsRef.current = openStack.members.map((member) => member.id);
   useEffect(() => {
     if (openStack && openStack.key !== openStackKey) setOpenStackKey(openStack.key);
   }, [openStack, openStackKey]);
@@ -1140,6 +1182,7 @@ function App() {
     sortDir,
     groupByFolders,
     randomSeed,
+    randomOrderMap,
     zoomLevel,
     scrollContainerRef,
     gridRef,
