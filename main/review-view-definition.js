@@ -148,6 +148,8 @@ function normalizeReviewViewDefinition(
     ...(Object.keys(companionFilters).length ? { companionFilters } : {}),
     ...(filtersInput.companionHideSent === true ? { companionHideSent: true } : {}),
   };
+  const promptQuery =
+    typeof filtersInput.promptQuery === 'string' ? filtersInput.promptQuery.trim().slice(0, 200) : '';
 
   const normalized = {
     version: REVIEW_VIEW_VERSION,
@@ -164,6 +166,7 @@ function normalizeReviewViewDefinition(
         ? filtersInput.versionFilter
         : 'any',
       ...companion,
+      ...(promptQuery ? { promptQuery } : {}),
     },
     sort: {
       key: sortKey,

@@ -1682,6 +1682,11 @@ function createMetadataStore(db) {
       -- library search. Unrated clips never match a rating.
       AND (@min_rating IS NULL OR r.value >= @min_rating)
       AND (@exact_rating IS NULL OR r.value = @exact_rating)
+      -- Prompt search narrows to the prompt keys that matched it.
+      AND (
+        @prompt_keys IS NULL
+        OR mc.prompt_key IN (SELECT value FROM json_each(@prompt_keys))
+      )
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
@@ -3467,6 +3472,9 @@ function createMetadataStore(db) {
         tagNames.length === 0 ? 0 : matchMode === 'any' ? 1 : tagNames.length,
       min_rating: ratingOf(options.minRating),
       exact_rating: ratingOf(options.exactRating),
+      prompt_keys: Array.isArray(options.promptKeys)
+        ? JSON.stringify(options.promptKeys.filter(isPromptKey))
+        : null,
       limit: maxRecords + 1,
     });
     assertOperationActive(options.assertActive);
@@ -5128,6 +5136,21 @@ function createMetadataStore(db) {
     LIMIT @limit;
   `);
 
+  // Every prompt key with a present clip, for prompt search across the
+  // library (prompt-search-and-tag-suggestions.md).
+  const libraryPromptKeyRows = db.prepare(`
+    SELECT DISTINCT mc.prompt_key
+    FROM media_content mc
+    INNER JOIN file_instances fi ON fi.fingerprint = mc.fingerprint
+    INNER JOIN directories d ON d.id = fi.directory_id
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    WHERE mc.prompt_key IS NOT NULL
+      AND mc.prompt_key_version = @prompt_version
+      AND fi.is_present != 0
+      AND d.is_present != 0
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths));
+  `);
+
   const frameRowsForInstances = db.prepare(`
     SELECT fi.id AS instance_id, fi.fingerprint, fi.absolute_path,
       lr.root_path, ff.frame_hash, ff.version AS frame_version
@@ -5340,6 +5363,19 @@ function createMetadataStore(db) {
         updated_at: Date.now(),
       }).changes > 0
     );
+  }
+
+  function listLibraryPromptKeys({ unavailableRootPaths = [] } = {}) {
+    return libraryPromptKeyRows
+      .all({
+        prompt_version: PROMPT_KEY_VERSION,
+        unavailable_root_paths: JSON.stringify(
+          (Array.isArray(unavailableRootPaths) ? unavailableRootPaths : []).filter(
+            (rootPath) => typeof rootPath === 'string' && rootPath
+          )
+        ),
+      })
+      .map((row) => row.prompt_key);
   }
 
   function listPresentInstancesForPromptKey(promptKey, limit = 3) {
@@ -5871,6 +5907,7 @@ function createMetadataStore(db) {
     getGenerationVersionSummaries,
     getGenerationVersionSiblings,
     listPresentInstancesForPromptKey,
+    listLibraryPromptKeys,
     getFrameRows,
     setFrameFingerprint,
     clearFingerprintCache,

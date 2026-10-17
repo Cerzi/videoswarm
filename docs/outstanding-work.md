@@ -327,6 +327,10 @@ matches under the tag input, including in fullscreen. Check by hand:
 - View › Layout › Rows of equal height: rows of one height that read in sort
   order; Shift-click range selection follows the rows; zoom changes the row
   height; the choice survives a restart.
+- Filters › Prompt: words narrow the grid to clips whose prompts contain
+  them (word starts, `-word` excludes); a word only in the negative prompt
+  finds nothing; with *Entire library*, prompt words alone search every
+  root (`architecture/prompt-search-and-tag-suggestions.md`).
 - Stack cards: an undecided stack is headed by its most typical clip, with
   three stills of the most different clips and `+N` along the bottom;
   hovering a still shows it over the header, clicking opens the stack there.

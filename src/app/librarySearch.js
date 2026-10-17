@@ -1,4 +1,8 @@
-import { sanitizeExactRating, sanitizeMinRating } from "./filters/filtersUtils";
+import {
+  normalizePromptQuery,
+  sanitizeExactRating,
+  sanitizeMinRating,
+} from "./filters/filtersUtils";
 
 // What a library search asks main for (docs/architecture/library-tag-views.md):
 // tags, a rating, or both. "4 stars or more" alone is a search; no tags and
@@ -17,17 +21,23 @@ export function librarySearchCriteria(filters = {}) {
     // An exact rating wins over a minimum, as it does in the filters.
     minRating: exactRating === null ? searchRating(sanitizeMinRating(filters.minRating)) : null,
     exactRating,
+    // Prompt words (prompt-search-and-tag-suggestions.md).
+    promptQuery: normalizePromptQuery(filters.promptQuery).trim(),
   };
 }
 
 export const hasLibrarySearchCriteria = (criteria) =>
   Boolean(criteria) &&
-  (criteria.tags?.length > 0 || criteria.minRating != null || criteria.exactRating != null);
+  (criteria.tags?.length > 0 ||
+    criteria.minRating != null ||
+    criteria.exactRating != null ||
+    Boolean(criteria.promptQuery));
 
 export const librarySearchKey = (criteria) =>
   [
     criteria.matchMode,
     criteria.minRating ?? "",
     criteria.exactRating ?? "",
+    criteria.promptQuery || "",
     ...criteria.tags,
   ].join("\u0000");

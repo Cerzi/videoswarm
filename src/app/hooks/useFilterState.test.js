@@ -287,3 +287,42 @@ describe("useFilterState companion filters", () => {
     expect(ids(result)).toEqual(["fresh", "polishing", "taken-back", "unknown"]);
   });
 });
+
+describe("useFilterState prompt search", () => {
+  const clips = [
+    { id: "beach", promptKey: "pk-beach", reviewState: "unreviewed" },
+    { id: "studio", promptKey: "pk-studio", reviewState: "unreviewed" },
+    { id: "plain", reviewState: "unreviewed" },
+  ];
+  afterEach(() => {
+    vi.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  it("keeps clips whose prompts match, once main answers", async () => {
+    vi.useFakeTimers();
+    const search = vi.fn(async (keys, query) => ({
+      success: true,
+      matches: query === "beach" ? ["pk-beach"] : [],
+      unread: 0,
+    }));
+    window.electronAPI = { prompts: { search } };
+    const { result } = renderHook(() =>
+      useFilterState({ videos: clips, filtersButtonRef: createRef(), filtersPopoverRef: createRef() })
+    );
+    act(() => result.current.updateFilters({ promptQuery: "beach" }));
+    // Until the answer, the grid is left as it was.
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["beach", "studio", "plain"]);
+    expect(result.current.promptSearch.pending).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(search).toHaveBeenCalledWith(["pk-beach", "pk-studio"], "beach");
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["beach"]);
+    expect(result.current.filtersActiveCount).toBe(1);
+
+    act(() => result.current.updateFilters({ promptQuery: "" }));
+    expect(result.current.filteredVideos).toHaveLength(3);
+  });
+});

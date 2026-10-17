@@ -7,6 +7,7 @@ const {
   similarPromptPairs,
   similarPromptPairsInSlices,
   createWordDictionary,
+  parsePromptQuery,
 } = require("../prompt-similarity");
 const { computeGenerationKeys } = require("../generation-key");
 
@@ -250,5 +251,50 @@ describe("PromptSimilarityService", () => {
         assertActive,
       })
     ).rejects.toThrow("inactive");
+  });
+});
+
+describe("prompt search", () => {
+  function promptWithNegative(positive, negative) {
+    return JSON.stringify({
+      1: { class_type: "CLIPTextEncode", inputs: { text: positive, clip: ["4", 1] } },
+      2: { class_type: "CLIPTextEncode", inputs: { text: negative, clip: ["4", 1] } },
+      3: { class_type: "KSampler", inputs: { seed: 7, steps: 20, positive: ["1", 0], negative: ["2", 0] } },
+      4: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "m.safetensors" } },
+    });
+  }
+
+  it("parses words to find and -words to rule out", () => {
+    expect(parsePromptQuery("  Dance -Night  dance-floor ")).toEqual({
+      include: ["dance", "floor"],
+      exclude: ["night"],
+    });
+    expect(parsePromptQuery("")).toEqual({ include: [], exclude: [] });
+  });
+
+  it("finds prompts by word starts, all words, minus excluded ones, never by negatives", async () => {
+    const negative = "blurry low quality watermark";
+    const library = createLibrary([
+      promptWithNegative("a woman dancing on a beach at night", negative),
+      promptWithNegative("a woman dancing in a studio at noon", negative),
+      promptWithNegative("an old lighthouse on a cliff in fog", negative),
+    ]);
+    const [beach, studio, lighthouse] = library.keys;
+    const search = new PromptSimilarityService({
+      fsPromises: library.fsPromises,
+      readIsoPayload: library.readIsoPayload,
+      yieldToEventLoop: async () => {},
+    });
+    const find = async (query) =>
+      (await search.searchPrompts({ store: library.store, promptKeys: library.keys, query })).matches.sort();
+
+    expect(await find("danc")).toEqual([beach, studio].sort());
+    expect(await find("dancing night")).toEqual([beach]);
+    expect(await find("woman -beach")).toEqual([studio]);
+    expect(await find("lighthouse")).toEqual([lighthouse]);
+    expect(await find("blurry")).toEqual([]);
+    expect(await find("")).toEqual([]);
+    // Prompts are read once; later searches are lookups.
+    expect(library.readIsoPayload).toHaveBeenCalledTimes(3);
   });
 });

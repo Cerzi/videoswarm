@@ -753,6 +753,7 @@ function App() {
     handleRemoveExcludeFilter,
     clearReviewFilter,
     clearVersionFilter,
+    promptSearch,
   } = useFilterState({
     videos,
     filtersButtonRef,
@@ -2516,11 +2517,16 @@ function App() {
   // otherwise untagging a clip would leave it sitting in a view defined by that
   // tag.
   const loadTagCollection = useCallback(
-    async (tags, matchMode = "all", { minRating = null, exactRating = null } = {}) => {
+    async (
+      tags,
+      matchMode = "all",
+      { minRating = null, exactRating = null, promptQuery = "" } = {}
+    ) => {
       const requested = (Array.isArray(tags) ? tags : [])
         .map((tag) => (tag ?? "").toString().trim())
         .filter(Boolean);
-      const rating = { minRating, exactRating };
+      // A rating and prompt words narrow the search as tags do.
+      const rating = { minRating, exactRating, promptQuery: (promptQuery || "").trim() };
 
       // A library search is defined by its tags and its rating, so with
       // neither there is no question to ask. Asking it anyway reads every clip
@@ -2584,6 +2590,7 @@ function App() {
     return loadTagCollection(tagCollection.tags, tagCollection.matchMode, {
       minRating: tagCollection.minRating ?? null,
       exactRating: tagCollection.exactRating ?? null,
+      promptQuery: tagCollection.promptQuery || "",
     });
   }, [loadTagCollection, tagCollection]);
 
@@ -3903,6 +3910,7 @@ function App() {
         matchMode: tagCollection.matchMode,
         minRating: tagCollection.minRating ?? null,
         exactRating: tagCollection.exactRating ?? null,
+        promptQuery: tagCollection.promptQuery || "",
       };
       return hasLibrarySearchCriteria(library) ? { library } : null;
     }
@@ -3946,8 +3954,14 @@ function App() {
         since: Date.now(),
       };
       if (location.library) {
-        const { tags, matchMode, minRating, exactRating } = location.library;
-        updateFilters({ includeTags: tags, includeTagsMode: matchMode, minRating, exactRating });
+        const { tags, matchMode, minRating, exactRating, promptQuery = "" } = location.library;
+        updateFilters({
+          includeTags: tags,
+          includeTagsMode: matchMode,
+          minRating,
+          exactRating,
+          promptQuery,
+        });
         if (librarySearchScope !== "library") {
           folderScopeReturnRef.current = activeRootPath || null;
           setLibrarySearchScope("library");
@@ -4091,6 +4105,7 @@ function App() {
           versionFilter: normalizeVersionFilter(filters.versionFilter),
           companionFilters: filters.companionFilters || {},
           companionHideSent: filters.companionHideSent === true,
+          promptQuery: (filters.promptQuery || "").trim(),
         },
         sort: {
           key: sortKey,
@@ -5874,6 +5889,7 @@ function App() {
               }
               onSetTagParent={handleSetTagParent}
             companion={companionPanel}
+            promptSearch={promptSearch}
             />
           )}
 
@@ -6081,6 +6097,23 @@ function App() {
                       title="Clear review-state filter"
                     >
                       {reviewFilterSummary}
+                      <span className="filters-summary__chip-remove">×</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {(filters.promptQuery || "").trim() && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">Prompt</span>
+                  <div className="filters-summary__chips">
+                    <button
+                      type="button"
+                      className="filters-summary__chip filters-summary__chip--review"
+                      onClick={() => updateFilters((prev) => ({ ...prev, promptQuery: "" }))}
+                      title="Clear prompt search"
+                    >
+                      {filters.promptQuery.trim()}
                       <span className="filters-summary__chip-remove">×</span>
                     </button>
                   </div>

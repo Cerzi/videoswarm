@@ -16,7 +16,13 @@ export const createDefaultFilters = () => ({
   // Per companion action id, a phase (src/app/companion/companionFilters.js).
   companionFilters: {},
   companionHideSent: false,
+  // Words in the prompt (prompt-search-and-tag-suggestions.md).
+  promptQuery: "",
 });
+
+const MAX_PROMPT_QUERY_CHARS = 200;
+export const normalizePromptQuery = (value) =>
+  typeof value === "string" ? value.slice(0, MAX_PROMPT_QUERY_CHARS) : "";
 
 // "all" is an intersection, "any" a union. Exclusion stays separate and always
 // means "none of these", so the two controls compose without a query language.
@@ -119,6 +125,7 @@ export const useFiltersActiveCount = (filters) =>
       reviewCount +
       resolutionCount +
       versionCount +
-      companionFilterCount(filters)
+      companionFilterCount(filters) +
+      (normalizePromptQuery(filters.promptQuery).trim() ? 1 : 0)
     );
   }, [filters]);

@@ -128,6 +128,8 @@ const FiltersPopover = forwardRef(
       onSetTagParent,
       // A connected companion app: `{ name, actions, status }`, or null.
       companion = null,
+      // Prompt search status: `{ pending, unread }` (usePromptSearch).
+      promptSearch = null,
     },
     ref
   ) => {
@@ -591,6 +593,29 @@ const FiltersPopover = forwardRef(
               })}
             </div>
           </div>
+        </section>
+
+        <section className="filters-section">
+          <header className="filters-section__title">Prompt</header>
+          <div className="filters-tag-search">
+            <input
+              type="search"
+              aria-label="Words in the prompt"
+              value={filters?.promptQuery || ""}
+              onChange={(event) =>
+                onChange((prev) => ({ ...prev, promptQuery: event.target.value }))
+              }
+              placeholder="Words in the prompt"
+              maxLength={200}
+            />
+          </div>
+          <span className="filters-empty-hint" role="status">
+            {promptSearch?.pending
+              ? "Searching prompts…"
+              : promptSearch?.unread
+                ? `${promptSearch.unread.toLocaleString()} prompts could not be read (WebM, MKV or missing files).`
+                : "Matches the start of words; every word must appear, -word rules one out. Negative prompts are ignored."}
+          </span>
         </section>
 
         <section className="filters-section">

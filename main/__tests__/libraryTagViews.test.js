@@ -259,6 +259,23 @@ if (!database || databaseLoadError) {
       expect(store.getTaggedLibrarySnapshot({ minRating: 0 }).records).toHaveLength(4);
     });
 
+    it('narrows the library to clips whose prompt keys matched a prompt search', async () => {
+      const pk = (letter) => `pk2-${letter.repeat(32)}`;
+      const gk = (letter) => `gk3-${letter.repeat(32)}`;
+      const a = await indexInto('alpha', 'a.mp4', 'alpha-a');
+      const b = await indexInto('beta', 'b.mp4', 'beta-b');
+      await indexInto('beta', 'plain.mp4', 'beta-plain');
+      store.setGenerationKeys([
+        { fingerprint: a.indexed.fingerprint, generationKey: gk('a'), promptKey: pk('a') },
+        { fingerprint: b.indexed.fingerprint, generationKey: gk('b'), promptKey: pk('b') },
+      ]);
+      expect(store.listLibraryPromptKeys().sort()).toEqual([pk('a'), pk('b')]);
+      const names = (snapshot) => snapshot.records.map((record) => record.relativePath);
+      expect(names(store.getTaggedLibrarySnapshot({ promptKeys: [pk('b')] }))).toEqual(['b.mp4']);
+      expect(store.getTaggedLibrarySnapshot({ promptKeys: [] }).records).toEqual([]);
+      expect(store.getTaggedLibrarySnapshot({}).records).toHaveLength(3);
+    });
+
     it('treats an empty tag set as no tag constraint', async () => {
       const tagged = await indexInto('alpha', 'a.mp4', 'a');
       await indexInto('beta', 'b.mp4', 'b');

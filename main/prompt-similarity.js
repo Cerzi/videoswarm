@@ -1,7 +1,11 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { computeGenerationKeys, deriveGenerationKeyParts } = require("./generation-key");
+const {
+  computeGenerationKeys,
+  deriveGenerationKeyParts,
+  deriveSearchTexts,
+} = require("./generation-key");
 const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./container-tags");
 
 // Similar-prompt stacks (docs/architecture/prompt-stacks.md, Section 7).
@@ -37,7 +41,17 @@ const EPSILON = 1e-9;
 /** Numbers words as it meets them; a text becomes a sorted set of numbers. */
 function createWordDictionary() {
   const ids = new Map();
+  const known = []; // id -> word
   return {
+    /** The numbers of every known word starting with `prefix`. */
+    idsStartingWith(prefix) {
+      const found = new Set();
+      if (!prefix) return found;
+      known.forEach((word, id) => {
+        if (word.startsWith(prefix)) found.add(id);
+      });
+      return found;
+    },
     idsOf(text) {
       const words = new Set();
       for (const match of String(text).matchAll(WORD)) {
@@ -46,6 +60,7 @@ function createWordDictionary() {
         if (id === undefined) {
           id = ids.size;
           ids.set(word, id);
+          known.push(word);
         }
         words.add(id);
       }
@@ -56,7 +71,30 @@ function createWordDictionary() {
     },
     clear() {
       ids.clear();
+      known.length = 0;
     },
+  };
+}
+
+const MAX_QUERY_TERMS = 16;
+
+/**
+ * A prompt search query as `{ include, exclude }` words, lowercased: words to
+ * find, and words after a leading `-` to rule out. "dance-floor" is two words.
+ */
+function parsePromptQuery(query) {
+  const include = [];
+  const exclude = [];
+  for (const token of String(query || "").toLowerCase().split(/\s+/u)) {
+    if (!token) continue;
+    const negated = token.startsWith("-");
+    for (const match of token.matchAll(WORD)) {
+      (negated ? exclude : include).push(match[0]);
+    }
+  }
+  return {
+    include: [...new Set(include)].slice(0, MAX_QUERY_TERMS),
+    exclude: [...new Set(exclude)].slice(0, MAX_QUERY_TERMS),
   };
 }
 
@@ -281,6 +319,7 @@ class PromptSimilarityService {
     this.cache = new Map();
     this.inFlight = new Map();
     this.ticket = 0;
+    this.searchTicket = 0;
     this.epoch = 0;
   }
 
@@ -319,12 +358,15 @@ class PromptSimilarityService {
         if (computeGenerationKeys(prompt).promptKey !== key) continue;
         const parts = deriveGenerationKeyParts(prompt);
         if (!parts) continue;
+        // Search reads every text but negative prompts, short ones included.
+        const searchable = (deriveSearchTexts(prompt) || []).filter((text) => !text.negative);
         return {
           media: hash(parts.media.join("\n")),
           texts: parts.texts.map((text) => ({
             id: hash(text),
             words: this.dictionary.idsOf(text),
           })),
+          searchWords: new Set(searchable.flatMap((text) => [...this.dictionary.idsOf(text.text)])),
         };
       } catch {
         // Try the next instance.
@@ -388,10 +430,53 @@ class PromptSimilarityService {
     }
   }
 
+  /**
+   * The prompt keys among `promptKeys` whose positive prompts contain every
+   * word of `query` (by word start) and none of its `-words`. Returns
+   * `{ matches, unread }`, or null when a newer request superseded this one.
+   */
+  async searchPrompts({ store, promptKeys, query, assertActive }) {
+    if (this.dictionary.size > this.limits.maxDictionaryWords) this.clear();
+    const terms = parsePromptQuery(query);
+    const ticket = ++this.searchTicket;
+    const list = (Array.isArray(promptKeys) ? promptKeys : []).slice(0, this.limits.maxKeys);
+    const read = [];
+    let unread = 0;
+    for (let index = 0; index < list.length; index += 1) {
+      const prompt = await this._promptFor(list[index], store, assertActive);
+      assertActive?.();
+      if (ticket !== this.searchTicket) return null;
+      if (prompt?.searchWords) read.push([list[index], prompt.searchWords]);
+      else unread += 1;
+      if ((index + 1) % this.limits.yieldEvery === 0) {
+        await this.yieldToEventLoop();
+        assertActive?.();
+        if (ticket !== this.searchTicket) return null;
+      }
+    }
+    if (!terms.include.length && !terms.exclude.length) return { matches: [], unread };
+    const include = terms.include.map((word) => this.dictionary.idsStartingWith(word));
+    const exclude = terms.exclude.map((word) => this.dictionary.idsStartingWith(word));
+    const has = (words, ids) => {
+      for (const id of ids.size < words.size ? ids : words) {
+        if ((ids.size < words.size ? words : ids).has(id)) return true;
+      }
+      return false;
+    };
+    const matches = [];
+    for (const [key, words] of read) {
+      if (include.every((ids) => has(words, ids)) && !exclude.some((ids) => has(words, ids))) {
+        matches.push(key);
+      }
+    }
+    return { matches, unread };
+  }
+
   // Profile switches clear the cache: whether a key has a readable clip
   // depends on the profile's library.
   clear() {
     this.ticket += 1;
+    this.searchTicket += 1;
     this.epoch += 1;
     this.cache.clear();
     this.inFlight.clear();
@@ -410,4 +495,5 @@ module.exports = {
   similarPromptPairsInSlices,
   createPromptSimilarityService,
   createWordDictionary,
+  parsePromptQuery,
 };

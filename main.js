@@ -4609,6 +4609,11 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
       : assertInteger(value, { name, min: 1, max: 5 });
   const minRating = ratingOf(payload?.minRating, "tag view minimum rating");
   const exactRating = ratingOf(payload?.exactRating, "tag view exact rating");
+  // Prompt words narrow it too (prompt-search-and-tag-suggestions.md).
+  const promptQuery =
+    payload?.promptQuery === undefined || payload?.promptQuery === null
+      ? ""
+      : assertString(payload.promptQuery, { name: "prompt search", maxChars: 200, trim: true });
   // Folder checks are filesystem work, so they run before the synchronous
   // catalog read rather than inside it.
   const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
@@ -4618,12 +4623,36 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
   const unavailableRootPaths = await findUnavailableRootPaths(
     rootsResult.rootPaths
   );
+  let promptKeys = null;
+  if (promptQuery) {
+    let context = null;
+    try {
+      context = captureMetadataContext();
+      const found = await promptSimilarityService.searchPrompts({
+        store: context.metadataStore,
+        promptKeys: context.metadataStore.listLibraryPromptKeys({ unavailableRootPaths }),
+        query: promptQuery,
+        assertActive: () => assertMetadataContextActive(context),
+      });
+      if (!found) {
+        return { success: false, code: "SUPERSEDED", error: "A newer prompt search replaced this one" };
+      }
+      promptKeys = found.matches;
+    } catch (error) {
+      return {
+        success: false,
+        code: error?.code || "PROMPT_SEARCH_ERROR",
+        error: error?.message || String(error),
+      };
+    }
+  }
   return runLibraryCatalogOperation((metadataStore, context) =>
     buildTaggedSnapshotResponse(metadataStore, {
       tagNames,
       matchMode,
       minRating,
       exactRating,
+      promptKeys,
       unavailableRootPaths,
       generation: context.generation,
       assertActive: () => assertMetadataContextActive(context),
@@ -5749,6 +5778,38 @@ ipcMain.handle("stacks:frame-stills", async (event, payload = {}) => {
     return { success: true, generation: context.generation, stills };
   } catch (error) {
     return { success: false, code: error?.code || "STACK_FRAME_ERROR", error: error?.message || String(error) };
+  }
+});
+
+// Prompt search in the open collection (prompt-search-and-tag-suggestions.md):
+// the renderer sends its clips' prompt keys and the query, and gets back the
+// keys whose positive prompts match. Prompts never cross this boundary.
+ipcMain.handle("prompts:search", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "prompt search");
+    const query = assertString(payload.query, { name: "prompt search", maxChars: 200, trim: true });
+    if (!Array.isArray(payload.promptKeys) || payload.promptKeys.length > PROMPT_SIMILARITY_MAX_ENTRIES) {
+      throw new TypeError("Prompt keys are outside the allowed bounds");
+    }
+    const promptKeys = [...new Set(payload.promptKeys.filter(isPromptKey))];
+    context = captureMetadataContext();
+    const found = await promptSimilarityService.searchPrompts({
+      store: context.metadataStore,
+      promptKeys,
+      query,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      generation: context.generation,
+      superseded: found === null,
+      matches: found?.matches || [],
+      unread: found?.unread || 0,
+    };
+  } catch (error) {
+    return { success: false, code: error?.code || "PROMPT_SEARCH_ERROR", error: error?.message || String(error) };
   }
 });
 

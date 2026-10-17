@@ -356,6 +356,68 @@ function isPromptKey(value) {
   return hasHexKeyShape(value, PROMPT_KEY_PREFIX);
 }
 
+// How far back from a sampler's `positive` or `negative` input a text node is
+// followed (a conditioning node or two between them is common).
+const CONDITIONING_HOPS = 3;
+
+// Nodes that feed an input whose name matches `pattern`, up to a few links
+// back.
+function nodesFeeding(nodes, pattern) {
+  const found = new Set();
+  const queue = [];
+  for (const inputs of nodes.values()) {
+    for (const [name, value] of Object.entries(inputs)) {
+      if (pattern.test(name) && isLink(value)) queue.push([linkTarget(value), 1]);
+    }
+  }
+  while (queue.length) {
+    const [id, depth] = queue.shift();
+    if (found.has(id)) continue;
+    found.add(id);
+    if (depth >= CONDITIONING_HOPS) continue;
+    for (const value of Object.values(nodes.get(id) || {})) {
+      if (isLink(value)) queue.push([linkTarget(value), depth + 1]);
+    }
+  }
+  return found;
+}
+
+/**
+ * The prompt's texts for search (prompt-search-and-tag-suggestions.md), each
+ * with whether it is a negative prompt: its node feeds a `negative` input and
+ * not a `positive` one. Unlike the keys, short texts are included. Returns
+ * null when the payload is not a graph. The texts must never be persisted or
+ * logged.
+ */
+function deriveSearchTexts(payload, options = {}) {
+  const limits = { ...GENERATION_KEY_LIMITS, ...options };
+  try {
+    const graph = decodeGraph(payload, limits);
+    if (!graph) return null;
+    const nodes = new Map();
+    for (const id of Object.keys(graph)) {
+      if (nodes.size >= limits.maxNodes) return null;
+      const node = graph[id];
+      if (isPlainObject(node) && isPlainObject(node.inputs)) nodes.set(id, node.inputs);
+    }
+    const positive = nodesFeeding(nodes, /positive/iu);
+    const negative = nodesFeeding(nodes, /negative/iu);
+    const texts = [];
+    for (const [id, inputs] of nodes) {
+      for (const value of Object.values(inputs)) {
+        if (typeof value !== "string" || mediaBasename(value) !== null) continue;
+        const text = classifyText(value);
+        if (!text) continue;
+        texts.push({ text: text.text, negative: negative.has(id) && !positive.has(id) });
+        if (texts.length > limits.maxTexts + limits.maxShortTexts) return null;
+      }
+    }
+    return texts;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   GENERATION_KEY_LIMITS,
   GENERATION_KEY_VERSION,
@@ -364,6 +426,7 @@ module.exports = {
   computeGenerationKey,
   computeGenerationKeys,
   deriveGenerationKeyParts,
+  deriveSearchTexts,
   isGenerationKey,
   isPromptKey,
 };

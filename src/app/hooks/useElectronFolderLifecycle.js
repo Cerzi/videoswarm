@@ -1078,6 +1078,7 @@ export function useElectronFolderLifecycle({
       matchMode = "all",
       minRating = null,
       exactRating = null,
+      promptQuery = "",
       records = [],
       truncated = false,
     } = {}) => {
@@ -1104,6 +1105,7 @@ export function useElectronFolderLifecycle({
         // A library search can be by rating as well as, or instead of, tags.
         minRating,
         exactRating,
+        promptQuery,
         truncated: Boolean(truncated),
         // Distinguishes one snapshot from the next so collection ownership
         // changes on refresh and stale per-clip work is discarded.

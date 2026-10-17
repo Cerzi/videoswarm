@@ -294,6 +294,47 @@ describe("FiltersPopover tag hierarchy", () => {
 });
 
 
+describe("FiltersPopover prompt search", () => {
+  it("searches prompt words and says while it is searching", () => {
+    let current = { reviewFilter: "any" };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    const { rerender } = render(
+      <FiltersPopover filters={current} onChange={onChange} onReset={vi.fn()} onClose={vi.fn()} />
+    );
+    fireEvent.change(screen.getByRole("searchbox", { name: "Words in the prompt" }), {
+      target: { value: "lighthouse -fog" },
+    });
+    expect(current.promptQuery).toBe("lighthouse -fog");
+    rerender(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        promptSearch={{ pending: true, unread: 0 }}
+      />
+    );
+    expect(screen.getByText("Searching prompts…")).toBeInTheDocument();
+  });
+
+  it("offers a library search for prompt words alone", () => {
+    const onSearchScopeChange = vi.fn();
+    render(
+      <FiltersPopover
+        filters={{ promptQuery: "lighthouse" }}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        onSearchScopeChange={onSearchScopeChange}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Entire library" }));
+    expect(onSearchScopeChange).toHaveBeenCalledWith("library");
+  });
+});
+
 describe("FiltersPopover companion app", () => {
   const companion = {
     name: "Helper",

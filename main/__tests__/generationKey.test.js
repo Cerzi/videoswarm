@@ -10,6 +10,7 @@ const {
   computeGenerationKey,
   computeGenerationKeys,
   deriveGenerationKeyParts,
+  deriveSearchTexts,
   isGenerationKey,
   isPromptKey,
 } = require("../generation-key");
@@ -514,3 +515,35 @@ describe("video-to-video cuts", () => {
   });
 });
 
+describe("deriveSearchTexts", () => {
+  it("flags the texts that feed only a negative input", () => {
+    const texts = deriveSearchTexts(
+      graph({
+        1: { class_type: "CLIPTextEncode", inputs: { text: TEXT_A, clip: ["9", 1] } },
+        2: { class_type: "CLIPTextEncode", inputs: { text: "blurry low quality", clip: ["9", 1] } },
+        3: { class_type: "KSampler", inputs: { seed: 1, positive: ["1", 0], negative: ["5", 0] } },
+        5: { class_type: "ConditioningSetTimestepRange", inputs: { conditioning: ["2", 0] } },
+        6: { class_type: "CLIPTextEncode", inputs: { text: "short words", clip: ["9", 1] } },
+      })
+    );
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        { text: TEXT_A, negative: false },
+        { text: "blurry low quality", negative: true },
+        { text: "short words", negative: false },
+      ])
+    );
+  });
+
+  it("keeps a positive text that also feeds a zeroed negative", () => {
+    const texts = deriveSearchTexts(
+      graph({
+        1: { class_type: "CLIPTextEncode", inputs: { text: TEXT_A, clip: ["9", 1] } },
+        2: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["1", 0] } },
+        3: { class_type: "KSampler", inputs: { seed: 1, positive: ["1", 0], negative: ["2", 0] } },
+      })
+    );
+    expect(texts).toEqual([{ text: TEXT_A, negative: false }]);
+    expect(deriveSearchTexts("not json")).toBeNull();
+  });
+});

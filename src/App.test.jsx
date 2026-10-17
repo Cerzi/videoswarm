@@ -4375,7 +4375,7 @@ describe("library search scope", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Every keeper Library" }));
     });
-    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null }));
+    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "" }));
     expect(taggedSnapshot).toHaveBeenCalledTimes(1);
     expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(libraryView.definition.filters);
   });
@@ -4393,7 +4393,24 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null });
+    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "" });
+  });
+
+  test("searches the whole library by prompt words alone", async () => {
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    window.electronAPI = { library: { taggedSnapshot } };
+    const { props } = await renderWithTags([], { promptQuery: " lighthouse " });
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", {
+      minRating: null,
+      exactRating: null,
+      promptQuery: "lighthouse",
+    });
+    expect(openTagCollectionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tags: [], promptQuery: "lighthouse" })
+    );
   });
 
   test("searches the whole library by rating alone", async () => {
@@ -4410,7 +4427,7 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", { minRating: 4, exactRating: null });
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", { minRating: 4, exactRating: null, promptQuery: "" });
     expect(openTagCollectionMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ tags: [], minRating: 4, exactRating: null })
     );

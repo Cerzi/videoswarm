@@ -415,6 +415,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
 
+  // Prompt search in the open collection: prompt keys and words in, the
+  // matching prompt keys out. Prompts never cross.
+  prompts: {
+    search: async (promptKeys, query) =>
+      ipcRenderer.invoke("prompts:search", {
+        promptKeys: Array.isArray(promptKeys) ? promptKeys : [],
+        query: typeof query === "string" ? query : "",
+      }),
+  },
+
   // Similar-prompt stacks: a collection's prompt keys in, a map of prompt
   // key -> keys whose prompts are alike out. Prompts never cross.
   stacks: {
@@ -545,13 +555,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   library: {
-    // A library search: tags and/or a rating (1 to 5 stars).
-    taggedSnapshot: async (tags, matchMode, { minRating = null, exactRating = null } = {}) =>
+    // A library search: tags, a rating (1 to 5 stars) and/or prompt words.
+    taggedSnapshot: async (
+      tags,
+      matchMode,
+      { minRating = null, exactRating = null, promptQuery = "" } = {}
+    ) =>
       ipcRenderer.invoke("library:tagged-snapshot", {
         tags: Array.isArray(tags) ? tags : [],
         matchMode: matchMode === "any" ? "any" : "all",
         ...(Number.isInteger(minRating) ? { minRating } : {}),
         ...(Number.isInteger(exactRating) ? { exactRating } : {}),
+        ...(typeof promptQuery === "string" && promptQuery.trim()
+          ? { promptQuery: promptQuery.trim() }
+          : {}),
       }),
     listRoots: async (options = {}) =>
       ipcRenderer.invoke("library:list-roots", options),

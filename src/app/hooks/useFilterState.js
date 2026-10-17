@@ -9,6 +9,7 @@ import {
   normalizeIncludeTagsMode,
   formatRatingLabel,
   useFiltersActiveCount,
+  normalizePromptQuery,
 } from "../filters/filtersUtils";
 import {
   REVIEW_FILTERS,
@@ -24,6 +25,7 @@ import {
   matchesCompanionFilters,
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
+import { usePromptSearch } from "./usePromptSearch";
 import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
 
 const resolveValue = (value, fallback) =>
@@ -57,6 +59,7 @@ const normalizeFiltersDraft = (draft, prev) => {
     ),
     companionHideSent:
       resolveValue(draft?.companionHideSent, prev.companionHideSent) === true,
+    promptQuery: normalizePromptQuery(resolveValue(draft?.promptQuery, prev.promptQuery)),
   };
 };
 
@@ -72,6 +75,10 @@ export function useFilterState({
   companionEntries = null,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
+  // Words in the prompt: main answers which of the collection's prompt keys
+  // match (prompt-search-and-tag-suggestions.md).
+  const promptSearch = usePromptSearch({ videos, query: filters.promptQuery });
+  const promptMatches = promptSearch.matches;
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
   const updateFilters = useCallback((updater) => {
@@ -101,6 +108,8 @@ export function useFilterState({
     const companionActive =
       Boolean(companionEntries) &&
       (companionHideSent || Object.keys(companionFilters).length > 0);
+    const promptActive =
+      normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -118,7 +127,8 @@ export function useFilterState({
       maxMegapixels === null &&
       reviewFilter === REVIEW_FILTERS.ANY &&
       versionFilter === VERSION_FILTERS.ANY &&
-      !companionActive
+      !companionActive &&
+      !promptActive
     ) {
       return videos;
     }
@@ -175,6 +185,10 @@ export function useFilterState({
         return false;
       }
 
+      if (promptActive && !(video.promptKey && promptMatches.has(video.promptKey))) {
+        return false;
+      }
+
       if (
         companionActive &&
         !matchesCompanionFilters(
@@ -198,7 +212,7 @@ export function useFilterState({
 
       return true;
     });
-  }, [videos, filters, generationVersionIndex, tagHierarchy, companionEntries]);
+  }, [videos, filters, generationVersionIndex, tagHierarchy, companionEntries, promptMatches]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),
@@ -324,6 +338,7 @@ export function useFilterState({
 
   return {
     filters,
+    promptSearch,
     setFiltersOpen,
     isFiltersOpen,
     updateFilters,

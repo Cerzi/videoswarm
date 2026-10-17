@@ -56,6 +56,16 @@ describe("generation versions main-process integration", () => {
     );
   });
 
+  it("searches prompts by prompt key and query only, in the main process", () => {
+    const search = section('ipcMain.handle("prompts:search"', "// ===== Companion app IPC =====");
+    expect(search).toContain("payload.promptKeys.filter(isPromptKey)");
+    expect(search).toContain("maxChars: 200");
+    expect(search).toContain("promptSimilarityService.searchPrompts(");
+    const library = section('ipcMain.handle("library:tagged-snapshot"', 'ipcMain.handle("library:authorize-root"');
+    expect(library).toContain("listLibraryPromptKeys(");
+    expect(library).toContain("promptKeys,");
+  });
+
   it("reads stack frames by catalog row, bounded, and stops them with their owner", () => {
     const handlers = section('ipcMain.handle("stacks:frame-fingerprints"', "// ===== Companion app IPC =====");
     expect(handlers).toContain("maxEntries: STACK_FRAME_MAX_ROWS");

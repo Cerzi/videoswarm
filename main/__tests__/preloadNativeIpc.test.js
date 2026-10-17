@@ -145,11 +145,15 @@ describe("preload native-work bridge", () => {
     const { api, ipcRenderer } = loadPreload();
     await api.stacks.similarPrompts({ promptKeys: ["pk2-a"], threshold: 0.8, rootPath: "/nope" });
     await api.stacks.similarPrompts({ promptKeys: "bad", threshold: "0.9" });
+    await api.prompts.search(["pk2-a"], "lighthouse");
+    await api.prompts.search("bad", 5);
     await api.stacks.frameFingerprints([1, 2]);
     await api.stacks.frameStills("bad");
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["stacks:similar-prompts", { promptKeys: ["pk2-a"], threshold: 0.8 }],
       ["stacks:similar-prompts", { promptKeys: [], threshold: 0.9 }],
+      ["prompts:search", { promptKeys: ["pk2-a"], query: "lighthouse" }],
+      ["prompts:search", { promptKeys: [], query: "" }],
       ["stacks:frame-fingerprints", { instanceIds: [1, 2] }],
       ["stacks:frame-stills", { instanceIds: [] }],
     ]);

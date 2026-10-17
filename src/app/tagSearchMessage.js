@@ -17,6 +17,7 @@ export function emptyTagSearchMessage(tags, matchMode, rating = {}) {
     .map((tag) => (tag ?? "").toString().trim())
     .filter(Boolean);
   const rated = ratingPhrase(rating);
+  if (rating.promptQuery) return "No clips match those prompt words and filters";
 
   if (selected.length === 0) {
     return rated ? `No clips are ${rated}` : "The library has no clips to show";

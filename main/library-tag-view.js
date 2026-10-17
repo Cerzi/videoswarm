@@ -42,6 +42,7 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
     matchMode,
     minRating = null,
     exactRating = null,
+    promptKeys = null,
     unavailableRootPaths,
     generation,
     assertActive,
@@ -51,6 +52,7 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
     matchMode,
     minRating,
     exactRating,
+    ...(promptKeys ? { promptKeys } : {}),
     unavailableRootPaths,
     assertActive,
   });

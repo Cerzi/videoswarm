@@ -26,6 +26,7 @@ describe("filtersUtils", () => {
       versionFilter: "any",
       companionFilters: {},
       companionHideSent: false,
+      promptQuery: "",
     });
   });
 
