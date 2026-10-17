@@ -260,6 +260,8 @@ function App() {
   // stack open in its own view with the stack order it was opened from.
   const [stackByPrompt, setStackByPrompt] = useState(false);
   const [stackSimilarity, setStackSimilarityState] = useState(DEFAULT_STACK_SIMILARITY);
+  // Masonry columns, or rows of one height in reading order (View › Layout).
+  const [gridLayout, setGridLayout] = useState("masonry");
   const [openStackKey, setOpenStackKey] = useState(null);
   const [openStackOrder, setOpenStackOrder] = useState([]);
   const [randomSeed, setRandomSeed] = useState(null);
@@ -586,6 +588,7 @@ function App() {
     setPlaybackDetailsVisible,
     setStackByPrompt,
     setStackSimilarity: setStackSimilarityState,
+    setGridLayout,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -1183,6 +1186,7 @@ function App() {
     groupByFolders,
     randomSeed,
     randomOrderMap,
+    gridLayout,
     zoomLevel,
     scrollContainerRef,
     gridRef,
@@ -1790,6 +1794,12 @@ function App() {
       window.electronAPI?.saveSettingsPartial?.({ stackByPrompt: next });
       return next;
     });
+  }, []);
+
+  const handleGridLayoutChange = useCallback((value) => {
+    const next = value === "rows" ? "rows" : "masonry";
+    setGridLayout(next);
+    window.electronAPI?.saveSettingsPartial?.({ gridLayout: next });
   }, []);
 
   // Choosing how alike prompts must be also turns stacking on.
@@ -5723,6 +5733,8 @@ function App() {
             onStackByPromptToggle={toggleStackByPrompt}
             stackSimilarity={stackSimilarity}
             onStackSimilarityChange={handleStackSimilarityChange}
+            gridLayout={gridLayout}
+            onGridLayoutChange={handleGridLayoutChange}
             showFolderHeaders={showFolderHeaders}
             onFolderHeadersToggle={setShowFolderHeaders}
             playbackMode={playbackMode}

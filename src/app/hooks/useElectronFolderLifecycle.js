@@ -144,6 +144,7 @@ export function useElectronFolderLifecycle({
   setPlaybackDetailsVisible,
   setStackByPrompt,
   setStackSimilarity,
+  setGridLayout,
   setSortKey,
   setSortDir,
   groupByFolders: _groupByFolders,
@@ -203,6 +204,7 @@ export function useElectronFolderLifecycle({
     setPlaybackDetailsVisible,
     setStackByPrompt,
     setStackSimilarity,
+    setGridLayout,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -228,6 +230,7 @@ export function useElectronFolderLifecycle({
       setPlaybackDetailsVisible,
       setStackByPrompt,
       setStackSimilarity,
+      setGridLayout,
       setSortKey,
       setSortDir,
       setGroupByFolders,
@@ -251,6 +254,7 @@ export function useElectronFolderLifecycle({
     setPlaybackDetailsVisible,
     setStackByPrompt,
     setStackSimilarity,
+    setGridLayout,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -1148,6 +1152,7 @@ export function useElectronFolderLifecycle({
       setPlaybackDetailsVisible: applyPlaybackDetailsVisible,
       setStackByPrompt: applyStackByPrompt,
       setStackSimilarity: applyStackSimilarity,
+      setGridLayout: applyGridLayout,
       setSortKey: applySortKey,
       setSortDir: applySortDir,
       setGroupByFolders: applyGroupByFolders,
@@ -1177,6 +1182,8 @@ export function useElectronFolderLifecycle({
       applyStackByPrompt?.(settings.stackByPrompt === true);
     if (settings.stackSimilarity !== undefined)
       applyStackSimilarity?.(normalizeStackSimilarity(settings.stackSimilarity));
+    if (settings.gridLayout !== undefined)
+      applyGridLayout?.(settings.gridLayout === "rows" ? "rows" : "masonry");
     if (settings.zoomLevel !== undefined)
       applyZoomLevelFromSettings(settings.zoomLevel);
     if (settings.sortKey) applySortKey(settings.sortKey);

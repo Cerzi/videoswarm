@@ -339,6 +339,8 @@ const defaultSettings = {
   // How alike prompts must be to share a stack: 1 is the exact prompt, below
   // that the share of words in common (Section 7).
   stackSimilarity: 0.8,
+  // The grid: masonry columns, or rows of one height in reading order.
+  gridLayout: "masonry",
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1842,6 +1844,7 @@ function normaliseLoadedSettings(rawSettings) {
     stackSimilarity: STACK_SIMILARITY_LEVELS.has(Number(source.stackSimilarity))
       ? Number(source.stackSimilarity)
       : defaultSettings.stackSimilarity,
+    gridLayout: source.gridLayout === "rows" ? "rows" : "masonry",
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled

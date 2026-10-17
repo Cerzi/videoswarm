@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeMasonryLayout,
+  computeRowLayout,
   getAnchorScrollAdjustment,
   getScrollTopForItem,
   getVirtualMasonryWindow,
@@ -269,5 +270,66 @@ describe('getScrollTopForItem', () => {
       Math.max(0, Math.min(maximumScroll, deepest.bottom - viewportHeight))
     );
     expect(getScrollTopForItem(layout, 'missing', { viewportHeight })).toBeNull();
+  });
+});
+
+describe('computeRowLayout', () => {
+  const rows = (items, overrides = {}) =>
+    computeRowLayout(items, {
+      containerWidth: 1000,
+      targetTileWidth: 160,
+      padding: 10,
+      gap: 4,
+      ...overrides,
+    });
+  const clips = (...aspects) => aspects.map((aspectRatio, index) => ({ id: `c${index}`, aspectRatio }));
+
+  it('lays clips out left to right in rows of one height, in their order', () => {
+    const layout = rows(makeItems(40));
+    const heights = new Set(layout.positions.map((position) => position.height));
+    expect(heights).toEqual(new Set([90]));
+    expect(layout.visualOrderIds).toEqual(makeItems(40).map((item) => item.id));
+    for (let index = 1; index < layout.positions.length; index += 1) {
+      const previous = layout.positions[index - 1];
+      const position = layout.positions[index];
+      // Each clip is right of the one before, or starts the next row.
+      expect(
+        (position.y === previous.y && position.x > previous.x) ||
+          (position.y === previous.bottom + 4 && position.x === 10)
+      ).toBe(true);
+    }
+    expect(layout.totalHeight).toBe(layout.positions.at(-1).bottom + 10);
+  });
+
+  it('justifies a nearly full row and leaves the others and the last row ragged', () => {
+    // 90px rows: 16:9 is 160px wide. Five fit in 980px with 136px spare
+    // (over 12%), so that row stays ragged; six 1.75 clips leave 42px and
+    // fill the width.
+    const ragged = rows(clips(16 / 9, 16 / 9, 16 / 9, 16 / 9, 16 / 9, 16 / 9));
+    expect(ragged.positions[4].x + ragged.positions[4].width).toBeLessThan(990);
+    const full = rows(clips(1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75));
+    const firstRow = full.positions.filter((position) => position.y === 10);
+    expect(firstRow).toHaveLength(6);
+    expect(firstRow.at(-1).x + firstRow.at(-1).width).toBe(990);
+    const lastRow = full.positions.filter((position) => position.y > 10);
+    expect(lastRow.at(-1).x + lastRow.at(-1).width).toBeLessThan(990);
+  });
+
+  it('keeps a clip wider than the grid within it', () => {
+    const layout = rows(clips(4), { containerWidth: 200, targetTileWidth: 400 });
+    expect(layout.positions[0].width).toBe(180);
+  });
+
+  it('serves the virtual window and scrolling like the column layout', () => {
+    const layout = rows(makeItems(300));
+    const visible = getVirtualMasonryWindow(layout, { scrollTop: 500, viewportHeight: 300 });
+    expect(visible.length).toBeGreaterThan(0);
+    for (const position of visible) {
+      expect(position.bottom).toBeGreaterThan(500);
+      expect(position.y).toBeLessThan(800);
+    }
+    expect(getScrollTopForItem(layout, 'clip-150', { viewportHeight: 300, align: 'start' })).toBe(
+      layout.positionsById.get('clip-150').y
+    );
   });
 });

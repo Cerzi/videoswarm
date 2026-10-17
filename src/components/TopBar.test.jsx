@@ -130,6 +130,15 @@ describe("TopBar", () => {
     expect(within(menu).getByText(/3 of 6 decoders in use · Linux: hardware video decode was not detected/)).toBeVisible();
   });
 
+  it("offers masonry columns or rows of equal height in the View menu", () => {
+    const props = { ...baseProps(), gridLayout: "masonry", onGridLayoutChange: vi.fn() };
+    render(<TopBar {...props} />);
+    const menu = openMenu("View");
+    expect(within(menu).getByRole("menuitemradio", { name: "Masonry columns" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Rows of equal height" }));
+    expect(props.onGridLayoutChange).toHaveBeenCalledWith("rows");
+  });
+
   it("offers prompt stacking and how alike prompts must be in the View menu", () => {
     const props = {
       ...baseProps(),

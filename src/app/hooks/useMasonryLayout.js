@@ -9,6 +9,7 @@ import {
 import useIntersectionObserverRegistry from "../../hooks/ui-perf/useIntersectionObserverRegistry";
 import {
   computeMasonryLayout,
+  computeRowLayout,
   getScrollTopForItem,
   getVirtualMasonryWindow,
 } from "../../layout/masonryLayout";
@@ -148,6 +149,8 @@ export function useMasonryLayout({
   // The random order, when the caller shares one with other views of the
   // same sort (prompt stacks walk the grid in exactly this order).
   randomOrderMap: sharedRandomOrderMap,
+  // "masonry" (columns) or "rows" (rows of one height, in reading order).
+  gridLayout = "masonry",
   zoomLevel,
   scrollContainerRef,
   gridRef,
@@ -379,7 +382,7 @@ export function useMasonryLayout({
 
   const layout = useMemo(
     () =>
-      computeMasonryLayout(layoutVideos, {
+      (gridLayout === "rows" ? computeRowLayout : computeMasonryLayout)(layoutVideos, {
         containerWidth,
         targetTileWidth,
         padding: LAYOUT_PADDING,
@@ -392,7 +395,15 @@ export function useMasonryLayout({
             : baseAspectRatio(video);
         },
       }),
-    [aspectRevision, containerWidth, layoutRevision, layoutVideos, signatureState, targetTileWidth]
+    [
+      aspectRevision,
+      containerWidth,
+      gridLayout,
+      layoutRevision,
+      layoutVideos,
+      signatureState,
+      targetTileWidth,
+    ]
   );
   layoutRef.current = layout;
 
@@ -504,9 +515,10 @@ export function useMasonryLayout({
     }, 0);
     return total / sample.length;
   }, [aspectRevision, layoutVideos, signatureState]);
+  // Rows say their height; columns are as tall as their clips' shapes.
   const approxTileHeight = Math.max(
     48,
-    layout.columnWidth / Math.max(0.25, averageAspectRatio)
+    layout.rowHeight || layout.columnWidth / Math.max(0.25, averageAspectRatio)
   );
   const viewportRows = Math.max(
     1,

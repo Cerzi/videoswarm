@@ -40,6 +40,12 @@ const SCOPE_OPTIONS = Object.freeze([
   { value: FolderScope.CURRENT_SUBTREE, label: "Current subtree" },
 ]);
 
+// How the grid places cards.
+const GRID_LAYOUT_OPTIONS = Object.freeze([
+  { value: "masonry", label: "Masonry columns", hint: "Columns of equal width; each card as tall as its clip" },
+  { value: "rows", label: "Rows of equal height", hint: "Rows of one height, read left to right in sort order" },
+]);
+
 // How alike prompts must be to share a stack (docs/architecture/prompt-stacks.md, Section 7).
 const STACK_SIMILARITY_OPTIONS = Object.freeze([
   { value: 1, label: "Same prompt only", hint: "Stack only runs of the identical prompt" },
@@ -117,6 +123,8 @@ export default function TopBar({
   onStackByPromptToggle,
   stackSimilarity = 0.8,
   onStackSimilarityChange,
+  gridLayout = "masonry",
+  onGridLayoutChange,
   showFolderHeaders = false,
   onFolderHeadersToggle,
   playbackMode,
@@ -203,6 +211,17 @@ export default function TopBar({
       onChange: (value) => onFolderHeadersToggle?.(value),
       disabled: busy || !groupByFolders,
     },
+    { type: "separator", id: "sep-layout" },
+    { type: "heading", id: "layout-heading", label: "Layout" },
+    ...GRID_LAYOUT_OPTIONS.map((option) => ({
+      type: "radio",
+      id: `layout-${option.value}`,
+      label: option.label,
+      hint: option.hint,
+      checked: gridLayout === option.value,
+      onSelect: () => onGridLayoutChange?.(option.value),
+      disabled: busy,
+    })),
     { type: "separator", id: "sep-stacks" },
     { type: "heading", id: "stacks-heading", label: "Stacks" },
     {

@@ -324,6 +324,11 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- View › Layout › Rows of equal height: rows of one height that read in sort
+  order; Shift-click range selection follows the rows; zoom changes the row
+  height; the choice survives a restart.
+- Stacks only collapse neighbours: a batch run back to back collapses, the
+  same prompt elsewhere in the sort stays separate, and re-sorting regroups.
 - Mouse back and forward (and Alt+←/→): open a stack, go back to the grid,
   forward into the stack again; move between folders and roots and back;
   in fullscreen, back closes the player.

@@ -3135,6 +3135,18 @@ describe("App hook composition", () => {
     }
   });
 
+  test("lays the grid out in rows when chosen, and remembers it", async () => {
+    const saveSettingsPartial = vi.fn();
+    window.electronAPI = { saveSettingsPartial };
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    expect(useMasonryLayoutMock.mock.calls.at(-1)[0].gridLayout).toBe("masonry");
+    await act(async () => topBarSpy.mock.calls.at(-1)[0].onGridLayoutChange("rows"));
+    expect(useMasonryLayoutMock.mock.calls.at(-1)[0].gridLayout).toBe("rows");
+    expect(saveSettingsPartial).toHaveBeenCalledWith({ gridLayout: "rows" });
+  });
+
   test("stacks only neighbours in the grid's sort order", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const PK_B = `pk2-${"b".repeat(32)}`;

@@ -182,6 +182,128 @@ export function computeMasonryLayout(items = [], options = {}) {
   };
 }
 
+// Rows of one height (View › Layout), an alternative to masonry columns: the
+// reading order is the sort order, so range selection reads naturally. A row
+// is justified to the full width by widening its cards a little, which
+// `object-fit: cover` turns into a slight crop, only when it is already this
+// close to full; otherwise its right edge stays ragged.
+const ROW_JUSTIFY_LIMIT = 0.12;
+
+/**
+ * Build rows of equal height in the items' order, left to right, without
+ * reading or writing the DOM. The row height is the height a 16:9 clip has
+ * at `targetTileWidth`, so a zoom step means the same size in either layout.
+ * Returns the same shape as computeMasonryLayout; `columns` holds one list in
+ * reading order, which the virtual window searches like a column.
+ */
+export function computeRowLayout(items = [], options = {}) {
+  const safeItems = Array.isArray(items) ? items : [];
+  const containerWidth = positiveNumber(options.containerWidth, 1);
+  const requestedPadding = nonNegativeNumber(options.padding, DEFAULT_PADDING);
+  const padding = Math.min(requestedPadding, Math.max(0, (containerWidth - 1) / 2));
+  const gap = nonNegativeNumber(options.gap, DEFAULT_GAP);
+  const targetTileWidth = positiveNumber(options.targetTileWidth, DEFAULT_TILE_WIDTH);
+  const minAspect = positiveNumber(options.minAspect, DEFAULT_MIN_ASPECT);
+  const maxAspect = Math.max(minAspect, positiveNumber(options.maxAspect, DEFAULT_MAX_ASPECT));
+  const defaultAspect = normalizeAspectRatio(
+    options.defaultAspect,
+    DEFAULT_ASPECT_RATIO,
+    minAspect,
+    maxAspect
+  );
+  const getId = typeof options.getId === 'function' ? options.getId : defaultGetId;
+  const getAspectRatio = typeof options.getAspectRatio === 'function'
+    ? options.getAspectRatio
+    : defaultGetAspectRatio;
+
+  const availableWidth = Math.max(1, containerWidth - padding * 2);
+  const rowHeight = Math.max(1, Math.round(targetTileWidth / DEFAULT_ASPECT_RATIO));
+  const positions = [];
+  const positionsById = new Map();
+  let row = [];
+  let rowWidth = 0; // cards and the gaps between them
+  let y = padding;
+
+  const place = (justify) => {
+    if (!row.length) return;
+    const gaps = gap * (row.length - 1);
+    const cards = rowWidth - gaps;
+    const spare = availableWidth - rowWidth;
+    const scale = justify && spare > 0 && spare <= availableWidth * ROW_JUSTIFY_LIMIT
+      ? (cards + spare) / cards
+      : 1;
+    let x = padding;
+    row.forEach((entry, at) => {
+      const right = at === row.length - 1 && scale !== 1
+        ? padding + availableWidth
+        : x + Math.round(entry.width * scale);
+      const width = Math.max(1, right - x);
+      const style = {
+        position: 'absolute',
+        left: '0px',
+        top: '0px',
+        width: `${width}px`,
+        height: `${rowHeight}px`,
+        transform: `translate(${x}px, ${y}px)`,
+      };
+      const position = {
+        id: entry.id,
+        item: entry.item,
+        index: entry.index,
+        column: 0,
+        x,
+        y,
+        width,
+        height: rowHeight,
+        bottom: y + rowHeight,
+        style,
+      };
+      positions.push(position);
+      positionsById.set(entry.id, position);
+      x = right + gap;
+    });
+    y += rowHeight + gap;
+    row = [];
+    rowWidth = 0;
+  };
+
+  const seen = new Set();
+  safeItems.forEach((item, index) => {
+    const resolvedId = getId(item, index);
+    const id = resolvedId == null ? index : resolvedId;
+    if (seen.has(id)) {
+      throw new Error(`Duplicate masonry item id: ${String(id)}`);
+    }
+    seen.add(id);
+    const aspectRatio = normalizeAspectRatio(
+      getAspectRatio(item, index),
+      defaultAspect,
+      minAspect,
+      maxAspect
+    );
+    const width = Math.min(availableWidth, Math.max(1, Math.round(rowHeight * aspectRatio)));
+    const needed = row.length ? rowWidth + gap + width : width;
+    if (row.length && needed > availableWidth) place(true);
+    rowWidth = row.length ? rowWidth + gap + width : width;
+    row.push({ id, item, index, width });
+  });
+  place(false);
+
+  const contentBottom = positions.length ? positions[positions.length - 1].bottom : padding;
+  return {
+    positions,
+    positionsById,
+    columns: [positions],
+    visualOrderIds: positions.map((position) => position.id),
+    columnCount: 1,
+    columnWidth: Math.round(rowHeight * DEFAULT_ASPECT_RATIO),
+    rowHeight,
+    totalHeight: contentBottom + padding,
+    padding,
+    gap,
+  };
+}
+
 function findFirstIntersectingPosition(column, top) {
   let low = 0;
   let high = column.length;
