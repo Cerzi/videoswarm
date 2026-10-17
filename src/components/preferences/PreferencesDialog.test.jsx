@@ -51,8 +51,18 @@ const installApi = () => {
       isCommandLineOverride: false,
     }),
   };
-  window.electronAPI = { profiles, comfyQueue, dataLocation };
-  return { profiles, comfyQueue, dataLocation, fireProfileChanged: () => profileListener?.() };
+  const companion = {
+    getConnection: vi.fn().mockResolvedValue({ enabled: false, url: null }),
+    setConnection: vi.fn(async (value) => ({ enabled: value.enabled, url: value.url || null })),
+    testConnection: vi.fn().mockResolvedValue({
+      ok: true,
+      url: "http://127.0.0.1:9000",
+      name: "Helper",
+      actions: [{ id: "polish", label: "Polish" }, { id: "enlarge", label: "Enlarge" }],
+    }),
+  };
+  window.electronAPI = { profiles, comfyQueue, dataLocation, companion };
+  return { profiles, comfyQueue, dataLocation, companion, fireProfileChanged: () => profileListener?.() };
 };
 
 describe("PreferencesDialog", () => {
@@ -136,7 +146,7 @@ describe("PreferencesDialog", () => {
     expect(screen.getByRole("tab", { name: "Profiles" })).toHaveAttribute("aria-selected", "true");
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Profiles" }));
     fireEvent.keyDown(document.activeElement, { key: "End" });
-    expect(screen.getByRole("tab", { name: "ComfyUI" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Companion app" })).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(document.activeElement, { key: "ArrowDown" });
     expect(screen.getByRole("tab", { name: "Playback" })).toHaveAttribute("aria-selected", "true");
   });
@@ -235,6 +245,29 @@ describe("PreferencesDialog", () => {
       })
     );
     expect(await screen.findByText("Saved. Re-rendering is on.")).toBeInTheDocument();
+  });
+
+  it("tests and saves a companion app connection, naming what it offers", async () => {
+    render(<PreferencesDialog open onClose={vi.fn()} initialSection="companion" {...playbackProps()} />);
+    const address = await screen.findByRole("textbox", { name: "Address" });
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+    fireEvent.change(address, { target: { value: "http://127.0.0.1:9000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    await waitFor(() =>
+      expect(api.companion.testConnection).toHaveBeenCalledWith("http://127.0.0.1:9000")
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Helper answered at http://127.0.0.1:9000, offering Polish, Enlarge. Nothing was sent."
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to a companion app/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.companion.setConnection).toHaveBeenCalledWith({
+        enabled: true,
+        url: "http://127.0.0.1:9000",
+      })
+    );
+    expect(await screen.findByText("Saved. Connected.")).toBeInTheDocument();
   });
 
   it("shows the main process's reason when a connection is refused", async () => {

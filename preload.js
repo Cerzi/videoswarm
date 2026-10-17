@@ -425,6 +425,41 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
   },
 
+  // A companion app on this computer (docs/architecture/companion-app.md).
+  // Clips are named by catalog row and actions by the companion's own ids;
+  // answers come back by row.
+  companion: {
+    getConnection: async () => ipcRenderer.invoke("companion:connection:get"),
+    setConnection: async ({ enabled, url } = {}) =>
+      ipcRenderer.invoke("companion:connection:set", {
+        enabled: enabled === true,
+        url: typeof url === "string" ? url : "",
+      }),
+    testConnection: async (url) =>
+      ipcRenderer.invoke(
+        "companion:connection:test",
+        typeof url === "string" ? { url } : {}
+      ),
+    describe: async () => ipcRenderer.invoke("companion:describe"),
+    lookup: async (instanceIds) =>
+      ipcRenderer.invoke("companion:lookup", {
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+      }),
+    send: async ({ action, instanceIds, dryRun = false, again = false } = {}) =>
+      ipcRenderer.invoke("companion:send", {
+        action: typeof action === "string" ? action : "",
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+        dryRun: dryRun === true,
+        again: again === true,
+      }),
+    onConnectionChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("companion:connection-changed", handler);
+      return () =>
+        ipcRenderer.removeListener("companion:connection-changed", handler);
+    },
+  },
+
   // Re-rendering through a ComfyUI on this computer. Clips are named by the
   // paths the renderer was shown; everything else is ids and settings.
   comfyQueue: {

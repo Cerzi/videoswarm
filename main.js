@@ -71,6 +71,14 @@ const {
   resolveProxyPlaybackEnabled,
 } = require("./main/proxy-playback-settings");
 const {
+  DEFAULT_COMPANION_CONNECTION,
+  normalizeCompanionConnection,
+  parseCompanionUrl,
+  validateCompanionConnection,
+} = require("./main/companion-connection");
+const { createCompanionService } = require("./main/companion-service");
+const { COMPANION_LIMITS } = require("./main/companion-client");
+const {
   DEFAULT_COMFY_CONNECTION,
   normalizeComfyConnection,
   parseComfyUrl,
@@ -337,6 +345,9 @@ const defaultSettings = {
   randomSeed: null,
   // Re-rendering through a ComfyUI on this computer: off until switched on.
   comfyConnection: { ...DEFAULT_COMFY_CONNECTION },
+  // A companion app on this computer (docs/architecture/companion-app.md):
+  // off until switched on.
+  companionConnection: { ...DEFAULT_COMPANION_CONNECTION },
   windowBounds: {
     width: 1400,
     height: 900,
@@ -1843,6 +1854,7 @@ function normaliseLoadedSettings(rawSettings) {
         : Boolean(source.groupByFolders),
     randomSeed,
     comfyConnection: normalizeComfyConnection(source.comfyConnection),
+    companionConnection: normalizeCompanionConnection(source.companionConnection),
     windowBounds: {
       width: clampInteger(bounds.width, defaultSettings.windowBounds.width, 800, 10_000),
       height: clampInteger(bounds.height, defaultSettings.windowBounds.height, 600, 10_000),
@@ -3391,10 +3403,14 @@ ipcMain.on("dnd:start-file", async (event, payload) => {
   }
 });
 
-// The ComfyUI connection changes only through its own validated IPC, never
-// through the renderer's general settings writes.
+// The ComfyUI and companion connections change only through their own
+// validated IPC, never through the renderer's general settings writes.
 function withoutComfyConnection(settings) {
-  const { comfyConnection: _ignored, ...rest } = settings;
+  const {
+    comfyConnection: _ignored,
+    companionConnection: _ignoredCompanion,
+    ...rest
+  } = settings;
   return rest;
 }
 
@@ -3406,6 +3422,7 @@ ipcMain.handle("save-settings", async (_event, settings) => {
     {
       ...withoutComfyConnection(settings),
       comfyConnection: normalizeComfyConnection(currentSettings?.comfyConnection),
+      companionConnection: normalizeCompanionConnection(currentSettings?.companionConnection),
       metadataInspectorRevision: currentSettings?.metadataInspectorRevision,
       proxyPlaybackRevision: currentSettings?.proxyPlaybackRevision,
     },
@@ -5621,6 +5638,139 @@ ipcMain.handle("stacks:similar-groups", async (_event, payload = {}) => {
       error: error?.message || String(error),
       code: error?.code || "PROMPT_SIMILARITY_ERROR",
     };
+  }
+});
+
+// ===== Companion app IPC =====
+// docs/architecture/companion-app.md. The renderer names catalog rows and
+// action ids; main turns rows into paths, talks to the loopback companion and
+// answers by row. Nothing the companion says is stored.
+const companionService = createCompanionService({
+  getConnection: () => currentSettings?.companionConnection,
+});
+
+const companionFailure = (error) => ({
+  success: false,
+  code: error?.code || "COMPANION_ERROR",
+  error: error?.message || String(error),
+});
+
+ipcMain.handle("companion:connection:get", async () =>
+  normalizeCompanionConnection(currentSettings?.companionConnection)
+);
+
+ipcMain.handle("companion:connection:set", async (_event, payload = {}) => {
+  assertPlainObject(payload, "companion connection");
+  assertPayloadSize(payload, 4 * 1024);
+  const context = captureSettingsContext();
+  const value = validateCompanionConnection({
+    enabled: payload.enabled === true,
+    url: payload.url,
+  });
+  await saveSettingsPartial({ companionConnection: value }, context.profileId);
+  assertSettingsContextActive(context);
+  companionService.forget();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("companion:connection-changed", value);
+  }
+  return value;
+});
+
+// Read-only: asks the address to describe itself. Nothing is sent.
+ipcMain.handle("companion:connection:test", async (_event, payload = {}) => {
+  assertPlainObject(payload, "companion connection test");
+  try {
+    const url = parseCompanionUrl(
+      payload.url ?? normalizeCompanionConnection(currentSettings?.companionConnection).url
+    );
+    const description = await companionService.test(url);
+    return { ok: true, url, ...description };
+  } catch (error) {
+    return { ok: false, code: error?.code || "COMPANION_UNAVAILABLE", message: error?.message };
+  }
+});
+
+ipcMain.handle("companion:describe", async () => {
+  try {
+    return { success: true, ...(await companionService.describe({ fresh: true })) };
+  } catch (error) {
+    return companionFailure(error);
+  }
+});
+
+// Present catalog rows as `{ paths, idsByPath }`, skipping rows that are gone.
+function companionPathsForInstances(metadataStore, instanceIds) {
+  const idsByPath = new Map();
+  for (const instanceId of instanceIds) {
+    const instance = metadataStore.getFileInstanceLocation(instanceId);
+    if (instance?.present && instance.absolutePath) {
+      idsByPath.set(instance.absolutePath, instanceId);
+    }
+  }
+  return { paths: [...idsByPath.keys()], idsByPath };
+}
+
+function byInstance(resultsByPath, idsByPath) {
+  const results = {};
+  for (const [filePath, entry] of resultsByPath) {
+    const instanceId = idsByPath.get(filePath);
+    if (instanceId !== undefined) results[instanceId] = entry;
+  }
+  return results;
+}
+
+ipcMain.handle("companion:lookup", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "companion lookup");
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "companion lookup rows",
+      minEntries: 0,
+      maxEntries: COMPANION_LIMITS.maxLookupPaths,
+    });
+    context = captureMetadataContext();
+    const { paths, idsByPath } = companionPathsForInstances(
+      context.metadataStore,
+      instanceIds
+    );
+    const found = await companionService.lookup(paths);
+    assertMetadataContextActive(context);
+    return { success: true, generation: context.generation, results: byInstance(found, idsByPath) };
+  } catch (error) {
+    return companionFailure(error);
+  }
+});
+
+// Sending asks the companion to act on files, so every path must be one the
+// renderer was shown, as for native file actions.
+ipcMain.handle("companion:send", async (event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "companion send");
+    const action = assertString(payload.action, { name: "companion action", minChars: 1, maxChars: 32 });
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "companion send rows",
+      maxEntries: COMPANION_LIMITS.maxSendPaths,
+    });
+    context = captureMetadataContext();
+    const { paths, idsByPath } = companionPathsForInstances(
+      context.metadataStore,
+      instanceIds
+    );
+    for (const filePath of paths) {
+      await assertRendererPath(event, filePath, "file");
+    }
+    assertMetadataContextActive(context);
+    const outcome = await companionService.send({
+      action,
+      paths,
+      dryRun: payload.dryRun === true,
+      again: payload.again === true,
+    });
+    assertMetadataContextActive(context);
+    return { success: true, dryRun: payload.dryRun === true, results: byInstance(outcome, idsByPath) };
+  } catch (error) {
+    return companionFailure(error);
   }
 });
 

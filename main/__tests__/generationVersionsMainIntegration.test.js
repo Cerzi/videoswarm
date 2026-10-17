@@ -40,7 +40,7 @@ describe("generation versions main-process integration", () => {
   it("bounds similar-prompt requests to prompt keys and known thresholds", () => {
     const handler = section(
       'ipcMain.handle("stacks:similar-groups"',
-      "// ===== ComfyUI re-render queue IPC ====="
+      "// ===== Companion app IPC ====="
     );
     expect(handler).toContain("PROMPT_SIMILARITY_MAX_ENTRIES");
     expect(handler).toContain("!(threshold < 1 && STACK_SIMILARITY_LEVELS.has(threshold))");

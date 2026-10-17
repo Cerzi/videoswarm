@@ -15,6 +15,7 @@ export const PREFERENCE_SECTIONS = Object.freeze([
   { id: "profiles", label: "Profiles" },
   { id: "data", label: "Data location" },
   { id: "comfy", label: "ComfyUI" },
+  { id: "companion", label: "Companion app" },
 ]);
 
 const FOCUSABLE_SELECTOR = [
@@ -497,6 +498,127 @@ function ComfySection({ active }) {
   );
 }
 
+export function describeCompanionTest(result) {
+  if (!result?.ok) {
+    return { type: "error", text: result?.message || "The companion app did not answer." };
+  }
+  const actions = (result.actions || []).map((action) => action.label).filter(Boolean);
+  const offers = actions.length ? `, offering ${actions.join(", ")}` : "";
+  return {
+    type: "success",
+    text: `${result.name || "A companion app"} answered at ${result.url}${offers}. Nothing was sent.`,
+  };
+}
+
+// A companion app: another program on this computer that says where each
+// clip stands in its own work and accepts clips sent to it
+// (docs/architecture/companion-app.md).
+function CompanionSection({ active }) {
+  const api = window.electronAPI?.companion;
+  const [saved, setSaved] = useState(null);
+  const [enabled, setEnabled] = useState(false);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const apply = useCallback((connection) => {
+    setSaved(connection);
+    setEnabled(connection?.enabled === true);
+    setUrl(connection?.url || "");
+  }, []);
+
+  useEffect(() => {
+    if (!active || !api) return undefined;
+    let alive = true;
+    api
+      .getConnection()
+      .then((connection) => {
+        if (alive) apply(connection);
+      })
+      .catch((error) => {
+        if (alive) setStatus({ type: "error", text: ipcErrorMessage(error) });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, api, apply]);
+
+  if (!api) {
+    return <p className="preferences__intro">Companion apps are not available in this build.</p>;
+  }
+
+  const dirty =
+    saved && (enabled !== (saved.enabled === true) || url !== (saved.url || ""));
+
+  const perform = async (action) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await action();
+    } catch (error) {
+      setStatus({ type: "error", text: ipcErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="preferences__form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void perform(async () => {
+          const next = await api.setConnection({ enabled, url });
+          apply(next);
+          setStatus({
+            type: "success",
+            text: next.enabled ? "Saved. Connected." : "Saved. Not connected.",
+          });
+        });
+      }}
+    >
+      <p className="preferences__intro">
+        A companion app runs on this computer, says where each clip stands in its own work, and
+        accepts clips you send it. Video Swarm sends it the paths of the clips you are viewing and
+        keeps nothing it answers. Off by default; only local addresses (localhost, 127.0.0.1,
+        [::1]) are accepted, never the internet.
+      </p>
+      <label className="preferences__choice">
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        <span>
+          <span className="preferences__choice-label">Connect to a companion app</span>
+        </span>
+      </label>
+      <label className="preferences__field">
+        <span>Address</span>
+        <input
+          type="text"
+          value={url}
+          spellCheck={false}
+          placeholder="http://127.0.0.1:PORT"
+          onChange={(event) => setUrl(event.target.value)}
+        />
+      </label>
+      <div className="preferences__actions">
+        <button
+          type="button"
+          className="preferences__button"
+          disabled={busy || !url.trim()}
+          onClick={() =>
+            perform(async () => setStatus(describeCompanionTest(await api.testConnection(url))))
+          }
+        >
+          Test connection
+        </button>
+        <button type="submit" className="preferences__button preferences__button--primary" disabled={busy || !dirty}>
+          Save
+        </button>
+      </div>
+      <Status status={status} />
+    </form>
+  );
+}
+
 export default function PreferencesDialog({
   open,
   onClose,
@@ -629,6 +751,7 @@ export default function PreferencesDialog({
               />
             ) : null}
             {section === "comfy" ? <ComfySection active /> : null}
+            {section === "companion" ? <CompanionSection active /> : null}
           </div>
         </div>
       </section>

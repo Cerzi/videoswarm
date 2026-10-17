@@ -184,6 +184,35 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("talks to the companion app by catalog row and action id only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.companion.getConnection();
+    await api.companion.setConnection({ enabled: "yes", url: "http://127.0.0.1:9", extra: 1 });
+    await api.companion.testConnection();
+    await api.companion.testConnection("http://localhost:9");
+    await api.companion.describe();
+    await api.companion.lookup([1, 2]);
+    await api.companion.lookup("bad");
+    await api.companion.send({ action: "polish", instanceIds: [3], dryRun: true, paths: ["/x"] });
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["companion:connection:get"],
+      ["companion:connection:set", { enabled: false, url: "http://127.0.0.1:9" }],
+      ["companion:connection:test", {}],
+      ["companion:connection:test", { url: "http://localhost:9" }],
+      ["companion:describe"],
+      ["companion:lookup", { instanceIds: [1, 2] }],
+      ["companion:lookup", { instanceIds: [] }],
+      ["companion:send", { action: "polish", instanceIds: [3], dryRun: true, again: false }],
+    ]);
+    const callback = vi.fn();
+    const unsubscribe = api.companion.onConnectionChanged(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("companion:connection-changed");
+    handler({}, { enabled: true });
+    expect(callback).toHaveBeenCalledWith({ enabled: true });
+    unsubscribe();
+  });
+
   it("opens a clip's workflow by catalog row only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.comfyQueue.openWorkflow(12);
