@@ -300,3 +300,24 @@
   color: #ff8787;
 }
 
+
+/* Companion app section (docs/architecture/companion-app.md). */
+.filters-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.filters-companion-action {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.filters-companion-action__label {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}

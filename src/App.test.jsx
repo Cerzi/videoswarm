@@ -831,6 +831,55 @@ describe("App hook composition", () => {
     );
   });
 
+  test("shows a companion app's chips on cards and hands its answers to the filters", async () => {
+    const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, isElectronFile: true };
+    useElectronLifecycleMock.mockImplementation(() => ({ ...electronLifecycleReturn, videos: [clip] }));
+    const companion = {
+      getConnection: vi.fn().mockResolvedValue({ enabled: true, url: "http://127.0.0.1:9" }),
+      onConnectionChanged: vi.fn(() => () => {}),
+      describe: vi.fn().mockResolvedValue({
+        success: true,
+        name: "Helper",
+        actions: [{ id: "polish", label: "Polish", send: "Send to polish" }],
+      }),
+      lookup: vi.fn().mockResolvedValue({
+        success: true,
+        results: {
+          7: {
+            kind: "render",
+            chip: { label: "Waiting #2", tone: "progress" },
+            actions: { polish: { phase: "under-way", why: "Second in line" } },
+          },
+        },
+      }),
+    };
+    window.electronAPI = { companion };
+    const previousOrdered = masonryReturn.orderedVideos;
+    const previousItems = masonryReturn.virtualItems;
+    masonryReturn.orderedVideos = [clip];
+    masonryReturn.virtualItems = [{ id: clip.id, item: clip, style: {} }];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await waitFor(() => expect(companion.lookup).toHaveBeenCalledWith([7]), { timeout: 3000 });
+      await waitFor(() =>
+        expect(
+          videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === clip.id).at(-1)
+        ).toMatchObject({
+          companionChipLabel: "Waiting #2",
+          companionChipTone: "progress",
+          companionChipTitle: "Polish: Second in line",
+        })
+      );
+      const filterArgs = useFilterStateMock.mock.calls.at(-1)[0];
+      expect(filterArgs.companionEntries.get(7).actions.polish.phase).toBe("under-way");
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+      masonryReturn.virtualItems = previousItems;
+    }
+  });
+
   test("opens a clip's workflow in ComfyUI from its context menu and says why not", async () => {
     const clip = {
       id: "/library/clip.mp4",

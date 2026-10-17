@@ -21,6 +21,8 @@ export default function DebugSummary({
   // how many of the cards are stacks.
   stackedClips = null,
   stackCount = 0,
+  // A companion app that stopped answering: its last answers still show.
+  companionNote = null,
 }) {
   if (!detailed) {
     const stacked = stackCount > 0 && Number.isFinite(stackedClips);
@@ -38,6 +40,8 @@ export default function DebugSummary({
         )}
         {sortStatus && <span aria-hidden="true">·</span>}
         {sortStatus && <span>{sortStatus}</span>}
+        {companionNote && <span aria-hidden="true">·</span>}
+        {companionNote && <span className="debug-info__warning">{companionNote}</span>}
       </div>
     );
   }
@@ -58,6 +62,8 @@ export default function DebugSummary({
     >
       {sortStatus && <span>{sortStatus}</span>}
       {sortStatus && <span>|</span>}
+      {companionNote && <span className="debug-info__warning">{companionNote}</span>}
+      {companionNote && <span>|</span>}
       <span>🎬 {total} videos</span>
       <span>🎭 {rendered} rendered</span>
       {typeof activeWindow === "number" && (

@@ -9,10 +9,10 @@ const { loopbackLookup, parseCompanionUrl } = require("./companion-connection");
 // own words: Video Swarm renders them and never interprets them.
 
 const PROTOCOL_VERSION = 1;
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 const SEND_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const MAX_LOOKUP_PATHS = 2000;
+const MAX_LOOKUP_PATHS = 500;
 const MAX_SEND_PATHS = 500;
 const MAX_ACTIONS = 8;
 

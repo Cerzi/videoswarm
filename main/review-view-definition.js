@@ -67,6 +67,23 @@ function normalizeMegapixels(value) {
 // Generation-version filter; see docs/architecture/generation-versions.md.
 const VERSION_FILTERS = new Set(['any', 'superseded', 'best']);
 
+// Companion app filters (docs/architecture/companion-app.md): a phase per
+// action id, as src/app/companion/companionFilters.js reads them.
+const COMPANION_PHASE_FILTERS = new Set([
+  'not-sent', 'sent', 'under-way', 'done', 'stopped', 'n/a',
+]);
+const COMPANION_ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
+
+function normalizeCompanionFilters(value) {
+  const result = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
+  for (const [id, phase] of Object.entries(value)) {
+    if (Object.keys(result).length >= 8) break;
+    if (COMPANION_ACTION_ID.test(id) && COMPANION_PHASE_FILTERS.has(phase)) result[id] = phase;
+  }
+  return result;
+}
+
 function normalizeRandomSeed(value) {
   if (value === null || value === undefined || value === '') return null;
   let number;
@@ -125,6 +142,13 @@ function normalizeReviewViewDefinition(
     throw new TypeError('Random review sort requires an integer seed');
   }
 
+  // Present only when set, so views saved without them keep their shape.
+  const companionFilters = normalizeCompanionFilters(filtersInput.companionFilters);
+  const companion = {
+    ...(Object.keys(companionFilters).length ? { companionFilters } : {}),
+    ...(filtersInput.companionHideSent === true ? { companionHideSent: true } : {}),
+  };
+
   const normalized = {
     version: REVIEW_VIEW_VERSION,
     filters: {
@@ -139,6 +163,7 @@ function normalizeReviewViewDefinition(
       versionFilter: VERSION_FILTERS.has(filtersInput.versionFilter)
         ? filtersInput.versionFilter
         : 'any',
+      ...companion,
     },
     sort: {
       key: sortKey,

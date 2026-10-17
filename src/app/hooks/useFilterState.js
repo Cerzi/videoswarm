@@ -20,6 +20,10 @@ import {
   matchesVersionFilter,
   normalizeVersionFilter,
 } from "../filters/generationVersions";
+import {
+  matchesCompanionFilters,
+  normalizeCompanionFilters,
+} from "../companion/companionFilters";
 import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
 
 const resolveValue = (value, fallback) =>
@@ -48,6 +52,11 @@ const normalizeFiltersDraft = (draft, prev) => {
     versionFilter: normalizeVersionFilter(
       resolveValue(draft?.versionFilter, prev.versionFilter)
     ),
+    companionFilters: normalizeCompanionFilters(
+      resolveValue(draft?.companionFilters, prev.companionFilters)
+    ),
+    companionHideSent:
+      resolveValue(draft?.companionHideSent, prev.companionHideSent) === true,
   };
 };
 
@@ -58,6 +67,9 @@ export function useFilterState({
   generationVersionIndex = null,
   // Filtering by a tag also matches the tags under it.
   tagHierarchy = EMPTY_TAG_HIERARCHY,
+  // What a companion app says about each clip, by catalog row
+  // (src/app/companion/useCompanion.js).
+  companionEntries = null,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   const [isFiltersOpen, setFiltersOpen] = useState(false);
@@ -84,6 +96,11 @@ export function useFilterState({
     const minMegapixels = sanitizeMegapixels(filters.minMegapixels);
     const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
     const versionFilter = normalizeVersionFilter(filters.versionFilter);
+    const companionFilters = normalizeCompanionFilters(filters.companionFilters);
+    const companionHideSent = filters.companionHideSent === true;
+    const companionActive =
+      Boolean(companionEntries) &&
+      (companionHideSent || Object.keys(companionFilters).length > 0);
 
     const includeSet = includeTags.length
       ? new Set(includeTags.map((tag) => tag.toLowerCase()))
@@ -100,7 +117,8 @@ export function useFilterState({
       minMegapixels === null &&
       maxMegapixels === null &&
       reviewFilter === REVIEW_FILTERS.ANY &&
-      versionFilter === VERSION_FILTERS.ANY
+      versionFilter === VERSION_FILTERS.ANY &&
+      !companionActive
     ) {
       return videos;
     }
@@ -157,6 +175,17 @@ export function useFilterState({
         return false;
       }
 
+      if (
+        companionActive &&
+        !matchesCompanionFilters(
+          companionEntries.get(video.instanceId),
+          companionFilters,
+          companionHideSent
+        )
+      ) {
+        return false;
+      }
+
       const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
 
       if (exactRating !== null) {
@@ -169,7 +198,7 @@ export function useFilterState({
 
       return true;
     });
-  }, [videos, filters, generationVersionIndex, tagHierarchy]);
+  }, [videos, filters, generationVersionIndex, tagHierarchy, companionEntries]);
 
   const filteredVideoIds = useMemo(
     () => new Set(filteredVideos.map((video) => video.id)),

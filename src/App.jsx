@@ -125,6 +125,12 @@ import {
   stackOrderOf,
   unreviewedStackFingerprints,
 } from "./app/stacks/promptStacks";
+import { useCompanion } from "./app/companion/useCompanion";
+import { companionCardProps } from "./app/companion/companionCard";
+import {
+  COMPANION_PHASE_LABELS,
+  normalizeCompanionFilters,
+} from "./app/companion/companionFilters";
 import {
   DEFAULT_STACK_SIMILARITY,
   normalizeStackSimilarity,
@@ -697,6 +703,17 @@ function App() {
     [videos, generationVersionSummaries]
   );
 
+  // A companion app's view of the collection (docs/architecture/companion-app.md).
+  const companion = useCompanion({ videos, suspended: workSuspended });
+  const companionActive = companion.status !== "off";
+  const companionPanel = useMemo(
+    () =>
+      companionActive
+        ? { name: companion.name, actions: companion.actions, status: companion.status }
+        : null,
+    [companion.actions, companion.name, companion.status, companionActive]
+  );
+
   const {
     filters,
     setFiltersOpen,
@@ -717,6 +734,7 @@ function App() {
     filtersPopoverRef,
     generationVersionIndex,
     tagHierarchy,
+    companionEntries: companionActive ? companion.entries : null,
   });
   reviewViewStateRef.current = {
     filters,
@@ -3809,6 +3827,8 @@ function App() {
           minMegapixels: filters.minMegapixels ?? null,
           maxMegapixels: filters.maxMegapixels ?? null,
           versionFilter: normalizeVersionFilter(filters.versionFilter),
+          companionFilters: filters.companionFilters || {},
+          companionHideSent: filters.companionHideSent === true,
         },
         sort: {
           key: sortKey,
@@ -5589,6 +5609,7 @@ function App() {
                   : undefined
               }
               onSetTagParent={handleSetTagParent}
+            companion={companionPanel}
             />
           )}
 
@@ -5808,6 +5829,53 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {(Object.keys(normalizeCompanionFilters(filters.companionFilters)).length > 0 ||
+                filters.companionHideSent) && (
+                <div className="filters-summary__section">
+                  <span className="filters-summary__label">
+                    {companion.name || "Companion app"}
+                  </span>
+                  <div className="filters-summary__chips">
+                    {Object.entries(normalizeCompanionFilters(filters.companionFilters)).map(
+                      ([actionId, phase]) => (
+                        <button
+                          key={actionId}
+                          type="button"
+                          className="filters-summary__chip filters-summary__chip--review"
+                          onClick={() =>
+                            updateFilters((prev) => {
+                              const next = { ...normalizeCompanionFilters(prev.companionFilters) };
+                              delete next[actionId];
+                              return { ...prev, companionFilters: next };
+                            })
+                          }
+                          title="Clear this filter"
+                        >
+                          {`${
+                            companion.actions.find((action) => action.id === actionId)?.label ||
+                            actionId
+                          }: ${COMPANION_PHASE_LABELS[phase]}`}
+                          <span className="filters-summary__chip-remove">×</span>
+                        </button>
+                      )
+                    )}
+                    {filters.companionHideSent && (
+                      <button
+                        type="button"
+                        className="filters-summary__chip filters-summary__chip--review"
+                        onClick={() =>
+                          updateFilters((prev) => ({ ...prev, companionHideSent: false }))
+                        }
+                        title="Show clips already sent again"
+                      >
+                        Hiding clips already sent
+                        <span className="filters-summary__chip-remove">×</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -5816,6 +5884,11 @@ function App() {
             total={videoCollection.stats.total}
             stackedClips={stackSelectionUnits ? scopedFilteredVideos.length : null}
             stackCount={stackSelectionUnits ? promptStacks.stacks.size : 0}
+            companionNote={
+              companion.status === "offline"
+                ? `${companion.name || "The companion app"} is not answering`
+                : null
+            }
             rendered={virtualItems.length}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
@@ -6086,6 +6159,10 @@ function App() {
                                       ?.total || 0
                                   : 0
                               }
+                              {...companionCardProps(
+                                companion.entries.get(video.instanceId),
+                                companion.actions
+                              )}
                               stackSimilar={
                                 stackSelectionUnits
                                   ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))

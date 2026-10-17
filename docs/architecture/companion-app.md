@@ -1,7 +1,7 @@
 # Companion App
 
-Status: **Partly implemented** (2026-10-17). Connection, client, IPC and
-Preferences are in place; card chips, filters and sending are not yet.
+Status: **Partly implemented** (2026-10-17). Connection, client, IPC,
+Preferences, card chips and filters are in place; sending is not yet.
 
 ## Summary
 
@@ -74,7 +74,7 @@ Request: `{}`. Response:
 
 ### `POST /api/lookup`
 
-Request: `{"paths": ["/abs/path.mp4", ...]}`, at most 2000 paths. Response:
+Request: `{"paths": ["/abs/path.mp4", ...]}`, at most 500 paths. Response:
 
 ```json
 {
@@ -148,21 +148,26 @@ At most 500 paths. `dry_run` changes nothing and answers what would happen.
   (names the companion and its actions; sends nothing), Save. The setting is
   per profile and changes only through its own validated IPC.
 - IPC: `companion:connection:get|set|test`, `companion:describe`,
-  `companion:lookup` (rows, at most 2000), `companion:send` (rows, at most
+  `companion:lookup` (rows, at most 500), `companion:send` (rows, at most
   500, every path authorized). Main caches the description for a minute.
 - Tests run against `main/__tests__/helpers/fakeCompanion.cjs`, with made-up
   clips. No test talks to a real companion.
+- **Chips** (`src/app/companion/useCompanion.js`). Every clip in the open
+  collection is looked up once, in chunks of 500, so filters can judge the
+  whole collection; new clips are looked up as they arrive. After that only
+  clips under way are asked again, every 4 s while the window is visible, and
+  everything on focus at most every 30 s. While the companion is not
+  answering, its last answers stand, the status line says so, and Video Swarm
+  tries again every 30 s. Cards receive the chip's label, tone and a tooltip
+  of each action's phase and reason, as primitives, below the review and
+  version pills.
+- **Filters** (Filters › the companion's name): *Hide clips already sent*,
+  across all actions, and per action any, not sent, sent, under way, done or
+  stopped. A clip the companion has not answered for yet always passes.
+  Saved views keep them; a view without them is stored exactly as before.
 
 ### Unimplemented
 
-- **Chips.** Lookups cover the whole open collection, so filters can judge
-  every clip, in chunks of up to 2000, on folder open, on focus and after a
-  send; then only clips whose phase is `under-way` are asked again, every few
-  seconds. Cards receive the chip's label and tone as primitives.
-- **Filters**, per action: any, not sent, under way, done, stopped, n/a; and
-  *Hide clips already sent* across all actions. Savable in saved views. While
-  the companion is not answering, the last answer of the session stands and
-  the status line says so.
 - **Sending.** *Send to …* items from the description, for a selection and
   the context menu: a dry run gives a dialog (how many will be sent, the
   estimate, skips and refusals grouped by reason), then the send, in chunks,

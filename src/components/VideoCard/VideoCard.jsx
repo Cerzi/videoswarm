@@ -143,6 +143,10 @@ const VideoCard = memo(function VideoCard({
   stackCount = 0,
   stackTotal = 0,
   stackSimilar = false,
+  // A companion app's chip: its own label, a tone and a tooltip.
+  companionChipLabel = null,
+  companionChipTone = null,
+  companionChipTitle = null,
   onOpenStack,
 
   // limits & callbacks (owned by parent/orchestrator)
@@ -1575,6 +1579,16 @@ const VideoCard = memo(function VideoCard({
           }
         >
           {versionCount} versions
+        </div>
+      )}
+
+      {companionChipLabel && (
+        <div
+          className={`video-item-companion video-item-companion--${companionChipTone || "info"}`}
+          style={{ top: 8 + 22 * ((hasReviewBadge ? 1 : 0) + (versionCount >= 2 ? 1 : 0)) }}
+          title={companionChipTitle || companionChipLabel}
+        >
+          {companionChipLabel}
         </div>
       )}
 

@@ -30,3 +30,24 @@ describe("saved view search scope", () => {
     expect(normalizeReviewViewDefinition(view({ searchScope: "library" }))).not.toHaveProperty("searchScope");
   });
 });
+
+describe("saved view companion filters", () => {
+  it("keeps well-formed companion filters and the hide-sent switch", () => {
+    const filters = saved(
+      view({
+        filters: {
+          companionFilters: { polish: "not-sent", enlarge: "sideways", "Bad Id": "sent" },
+          companionHideSent: true,
+        },
+      })
+    ).filters;
+    expect(filters.companionFilters).toEqual({ polish: "not-sent" });
+    expect(filters.companionHideSent).toBe(true);
+  });
+
+  it("leaves a view without them exactly as before", () => {
+    const filters = saved(view({ filters: { companionFilters: {}, companionHideSent: false } })).filters;
+    expect(filters).not.toHaveProperty("companionFilters");
+    expect(filters).not.toHaveProperty("companionHideSent");
+  });
+});

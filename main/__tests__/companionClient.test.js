@@ -170,7 +170,7 @@ describe("createCompanionClient against a fake companion", () => {
   it("refuses oversized requests and bad actions before sending", async () => {
     const client = createCompanionClient({ url: "http://127.0.0.1:9" });
     await expect(
-      client.lookup(Array.from({ length: 2001 }, (_, index) => `/c/${index}.mp4`), [])
+      client.lookup(Array.from({ length: 501 }, (_, index) => `/c/${index}.mp4`), [])
     ).rejects.toMatchObject({ code: "COMPANION_REQUEST_INVALID" });
     await expect(client.send({ action: "../x", paths: [CLIP_A] })).rejects.toMatchObject({
       code: "COMPANION_REQUEST_INVALID",

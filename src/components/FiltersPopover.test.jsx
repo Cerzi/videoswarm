@@ -284,3 +284,72 @@ describe("FiltersPopover tag hierarchy", () => {
   });
 });
 
+
+describe("FiltersPopover companion app", () => {
+  const companion = {
+    name: "Helper",
+    status: "online",
+    actions: [
+      { id: "polish", label: "Polish", hint: "Makes a better copy" },
+      { id: "enlarge", label: "Enlarge" },
+    ],
+  };
+
+  it("is absent without a connected companion", () => {
+    render(<FiltersPopover filters={{}} onChange={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.queryByText("Hide clips already sent")).toBeNull();
+  });
+
+  it("filters each described action by phase and hides clips already sent", () => {
+    let current = { reviewFilter: "pick", companionFilters: { enlarge: "done" } };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    const { rerender } = render(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        companion={companion}
+      />
+    );
+    expect(screen.getByText("Helper")).toBeInTheDocument();
+    const polish = within(screen.getByRole("group", { name: "Polish" }));
+    fireEvent.click(polish.getByRole("button", { name: "Not sent" }));
+    expect(current).toEqual({
+      reviewFilter: "pick",
+      companionFilters: { enlarge: "done", polish: "not-sent" },
+    });
+
+    rerender(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        companion={companion}
+      />
+    );
+    const enlarge = within(screen.getByRole("group", { name: "Enlarge" }));
+    expect(enlarge.getByRole("button", { name: "Done" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(enlarge.getByRole("button", { name: "Any" }));
+    expect(current.companionFilters).toEqual({ polish: "not-sent" });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hide clips already sent" }));
+    expect(current.companionHideSent).toBe(true);
+  });
+
+  it("says when the companion is not answering", () => {
+    render(
+      <FiltersPopover
+        filters={{}}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        companion={{ ...companion, status: "offline" }}
+      />
+    );
+    expect(screen.getByText("Not answering; showing its last answers.")).toBeInTheDocument();
+  });
+});

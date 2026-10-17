@@ -7,6 +7,7 @@ import {
 } from "../app/filters/filtersUtils";
 import { normalizeReviewFilter } from "../review/reviewState";
 import { normalizeVersionFilter } from "../app/filters/generationVersions";
+import { normalizeCompanionFilters } from "../app/companion/companionFilters";
 
 export const DEFAULT_FOLDER_VIEW_CACHE_LIMIT = 128;
 export const MAX_RESTORED_SELECTION_IDS = 500;
@@ -34,6 +35,8 @@ const normalizeFilters = (filters) => ({
   minMegapixels: sanitizeMegapixels(filters?.minMegapixels),
   maxMegapixels: sanitizeMegapixels(filters?.maxMegapixels),
   versionFilter: normalizeVersionFilter(filters?.versionFilter),
+  companionFilters: normalizeCompanionFilters(filters?.companionFilters),
+  companionHideSent: filters?.companionHideSent === true,
 });
 
 const normalizeSnapshot = (snapshot = {}) => ({

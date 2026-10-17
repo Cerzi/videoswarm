@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { REVIEW_FILTERS, normalizeReviewFilter } from "../../review/reviewState";
 import { VERSION_FILTERS, normalizeVersionFilter } from "./generationVersions";
+import { companionFilterCount } from "../companion/companionFilters";
 
 export const createDefaultFilters = () => ({
   includeTags: [],
@@ -12,6 +13,9 @@ export const createDefaultFilters = () => ({
   minMegapixels: null,
   maxMegapixels: null,
   versionFilter: VERSION_FILTERS.ANY,
+  // Per companion action id, a phase (src/app/companion/companionFilters.js).
+  companionFilters: {},
+  companionHideSent: false,
 });
 
 // "all" is an intersection, "any" a union. Exclusion stays separate and always
@@ -114,6 +118,7 @@ export const useFiltersActiveCount = (filters) =>
       ratingCount +
       reviewCount +
       resolutionCount +
-      versionCount
+      versionCount +
+      companionFilterCount(filters)
     );
   }, [filters]);

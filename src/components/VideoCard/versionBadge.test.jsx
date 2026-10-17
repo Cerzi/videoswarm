@@ -56,3 +56,39 @@ describe("VideoCard generation versions badge", () => {
     expect(screen.getByText("2 versions").className).toMatch(/with-review/);
   });
 });
+
+describe("VideoCard companion chip", () => {
+  it("shows the companion's own label, tone and reasons", () => {
+    render(
+      <VideoCard
+        {...baseProps()}
+        companionChipLabel="Waiting #3"
+        companionChipTone="progress"
+        companionChipTitle={"Polish: Third in line"}
+      />
+    );
+    const chip = screen.getByText("Waiting #3");
+    expect(chip.className).toMatch(/video-item-companion--progress/);
+    expect(chip.getAttribute("title")).toBe("Polish: Third in line");
+    expect(chip.style.top).toBe("8px");
+  });
+
+  it("sits below the review and version pills", () => {
+    const props = baseProps();
+    render(
+      <VideoCard
+        {...props}
+        video={{ ...props.video, reviewState: "pick" }}
+        versionCount={2}
+        companionChipLabel="Done"
+        companionChipTone="done"
+      />
+    );
+    expect(screen.getByText("Done").style.top).toBe("52px");
+  });
+
+  it("shows nothing without a label", () => {
+    render(<VideoCard {...baseProps()} companionChipTone="done" />);
+    expect(document.querySelector(".video-item-companion")).toBeNull();
+  });
+});

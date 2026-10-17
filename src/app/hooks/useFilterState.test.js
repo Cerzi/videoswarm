@@ -233,3 +233,57 @@ describe("useFilterState tag hierarchy", () => {
   });
 });
 
+
+describe("useFilterState companion filters", () => {
+  const clips = [
+    { id: "fresh", instanceId: 1, reviewState: "pick" },
+    { id: "polishing", instanceId: 2, reviewState: "pick" },
+    { id: "taken-back", instanceId: 3, reviewState: "pick" },
+    { id: "unknown", instanceId: 4, reviewState: "pick" },
+  ];
+  const stage = (phase) => ({ phase, why: "" });
+  const companionEntries = new Map([
+    [1, { actions: { polish: stage("not-sent"), enlarge: stage("n/a") } }],
+    [2, { actions: { polish: stage("under-way"), enlarge: stage("not-sent") } }],
+    [3, { actions: { polish: stage("stopped"), enlarge: stage("not-sent") } }],
+  ]);
+  const renderFilters = (entries = companionEntries) =>
+    renderHook(() =>
+      useFilterState({
+        videos: clips,
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+        companionEntries: entries,
+      })
+    );
+  const ids = (result) => result.current.filteredVideos.map((video) => video.id);
+
+  it("drops clips already sent for any action, and keeps unanswered ones", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ companionHideSent: true }));
+    expect(ids(result)).toEqual(["fresh", "unknown"]);
+    expect(result.current.filtersActiveCount).toBe(1);
+  });
+
+  it("filters by an action's phase and combines with other filters", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ companionFilters: { polish: "sent" } }));
+    expect(ids(result)).toEqual(["polishing", "taken-back", "unknown"]);
+    act(() =>
+      result.current.updateFilters({
+        companionFilters: { polish: "not-sent", enlarge: "not-sent", bogus: "x" },
+      })
+    );
+    expect(result.current.filters.companionFilters).toEqual({
+      polish: "not-sent",
+      enlarge: "not-sent",
+    });
+    expect(ids(result)).toEqual(["unknown"]);
+  });
+
+  it("ignores companion filters while there is no companion", () => {
+    const { result } = renderFilters(null);
+    act(() => result.current.updateFilters({ companionHideSent: true }));
+    expect(ids(result)).toEqual(["fresh", "polishing", "taken-back", "unknown"]);
+  });
+});

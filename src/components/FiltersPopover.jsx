@@ -10,6 +10,10 @@ import {
   normalizeVersionFilter,
 } from "../app/filters/generationVersions";
 import "./FiltersPopover.css";
+import {
+  COMPANION_PHASE_LABELS,
+  normalizeCompanionFilters,
+} from "../app/companion/companionFilters";
 
 const MIN_RATING_OPTIONS = [
   { value: null, label: "Any" },
@@ -92,6 +96,15 @@ function renderTagChip(tag, onRemove, variant) {
   );
 }
 
+// Phases a companion action can be filtered by (src/app/companion/companionFilters.js).
+const COMPANION_FILTER_OPTIONS = [
+  { value: "any", label: "Any" },
+  ...["not-sent", "sent", "under-way", "done", "stopped"].map((value) => ({
+    value,
+    label: COMPANION_PHASE_LABELS[value],
+  })),
+];
+
 const FiltersPopover = forwardRef(
   (
     {
@@ -112,9 +125,12 @@ const FiltersPopover = forwardRef(
       versionPendingCount = 0,
       onFindVersionsInLibrary,
       onSetTagParent,
+      // A connected companion app: `{ name, actions, status }`, or null.
+      companion = null,
     },
     ref
   ) => {
+    const companionFilters = normalizeCompanionFilters(filters?.companionFilters);
     const includeTags = filters?.includeTags ?? [];
     const excludeTags = filters?.excludeTags ?? [];
     const minRating = filters?.minRating ?? null;
@@ -732,6 +748,59 @@ const FiltersPopover = forwardRef(
             ) : null}
           </div>
         </section>
+
+        {companion ? (
+          <section className="filters-section">
+            <header className="filters-section__title">{companion.name || "Companion app"}</header>
+            <label className="filters-checkbox">
+              <input
+                type="checkbox"
+                checked={filters?.companionHideSent === true}
+                onChange={(event) =>
+                  onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
+                }
+              />
+              <span>Hide clips already sent</span>
+            </label>
+            {(companion.actions || []).map((action) => {
+              const current = companionFilters[action.id] || "any";
+              return (
+                <div key={action.id} className="filters-companion-action">
+                  <span className="filters-companion-action__label" title={action.hint || undefined}>
+                    {action.label}
+                  </span>
+                  <div className="filters-rating-row" role="group" aria-label={action.label}>
+                    {COMPANION_FILTER_OPTIONS.map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`filters-pill ${current === value ? "filters-pill--active" : ""}`}
+                        aria-pressed={current === value}
+                        onClick={() =>
+                          onChange((prev) => {
+                            const next = { ...normalizeCompanionFilters(prev.companionFilters) };
+                            if (value === "any") delete next[action.id];
+                            else next[action.id] = value;
+                            return { ...prev, companionFilters: next };
+                          })
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <span className="filters-empty-hint" role="status">
+              {companion.status === "offline"
+                ? "Not answering; showing its last answers."
+                : companion.status === "connecting"
+                  ? "Connecting…"
+                  : "Clips it has not answered for yet are always shown."}
+            </span>
+          </section>
+        ) : null}
 
         {reviewModeEnabled ? (
         <section className="filters-section">

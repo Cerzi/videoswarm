@@ -24,6 +24,8 @@ describe("filtersUtils", () => {
       minMegapixels: null,
       maxMegapixels: null,
       versionFilter: "any",
+      companionFilters: {},
+      companionHideSent: false,
     });
   });
 
