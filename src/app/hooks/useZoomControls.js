@@ -5,24 +5,8 @@ import {
   getTileWidthForZoomLevel,
 } from "../../zoom/utils";
 
-const ZOOM_LABELS = [
-  "Compact",
-  "Compact+",
-  "Cozy",
-  "Cozy+",
-  "Comfy",
-  "Comfy+",
-  "Roomy",
-  "Roomy+",
-  "Immersive",
-];
-
 export function getZoomLabelByIndex(index) {
-  const clamped = clampZoomIndex(index);
-  return (
-    ZOOM_LABELS[Math.round(clamped * 2)] ??
-    `${getTileWidthForZoomLevel(clamped)}px cards`
-  );
+  return `${getTileWidthForZoomLevel(clampZoomIndex(index))}px cards`;
 }
 
 function defaultRunWithAnchor(_, updater) {

@@ -21,8 +21,11 @@ export const clampZoomIndex = (value) => {
   );
 };
 
+// The five historic classes; every level from the largest of them up shares
+// its class.
 export const zoomClassForLevel = (i) =>
-  ZOOM_CLASSES[Math.round(clampZoomIndex(i))] ?? ZOOM_CLASSES[1];
+  ZOOM_CLASSES[Math.min(ZOOM_CLASSES.length - 1, Math.round(clampZoomIndex(i)))] ??
+  ZOOM_CLASSES[1];
 
 export const getTileWidthForZoomLevel = (value) => {
   const level = clampZoomIndex(value);

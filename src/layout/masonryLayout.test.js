@@ -320,6 +320,14 @@ describe('computeRowLayout', () => {
     expect(layout.positions[0].width).toBe(180);
   });
 
+  it('stops growing rows once a 16:9 clip fills the grid', () => {
+    // 980px across: a zoom wider than that gives the 16:9 row of 980px.
+    const fits = rows(clips(16 / 9), { targetTileWidth: 1900 });
+    expect(fits.positions[0].height).toBe(551);
+    expect(fits.positions[0].width).toBe(980);
+    expect(rows(clips(16 / 9), { targetTileWidth: 640 }).positions[0].height).toBe(360);
+  });
+
   it('serves the virtual window and scrolling like the column layout', () => {
     const layout = rows(makeItems(300));
     const visible = getVirtualMasonryWindow(layout, { scrollTop: 500, viewportHeight: 300 });

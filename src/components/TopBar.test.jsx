@@ -92,7 +92,7 @@ describe("TopBar", () => {
     expect(screen.getByRole("checkbox", { name: "Include subfolders" })).toBeInTheDocument();
   });
 
-  it("labels the review switch and keeps zoom's historic range", () => {
+  it("labels the review switch and offers zoom's full range in quarter steps", () => {
     const props = baseProps();
     render(<TopBar {...props} />);
     const review = screen.getByRole("button", { name: "Review" });
@@ -101,8 +101,8 @@ describe("TopBar", () => {
     expect(props.onReviewModeToggle).toHaveBeenCalled();
     const zoom = screen.getByRole("slider", { name: "Grid zoom" });
     expect(zoom).toHaveAttribute("min", "0");
-    expect(zoom).toHaveAttribute("max", "4");
-    expect(zoom).toHaveAttribute("step", "0.5");
+    expect(zoom).toHaveAttribute("max", "8");
+    expect(zoom).toHaveAttribute("step", "0.25");
     expect(zoom).toHaveAttribute("aria-valuetext", "200px cards");
     fireEvent.change(zoom, { target: { value: "1.5" } });
     expect(props.onZoomChange).toHaveBeenCalledWith(1.5);

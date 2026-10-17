@@ -217,7 +217,13 @@ export function computeRowLayout(items = [], options = {}) {
     : defaultGetAspectRatio;
 
   const availableWidth = Math.max(1, containerWidth - padding * 2);
-  const rowHeight = Math.max(1, Math.round(targetTileWidth / DEFAULT_ASPECT_RATIO));
+  // A 16:9 card at the zoom's width; never wider than the grid, as a masonry
+  // column is never wider than the grid, so the largest zoom levels on a
+  // narrow window stop growing instead of cropping landscape clips.
+  const rowHeight = Math.max(
+    1,
+    Math.round(Math.min(targetTileWidth, availableWidth) / DEFAULT_ASPECT_RATIO)
+  );
   const positions = [];
   const positionsById = new Map();
   let row = [];

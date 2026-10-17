@@ -1,6 +1,7 @@
+// The renderer's zoom range and step (src/zoom/config.js).
 const ZOOM_MIN_LEVEL = 0;
-const ZOOM_MAX_LEVEL = 4;
-const ZOOM_LEVEL_STEP = 0.5;
+const ZOOM_MAX_LEVEL = 8;
+const ZOOM_LEVEL_STEP = 0.25;
 
 function normalizeZoomLevel(value, fallback = 1) {
   const fallbackNumber = Number(fallback);

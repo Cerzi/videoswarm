@@ -279,7 +279,7 @@ describe('useHotkeys', () => {
     expect(setZoomIndexSafe).not.toHaveBeenCalled();
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '=' }));
-    expect(setZoomIndexSafe).toHaveBeenCalledWith(1.5);
+    expect(setZoomIndexSafe).toHaveBeenCalledWith(1.25);
   });
 
   describe('Ctrl+wheel zoom', () => {
@@ -354,13 +354,13 @@ describe('useHotkeys', () => {
 
       emit('in');
       flushFrames();
-      expect(zoom).toBe(2.5);
+      expect(zoom).toBe(2.25);
 
       emit('out');
       flushFrames();
       emit('out');
       flushFrames();
-      expect(zoom).toBe(1.5);
+      expect(zoom).toBe(1.75);
 
       unmount();
       expect(unsubscribe).toHaveBeenCalledOnce();
@@ -373,7 +373,7 @@ describe('useHotkeys', () => {
       expect(window.electronAPI.onZoomWheel).not.toHaveBeenCalled();
       expect(wheel(-120).defaultPrevented).toBe(true);
       flushFrames();
-      expect(zoom).toBe(2.5);
+      expect(zoom).toBe(2.25);
 
       // Reversing direction must zoom back out rather than repeat the last
       // direction.
@@ -381,7 +381,7 @@ describe('useHotkeys', () => {
       flushFrames();
       wheel(120);
       flushFrames();
-      expect(zoom).toBe(1.5);
+      expect(zoom).toBe(1.75);
 
       expect(wheel(120, { ctrlKey: false }).defaultPrevented).toBe(false);
     });
