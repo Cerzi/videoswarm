@@ -342,11 +342,21 @@ function DataLocationSection({ active, dataLocationOpen, onOpenDataLocation }) {
           </>
         ) : null}
       </dl>
-      {state?.isCommandLineOverride ? (
+      {state?.isPortable ? (
+        <p className="preferences__note">
+          Portable: everything this copy writes stays in this folder beside it, and nothing goes
+          anywhere else on the computer. It cannot be moved; move the whole portable folder instead.
+        </p>
+      ) : state?.isCommandLineOverride ? (
         <p className="preferences__note">Set on the command line for this session.</p>
       ) : null}
       <div className="preferences__actions">
-        <button type="button" className="preferences__button" onClick={() => onOpenDataLocation?.()}>
+        <button
+          type="button"
+          className="preferences__button"
+          disabled={state?.isPortable === true}
+          onClick={() => onOpenDataLocation?.()}
+        >
           Change data location…
         </button>
       </div>

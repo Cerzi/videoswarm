@@ -166,6 +166,12 @@ export default function DataLocationDialog({ open, onClose }) {
             );
           }
           break;
+        case "portable":
+          setBusy(false);
+          setStatusMessage(
+            buildMessage("warning", "This portable copy keeps its data beside itself; it cannot be moved.")
+          );
+          break;
         case "overridden":
           setBusy(false);
           setStatusMessage(

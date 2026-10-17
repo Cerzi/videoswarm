@@ -96,10 +96,14 @@ function readBootstrapConfig(candidate) {
 }
 
 class DataLocationManager {
-  constructor({ app, dialog, homeDir = os.homedir() }) {
+  constructor({ app, dialog, homeDir = os.homedir(), portableUserData = null }) {
     this.app = app;
     this.dialog = dialog;
     this.homeDir = path.resolve(homeDir);
+    // A portable copy (main/portable-mode.js) keeps its data in one fixed
+    // folder beside itself: no bootstrap file is read or written, and the
+    // folder cannot be moved.
+    this.portableUserData = portableUserData ? path.resolve(portableUserData) : null;
     this.config = { ...DEFAULT_CONFIG };
     this.configPath = null;
     this.configSignature = null;
@@ -111,6 +115,14 @@ class DataLocationManager {
   }
 
   bootstrap(argv = []) {
+    if (this.portableUserData) {
+      this.defaultPath = this.portableUserData;
+      this.effectivePath = this.portableUserData;
+      this.source = "portable";
+      this.config = { ...DEFAULT_CONFIG };
+      this.app.setPath("userData", this.portableUserData);
+      return { effectivePath: this.effectivePath, source: this.source };
+    }
     this.defaultPath = this.app.getPath("userData");
     this.commandLinePath = this.extractCommandLineOverride(argv);
     this.config = this.loadConfig();
@@ -219,6 +231,7 @@ class DataLocationManager {
   }
 
   async saveConfig() {
+    if (this.portableUserData) return null;
     const currentRevision = normalizeRevision(this.config.revision);
     if (currentRevision >= Number.MAX_SAFE_INTEGER) {
       throw new Error("Bootstrap configuration revision is exhausted");
@@ -305,6 +318,8 @@ class DataLocationManager {
   }
 
   async ensureReady() {
+    // Portable mode made and checked its folder before anything started.
+    if (this.portableUserData) return;
     if (this.commandLinePath) {
       await this.ensureReadyForCommandLine();
       return;
@@ -527,6 +542,7 @@ class DataLocationManager {
     const preferredPath = normalizePath(this.config.preferredDataDir);
     const effectivePath = this.app.getPath("userData");
     return {
+      isPortable: Boolean(this.portableUserData),
       defaultPath: this.defaultPath,
       effectivePath,
       preferredPath,
@@ -553,6 +569,9 @@ class DataLocationManager {
   }
 
   async applySelection(payload = {}, browserWindow, options = {}) {
+    if (this.portableUserData) {
+      return { status: "portable" };
+    }
     if (this.commandLinePath) {
       return { status: "overridden" };
     }

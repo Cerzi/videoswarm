@@ -390,29 +390,12 @@ later choice sticks. Check by hand:
 - If grid previews look too soft to judge at a glance, say so: the
   default can go back with one line.
 
-## 5d. A fully portable build (planned, 2026-10-17)
+## 5d. A fully portable build
 
-Asked for: a portable Video Swarm that keeps its settings, databases,
-thumbnails, proxies and caches in a folder beside the executable and
-touches nothing system-wide, so it never mixes with an installed copy.
-Pieces already there: the data-location manager has a portable preset
-(`VideoSwarmData` beside the app) and a bootstrap file. What full isolation
-still needs:
-
-- Detect a portable run before `app.ready` (electron-builder's portable
-  Windows build sets `PORTABLE_EXECUTABLE_DIR`; on Linux an `APPIMAGE` path
-  or a marker file beside the executable) and set `userData`, `sessionData`,
-  `cache`, `logs`, `crashDumps` and `temp` under the portable folder.
-- Never read or write the per-user bootstrap fallback (`~/.videoswarm`) or
-  the recent-folder store outside that folder.
-- A single-instance lock and app name of its own, so a portable copy and an
-  installed one can run side by side without blocking each other.
-- ffmpeg temp files, proxy and thumbnail caches, and `local-api.json` under
-  the portable folder too.
-- Linux: AppImages are unsupported today because their mount cannot hold the
-  SUID sandbox helper (`AGENTS.md`); a portable Linux build needs another
-  answer (a tarball with a launcher that uses the user-namespace sandbox, for
-  example) before it can ship.
+App side implemented 2026-10-17 (`architecture/portable-mode.md`): detection,
+every folder moved into `VideoSwarmData/` beside the copy, the lock per data
+folder, the data folder fixed. Packaging (the portable artifacts and their
+launchers) waits for the owner's choice, set out in that document.
 
 ## 6. Local branches and pushes
 

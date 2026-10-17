@@ -183,4 +183,24 @@ describe("data location persistence", () => {
     expect(app.relaunch).toHaveBeenCalledOnce();
     expect(app.exit).toHaveBeenCalledWith(0);
   });
+
+  it("keeps a portable copy's data where it is, reading and writing no bootstrap file", async () => {
+    const portableUserData = path.join(basePath, "portable", "VideoSwarmData", "user-data");
+    fs.mkdirSync(portableUserData, { recursive: true });
+    // A bootstrap file from an installed copy must not steer a portable one.
+    fs.mkdirSync(path.join(basePath, ".videoswarm"), { recursive: true });
+    fs.writeFileSync(
+      path.join(basePath, ".videoswarm", "videoswarm-bootstrap.json"),
+      JSON.stringify({ version: 1, preferredDataDir: path.join(basePath, "elsewhere") })
+    );
+    const manager = new DataLocationManager({ app, dialog, homeDir: basePath, portableUserData });
+    expect(manager.bootstrap([])).toEqual({ effectivePath: portableUserData, source: "portable" });
+    expect(app.setPath).toHaveBeenCalledWith("userData", portableUserData);
+    await manager.ensureReady();
+    expect(await manager.saveConfig()).toBeNull();
+    expect(await manager.applySelection({ useDefault: true })).toEqual({ status: "portable" });
+    expect(manager.getRendererState()).toMatchObject({ isPortable: true, source: "portable" });
+    expect(fs.readdirSync(path.join(basePath, ".videoswarm"))).toEqual(["videoswarm-bootstrap.json"]);
+    expect(fs.existsSync(path.join(basePath, "videoswarm-bootstrap.json"))).toBe(false);
+  });
 });

@@ -15,17 +15,47 @@ const {
   session,
   Tray,
 } = require("electron");
-const ownsSingleInstanceLock = app.requestSingleInstanceLock();
-if (!ownsSingleInstanceLock) {
-  app.quit();
-}
 const path = require("path");
 const fs = require("fs");
 const { pathToFileURL } = require("url");
 const fsPromises = fs.promises;
+// Portable mode (docs/architecture/portable-mode.md) is decided first, before
+// anything reads or writes a system location: Electron's folders, temporary
+// files and child processes' caches all move beside the portable copy.
+const {
+  applyPortableMode,
+  detectPortableRoot,
+  portablePaths,
+} = require("./main/portable-mode");
+const portableRoot = detectPortableRoot();
+let portable = null;
+if (portableRoot) {
+  try {
+    portable = { ...portableRoot, ...applyPortableMode(app, portablePaths(portableRoot.root)) };
+    console.log(`🧳 Portable: everything stays in ${portable.dataDir} [${portable.source}]`);
+  } catch (error) {
+    // Writing anywhere else would break the promise of a portable copy.
+    dialog.showErrorBox(
+      "Video Swarm could not start",
+      `This portable copy keeps its data beside itself, in\n${path.join(portableRoot.root, "VideoSwarmData")}\n\nThat folder cannot be written (${error?.code || error?.message || error}). Move Video Swarm to a folder you can write to.`
+    );
+    // Stop here: nothing below may run against the system's folders.
+    process.exit(1);
+  }
+}
 const { DataLocationManager } = require("./main/data-location-manager");
-const dataLocationManager = new DataLocationManager({ app, dialog });
+const dataLocationManager = new DataLocationManager({
+  app,
+  dialog,
+  portableUserData: portable?.userData || null,
+});
 const { source: dataLocationSource } = dataLocationManager.bootstrap(process.argv);
+// The lock belongs to the data folder in use, so a portable copy, or one with
+// its data moved, runs beside an installed copy instead of deferring to it.
+const ownsSingleInstanceLock = app.requestSingleInstanceLock();
+if (!ownsSingleInstanceLock) {
+  app.quit();
+}
 
 const { getEmbeddedDragIcon } = require("./main/drag-icon");
 const {
