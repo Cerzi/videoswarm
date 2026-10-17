@@ -2466,11 +2466,14 @@ describe("useElectronFolderLifecycle", () => {
       result.current.openTagCollection({
         tags: ["keeper"],
         matchMode: "all",
-        records,
+        // The same file twice, as from a folder indexed inside another: the
+        // grid cannot hold two items with one id.
+        records: [...records, { ...records[0], instanceId: 13, rootPath: "/roots" }],
       });
     });
 
     expect(result.current.videos).toHaveLength(2);
+    expect(result.current.videos[0].instanceId).toBe(11);
     // Clips from two roots coexist, which is the whole point of the view.
     expect(result.current.videos.map((video) => video.rootPath)).toEqual([
       "/roots/a",

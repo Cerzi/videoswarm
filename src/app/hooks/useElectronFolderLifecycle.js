@@ -1088,12 +1088,18 @@ export function useElectronFolderLifecycle({
       collectionOwnerScanIdRef.current = null;
       // Every other collection normalizes what main sends before the grid sees
       // it, and this one is no exception: the sort comparator reads `basename`,
-      // which only normalization derives from `name`.
-      setVideos(
-        (Array.isArray(records) ? records : []).map((record) =>
-          normalizeVideoFromMain(record)
-        )
-      );
+      // which only normalization derives from `name`. A clip is shown once:
+      // the grid cannot hold two items with one id, and main already sends
+      // each path once, so a repeat here is dropped rather than fatal.
+      const seenIds = new Set();
+      const collection = [];
+      for (const record of Array.isArray(records) ? records : []) {
+        const video = normalizeVideoFromMain(record);
+        if (seenIds.has(video.id)) continue;
+        seenIds.add(video.id);
+        collection.push(video);
+      }
+      setVideos(collection);
       setActiveScanId(null);
       setActiveRootPath(null);
       setLibraryRoot(null);

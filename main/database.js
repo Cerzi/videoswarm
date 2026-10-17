@@ -1650,8 +1650,16 @@ function createMetadataStore(db) {
   // instances must not reappear just because they carry a tag. A root whose
   // folder is gone from disk is never rescanned, so its rows still read as
   // present; the caller names those roots and they are left out.
+  // A folder indexed inside another indexed folder puts its files in the
+  // catalog once per root, with one path. A library search shows each path
+  // once: the copy seen most recently, then the one in the most specific root.
   const taggedInstancesAcrossRoots = db.prepare(`
+    SELECT * FROM (
     SELECT fi.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY fi.absolute_path
+        ORDER BY fi.last_seen_at DESC, LENGTH(lr.root_path) DESC, fi.id
+      ) AS path_rank,
       lr.root_path AS owner_root_path,
       mc.created_ms AS content_created_ms,
       mc.width AS content_width,
@@ -1722,9 +1730,11 @@ function createMetadataStore(db) {
           WHERE mds.fingerprint = fi.fingerprint AND mdt.name = @might_be_tag
         )
       )
+    )
+    WHERE path_rank = 1
     -- The grid sorts for itself; this order only decides which clips a
     -- search past the record cap keeps: the newest.
-    ORDER BY fi.mtime_ms DESC, lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
+    ORDER BY mtime_ms DESC, owner_root_path COLLATE NOCASE, relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
   const cachedFileTagsForRoot = db.prepare(`

@@ -213,6 +213,29 @@ if (!database || databaseLoadError) {
       expect(complete.truncated).toBe(false);
     });
 
+    it('shows a file once when its folder is indexed inside another indexed folder', async () => {
+      const outer = path.join(tempDir, 'outer');
+      const inner = path.join(outer, 'inner');
+      fs.mkdirSync(inner, { recursive: true });
+      const shared = path.join(inner, 'shared.mp4');
+      const own = path.join(outer, 'own.mp4');
+      fs.writeFileSync(shared, 'shared-body');
+      fs.writeFileSync(own, 'own-body');
+      const entry = (filePath) => ({ filePath, stats: fs.statSync(filePath) });
+      await store.indexFiles({ rootPath: outer, entries: [entry(shared), entry(own)] });
+      store.reconcileLibraryRoot(outer, [shared, own], { recursive: true, completeCoverage: true });
+      await store.indexFiles({ rootPath: inner, entries: [entry(shared)] });
+      store.reconcileLibraryRoot(inner, [shared], { recursive: true, completeCoverage: true });
+
+      const snapshot = store.getTaggedLibrarySnapshot({});
+      const paths = snapshot.records.map((record) => record.fullPath || record.absolutePath || record.path);
+      expect(snapshot.records).toHaveLength(2);
+      expect(new Set(paths).size).toBe(2);
+      // The copy kept is the more specific root's.
+      const kept = snapshot.records.find((record) => record.relativePath === 'shared.mp4');
+      expect(kept).toBeTruthy();
+    });
+
     it('keeps the newest clips when a search passes the record cap', async () => {
       const rootPath = path.join(tempDir, 'dated');
       fs.mkdirSync(rootPath, { recursive: true });
