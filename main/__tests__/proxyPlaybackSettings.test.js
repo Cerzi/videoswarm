@@ -31,5 +31,10 @@ describe("proxy playback profile setting", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "main.js"), "utf8");
     expect(source).toContain("proxyPlaybackEnabled: true,\n  proxyPlaybackRevision: PROXY_PLAYBACK_REVISION,");
     expect(source).toContain("proxyPlaybackEnabled: resolveProxyPlaybackEnabled(source),");
+    // A whole-settings save from the renderer keeps the stored revision, so
+    // it cannot replay the one-time switch-on over a later choice.
+    expect(source).toContain(
+      "proxyPlaybackRevision: currentSettings?.proxyPlaybackRevision,"
+    );
   });
 });

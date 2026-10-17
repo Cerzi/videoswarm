@@ -3407,6 +3407,7 @@ ipcMain.handle("save-settings", async (_event, settings) => {
       ...withoutComfyConnection(settings),
       comfyConnection: normalizeComfyConnection(currentSettings?.comfyConnection),
       metadataInspectorRevision: currentSettings?.metadataInspectorRevision,
+      proxyPlaybackRevision: currentSettings?.proxyPlaybackRevision,
     },
     context.profileId
   );
