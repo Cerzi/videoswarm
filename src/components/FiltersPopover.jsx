@@ -667,7 +667,7 @@ const FiltersPopover = forwardRef(
               ? "Searching prompts…"
               : promptSearch?.unread
                 ? `${promptSearch.unread.toLocaleString()} prompts could not be read (WebM, MKV or missing files).`
-                : "Matches the start of words; every word must appear, -word rules one out. Negative prompts are ignored."}
+                : 'Words match their starts, "quoted" words only themselves; all must appear, -word rules one out. Negative prompts are ignored.'}
           </span>
         </section>
 

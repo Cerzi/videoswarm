@@ -41,9 +41,12 @@ Status: **Implemented, unverified by a human** (2026-10-17)
   like any filter, and with *Entire library* it narrows the library search
   itself, alone or with tags and a rating.
 - **Matching.** Words are matched case-insensitively against the starts of
-  the prompt's words: `danc` finds *dance* and *dancing*. Every word must
-  appear; a word starting with `-` must not. Word order and phrases are not
-  matched (word sets keep no order).
+  the prompt's words: `danc` finds *dance* and *dancing*. A word in quotes
+  matches only itself: `"pan"` finds *pan* but not *panda*. Every word must
+  appear; a word (or quoted word) starting with `-` must not. Quoted words
+  are each matched on their own: `"golden hour"` needs both words anywhere
+  in the prompt, not the phrase, since word sets keep no order. A quote
+  still being typed already counts.
 - **Negative prompts are ignored.** A text counts as negative when its node
   feeds a sampler's `negative` input and not its `positive` one, so searching
   `blurry` does not find every clip with a stock negative prompt. A text that
@@ -175,5 +178,5 @@ what the prompts of clips they did tag have in common
 
 ## Deferred
 
-- Phrase and fuzzy matching in prompt search.
+- Phrase matching (word order) and fuzzy matching in prompt search.
 - Searching WebM and MKV prompts in-process.

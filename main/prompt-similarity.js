@@ -44,6 +44,11 @@ function createWordDictionary() {
   const ids = new Map();
   const known = []; // id -> word
   return {
+    /** The number of exactly this word, as a set, empty when unknown. */
+    idsExactly(word) {
+      const id = ids.get(word);
+      return id === undefined ? new Set() : new Set([id]);
+    },
     /** The numbers of every known word starting with `prefix`. */
     idsStartingWith(prefix) {
       const found = new Set();
@@ -89,23 +94,31 @@ function createWordDictionary() {
 
 const MAX_QUERY_TERMS = 16;
 
+// A term: an optional leading "-", then words in quotes (to the next quote,
+// or the end while one is still being typed) or a run without spaces.
+const QUERY_TERM = /(-?)(?:"([^"]*)"?|(\S+))/gu;
+
 /**
- * A prompt search query as `{ include, exclude }` words, lowercased: words to
- * find, and words after a leading `-` to rule out. "dance-floor" is two words.
+ * A prompt search query as `{ include, exclude }` terms, lowercased:
+ * `{ word, exact }` to find, and after a leading `-` to rule out. A word
+ * matches the starts of words ("danc" finds "dancing"); in quotes it matches
+ * only itself ("pan" finds "pan", not "panda"). Quoted words are each matched
+ * on their own, not as a phrase. "dance-floor" is two words.
  */
 function parsePromptQuery(query) {
-  const include = [];
-  const exclude = [];
-  for (const token of String(query || "").toLowerCase().split(/\s+/u)) {
-    if (!token) continue;
-    const negated = token.startsWith("-");
-    for (const match of token.matchAll(WORD)) {
-      (negated ? exclude : include).push(match[0]);
+  const include = new Map();
+  const exclude = new Map();
+  for (const match of String(query || "").toLowerCase().matchAll(QUERY_TERM)) {
+    const exact = match[2] !== undefined;
+    const target = match[1] === "-" ? exclude : include;
+    for (const word of (exact ? match[2] : match[3]).matchAll(WORD)) {
+      const key = `${exact ? "=" : "^"}${word[0]}`;
+      if (!target.has(key)) target.set(key, { word: word[0], exact });
     }
   }
   return {
-    include: [...new Set(include)].slice(0, MAX_QUERY_TERMS),
-    exclude: [...new Set(exclude)].slice(0, MAX_QUERY_TERMS),
+    include: [...include.values()].slice(0, MAX_QUERY_TERMS),
+    exclude: [...exclude.values()].slice(0, MAX_QUERY_TERMS),
   };
 }
 
@@ -476,8 +489,12 @@ class PromptSimilarityService {
       }
     }
     if (!terms.include.length && !terms.exclude.length) return { matches: [], unread };
-    const include = terms.include.map((word) => this.dictionary.idsStartingWith(word));
-    const exclude = terms.exclude.map((word) => this.dictionary.idsStartingWith(word));
+    const idsOf = (term) =>
+      term.exact
+        ? this.dictionary.idsExactly(term.word)
+        : this.dictionary.idsStartingWith(term.word);
+    const include = terms.include.map(idsOf);
+    const exclude = terms.exclude.map(idsOf);
     const has = (words, ids) => {
       for (const id of ids.size < words.size ? ids : words) {
         if ((ids.size < words.size ? words : ids).has(id)) return true;

@@ -264,10 +264,21 @@ describe("prompt search", () => {
     });
   }
 
-  it("parses words to find and -words to rule out", () => {
+  it("parses words to find and -words to rule out, quoted ones exactly", () => {
+    const starts = (word) => ({ word, exact: false });
+    const exactly = (word) => ({ word, exact: true });
     expect(parsePromptQuery("  Dance -Night  dance-floor ")).toEqual({
-      include: ["dance", "floor"],
-      exclude: ["night"],
+      include: [starts("dance"), starts("floor")],
+      exclude: [starts("night")],
+    });
+    expect(parsePromptQuery('"Pan" -"pan-am" "golden hour" pan')).toEqual({
+      include: [exactly("pan"), exactly("golden"), exactly("hour"), starts("pan")],
+      exclude: [exactly("pan"), exactly("am")],
+    });
+    // A quote still being typed already counts.
+    expect(parsePromptQuery('city "pan')).toEqual({
+      include: [starts("city"), exactly("pan")],
+      exclude: [],
     });
     expect(parsePromptQuery("")).toEqual({ include: [], exclude: [] });
   });
@@ -278,8 +289,9 @@ describe("prompt search", () => {
       promptWithNegative("a woman dancing on a beach at night", negative),
       promptWithNegative("a woman dancing in a studio at noon", negative),
       promptWithNegative("an old lighthouse on a cliff in fog", negative),
+      promptWithNegative("a sleeping panda in a bamboo forest", negative),
     ]);
-    const [beach, studio, lighthouse] = library.keys;
+    const [beach, studio, lighthouse, panda] = library.keys;
     const search = new PromptSimilarityService({
       fsPromises: library.fsPromises,
       readIsoPayload: library.readIsoPayload,
@@ -294,7 +306,13 @@ describe("prompt search", () => {
     expect(await find("lighthouse")).toEqual([lighthouse]);
     expect(await find("blurry")).toEqual([]);
     expect(await find("")).toEqual([]);
+    // In quotes, a word matches only itself: "pan" is not "panda".
+    expect(await find("pan")).toEqual([panda]);
+    expect(await find('"pan"')).toEqual([]);
+    expect(await find('"panda" -"pan"')).toEqual([panda]);
+    expect(await find('"panda" -pan')).toEqual([]);
+    expect(await find('"woman" -"studi"')).toEqual([beach, studio].sort());
     // Prompts are read once; later searches are lookups.
-    expect(library.readIsoPayload).toHaveBeenCalledTimes(3);
+    expect(library.readIsoPayload).toHaveBeenCalledTimes(4);
   });
 });
