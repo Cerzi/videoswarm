@@ -303,7 +303,7 @@ describe("MetadataPanel single-selection info", () => {
 
     expect(screen.getByText("clip-one.mp4")).toBeInTheDocument();
     expect(screen.getByText(formatExpectedDate(createdDate))).toBeInTheDocument();
-    expect(screen.getByText("1920×1080")).toBeInTheDocument();
+    expect(screen.getByText("1920×1080 (2.1MP)")).toBeInTheDocument();
     expect(screen.queryByText("Filename")).not.toBeInTheDocument();
   });
 

@@ -166,6 +166,9 @@ export const deriveSingleSelectionInfo = (
   const height = asFiniteNumber(video?.dimensions?.height);
   const resolution =
     width > 0 && height > 0 ? `${width}×${height}` : null;
+  // Shown beside the resolution as X.YMP, the unit the resolution filter uses.
+  const megapixels =
+    width > 0 && height > 0 ? Math.round((width * height) / 100_000) / 10 : null;
   const filename = deriveMetadataFilename(video);
   const relativePath = deriveMetadataRelativePath(video);
   const sizeBytes = asFiniteNumber(video?.size ?? video?.file?.size);
@@ -193,6 +196,7 @@ export const deriveSingleSelectionInfo = (
     relativePath,
     created,
     resolution,
+    megapixels,
     duration,
     frameRate,
     sizeBytes,
@@ -226,7 +230,14 @@ export const buildMetadataInfoLineItems = (
     });
   }
   if (info.resolution) {
-    items.push({ key: "resolution", label: info.resolution });
+    const megapixels = Number.isFinite(info.megapixels) ? info.megapixels : null;
+    items.push({
+      key: "resolution",
+      label: megapixels === null ? info.resolution : `${info.resolution} (${megapixels.toFixed(1)}MP)`,
+      ...(megapixels === null
+        ? {}
+        : { title: `${info.resolution} · ${megapixels.toFixed(1)} megapixels` }),
+    });
   }
   if (info.frameRate) {
     items.push({ key: "frame-rate", label: info.frameRate });

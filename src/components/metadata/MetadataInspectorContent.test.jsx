@@ -58,7 +58,7 @@ describe("MetadataInspectorContent", () => {
     );
 
     expect(screen.getByText("clip-one.mp4")).toBeVisible();
-    expect(screen.getByText("1280×720")).toBeVisible();
+    expect(screen.getByText("1280×720 (0.9MP)")).toBeVisible();
     expect(screen.getByText("3 / 5")).toBeVisible();
     expect(screen.getByRole("button", { name: "Accept" })).toHaveAttribute(
       "aria-pressed",

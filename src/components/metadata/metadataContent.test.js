@@ -38,11 +38,17 @@ describe("shared metadata content helpers", () => {
       filename: "clip.mp4",
       relativePath: "runs/seed-1/clip.mp4",
       resolution: "1280×720",
+      megapixels: 0.9,
       duration: "1:02",
       frameRate: "29.97 fps",
       sizeBytes: 1234,
     });
     expect(buildMetadataInfoLineItems(info)).toHaveLength(6);
+    // The megapixels sit beside the resolution, as X.YMP.
+    expect(buildMetadataInfoLineItems(info).find(({ key }) => key === "resolution")).toMatchObject({
+      label: "1280×720 (0.9MP)",
+      title: "1280×720 · 0.9 megapixels",
+    });
     expect(
       buildMetadataInfoLineItems(info, { includeRelativePath: true }).map(
         ({ key }) => key
