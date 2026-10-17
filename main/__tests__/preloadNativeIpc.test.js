@@ -265,6 +265,18 @@ describe("preload native-work bridge", () => {
     unsubscribe();
   });
 
+  it("reads and changes the local API setting with plain values only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.localApi.get();
+    await api.localApi.set({ enabled: "yes", port: "50000", token: "x" });
+    await api.localApi.newToken();
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["local-api:get"],
+      ["local-api:set", { enabled: false, port: 50000 }],
+      ["local-api:new-token"],
+    ]);
+  });
+
   it("opens a clip's workflow by catalog row only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.comfyQueue.openWorkflow(12);

@@ -365,6 +365,12 @@ matches under the tag input, including in fullscreen. Check by hand:
   filter shows the whole library (up to 50,000 clips, newest kept past that).
 - Prompt search: `"pan"` in quotes finds *pan* and not *panda*;
   `"golden hour"` finds the phrase, in order.
+- *Entire library* with no filter on the owner's library (folders indexed
+  inside other indexed folders) loads instead of blanking the window; each
+  file appears once.
+- Preferences › Local API (`architecture/local-read-api.md`): switching it
+  on writes `local-api.json` beside `profiles/`; *Last read by* names the app
+  reading it.
 - Several companion apps per profile (`architecture/companion-app.md`): add
   two in Preferences › Companion app; each card shows a chip from each, the
   context menu names the app beside its actions, Filters has a row per app,
@@ -383,6 +389,30 @@ later choice sticks. Check by hand:
 - Switching proxies off survives a restart.
 - If grid previews look too soft to judge at a glance, say so: the
   default can go back with one line.
+
+## 5d. A fully portable build (planned, 2026-10-17)
+
+Asked for: a portable Video Swarm that keeps its settings, databases,
+thumbnails, proxies and caches in a folder beside the executable and
+touches nothing system-wide, so it never mixes with an installed copy.
+Pieces already there: the data-location manager has a portable preset
+(`VideoSwarmData` beside the app) and a bootstrap file. What full isolation
+still needs:
+
+- Detect a portable run before `app.ready` (electron-builder's portable
+  Windows build sets `PORTABLE_EXECUTABLE_DIR`; on Linux an `APPIMAGE` path
+  or a marker file beside the executable) and set `userData`, `sessionData`,
+  `cache`, `logs`, `crashDumps` and `temp` under the portable folder.
+- Never read or write the per-user bootstrap fallback (`~/.videoswarm`) or
+  the recent-folder store outside that folder.
+- A single-instance lock and app name of its own, so a portable copy and an
+  installed one can run side by side without blocking each other.
+- ffmpeg temp files, proxy and thumbnail caches, and `local-api.json` under
+  the portable folder too.
+- Linux: AppImages are unsupported today because their mount cannot hold the
+  SUID sandbox helper (`AGENTS.md`); a portable Linux build needs another
+  answer (a tarball with a launcher that uses the user-namespace sandbox, for
+  example) before it can ship.
 
 ## 6. Local branches and pushes
 

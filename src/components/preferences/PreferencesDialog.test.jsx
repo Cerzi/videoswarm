@@ -63,8 +63,46 @@ const installApi = () => {
       actions: [{ id: "polish", label: "Polish" }, { id: "enlarge", label: "Enlarge" }],
     }),
   };
-  window.electronAPI = { profiles, comfyQueue, dataLocation, companion };
-  return { profiles, comfyQueue, dataLocation, companion, fireProfileChanged: () => profileListener?.() };
+  const localApi = {
+    get: vi.fn().mockResolvedValue({
+      enabled: false,
+      port: 47821,
+      token: null,
+      filePath: "/data/video-swarm/local-api.json",
+      running: false,
+      error: null,
+      lastRead: null,
+    }),
+    set: vi.fn(async ({ enabled, port }) => ({
+      enabled,
+      port,
+      token: "T".repeat(43),
+      filePath: "/data/video-swarm/local-api.json",
+      running: enabled,
+      error: null,
+      lastRead: null,
+    })),
+    newToken: vi.fn(async () => ({
+      enabled: true,
+      port: 47821,
+      token: "N".repeat(43),
+      filePath: "/data/video-swarm/local-api.json",
+      running: true,
+      error: null,
+      lastRead: { userAgent: "editor/1.0", at: Date.UTC(2026, 9, 17, 12) },
+    })),
+  };
+  const copyToClipboard = vi.fn(async () => {});
+  window.electronAPI = { profiles, comfyQueue, dataLocation, companion, localApi, copyToClipboard };
+  return {
+    profiles,
+    comfyQueue,
+    dataLocation,
+    companion,
+    localApi,
+    copyToClipboard,
+    fireProfileChanged: () => profileListener?.(),
+  };
 };
 
 describe("PreferencesDialog", () => {
@@ -148,7 +186,7 @@ describe("PreferencesDialog", () => {
     expect(screen.getByRole("tab", { name: "Profiles" })).toHaveAttribute("aria-selected", "true");
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Profiles" }));
     fireEvent.keyDown(document.activeElement, { key: "End" });
-    expect(screen.getByRole("tab", { name: "Companion app" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Local API" })).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(document.activeElement, { key: "ArrowDown" });
     expect(screen.getByRole("tab", { name: "Playback" })).toHaveAttribute("aria-selected", "true");
   });
@@ -287,6 +325,23 @@ describe("PreferencesDialog", () => {
         { id: "c2", enabled: false, url: "http://127.0.0.1:9100" },
       ])
     );
+  });
+
+  it("switches the local API on, shows where apps find it, and copies or renews the token", async () => {
+    render(<PreferencesDialog open onClose={vi.fn()} initialSection="local-api" {...playbackProps()} />);
+    expect(await screen.findByText(/Not answering\. Apps find the port and token in \/data\/video-swarm\/local-api\.json/)).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Port" })).toHaveValue(47821);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Let other apps on this computer read clips/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.localApi.set).toHaveBeenCalledWith({ enabled: true, port: 47821 }));
+    expect(await screen.findByText("Saved. Answering on port 47821.")).toBeInTheDocument();
+    // The token is hidden until asked for.
+    expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(api.copyToClipboard).toHaveBeenCalledWith("T".repeat(43)));
+    fireEvent.click(screen.getByRole("button", { name: "Make a new token" }));
+    expect(await screen.findByText(/Last read by editor\/1\.0/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Token")).toHaveValue("N".repeat(43));
   });
 
   it("offers at most four companion apps", async () => {

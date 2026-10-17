@@ -16,6 +16,7 @@ export const PREFERENCE_SECTIONS = Object.freeze([
   { id: "data", label: "Data location" },
   { id: "comfy", label: "ComfyUI" },
   { id: "companion", label: "Companion app" },
+  { id: "local-api", label: "Local API" },
 ]);
 
 const FOCUSABLE_SELECTOR = [
@@ -680,6 +681,154 @@ function CompanionSection({ active }) {
   );
 }
 
+// The local read API (docs/architecture/local-read-api.md): other apps on this
+// computer reading clips' tags, ratings and review decisions.
+function LocalApiSection({ active }) {
+  const api = window.electronAPI?.localApi;
+  const [state, setState] = useState(null);
+  const [enabled, setEnabled] = useState(false);
+  const [port, setPort] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const apply = useCallback((next) => {
+    setState(next);
+    setEnabled(next?.enabled === true);
+    setPort(next?.port ? String(next.port) : "");
+  }, []);
+
+  useEffect(() => {
+    if (!active || !api?.get) return undefined;
+    let alive = true;
+    api
+      .get()
+      .then((next) => {
+        if (alive) apply(next);
+      })
+      .catch((error) => {
+        if (alive) setStatus({ type: "error", text: ipcErrorMessage(error) });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, api, apply]);
+
+  if (!api?.get) {
+    return <p className="preferences__intro">The local API is not available in this build.</p>;
+  }
+
+  const dirty = state !== null && (enabled !== state.enabled || port !== String(state.port ?? ""));
+  const perform = async (action) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await action();
+    } catch (error) {
+      setStatus({ type: "error", text: ipcErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copyToken = () =>
+    perform(async () => {
+      const copy = window.electronAPI?.copyToClipboard;
+      if (copy) await copy(state?.token || "");
+      else await navigator.clipboard.writeText(state?.token || "");
+      setStatus({ type: "success", text: "Token copied." });
+    });
+
+  return (
+    <form
+      className="preferences__form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void perform(async () => {
+          const next = await api.set({ enabled, port: Number(port) });
+          apply(next);
+          setStatus(
+            next.error
+              ? { type: "error", text: next.error }
+              : {
+                  type: "success",
+                  text: next.running ? `Saved. Answering on port ${next.port}.` : "Saved. Off.",
+                }
+          );
+        });
+      }}
+    >
+      <p className="preferences__intro">
+        Lets other apps on this computer read your clips' tags, ratings and review decisions, and
+        what changed since they last asked. Prompts are never shared, and an app only hears about
+        files it asks about. Off by default; only this computer can connect, never the internet or
+        a web page, and only with the token.
+      </p>
+      <label className="preferences__choice">
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        <span>
+          <span className="preferences__choice-label">Let other apps on this computer read clips</span>
+        </span>
+      </label>
+      <label className="preferences__field">
+        <span>Port</span>
+        <input
+          type="number"
+          min={1024}
+          max={65535}
+          value={port}
+          onChange={(event) => setPort(event.target.value)}
+        />
+      </label>
+      {state?.token ? (
+        <div className="preferences__row">
+          <label className="preferences__field">
+            <span>Token</span>
+            <input type={showToken ? "text" : "password"} value={state.token} readOnly spellCheck={false} />
+          </label>
+          <button type="button" className="preferences__button" onClick={() => setShowToken((shown) => !shown)}>
+            {showToken ? "Hide" : "Show"}
+          </button>
+          <button type="button" className="preferences__button" disabled={busy} onClick={copyToken}>
+            Copy
+          </button>
+          <button
+            type="button"
+            className="preferences__button"
+            disabled={busy}
+            onClick={() =>
+              perform(async () => {
+                apply(await api.newToken());
+                setStatus({ type: "success", text: "New token made. Apps using the old one are refused." });
+              })
+            }
+          >
+            Make a new token
+          </button>
+        </div>
+      ) : null}
+      <p className="preferences__hint">
+        {state?.running
+          ? `Answering at http://127.0.0.1:${state.port}/api/v1/. `
+          : state?.error
+            ? `${state.error}. `
+            : "Not answering. "}
+        {state?.filePath ? `Apps find the port and token in ${state.filePath}.` : null}
+      </p>
+      <p className="preferences__hint">
+        {state?.lastRead
+          ? `Last read by ${state.lastRead.userAgent} at ${new Date(state.lastRead.at).toLocaleTimeString()}.`
+          : "No app has read anything since Video Swarm started."}
+      </p>
+      <div className="preferences__actions">
+        <button type="submit" className="preferences__button preferences__button--primary" disabled={busy || !dirty}>
+          Save
+        </button>
+      </div>
+      <Status status={status} />
+    </form>
+  );
+}
+
 export default function PreferencesDialog({
   open,
   onClose,
@@ -813,6 +962,7 @@ export default function PreferencesDialog({
             ) : null}
             {section === "comfy" ? <ComfySection active /> : null}
             {section === "companion" ? <CompanionSection active /> : null}
+            {section === "local-api" ? <LocalApiSection active /> : null}
           </div>
         </div>
       </section>

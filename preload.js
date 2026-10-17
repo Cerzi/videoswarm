@@ -512,6 +512,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
 
+  // The local read API: other apps on this computer reading clips' tags,
+  // ratings and review states. Preferences reads and changes its setting.
+  localApi: {
+    get: async () => ipcRenderer.invoke("local-api:get"),
+    set: async ({ enabled, port } = {}) =>
+      ipcRenderer.invoke("local-api:set", {
+        enabled: enabled === true,
+        port: Number(port),
+      }),
+    newToken: async () => ipcRenderer.invoke("local-api:new-token"),
+  },
+
   // Re-rendering through a ComfyUI on this computer. Clips are named by the
   // paths the renderer was shown; everything else is ids and settings.
   comfyQueue: {

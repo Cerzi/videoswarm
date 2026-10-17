@@ -88,6 +88,10 @@ const {
   validateCompanionConnections,
 } = require("./main/companion-connection");
 const { createCompanionService } = require("./main/companion-service");
+const crypto = require("crypto");
+const { createLocalApiHandlers } = require("./main/local-api/handlers");
+const { createLocalApiService } = require("./main/local-api/service");
+const { LocalApiError } = require("./main/local-api/server");
 const { COMPANION_LIMITS } = require("./main/companion-client");
 const {
   DEFAULT_COMFY_CONNECTION,
@@ -6110,6 +6114,48 @@ ipcMain.handle("companion:send", async (event, payload = {}) => {
   }
 });
 
+// ===== Local read API =====
+// docs/architecture/local-read-api.md. Off by default; other apps on this
+// computer read clips' tags, ratings and review states, never prompts, never
+// a path they did not send. Its file sits in the data folder for every
+// profile; answers come from the active profile.
+const localApiProfileId = (profileId) =>
+  `p-${crypto.createHash("sha256").update(String(profileId)).digest("hex").slice(0, 16)}`;
+const localApiService = createLocalApiService({
+  getDataDir: () => app.getPath("userData"),
+  handlers: createLocalApiHandlers({
+    appVersion: app.getVersion(),
+    withStore: async (work) => {
+      let context;
+      try {
+        context = captureMetadataContext();
+      } catch {
+        throw new LocalApiError(503, "LOCAL_API_BUSY", "Video Swarm is switching profiles; ask again");
+      }
+      const result = await work(context.metadataStore);
+      try {
+        assertMetadataContextActive(context);
+      } catch {
+        throw new LocalApiError(503, "LOCAL_API_BUSY", "Video Swarm switched profiles; ask again");
+      }
+      return {
+        profile: localApiProfileId(context.profileId),
+        revision: context.metadataStore.getMetadataRevision(),
+        ...result,
+      };
+    },
+  }),
+});
+
+ipcMain.handle("local-api:get", async () => localApiService.describe());
+
+ipcMain.handle("local-api:set", async (_event, payload = {}) => {
+  assertPlainObject(payload, "local API setting");
+  return localApiService.update({ enabled: payload.enabled === true, port: payload.port });
+});
+
+ipcMain.handle("local-api:new-token", async () => localApiService.renewToken());
+
 // ===== ComfyUI re-render queue IPC =====
 // The renderer sends clip paths it was shown (authorized like every native
 // action), recipe and queue ids, and settings; never a URL beyond the
@@ -6704,6 +6750,9 @@ async function settleShutdownTasks(phase, tasks) {
 }
 
 async function performNativeShutdown() {
+  // Other apps stop being answered before anything they could ask about
+  // goes away.
+  await localApiService.stop().catch(() => {});
   // The renderer owns only the latest debounced plain-data checkpoint draft.
   // Give it one bounded opportunity to persist through the still-current
   // profile/store before any native owner or generation is invalidated.
@@ -6810,6 +6859,9 @@ applicationInitializationPromise = app.whenReady().then(async () => {
     .then(() => console.log("GPU status:", app.getGPUFeatureStatus()))
     .catch((error) => console.warn("GPU status unavailable:", error?.message || error));
   await reconfigureForProfile(activeProfileId, { broadcast: false });
+  await localApiService.start().catch((error) => {
+    console.warn("[local-api] Could not read its setting:", error?.message || error);
+  });
   mediaProtocolService.register(protocol);
   applicationInitializationComplete = true;
   await ensureMainWindow();

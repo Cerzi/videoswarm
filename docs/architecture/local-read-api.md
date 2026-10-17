@@ -1,6 +1,8 @@
 # Local Read API
 
-Status: **Proposed** (2026-10-17). Nothing is built.
+Status: **Phases 1 and 2 implemented, unverified by a human** (2026-10-17):
+`describe`, `clips`, `tags` and `changes`. Prompt search is deferred: the
+owner chose to let the first caller read embedded prompts itself.
 
 ## Summary
 
@@ -19,7 +21,6 @@ another app asks Video Swarm.
 - **Lookup**: for paths or content ids, a clip's tags (with where each sits
   in the tag tree), rating, review state and generation keys.
 - **Tag tree**: every tag and its parent.
-- **Prompt search**: words in, content ids out, among ids the caller names.
 - **Changes**: which clips' tags, rating or review state changed since a
   revision, removals included, so a caller can poll cheaply.
 
@@ -36,8 +37,10 @@ Video Swarm (a "used in a video" chip) does so as a companion.
 ## Principles
 
 - **Off by default, the owner's choice.** Preferences › Local API switches
-  it on, shows the address and token, and says which app read last and when.
-  Switching it off closes the port.
+  it on, sets the port (default **47821**, any from 1024 to 65535), shows the
+  token (hidden until asked, with *Copy* and *Make a new token*), says where
+  the file is and which app read last and when. Switching it off closes the
+  port; a port another program holds is reported there.
 - **Loopback only.** The server binds `127.0.0.1` (and `::1` if available),
   never `0.0.0.0`. Every request's `Host` must be `127.0.0.1`, `localhost` or
   `[::1]` with the server's port, which defeats DNS rebinding.
@@ -46,27 +49,32 @@ Video Swarm (a "used in a video" chip) does so as a companion.
   application/json` and an `Authorization` header, so a web page cannot get
   a request through even as a "simple" one.
 - **A token, compared in constant time.** 256 random bits, made when the API
-  is first switched on, shown in Preferences with *Copy* and *Make a new
-  token*. Video Swarm also writes `{ port, token }` to a file in its data
-  folder readable by the user only (mode 0600), so an app run by the same
-  user can find it. The threat this guards against is other users and web
-  pages: any program of the same user can already read Video Swarm's files.
+  is first switched on and kept until *Make a new token*.
+- **One file, at a stable place.** `local-api.json` in Video Swarm's data
+  folder, beside `profiles/`, the same for every profile: on Linux
+  `~/.config/video-swarm/local-api.json`, on Windows
+  `%APPDATA%\video-swarm\local-api.json`, on macOS
+  `~/Library/Application Support/video-swarm/local-api.json`. It moves only
+  if the user moves the data folder (Preferences › Data location). It holds
+  `{ "version": 1, "enabled", "port", "token" }`, is written atomically and
+  is readable by the user only (mode 0600). A caller reads the port and token
+  from it. The threat the token guards against is other users and web pages:
+  any program of the same user can already read Video Swarm's files.
 - **Read-only.** No endpoint changes tags, ratings, review states, files or
   settings.
 - **Prompt text never leaves the main process**, as everywhere else
-  (`prompt-search-and-tag-suggestions.md`). Prompt search answers with
-  content ids. No prompt text, negative prompt, model or LoRA name is ever
-  in a response.
+  (`prompt-search-and-tag-suggestions.md`). No prompt text, negative prompt,
+  model or LoRA name is ever in a response; only the prompt and generation
+  keys, which are hashes.
 - **Answers only about what was asked.** Lookups answer for the paths or ids
   sent; nothing lists the library, and no response carries a path the
   caller did not send.
 - **The active profile.** Answers come from the profile open in Video
   Swarm. Every response names it by an opaque id (a hash, not its name), so
   a caller can tell a switch and start again.
-- **Bounded.** Request bodies of at most 1 MiB; at most 5,000 items per
-  lookup and 20,000 ids per prompt search; one prompt search at a time; at
-  most 60 prompt searches a minute; a 30 s time limit per request. Work
-  yields to the event loop like every other catalog read.
+- **Bounded.** Request bodies of at most 1 MiB (refused with 413); at most
+  5,000 paths and ids per lookup; four requests at once (503 beyond); a
+  30 s time limit per request.
 
 ## Endpoints (protocol 1)
 
@@ -115,7 +123,14 @@ At most 5,000 together. Answers by the key asked:
   KiB or less) and the size as decimal text>`. A caller can compute it, so it
   matches clips across moves and copies without sending paths.
 - `rating` is 1 to 5, or `null`; `review` is `unreviewed`, `reviewed`,
-  `pick` (accepted) or `reject`.
+  `pick` (accepted) or `reject`. Review states travel as they are; what a
+  caller makes of them (a favourite, "never use") is its own business.
+- `hasPrompt` is `true` or `false` once the clip's embedded metadata has been
+  read, and `null` before.
+- Content ids are `v2-…`; an entry not rescanned since the v1 upgrade may
+  still be `v1-…` until it is.
+- A file in two indexed roots (a folder indexed inside another) is one
+  path and answers once.
 - `promptKey` and `generationKey` are present when known. Clips with one
   `generationKey` are versions of one generation (re-renders, upscales);
   clips with one `promptKey` share a prompt (`generation-versions.md`,
@@ -126,19 +141,6 @@ At most 5,000 together. Answers by the key asked:
 `{}` → `{ "tags": [{ "name": "bellydance", "parent": "dance" }], … }`, every
 tag in the profile, at most 8 deep.
 
-### `POST /api/v1/prompt-search`
-
-```json
-{ "query": "\"golden hour\" -night", "contentIds": ["v2-…"] }
-```
-
-`query` uses Filters › Prompt's syntax (word starts, `"exact"` words and
-`"phrases"`, `-` to rule out; negative prompts ignored). Answers
-`{ "matches": ["v2-…"], "unread": 3 }`: the content ids among those sent
-whose positive prompts match, and how many could not be read. Ids not in the
-library are ignored. The first search over many clips reads their prompts
-and may take a while; later ones are lookups.
-
 ### `POST /api/v1/changes`
 
 ```json
@@ -146,9 +148,9 @@ and may take a while; later ones are lookups.
 ```
 
 → `{ "revision": 1234, "changed": ["v2-…"], "tagTreeChanged": false,
-"reset": false }`: the contents whose tags, rating or review state changed
-after revision 1200, removals included, at most 10,000 at a time (call again
-from the new revision for more). `tagTreeChanged` says tags were renamed,
+"reset": false, "more": false }`: the contents whose tags, rating or review
+state changed after revision 1200, removals included, at most 10,000 log
+entries at a time; with `more`, call again from the `revision` returned. `tagTreeChanged` says tags were renamed,
 moved or removed, so every clip's tag paths may differ. `reset` says the log
 no longer reaches back that far, or the profile changed: fetch everything
 again. Polling every 30 s while the caller is open is expected.
@@ -156,16 +158,14 @@ again. Polling every 30 s while the caller is open is expected.
 ## Storage
 
 - **A change log**, per profile: `metadata_changes(revision INTEGER PRIMARY
-  KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, changed_at INTEGER NOT
-  NULL)`, appended in the same transaction as every tag, rating and review
-  write (assigning and removing tags, ratings, review states, restoring a
-  review snapshot, and re-keying a content), and a tag-tree revision bumped
-  by renames, moves and pruned tags. Pruned to the latest 100,000 rows or 90
-  days. This is new bookkeeping in hot write paths, so it lands with tests
-  per write path and a check that bulk tagging stays fast.
-- **Settings**, application-wide rather than per profile: `localApi: {
-  enabled, port }`. The token lives only in the 0600 file, never in
-  settings.
+  KEY AUTOINCREMENT, fingerprint TEXT, kind 'clip' | 'tags', changed_at)`,
+  appended in the same transaction as every write: assigning and removing
+  tags, ratings, review states, restoring a review snapshot, re-keying a
+  content (both sides), and the tag tree (a new tag, a move, a pruned tag).
+  Pruned to the latest 100,000 rows or 90 days. Revisions come from
+  `sqlite_sequence`, so they never repeat, even after pruning.
+- **An index** on `file_instances(absolute_path)` for lookups by path.
+- **The setting** is the file above, application-wide, not per profile.
 - Nothing about callers is stored beyond the last reader's `User-Agent` and
   time, in memory, for Preferences.
 
@@ -174,52 +174,41 @@ again. Polling every 30 s while the caller is open is expected.
 - Tags, ratings and review decisions are the user's private data. The API
   exists to share them with apps the owner chooses; the switch, the token
   and the *last read by* line are how the owner stays in control.
-- Prompt search returns no text, but whether a clip's prompt contains a
-  word is itself information: a caller asking about one word at a time could
-  learn which of the clips it names contain it. The rate limit slows that;
-  it cannot prevent it. The owner should switch the API on only for apps
-  they trust with that.
 - Prompt and generation keys are hashes of whole prompts; recovering a
   prompt from one needs the prompt already.
 
-## Implementation sketch
+## Implementation
 
-- `main/local-api/server.js`: a `node:http` server, started and stopped with
-  the setting; the header, token and size checks before any handler runs.
-- `main/local-api/handlers.js`: pure handlers over the metadata store and
-  the prompt service, using the same profile-context checks as IPC
-  (`captureMetadataContext`, `assertMetadataContextActive`), so a profile
-  switch mid-request answers `PROFILE_CHANGED` rather than mixing profiles.
-- `main/database.js`: `getClipsByPaths`, `getClipsByContentIds`,
-  `listTagTree`, the change log and `listChangesSince`.
-- Preferences › Local API: the switch, the address, the token with *Copy*
-  and *Make a new token*, and *Last read by … at …*.
-- Tests: handler tests on a temp database; HTTP tests against the server on
-  an ephemeral port (refused without a token, with an `Origin`, with a
-  foreign `Host`, with a body too large; answers by key; never a path not
-  sent); change-log tests for every write path; a smoke spec reading through
-  the API from the test process while the real app runs. No test is ever
-  pointed at a real caller.
+- `main/local-api/server.js`: a `node:http` server on `127.0.0.1`, started
+  and stopped with the setting; the Origin, Host, method, token, type and
+  size checks run in that order before any handler, and an unexpected
+  failure answers 500 without its message.
+- `main/local-api/handlers.js`: the endpoints, over the active profile's
+  store through the same profile-context checks as IPC, so a profile switch
+  mid-request answers 503 rather than mixing profiles.
+- `main/local-api/config.js`, `service.js`: the file and the running server.
+- `main/database.js`: `getLocalApiClips`, `getMetadataRevision`,
+  `listMetadataChangesSince` and the change-log writes.
+- Preferences › Local API.
+- Tests: `main/__tests__/localApiServer.test.js` (every refusal against a
+  real server on an ephemeral port, handlers, the 0600 file, the service);
+  `localApiDatabase.test.js` (lookups, a gone file, the log across write
+  paths, reset); `tests/electron/local-api.smoke.spec.cjs` reads through the
+  API from the test process while the real app runs, the way another app
+  would. No test is ever pointed at a real caller.
 
-## Phasing
+## Decisions (2026-10-17, the owner)
 
-1. `describe`, `clips` and `tags`, with the security checks and Preferences.
-2. The change log and `changes`.
-3. `prompt-search`.
+1. A fixed default port, changeable in Preferences, plus the file.
+2. The file is acceptable; callers read the port and token from it.
+3. Review states only.
+4. No prompt search for now (deferred below).
 
-Each phase is useful alone; a caller can poll `clips` for the clips it has
-until phase 2 lands.
+## Deferred
 
-## Questions for the owner
-
-1. A fixed default port (so a caller can be configured once) or one chosen
-   at random and found through the 0600 file?
-2. Is the token file acceptable, or should the token only ever be copied
-   from Preferences?
-3. Should *pick* and *reject* travel as review states only, or also as a
-   simpler `favourite` / `never` the caller does not need to interpret?
-4. Is 60 prompt searches a minute right for the caller's planner, which may
-   run many searches while it plans an edit?
+- `POST /api/v1/prompt-search`: words in, content ids out, among ids the
+  caller names, never text. Whether a clip's prompt contains a word is
+  itself information, so it would come with a rate limit.
 
 ## Acceptance
 

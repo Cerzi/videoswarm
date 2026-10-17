@@ -1007,6 +1007,20 @@ function initDatabase(app, profilePath) {
         ON sequence_entries(sequence_id, position);
       CREATE INDEX IF NOT EXISTS idx_sequence_entries_fingerprint
         ON sequence_entries(fingerprint);
+
+      -- What changed, in order, for the local read API's changes cursor
+      -- (local-read-api.md): a clip's tags, rating or review state (kind
+      -- 'clip', naming the content) or the tag tree (kind 'tags'). Kept to
+      -- the latest 100,000 rows and 90 days.
+      CREATE TABLE IF NOT EXISTS metadata_changes (
+        revision INTEGER PRIMARY KEY AUTOINCREMENT,
+        fingerprint TEXT,
+        kind TEXT NOT NULL CHECK (kind IN ('clip', 'tags')),
+        changed_at INTEGER NOT NULL
+      );
+      -- The local read API looks clips up by path.
+      CREATE INDEX IF NOT EXISTS idx_file_instances_absolute_path
+        ON file_instances(absolute_path);
     `);
 
     // Tag hierarchy: each tag may have one parent ("bellydance" under
@@ -1394,6 +1408,39 @@ function initDatabase(app, profilePath) {
 }
 
 function createMetadataStore(db) {
+  // The change log (local-read-api.md): written in the same transaction as
+  // every tag, rating and review write, so a reader never misses one.
+  const METADATA_CHANGE_LIMITS = Object.freeze({
+    keepRows: 100_000,
+    keepMs: 90 * 24 * 60 * 60 * 1000,
+    pruneEvery: 1_000,
+    readLimit: 10_000,
+  });
+  const insertMetadataChange = db.prepare(
+    'INSERT INTO metadata_changes (fingerprint, kind, changed_at) VALUES (?, ?, ?);'
+  );
+  const pruneMetadataChanges = db.prepare(`
+    DELETE FROM metadata_changes
+    WHERE revision <= (SELECT MAX(revision) FROM metadata_changes) - @keep_rows
+       OR changed_at < @oldest;
+  `);
+  let changesSincePrune = 0;
+  const pruneChangeLog = () => {
+    changesSincePrune = 0;
+    pruneMetadataChanges.run({
+      keep_rows: METADATA_CHANGE_LIMITS.keepRows,
+      oldest: Date.now() - METADATA_CHANGE_LIMITS.keepMs,
+    });
+  };
+  function noteMetadataChange(fingerprint, kind = 'clip') {
+    if (kind === 'clip' && !fingerprint) return;
+    insertMetadataChange.run(kind === 'clip' ? fingerprint : null, kind, Date.now());
+    changesSincePrune += 1;
+    if (changesSincePrune >= METADATA_CHANGE_LIMITS.pruneEvery) pruneChangeLog();
+  }
+  const noteTagTreeChange = () => noteMetadataChange(null, 'tags');
+  pruneChangeLog();
+
   // Re-render recipes, queue and finals share the profile's database.
   const comfyQueue = createComfyQueueStore(db);
   const columns = new Set(
@@ -2941,6 +2988,9 @@ function createMetadataStore(db) {
     rekeyRating.run(parameters);
     rekeyTagLinks.run(parameters);
     rekeyTagSuggestionDismissals.run(parameters);
+    // The metadata moved: one content lost it, another gained it.
+    noteMetadataChange(fromFingerprint);
+    noteMetadataChange(toFingerprint);
     rekeyInstanceFingerprints.run(parameters);
     rekeyCheckpointAnchors.run(parameters);
     // Sequence entries cascade from media_content, so carrying them across
@@ -4667,7 +4717,7 @@ function createMetadataStore(db) {
   function getTagId(name) {
     const trimmed = (name || '').trim();
     if (!trimmed) return null;
-    tagInsert.run(trimmed);
+    if (tagInsert.run(trimmed).changes > 0) noteTagTreeChange();
     const row = tagSelect.get(trimmed);
     return row ? row.id : null;
   }
@@ -5508,6 +5558,143 @@ function createMetadataStore(db) {
     return dismissed;
   }
 
+  // The local read API (local-read-api.md): clips by path or content, and
+  // the change log.
+  const metadataSequence = db.prepare(
+    "SELECT seq FROM sqlite_sequence WHERE name = 'metadata_changes';"
+  );
+  const metadataOldestRevision = db.prepare(
+    'SELECT MIN(revision) AS oldest FROM metadata_changes;'
+  );
+  const metadataChangesAfter = db.prepare(`
+    SELECT revision, fingerprint, kind FROM metadata_changes
+    WHERE revision > ? ORDER BY revision LIMIT ?;
+  `);
+  const localApiPathRows = db.prepare(`
+    SELECT * FROM (
+      SELECT fi.absolute_path AS absolute_path, fi.fingerprint,
+        ROW_NUMBER() OVER (
+          PARTITION BY fi.absolute_path
+          ORDER BY fi.last_seen_at DESC, LENGTH(lr.root_path) DESC, fi.id
+        ) AS path_rank
+      FROM file_instances fi
+      INNER JOIN library_roots lr ON lr.id = fi.root_id
+      INNER JOIN directories d ON d.id = fi.directory_id
+      WHERE fi.absolute_path IN (SELECT value FROM json_each(@paths))
+        AND fi.is_present != 0
+        AND d.is_present != 0
+        AND fi.fingerprint IS NOT NULL
+    )
+    WHERE path_rank = 1;
+  `);
+  const localApiContentRows = db.prepare(`
+    SELECT mc.fingerprint, mc.prompt_key, mc.prompt_key_version,
+      mc.generation_key, mc.generation_key_version,
+      r.value AS rating,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM media_content mc
+    LEFT JOIN ratings r ON r.fingerprint = mc.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = mc.fingerprint
+    WHERE mc.fingerprint IN (SELECT value FROM json_each(@fingerprints));
+  `);
+
+  /** The last revision the change log handed out; 0 before any change. */
+  function getMetadataRevision() {
+    return Number(metadataSequence.get()?.seq || 0);
+  }
+
+  /**
+   * What changed after revision `since`: `{ revision, changed, tagTreeChanged,
+   * reset, more }`. `changed` lists contents whose tags, rating or review
+   * state changed; `revision` is where to ask from next. `reset` says the log
+   * no longer reaches back that far (or `since` is from elsewhere): read
+   * everything again.
+   */
+  function listMetadataChangesSince(since) {
+    const current = getMetadataRevision();
+    const oldest = metadataOldestRevision.get()?.oldest;
+    const gone = oldest == null ? since < current : since < Number(oldest) - 1;
+    if (!Number.isSafeInteger(since) || since < 0 || since > current || gone) {
+      return { revision: current, changed: [], tagTreeChanged: false, reset: true, more: false };
+    }
+    const limit = METADATA_CHANGE_LIMITS.readLimit;
+    const rows = metadataChangesAfter.all(since, limit + 1);
+    const more = rows.length > limit;
+    const kept = more ? rows.slice(0, limit) : rows;
+    return {
+      revision: kept.length ? Number(kept[kept.length - 1].revision) : since,
+      changed: [
+        ...new Set(kept.filter((row) => row.kind === 'clip' && row.fingerprint).map((row) => row.fingerprint)),
+      ],
+      tagTreeChanged: kept.some((row) => row.kind === 'tags'),
+      reset: false,
+      more,
+    };
+  }
+
+  /**
+   * Clips for the local read API, by present path or by content id: a Map of
+   * each key found to `{ contentId, tags, rating, review, hasPrompt,
+   * promptKey, generationKey }`. Keys not found are left out.
+   */
+  function getLocalApiClips({ paths = [], contentIds = [] } = {}) {
+    const fingerprintByKey = new Map();
+    if (paths.length) {
+      for (const row of localApiPathRows.all({ paths: JSON.stringify(paths) })) {
+        fingerprintByKey.set(row.absolute_path, row.fingerprint);
+      }
+    }
+    for (const id of contentIds) fingerprintByKey.set(id, id);
+    const fingerprints = [...new Set(fingerprintByKey.values())];
+    const contents = new Map();
+    if (fingerprints.length) {
+      for (const row of localApiContentRows.all({ fingerprints: JSON.stringify(fingerprints) })) {
+        contents.set(row.fingerprint, row);
+      }
+    }
+    // Where each tag sits: its name and every name above it, top first.
+    const tags = tagRows.all();
+    const byId = new Map(tags.map((row) => [row.id, row]));
+    const byName = new Map(tags.map((row) => [row.name.toLowerCase(), row]));
+    const pathOf = (name) => {
+      const names = [];
+      const seen = new Set();
+      let row = byName.get(String(name).toLowerCase());
+      while (row && !seen.has(row.id) && names.length <= MAX_TAG_DEPTH) {
+        seen.add(row.id);
+        names.unshift(row.name);
+        row = row.parentId == null ? null : byId.get(row.parentId);
+      }
+      return names;
+    };
+    const clips = new Map();
+    const shaped = new Map();
+    for (const [key, fingerprint] of fingerprintByKey) {
+      const row = contents.get(fingerprint);
+      if (!row) continue;
+      if (!shaped.has(fingerprint)) {
+        const promptCurrent = Number(row.prompt_key_version) === PROMPT_KEY_VERSION;
+        const generationCurrent = Number(row.generation_key_version) === GENERATION_KEY_VERSION;
+        const rating = Number(row.rating);
+        shaped.set(fingerprint, {
+          contentId: fingerprint,
+          tags: tagsForFingerprint.all(fingerprint).map(({ name }) => ({ name, path: pathOf(name) })),
+          rating: Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null,
+          review: REVIEW_STATES.has(row.review_state) ? row.review_state : 'unreviewed',
+          // Unknown until the clip's embedded metadata has been read.
+          hasPrompt: promptCurrent ? isPromptKey(row.prompt_key) : null,
+          promptKey: promptCurrent && isPromptKey(row.prompt_key) ? row.prompt_key : null,
+          generationKey:
+            generationCurrent && isGenerationKey(row.generation_key) ? row.generation_key : null,
+        });
+      }
+      clips.set(key, shaped.get(fingerprint));
+    }
+    return clips;
+  }
+
   /**
    * Present catalog rows with their stored first-frame fingerprint, if any of
    * `version`. Rows of contents without one are returned with `frameHash`
@@ -5711,7 +5898,10 @@ function createMetadataStore(db) {
     const childId = getTagId(childName);
     if (!childId) throw new TagHierarchyError('A tag name is required');
     if (parentName == null || String(parentName).trim() === '') {
-      setTagParentStmt.run(null, childId);
+      if ((tagById.get(childId)?.parentId ?? null) !== null) {
+        setTagParentStmt.run(null, childId);
+        noteTagTreeChange();
+      }
       return;
     }
     const parentId = getTagId(parentName);
@@ -5733,7 +5923,10 @@ function createMetadataStore(db) {
     if (tagDepthAbove(parentId) + 1 + tagSubtreeHeight(childId) >= MAX_TAG_DEPTH) {
       throw new TagHierarchyError(`Tags nest at most ${MAX_TAG_DEPTH} levels deep`);
     }
-    setTagParentStmt.run(parentId, childId);
+    if ((tagById.get(childId)?.parentId ?? null) !== parentId) {
+      setTagParentStmt.run(parentId, childId);
+      noteTagTreeChange();
+    }
   }
 
   function setTagParent(childName, parentName = null) {
@@ -5800,6 +5993,7 @@ function createMetadataStore(db) {
       if (Number(tagChildCount.get(current)?.count || 0) > 0) return;
       reparentTagChildren.run(row.parentId ?? null, current);
       deleteTagById.run(current);
+      noteTagTreeChange();
       current = row.parentId ?? null;
     }
   }
@@ -5815,6 +6009,7 @@ function createMetadataStore(db) {
           if (!id) return;
           addTagLink.run(fingerprint, id, now);
         });
+        noteMetadataChange(fingerprint);
         applied[fingerprint] = mapMetadataRow(fingerprint);
       });
     });
@@ -5832,7 +6027,7 @@ function createMetadataStore(db) {
     const txn = db.transaction(() => {
       fingerprints.forEach((fingerprint) => {
         if (!fingerprint) return;
-        removeTagLink.run(fingerprint, id);
+        if (removeTagLink.run(fingerprint, id).changes > 0) noteMetadataChange(fingerprint);
         removed[fingerprint] = mapMetadataRow(fingerprint);
       });
 
@@ -5924,6 +6119,7 @@ function createMetadataStore(db) {
           Number(isReviewed) - Number(wasReviewed),
           reviewedCountDeltas
         );
+        noteMetadataChange(fingerprint);
         updates[fingerprint] = mapMetadataRow(fingerprint);
       });
       applyReviewedCountDeltas(reviewedCountDeltas, now);
@@ -5956,6 +6152,7 @@ function createMetadataStore(db) {
           Number(isReviewed) - Number(wasReviewed),
           reviewedCountDeltas
         );
+        noteMetadataChange(fingerprint);
         updates[fingerprint] = mapMetadataRow(fingerprint);
       });
       applyReviewedCountDeltas(reviewedCountDeltas, now);
@@ -6014,6 +6211,7 @@ function createMetadataStore(db) {
           Number(isReviewed) - Number(wasReviewed),
           reviewedCountDeltas
         );
+        noteMetadataChange(fingerprint);
         updates[fingerprint] = mapMetadataRow(fingerprint);
       });
       applyReviewedCountDeltas(reviewedCountDeltas, now);
@@ -6092,6 +6290,9 @@ function createMetadataStore(db) {
     getTagSuggestionLabels,
     getTagSuggestionTargets,
     dismissTagSuggestion,
+    getMetadataRevision,
+    listMetadataChangesSince,
+    getLocalApiClips,
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,
