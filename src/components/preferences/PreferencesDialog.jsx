@@ -510,30 +510,52 @@ export function describeCompanionTest(result) {
   };
 }
 
-// A companion app: another program on this computer that says where each
-// clip stands in its own work and accepts clips sent to it
-// (docs/architecture/companion-app.md).
+// Companion apps: other programs on this computer that say where each clip
+// stands in their own work and accept clips sent to them
+// (docs/architecture/companion-app.md). A profile can connect up to four.
+const MAX_COMPANION_APPS = 4;
+
+const comparableCompanions = (list) =>
+  JSON.stringify(
+    (list || []).map(({ id = null, enabled, url }) => ({ id: id || null, enabled: enabled === true, url: url || "" }))
+  );
+
 function CompanionSection({ active }) {
   const api = window.electronAPI?.companion;
   const [saved, setSaved] = useState(null);
-  const [enabled, setEnabled] = useState(false);
-  const [url, setUrl] = useState("");
+  const [rows, setRows] = useState([]);
+  const [tests, setTests] = useState({});
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
+  const nextKeyRef = useRef(0);
 
-  const apply = useCallback((connection) => {
-    setSaved(connection);
-    setEnabled(connection?.enabled === true);
-    setUrl(connection?.url || "");
-  }, []);
+  const toRows = useCallback(
+    (list) =>
+      list.map((entry) => ({
+        key: `row-${(nextKeyRef.current += 1)}`,
+        id: entry.id || null,
+        enabled: entry.enabled === true,
+        url: entry.url || "",
+      })),
+    []
+  );
+  const apply = useCallback(
+    (list) => {
+      const safe = Array.isArray(list) ? list : [];
+      setSaved(safe);
+      setRows(toRows(safe));
+      setTests({});
+    },
+    [toRows]
+  );
 
   useEffect(() => {
-    if (!active || !api) return undefined;
+    if (!active || !api?.getConnections) return undefined;
     let alive = true;
     api
-      .getConnection()
-      .then((connection) => {
-        if (alive) apply(connection);
+      .getConnections()
+      .then((list) => {
+        if (alive) apply(list);
       })
       .catch((error) => {
         if (alive) setStatus({ type: "error", text: ipcErrorMessage(error) });
@@ -543,12 +565,13 @@ function CompanionSection({ active }) {
     };
   }, [active, api, apply]);
 
-  if (!api) {
+  if (!api?.getConnections) {
     return <p className="preferences__intro">Companion apps are not available in this build.</p>;
   }
 
-  const dirty =
-    saved && (enabled !== (saved.enabled === true) || url !== (saved.url || ""));
+  const dirty = saved !== null && comparableCompanions(rows) !== comparableCompanions(saved);
+  const update = (key, patch) =>
+    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
 
   const perform = async (action) => {
     setBusy(true);
@@ -568,11 +591,14 @@ function CompanionSection({ active }) {
       onSubmit={(event) => {
         event.preventDefault();
         void perform(async () => {
-          const next = await api.setConnection({ enabled, url });
+          const next = await api.setConnections(
+            rows.map(({ id, enabled, url }) => ({ ...(id ? { id } : {}), enabled, url }))
+          );
           apply(next);
+          const connected = (next || []).filter((entry) => entry.enabled).length;
           setStatus({
             type: "success",
-            text: next.enabled ? "Saved. Connected." : "Saved. Not connected.",
+            text: connected ? `Saved. ${connected} connected.` : "Saved. None connected.",
           });
         });
       }}
@@ -580,35 +606,70 @@ function CompanionSection({ active }) {
       <p className="preferences__intro">
         A companion app runs on this computer, says where each clip stands in its own work, and
         accepts clips you send it. Video Swarm sends it the paths of the clips you are viewing and
-        keeps nothing it answers. Off by default; only local addresses (localhost, 127.0.0.1,
-        [::1]) are accepted, never the internet.
+        keeps nothing it answers. Up to {MAX_COMPANION_APPS} can be connected; each gets its own
+        chips, filters and actions. Only local addresses (localhost, 127.0.0.1, [::1]) are
+        accepted, never the internet.
       </p>
-      <label className="preferences__choice">
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-        <span>
-          <span className="preferences__choice-label">Connect to a companion app</span>
-        </span>
-      </label>
-      <label className="preferences__field">
-        <span>Address</span>
-        <input
-          type="text"
-          value={url}
-          spellCheck={false}
-          placeholder="http://127.0.0.1:PORT"
-          onChange={(event) => setUrl(event.target.value)}
-        />
-      </label>
+      {rows.length === 0 ? <p className="preferences__hint">No companion apps yet.</p> : null}
+      {rows.map((row, index) => (
+        <fieldset key={row.key} className="preferences__companion">
+          <legend className="preferences__hint">{`Companion app ${index + 1}`}</legend>
+          <label className="preferences__choice">
+            <input
+              type="checkbox"
+              checked={row.enabled}
+              onChange={(event) => update(row.key, { enabled: event.target.checked })}
+            />
+            <span>
+              <span className="preferences__choice-label">Connect to this app</span>
+            </span>
+          </label>
+          <div className="preferences__row">
+            <label className="preferences__field">
+              <span>Address</span>
+              <input
+                type="text"
+                value={row.url}
+                spellCheck={false}
+                placeholder="http://127.0.0.1:PORT"
+                onChange={(event) => update(row.key, { url: event.target.value })}
+              />
+            </label>
+            <button
+              type="button"
+              className="preferences__button"
+              disabled={busy || !row.url.trim()}
+              onClick={() =>
+                perform(async () => {
+                  const result = describeCompanionTest(await api.testConnection(row.url));
+                  setTests((current) => ({ ...current, [row.key]: result }));
+                })
+              }
+            >
+              Test connection
+            </button>
+            <button
+              type="button"
+              className="preferences__button"
+              disabled={busy}
+              onClick={() => setRows((current) => current.filter((entry) => entry.key !== row.key))}
+            >
+              Remove
+            </button>
+          </div>
+          <Status status={tests[row.key] || null} />
+        </fieldset>
+      ))}
       <div className="preferences__actions">
         <button
           type="button"
           className="preferences__button"
-          disabled={busy || !url.trim()}
+          disabled={busy || rows.length >= MAX_COMPANION_APPS}
           onClick={() =>
-            perform(async () => setStatus(describeCompanionTest(await api.testConnection(url))))
+            setRows((current) => [...current, ...toRows([{ enabled: true, url: "" }])])
           }
         >
-          Test connection
+          Add a companion app
         </button>
         <button type="submit" className="preferences__button preferences__button--primary" disabled={busy || !dirty}>
           Save

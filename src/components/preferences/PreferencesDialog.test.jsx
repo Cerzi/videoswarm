@@ -52,8 +52,10 @@ const installApi = () => {
     }),
   };
   const companion = {
-    getConnection: vi.fn().mockResolvedValue({ enabled: false, url: null }),
-    setConnection: vi.fn(async (value) => ({ enabled: value.enabled, url: value.url || null })),
+    getConnections: vi.fn().mockResolvedValue([]),
+    setConnections: vi.fn(async (list) =>
+      list.map((entry, index) => ({ id: entry.id || `c${index + 1}`, enabled: entry.enabled, url: entry.url }))
+    ),
     testConnection: vi.fn().mockResolvedValue({
       ok: true,
       url: "http://127.0.0.1:9000",
@@ -247,9 +249,11 @@ describe("PreferencesDialog", () => {
     expect(await screen.findByText("Saved. Re-rendering is on.")).toBeInTheDocument();
   });
 
-  it("tests and saves a companion app connection, naming what it offers", async () => {
+  it("adds, tests and saves companion apps, naming what each offers", async () => {
     render(<PreferencesDialog open onClose={vi.fn()} initialSection="companion" {...playbackProps()} />);
-    const address = await screen.findByRole("textbox", { name: "Address" });
+    expect(await screen.findByText("No companion apps yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add a companion app" }));
+    const address = screen.getByRole("textbox", { name: "Address" });
     expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
     fireEvent.change(address, { target: { value: "http://127.0.0.1:9000" } });
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
@@ -259,15 +263,39 @@ describe("PreferencesDialog", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Helper answered at http://127.0.0.1:9000, offering Polish, Enlarge. Nothing was sent."
     );
-    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to a companion app/ }));
+
+    // A second app, switched off for now.
+    fireEvent.click(screen.getByRole("button", { name: "Add a companion app" }));
+    const addresses = screen.getAllByRole("textbox", { name: "Address" });
+    fireEvent.change(addresses[1], { target: { value: "http://127.0.0.1:9100" } });
+    fireEvent.click(screen.getAllByRole("checkbox", { name: /Connect to this app/ })[1]);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(api.companion.setConnection).toHaveBeenCalledWith({
-        enabled: true,
-        url: "http://127.0.0.1:9000",
-      })
+      expect(api.companion.setConnections).toHaveBeenCalledWith([
+        { enabled: true, url: "http://127.0.0.1:9000" },
+        { enabled: false, url: "http://127.0.0.1:9100" },
+      ])
     );
-    expect(await screen.findByText("Saved. Connected.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved. 1 connected.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    // Removing one and saving keeps the other's id.
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.companion.setConnections).toHaveBeenLastCalledWith([
+        { id: "c2", enabled: false, url: "http://127.0.0.1:9100" },
+      ])
+    );
+  });
+
+  it("offers at most four companion apps", async () => {
+    api.companion.getConnections.mockResolvedValueOnce(
+      [1, 2, 3, 4].map((n) => ({ id: `c${n}`, enabled: true, url: `http://127.0.0.1:${9000 + n}` }))
+    );
+    render(<PreferencesDialog open onClose={vi.fn()} initialSection="companion" {...playbackProps()} />);
+    expect(await screen.findAllByRole("textbox", { name: "Address" })).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Add a companion app" })).toBeDisabled();
   });
 
   it("shows the main process's reason when a connection is refused", async () => {

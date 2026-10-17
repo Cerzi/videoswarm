@@ -359,3 +359,18 @@
     border-bottom: 1px solid var(--color-border);
   }
 }
+
+/* One companion app in the list. */
+.preferences__companion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.preferences__companion legend {
+  padding: 0 0.3rem;
+}

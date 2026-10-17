@@ -62,7 +62,7 @@ describe("useCompanionSend", () => {
     const onSent = vi.fn();
     const ids = Array.from({ length: 150 }, (_, index) => index + 1);
     const { result } = renderHook(() =>
-      useCompanionSend({ action: "polish", instanceIds: ids, onSent })
+      useCompanionSend({ companionId: "c3", action: "polish", instanceIds: ids, onSent })
     );
     await act(async () => result.current.check(false));
     expect(send.mock.calls.map(([request]) => [request.instanceIds.length, request.dryRun])).toEqual([
@@ -74,7 +74,12 @@ describe("useCompanionSend", () => {
 
     await act(async () => result.current.send());
     const real = send.mock.calls.slice(2).map(([request]) => request);
-    expect(real.every((request) => request.dryRun === false && request.action === "polish")).toBe(true);
+    expect(
+      real.every(
+        (request) =>
+          request.dryRun === false && request.action === "polish" && request.companionId === "c3"
+      )
+    ).toBe(true);
     expect(real.flatMap((request) => request.instanceIds)).toEqual(ids.filter((id) => id % 2));
     expect(result.current.phase).toBe("done");
     expect(onSent).toHaveBeenCalledWith(ids.filter((id) => id % 2));

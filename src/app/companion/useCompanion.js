@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// What a companion app says about the open collection
-// (docs/architecture/companion-app.md). Every clip is looked up once, in
-// chunks, so filters can judge the whole collection; after that only clips
-// still under way are asked again, every few seconds while the window is
-// visible, and everything on focus at most twice a minute. Answers live in
-// this hook only, for the session.
+// What companion apps say about the open collection
+// (docs/architecture/companion-app.md). A profile can connect up to four;
+// each runs its own session here. Every clip is looked up once, in chunks,
+// so filters can judge the whole collection; after that only clips still
+// under way are asked again, every few seconds while the window is visible,
+// and everything on focus at most twice a minute. Answers live in this hook
+// only, for the session.
 
 export const COMPANION_LOOKUP_CHUNK = 500;
 export const COMPANION_POLL_MS = 4000;
@@ -28,14 +29,16 @@ function rowsOf(videos) {
 const isUnderWay = (entry) =>
   Object.values(entry?.actions || {}).some((stage) => stage?.phase === "under-way");
 
+export const MAX_COMPANIONS = 4;
+
 /**
- * Returns `{ status, name, actions, entries, refresh, refreshAll }`, where
- * `status` is "off", "connecting", "online" or "offline", and `entries` maps
- * catalog row -> `{ kind, chip, actions }`.
+ * One companion's session, for `connection` (`{ id, enabled, url }`, or
+ * nothing). Returns `{ id, status, name, actions, entries, refresh,
+ * refreshAll }`, where `status` is "off", "connecting", "online" or
+ * "offline", and `entries` maps catalog row -> `{ kind, chip, actions }`.
  */
-export function useCompanion({ videos, suspended = false }) {
+export function useCompanion({ videos, suspended = false, connection = null }) {
   const api = typeof window !== "undefined" ? window.electronAPI?.companion : null;
-  const [connection, setConnection] = useState(null);
   const [description, setDescription] = useState(null);
   const [status, setStatus] = useState("off");
   const [entries, setEntries] = useState(EMPTY_ENTRIES);
@@ -48,23 +51,8 @@ export function useCompanion({ videos, suspended = false }) {
   const sessionRef = useRef({ epoch: 0, queue: new Set(), asked: new Set(), running: false });
   const lastFullRef = useRef(0);
 
-  useEffect(() => {
-    if (!api?.getConnection) return undefined;
-    let alive = true;
-    api
-      .getConnection()
-      .then((value) => {
-        if (alive) setConnection(value);
-      })
-      .catch(() => {});
-    const unsubscribe = api.onConnectionChanged?.((value) => setConnection(value));
-    return () => {
-      alive = false;
-      unsubscribe?.();
-    };
-  }, [api]);
-
-  const enabled = connection?.enabled === true;
+  const id = connection?.id || null;
+  const enabled = connection?.enabled === true && Boolean(id);
   const url = connection?.url || null;
 
   const merge = useCallback((results, chunk) => {
@@ -92,7 +80,7 @@ export function useCompanion({ videos, suspended = false }) {
         chunk.forEach((id) => session.queue.delete(id));
         let result;
         try {
-          result = await api.lookup(chunk);
+          result = await api.lookup(id, chunk);
         } catch {
           result = null;
         }
@@ -107,7 +95,7 @@ export function useCompanion({ videos, suspended = false }) {
     } finally {
       session.running = false;
     }
-  }, [api, merge]);
+  }, [api, id, merge]);
 
   const enqueue = useCallback(
     (ids) => {
@@ -137,7 +125,7 @@ export function useCompanion({ videos, suspended = false }) {
     }
     setStatus("connecting");
     return undefined;
-  }, [api, enabled, url]);
+  }, [api, enabled, id, url]);
 
   useEffect(() => {
     if (!api?.describe || !enabled || (status !== "connecting" && status !== "offline")) {
@@ -148,7 +136,7 @@ export function useCompanion({ videos, suspended = false }) {
     const connect = async () => {
       let result;
       try {
-        result = await api.describe();
+        result = await api.describe(id);
       } catch {
         result = null;
       }
@@ -167,7 +155,7 @@ export function useCompanion({ videos, suspended = false }) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [api, enabled, status, url]);
+  }, [api, enabled, id, status, url]);
 
   // New clips in the collection are looked up once they settle. Answers for
   // clips long gone from it are let go.
@@ -214,12 +202,51 @@ export function useCompanion({ videos, suspended = false }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [refreshAll, status]);
 
-  return {
-    status,
-    name: description?.name || null,
-    actions: description?.actions || NO_ACTIONS,
-    entries,
-    refresh: enqueue,
-    refreshAll,
-  };
+  const name = description?.name || null;
+  const actions = description?.actions || NO_ACTIONS;
+  return useMemo(
+    () => ({ id, status, name, actions, entries, refresh: enqueue, refreshAll }),
+    [actions, enqueue, entries, id, name, refreshAll, status]
+  );
+}
+
+const NO_CONNECTIONS = Object.freeze([]);
+const NO_COMPANIONS = Object.freeze([]);
+
+/**
+ * Every companion the profile connects, each with its own session (see
+ * `useCompanion`); those switched off are left out. Asks main for the list
+ * again whenever `refreshKey` changes (a profile switch) and when it changes.
+ */
+export function useCompanions({ videos, suspended = false, refreshKey = 0 }) {
+  const api = typeof window !== "undefined" ? window.electronAPI?.companion : null;
+  const [connections, setConnections] = useState(NO_CONNECTIONS);
+
+  useEffect(() => {
+    if (!api?.getConnections) return undefined;
+    let alive = true;
+    api
+      .getConnections()
+      .then((value) => {
+        if (alive) setConnections(Array.isArray(value) ? value : NO_CONNECTIONS);
+      })
+      .catch(() => {});
+    const unsubscribe = api.onConnectionsChanged?.((value) =>
+      setConnections(Array.isArray(value) ? value : NO_CONNECTIONS)
+    );
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, [api, refreshKey]);
+
+  // Hooks run in a fixed order, so the sessions are fixed slots.
+  const first = useCompanion({ videos, suspended, connection: connections[0] || null });
+  const second = useCompanion({ videos, suspended, connection: connections[1] || null });
+  const third = useCompanion({ videos, suspended, connection: connections[2] || null });
+  const fourth = useCompanion({ videos, suspended, connection: connections[3] || null });
+  return useMemo(() => {
+    const active = [first, second, third, fourth].filter((companion) => companion.status !== "off");
+    return active.length ? active : NO_COMPANIONS;
+  }, [first, second, third, fourth]);
 }

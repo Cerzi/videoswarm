@@ -140,15 +140,16 @@ import {
   stackOrderOf,
   unreviewedStackFingerprints,
 } from "./app/stacks/promptStacks";
-import { useCompanion } from "./app/companion/useCompanion";
+import { useCompanions } from "./app/companion/useCompanion";
 import CompanionSendDialog from "./components/CompanionSendDialog";
 import { useViewHistory } from "./app/hooks/useViewHistory";
 import { useStackFrames } from "./app/stacks/useStackFrames";
 import { applyStackFaces } from "./app/stacks/stackFaces";
-import { companionCardProps } from "./app/companion/companionCard";
+import { createCompanionChipCache } from "./app/companion/companionCard";
 import {
   COMPANION_PHASE_LABELS,
   normalizeCompanionFilters,
+  parseCompanionFilterKey,
 } from "./app/companion/companionFilters";
 import {
   DEFAULT_STACK_SIMILARITY,
@@ -283,7 +284,8 @@ function App() {
   const [transferLayout, setTransferLayout] = useState("structured");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState([]);
-  // Clips on their way to a companion app's action: `{ action, videos }`.
+  // Clips on their way to a companion app's action:
+  // `{ companion: { id, name, refresh }, action, videos }`.
   const [companionSend, setCompanionSend] = useState(null);
   const [tagRefreshToken, setTagRefreshToken] = useState(0);
   const [librarySearchScope, setLibrarySearchScope] = useState("folder");
@@ -729,19 +731,40 @@ function App() {
     [videos, generationVersionSummaries]
   );
 
-  // A companion app's view of the collection (docs/architecture/companion-app.md).
-  const companion = useCompanion({ videos, suspended: workSuspended });
-  const companionActive = companion.status !== "off";
-  // Read by the context-menu handler, so new answers do not re-create it.
-  const companionActionsRef = useRef(companion.actions);
-  companionActionsRef.current = companion.status === "online" ? companion.actions : [];
-  const companionPanel = useMemo(
-    () =>
-      companionActive
-        ? { name: companion.name, actions: companion.actions, status: companion.status }
-        : null,
-    [companion.actions, companion.name, companion.status, companionActive]
+  // Companion apps' view of the collection (docs/architecture/companion-app.md):
+  // every app the profile connects, each with its own session. A profile
+  // switch asks for the profile's list again.
+  const companions = useCompanions({
+    videos,
+    suspended: workSuspended,
+    refreshKey: reviewProfileEpoch,
+  });
+  const onlineCompanions = useMemo(
+    () => companions.filter((companion) => companion.status === "online"),
+    [companions]
   );
+  // Every online app's actions, each with its app; read by the context-menu
+  // handler through a ref, so new answers do not re-create it.
+  const companionActions = useMemo(
+    () =>
+      onlineCompanions.flatMap((companion) =>
+        companion.actions.map((action) => ({
+          ...action,
+          companionId: companion.id,
+          companionName: companion.name,
+        }))
+      ),
+    [onlineCompanions]
+  );
+  const companionActionsRef = useRef(companionActions);
+  companionActionsRef.current = companionActions;
+  const companionPanels = useMemo(
+    () =>
+      companions.map(({ id, name, actions, status }) => ({ id, name, actions, status })),
+    [companions]
+  );
+  // One chip per app on a card, the same array while it reads the same.
+  const companionChipsFor = useMemo(() => createCompanionChipCache(), []);
 
   const {
     filters,
@@ -765,7 +788,7 @@ function App() {
     filtersPopoverRef,
     generationVersionIndex,
     tagHierarchy,
-    companionEntries: companionActive ? companion.entries : null,
+    companions,
   });
   // Which tags can be suggested, for Filters › Might be; asked while Filters
   // is open and again after a tag edit.
@@ -3058,12 +3081,18 @@ function App() {
       }
       if (actionId.startsWith("companion:send:")) {
         const action = companionActionsRef.current.find(
-          (entry) => `companion:send:${entry.id}` === actionId
+          (entry) => `companion:send:${entry.companionId}:${entry.id}` === actionId
         );
         const ids =
           selection.size > 1 ? [...selection.selected] : [contextMenu.contextId];
         const targets = ids.map((id) => getById(id)).filter(Boolean);
-        if (action && targets.length) setCompanionSend({ action, videos: targets });
+        if (action && targets.length) {
+          setCompanionSend({
+            companion: { id: action.companionId, name: action.companionName },
+            action,
+            videos: targets,
+          });
+        }
         return;
       }
       if (actionId === "likely-tag:accept" || actionId === "likely-tag:dismiss") {
@@ -5914,7 +5943,7 @@ function App() {
                   : undefined
               }
               onSetTagParent={handleSetTagParent}
-            companion={companionPanel}
+            companions={companionPanels}
             promptSearch={promptSearch}
             likelyTagStatus={likelyTagStatus}
             mightBe={mightBe}
@@ -5944,16 +5973,18 @@ function App() {
             onCancelAcceptedCopy={handleCancelAcceptedCopy}
             acceptedCopyProgress={acceptedCopyProgress}
             trashProgress={trashProgress}
-            companion={companion.status === "online" ? companionPanel : null}
-            onCompanionSent={companion.refresh}
+            companions={onlineCompanions}
           />
           <CompanionSendDialog
             open={Boolean(companionSend)}
+            companionId={companionSend?.companion.id || null}
             action={companionSend?.action || null}
-            companionName={companion.name || undefined}
+            companionName={companionSend?.companion.name || undefined}
             videos={companionSend?.videos || []}
             onClose={() => setCompanionSend(null)}
-            onSent={companion.refresh}
+            onSent={(rows) =>
+              companions.find((companion) => companion.id === companionSend?.companion.id)?.refresh(rows)
+            }
           />
           <SequenceRenumberDialog
             open={sequenceAction?.kind === "renumber"}
@@ -6186,31 +6217,36 @@ function App() {
                 filters.companionHideSent) && (
                 <div className="filters-summary__section">
                   <span className="filters-summary__label">
-                    {companion.name || "Companion app"}
+                    {companions.length === 1 ? companions[0].name || "Companion app" : "Companion apps"}
                   </span>
                   <div className="filters-summary__chips">
                     {Object.entries(normalizeCompanionFilters(filters.companionFilters)).map(
-                      ([actionId, phase]) => (
-                        <button
-                          key={actionId}
-                          type="button"
-                          className="filters-summary__chip filters-summary__chip--review"
-                          onClick={() =>
-                            updateFilters((prev) => {
-                              const next = { ...normalizeCompanionFilters(prev.companionFilters) };
-                              delete next[actionId];
-                              return { ...prev, companionFilters: next };
-                            })
-                          }
-                          title="Clear this filter"
-                        >
-                          {`${
-                            companion.actions.find((action) => action.id === actionId)?.label ||
-                            actionId
-                          }: ${COMPANION_PHASE_LABELS[phase]}`}
-                          <span className="filters-summary__chip-remove">×</span>
-                        </button>
-                      )
+                      ([key, phase]) => {
+                        const { companionId, actionId } = parseCompanionFilterKey(key) || {};
+                        const owner = companions.find((entry) => entry.id === companionId);
+                        const actionLabel =
+                          owner?.actions.find((action) => action.id === actionId)?.label || actionId;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            className="filters-summary__chip filters-summary__chip--review"
+                            onClick={() =>
+                              updateFilters((prev) => {
+                                const next = { ...normalizeCompanionFilters(prev.companionFilters) };
+                                delete next[key];
+                                return { ...prev, companionFilters: next };
+                              })
+                            }
+                            title="Clear this filter"
+                          >
+                            {`${
+                              companions.length > 1 && owner?.name ? `${owner.name} · ` : ""
+                            }${actionLabel}: ${COMPANION_PHASE_LABELS[phase]}`}
+                            <span className="filters-summary__chip-remove">×</span>
+                          </button>
+                        );
+                      }
                     )}
                     {filters.companionHideSent && (
                       <button
@@ -6237,8 +6273,11 @@ function App() {
             stackedClips={stackSelectionUnits ? scopedFilteredVideos.length : null}
             stackCount={stackSelectionUnits ? promptStacks.stacks.size : 0}
             companionNote={
-              companion.status === "offline"
-                ? `${companion.name || "The companion app"} is not answering`
+              companions.some((companion) => companion.status === "offline")
+                ? `${companions
+                    .filter((companion) => companion.status === "offline")
+                    .map((companion) => companion.name || "A companion app")
+                    .join(", ")} not answering`
                 : null
             }
             rendered={virtualItems.length}
@@ -6509,10 +6548,7 @@ function App() {
                                       ?.total || 0
                                   : 0
                               }
-                              {...companionCardProps(
-                                companion.entries.get(video.instanceId),
-                                companion.actions
-                              )}
+                              companionChips={companionChipsFor(companions, video.instanceId)}
                               stackSimilar={
                                 stackSelectionUnits
                                   ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
@@ -6677,7 +6713,7 @@ function App() {
               onPlacementChange={handleContextMenuPlacementChange}
               reviewModeEnabled={reviewModeEnabled}
               canGoToFolder={Boolean(tagCollection)}
-              companionActions={companion.status === "online" ? companion.actions : undefined}
+              companionActions={companionActions.length ? companionActions : undefined}
               mightBeTag={(filters.mightBe || "").trim()}
             />
           )}

@@ -247,13 +247,13 @@ describe("useFilterState companion filters", () => {
     [2, { actions: { polish: stage("under-way"), enlarge: stage("not-sent") } }],
     [3, { actions: { polish: stage("stopped"), enlarge: stage("not-sent") } }],
   ]);
-  const renderFilters = (entries = companionEntries) =>
+  const renderFilters = (companions = [{ id: "c1", entries: companionEntries }]) =>
     renderHook(() =>
       useFilterState({
         videos: clips,
         filtersButtonRef: createRef(),
         filtersPopoverRef: createRef(),
-        companionEntries: entries,
+        companions,
       })
     );
   const ids = (result) => result.current.filteredVideos.map((video) => video.id);
@@ -267,22 +267,35 @@ describe("useFilterState companion filters", () => {
 
   it("filters by an action's phase and combines with other filters", () => {
     const { result } = renderFilters();
-    act(() => result.current.updateFilters({ companionFilters: { polish: "sent" } }));
+    act(() => result.current.updateFilters({ companionFilters: { "c1/polish": "sent" } }));
     expect(ids(result)).toEqual(["polishing", "taken-back", "unknown"]);
     act(() =>
       result.current.updateFilters({
-        companionFilters: { polish: "not-sent", enlarge: "not-sent", bogus: "x" },
+        companionFilters: { "c1/polish": "not-sent", enlarge: "not-sent", bogus: "x" },
       })
     );
+    // A plain action id is the first companion's.
     expect(result.current.filters.companionFilters).toEqual({
-      polish: "not-sent",
-      enlarge: "not-sent",
+      "c1/polish": "not-sent",
+      "c1/enlarge": "not-sent",
     });
     expect(ids(result)).toEqual(["unknown"]);
   });
 
+  it("asks each companion about its own actions", () => {
+    const editor = new Map([[4, { actions: { cut: stage("done") } }]]);
+    const { result } = renderFilters([
+      { id: "c1", entries: companionEntries },
+      { id: "c2", entries: editor },
+    ]);
+    act(() => result.current.updateFilters({ companionFilters: { "c2/cut": "not-sent" } }));
+    expect(ids(result)).toEqual(["fresh", "polishing", "taken-back"]);
+    act(() => result.current.updateFilters({ companionFilters: {}, companionHideSent: true }));
+    expect(ids(result)).toEqual(["fresh"]);
+  });
+
   it("ignores companion filters while there is no companion", () => {
-    const { result } = renderFilters(null);
+    const { result } = renderFilters([]);
     act(() => result.current.updateFilters({ companionHideSent: true }));
     expect(ids(result)).toEqual(["fresh", "polishing", "taken-back", "unknown"]);
   });

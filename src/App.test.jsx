@@ -835,8 +835,8 @@ describe("App hook composition", () => {
     const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, isElectronFile: true };
     useElectronLifecycleMock.mockImplementation(() => ({ ...electronLifecycleReturn, videos: [clip] }));
     const companion = {
-      getConnection: vi.fn().mockResolvedValue({ enabled: true, url: "http://127.0.0.1:9" }),
-      onConnectionChanged: vi.fn(() => () => {}),
+      getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
+      onConnectionsChanged: vi.fn(() => () => {}),
       describe: vi.fn().mockResolvedValue({
         success: true,
         name: "Helper",
@@ -862,18 +862,18 @@ describe("App hook composition", () => {
       vi.resetModules();
       const { default: App } = await import("./App.jsx");
       render(<App />);
-      await waitFor(() => expect(companion.lookup).toHaveBeenCalledWith([7]), { timeout: 3000 });
+      await waitFor(() => expect(companion.lookup).toHaveBeenCalledWith("c1", [7]), { timeout: 3000 });
       await waitFor(() =>
         expect(
           videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === clip.id).at(-1)
         ).toMatchObject({
-          companionChipLabel: "Waiting #2",
-          companionChipTone: "progress",
-          companionChipTitle: "Polish: Second in line",
+          companionChips: [
+            { key: "c1", label: "Waiting #2", tone: "progress", title: "Polish: Second in line" },
+          ],
         })
       );
       const filterArgs = useFilterStateMock.mock.calls.at(-1)[0];
-      expect(filterArgs.companionEntries.get(7).actions.polish.phase).toBe("under-way");
+      expect(filterArgs.companions[0].entries.get(7).actions.polish.phase).toBe("under-way");
     } finally {
       masonryReturn.orderedVideos = previousOrdered;
       masonryReturn.virtualItems = previousItems;
@@ -893,8 +893,8 @@ describe("App hook composition", () => {
     });
     window.electronAPI = {
       companion: {
-        getConnection: vi.fn().mockResolvedValue({ enabled: true, url: "http://127.0.0.1:9" }),
-        onConnectionChanged: vi.fn(() => () => {}),
+        getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
+        onConnectionsChanged: vi.fn(() => () => {}),
         describe: vi.fn().mockResolvedValue({
           success: true,
           name: "Helper",
@@ -912,12 +912,20 @@ describe("App hook composition", () => {
       render(<App />);
       const menu = () => contextMenuSpy.mock.calls.at(-1)[0];
       await waitFor(() =>
-        expect(menu().companionActions?.map((action) => action.id)).toEqual(["polish"])
+        expect(menu().companionActions?.map((action) => [action.companionId, action.id])).toEqual([
+          ["c1", "polish"],
+        ])
       );
-      await act(async () => menu().onAction("companion:send:polish"));
+      await act(async () => menu().onAction("companion:send:c1:polish"));
       expect(await screen.findByRole("dialog", { name: "Send to polish" })).toBeInTheDocument();
       await waitFor(() =>
-        expect(send).toHaveBeenCalledWith({ action: "polish", instanceIds: [7], dryRun: true, again: false })
+        expect(send).toHaveBeenCalledWith({
+          companionId: "c1",
+          action: "polish",
+          instanceIds: [7],
+          dryRun: true,
+          again: false,
+        })
       );
       expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
     } finally {

@@ -16,7 +16,7 @@ const IDLE = Object.freeze({
  * `send()` sends the clips the dry run said it would, `cancel()` stops after
  * the chunk in flight. `onSent(rows)` follows a send, so lookups can refresh.
  */
-export function useCompanionSend({ action, instanceIds, onSent }) {
+export function useCompanionSend({ companionId, action, instanceIds, onSent }) {
   const [state, setState] = useState(IDLE);
   const runRef = useRef(0);
   const cancelRef = useRef(false);
@@ -27,7 +27,7 @@ export function useCompanionSend({ action, instanceIds, onSent }) {
   useEffect(() => {
     runRef.current += 1;
     setState(IDLE);
-  }, [action, idsKey]);
+  }, [action, companionId, idsKey]);
 
   const runChunks = useCallback(
     async (rows, { dryRun, again }, phase) => {
@@ -40,6 +40,7 @@ export function useCompanionSend({ action, instanceIds, onSent }) {
         let answer;
         try {
           answer = await window.electronAPI?.companion?.send({
+            companionId,
             action,
             instanceIds: chunk,
             dryRun,
@@ -65,7 +66,7 @@ export function useCompanionSend({ action, instanceIds, onSent }) {
       }
       return results;
     },
-    [action]
+    [action, companionId]
   );
 
   const check = useCallback(

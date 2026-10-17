@@ -117,6 +117,8 @@ const playWithTimeout = async (element, timeoutMs = RECOVERY_TIMEOUT_MS) => {
   }
 };
 
+const NO_COMPANION_CHIPS = Object.freeze([]);
+
 const VideoCard = memo(function VideoCard({
   video,
   selected,
@@ -146,10 +148,8 @@ const VideoCard = memo(function VideoCard({
   // A few of the stack's other clips as stills ([{ id, src }]), to show how
   // much it varies; one array per stack that changes only with its stills.
   stackStrip = null,
-  // A companion app's chip: its own label, a tone and a tooltip.
-  companionChipLabel = null,
-  companionChipTone = null,
-  companionChipTitle = null,
+  // Companion apps' chips, one per app: `[{ key, label, tone, title }]`.
+  companionChips = NO_COMPANION_CHIPS,
   onOpenStack,
 
   // limits & callbacks (owned by parent/orchestrator)
@@ -1594,15 +1594,18 @@ const VideoCard = memo(function VideoCard({
         </div>
       )}
 
-      {companionChipLabel && (
+      {companionChips.map((chip, index) => (
         <div
-          className={`video-item-companion video-item-companion--${companionChipTone || "info"}`}
-          style={{ top: 8 + 22 * ((hasReviewBadge ? 1 : 0) + (versionCount >= 2 ? 1 : 0)) }}
-          title={companionChipTitle || companionChipLabel}
+          key={chip.key}
+          className={`video-item-companion video-item-companion--${chip.tone || "info"}`}
+          style={{
+            top: 8 + 22 * ((hasReviewBadge ? 1 : 0) + (versionCount >= 2 ? 1 : 0) + index),
+          }}
+          title={chip.title || chip.label}
         >
-          {companionChipLabel}
+          {chip.label}
         </div>
-      )}
+      ))}
 
       {isStack && (
         <button

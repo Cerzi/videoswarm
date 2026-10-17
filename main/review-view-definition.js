@@ -74,12 +74,17 @@ const COMPANION_PHASE_FILTERS = new Set([
 ]);
 const COMPANION_ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 
+// Keys name a companion and one of its actions (`c1/polish`); a plain action
+// id, saved when a profile had one companion, belongs to the first.
+const COMPANION_FILTER_KEY = /^c[1-9]\/[a-z][a-z0-9_-]{0,31}$/;
+
 function normalizeCompanionFilters(value) {
   const result = {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
-  for (const [id, phase] of Object.entries(value)) {
+  for (const [rawKey, phase] of Object.entries(value)) {
     if (Object.keys(result).length >= 8) break;
-    if (COMPANION_ACTION_ID.test(id) && COMPANION_PHASE_FILTERS.has(phase)) result[id] = phase;
+    const key = COMPANION_ACTION_ID.test(rawKey) ? `c1/${rawKey}` : rawKey;
+    if (COMPANION_FILTER_KEY.test(key) && COMPANION_PHASE_FILTERS.has(phase)) result[key] = phase;
   }
   return result;
 }

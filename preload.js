@@ -473,35 +473,42 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // A companion app on this computer (docs/architecture/companion-app.md).
   // Clips are named by catalog row and actions by the companion's own ids;
   // answers come back by row.
+  // Companion apps on this computer: each named by its id (`c1`…), with
+  // catalog rows and action ids in, answers by row out.
   companion: {
-    getConnection: async () => ipcRenderer.invoke("companion:connection:get"),
-    setConnection: async ({ enabled, url } = {}) =>
-      ipcRenderer.invoke("companion:connection:set", {
-        enabled: enabled === true,
-        url: typeof url === "string" ? url : "",
+    getConnections: async () => ipcRenderer.invoke("companion:connections:get"),
+    setConnections: async (connections) =>
+      ipcRenderer.invoke("companion:connections:set", {
+        connections: (Array.isArray(connections) ? connections : []).map((entry) => ({
+          ...(typeof entry?.id === "string" ? { id: entry.id } : {}),
+          enabled: entry?.enabled === true,
+          url: typeof entry?.url === "string" ? entry.url : "",
+        })),
       }),
     testConnection: async (url) =>
-      ipcRenderer.invoke(
-        "companion:connection:test",
-        typeof url === "string" ? { url } : {}
-      ),
-    describe: async () => ipcRenderer.invoke("companion:describe"),
-    lookup: async (instanceIds) =>
+      ipcRenderer.invoke("companion:connection:test", { url: typeof url === "string" ? url : "" }),
+    describe: async (companionId) =>
+      ipcRenderer.invoke("companion:describe", {
+        companionId: typeof companionId === "string" ? companionId : "",
+      }),
+    lookup: async (companionId, instanceIds) =>
       ipcRenderer.invoke("companion:lookup", {
+        companionId: typeof companionId === "string" ? companionId : "",
         instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
       }),
-    send: async ({ action, instanceIds, dryRun = false, again = false } = {}) =>
+    send: async ({ companionId, action, instanceIds, dryRun = false, again = false } = {}) =>
       ipcRenderer.invoke("companion:send", {
+        companionId: typeof companionId === "string" ? companionId : "",
         action: typeof action === "string" ? action : "",
         instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
         dryRun: dryRun === true,
         again: again === true,
       }),
-    onConnectionChanged: (callback) => {
+    onConnectionsChanged: (callback) => {
       const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("companion:connection-changed", handler);
+      ipcRenderer.on("companion:connections-changed", handler);
       return () =>
-        ipcRenderer.removeListener("companion:connection-changed", handler);
+        ipcRenderer.removeListener("companion:connections-changed", handler);
     },
   },
 

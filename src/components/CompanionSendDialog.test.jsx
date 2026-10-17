@@ -21,6 +21,7 @@ describe("CompanionSendDialog", () => {
     render(
       <CompanionSendDialog
         open
+        companionId="c1"
         action={{ id: "polish", label: "Polish", send: "Send to polish" }}
         companionName="Helper"
         videos={[{ instanceId: 1 }, { instanceId: 2 }, { instanceId: 3 }, { name: "web.mp4" }]}
@@ -29,6 +30,7 @@ describe("CompanionSendDialog", () => {
     );
     expect(screen.getByRole("dialog", { name: "Send to polish" })).toBeInTheDocument();
     expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
+    expect(send.mock.calls[0][0]).toMatchObject({ companionId: "c1", action: "polish", dryRun: true });
     expect(screen.getByText(/1 skipped · 1 cannot be sent/)).toBeInTheDocument();
     expect(screen.getByText("Sent before")).toBeInTheDocument();
     expect(screen.getByText("Carries no prompt")).toBeInTheDocument();

@@ -109,7 +109,8 @@ const ContextMenu = ({
   reviewModeEnabled = true,
   // In a library-wide view: offer going to the clip's own folder.
   canGoToFolder = false,
-  // A connected companion app's actions, as it describes them.
+  // Connected companion apps' actions, as they describe them, each with its
+  // app's id and name: `[{ companionId, companionName, id, label, send }]`.
   companionActions = NO_COMPANION_ACTIONS,
   // While Filters › Might be shows a tag's suggestions: tag them or rule
   // them out.
@@ -216,13 +217,18 @@ const ContextMenu = ({
 
     const reviewTarget =
       selectionCount > 1 ? ` (${selectionCount} selected)` : '';
+    // With several apps connected, each action says whose it is.
+    const severalCompanions =
+      new Set(companionActions.map((companionAction) => companionAction.companionId)).size > 1;
     pushSection(
       companionActions.map((companionAction) => ({
-        id: `companion-send-${companionAction.id}`,
+        id: `companion-send-${companionAction.companionId}-${companionAction.id}`,
         label: `↗ ${companionAction.send}…${
-          selectionCount > 1 ? ` (${selectionCount} selected)` : ''
-        }`,
-        action: `companion:send:${companionAction.id}`,
+          severalCompanions && companionAction.companionName
+            ? ` · ${companionAction.companionName}`
+            : ''
+        }${selectionCount > 1 ? ` (${selectionCount} selected)` : ''}`,
+        action: `companion:send:${companionAction.companionId}:${companionAction.id}`,
       }))
     );
 

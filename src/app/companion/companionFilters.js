@@ -1,8 +1,8 @@
-// Filtering by what a companion app says (docs/architecture/companion-app.md).
-// A filter names the companion's actions by id and asks for a phase; the
-// companion's own words never appear here. A clip the companion has not
-// answered for yet passes every companion filter, so nothing is hidden on a
-// guess.
+// Filtering by what companion apps say (docs/architecture/companion-app.md).
+// A filter names a companion by its id and one of its actions by id
+// (`c1/polish`) and asks for a phase; a companion's own words never appear
+// here. A clip a companion has not answered for yet passes every filter on
+// that companion, so nothing is hidden on a guess.
 
 export const COMPANION_PHASE_FILTERS = Object.freeze([
   "not-sent",
@@ -24,15 +24,29 @@ export const COMPANION_PHASE_LABELS = Object.freeze({
 
 const SENT_PHASES = new Set(["under-way", "done", "stopped"]);
 const ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
+const FILTER_KEY = /^(c[1-9])\/([a-z][a-z0-9_-]{0,31})$/u;
 const MAX_ACTION_FILTERS = 8;
 
-/** `{ [actionId]: phaseFilter }`, keeping only well-formed entries. */
+/** A filter's key: the companion's id and the action's. */
+export const companionFilterKey = (companionId, actionId) => `${companionId}/${actionId}`;
+
+/** `{ companionId, actionId }` from a filter key, or null. */
+export function parseCompanionFilterKey(key) {
+  const match = FILTER_KEY.exec(key);
+  return match ? { companionId: match[1], actionId: match[2] } : null;
+}
+
+/**
+ * `{ "c1/polish": phaseFilter }`, keeping only well-formed entries. A plain
+ * action id, saved when a profile had one companion, belongs to the first.
+ */
 export function normalizeCompanionFilters(value) {
   const result = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return result;
-  for (const [id, phase] of Object.entries(value)) {
+  for (const [rawKey, phase] of Object.entries(value)) {
     if (Object.keys(result).length >= MAX_ACTION_FILTERS) break;
-    if (ACTION_ID.test(id) && COMPANION_PHASE_FILTERS.includes(phase)) result[id] = phase;
+    const key = ACTION_ID.test(rawKey) ? companionFilterKey("c1", rawKey) : rawKey;
+    if (FILTER_KEY.test(key) && COMPANION_PHASE_FILTERS.includes(phase)) result[key] = phase;
   }
   return result;
 }
@@ -40,16 +54,21 @@ export function normalizeCompanionFilters(value) {
 export const isCompanionSent = (stage) => SENT_PHASES.has(stage?.phase);
 
 /**
- * Whether a clip's companion entry (`{ actions: { [id]: { phase } } }`, or
- * nothing yet) passes the per-action filters and, with `hideSent`, was never
- * sent for any action.
+ * Whether a clip passes the per-action filters and, with `hideSent`, was
+ * never sent for any action of any companion. `entryFor(companionId)` is what
+ * that companion said about the clip (`{ actions: { [id]: { phase } } }`), or
+ * nothing yet; `companionIds` are the companions to judge it by.
  */
-export function matchesCompanionFilters(entry, companionFilters, hideSent = false) {
-  if (!entry) return true;
-  const stages = entry.actions || {};
-  if (hideSent && Object.values(stages).some(isCompanionSent)) return false;
-  for (const [id, wanted] of Object.entries(companionFilters || {})) {
-    const stage = stages[id];
+export function matchesCompanionFilters(entryFor, companionIds, companionFilters, hideSent = false) {
+  if (hideSent) {
+    for (const id of companionIds) {
+      const stages = entryFor(id)?.actions;
+      if (stages && Object.values(stages).some(isCompanionSent)) return false;
+    }
+  }
+  for (const [key, wanted] of Object.entries(companionFilters || {})) {
+    const parsed = parseCompanionFilterKey(key);
+    const stage = parsed && entryFor(parsed.companionId)?.actions?.[parsed.actionId];
     if (!stage) continue;
     if (wanted === "sent" ? !isCompanionSent(stage) : stage.phase !== wanted) return false;
   }

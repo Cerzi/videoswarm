@@ -71,20 +71,19 @@ describe("companion main-process integration", () => {
     return source.slice(from, to);
   };
 
-  it("changes the connection only through its validated IPC", () => {
-    const set = section('ipcMain.handle("companion:connection:set"', 'ipcMain.handle("companion:connection:test"');
-    expect(set).toContain("validateCompanionConnection(");
-    expect(set).toContain("saveSettingsPartial({ companionConnection: value }");
+  it("changes the connections only through their validated IPC", () => {
+    const set = section('ipcMain.handle("companion:connections:set"', 'ipcMain.handle("companion:connection:test"');
+    expect(set).toContain("validateCompanionConnections(");
+    expect(set).toContain("saveSettingsPartial({ companionConnections: value }");
     const guard = section("function withoutComfyConnection", 'ipcMain.handle("save-settings"');
-    expect(guard).toContain("companionConnection: _ignoredCompanion");
-    expect(source).toContain(
-      "companionConnection: normalizeCompanionConnection(source.companionConnection)"
-    );
+    expect(guard).toContain("companionConnections: _ignoredCompanions");
+    expect(source).toContain("companionConnections: normalizeCompanionConnections(");
   });
 
   it("looks up by catalog row and authorizes every path it sends", () => {
     const lookup = section('ipcMain.handle("companion:lookup"', 'ipcMain.handle("companion:send"');
     expect(lookup).toContain("maxEntries: COMPANION_LIMITS.maxLookupPaths");
+    expect(lookup).toContain("companionServiceFor(payload.companionId)");
     expect(lookup).not.toContain("payload.paths");
     const send = section('ipcMain.handle("companion:send"', "// ===== ComfyUI re-render queue IPC");
     expect(send).toContain("maxEntries: COMPANION_LIMITS.maxSendPaths");

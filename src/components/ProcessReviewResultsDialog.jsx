@@ -52,10 +52,10 @@ export default function ProcessReviewResultsDialog({
   onCancelAcceptedCopy,
   acceptedCopyProgress = null,
   trashProgress = null,
-  // A connected companion app (`{ name, actions }`): Accepted clips can be
-  // handed to its actions by reference instead of copied or moved.
-  companion = null,
-  onCompanionSent,
+  // Connected companion apps (`[{ id, name, actions, refresh }]`): Accepted
+  // clips can be handed to their actions by reference instead of copied or
+  // moved.
+  companions = [],
 }) {
   const backdropRef = useRef(null);
   const dialogRef = useRef(null);
@@ -330,19 +330,22 @@ export default function ProcessReviewResultsDialog({
           )}
 
           <div className="review-results-dialog__actions">
-            {companion && processingReady
-              ? (companion.actions || []).map((action) => (
-                  <CompanionSendPanel
-                    key={action.id}
-                    action={action}
-                    companionName={companion.name || undefined}
-                    instanceIds={acceptedRows.instanceIds}
-                    excludedCount={acceptedRows.excludedCount}
-                    itemLabel={acceptedRows.instanceIds.length === 1 ? "accepted clip" : "accepted clips"}
-                    onBusyChange={setCompanionActionBusy(action.id)}
-                    onSent={onCompanionSent}
-                  />
-                ))
+            {processingReady
+              ? (companions || []).flatMap((companion) =>
+                  (companion.actions || []).map((action) => (
+                    <CompanionSendPanel
+                      key={`${companion.id}/${action.id}`}
+                      companionId={companion.id}
+                      action={action}
+                      companionName={companion.name || undefined}
+                      instanceIds={acceptedRows.instanceIds}
+                      excludedCount={acceptedRows.excludedCount}
+                      itemLabel={acceptedRows.instanceIds.length === 1 ? "accepted clip" : "accepted clips"}
+                      onBusyChange={setCompanionActionBusy(`${companion.id}/${action.id}`)}
+                      onSent={companion.refresh}
+                    />
+                  ))
+                )
               : null}
             <article className="review-results-action review-results-action--danger">
               <div>

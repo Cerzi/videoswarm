@@ -363,7 +363,12 @@ matches under the tag input, including in fullscreen. Check by hand:
   it is one column. Nothing should need scrolling to on a normal window.
 - With no folder open, Filters lists the tags, and *Entire library* with no
   filter shows the whole library (up to 50,000 clips, newest kept past that).
-- Prompt search: `"pan"` in quotes finds *pan* and not *panda*.
+- Prompt search: `"pan"` in quotes finds *pan* and not *panda*;
+  `"golden hour"` finds the phrase, in order.
+- Several companion apps per profile (`architecture/companion-app.md`): add
+  two in Preferences › Companion app; each card shows a chip from each, the
+  context menu names the app beside its actions, Filters has a row per app,
+  and a profile that had one companion keeps it as the first.
 
 Decided 2026-10-17: **proxies are on by default**, to try. For portrait
 WAN/A1 clips they cut decoded pixels by about 1.8-3x. They are CRF 30

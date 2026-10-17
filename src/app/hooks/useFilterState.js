@@ -77,9 +77,9 @@ export function useFilterState({
   generationVersionIndex = null,
   // Filtering by a tag also matches the tags under it.
   tagHierarchy = EMPTY_TAG_HIERARCHY,
-  // What a companion app says about each clip, by catalog row
-  // (src/app/companion/useCompanion.js).
-  companionEntries = null,
+  // Connected companion apps' sessions, each with what it says about each
+  // clip by catalog row (src/app/companion/useCompanion.js).
+  companions = null,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   // Words in the prompt: main answers which of the collection's prompt keys
@@ -117,9 +117,12 @@ export function useFilterState({
     const versionFilter = normalizeVersionFilter(filters.versionFilter);
     const companionFilters = normalizeCompanionFilters(filters.companionFilters);
     const companionHideSent = filters.companionHideSent === true;
+    const companionList = Array.isArray(companions) ? companions : [];
     const companionActive =
-      Boolean(companionEntries) &&
+      companionList.length > 0 &&
       (companionHideSent || Object.keys(companionFilters).length > 0);
+    const companionIds = companionList.map((companion) => companion.id);
+    const companionById = new Map(companionList.map((companion) => [companion.id, companion]));
     const promptActive =
       normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
     // Until the first answer arrives nothing is known to match, so nothing
@@ -219,7 +222,8 @@ export function useFilterState({
       if (
         companionActive &&
         !matchesCompanionFilters(
-          companionEntries.get(video.instanceId),
+          (id) => companionById.get(id)?.entries?.get(video.instanceId),
+          companionIds,
           companionFilters,
           companionHideSent
         )
@@ -246,7 +250,7 @@ export function useFilterState({
     filters,
     generationVersionIndex,
     tagHierarchy,
-    companionEntries,
+    companions,
     promptMatches,
     mightBeMatches,
     turnedDownVersion,

@@ -42,6 +42,7 @@ function Progress({ label, done, total }) {
  * then the send. Every word about the action comes from the companion.
  */
 export default function CompanionSendPanel({
+  companionId,
   action,
   companionName = "The companion app",
   instanceIds = [],
@@ -51,7 +52,7 @@ export default function CompanionSendPanel({
   onBusyChange,
   onSent,
 }) {
-  const sender = useCompanionSend({ action: action.id, instanceIds, onSent });
+  const sender = useCompanionSend({ companionId, action: action.id, instanceIds, onSent });
   const { phase, busy, check } = sender;
   const count = instanceIds.length;
 

@@ -12,6 +12,7 @@ import {
 import "./FiltersPopover.css";
 import {
   COMPANION_PHASE_LABELS,
+  companionFilterKey,
   normalizeCompanionFilters,
 } from "../app/companion/companionFilters";
 
@@ -199,8 +200,8 @@ const FiltersPopover = forwardRef(
       versionPendingCount = 0,
       onFindVersionsInLibrary,
       onSetTagParent,
-      // A connected companion app: `{ name, actions, status }`, or null.
-      companion = null,
+      // Connected companion apps: `[{ id, name, actions, status }]`.
+      companions = [],
       // Prompt search status: `{ pending, unread }` (usePromptSearch).
       promptSearch = null,
       // Which tags can be suggested, `{ tags, pending }`, and the "Might be"
@@ -777,8 +778,9 @@ const FiltersPopover = forwardRef(
             </div>
           </FilterRow>
 
-          {companion ? (
+          {(companions || []).map((companion, index) => (
             <FilterRow
+              key={companion.id}
               label={companion.name || "Companion app"}
               hint="Clips it has not answered for yet are always shown."
               status={
@@ -789,18 +791,26 @@ const FiltersPopover = forwardRef(
                     : null
               }
             >
-              <label className="filters-checkbox">
-                <input
-                  type="checkbox"
-                  checked={filters?.companionHideSent === true}
-                  onChange={(event) =>
-                    onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
-                  }
-                />
-                <span>Hide clips already sent</span>
-              </label>
+              {/* One switch for every app: sent anywhere is sent. */}
+              {index === 0 ? (
+                <label className="filters-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={filters?.companionHideSent === true}
+                    onChange={(event) =>
+                      onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    {companions.length > 1
+                      ? "Hide clips already sent to any of these apps"
+                      : "Hide clips already sent"}
+                  </span>
+                </label>
+              ) : null}
               {(companion.actions || []).map((action) => {
-                const current = companionFilters[action.id] || "any";
+                const key = companionFilterKey(companion.id, action.id);
+                const current = companionFilters[key] || "any";
                 return (
                   <div key={action.id} className="filters-subrow">
                     <span className="filters-subrow__label" title={action.hint || undefined}>
@@ -809,8 +819,8 @@ const FiltersPopover = forwardRef(
                     {pillGroup(action.label, COMPANION_FILTER_OPTIONS, current, (value) =>
                       onChange((prev) => {
                         const next = { ...normalizeCompanionFilters(prev.companionFilters) };
-                        if (value === "any") delete next[action.id];
-                        else next[action.id] = value;
+                        if (value === "any") delete next[key];
+                        else next[key] = value;
                         return { ...prev, companionFilters: next };
                       })
                     )}
@@ -818,7 +828,7 @@ const FiltersPopover = forwardRef(
                 );
               })}
             </FilterRow>
-          ) : null}
+          ))}
         </div>
         </div>
       </div>

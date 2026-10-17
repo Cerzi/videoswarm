@@ -18,6 +18,7 @@ const FOCUSABLE_SELECTOR = [
  */
 export default function CompanionSendDialog({
   open,
+  companionId = null,
   action = null,
   companionName = "The companion app",
   videos = [],
@@ -105,6 +106,7 @@ export default function CompanionSendDialog({
         <div className="review-results-dialog__body">
           <div className="review-results-dialog__actions">
             <CompanionSendPanel
+              companionId={companionId}
               action={action}
               companionName={companionName}
               instanceIds={instanceIds}

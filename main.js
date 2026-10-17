@@ -82,10 +82,10 @@ const {
   resolveProxyPlaybackEnabled,
 } = require("./main/proxy-playback-settings");
 const {
-  DEFAULT_COMPANION_CONNECTION,
-  normalizeCompanionConnection,
+  isCompanionId,
+  normalizeCompanionConnections,
   parseCompanionUrl,
-  validateCompanionConnection,
+  validateCompanionConnections,
 } = require("./main/companion-connection");
 const { createCompanionService } = require("./main/companion-service");
 const { COMPANION_LIMITS } = require("./main/companion-client");
@@ -358,9 +358,9 @@ const defaultSettings = {
   randomSeed: null,
   // Re-rendering through a ComfyUI on this computer: off until switched on.
   comfyConnection: { ...DEFAULT_COMFY_CONNECTION },
-  // A companion app on this computer (docs/architecture/companion-app.md):
-  // off until switched on.
-  companionConnection: { ...DEFAULT_COMPANION_CONNECTION },
+  // Companion apps on this computer (docs/architecture/companion-app.md):
+  // none until added.
+  companionConnections: [],
   windowBounds: {
     width: 1400,
     height: 900,
@@ -1870,7 +1870,10 @@ function normaliseLoadedSettings(rawSettings) {
         : Boolean(source.groupByFolders),
     randomSeed,
     comfyConnection: normalizeComfyConnection(source.comfyConnection),
-    companionConnection: normalizeCompanionConnection(source.companionConnection),
+    companionConnections: normalizeCompanionConnections(
+      source.companionConnections,
+      source.companionConnection
+    ),
     windowBounds: {
       width: clampInteger(bounds.width, defaultSettings.windowBounds.width, 800, 10_000),
       height: clampInteger(bounds.height, defaultSettings.windowBounds.height, 600, 10_000),
@@ -3427,6 +3430,7 @@ function withoutComfyConnection(settings) {
   const {
     comfyConnection: _ignored,
     companionConnection: _ignoredCompanion,
+    companionConnections: _ignoredCompanions,
     ...rest
   } = settings;
   return rest;
@@ -3440,7 +3444,7 @@ ipcMain.handle("save-settings", async (_event, settings) => {
     {
       ...withoutComfyConnection(settings),
       comfyConnection: normalizeComfyConnection(currentSettings?.comfyConnection),
-      companionConnection: normalizeCompanionConnection(currentSettings?.companionConnection),
+      companionConnections: normalizeCompanionConnections(currentSettings?.companionConnections),
       metadataInspectorRevision: currentSettings?.metadataInspectorRevision,
       proxyPlaybackRevision: currentSettings?.proxyPlaybackRevision,
     },
@@ -5952,12 +5956,27 @@ ipcMain.handle("tag-suggestions:dismiss", async (_event, payload = {}) => {
 });
 
 // ===== Companion app IPC =====
-// docs/architecture/companion-app.md. The renderer names catalog rows and
-// action ids; main turns rows into paths, talks to the loopback companion and
-// answers by row. Nothing the companion says is stored.
-const companionService = createCompanionService({
-  getConnection: () => currentSettings?.companionConnection,
-});
+// docs/architecture/companion-app.md. The renderer names a companion by id,
+// catalog rows and action ids; main turns rows into paths, talks to that
+// loopback companion and answers by row. Nothing a companion says is stored.
+const companionConnections = () =>
+  normalizeCompanionConnections(currentSettings?.companionConnections);
+// One service per companion id, each remembering its own description.
+const companionServices = new Map();
+function companionServiceFor(companionId) {
+  if (!isCompanionId(companionId)) {
+    throw Object.assign(new Error("Unknown companion app"), { code: "COMPANION_UNKNOWN" });
+  }
+  let service = companionServices.get(companionId);
+  if (!service) {
+    service = createCompanionService({
+      getConnection: () =>
+        companionConnections().find((connection) => connection.id === companionId) || null,
+    });
+    companionServices.set(companionId, service);
+  }
+  return service;
+}
 
 const companionFailure = (error) => ({
   success: false,
@@ -5965,44 +5984,51 @@ const companionFailure = (error) => ({
   error: error?.message || String(error),
 });
 
-ipcMain.handle("companion:connection:get", async () =>
-  normalizeCompanionConnection(currentSettings?.companionConnection)
-);
+ipcMain.handle("companion:connections:get", async () => companionConnections());
 
-ipcMain.handle("companion:connection:set", async (_event, payload = {}) => {
-  assertPlainObject(payload, "companion connection");
-  assertPayloadSize(payload, 4 * 1024);
+ipcMain.handle("companion:connections:set", async (_event, payload = {}) => {
+  assertPlainObject(payload, "companion connections");
+  assertPayloadSize(payload, 8 * 1024);
   const context = captureSettingsContext();
-  const value = validateCompanionConnection({
-    enabled: payload.enabled === true,
-    url: payload.url,
-  });
-  await saveSettingsPartial({ companionConnection: value }, context.profileId);
+  const value = validateCompanionConnections(
+    Array.isArray(payload.connections)
+      ? payload.connections.map((entry) => ({
+          id: entry?.id,
+          enabled: entry?.enabled === true,
+          url: entry?.url,
+        }))
+      : payload.connections
+  );
+  await saveSettingsPartial({ companionConnections: value }, context.profileId);
   assertSettingsContextActive(context);
-  companionService.forget();
+  companionServices.clear();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("companion:connection-changed", value);
+    mainWindow.webContents.send("companion:connections-changed", value);
   }
   return value;
 });
 
-// Read-only: asks the address to describe itself. Nothing is sent.
+// Read-only: asks an address to describe itself. Nothing is sent.
 ipcMain.handle("companion:connection:test", async (_event, payload = {}) => {
   assertPlainObject(payload, "companion connection test");
   try {
-    const url = parseCompanionUrl(
-      payload.url ?? normalizeCompanionConnection(currentSettings?.companionConnection).url
-    );
-    const description = await companionService.test(url);
+    const url = parseCompanionUrl(payload.url);
+    const description = await createCompanionService({
+      getConnection: () => ({ enabled: true, url }),
+    }).test(url);
     return { ok: true, url, ...description };
   } catch (error) {
     return { ok: false, code: error?.code || "COMPANION_UNAVAILABLE", message: error?.message };
   }
 });
 
-ipcMain.handle("companion:describe", async () => {
+ipcMain.handle("companion:describe", async (_event, payload = {}) => {
   try {
-    return { success: true, ...(await companionService.describe({ fresh: true })) };
+    assertPlainObject(payload, "companion description");
+    return {
+      success: true,
+      ...(await companionServiceFor(payload.companionId).describe({ fresh: true })),
+    };
   } catch (error) {
     return companionFailure(error);
   }
@@ -6043,7 +6069,7 @@ ipcMain.handle("companion:lookup", async (_event, payload = {}) => {
       context.metadataStore,
       instanceIds
     );
-    const found = await companionService.lookup(paths);
+    const found = await companionServiceFor(payload.companionId).lookup(paths);
     assertMetadataContextActive(context);
     return { success: true, generation: context.generation, results: byInstance(found, idsByPath) };
   } catch (error) {
@@ -6071,7 +6097,7 @@ ipcMain.handle("companion:send", async (event, payload = {}) => {
       await assertRendererPath(event, filePath, "file");
     }
     assertMetadataContextActive(context);
-    const outcome = await companionService.send({
+    const outcome = await companionServiceFor(payload.companionId).send({
       action,
       paths,
       dryRun: payload.dryRun === true,

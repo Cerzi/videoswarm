@@ -652,6 +652,7 @@ describe("ProcessReviewResultsDialog", () => {
 
 describe("ProcessReviewResultsDialog companion app", () => {
   const companion = {
+    id: "c2",
     name: "Helper",
     actions: [{ id: "polish", label: "Polish", send: "Send to polish", hint: "Makes a better copy" }],
   };
@@ -676,14 +677,20 @@ describe("ProcessReviewResultsDialog companion app", () => {
     });
     window.electronAPI = { companion: { send } };
     const onCompanionSent = vi.fn();
-    const props = dialogProps({ companion, onCompanionSent });
+    const props = dialogProps({ companions: [{ ...companion, refresh: onCompanionSent }] });
     render(<ProcessReviewResultsDialog {...props} />);
 
     expect(screen.getByRole("heading", { name: "Send to polish" })).toBeInTheDocument();
     expect(screen.getByText("Makes a better copy")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check 1" }));
     await waitFor(() =>
-      expect(send).toHaveBeenCalledWith({ action: "polish", instanceIds: [1], dryRun: true, again: false })
+      expect(send).toHaveBeenCalledWith({
+        companionId: "c2",
+        action: "polish",
+        instanceIds: [1],
+        dryRun: true,
+        again: false,
+      })
     );
     expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
     expect(screen.getByText(/≈ 10 min/)).toBeInTheDocument();

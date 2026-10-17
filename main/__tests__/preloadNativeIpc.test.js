@@ -220,32 +220,48 @@ describe("preload native-work bridge", () => {
     );
   });
 
-  it("talks to the companion app by catalog row and action id only", async () => {
+  it("talks to companion apps by id, catalog row and action id only", async () => {
     const { api, ipcRenderer } = loadPreload();
-    await api.companion.getConnection();
-    await api.companion.setConnection({ enabled: "yes", url: "http://127.0.0.1:9", extra: 1 });
+    await api.companion.getConnections();
+    await api.companion.setConnections([
+      { id: "c1", enabled: "yes", url: "http://127.0.0.1:9", extra: 1 },
+      { enabled: true, url: "http://localhost:8" },
+    ]);
+    await api.companion.setConnections("bad");
     await api.companion.testConnection();
     await api.companion.testConnection("http://localhost:9");
-    await api.companion.describe();
-    await api.companion.lookup([1, 2]);
-    await api.companion.lookup("bad");
-    await api.companion.send({ action: "polish", instanceIds: [3], dryRun: true, paths: ["/x"] });
+    await api.companion.describe("c2");
+    await api.companion.lookup("c1", [1, 2]);
+    await api.companion.lookup(null, "bad");
+    await api.companion.send({ companionId: "c2", action: "polish", instanceIds: [3], dryRun: true, paths: ["/x"] });
     expect(ipcRenderer.invoke.mock.calls).toEqual([
-      ["companion:connection:get"],
-      ["companion:connection:set", { enabled: false, url: "http://127.0.0.1:9" }],
-      ["companion:connection:test", {}],
+      ["companion:connections:get"],
+      [
+        "companion:connections:set",
+        {
+          connections: [
+            { id: "c1", enabled: false, url: "http://127.0.0.1:9" },
+            { enabled: true, url: "http://localhost:8" },
+          ],
+        },
+      ],
+      ["companion:connections:set", { connections: [] }],
+      ["companion:connection:test", { url: "" }],
       ["companion:connection:test", { url: "http://localhost:9" }],
-      ["companion:describe"],
-      ["companion:lookup", { instanceIds: [1, 2] }],
-      ["companion:lookup", { instanceIds: [] }],
-      ["companion:send", { action: "polish", instanceIds: [3], dryRun: true, again: false }],
+      ["companion:describe", { companionId: "c2" }],
+      ["companion:lookup", { companionId: "c1", instanceIds: [1, 2] }],
+      ["companion:lookup", { companionId: "", instanceIds: [] }],
+      [
+        "companion:send",
+        { companionId: "c2", action: "polish", instanceIds: [3], dryRun: true, again: false },
+      ],
     ]);
     const callback = vi.fn();
-    const unsubscribe = api.companion.onConnectionChanged(callback);
+    const unsubscribe = api.companion.onConnectionsChanged(callback);
     const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
-    expect(channel).toBe("companion:connection-changed");
-    handler({}, { enabled: true });
-    expect(callback).toHaveBeenCalledWith({ enabled: true });
+    expect(channel).toBe("companion:connections-changed");
+    handler({}, [{ id: "c1", enabled: true }]);
+    expect(callback).toHaveBeenCalledWith([{ id: "c1", enabled: true }]);
     unsubscribe();
   });
 

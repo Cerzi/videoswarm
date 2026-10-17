@@ -1,16 +1,20 @@
 const dns = require("dns");
 const net = require("net");
 
-// The companion app connection, per profile (docs/architecture/companion-app.md).
-// Off by default. A companion is another program on this machine that
+// Companion app connections, per profile (docs/architecture/companion-app.md).
+// None by default. A companion is another program on this machine that
 // describes clips and accepts them for work; Video Swarm only shows what it
-// says. Only a loopback address is accepted, and the host name is checked
+// says. A profile can connect up to four, each with a short id (`c1`…`c4`)
+// that filters and saved views name it by, so changing its address keeps
+// them. Only loopback addresses are accepted, and the host name is checked
 // again when it resolves, so Video Swarm never reaches beyond this machine.
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const MAX_URL_LENGTH = 256;
 
 const DEFAULT_COMPANION_CONNECTION = Object.freeze({ enabled: false, url: null });
+const MAX_COMPANIONS = 4;
+const COMPANION_ID = /^c[1-9]$/u;
 
 class CompanionConnectionError extends Error {
   constructor(code, message) {
@@ -116,9 +120,100 @@ function validateCompanionConnection(input) {
   return { enabled, url };
 }
 
+const isPlainObject = (value) =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+function nextCompanionId(taken) {
+  for (let number = 1; number <= 9; number += 1) {
+    if (!taken.has(`c${number}`)) return `c${number}`;
+  }
+  return null;
+}
+
+/**
+ * The stored list, made safe: at most four, unique ids and addresses, and an
+ * entry without a usable address dropped. A profile saved before the list
+ * existed has its single connection as the first entry, `c1`.
+ */
+function normalizeCompanionConnections(raw, legacy = null) {
+  const source = Array.isArray(raw)
+    ? raw
+    : isPlainObject(legacy)
+      ? [{ ...legacy, id: "c1" }]
+      : [];
+  const result = [];
+  const ids = new Set();
+  const urls = new Set();
+  for (const entry of source) {
+    if (result.length >= MAX_COMPANIONS) break;
+    if (!isPlainObject(entry)) continue;
+    const { url } = normalizeCompanionConnection({ ...entry, enabled: true });
+    if (!url || urls.has(url)) continue;
+    const id =
+      COMPANION_ID.test(entry.id) && !ids.has(entry.id) ? entry.id : nextCompanionId(ids);
+    if (!id) continue;
+    ids.add(id);
+    urls.add(url);
+    result.push({ id, enabled: entry.enabled === true, url });
+  }
+  return result;
+}
+
+/**
+ * The list as the user changed it. Every entry needs an address; one listed
+ * twice, or more than four, is refused. A new entry gets the first free id.
+ */
+function validateCompanionConnections(input) {
+  if (!Array.isArray(input)) {
+    throw new CompanionConnectionError("COMPANION_SETTING_INVALID", "Expected a list of companion apps");
+  }
+  if (input.length > MAX_COMPANIONS) {
+    throw new CompanionConnectionError(
+      "COMPANION_SETTING_INVALID",
+      `Up to ${MAX_COMPANIONS} companion apps can be connected`
+    );
+  }
+  const declared = input
+    .filter((entry) => isPlainObject(entry) && COMPANION_ID.test(entry.id))
+    .map((entry) => entry.id);
+  const ids = new Set(declared);
+  if (ids.size !== declared.length) {
+    throw new CompanionConnectionError("COMPANION_SETTING_INVALID", "Two companion apps share an id");
+  }
+  const urls = new Set();
+  return input.map((entry) => {
+    const { enabled, url } = validateCompanionConnection(entry);
+    if (!url) {
+      throw new CompanionConnectionError(
+        "COMPANION_URL_INVALID",
+        "Enter each companion app's address"
+      );
+    }
+    if (urls.has(url)) {
+      throw new CompanionConnectionError(
+        "COMPANION_SETTING_INVALID",
+        `${url} is listed twice`
+      );
+    }
+    urls.add(url);
+    let id = COMPANION_ID.test(entry.id) ? entry.id : null;
+    if (!id) {
+      id = nextCompanionId(ids);
+      ids.add(id);
+    }
+    return { id, enabled, url };
+  });
+}
+
+const isCompanionId = (value) => typeof value === "string" && COMPANION_ID.test(value);
+
 module.exports = {
   CompanionConnectionError,
   DEFAULT_COMPANION_CONNECTION,
+  MAX_COMPANIONS,
+  isCompanionId,
+  normalizeCompanionConnections,
+  validateCompanionConnections,
   isLoopbackAddress,
   loopbackLookup,
   normalizeCompanionConnection,

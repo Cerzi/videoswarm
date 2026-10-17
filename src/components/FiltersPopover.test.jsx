@@ -325,6 +325,7 @@ describe("FiltersPopover prompt search", () => {
 
 describe("FiltersPopover companion app", () => {
   const companion = {
+    id: "c1",
     name: "Helper",
     status: "online",
     actions: [
@@ -349,15 +350,16 @@ describe("FiltersPopover companion app", () => {
         onChange={onChange}
         onReset={vi.fn()}
         onClose={vi.fn()}
-        companion={companion}
+        companions={[companion]}
       />
     );
     expect(screen.getByText("Helper")).toBeInTheDocument();
     const polish = within(screen.getByRole("group", { name: "Polish" }));
     fireEvent.click(polish.getByRole("button", { name: "Not sent" }));
+    // A plain action id saved with one companion is the first one's.
     expect(current).toEqual({
       reviewFilter: "pick",
-      companionFilters: { enlarge: "done", polish: "not-sent" },
+      companionFilters: { "c1/enlarge": "done", "c1/polish": "not-sent" },
     });
 
     rerender(
@@ -366,13 +368,13 @@ describe("FiltersPopover companion app", () => {
         onChange={onChange}
         onReset={vi.fn()}
         onClose={vi.fn()}
-        companion={companion}
+        companions={[companion]}
       />
     );
     const enlarge = within(screen.getByRole("group", { name: "Enlarge" }));
     expect(enlarge.getByRole("button", { name: "Done" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(enlarge.getByRole("button", { name: "Any" }));
-    expect(current.companionFilters).toEqual({ polish: "not-sent" });
+    expect(current.companionFilters).toEqual({ "c1/polish": "not-sent" });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Hide clips already sent" }));
     expect(current.companionHideSent).toBe(true);
@@ -385,10 +387,34 @@ describe("FiltersPopover companion app", () => {
         onChange={vi.fn()}
         onReset={vi.fn()}
         onClose={vi.fn()}
-        companion={{ ...companion, status: "offline" }}
+        companions={[{ ...companion, status: "offline" }]}
       />
     );
     expect(screen.getByText("Not answering; showing its last answers.")).toBeInTheDocument();
+  });
+
+  it("gives each app its own row, filtered by its own actions", () => {
+    let current = {};
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    render(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        companions={[
+          companion,
+          { id: "c3", name: "Editor", status: "online", actions: [{ id: "polish", label: "Use" }] },
+        ]}
+      />
+    );
+    const editor = within(screen.getByRole("region", { name: "Editor" }));
+    fireEvent.click(within(editor.getByRole("group", { name: "Use" })).getByRole("button", { name: "Done" }));
+    expect(current.companionFilters).toEqual({ "c3/polish": "done" });
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: "Hide clips already sent to any of these apps" })).toBeInTheDocument();
   });
 });
 

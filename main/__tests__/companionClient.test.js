@@ -5,8 +5,10 @@ const require = createRequire(import.meta.url);
 const {
   CompanionConnectionError,
   normalizeCompanionConnection,
+  normalizeCompanionConnections,
   parseCompanionUrl,
   validateCompanionConnection,
+  validateCompanionConnections,
 } = require("../companion-connection");
 const {
   createCompanionClient,
@@ -46,6 +48,69 @@ describe("companion connection setting", () => {
       url: null,
     });
     expect(() => validateCompanionConnection({ enabled: true, url: "" })).toThrow(/address/u);
+  });
+});
+
+describe("companion connection list", () => {
+  it("keeps up to four companions with unique ids and addresses", () => {
+    expect(normalizeCompanionConnections(undefined)).toEqual([]);
+    expect(
+      normalizeCompanionConnections([
+        { id: "c2", enabled: true, url: "http://127.0.0.1:1/" },
+        { id: "c2", enabled: false, url: "http://localhost:2" },
+        { id: "zz", enabled: true, url: "http://127.0.0.1:1" },
+        { id: "c4", enabled: true, url: "http://example.com:3" },
+        "junk",
+      ])
+    ).toEqual([
+      { id: "c2", enabled: true, url: "http://127.0.0.1:1" },
+      { id: "c1", enabled: false, url: "http://localhost:2" },
+    ]);
+    const many = Array.from({ length: 6 }, (_, index) => ({ enabled: true, url: `http://127.0.0.1:${index + 1}` }));
+    expect(normalizeCompanionConnections(many)).toHaveLength(4);
+  });
+
+  it("makes a profile's single connection from before the list its first entry", () => {
+    expect(normalizeCompanionConnections(undefined, { enabled: true, url: "http://127.0.0.1:8000" })).toEqual([
+      { id: "c1", enabled: true, url: "http://127.0.0.1:8000" },
+    ]);
+    expect(normalizeCompanionConnections(undefined, { enabled: false, url: null })).toEqual([]);
+    // Once a list is saved, the old setting is ignored.
+    expect(normalizeCompanionConnections([], { enabled: true, url: "http://127.0.0.1:8000" })).toEqual([]);
+  });
+
+  it("refuses a list it cannot keep, and numbers new entries", () => {
+    expect(
+      validateCompanionConnections([
+        { id: "c2", enabled: true, url: "http://127.0.0.1:1" },
+        { enabled: false, url: "http://localhost:2" },
+      ])
+    ).toEqual([
+      { id: "c2", enabled: true, url: "http://127.0.0.1:1" },
+      { id: "c1", enabled: false, url: "http://localhost:2" },
+    ]);
+    expect(() => validateCompanionConnections("x")).toThrow(/list/u);
+    expect(() => validateCompanionConnections([{ enabled: false, url: "" }])).toThrow(/address/u);
+    expect(() =>
+      validateCompanionConnections([
+        { enabled: true, url: "http://127.0.0.1:1" },
+        { enabled: true, url: "http://127.0.0.1:1/" },
+      ])
+    ).toThrow(/twice/u);
+    expect(() =>
+      validateCompanionConnections([
+        { id: "c1", enabled: true, url: "http://127.0.0.1:1" },
+        { id: "c1", enabled: true, url: "http://127.0.0.1:2" },
+      ])
+    ).toThrow(/share an id/u);
+    expect(() =>
+      validateCompanionConnections(
+        Array.from({ length: 5 }, (_, index) => ({ enabled: true, url: `http://127.0.0.1:${index + 1}` }))
+      )
+    ).toThrow(/Up to 4/u);
+    expect(() => validateCompanionConnections([{ enabled: true, url: "http://example.com" }])).toThrow(
+      /this computer/u
+    );
   });
 });
 

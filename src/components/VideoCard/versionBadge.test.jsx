@@ -62,9 +62,9 @@ describe("VideoCard companion chip", () => {
     render(
       <VideoCard
         {...baseProps()}
-        companionChipLabel="Waiting #3"
-        companionChipTone="progress"
-        companionChipTitle={"Polish: Third in line"}
+        companionChips={[
+          { key: "c1", label: "Waiting #3", tone: "progress", title: "Polish: Third in line" },
+        ]}
       />
     );
     const chip = screen.getByText("Waiting #3");
@@ -80,15 +80,19 @@ describe("VideoCard companion chip", () => {
         {...props}
         video={{ ...props.video, reviewState: "pick" }}
         versionCount={2}
-        companionChipLabel="Done"
-        companionChipTone="done"
+        companionChips={[
+          { key: "c1", label: "Done", tone: "done", title: "Done" },
+          { key: "c2", label: "In a video", tone: "info", title: "In a video" },
+        ]}
       />
     );
     expect(screen.getByText("Done").style.top).toBe("52px");
+    // One chip per companion app, stacked.
+    expect(screen.getByText("In a video").style.top).toBe("74px");
   });
 
-  it("shows nothing without a label", () => {
-    render(<VideoCard {...baseProps()} companionChipTone="done" />);
+  it("shows nothing without chips", () => {
+    render(<VideoCard {...baseProps()} />);
     expect(document.querySelector(".video-item-companion")).toBeNull();
   });
 });

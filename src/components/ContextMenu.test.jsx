@@ -380,13 +380,34 @@ describe('ContextMenu', () => {
         onClose={() => {}}
         onAction={onAction}
         companionActions={[
-          { id: 'polish', label: 'Polish', send: 'Send to polish' },
-          { id: 'enlarge', label: 'Enlarge', send: 'Send to enlarge' },
+          { companionId: 'c1', companionName: 'Helper', id: 'polish', label: 'Polish', send: 'Send to polish' },
+          { companionId: 'c1', companionName: 'Helper', id: 'enlarge', label: 'Enlarge', send: 'Send to enlarge' },
         ]}
       />
     );
     fireEvent.click(screen.getByRole('menuitem', { name: /Send to enlarge… \(3 selected\)/ }));
-    expect(onAction).toHaveBeenCalledWith('companion:send:enlarge');
+    expect(onAction).toHaveBeenCalledWith('companion:send:c1:enlarge');
+  });
+
+  test('names the app beside its actions when several are connected', () => {
+    const onAction = vi.fn();
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getById}
+        onClose={() => {}}
+        onAction={onAction}
+        companionActions={[
+          { companionId: 'c1', companionName: 'Helper', id: 'polish', label: 'Polish', send: 'Send to polish' },
+          { companionId: 'c2', companionName: 'Editor', id: 'polish', label: 'Polish', send: 'Send to polish' },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: /Send to polish… · Editor$/ }));
+    expect(onAction).toHaveBeenCalledWith('companion:send:c2:polish');
   });
 
   test('tags or rules out clips while a might-be filter is on', () => {

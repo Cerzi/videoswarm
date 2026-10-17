@@ -9,7 +9,9 @@ A *companion app* is another program on the same computer that does work on
 clips: re-rendering, upscaling, captioning, publishing. Video Swarm is where
 the user reviews. The companion decides; Video Swarm shows.
 
-- Each card can show a short chip from the companion ("Waiting #3", "Done").
+- A profile can connect up to four companions at once (2026-10-17), each
+  with its own chips, filters and actions.
+- Each card can show a short chip from each companion ("Waiting #3", "Done").
 - Filters can hide clips already sent, so the review worklist holds only
   clips still waiting for a decision.
 - Clips can be sent to one of the companion's actions, from a selection, the
@@ -144,41 +146,57 @@ At most 500 paths. `dry_run` changes nothing and answers what would happen.
 
 ### Implemented
 
-- **Preferences › Companion app**: connect, address, *Test connection*
-  (names the companion and its actions; sends nothing), Save. The setting is
-  per profile and changes only through its own validated IPC.
-- IPC: `companion:connection:get|set|test`, `companion:describe`,
-  `companion:lookup` (rows, at most 500), `companion:send` (rows, at most
-  500, every path authorized). Main caches the description for a minute.
+- **Several companions.** A profile keeps a list of up to four, each
+  `{ id, enabled, url }`. The id (`c1`…`c4`) is given when one is added and
+  kept when its address changes, so filters and saved views that name it
+  stay valid. A profile saved with the single connection that came before
+  has it as `c1`, and saved filters naming a bare action id are read as
+  `c1`'s.
+- **Preferences › Companion app**: a list, each with *Connect to this app*,
+  address, *Test connection* (names the companion and its actions; sends
+  nothing) and *Remove*; *Add a companion app*, then Save. The list is per
+  profile and changes only through its own validated IPC, which refuses an
+  address listed twice or a fifth app.
+- IPC: `companion:connections:get|set`, `companion:connection:test`, and
+  `companion:describe`, `companion:lookup` (rows, at most 500) and
+  `companion:send` (rows, at most 500, every path authorized), each naming
+  the companion by id. Main keeps a client per companion and caches each
+  description for a minute.
 - Tests run against `main/__tests__/helpers/fakeCompanion.cjs`, with made-up
   clips. No test talks to a real companion.
-- **Chips** (`src/app/companion/useCompanion.js`). Every clip in the open
-  collection is looked up once, in chunks of 500, so filters can judge the
-  whole collection; new clips are looked up as they arrive. After that only
-  clips under way are asked again, every 4 s while the window is visible, and
-  everything on focus at most every 30 s. While the companion is not
-  answering, its last answers stand, the status line says so, and Video Swarm
-  tries again every 30 s. Cards receive the chip's label, tone and a tooltip
-  of each action's phase and reason, as primitives, below the review and
-  version pills.
-- **Filters** (Filters › the companion's name): *Hide clips already sent*,
-  across all actions, and per action any, not sent, sent, under way, done or
-  stopped. A clip the companion has not answered for yet always passes.
-  Saved views keep them; a view without them is stored exactly as before.
+- **Chips** (`src/app/companion/useCompanion.js`). Each companion has its
+  own session. Every clip in the open collection is looked up once, in
+  chunks of 500, so filters can judge the whole collection; new clips are
+  looked up as they arrive. After that only clips under way are asked again,
+  every 4 s while the window is visible, and everything on focus at most
+  every 30 s. While a companion is not answering, its last answers stand,
+  the status line says so, and Video Swarm tries again every 30 s. A card
+  shows one chip per companion with something to say, stacked below the
+  review and version pills, each with its label, tone and a tooltip of each
+  action's phase and reason (under the companion's name when several are
+  connected); the chips stay the same array while they read the same, so a
+  card re-renders only when its own chips change.
+- **Filters** (Filters › each companion's name): *Hide clips already sent*,
+  across every action of every companion, and per action any, not sent,
+  sent, under way, done or stopped. Filters are keyed `c1/polish`. A clip a
+  companion has not answered for yet always passes that companion's
+  filters. Saved views keep them; a view without them is stored exactly as
+  before.
 
 - **Sending** (`src/components/CompanionSendPanel.jsx`). *Send to …* items,
-  named by the companion, in a clip's context menu act on the whole
-  selection. The dialog opens on the dry run: how many will be sent, the
+  named by each companion (and followed by its name when several are
+  connected), in a clip's context menu act on the whole selection. The dialog opens on the dry run: how many will be sent, the
   estimate, and skips and refusals grouped by reason. *Send again clips sent
   before* re-runs it with `again`. *Send* sends only what the dry run said
   would be sent, in chunks of 100, with progress and *Stop*; the clips are
   looked up again straight after.
-- **Process review results** offers each action for the Accepted clips in
-  scope, above moving rejects and copying Accepted clips, with the same
+- **Process review results** offers each companion's actions for the
+  Accepted clips in scope, above moving rejects and copying Accepted clips, with the same
   dry run. The dialog cannot close while a send runs.
 - `tests/electron/companion.smoke.spec.cjs` runs the whole path in the real
-  app against the fake: connecting, chips, sending through the dialog,
-  refusing a row the renderer was never shown, and hiding sent clips.
+  app against two fakes at once: connecting both, a chip from each, sending
+  to one through the dialog (the other is sent nothing), refusing a row the
+  renderer was never shown, and hiding sent clips.
 
 ## Deferred
 
