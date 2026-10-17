@@ -21,6 +21,9 @@ the user reviews. The companion decides; Video Swarm shows.
 Video Swarm knows nothing about any particular companion. Every word the user
 sees about a companion's work comes from the companion.
 
+The reverse direction, another app reading what Video Swarm knows about
+clips, is the proposed local read API (`local-read-api.md`).
+
 ## Status convention
 
 - **Implemented** means the behavior and its focused verification are present.
