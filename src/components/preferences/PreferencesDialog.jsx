@@ -97,7 +97,7 @@ function PlaybackSection({
             <span className="preferences__choice-label">Playback proxies (720p)</span>
             <span className="preferences__hint">
               {proxyPlaybackAvailable
-                ? "Plays large clips from a smaller cached copy, so more of them can play at once."
+                ? "Plays large clips in the grid from a smaller cached copy, so more of them can play at once. Fullscreen always plays the original."
                 : "Needs FFmpeg, which was not found on this computer."}
             </span>
           </span>

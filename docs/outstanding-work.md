@@ -325,11 +325,19 @@ matches under the tag input, including in fullscreen. Check by hand:
   clip loads into the same window; with ComfyUI stopped, the error says to
   start it (`architecture/comfy-workflow-window.md`).
 
-Decision waiting for the user:
+Decided 2026-10-17: **proxies are on by default**, to try. For portrait
+WAN/A1 clips they cut decoded pixels by about 1.8-3x. They are CRF 30
+re-encodes, so they only feed the grid: fullscreen always plays the
+original. Settings saved before the change (which held `false` because it
+was the default) are turned on once (`main/proxy-playback-settings.js`); a
+later choice sticks. Check by hand:
 
-- **Proxies on by default?** For portrait WAN/A1 clips they cut decoded
-  pixels by about 1.8-3x, but they are CRF 30 re-encodes, which matters
-  in a tool for judging generated video. They stay off.
+- After installing, *View › Playback proxies (720p)* is ticked; clips
+  above 720p start on originals and switch to proxies as they are made,
+  the next time their cards load.
+- Switching proxies off survives a restart.
+- If grid previews look too soft to judge at a glance, say so: the
+  default can go back with one line.
 
 ## 6. Local branches and pushes
 

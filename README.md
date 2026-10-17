@@ -53,8 +53,9 @@ Traditional file browsers show static thumbnails and provide limited ways to com
   retaining complete logical navigation for large collections.
 - **Balanced**, **Adaptive Motion**, **All Motion**, and **Static + Hover**
   playback modes cover efficient review through fully uncapped visible motion.
-- Optional bounded 720p playback proxies are available when native tooling is
-  present; source media is never modified.
+- Bounded 720p playback proxies for the grid, on by default when FFmpeg is
+  present; fullscreen always plays the original, and source media is never
+  modified.
 - Off-screen, hidden-window, and stale-collection media resources are released
   deterministically.
 - Nine grid-size steps span approximately 150–650 px with scroll anchoring and

@@ -67,6 +67,10 @@ const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-
 const { createComfyClient } = require("./main/comfy-client");
 const { createComfyWorkflowWindow } = require("./main/comfy-workflow-window");
 const {
+  PROXY_PLAYBACK_REVISION,
+  resolveProxyPlaybackEnabled,
+} = require("./main/proxy-playback-settings");
+const {
   DEFAULT_COMFY_CONNECTION,
   normalizeComfyConnection,
   parseComfyUrl,
@@ -304,7 +308,9 @@ function getDefaultZoomForScreen() {
 const defaultSettings = {
   recursiveMode: false,
   playbackMode: "balanced",
-  proxyPlaybackEnabled: false,
+  // Grid proxies (main/proxy-playback-settings.js): on unless switched off.
+  proxyPlaybackEnabled: true,
+  proxyPlaybackRevision: PROXY_PLAYBACK_REVISION,
   pauseWhenCovered: false,
   reviewAutoAdvance: false,
   reviewModeEnabled: true,
@@ -1787,7 +1793,8 @@ function normaliseLoadedSettings(rawSettings) {
   return {
     recursiveMode: Boolean(source.recursiveMode),
     playbackMode: normalizePlaybackMode(source.playbackMode),
-    proxyPlaybackEnabled: Boolean(source.proxyPlaybackEnabled),
+    proxyPlaybackEnabled: resolveProxyPlaybackEnabled(source),
+    proxyPlaybackRevision: PROXY_PLAYBACK_REVISION,
     pauseWhenCovered: source.pauseWhenCovered === true,
     reviewAutoAdvance: source.reviewAutoAdvance === true,
     reviewModeEnabled:

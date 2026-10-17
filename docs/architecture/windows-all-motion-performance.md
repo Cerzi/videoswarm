@@ -39,8 +39,9 @@ performance while protecting the Linux improvements shipped in 0.6.
    ownership remain mandatory.
 4. All Motion means every visible, loaded card is eligible for playback. It may
    consume substantial resources, but Balanced-mode caps must not leak into it.
-5. Generated proxies remain optional and disabled by default. They are not the
-   baseline solution for native Windows playback.
+5. Generated proxies are on by default for the grid since 2026-10-17 (see
+   `docs/outstanding-work.md`, Section 5c), but they are not the baseline
+   solution for native Windows playback: All Motion must stand without them.
 6. Improvements must be measured on release-like production builds. Development
    React and logging overhead is not release evidence.
 

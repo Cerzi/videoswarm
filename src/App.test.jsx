@@ -612,6 +612,8 @@ vi.mock("./App.css", () => ({}), { virtual: true });
 
 afterEach(() => {
   cleanup();
+  // Toasts live outside React, so cleanup() leaves them behind.
+  document.getElementById("app-toast-stack")?.remove();
   vi.useRealTimers();
   vi.clearAllMocks();
   useElectronLifecycleMock.mockImplementation(() => electronLifecycleReturn);
@@ -740,7 +742,7 @@ describe("App hook composition", () => {
       playbackMode: "balanced",
       playbackDecision,
       playbackCapabilityStatus,
-      proxyPlaybackEnabled: false,
+      proxyPlaybackEnabled: true,
       proxyPlaybackAvailable: true,
       workSuspended: false,
       isRefreshingFolder: false,
@@ -1118,10 +1120,11 @@ describe("App hook composition", () => {
       screen.getByRole("button", { name: "Toggle proxy playback" })
     );
 
+    // Proxies start on, so the first press turns them off.
     headerProps = topBarSpy.mock.calls.at(-1)?.[0];
-    expect(headerProps.proxyPlaybackEnabled).toBe(true);
+    expect(headerProps.proxyPlaybackEnabled).toBe(false);
     expect(saveSettingsPartial).toHaveBeenCalledWith({
-      proxyPlaybackEnabled: true,
+      proxyPlaybackEnabled: false,
     });
   });
 
@@ -1272,7 +1275,7 @@ describe("App hook composition", () => {
     expect(firstProps).toBeTruthy();
     expect(firstProps).toMatchObject({
       workSuspended: false,
-      proxyPlaybackEnabled: false,
+      proxyPlaybackEnabled: true,
       registerMediaElement: registerMediaElementMock,
     });
 

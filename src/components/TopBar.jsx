@@ -238,7 +238,7 @@ export default function TopBar({
       type: "checkbox",
       id: "proxy",
       label: "Playback proxies (720p)",
-      hint: "Generate bounded 720p playback proxies in the background; originals are never changed",
+      hint: "Grid cards play bounded 720p copies made in the background; fullscreen plays the original, and originals are never changed",
       checked: proxyPlaybackEnabled,
       onChange: () => onProxyPlaybackToggle?.(),
       disabled: busy || !proxyPlaybackAvailable,

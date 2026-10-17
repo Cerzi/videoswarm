@@ -213,7 +213,9 @@ function App() {
   // the playback diagnostics.
   const [playbackDetailsVisible, setPlaybackDetailsVisible] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(DEFAULT_PLAYBACK_MODE);
-  const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(false);
+  // On by default (main/proxy-playback-settings.js); the profile's setting
+  // replaces this once it loads.
+  const [proxyPlaybackEnabled, setProxyPlaybackEnabled] = useState(true);
   // Optional: freeze the grid while other windows fully cover the app (X11).
   const [pauseWhenCovered, setPauseWhenCovered] = useState(false);
   const [windowCovered, setWindowCovered] = useState(false);
