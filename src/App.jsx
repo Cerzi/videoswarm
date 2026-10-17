@@ -132,6 +132,7 @@ import {
 } from "./app/stacks/promptStacks";
 import { useCompanion } from "./app/companion/useCompanion";
 import CompanionSendDialog from "./components/CompanionSendDialog";
+import { useViewHistory } from "./app/hooks/useViewHistory";
 import { companionCardProps } from "./app/companion/companionCard";
 import {
   COMPANION_PHASE_LABELS,
@@ -3770,6 +3771,120 @@ function App() {
     ]
   );
   openLibraryRootRef.current = handleOpenLibraryRoot;
+
+  // Back and forward between views (mouse buttons 4 and 5, Alt+←/→): the
+  // folder, library search or open stack the user came from.
+  const viewLocation = useMemo(() => {
+    if (!activeRootPath && tagCollection) {
+      const library = {
+        tags: tagCollection.tags,
+        matchMode: tagCollection.matchMode,
+        minRating: tagCollection.minRating ?? null,
+        exactRating: tagCollection.exactRating ?? null,
+      };
+      return hasLibrarySearchCriteria(library) ? { library } : null;
+    }
+    if (!activeRootPath) return null;
+    return { rootPath: activeRootPath, directory: currentDirectory, scope: folderScope };
+  }, [activeRootPath, currentDirectory, folderScope, tagCollection]);
+  const viewLocationKey = viewLocation ? JSON.stringify(viewLocation) : "";
+  const currentView = useMemo(
+    () => (viewLocation ? { ...viewLocation, stackKey: openStackKey || null } : null),
+    [openStackKey, viewLocation]
+  );
+  // A stack to reopen once its folder or search has loaded.
+  const pendingViewStackRef = useRef(null);
+
+  const openStackFromHistory = useCallback(
+    (stackKey) => {
+      if (!stackKey) {
+        if (openStackKey) handleCloseStack();
+        return true;
+      }
+      if (openStackKey === stackKey) return true;
+      if (!promptStacks.stacks.has(stackKey)) return false;
+      setOpenStackOrder(collapsedStackOrderRef.current);
+      showStack(stackKey);
+      return true;
+    },
+    [handleCloseStack, openStackKey, promptStacks, showStack]
+  );
+
+  const navigateToView = useCallback(
+    (entry) => {
+      if (!entry) return;
+      const { stackKey = null, ...location } = entry;
+      if (JSON.stringify(location) === viewLocationKey) {
+        openStackFromHistory(stackKey);
+        return;
+      }
+      pendingViewStackRef.current = {
+        locationKey: JSON.stringify(location),
+        stackKey,
+        since: Date.now(),
+      };
+      if (location.library) {
+        const { tags, matchMode, minRating, exactRating } = location.library;
+        updateFilters({ includeTags: tags, includeTagsMode: matchMode, minRating, exactRating });
+        if (librarySearchScope !== "library") {
+          folderScopeReturnRef.current = activeRootPath || null;
+          setLibrarySearchScope("library");
+        }
+        setLibrarySearchRequest((request) => request + 1);
+        return;
+      }
+      if (librarySearchScope === "library") {
+        folderScopeReturnRef.current = null;
+        setLibrarySearchScope("folder");
+      }
+      captureFolderViewState();
+      folderViewStateRef.current.setLocation(location.rootPath, location.directory, location.scope);
+      restoredFolderViewKeyRef.current = null;
+      if (location.rootPath !== activeRootPath) {
+        void openLibraryRootRef.current?.(location.rootPath);
+        return;
+      }
+      setFolderLocation({
+        rootPath: location.rootPath,
+        directory: location.directory,
+        scope: location.scope,
+      });
+      setExpandedFolderPaths((previous) => expandFolderAncestors(previous, location.directory));
+      if (location.directory && !recursiveMode) void handleRecursiveChange(true);
+    },
+    [
+      activeRootPath,
+      captureFolderViewState,
+      handleRecursiveChange,
+      librarySearchScope,
+      openStackFromHistory,
+      recursiveMode,
+      updateFilters,
+      viewLocationKey,
+    ]
+  );
+
+  useEffect(() => {
+    const pending = pendingViewStackRef.current;
+    if (!pending) return;
+    if (Date.now() - pending.since > 8000) {
+      pendingViewStackRef.current = null;
+      return;
+    }
+    if (pending.locationKey !== viewLocationKey) return;
+    if (openStackFromHistory(pending.stackKey)) pendingViewStackRef.current = null;
+  }, [openStackFromHistory, viewLocationKey]);
+
+  useViewHistory({
+    current: currentView,
+    navigate: navigateToView,
+    // In fullscreen, back leaves the player first.
+    onBack: () => {
+      if (!fullScreenVideo) return false;
+      closeFullScreenRef.current?.();
+      return true;
+    },
+  });
 
   // From a library-wide view: leave the search and drop its filters, open
   // the clip's root at the clip's own folder, and land on the clip there,

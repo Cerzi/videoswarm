@@ -3135,6 +3135,66 @@ describe("App hook composition", () => {
     }
   });
 
+  test("the mouse's back button closes an open stack and forward reopens it", async () => {
+    const PK_A = `pk2-${"a".repeat(32)}`;
+    const clip = (id, createdMs) => ({
+      id,
+      name: `${id}.mp4`,
+      dirname: "",
+      fingerprint: `fp-${id}`,
+      promptKey: PK_A,
+      reviewState: "unreviewed",
+      createdMs,
+    });
+    const videos = [clip("a1", 1), clip("a2", 2)];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: videos }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    window.electronAPI = { saveSettingsPartial: vi.fn() };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 450)));
+    const mouse = (button) =>
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mouseup", { button, bubbles: true }));
+      });
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await act(async () => hotkeys().onToggleStacks());
+      await waitFor(() => expect(gridIds()).toEqual(["a2"]));
+      await settle();
+
+      await act(async () => cardProps("a2").onOpenStack("a2"));
+      await waitFor(() => expect(gridIds()).toEqual(["a1", "a2"]));
+      await settle();
+
+      mouse(3);
+      await waitFor(() => expect(gridIds()).toEqual(["a2"]));
+      await settle();
+      mouse(4);
+      await waitFor(() => expect(gridIds()).toEqual(["a1", "a2"]));
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("stacks similar prompts together once main groups them", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const PK_B = `pk2-${"b".repeat(32)}`;

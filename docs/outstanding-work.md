@@ -320,6 +320,13 @@ matches under the tag input, including in fullscreen. Check by hand:
   stacks on, reworded runs of one idea join one stack a moment after the
   folder opens; *View › Stacks* switches between *Same prompt only* and the
   similar levels; a mixed stack's pill says "similar prompts".
+- Filters › rating 4+ with no tag, then *Entire library*: every 4- and
+  5-star clip from every root.
+- File details show the resolution with its megapixels, e.g.
+  `1920×1080 (2.1MP)`.
+- Mouse back and forward (and Alt+←/→): open a stack, go back to the grid,
+  forward into the stack again; move between folders and roots and back;
+  in fullscreen, back closes the player.
 - With ComfyUI running, a clip's *Open workflow in ComfyUI* (context menu)
   or **Workflow** (Generation panel) opens it in a ComfyUI window; a second
   clip loads into the same window; with ComfyUI stopped, the error says to

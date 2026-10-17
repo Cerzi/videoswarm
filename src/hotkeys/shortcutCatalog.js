@@ -383,6 +383,18 @@ const LIBRARY_SHORTCUTS = Object.freeze([
     label: "Next sibling folder",
     detail: "Moves within the active library directory.",
   }),
+  freezeShortcut({
+    id: "view-back",
+    keys: ["Alt", "←"],
+    label: "Back to the previous view",
+    detail: "Or the mouse's back button: the folder, library search or stack before this one. Closes fullscreen first.",
+  }),
+  freezeShortcut({
+    id: "view-forward",
+    keys: ["Alt", "→"],
+    label: "Forward again",
+    detail: "Or the mouse's forward button.",
+  }),
 ]);
 
 const SELECTION_SHORTCUTS = Object.freeze([
@@ -484,7 +496,7 @@ export const HOTKEY_SECTIONS = Object.freeze([
   Object.freeze({
     id: "library",
     title: "Library",
-    description: "Move through the active folder tree.",
+    description: "Move through the active folder tree and the views you came from.",
     shortcuts: LIBRARY_SHORTCUTS,
   }),
   Object.freeze({
