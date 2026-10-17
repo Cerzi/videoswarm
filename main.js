@@ -26,6 +26,7 @@ const {
   applyPortableMode,
   detectPortableRoot,
   portablePaths,
+  singletonSocketTemp,
 } = require("./main/portable-mode");
 const portableRoot = detectPortableRoot();
 let portable = null;
@@ -52,7 +53,18 @@ const dataLocationManager = new DataLocationManager({
 const { source: dataLocationSource } = dataLocationManager.bootstrap(process.argv);
 // The lock belongs to the data folder in use, so a portable copy, or one with
 // its data moved, runs beside an installed copy instead of deferring to it.
+// Its socket briefly gets a short temporary folder when the portable one is
+// too deep for a socket path (see singletonSocketTemp).
+const singletonTemp = portable ? singletonSocketTemp(portable) : null;
+if (singletonTemp) {
+  app.setPath("temp", singletonTemp);
+  process.env.TMPDIR = singletonTemp;
+}
 const ownsSingleInstanceLock = app.requestSingleInstanceLock();
+if (singletonTemp) {
+  app.setPath("temp", portable.temp);
+  process.env.TMPDIR = portable.temp;
+}
 if (!ownsSingleInstanceLock) {
   app.quit();
 }

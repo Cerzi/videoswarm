@@ -41,6 +41,7 @@
     "electron:build": "npm run vite:build && electron-builder",
     "electron:dist": "npm run vite:build && electron-builder --publish=never",
     "electron:pack": "npm run vite:build && electron-builder --dir",
+    "linux:portable": "node scripts/linux-portable.cjs",
     "vite:dev": "vite",
     "vite:build": "vite build",
     "vite:preview": "vite preview",

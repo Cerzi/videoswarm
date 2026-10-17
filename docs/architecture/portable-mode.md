@@ -1,8 +1,8 @@
 # Portable Mode
 
-Status: **App side implemented, unverified by a human** (2026-10-17).
-Packaging (the portable artifacts and their launchers) is open: see
-*Packaging* below.
+Status: **Implemented, unverified by a human** (2026-10-17): the app side,
+the Linux portable folder and the release workflow. Windows keeps its
+single-file portable build.
 
 ## Summary
 
@@ -75,26 +75,56 @@ Windows: graphics drivers keep their shader caches in the system's own
 folders (known folders, not environment variables), which no launcher can
 redirect; the only way to avoid them is to switch hardware acceleration off.
 
-## Packaging
+## The single-instance socket
 
-Open, for the owner. Linux releases need Chromium's sandbox, and on Ubuntu
-24.04 (unprivileged user namespaces restricted) an unpacked copy can only
-sandbox itself through a root-owned helper (`AGENTS.md`):
+Chromium's single-instance check listens on a Unix socket in a new
+temporary folder (`<temp>/scoped_dirXXXXXX/SingletonSocket`), and a socket's
+path is limited to 107 bytes on Linux (103 on macOS). A portable folder at
+an ordinary depth goes past that, and Chromium aborts ("Socket path too
+long"). While the lock is taken, and only when the portable temporary
+folder is too deep, the socket's folder goes to the per-user runtime folder
+(`$XDG_RUNTIME_DIR`, in memory and emptied at logout; else `/tmp`), and the
+temporary folder is moved back straight after. Chromium removes the socket's
+folder when the copy quits; nothing persists.
 
-- **Linux portable folder** (a `.tar.gz` with a launcher script and the
-  `portable` marker): fully isolated; needs a one-time `sudo` to make the
-  folder's `chrome-sandbox` root-owned and setuid, which only works on a
-  disk mounted without `nosuid` (not most USB sticks).
-- **Isolated launcher for the installed copy**: runs the installed,
-  sandboxed binary with a separate `VideoSwarmData/` folder; no setup, data
-  fully separate, but not a copy of the app itself.
-- **AppImage**: needs `--no-sandbox` on such systems, which the project does
-  not ship.
-- **Windows**: the single-file portable .exe already works (it unpacks
-  itself into the system's temporary folder each run); a zip of the unpacked
-  app with a launcher would avoid even that.
+## Packaging (decided 2026-10-17)
+
+Linux releases need Chromium's sandbox, and on Ubuntu 24.04 (unprivileged
+user namespaces restricted) an unpacked copy can only sandbox itself through
+a root-owned helper (`AGENTS.md`).
+
+- **Linux: a portable folder**,
+  `VideoSwarm-<version>-linux-portable.tar.gz`, made by
+  `scripts/linux-portable.cjs` (`npm run linux:portable`) from the unpacked
+  build, never touching it (the `.deb` is built from the same folder). It
+  adds the `portable` marker, a `video-swarm` launcher, `setup-sandbox.sh`
+  and `README-PORTABLE.txt`, and stores files as root's so no builder's
+  account is named.
+  - The launcher makes `VideoSwarmData/`, sets `VIDEOSWARM_PORTABLE_DIR`,
+    the temporary and XDG folders and `GSETTINGS_BACKEND=memory`, then starts
+    the app. It refuses a folder it cannot write. Where user namespaces are
+    restricted and the helper is not root-owned and setuid, it says to run
+    `sudo ./setup-sandbox.sh` once (in a dialog too, through zenity or
+    kdialog, for a start from a file manager) and does not start
+    unsandboxed. `VIDEOSWARM_DISABLE_SANDBOX=1` stays the diagnostic way out.
+  - `setup-sandbox.sh` needs root, refuses a disk mounted `nosuid` (as most
+    USB sticks are), and only makes `chrome-sandbox` root-owned with mode
+    4755.
+- **Windows: the single-file portable .exe** as before. It now keeps its
+  data beside itself; the program files it unpacks still pass through the
+  system's temporary folder each run.
+- **AppImage**: not shipped (it would need `--no-sandbox`).
 
 ## Verification
+
+- `scripts/linux-portable.test.js`: the archive's contents and owner; the
+  launcher's environment, its refusal and explanation where the sandbox
+  helper is needed, the diagnostic opt-out, a read-only folder; the setup
+  script asking for sudo.
+- `tests/electron/linux-portable-package.smoke.spec.cjs`: the shipped
+  folder, extracted, started through its launcher; it writes nothing
+  outside itself. The release workflow sets its sandbox up with `sudo` and
+  requires the sandbox on.
 
 - `main/__tests__/portableMode.test.js`: detection, the folders and the
   environment, a read-only folder.

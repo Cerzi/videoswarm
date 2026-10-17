@@ -112,9 +112,35 @@ function portableEnvironment(paths, platform = process.platform) {
           XDG_CACHE_HOME: paths.xdgCache,
           XDG_DATA_HOME: paths.xdgData,
           XDG_STATE_HOME: paths.xdgState,
+          // GTK keeps what it remembers (file dialogs) in memory, not the
+          // desktop's settings database.
+          GSETTINGS_BACKEND: "memory",
         }
       : {}),
   };
+}
+
+// Chromium's single-instance check listens on a Unix socket it makes in a
+// new temporary folder: <temp>/scoped_dirXXXXXX/SingletonSocket. A socket's
+// path has a hard limit (107 bytes on Linux, 103 on macOS), and a portable
+// folder at an ordinary depth goes past it, which Chromium treats as fatal.
+const SINGLETON_SOCKET_TAIL = "/scoped_dirXXXXXX/SingletonSocket";
+
+/**
+ * A short folder for that socket when the portable temporary folder would
+ * make its path too long, else null: the per-user runtime folder (a memory
+ * folder emptied at logout), else /tmp. The socket's folder exists only
+ * while the copy runs; Chromium removes it on quit.
+ */
+function singletonSocketTemp(paths, env = process.env, platform = process.platform) {
+  if (platform === "win32") return null;
+  const limit = platform === "darwin" ? 103 : 107;
+  const fits = (folder) => Buffer.byteLength(folder + SINGLETON_SOCKET_TAIL, "utf8") <= limit;
+  if (fits(paths.temp)) return null;
+  for (const candidate of [env.XDG_RUNTIME_DIR, "/tmp"]) {
+    if (typeof candidate === "string" && path.isAbsolute(candidate) && fits(candidate)) return candidate;
+  }
+  return null;
 }
 
 /**
@@ -158,4 +184,5 @@ module.exports = {
   detectPortableRoot,
   portableEnvironment,
   portablePaths,
+  singletonSocketTemp,
 };

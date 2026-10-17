@@ -10,6 +10,7 @@ const {
   detectPortableRoot,
   portableEnvironment,
   portablePaths,
+  singletonSocketTemp,
 } = require("../portable-mode");
 
 describe("portable mode", () => {
@@ -75,7 +76,9 @@ describe("portable mode", () => {
       expect(fs.statSync(dir).isDirectory()).toBe(true);
     }
     // Every folder is inside the portable one.
-    expect(Object.values(portableEnvironment(paths, "linux")).every((value) => value.startsWith(root))).toBe(true);
+    const { GSETTINGS_BACKEND, ...folders } = portableEnvironment(paths, "linux");
+    expect(GSETTINGS_BACKEND).toBe("memory");
+    expect(Object.values(folders).every((value) => value.startsWith(root))).toBe(true);
     // Windows has no XDG folders to move.
     expect(Object.keys(portableEnvironment(paths, "win32")).sort()).toEqual(["TEMP", "TMP", "TMPDIR"]);
   });
@@ -86,5 +89,13 @@ describe("portable mode", () => {
     const fsApi = { ...fs, mkdirSync: vi.fn(), accessSync: vi.fn(() => { throw Object.assign(new Error("read-only"), { code: "EROFS" }); }) };
     expect(() => applyPortableMode(app, portablePaths(root), { env: {}, platform: "linux", fsApi })).toThrow(/read-only/u);
     expect(app.setPath).not.toHaveBeenCalled();
+  });
+
+  it("finds a short folder for Chromium's single-instance socket when the portable one is too deep", () => {
+    expect(singletonSocketTemp(portablePaths("/p"), { XDG_RUNTIME_DIR: "/run/user/1000" }, "linux")).toBeNull();
+    const deep = portablePaths(`/home/someone/${"a-long-folder-name/".repeat(4)}VideoSwarm-portable`);
+    expect(singletonSocketTemp(deep, { XDG_RUNTIME_DIR: "/run/user/1000" }, "linux")).toBe("/run/user/1000");
+    expect(singletonSocketTemp(deep, {}, "linux")).toBe("/tmp");
+    expect(singletonSocketTemp(deep, { XDG_RUNTIME_DIR: "/run/user/1000" }, "win32")).toBeNull();
   });
 });

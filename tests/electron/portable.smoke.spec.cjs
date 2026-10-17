@@ -53,7 +53,14 @@ test("portable: everything stays in the portable folder", async () => {
   test.setTimeout(90_000);
   const workspace = createProductionAppWorkspace();
   const systemTemp = path.join(workspace.tempRoot, "system-temp");
-  const portableRoot = path.join(workspace.tempRoot, "portable-copy");
+  // Deep enough that Chromium's single-instance socket would not fit in the
+  // portable temporary folder.
+  const portableRoot = path.join(
+    workspace.tempRoot,
+    "a-portable-copy-kept-quite-deep",
+    "inside-several-folders-with-long-names",
+    "VideoSwarm-portable"
+  );
   const clips = path.join(workspace.tempRoot, "clips-elsewhere");
   fs.mkdirSync(systemTemp, { recursive: true });
   fs.mkdirSync(portableRoot, { recursive: true });

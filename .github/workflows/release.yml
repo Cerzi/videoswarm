@@ -70,6 +70,7 @@ jobs:
         run: |
           npm run vite:build
           npx electron-builder --linux deb --publish=never
+          node scripts/linux-portable.cjs
 
       - name: Build Windows application
         if: matrix.artifact-name == 'windows'
@@ -100,6 +101,31 @@ jobs:
             npx playwright test tests/electron/deb-package.smoke.spec.cjs \
               --config=playwright.electron.config.cjs
 
+      - name: Smoke-test Linux portable folder
+        if: matrix.artifact-name == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux-portable.tar.gz" | sort)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux portable archive, found ${#archives[@]}"
+            exit 1
+          fi
+          # A normal disk: the sandbox helper cannot work where nosuid is set.
+          extract_root="$RUNNER_TEMP/portable-smoke"
+          mkdir -p "$extract_root"
+          tar -xzf "${archives[0]}" -C "$extract_root"
+          folder="$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d)"
+          test -f "$folder/portable"
+          sudo "$folder/setup-sandbox.sh"
+          test "$(stat -c '%U:%G %a' "$folder/chrome-sandbox")" = "root:root 4755"
+          env -u VIDEOSWARM_DISABLE_SANDBOX \
+            VIDEOSWARM_PORTABLE_SMOKE=1 \
+            VIDEOSWARM_PORTABLE_FOLDER="$folder" \
+            xvfb-run -a \
+            npx playwright test tests/electron/linux-portable-package.smoke.spec.cjs \
+              --config=playwright.electron.config.cjs
+
       - name: Upload Linux package smoke diagnostics
         if: failure() && matrix.artifact-name == 'linux'
         uses: actions/upload-artifact@v4
@@ -117,9 +143,9 @@ jobs:
           mkdir -p release-assets
 
           if [ "${{ matrix.artifact-name }}" = "linux" ]; then
-            mapfile -t assets < <(find dist -maxdepth 1 -type f -name "VideoSwarm-*-linux.deb" | sort)
-            if [ "${#assets[@]}" -ne 1 ]; then
-              echo "Expected exactly one Linux release asset, found ${#assets[@]}"
+            mapfile -t assets < <(find dist -maxdepth 1 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm-*-linux-portable.tar.gz" \) | sort)
+            if [ "${#assets[@]}" -ne 2 ]; then
+              echo "Expected a Linux .deb and a portable archive, found ${#assets[@]}"
               exit 1
             fi
           else
@@ -165,10 +191,10 @@ jobs:
 
           mkdir -p release-files
 
-          mapfile -t linux_assets < <(find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-linux.deb" | sort)
+          mapfile -t linux_assets < <(find all-artifacts -maxdepth 3 -type f \( -name "VideoSwarm-*-linux.deb" -o -name "VideoSwarm-*-linux-portable.tar.gz" \) | sort)
           mapfile -t windows_assets < <(find all-artifacts -maxdepth 3 -type f -name "VideoSwarm-*-win-x64*.exe" | sort)
-          if [ "${#linux_assets[@]}" -ne 1 ] || [ "${#windows_assets[@]}" -ne 2 ]; then
-            echo "Expected one Linux .deb and two Windows executables"
+          if [ "${#linux_assets[@]}" -ne 2 ] || [ "${#windows_assets[@]}" -ne 2 ]; then
+            echo "Expected a Linux .deb, a Linux portable archive and two Windows executables"
             echo "Found ${#linux_assets[@]} Linux and ${#windows_assets[@]} Windows assets"
             exit 1
           fi
@@ -178,8 +204,8 @@ jobs:
           ls -la release-files/
 
           FILE_COUNT=$(find release-files -type f | wc -l)
-          if [ "$FILE_COUNT" -ne 3 ]; then
-            echo "Expected 3 release files, found $FILE_COUNT"
+          if [ "$FILE_COUNT" -ne 4 ]; then
+            echo "Expected 4 release files, found $FILE_COUNT"
             exit 1
           fi
 
@@ -221,8 +247,10 @@ jobs:
             - \`VideoSwarm-*-linux.deb\`: On Debian/Ubuntu x64, install with
               \`sudo apt install ./VideoSwarm-*-linux.deb\`, then launch
               \`video-swarm\`
-            - Portable AppImages and production no-sandbox launches are not
-              supported
+            - \`VideoSwarm-*-linux-portable.tar.gz\`: Portable folder that keeps
+              everything beside itself; extract it to a normal disk, run
+              \`sudo ./setup-sandbox.sh\` once, then start \`./video-swarm\`
+            - AppImages and production no-sandbox launches are not supported
 
           ## Checksums (SHA256)
 

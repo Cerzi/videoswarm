@@ -135,6 +135,13 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - Linux releases are Debian/Ubuntu x64 `.deb` packages. Their post-installation
   hook must leave the bundled `chrome-sandbox` owned by root with mode `4755`;
   do not publish a Linux artifact whose normal launch requires `--no-sandbox`.
+- The Linux portable build is a `.tar.gz` folder (`npm run linux:portable`
+  after `electron:dist`, from `dist/linux-unpacked`). Its launcher sets every
+  folder inside `VideoSwarmData/` before Electron starts and refuses to start
+  unsandboxed: where the system restricts user namespaces it asks for a
+  one-time `sudo ./setup-sandbox.sh`, which makes the folder's
+  `chrome-sandbox` root-owned and setuid. Never add the `portable` marker to
+  the shared unpacked folder, which the `.deb` is built from.
 - Portable AppImages are unsupported because their temporary mount cannot
   reliably provide that SUID helper configuration on hardened Ubuntu. The
   explicit `*:no-sandbox` commands are development-only escape hatches, not
@@ -152,9 +159,10 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - Keep the version in `package.json` and npm-generated `package-lock.json`
   aligned with the release tag after removing its leading `v`.
 - Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow expects
-  exactly one Linux `.deb` and two Windows `.exe` files, installs and launches
-  the `.deb` sandboxed, generates checksums, and creates a **draft** GitHub
-  release. A maintainer must inspect and publish that draft.
+  exactly one Linux `.deb`, one Linux portable `.tar.gz` and two Windows `.exe`
+  files, installs and launches the `.deb` sandboxed, sets up and launches the
+  portable folder sandboxed, generates checksums, and creates a **draft**
+  GitHub release. A maintainer must inspect and publish that draft.
 - Tags containing `-rc`, `-beta`, or `-alpha` create prereleases. GitHub does
   not present a prerelease as the latest stable release; publish a stable tag
   when the release candidate is promoted.
