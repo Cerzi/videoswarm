@@ -37,6 +37,19 @@ describe("re-render queue main-process integration", () => {
     expect(test).not.toMatch(/submitPrompt|deleteQueued|free\(/u);
   });
 
+  it("opens a workflow from an authorized catalog row and queues nothing", () => {
+    const open = section('ipcMain.handle("comfy:open-workflow"', "const comfyQueueStore");
+    expect(open).toContain("assertInteger(payload.instanceId");
+    expect(open).toContain('await assertRendererPath(event, instance.absolutePath, "file")');
+    expect(open).toContain("includeWorkflow: true");
+    expect(open).toContain("comfyWorkflowWindow.open(");
+    expect(open).not.toMatch(/submitPrompt|comfyRunner|payload\.path/u);
+    const closed = section('createdWindow.once("closed"', "function ");
+    expect(closed).toContain("comfyWorkflowWindow.close()");
+    const shutdown = section("async function performNativeShutdown", "function beginNativeShutdown");
+    expect(shutdown).toContain("comfyWorkflowWindow.close()");
+  });
+
   it("authorizes every clip path before reading or queueing it", () => {
     const learn = section('ipcMain.handle("comfy:recipes:learn"', 'ipcMain.handle("comfy:queue:add"');
     expect(learn.match(/assertRendererPath\(event, example\.(finalPath|draftPath), "file"\)/gu)).toHaveLength(2);

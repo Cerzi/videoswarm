@@ -12,6 +12,7 @@ const {
   nativeImage,
   clipboard,
   protocol,
+  session,
   Tray,
 } = require("electron");
 const ownsSingleInstanceLock = app.requestSingleInstanceLock();
@@ -64,6 +65,7 @@ const promptSimilarityService = createPromptSimilarityService();
 const STACK_SIMILARITY_LEVELS = new Set([1, 0.9, 0.8, 0.7]);
 const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-runner");
 const { createComfyClient } = require("./main/comfy-client");
+const { createComfyWorkflowWindow } = require("./main/comfy-workflow-window");
 const {
   DEFAULT_COMFY_CONNECTION,
   normalizeComfyConnection,
@@ -1620,6 +1622,20 @@ function comfyConnectionSetting() {
   return normalizeComfyConnection(currentSettings?.comfyConnection);
 }
 
+// A clip's workflow in the user's ComfyUI, in a window of its own
+// (main/comfy-workflow-window.js). It needs only the address: viewing a
+// workflow queues nothing, so the re-render queue need not be switched on.
+const comfyWorkflowWindow = createComfyWorkflowWindow({
+  BrowserWindow,
+  session,
+  getUrl: () => comfyConnectionSetting().url,
+  probe: (url) => createComfyClient({ url, timeoutMs: 3000 }).test(),
+  icon:
+    process.platform === "win32"
+      ? assetPath("assets", "icons", "videoswarm.ico")
+      : assetPath("assets", "icons", "videoswarm.png"),
+});
+
 // A draft's (or final's) embedded ComfyUI graphs. MP4 and MOV only for now:
 // ComfyUI's own SaveVideo writes MP4.
 async function readComfyGraphs(filePath, { includeRequeue = false } = {}) {
@@ -2530,7 +2546,10 @@ async function createWindow() {
       createdWindowActivityDisposer?.();
       disposeMainWindowActivity = null;
     }
-    if (mainWindow === createdWindow) mainWindow = null;
+    if (mainWindow === createdWindow) {
+      mainWindow = null;
+      comfyWorkflowWindow.close();
+    }
     if (closingWatcherRoot) {
       void folderWatcher.stop()
         .then(() => flushDirectoryAggregates(closingWatcherRoot))
@@ -5649,6 +5668,52 @@ ipcMain.handle("comfy:connection:test", async (_event, payload = {}) => {
   }
 });
 
+// The renderer names a catalog row; main reads the clip's embedded graph and
+// hands it to the ComfyUI page. Nothing is sent to ComfyUI's queue.
+ipcMain.handle("comfy:open-workflow", async (event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "workflow request");
+    const instanceId = assertInteger(payload.instanceId, {
+      name: "workflow instance",
+      min: 1,
+      max: Number.MAX_SAFE_INTEGER,
+    });
+    context = captureMetadataContext();
+    const instance = context.metadataStore.getFileInstanceLocation(instanceId);
+    if (!instance?.present || !instance.absolutePath) {
+      throw Object.assign(new Error("The clip is no longer in the library"), {
+        code: "INSTANCE_NOT_FOUND",
+      });
+    }
+    await assertRendererPath(event, instance.absolutePath, "file");
+    assertMetadataContextActive(context);
+    if (!isIsoBmffPath(instance.absolutePath)) {
+      throw Object.assign(new Error("Workflows can be opened from MP4 and MOV clips only"), {
+        code: "COMFY_NO_WORKFLOW",
+      });
+    }
+    const read = await readIsoBmffEmbeddedPayload(instance.absolutePath, {}, {
+      includeWorkflow: true,
+    });
+    assertMetadataContextActive(context);
+    if (read.status !== "found") {
+      throw Object.assign(new Error("This clip carries no ComfyUI workflow"), {
+        code: "COMFY_NO_WORKFLOW",
+      });
+    }
+    const name = path.parse(instance.absolutePath).name;
+    const opened = await comfyWorkflowWindow.open({ payload: read.payload, name });
+    return { success: true, kind: opened.kind };
+  } catch (error) {
+    return {
+      success: false,
+      error: error?.message || String(error),
+      code: error?.code || "COMFY_WORKFLOW_ERROR",
+    };
+  }
+});
+
 const comfyQueueStore = () => getMetadataStore().comfyQueue;
 const assertComfyId = (value, name) => assertInteger(value, { name, min: 1 });
 
@@ -6189,6 +6254,7 @@ async function performNativeShutdown() {
 
   nativeShutdownRequested = true;
   metadataProfileGeneration += 1;
+  comfyWorkflowWindow.close();
   disposeMainWindowActivity?.();
   disposeMainWindowActivity = null;
   if (mainWindow && !mainWindow.isDestroyed()) {

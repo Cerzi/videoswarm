@@ -367,5 +367,34 @@ describe('ContextMenu', () => {
     );
     expect(screen.queryByRole('menuitem', { name: /Go to folder/ })).toBeNull();
   });
+
+  test('offers the ComfyUI workflow for a clip carrying a prompt', () => {
+    const onAction = vi.fn();
+    const electronAPI = { comfyQueue: { openWorkflow: vi.fn() } };
+    const clip = (extra) => () => ({ id: 'a', name: 'a.webm', instanceId: 7, ...extra });
+    const menu = (getClip) => render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={1}
+        getById={getClip}
+        electronAPI={electronAPI}
+        onClose={() => {}}
+        onAction={onAction}
+      />
+    );
+    const { unmount } = menu(clip({ promptKey: 'pk2-x', generationKeyChecked: true }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Open workflow in ComfyUI/ }));
+    expect(onAction).toHaveBeenCalledWith('comfy:open-workflow');
+    unmount();
+
+    const checked = menu(clip({ generationKeyChecked: true }));
+    expect(screen.queryByRole('menuitem', { name: /Open workflow/ })).toBeNull();
+    checked.unmount();
+
+    menu(clip({ name: 'b.mp4' }));
+    expect(screen.getByRole('menuitem', { name: /Open workflow/ })).toBeInTheDocument();
+  });
 });
 

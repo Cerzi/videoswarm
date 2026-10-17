@@ -184,6 +184,14 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("opens a clip's workflow by catalog row only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.comfyQueue.openWorkflow(12);
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["comfy:open-workflow", { instanceId: 12 }],
+    ]);
+  });
+
   it("exposes the re-render queue with paths, ids and settings only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.comfyQueue.getConnection();

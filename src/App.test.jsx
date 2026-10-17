@@ -829,6 +829,48 @@ describe("App hook composition", () => {
     );
   });
 
+  test("opens a clip's workflow in ComfyUI from its context menu and says why not", async () => {
+    const clip = {
+      id: "/library/clip.mp4",
+      name: "clip.mp4",
+      fullPath: "/library/clip.mp4",
+      dirname: "",
+      instanceId: 42,
+      promptKey: `pk2-${"a".repeat(32)}`,
+      isElectronFile: true,
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [clip],
+    }));
+    useContextMenuMock.mockImplementation(() => ({
+      ...contextMenuReturn,
+      contextMenu: { visible: true, position: { x: 10, y: 10 }, contextId: clip.id },
+    }));
+    const openWorkflow = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, kind: "workflow" })
+      .mockResolvedValueOnce({ success: false, code: "COMFY_UNAVAILABLE", error: "x" });
+    window.electronAPI = { comfyQueue: { openWorkflow } };
+    const previousOrdered = masonryReturn.orderedVideos;
+    masonryReturn.orderedVideos = [clip];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      const menu = () => contextMenuSpy.mock.calls.at(-1)[0];
+      await act(async () => menu().onAction("comfy:open-workflow"));
+      expect(openWorkflow).toHaveBeenCalledWith(42);
+      await act(async () => menu().onAction("comfy:open-workflow"));
+      expect(
+        await screen.findByText(/ComfyUI is not answering\. Start it, or set its address/)
+      ).toBeInTheDocument();
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+      useContextMenuMock.mockImplementation(() => contextMenuReturn);
+    }
+  });
+
   test("Go to folder leaves a library view for the clip's folder and lands on it", async () => {
     const clip = {
       id: "/library/run-a/clip.mp4",

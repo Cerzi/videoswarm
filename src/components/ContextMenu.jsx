@@ -87,6 +87,13 @@ const rootMenuSize = (element, items) => {
   };
 };
 
+// A clip whose embedded ComfyUI prompt was read, or an MP4/MOV not read yet.
+const mayCarryWorkflow = (video) => {
+  if (!video?.instanceId) return false;
+  if (video.promptKey) return true;
+  return video.generationKeyChecked !== true && /\.(mp4|mov|m4v)$/i.test(video.name || '');
+};
+
 const ContextMenu = ({
   visible,
   position,
@@ -191,6 +198,13 @@ const ContextMenu = ({
           typeof electronAPI?.openInExternalPlayer !== 'function',
         disabledReason: localFileUnavailableReason,
       },
+      mayCarryWorkflow(primaryVideo) ? {
+        id: 'open-workflow',
+        label: `🧩 Open workflow in ComfyUI${selectionCount > 1 ? ' (this item)' : ''}`,
+        action: 'comfy:open-workflow',
+        disabled: typeof electronAPI?.comfyQueue?.openWorkflow !== 'function',
+        disabledReason: 'Desktop integration is unavailable',
+      } : null,
     ]);
 
     const reviewTarget =

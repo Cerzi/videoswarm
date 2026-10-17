@@ -156,6 +156,34 @@ describe("reusable metadata content sections", () => {
     expect(screen.getByText("A long generation prompt")).toBeInTheDocument();
   });
 
+  it("opens the workflow of an embedded payload only", () => {
+    const onOpenWorkflow = vi.fn();
+    const { rerender } = render(
+      <MetadataGenerationSection
+        state={{
+          found: true,
+          sourceKind: "embedded",
+          metadata: { prompt: "A prompt" },
+          onOpenWorkflow,
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Workflow" }));
+    expect(onOpenWorkflow).toHaveBeenCalledOnce();
+
+    rerender(
+      <MetadataGenerationSection
+        state={{
+          found: true,
+          sourceKind: "sidecar",
+          metadata: { prompt: "A prompt" },
+          onOpenWorkflow,
+        }}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Workflow" })).toBeNull();
+  });
+
   it("supports host-controlled generation disclosure state", () => {
     const onExpandedChange = vi.fn();
     const state = {

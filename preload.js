@@ -428,6 +428,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Re-rendering through a ComfyUI on this computer. Clips are named by the
   // paths the renderer was shown; everything else is ids and settings.
   comfyQueue: {
+    // Opens a clip's embedded workflow in a ComfyUI window; names the
+    // catalog row only.
+    openWorkflow: async (instanceId) =>
+      ipcRenderer.invoke("comfy:open-workflow", { instanceId }),
     getConnection: async () => ipcRenderer.invoke("comfy:connection:get"),
     setConnection: async ({ enabled, url, outputDir } = {}) =>
       ipcRenderer.invoke("comfy:connection:set", {

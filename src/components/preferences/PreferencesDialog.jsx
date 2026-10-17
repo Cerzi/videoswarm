@@ -433,6 +433,7 @@ function ComfySection({ active }) {
       <p className="preferences__intro">
         Re-render drafts at quality settings through a ComfyUI running on this computer. Off by
         default; only local addresses (localhost, 127.0.0.1, [::1]) are accepted, never the internet.
+        The address is also where a clip&apos;s workflow opens, with or without re-rendering.
       </p>
       <label className="preferences__choice">
         <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />

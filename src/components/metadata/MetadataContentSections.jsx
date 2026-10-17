@@ -241,6 +241,16 @@ export function MetadataGenerationSection({
             <RefreshIcon />
             <span>Re-read</span>
           </button>
+          {state.onOpenWorkflow && sourceKind === "embedded" ? (
+            <button
+              type="button"
+              className="metadata-panel__button metadata-panel__button--compact"
+              onClick={() => state.onOpenWorkflow()}
+              title="Open this clip's workflow in ComfyUI, in a window of its own"
+            >
+              <span>Workflow</span>
+            </button>
+          ) : null}
         </div>
       </div>
       {isExpanded ? (

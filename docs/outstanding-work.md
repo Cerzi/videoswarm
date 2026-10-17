@@ -320,6 +320,10 @@ matches under the tag input, including in fullscreen. Check by hand:
   stacks on, reworded runs of one idea join one stack a moment after the
   folder opens; *View › Stacks* switches between *Same prompt only* and the
   similar levels; a mixed stack's pill says "similar prompts".
+- With ComfyUI running, a clip's *Open workflow in ComfyUI* (context menu)
+  or **Workflow** (Generation panel) opens it in a ComfyUI window; a second
+  clip loads into the same window; with ComfyUI stopped, the error says to
+  start it (`architecture/comfy-workflow-window.md`).
 
 Decision waiting for the user:
 

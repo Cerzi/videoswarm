@@ -2838,6 +2838,31 @@ function App() {
     [handleAddToSequence, selectedFingerprintsInSortOrder]
   );
 
+  // A clip's embedded workflow in a ComfyUI window of its own
+  // (docs/architecture/comfy-workflow-window.md).
+  const handleOpenWorkflow = useCallback(
+    async (video) => {
+      const instanceId = Number(video?.instanceId);
+      const openWorkflow = window.electronAPI?.comfyQueue?.openWorkflow;
+      if (!Number.isSafeInteger(instanceId) || instanceId <= 0) return;
+      if (typeof openWorkflow !== "function") return;
+      let result;
+      try {
+        result = await openWorkflow(instanceId);
+      } catch (error) {
+        result = { success: false, error: error?.message };
+      }
+      if (result?.success) return;
+      notify(
+        result?.code === "COMFY_UNAVAILABLE"
+          ? "ComfyUI is not answering. Start it, or set its address in Preferences › ComfyUI."
+          : result?.error || "The workflow could not be opened",
+        "error"
+      );
+    },
+    [notify]
+  );
+
   const handleContextAction = useCallback(
     (actionId) => {
       if (!actionId) return;
@@ -2855,6 +2880,11 @@ function App() {
         // Declared further down, so reached through a ref.
         const video = getById(contextMenu.contextId);
         if (video) void goToFolderRef.current?.(video);
+        return;
+      }
+      if (actionId === "comfy:open-workflow") {
+        const video = getById(contextMenu.contextId);
+        if (video) void handleOpenWorkflow(video);
         return;
       }
       if (actionId === "metadata:open") {
@@ -2930,6 +2960,7 @@ function App() {
       metadataAnchorId,
       contextMetadataFingerprints,
       handleAddToSequence,
+      handleOpenWorkflow,
       selectedFingerprintsInSortOrder,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
@@ -3021,9 +3052,14 @@ function App() {
   const generationMetadataState = useMemo(
     () =>
       selectedGenerationInstanceId
-        ? { ...generationMetadata, onRefresh: generationMetadata.refresh }
+        ? {
+            ...generationMetadata,
+            onRefresh: generationMetadata.refresh,
+            onOpenWorkflow: () =>
+              handleOpenWorkflow({ instanceId: selectedGenerationInstanceId }),
+          }
         : null,
-    [generationMetadata, selectedGenerationInstanceId]
+    [generationMetadata, handleOpenWorkflow, selectedGenerationInstanceId]
   );
 
   const releaseFullScreenNow = useCallback((options) => {
@@ -3171,9 +3207,11 @@ function App() {
         ? {
             ...fullscreenGenerationMetadata,
             onRefresh: fullscreenGenerationMetadata.refresh,
+            onOpenWorkflow: () =>
+              handleOpenWorkflow({ instanceId: fullscreenGenerationInstanceId }),
           }
         : null,
-    [fullscreenGenerationInstanceId, fullscreenGenerationMetadata]
+    [fullscreenGenerationInstanceId, fullscreenGenerationMetadata, handleOpenWorkflow]
   );
 
   const visibleAveragePixelArea = useMemo(() => {
