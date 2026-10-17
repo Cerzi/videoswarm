@@ -174,6 +174,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
 - Preserve cross-platform native paths, especially Windows/UNC containment and file operations; renderer media playback stays on opaque protocol URLs.
 - User-facing keyboard shortcuts are catalogued in `src/hotkeys/shortcutCatalog.js`. When adding or changing a shortcut, update its handler and focused tests in the same change; shortcut help must render from the catalog rather than duplicating a second hard-coded list.
 - Do not commit generated outputs, build artifacts, coverage, local databases, or caches.
+- This repository is public. Keep the user's private tools, custom node and model names, library folder names, real paths and prompts out of code, tests, fixtures, docs and commit messages; use neutral placeholders (fixtures use `Acme` node classes and an `A1` library).
 
 ## Git Workflow
 
