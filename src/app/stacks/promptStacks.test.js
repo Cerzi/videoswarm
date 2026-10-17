@@ -86,14 +86,22 @@ describe("buildPromptStacks", () => {
     expect(buildPromptStacks(all, { visible: new Set(["a1", "b1"]) }).stacks.size).toBe(0);
   });
 
-  it("joins alike prompts to the run's first prompt, without drifting", () => {
+  it("judges each neighbour against the one before it, following gradual changes", () => {
     const alike = (a, b) =>
       (a === PK_A && b === PK_B) || (a === PK_B && b === PK_C);
     const videos = [clip("a1", PK_A), clip("b1", PK_B), clip("c1", PK_C), clip("c2", PK_C)];
+    const { stacks } = buildPromptStacks(videos, { alike });
+    // c1 is alike to b1, though not to a1: the batch drifted a step at a time.
+    const stack = stacks.get(stackKey(PK_A, "a1"));
+    expect(stack.members.map((video) => video.id)).toEqual(["a1", "b1", "c1", "c2"]);
+    expect(stack.similar).toBe(true);
+  });
+
+  it("ends a run where a neighbour is not alike to the one before it", () => {
+    const alike = (a, b) => a === PK_A && b === PK_B;
+    const videos = [clip("a1", PK_A), clip("b1", PK_B), clip("c1", PK_C), clip("c2", PK_C)];
     const { stacks, keyById } = buildPromptStacks(videos, { alike });
-    // c1 is alike to b1 but not to a1, which opened the run.
     expect(stacks.get(stackKey(PK_A, "a1")).members.map((video) => video.id)).toEqual(["a1", "b1"]);
-    expect(stacks.get(stackKey(PK_A, "a1")).similar).toBe(true);
     expect(keyById.get("c2")).toBe(stackKey(PK_C, "c1"));
   });
 

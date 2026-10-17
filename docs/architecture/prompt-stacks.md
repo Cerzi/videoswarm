@@ -153,8 +153,8 @@ Status: **Implemented** (2026-10-16)
   be is chosen beside it (Section 7).
 - **Neighbours, not groups** (2026-10-17). A stack is a run of clips next to
   each other in the grid's current sort order: walking the folder scope in
-  that order, a clip joins the run before it when its prompt is the run's
-  first prompt, or alike to it (Section 7), within one folder group. A clip
+  that order, a clip joins the run before it when its prompt is the previous
+  clip's prompt, or alike to it (Section 7), within one folder group. A clip
   without a key ends a run. Runs of one prompt that something else sits
   between stay separate: collapsing a batch saves scrolling past it, while
   gathering clips from all over the sort would be grouping, which is a
@@ -299,9 +299,12 @@ stack now holds prompts that share most of their words.
   threshold (64 at most, closest first). The renderer decides which clips
   stack, from neighbours in the grid's order (Section 3), so a new sort needs
   no new answer.
-- **No drifting.** A clip joins a run when its prompt is alike to the run's
-  *first* prompt, not merely to the clip before it, so a prompt refined one
-  word at a time cannot collapse a whole session into one stack.
+- **Neighbour against neighbour.** Each clip is judged against the one
+  before it, so a batch whose prompt changed a little at a time stays one
+  stack. (A first version judged every clip against the run's first, to stop
+  a slowly refined prompt collapsing a whole session; with stacks limited to
+  neighbours that guard cost more than it saved, and the user found it
+  arbitrary.)
 - **Asynchronous, exact meanwhile.** The renderer asks main 250 ms after the
   collection's prompt keys change. Until the answer arrives, and whenever main
   cannot answer (no readable clip, a WebM or MKV clip, a profile switch),
@@ -340,7 +343,7 @@ Neighbour runs give fewer stacks than this by design, depending on the sort.
 
 - Reworded runs of one idea share a stack at the default level; unrelated
   prompts do not, and different input media never do.
-- A chain of small edits does not join through intermediate prompts.
+- A batch refined a little at a time, back to back, is one stack.
 - Clips of one prompt far apart in the sort never stack.
 - Prompt text never reaches the renderer, storage or logs.
 - The grid never waits on the answer.

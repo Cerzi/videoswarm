@@ -61,10 +61,11 @@ const exactMatch = (a, b) => a === b;
 /**
  * Stacks are runs of neighbours: walking `ordered` (the folder scope, in the
  * grid's sort order, before filters), a clip joins the run before it when its
- * prompt is the run's first prompt or alike to it (`alike(a, b)`), and when
- * `folderOf` puts it in the same folder group. A clip without a prompt key
- * ends a run. Clips far apart in the sort never stack: that would be
- * grouping, not stacking.
+ * prompt is the previous clip's prompt or alike to it (`alike(a, b)`), and
+ * when `folderOf` puts it in the same folder group. Each neighbour is judged
+ * against the one before it, so a batch whose prompt changed a little at a
+ * time stays one stack. A clip without a prompt key ends a run. Clips far
+ * apart in the sort never stack: that would be grouping, not stacking.
  *
  * `visible` (a Set of ids, or null for all) is what passes the filters. A run
  * with two or more visible clips is a stack of those clips; its total is the
@@ -108,9 +109,12 @@ export function buildPromptStacks(
       continue;
     }
     if (run.length) {
-      const first = run[0];
-      const sameFolder = !folderOf || folderOf(first) === folderOf(video);
-      if (sameFolder && (promptKey === first.promptKey || alike(first.promptKey, promptKey))) {
+      const previous = run[run.length - 1];
+      const sameFolder = !folderOf || folderOf(previous) === folderOf(video);
+      if (
+        sameFolder &&
+        (promptKey === previous.promptKey || alike(previous.promptKey, promptKey))
+      ) {
         run.push(video);
         continue;
       }
