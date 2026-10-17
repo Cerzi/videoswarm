@@ -324,6 +324,9 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Hover audio (View › Play audio on hover, proxy playback on): every clip
+  that has sound plays it on hover, including clips already playing a proxy;
+  the first start after the update rebuilds proxies in the background.
 - View › Layout › Justified rows: every row but the last fills the width
   with no gap and no crop, rows read in sort order; Shift-click range
   selection follows the rows; zoom changes the row height, and a zoom level

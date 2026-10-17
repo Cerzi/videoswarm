@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
+  PROXY_FORMAT,
   createProxyManager,
+  defaultProxyArguments,
   proxyReducesDecode,
   sourceSignature,
 } = require("../proxy-manager");
@@ -458,6 +460,52 @@ describe("ProxyManager", () => {
       ownerStates: 0,
     });
     await manager.shutdown();
+  });
+
+  it("keeps the source's first audio track, if there is one, for hover audio", () => {
+    const args = defaultProxyArguments("/clips/in.mp4", "/cache/out.mp4");
+    expect(args).not.toContain("-an");
+    const maps = args.flatMap((arg, index) => (arg === "-map" ? [args[index + 1]] : []));
+    expect(maps).toEqual(["0:v:0", "0:a:0?"]);
+    expect(args[args.indexOf("-c:a") + 1]).toBe("aac");
+  });
+
+  it("deletes the silent proxies of an earlier format and never serves them", async () => {
+    const { root, profilePath } = await makeFixture();
+    const sourcePath = await makeSource(root, "had-a-silent-proxy.mp4");
+    const cacheDir = path.join(profilePath, "proxy-cache");
+    await fsPromises.mkdir(cacheDir, { recursive: true });
+    const sourceStats = await fsPromises.stat(sourcePath);
+    // Format 1 named a proxy by the source alone.
+    const { createHash } = await import("crypto");
+    const oldSignature = createHash("sha256")
+      .update(path.resolve(sourcePath))
+      .update("\0")
+      .update(String(sourceStats.size))
+      .update("\0")
+      .update(String(sourceStats.mtimeMs))
+      .digest("hex");
+    expect(sourceSignature(sourcePath, sourceStats)).not.toBe(oldSignature);
+    const oldProxy = path.join(cacheDir, `${oldSignature}.mp4`);
+    await fsPromises.writeFile(oldProxy, "silent proxy");
+    await fsPromises.writeFile(
+      path.join(cacheDir, "index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [{ signature: oldSignature, sourcePath, sourceSize: sourceStats.size, sourceMtimeMs: sourceStats.mtimeMs, bytes: 12, lastUsed: 1 }],
+      })
+    );
+
+    const runner = new FakeRunner({ deferred: true });
+    const manager = createProxyManager({ runner });
+    await manager.init(profilePath);
+    expect(fs.existsSync(oldProxy)).toBe(false);
+    expect(manager.getSnapshot()).toMatchObject({ entries: 0, diskBytes: 0 });
+    const resolution = await manager.resolveSource({ filePath: sourcePath, enabled: true, ownerId: "card" });
+    expect(resolution.usingProxy).not.toBe(true);
+    await manager.shutdown();
+    const index = JSON.parse(await fsPromises.readFile(path.join(cacheDir, "index.json"), "utf8"));
+    expect(index.version).toBe(PROXY_FORMAT);
   });
 
   it("does not return or queue cached work after owner deactivation", async () => {

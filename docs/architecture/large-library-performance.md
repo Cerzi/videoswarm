@@ -418,7 +418,11 @@ uses a 120-second timeout, caps stdout/stderr at 1 MiB/256 KiB, cancels work on
 owner, profile, window, or app teardown, and uses atomic publication. Completed
 proxies are capped at 512 entries and 1 GiB with disk-byte LRU eviction. A
 proxy is selected only on a subsequent media load after it is cached; originals
-remain untouched and are always the fallback.
+remain untouched and are always the fallback. A proxy keeps the source's first
+audio track (AAC), so hover audio sounds the same whether a card plays its
+proxy or its original; the grid plays both muted. The cache's format version
+is part of every proxy's name and of its index: proxies of an earlier format
+(format 1 was silent) are deleted when the index is loaded and never served.
 
 Acceptance criteria:
 

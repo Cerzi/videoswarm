@@ -43,6 +43,13 @@ function isMissingError(error) {
   return error?.code === "ENOENT" || error?.code === "ENOTDIR";
 }
 
+// What a proxy holds. Bumped when that changes: the signature includes it, so
+// proxies made before are never served, and an index written for another
+// format has its proxies deleted on load. Format 2 keeps the source's first
+// audio track (format 1 was silent, so hover audio fell silent on every clip
+// that had a proxy).
+const PROXY_FORMAT = 2;
+
 function sourceSignature(filePath, stats) {
   const size = Math.max(0, Number(stats?.size) || 0);
   const mtimeMs = Math.max(0, Number(stats?.mtimeMs) || 0);
@@ -53,6 +60,8 @@ function sourceSignature(filePath, stats) {
     .update(String(size))
     .update("\0")
     .update(String(mtimeMs))
+    .update("\0")
+    .update(`proxy-format-${PROXY_FORMAT}`)
     .digest("hex");
 }
 
@@ -93,9 +102,18 @@ function defaultProxyArguments(sourcePath, outputPath) {
     sourcePath,
     "-map",
     "0:v:0",
+    // The first audio track if there is one, for hover audio; the grid plays
+    // proxies muted, as it does originals.
+    "-map",
+    "0:a:0?",
     "-vf",
     "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
-    "-an",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ac",
+    "2",
     "-c:v",
     "libx264",
     "-preset",
@@ -841,6 +859,17 @@ class ProxyManager {
     }
 
     const descriptors = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    if (parsed?.version !== PROXY_FORMAT) {
+      // Proxies of another format are never served again; free their space.
+      for (const descriptor of descriptors) {
+        const signature = descriptor?.signature;
+        if (typeof signature === "string" && /^[a-f0-9]{64}$/.test(signature)) {
+          await this.#removeFile(this.#proxyPath(signature));
+        }
+      }
+      this.#schedulePersist();
+      return;
+    }
     let changed = false;
     for (const descriptor of descriptors) {
       const signature = descriptor?.signature;
@@ -965,7 +994,7 @@ class ProxyManager {
     const indexPath = this.indexPath;
     const payload = JSON.stringify(
       {
-        version: 1,
+        version: PROXY_FORMAT,
         entries: Array.from(this.entries.values(), (entry) => ({
           signature: entry.signature,
           sourcePath: entry.sourcePath,
@@ -1030,6 +1059,7 @@ function createProxyManager(options) {
 
 module.exports = {
   DEFAULT_PROXY_LIMITS: DEFAULTS,
+  PROXY_FORMAT,
   ProxyManager,
   createProxyManager,
   defaultProxyArguments,
