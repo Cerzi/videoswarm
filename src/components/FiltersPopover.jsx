@@ -15,25 +15,21 @@ import {
   normalizeCompanionFilters,
 } from "../app/companion/companionFilters";
 
+// Short labels keep each rating on one line beside its label.
 const MIN_RATING_OPTIONS = [
   { value: null, label: "Any" },
-  { value: 1, label: "★☆☆☆☆+" },
-  { value: 2, label: "★★☆☆☆+" },
-  { value: 3, label: "★★★☆☆+" },
-  { value: 4, label: "★★★★☆+" },
-  { value: 5, label: "★★★★★" },
+  ...[1, 2, 3, 4].map((value) => ({ value, label: `${value}★+` })),
+  { value: 5, label: "5★" },
 ];
 
 const EXACT_RATING_OPTIONS = [
   { value: null, label: "Any" },
-  { value: 1, label: "★☆☆☆☆" },
-  { value: 2, label: "★★☆☆☆" },
-  { value: 3, label: "★★★☆☆" },
-  { value: 4, label: "★★★★☆" },
-  { value: 5, label: "★★★★★" },
+  ...[1, 2, 3, 4, 5].map((value) => ({ value, label: `${value}★` })),
 ];
 
-const MAX_DEFAULT_TAGS = 10;
+// The tag list has a column to itself, so it shows the most used tags at
+// length; searching reaches the rest.
+const MAX_DEFAULT_TAGS = 40;
 
 // Draft generations cluster well below a megapixel, finished ones above, so a
 // short threshold list answers "which of these came out small" directly.
@@ -70,7 +66,31 @@ function describeVersionIndexStatus(status, pendingCount) {
     } left. Results are provisional until then.`;
   }
   if (status?.failed) return "Versions could not be read for this collection.";
-  return "Versions are matched across every indexed folder.";
+  return DEFAULT_VERSION_STATUS;
+}
+const DEFAULT_VERSION_STATUS = "Versions are matched across every indexed folder.";
+
+// A labelled row in the filters' side column. What a filter means sits in the
+// label's tooltip; only what is happening now (searching, learning) is shown.
+function FilterRow({ label, hint = null, status = null, children }) {
+  return (
+    <section className="filters-row" aria-label={label}>
+      <span
+        className={`filters-row__label${hint ? " filters-row__label--hint" : ""}`}
+        title={hint || undefined}
+      >
+        {label}
+      </span>
+      <div className="filters-row__body">
+        {children}
+        {status ? (
+          <span className="filters-empty-hint" role="status">
+            {status}
+          </span>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 const REVIEW_OPTIONS = [
@@ -122,7 +142,7 @@ function MightBeControl({ value, status, state, onChange }) {
     hint =
       "A tag can be suggested once it is on ten clips with different prompts, and other clips carry other tags.";
   } else {
-    hint = "Tags learned from the prompts of clips you have tagged.";
+    hint = null;
   }
   return (
     <>
@@ -142,9 +162,11 @@ function MightBeControl({ value, status, state, onChange }) {
           ))}
         </select>
       </div>
-      <span className="filters-empty-hint" role="status">
-        {hint}
-      </span>
+      {hint ? (
+        <span className="filters-empty-hint" role="status">
+          {hint}
+        </span>
+      ) : null}
       {!value && untellable.length ? (
         <span className="filters-empty-hint">
           {`Not told by the prompt: ${untellable
@@ -358,6 +380,41 @@ const FiltersPopover = forwardRef(
       });
     };
 
+    const ratingPills = (options, current, onPick, keyPrefix) =>
+      options.map(({ value, label }) => {
+        const isActive =
+          (value === null && (current === null || current === undefined)) || value === current;
+        return (
+          <button
+            key={`${keyPrefix}-${value ?? "any"}`}
+            type="button"
+            className={`filters-pill ${isActive ? "filters-pill--active" : ""}`}
+            aria-pressed={isActive}
+            onClick={() => onPick(value === null || value === current ? null : value)}
+          >
+            {label}
+          </button>
+        );
+      });
+
+    const pillGroup = (label, options, current, onPick) => (
+      <div className="filters-rating-row" role="group" aria-label={label}>
+        {options.map(({ value, label: text }) => (
+          <button
+            key={`${label}-${value ?? "any"}`}
+            type="button"
+            className={`filters-pill ${current === value ? "filters-pill--active" : ""}`}
+            aria-pressed={current === value}
+            onClick={() => onPick(value)}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+    );
+
+    const versionStatus = describeVersionIndexStatus(versionIndexStatus, versionPendingCount);
+
     return (
       <div
         className="filters-popover"
@@ -366,11 +423,62 @@ const FiltersPopover = forwardRef(
         role="dialog"
         aria-label="Video filters"
       >
+        {/* Where the filters apply comes first: it changes what all of them
+            mean. */}
         <div className="filters-popover__header">
-          <div>
-            <h3>Filters</h3>
-            <p>Refine the grid without leaving the gallery.</p>
+          <h3>Filters</h3>
+          <div className="filters-scope" role="group" aria-label="Search scope">
+            {[
+              {
+                value: "folder",
+                label: "This folder",
+                hint: "Filter the collection that is currently open.",
+              },
+              {
+                value: "library",
+                label: "Entire library",
+                hint: "Search every indexed root. Tags, rating, prompt words and Might be narrow the query itself; with none, the whole library.",
+              },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`filters-pill ${
+                  searchScope === option.value ? "filters-pill--active" : ""
+                }`}
+                aria-pressed={searchScope === option.value}
+                title={option.hint}
+                disabled={
+                  typeof onSearchScopeChange !== "function" ||
+                  (option.value === "folder" && !canReturnToFolder)
+                }
+                onClick={() => onSearchScopeChange?.(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+          {searchScope === "library" ? (
+            <div className="filters-library-status">
+              <span className="filters-empty-hint" role="status">
+                {libraryResultCount === null
+                  ? "Searching the library…"
+                  : `${libraryResultCount.toLocaleString()} clip${
+                      libraryResultCount === 1 ? "" : "s"
+                    } from every root${
+                      libraryTruncated ? " (partial)" : ""
+                    } · a snapshot, not live`}
+              </span>
+              <button
+                type="button"
+                className="filters-pill"
+                onClick={() => onRefreshLibrary?.()}
+                disabled={typeof onRefreshLibrary !== "function"}
+              >
+                Refresh
+              </button>
+            </div>
+          ) : null}
           <div className="filters-popover__header-actions">
             <button type="button" onClick={onReset} className="filters-link">
               Reset
@@ -381,60 +489,38 @@ const FiltersPopover = forwardRef(
           </div>
         </div>
 
-        <section className="filters-section">
-          <header className="filters-section__title">Tags</header>
-          {/* Two words rather than a query language. Combined with Exclude,
-              which always means "none of these", this covers the ordinary
-              questions without nesting conditions or parsing an expression. */}
-          <div
-            className="filters-tag-mode"
-            role="group"
-            aria-label="Match included tags"
-          >
-            <span className="filters-chip-group__label">Match</span>
-            {[
-              { value: "all", label: "All", hint: "Clips carrying every included tag." },
-              { value: "any", label: "Any", hint: "Clips carrying at least one included tag." },
-            ].map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`filters-pill ${
-                  includeTagsMode === option.value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={includeTagsMode === option.value}
-                title={option.hint}
-                onClick={() =>
-                  onChange((prev) => ({ ...prev, includeTagsMode: option.value }))
-                }
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="filters-chip-group">
-            <span className="filters-chip-group__label">Include</span>
-            <div className="filters-chip-group__chips">
-              {includeTags.length === 0 ? (
-                <span className="filters-chip--empty">None</span>
-              ) : (
-                includeTags.map((tag) =>
-                  renderTagChip(tag, handleRemoveInclude, "include")
-                )
-              )}
-            </div>
-          </div>
-
-          <div className="filters-chip-group">
-            <span className="filters-chip-group__label">Exclude</span>
-            <div className="filters-chip-group__chips">
-              {excludeTags.length === 0 ? (
-                <span className="filters-chip--empty">None</span>
-              ) : (
-                excludeTags.map((tag) =>
-                  renderTagChip(tag, handleRemoveExclude, "exclude")
-                )
-              )}
+        <div className="filters-popover__body">
+        <section className="filters-section filters-section--tags" aria-label="Tags">
+          <div className="filters-section__heading">
+            <header className="filters-section__title">Tags</header>
+            {/* Two words rather than a query language. Combined with Exclude,
+                which always means "none of these", this covers the ordinary
+                questions without nesting conditions or parsing an expression. */}
+            <div
+              className="filters-tag-mode"
+              role="group"
+              aria-label="Match included tags"
+            >
+              <span className="filters-chip-group__label">Match</span>
+              {[
+                { value: "all", label: "All", hint: "Clips carrying every included tag." },
+                { value: "any", label: "Any", hint: "Clips carrying at least one included tag." },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`filters-pill ${
+                    includeTagsMode === option.value ? "filters-pill--active" : ""
+                  }`}
+                  aria-pressed={includeTagsMode === option.value}
+                  title={option.hint}
+                  onClick={() =>
+                    onChange((prev) => ({ ...prev, includeTagsMode: option.value }))
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -444,11 +530,19 @@ const FiltersPopover = forwardRef(
               value={tagQuery}
               onChange={(event) => setTagQuery(event.target.value)}
               placeholder="Search available tags"
+              aria-label="Search available tags"
             />
           </div>
 
+          {includeTags.length || excludeTags.length ? (
+            <div className="filters-chip-group__chips filters-chosen-tags">
+              {includeTags.map((tag) => renderTagChip(tag, handleRemoveInclude, "include"))}
+              {excludeTags.map((tag) => renderTagChip(tag, handleRemoveExclude, "exclude"))}
+            </div>
+          ) : null}
+
           <div className="filters-tag-list__header">
-            {hasQuery ? "Matching tags" : `Popular tags (top ${MAX_DEFAULT_TAGS})`}
+            {hasQuery ? "Matching tags" : "Most used"}
           </div>
 
           <datalist id={parentListId}>
@@ -590,315 +684,143 @@ const FiltersPopover = forwardRef(
           </div>
         </section>
 
-        <section className="filters-section">
-          <header className="filters-section__title">Ratings</header>
-          <div className="filters-rating-group">
-            <span className="filters-chip-group__label">Minimum</span>
-            <div className="filters-rating-row">
-              {MIN_RATING_OPTIONS.map(({ value, label }) => {
-                const isActive =
-                  (value === null && (minRating === null || minRating === undefined)) ||
-                  value === minRating;
-                return (
-                  <button
-                    key={`min-${value ?? "any"}`}
-                    type="button"
-                    className={`filters-pill ${
-                      isActive ? "filters-pill--active" : ""
-                    }`}
-                    onClick={() =>
-                      handleMinRatingChange(
-                        value === null || value === minRating ? null : value
-                      )
-                    }
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+        <div className="filters-popover__side">
+          <FilterRow label="Rating">
+            <div className="filters-subrow">
+              <span className="filters-subrow__label">At least</span>
+              <div className="filters-rating-row" role="group" aria-label="Minimum rating">
+                {ratingPills(MIN_RATING_OPTIONS, minRating, handleMinRatingChange, "min")}
+              </div>
             </div>
-          </div>
-
-          <div className="filters-rating-group">
-            <span className="filters-chip-group__label">Exact</span>
-            <div className="filters-rating-row">
-              {EXACT_RATING_OPTIONS.map(({ value, label }) => {
-                const isActive =
-                  (value === null &&
-                    (exactRating === null || exactRating === undefined)) ||
-                  value === exactRating;
-                return (
-                  <button
-                    key={`exact-${value ?? "any"}`}
-                    type="button"
-                    className={`filters-pill ${
-                      isActive ? "filters-pill--active" : ""
-                    }`}
-                    onClick={() =>
-                      handleExactRatingChange(
-                        value === null || value === exactRating ? null : value
-                      )
-                    }
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+            <div className="filters-subrow">
+              <span className="filters-subrow__label">Exactly</span>
+              <div className="filters-rating-row" role="group" aria-label="Exact rating">
+                {ratingPills(EXACT_RATING_OPTIONS, exactRating, handleExactRatingChange, "exact")}
+              </div>
             </div>
-          </div>
-        </section>
+          </FilterRow>
 
-        <section className="filters-section">
-          <header className="filters-section__title">Prompt</header>
-          <div className="filters-tag-search">
-            <input
-              type="search"
-              aria-label="Words in the prompt"
-              value={filters?.promptQuery || ""}
-              onChange={(event) =>
-                onChange((prev) => ({ ...prev, promptQuery: event.target.value }))
-              }
-              placeholder="Words in the prompt"
-              maxLength={200}
-            />
-          </div>
-          <span className="filters-empty-hint" role="status">
-            {promptSearch?.pending
-              ? "Searching prompts…"
-              : promptSearch?.unread
-                ? `${promptSearch.unread.toLocaleString()} prompts could not be read (WebM, MKV or missing files).`
-                : 'Words match their starts, "quoted" words only themselves; all must appear, -word rules one out. Negative prompts are ignored.'}
-          </span>
-        </section>
-
-        <section className="filters-section">
-          <header className="filters-section__title">Might be</header>
-          <MightBeControl
-            value={filters?.mightBe || ""}
-            status={likelyTagStatus}
-            state={mightBe}
-            onChange={(tag) => onChange((prev) => ({ ...prev, mightBe: tag }))}
-          />
-        </section>
-
-        <section className="filters-section">
-          <header className="filters-section__title">Search</header>
-          <div className="filters-rating-row" role="group" aria-label="Search scope">
-            {[
-              {
-                value: "folder",
-                label: "This folder",
-                hint: "Filter the collection that is currently open.",
-              },
-              {
-                value: "library",
-                label: "Entire library",
-                hint: "Search every indexed root. Tags, rating, prompt words and Might be narrow the query itself.",
-              },
-            ].map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`filters-pill ${
-                  searchScope === option.value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={searchScope === option.value}
-                title={option.hint}
-                disabled={
-                  typeof onSearchScopeChange !== "function" ||
-                  (option.value === "folder" && !canReturnToFolder)
-                }
-                onClick={() => onSearchScopeChange?.(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {searchScope === "library" ? (
-            <div className="filters-library-status">
-              <span className="filters-empty-hint">
-                {libraryResultCount === null
-                    ? "Searching the library…"
-                    : `${libraryResultCount.toLocaleString()} clip${
-                        libraryResultCount === 1 ? "" : "s"
-                      } from every root${
-                        libraryTruncated ? " (partial)" : ""
-                      } · a snapshot, not live`}
-              </span>
-              <button
-                type="button"
-                className="filters-pill"
-                onClick={() => onRefreshLibrary?.()}
-                disabled={typeof onRefreshLibrary !== "function"}
-              >
-                Refresh
-              </button>
-            </div>
+          {reviewModeEnabled ? (
+            <FilterRow label="Review" hint="Accepted and rejected clips also count as reviewed.">
+              {pillGroup("Review state", REVIEW_OPTIONS, reviewFilter, (value) =>
+                onChange((prev) => ({ ...prev, reviewFilter: value }))
+              )}
+            </FilterRow>
           ) : null}
-        </section>
 
-        <section className="filters-section">
-          <header className="filters-section__title">Resolution</header>
-          <div className="filters-rating-row" role="group" aria-label="Maximum resolution">
-            {RESOLUTION_OPTIONS.map(({ value, label }) => (
-              <button
-                key={`max-${label}`}
-                type="button"
-                className={`filters-pill ${
-                  maxMegapixels === value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={maxMegapixels === value}
-                onClick={() =>
-                  onChange((prev) => ({ ...prev, maxMegapixels: value }))
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="filters-rating-row" role="group" aria-label="Minimum resolution">
-            {RESOLUTION_MIN_OPTIONS.map(({ value, label }) => (
-              <button
-                key={`min-${label}`}
-                type="button"
-                className={`filters-pill ${
-                  minMegapixels === value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={minMegapixels === value}
-                onClick={() =>
-                  onChange((prev) => ({ ...prev, minMegapixels: value }))
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <span className="filters-empty-hint">
-            Clips whose dimensions have not been read yet are hidden while a
-            resolution filter is active.
-          </span>
-        </section>
-
-        <section className="filters-section">
-          <header className="filters-section__title">Versions</header>
-          <div className="filters-rating-row" role="group" aria-label="Generation versions">
-            {VERSION_OPTIONS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                className={`filters-pill ${
-                  versionFilter === value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={versionFilter === value}
-                onClick={() =>
-                  onChange((prev) => ({ ...prev, versionFilter: value }))
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <span className="filters-empty-hint">
-            Versions are re-renders, upscales and sweeps of one generation.
-            Best version with a maximum resolution lists drafts not yet
-            re-rendered.
-          </span>
-          <div className="filters-library-status">
-            <span className="filters-empty-hint" role="status">
-              {describeVersionIndexStatus(versionIndexStatus, versionPendingCount)}
-            </span>
-            {typeof onFindVersionsInLibrary === "function" ? (
-              <button
-                type="button"
-                className="filters-pill"
-                onClick={() => onFindVersionsInLibrary()}
-                disabled={libraryVersionSearchRunning}
-                title="Read generation keys for every indexed clip, including folders that are not open"
-              >
-                Search library
-              </button>
-            ) : null}
-          </div>
-        </section>
-
-        {companion ? (
-          <section className="filters-section">
-            <header className="filters-section__title">{companion.name || "Companion app"}</header>
-            <label className="filters-checkbox">
+          <FilterRow
+            label="Prompt"
+            hint={'Words match their starts, "quoted" words only themselves; all must appear, -word rules one out. Negative prompts are ignored.'}
+            status={
+              promptSearch?.pending
+                ? "Searching prompts…"
+                : promptSearch?.unread
+                  ? `${promptSearch.unread.toLocaleString()} prompts could not be read (WebM, MKV or missing files).`
+                  : null
+            }
+          >
+            <div className="filters-tag-search">
               <input
-                type="checkbox"
-                checked={filters?.companionHideSent === true}
+                type="search"
+                aria-label="Words in the prompt"
+                value={filters?.promptQuery || ""}
                 onChange={(event) =>
-                  onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
+                  onChange((prev) => ({ ...prev, promptQuery: event.target.value }))
                 }
+                placeholder={'words, "exact", -not'}
+                maxLength={200}
               />
-              <span>Hide clips already sent</span>
-            </label>
-            {(companion.actions || []).map((action) => {
-              const current = companionFilters[action.id] || "any";
-              return (
-                <div key={action.id} className="filters-companion-action">
-                  <span className="filters-companion-action__label" title={action.hint || undefined}>
-                    {action.label}
-                  </span>
-                  <div className="filters-rating-row" role="group" aria-label={action.label}>
-                    {COMPANION_FILTER_OPTIONS.map(({ value, label }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={`filters-pill ${current === value ? "filters-pill--active" : ""}`}
-                        aria-pressed={current === value}
-                        onClick={() =>
-                          onChange((prev) => {
-                            const next = { ...normalizeCompanionFilters(prev.companionFilters) };
-                            if (value === "any") delete next[action.id];
-                            else next[action.id] = value;
-                            return { ...prev, companionFilters: next };
-                          })
-                        }
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-            <span className="filters-empty-hint" role="status">
-              {companion.status === "offline"
-                ? "Not answering; showing its last answers."
-                : companion.status === "connecting"
-                  ? "Connecting…"
-                  : "Clips it has not answered for yet are always shown."}
-            </span>
-          </section>
-        ) : null}
+            </div>
+          </FilterRow>
 
-        {reviewModeEnabled ? (
-        <section className="filters-section">
-          <header className="filters-section__title">Review state</header>
-          <div className="filters-rating-row" role="group" aria-label="Review state">
-            {REVIEW_OPTIONS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                className={`filters-pill ${
-                  reviewFilter === value ? "filters-pill--active" : ""
-                }`}
-                aria-pressed={reviewFilter === value}
-                onClick={() =>
-                  onChange((prev) => ({ ...prev, reviewFilter: value }))
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <span className="filters-empty-hint">
-            Accepted and rejected clips also count as reviewed.
-          </span>
-        </section>
-        ) : null}
+          <FilterRow label="Might be" hint="Tags learned from the prompts of clips you have tagged.">
+            <MightBeControl
+              value={filters?.mightBe || ""}
+              status={likelyTagStatus}
+              state={mightBe}
+              onChange={(tag) => onChange((prev) => ({ ...prev, mightBe: tag }))}
+            />
+          </FilterRow>
+
+          <FilterRow
+            label="Resolution"
+            hint="Clips whose dimensions have not been read yet are hidden while a resolution filter is active."
+          >
+            {pillGroup("Maximum resolution", RESOLUTION_OPTIONS, maxMegapixels, (value) =>
+              onChange((prev) => ({ ...prev, maxMegapixels: value }))
+            )}
+            {pillGroup("Minimum resolution", RESOLUTION_MIN_OPTIONS, minMegapixels, (value) =>
+              onChange((prev) => ({ ...prev, minMegapixels: value }))
+            )}
+          </FilterRow>
+
+          <FilterRow
+            label="Versions"
+            hint="Versions are re-renders, upscales and sweeps of one generation, matched across every indexed folder. Best version with a maximum resolution lists drafts not yet re-rendered."
+            status={versionStatus === DEFAULT_VERSION_STATUS ? null : versionStatus}
+          >
+            <div className="filters-inline">
+              {pillGroup("Generation versions", VERSION_OPTIONS, versionFilter, (value) =>
+                onChange((prev) => ({ ...prev, versionFilter: value }))
+              )}
+              {typeof onFindVersionsInLibrary === "function" ? (
+                <button
+                  type="button"
+                  className="filters-pill"
+                  onClick={() => onFindVersionsInLibrary()}
+                  disabled={libraryVersionSearchRunning}
+                  title="Read generation keys for every indexed clip, including folders that are not open"
+                >
+                  Search library
+                </button>
+              ) : null}
+            </div>
+          </FilterRow>
+
+          {companion ? (
+            <FilterRow
+              label={companion.name || "Companion app"}
+              hint="Clips it has not answered for yet are always shown."
+              status={
+                companion.status === "offline"
+                  ? "Not answering; showing its last answers."
+                  : companion.status === "connecting"
+                    ? "Connecting…"
+                    : null
+              }
+            >
+              <label className="filters-checkbox">
+                <input
+                  type="checkbox"
+                  checked={filters?.companionHideSent === true}
+                  onChange={(event) =>
+                    onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
+                  }
+                />
+                <span>Hide clips already sent</span>
+              </label>
+              {(companion.actions || []).map((action) => {
+                const current = companionFilters[action.id] || "any";
+                return (
+                  <div key={action.id} className="filters-subrow">
+                    <span className="filters-subrow__label" title={action.hint || undefined}>
+                      {action.label}
+                    </span>
+                    {pillGroup(action.label, COMPANION_FILTER_OPTIONS, current, (value) =>
+                      onChange((prev) => {
+                        const next = { ...normalizeCompanionFilters(prev.companionFilters) };
+                        if (value === "any") delete next[action.id];
+                        else next[action.id] = value;
+                        return { ...prev, companionFilters: next };
+                      })
+                    )}
+                  </div>
+                );
+              })}
+            </FilterRow>
+          ) : null}
+        </div>
+        </div>
       </div>
     );
   }

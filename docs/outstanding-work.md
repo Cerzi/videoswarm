@@ -357,6 +357,13 @@ matches under the tag input, including in fullscreen. Check by hand:
 - A smart view saved during a rating-only, prompt-only or *Might be*
   library search searches the library again when applied (it used to come
   back as a folder view).
+- Filters is one wide panel (2026-10-17): *This folder / Entire library* in
+  its header, tags down the left, every other filter as a labelled row on
+  the right with its explanation in the label's tooltip; below 900 px wide
+  it is one column. Nothing should need scrolling to on a normal window.
+- With no folder open, Filters lists the tags, and *Entire library* with no
+  filter shows the whole library (up to 50,000 clips, newest kept past that).
+- Prompt search: `"pan"` in quotes finds *pan* and not *panda*.
 
 Decided 2026-10-17: **proxies are on by default**, to try. For portrait
 WAN/A1 clips they cut decoded pixels by about 1.8-3x. They are CRF 30

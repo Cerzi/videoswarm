@@ -1,43 +1,123 @@
+/* One wide panel: where the filters apply across the top, tags down the
+   left (the biggest job), and every other filter as a compact row on the
+   right, so nothing needs scrolling to and nothing hides behind a tab. */
 .filters-popover {
   position: absolute;
   top: 4.75rem;
   right: 1.25rem;
-  width: min(360px, calc(100vw - 2.5rem));
+  width: min(880px, calc(100vw - 2.5rem));
   max-height: calc(100vh - 6rem);
   overflow-y: auto;
   background: #1c1c1c;
   border: 1px solid var(--color-border);
-  border-radius: 16px;
+  border-radius: 14px;
   box-shadow: 0 28px 56px rgba(0, 0, 0, 0.45);
-  padding: 1.25rem;
+  padding: 0.9rem 1rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 0.85rem;
   z-index: 120;
 }
 
 .filters-popover__header {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .filters-popover__header h3 {
-  margin: 0 0 0.2rem 0;
-  font-size: 1.1rem;
+  margin: 0;
+  font-size: 1rem;
   font-weight: 600;
 }
 
-.filters-popover__header p {
-  margin: 0;
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.65);
+.filters-scope {
+  display: inline-flex;
+  gap: 0.3rem;
 }
 
 .filters-popover__header-actions {
   display: flex;
   gap: 0.75rem;
+  margin-left: auto;
+}
+
+.filters-popover__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.filters-popover__side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+/* A side-column filter: a label (its meaning in the tooltip) and controls. */
+.filters-row {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.filters-row__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: rgba(255, 255, 255, 0.55);
+  padding-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.filters-row__label--hint {
+  cursor: help;
+  text-decoration: underline dotted rgba(255, 255, 255, 0.3);
+  text-underline-offset: 3px;
+}
+
+.filters-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.filters-subrow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filters-subrow__label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+  min-width: 3.5rem;
+}
+
+.filters-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.filters-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.filters-chosen-tags {
+  gap: 0.35rem;
 }
 
 .filters-link {
@@ -56,25 +136,20 @@
 .filters-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .filters-section__title {
-  font-size: 0.9rem;
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.filters-chip-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  letter-spacing: 0.07em;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .filters-chip-group__label {
-  font-size: 0.8rem;
+  font-size: 0.68rem;
   color: rgba(255, 255, 255, 0.7);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -117,8 +192,9 @@
 .filters-tag-search input,
 .filters-tag-search select {
   width: 100%;
-  padding: 0.45rem 0.75rem;
-  border-radius: 10px;
+  box-sizing: border-box;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
   border: 1px solid var(--color-border);
   background: rgba(0, 0, 0, 0.25);
   color: var(--color-text);
@@ -131,23 +207,21 @@
 .filters-tag-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  max-height: 200px;
+  gap: 0.3rem;
+  max-height: min(26rem, calc(100vh - 16rem));
   overflow-y: auto;
   padding-right: 0.25rem;
 }
 
 .filters-tag-list__header {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.5);
-  margin-top: 0.5rem;
-  margin-bottom: 0.25rem;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .filters-empty-hint {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   color: rgba(255, 255, 255, 0.45);
 }
 
@@ -156,9 +230,9 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.45rem 0.6rem;
-  border-radius: 10px;
+  gap: 0.5rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.05);
 }
@@ -180,7 +254,7 @@
 }
 
 .filters-tag-option__name {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 500;
 }
 
@@ -202,8 +276,8 @@
   border-radius: 999px;
   background: transparent;
   color: var(--color-text);
-  padding: 0.25rem 0.65rem;
-  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
@@ -218,16 +292,27 @@
   color: #051805;
 }
 
-.filters-rating-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
 .filters-rating-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.3rem;
+}
+
+.filters-pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Too narrow for two columns: one, tags first, with a shorter list so the
+   other filters stay close. */
+@media (max-width: 900px) {
+  .filters-popover__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .filters-tag-list {
+    max-height: 14rem;
+  }
 }
 
 @media (max-width: 720px) {
@@ -239,14 +324,12 @@
   }
 }
 
-/* Scope sits above the filters it governs, and states plainly that a library
-   search is a point-in-time read rather than something that tracks changes. */
+/* A library search is a point-in-time read rather than something that tracks
+   changes, and says so beside the scope. */
 .filters-library-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.4rem;
 }
 .filters-library-status .filters-empty-hint {
   margin: 0;
@@ -256,7 +339,6 @@
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  margin-bottom: 0.4rem;
 }
 
 /* Tag hierarchy: where a tag sits, and moving it under another. */
@@ -315,14 +397,3 @@
   cursor: pointer;
 }
 
-.filters-companion-action {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.filters-companion-action__label {
-  font-size: 0.7rem;
-  opacity: 0.8;
-}
