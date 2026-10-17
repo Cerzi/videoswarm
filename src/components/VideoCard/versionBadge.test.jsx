@@ -115,7 +115,8 @@ describe("VideoCard stack strip", () => {
 
     const { fireEvent } = await import("@testing-library/react");
     fireEvent.mouseEnter(stills[0]);
-    expect(container.querySelector(".video-item-stack-peek")?.getAttribute("src")).toBe(strip[0].src);
+    // The still shows over the header until the clip plays (StackPeek).
+    expect(container.querySelector(".video-item-stack-peek img")?.getAttribute("src")).toBe(strip[0].src);
     fireEvent.mouseLeave(container.querySelector(".video-item-stack-strip"));
     expect(container.querySelector(".video-item-stack-peek")).toBeNull();
 

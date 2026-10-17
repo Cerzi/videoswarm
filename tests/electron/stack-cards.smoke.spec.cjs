@@ -63,6 +63,12 @@ test("stack cards: a strip of first-frame stills that opens the stack at a clip"
     const src = await strip.locator(".video-item-stack-still img").first().getAttribute("src");
     expect(src).toMatch(/^data:image\/jpeg;base64,/u);
 
+    // Hovering a still plays that clip over the header, and leaving stops it.
+    await strip.getByRole("button", { name: "Open the stack at this clip" }).first().hover();
+    await expect(page.locator(".video-item-stack-peek.is-playing")).toHaveCount(1, { timeout: 15_000 });
+    await page.mouse.move(0, 0);
+    await expect(page.locator(".video-item-stack-peek")).toHaveCount(0);
+
     await strip.getByRole("button", { name: "Open the stack at this clip" }).nth(1).click();
     await expect(page.locator(".video-item")).toHaveCount(6);
     await expect(page.locator(".video-item.selected")).toHaveCount(1);

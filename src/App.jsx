@@ -103,6 +103,7 @@ import { thumbService } from "./services/thumbService";
 import { posterFrames } from "./services/posterFrameCache";
 import { createDefaultFilters } from "./app/filters/filtersUtils";
 import { buildTagHierarchy } from "./app/filters/tagHierarchy";
+import { getOpaqueMediaSource } from "./utils/mediaSource";
 import {
   resetTurnedDownTags,
   turnDownLikelyTag,
@@ -1987,8 +1988,17 @@ function App() {
   const stripCacheRef = useRef(new Map());
   const stackStripFor = (stack) => {
     if (!stack?.strip?.length) return null;
-    const value = stack.strip.map((member) => ({ id: member.id, src: stackFrames.stillOf(member) }));
-    const signature = value.map((still) => `${still.id}\u0000${still.src ? still.src.length : 0}`).join("\u0001");
+    // Each still with what plays it on hover (StackPeek): the clip's catalog
+    // row and opaque media source, for local files only.
+    const value = stack.strip.map((member) => ({
+      id: member.id,
+      src: stackFrames.stillOf(member),
+      instanceId: member.isElectronFile ? member.instanceId ?? null : null,
+      sourceUrl: member.isElectronFile ? getOpaqueMediaSource(member) : null,
+    }));
+    const signature = value
+      .map((still) => `${still.id}\u0000${still.src ? still.src.length : 0}\u0000${still.sourceUrl || ""}`)
+      .join("\u0001");
     const cached = stripCacheRef.current.get(stack.key);
     if (cached?.signature === signature) return cached.value;
     if (stripCacheRef.current.size > 2000) stripCacheRef.current.clear();
@@ -6562,6 +6572,7 @@ function App() {
                                     )
                                   : null
                               }
+                              stackPeekScheduler={mediaScheduler}
                               onOpenStack={handleOpenStackFromCard}
                               isHoverAudioActive={
                                 hoverAudioEnabled &&

@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from "react";
 import { classifyMediaError } from "./mediaError";
 import { hardDetach } from "./videoDom";
+import StackPeek from "./StackPeek";
 import { useVideoStallWatchdog } from "../../hooks/useVideoStallWatchdog";
 import { thumbService, signatureForVideo } from "../../services/thumbService";
 import { posterFrames } from "../../services/posterFrameCache";
@@ -148,6 +149,8 @@ const VideoCard = memo(function VideoCard({
   // A few of the stack's other clips as stills ([{ id, src }]), to show how
   // much it varies; one array per stack that changes only with its stills.
   stackStrip = null,
+  // The media scheduler, for a hovered strip clip's preview (StackPeek).
+  stackPeekScheduler = null,
   // Companion apps' chips, one per app: `[{ key, label, tone, title }]`.
   companionChips = NO_COMPANION_CHIPS,
   onOpenStack,
@@ -560,6 +563,11 @@ const VideoCard = memo(function VideoCard({
   }, [isLoaded, isLoading, cancelLoadAttempt]);
 
   // Orchestrated play/pause + error handling
+  // While a hovered strip clip plays over the header (StackPeek), the card
+  // holds its own clip paused: it keeps its decoder, so nothing is released
+  // and re-granted, and resumes where it was when the peek ends.
+  const [stackPeekPlaying, setStackPeekPlaying] = useState(false);
+
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
@@ -681,7 +689,15 @@ const VideoCard = memo(function VideoCard({
       isVisible &&
       loaded &&
       !permanentErrorRef.current;
-    if (shouldPlay) {
+    if (shouldPlay && stackPeekPlaying) {
+      // Still wanted, so the pause handler keeps the decoder; the watchdog
+      // leaves a paused element alone.
+      el.dataset.playbackDesired = "true";
+      el.dataset.mediaOperation = "stack-peek";
+      el.muted = true;
+      try { el.pause(); } catch {}
+    } else if (shouldPlay) {
+      if (el.dataset.mediaOperation === "stack-peek") delete el.dataset.mediaOperation;
       el.dataset.playbackDesired = "true";
       el.muted = !isHoverAudioActive;
       if (isHoverAudioActive) {
@@ -707,6 +723,7 @@ const VideoCard = memo(function VideoCard({
         });
       }
     } else {
+      if (el.dataset.mediaOperation === "stack-peek") delete el.dataset.mediaOperation;
       el.dataset.playbackDesired = "false";
       el.muted = true;
       try { el.pause(); } catch {}
@@ -730,6 +747,7 @@ const VideoCard = memo(function VideoCard({
     playbackSuspended,
     workSuspended,
     isHoverAudioActive,
+    stackPeekPlaying,
     videoId,
     onVideoPlay,
     onVideoPause,
@@ -1445,12 +1463,12 @@ const VideoCard = memo(function VideoCard({
     onOpenStack?.(videoId);
   }, [onOpenStack, videoId]);
 
-  // Hovering a still in the strip shows it over the header; clicking opens
-  // the stack at that clip.
-  const [peekSrc, setPeekSrc] = useState(null);
+  // Hovering a still in the strip plays that clip over the header
+  // (StackPeek); clicking opens the stack at that clip.
+  const [peekStill, setPeekStill] = useState(null);
   const stripShown = isStack && Array.isArray(stackStrip) && stackStrip.length > 0;
   useEffect(() => {
-    if (!stripShown) setPeekSrc(null);
+    if (!stripShown) setPeekStill(null);
   }, [stripShown]);
   const stackMore = stripShown ? Math.max(0, stackCount - 1 - stackStrip.length) : 0;
 
@@ -1625,15 +1643,22 @@ const VideoCard = memo(function VideoCard({
         </button>
       )}
 
-      {stripShown && peekSrc && (
-        <img className="video-item-stack-peek" src={peekSrc} alt="" draggable={false} />
+      {stripShown && peekStill && (
+        <StackPeek
+          key={peekStill.id}
+          still={peekStill}
+          scheduler={stackPeekScheduler}
+          proxyPlaybackEnabled={proxyPlaybackEnabled}
+          audible={isHoverAudioActive}
+          onPlayingChange={setStackPeekPlaying}
+        />
       )}
 
       {stripShown && (
         <div
           className={`video-item-stack-strip${showFilenames ? " with-filename" : ""}`}
           onDoubleClick={(e) => e.stopPropagation()}
-          onMouseLeave={() => setPeekSrc(null)}
+          onMouseLeave={() => setPeekStill(null)}
         >
           {stackStrip.map((still) => (
             <button
@@ -1642,7 +1667,7 @@ const VideoCard = memo(function VideoCard({
               className="video-item-stack-still"
               title="Open the stack at this clip"
               aria-label="Open the stack at this clip"
-              onMouseEnter={() => setPeekSrc(still.src || null)}
+              onMouseEnter={() => setPeekStill(still)}
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenStack?.(videoId, still.id);

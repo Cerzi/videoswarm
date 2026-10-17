@@ -360,6 +360,57 @@ describe("VideoCard scheduler integration", () => {
     expect(mediaElements[1].src).toContain("v=new");
   });
 
+  it("holds its clip paused, keeping its decoder, while a hovered strip clip plays", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const scheduler = createMediaSlotScheduler({
+      maxResident: 1,
+      maxLoaders: 1,
+      maxDecoders: 1,
+      maxAuxiliaryDecoders: 1,
+    });
+    const props = cardProps(scheduler, {
+      video: { id: "stack", name: "stack.mp4", fullPath: "/stack.mp4", isElectronFile: true },
+      stackCount: 4,
+      stackTotal: 4,
+      stackStrip: [
+        { id: "member", src: null, instanceId: 2, sourceUrl: "videoswarm-media://instance/2?v=peek-test" },
+      ],
+      stackPeekScheduler: scheduler,
+    });
+    const rendered = render(<VideoCard {...props} />);
+    await act(async () => {});
+    const header = mediaElements[0];
+    await act(async () => header.dispatchEvent(new Event("loadeddata")));
+    const decoderLease = scheduler.reserveDecoder("stack");
+    rendered.rerender(<VideoCard {...props} isLoaded isPlaying decoderLease={decoderLease} />);
+    await act(async () => {});
+    expect(header.play).toHaveBeenCalled();
+
+    const still = rendered.getByRole("button", { name: "Open the stack at this clip" });
+    await act(async () => fireEvent.mouseEnter(still));
+    const peek = mediaElements.find((element) => element !== header);
+    expect(peek).toBeTruthy();
+    expect(scheduler.getAuxiliaryDecoderLease("stack-peek:member")).toBeTruthy();
+    expect(peek.getAttribute("src")).toBe("videoswarm-media://instance/2?v=peek-test");
+    expect(peek.play).toHaveBeenCalled();
+
+    header.pause.mockClear();
+    header.play.mockClear();
+    props.onVideoPause.mockClear();
+    await act(async () => peek.dispatchEvent(new Event("playing")));
+    // Held, not handed back: the decoder stays the card's.
+    expect(header.pause).toHaveBeenCalled();
+    expect(header.dataset.mediaOperation).toBe("stack-peek");
+    await act(async () => header.dispatchEvent(new Event("pause")));
+    expect(props.onVideoPause).not.toHaveBeenCalled();
+    expect(scheduler.getSnapshot().decoders).toBe(1);
+
+    await act(async () => fireEvent.mouseLeave(rendered.container.querySelector(".video-item-stack-strip")));
+    expect(scheduler.getAuxiliaryDecoderLease("stack-peek:member")).toBeNull();
+    expect(header.play).toHaveBeenCalled();
+    expect(header.dataset.mediaOperation).toBeUndefined();
+  });
+
   it("pauses physically before acknowledging a decoder handoff", async () => {
     const scheduler = createMediaSlotScheduler({
       maxResident: 1,

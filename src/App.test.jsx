@@ -3203,13 +3203,16 @@ describe("App hook composition", () => {
       await waitFor(
         () =>
           expect(cardProps("a3").stackStrip).toEqual([
-            { id: "a1", src: "data:image/jpeg;base64,1" },
-            { id: "a2", src: "data:image/jpeg;base64,2" },
-            { id: "a5", src: "data:image/jpeg;base64,5" },
+            // These clips are not local files, so nothing plays on hover.
+            { id: "a1", src: "data:image/jpeg;base64,1", instanceId: null, sourceUrl: null },
+            { id: "a2", src: "data:image/jpeg;base64,2", instanceId: null, sourceUrl: null },
+            { id: "a5", src: "data:image/jpeg;base64,5", instanceId: null, sourceUrl: null },
           ]),
         { timeout: 3000 }
       );
 
+      // Strip clips play on hover through the grid's scheduler.
+      expect(typeof cardProps("a3").stackPeekScheduler?.reserveAuxiliaryDecoder).toBe("function");
       await act(async () => cardProps("a3").onOpenStack("a3", "a5"));
       await waitFor(() => expect(gridIds()).toEqual(["a1", "a2", "a3", "a4", "a5"]));
       expect(selectionMock.selectExactly).toHaveBeenLastCalledWith("a5");

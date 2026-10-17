@@ -365,11 +365,22 @@ up to three stills of other clips in the stack, with a `+N` tile for the rest.
   run order. Before fingerprints arrive the strip is spread evenly across the
   run. (Prompt words were considered as a fallback and dropped: in a stack of
   one exact prompt every clip has the same words.)
-- **Hover and click.** Hovering a still shows it over the header; clicking it
-  opens the stack at that clip, selected and in view. `+N` opens the stack.
-  The header keeps playing its own clip: switching the playing clip on hover
-  is deferred, because the card's media element lifecycle is the most
-  delicate code in the grid.
+- **Hover and click.** Hovering a still plays that clip over the header
+  (2026-10-17, `src/components/VideoCard/StackPeek.jsx`): its still at once,
+  then the clip, looping, through a proxy when proxies are on and with sound
+  when hover audio is. Leaving the strip returns to the header's clip where
+  it was. Clicking a still opens the stack at that clip, selected and in
+  view; `+N` opens the stack.
+  - The hovered clip plays in its own small `<video>`; the header's media
+    element, the most delicate code in the grid, is never re-pointed (that
+    would report the hovered clip's size as the cover's and reflow the grid).
+  - It takes the media scheduler's auxiliary lane, the one bounded extra
+    decoder (shared with last-frame capture, and closed while the window is
+    put away); with the lane taken the still shows instead.
+  - While it plays, the header holds its own clip paused but keeps its
+    decoder (marked `mediaOperation = "stack-peek"`, so the pause is not
+    reported as a hand-off and the stall watchdog leaves it alone), and
+    resumes when the peek ends. The grid decodes no more video than before.
 - **No extra decoding in the grid.** Stills are images, so a screen of stack
   cards plays no more video than before. On cards narrower than 170 px the
   strip is hidden.
@@ -405,8 +416,6 @@ up to three stills of other clips in the stack, with a `+N` tile for the rest.
 - **A "stacks without a pick" filter**, the culling counterpart of the drafts
   worklist in `generation-versions.md`.
 - **Sorting stacks by size**, so the most repeated prompts come first.
-- **Playing a strip clip in the header** on hover (Section 8 shows its
-  still instead).
 - **Library-wide stack counts** beside collection-local ones.
 
 ## Implementation order
