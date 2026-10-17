@@ -880,6 +880,52 @@ describe("App hook composition", () => {
     }
   });
 
+  test("sends a right-clicked clip to a companion action through the dry-run dialog", async () => {
+    const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, isElectronFile: true };
+    useElectronLifecycleMock.mockImplementation(() => ({ ...electronLifecycleReturn, videos: [clip] }));
+    useContextMenuMock.mockImplementation(() => ({
+      ...contextMenuReturn,
+      contextMenu: { visible: true, position: { x: 10, y: 10 }, contextId: clip.id },
+    }));
+    const send = vi.fn().mockResolvedValue({
+      success: true,
+      results: { 7: { result: "sent", why: "", estimate: 90 } },
+    });
+    window.electronAPI = {
+      companion: {
+        getConnection: vi.fn().mockResolvedValue({ enabled: true, url: "http://127.0.0.1:9" }),
+        onConnectionChanged: vi.fn(() => () => {}),
+        describe: vi.fn().mockResolvedValue({
+          success: true,
+          name: "Helper",
+          actions: [{ id: "polish", label: "Polish", send: "Send to polish" }],
+        }),
+        lookup: vi.fn().mockResolvedValue({ success: true, results: {} }),
+        send,
+      },
+    };
+    const previousOrdered = masonryReturn.orderedVideos;
+    masonryReturn.orderedVideos = [clip];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      const menu = () => contextMenuSpy.mock.calls.at(-1)[0];
+      await waitFor(() =>
+        expect(menu().companionActions?.map((action) => action.id)).toEqual(["polish"])
+      );
+      await act(async () => menu().onAction("companion:send:polish"));
+      expect(await screen.findByRole("dialog", { name: "Send to polish" })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(send).toHaveBeenCalledWith({ action: "polish", instanceIds: [7], dryRun: true, again: false })
+      );
+      expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+      useContextMenuMock.mockImplementation(() => contextMenuReturn);
+    }
+  });
+
   test("opens a clip's workflow in ComfyUI from its context menu and says why not", async () => {
     const clip = {
       id: "/library/clip.mp4",

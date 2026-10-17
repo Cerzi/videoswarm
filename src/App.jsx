@@ -126,6 +126,7 @@ import {
   unreviewedStackFingerprints,
 } from "./app/stacks/promptStacks";
 import { useCompanion } from "./app/companion/useCompanion";
+import CompanionSendDialog from "./components/CompanionSendDialog";
 import { companionCardProps } from "./app/companion/companionCard";
 import {
   COMPANION_PHASE_LABELS,
@@ -260,6 +261,8 @@ function App() {
   const [transferLayout, setTransferLayout] = useState("structured");
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState([]);
+  // Clips on their way to a companion app's action: `{ action, videos }`.
+  const [companionSend, setCompanionSend] = useState(null);
   const [tagRefreshToken, setTagRefreshToken] = useState(0);
   const [librarySearchScope, setLibrarySearchScope] = useState("folder");
   // Bumped to re-run the library search even when its tags did not change,
@@ -706,6 +709,9 @@ function App() {
   // A companion app's view of the collection (docs/architecture/companion-app.md).
   const companion = useCompanion({ videos, suspended: workSuspended });
   const companionActive = companion.status !== "off";
+  // Read by the context-menu handler, so new answers do not re-create it.
+  const companionActionsRef = useRef(companion.actions);
+  companionActionsRef.current = companion.status === "online" ? companion.actions : [];
   const companionPanel = useMemo(
     () =>
       companionActive
@@ -2905,6 +2911,16 @@ function App() {
       if (actionId === "comfy:open-workflow") {
         const video = getById(contextMenu.contextId);
         if (video) void handleOpenWorkflow(video);
+        return;
+      }
+      if (actionId.startsWith("companion:send:")) {
+        const action = companionActionsRef.current.find(
+          (entry) => `companion:send:${entry.id}` === actionId
+        );
+        const ids =
+          selection.size > 1 ? [...selection.selected] : [contextMenu.contextId];
+        const targets = ids.map((id) => getById(id)).filter(Boolean);
+        if (action && targets.length) setCompanionSend({ action, videos: targets });
         return;
       }
       if (actionId === "metadata:open") {
@@ -5636,6 +5652,16 @@ function App() {
             onCancelAcceptedCopy={handleCancelAcceptedCopy}
             acceptedCopyProgress={acceptedCopyProgress}
             trashProgress={trashProgress}
+            companion={companion.status === "online" ? companionPanel : null}
+            onCompanionSent={companion.refresh}
+          />
+          <CompanionSendDialog
+            open={Boolean(companionSend)}
+            action={companionSend?.action || null}
+            companionName={companion.name || undefined}
+            videos={companionSend?.videos || []}
+            onClose={() => setCompanionSend(null)}
+            onSent={companion.refresh}
           />
           <SequenceRenumberDialog
             open={sequenceAction?.kind === "renumber"}
@@ -6320,6 +6346,7 @@ function App() {
               onPlacementChange={handleContextMenuPlacementChange}
               reviewModeEnabled={reviewModeEnabled}
               canGoToFolder={Boolean(tagCollection)}
+              companionActions={companion.status === "online" ? companion.actions : undefined}
             />
           )}
         </>

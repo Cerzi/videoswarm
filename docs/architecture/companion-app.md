@@ -1,7 +1,7 @@
 # Companion App
 
-Status: **Partly implemented** (2026-10-17). Connection, client, IPC,
-Preferences, card chips and filters are in place; sending is not yet.
+Status: **Implemented, unverified by a human** (2026-10-17). Exercised
+against a fake companion only.
 
 ## Summary
 
@@ -166,14 +166,27 @@ At most 500 paths. `dry_run` changes nothing and answers what would happen.
   stopped. A clip the companion has not answered for yet always passes.
   Saved views keep them; a view without them is stored exactly as before.
 
-### Unimplemented
+- **Sending** (`src/components/CompanionSendPanel.jsx`). *Send to …* items,
+  named by the companion, in a clip's context menu act on the whole
+  selection. The dialog opens on the dry run: how many will be sent, the
+  estimate, and skips and refusals grouped by reason. *Send again clips sent
+  before* re-runs it with `again`. *Send* sends only what the dry run said
+  would be sent, in chunks of 100, with progress and *Stop*; the clips are
+  looked up again straight after.
+- **Process review results** offers each action for the Accepted clips in
+  scope, above moving rejects and copying Accepted clips, with the same
+  dry run. The dialog cannot close while a send runs.
+- `tests/electron/companion.smoke.spec.cjs` runs the whole path in the real
+  app against the fake: connecting, chips, sending through the dialog,
+  refusing a row the renderer was never shown, and hiding sent clips.
 
-- **Sending.** *Send to …* items from the description, for a selection and
-  the context menu: a dry run gives a dialog (how many will be sent, the
-  estimate, skips and refusals grouped by reason), then the send, in chunks,
-  with progress.
-- **Process review results** offers sending Accepted clips to an action,
-  above copying or moving them.
+## Deferred
+
+- A change feed (`/api/changes` with a revision counter), so work done
+  outside Video Swarm shows without waiting for focus.
+- Keyboard shortcuts for sending.
+- Clips the companion has not answered for are always shown; a stricter
+  mode that hides them until answered.
 
 ## Acceptance
 

@@ -368,6 +368,27 @@ describe('ContextMenu', () => {
     expect(screen.queryByRole('menuitem', { name: /Go to folder/ })).toBeNull();
   });
 
+  test('offers a companion app\'s actions, for the whole selection', () => {
+    const onAction = vi.fn();
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={3}
+        getById={getById}
+        onClose={() => {}}
+        onAction={onAction}
+        companionActions={[
+          { id: 'polish', label: 'Polish', send: 'Send to polish' },
+          { id: 'enlarge', label: 'Enlarge', send: 'Send to enlarge' },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: /Send to enlarge… \(3 selected\)/ }));
+    expect(onAction).toHaveBeenCalledWith('companion:send:enlarge');
+  });
+
   test('offers the ComfyUI workflow for a clip carrying a prompt', () => {
     const onAction = vi.fn();
     const electronAPI = { comfyQueue: { openWorkflow: vi.fn() } };

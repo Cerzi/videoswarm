@@ -536,3 +536,31 @@
     transition: none;
   }
 }
+
+/* Sending to a companion app (docs/architecture/companion-app.md). */
+.companion-send__summary { display: grid; gap: 0.45rem; margin-top: 0.6rem; }
+.companion-send__summary p { margin: 0; color: #c9ced2; font-size: 0.74rem; }
+.companion-send__reasons span {
+  color: #858c91;
+  font-size: 0.61rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.companion-send__reasons ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1rem;
+  color: #aab1b6;
+  font-size: 0.7rem;
+}
+.companion-send__progress p { margin: 0.5rem 0 0.3rem; color: #aab1b6; font-size: 0.72rem; }
+.companion-send__buttons { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
+.companion-send__buttons:empty { display: none; }
+.companion-send__primary { font-weight: 650; }
+.companion-send__again {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #aab1b6;
+  font-size: 0.72rem;
+  cursor: pointer;
+}

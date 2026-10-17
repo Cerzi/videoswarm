@@ -4,6 +4,9 @@ import {
   summarizeReviewScope,
 } from "../review/reviewResults";
 import MediaTransferPanel from "./MediaTransferPanel";
+import CompanionSendPanel from "./CompanionSendPanel";
+import { companionRowsOf } from "../app/companion/companionSend";
+import { normalizeReviewState, REVIEW_STATES } from "../review/reviewState";
 import {
   COPY_PHASES,
   useMediaTransfer,
@@ -49,6 +52,10 @@ export default function ProcessReviewResultsDialog({
   onCancelAcceptedCopy,
   acceptedCopyProgress = null,
   trashProgress = null,
+  // A connected companion app (`{ name, actions }`): Accepted clips can be
+  // handed to its actions by reference instead of copied or moved.
+  companion = null,
+  onCompanionSent,
 }) {
   const backdropRef = useRef(null);
   const dialogRef = useRef(null);
@@ -59,6 +66,33 @@ export default function ProcessReviewResultsDialog({
   const [pendingAction, setPendingAction] = useState(null);
   const [actionError, setActionError] = useState("");
   const summary = useMemo(() => summarizeReviewScope(videos), [videos]);
+  const acceptedRows = useMemo(
+    () =>
+      companionRowsOf(
+        videos.filter(
+          (video) => video && normalizeReviewState(video.reviewState) === REVIEW_STATES.PICK
+        )
+      ),
+    [videos]
+  );
+  const [companionBusy, setCompanionBusy] = useState(() => new Set());
+  const setCompanionActionBusy = useMemo(() => {
+    const setters = new Map();
+    return (actionId) => {
+      if (!setters.has(actionId)) {
+        setters.set(actionId, (busyNow) =>
+          setCompanionBusy((previous) => {
+            if (previous.has(actionId) === busyNow) return previous;
+            const next = new Set(previous);
+            if (busyNow) next.add(actionId);
+            else next.delete(actionId);
+            return next;
+          })
+        );
+      }
+      return setters.get(actionId);
+    };
+  }, []);
 
   const transferAvailable =
     processingReady &&
@@ -80,7 +114,9 @@ export default function ProcessReviewResultsDialog({
   });
   const copyPhase = transfer.phase;
   const copyBusy = transfer.busy;
-  const closeBlocked = Boolean(busy || pendingAction !== null || copyBusy);
+  const closeBlocked = Boolean(
+    busy || pendingAction !== null || copyBusy || companionBusy.size > 0
+  );
   const actionBusy = closeBlocked;
   actionBusyRef.current = closeBlocked;
   externalBusyRef.current = Boolean(busy);
@@ -294,6 +330,20 @@ export default function ProcessReviewResultsDialog({
           )}
 
           <div className="review-results-dialog__actions">
+            {companion && processingReady
+              ? (companion.actions || []).map((action) => (
+                  <CompanionSendPanel
+                    key={action.id}
+                    action={action}
+                    companionName={companion.name || undefined}
+                    instanceIds={acceptedRows.instanceIds}
+                    excludedCount={acceptedRows.excludedCount}
+                    itemLabel={acceptedRows.instanceIds.length === 1 ? "accepted clip" : "accepted clips"}
+                    onBusyChange={setCompanionActionBusy(action.id)}
+                    onSent={onCompanionSent}
+                  />
+                ))
+              : null}
             <article className="review-results-action review-results-action--danger">
               <div>
                 <h3>Move rejects to the {trashName()}</h3>

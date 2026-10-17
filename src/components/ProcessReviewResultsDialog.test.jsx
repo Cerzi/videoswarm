@@ -649,3 +649,56 @@ describe("ProcessReviewResultsDialog", () => {
     expect(background).not.toHaveAttribute("inert");
   });
 });
+
+describe("ProcessReviewResultsDialog companion app", () => {
+  const companion = {
+    name: "Helper",
+    actions: [{ id: "polish", label: "Polish", send: "Send to polish", hint: "Makes a better copy" }],
+  };
+
+  afterEach(() => {
+    delete window.electronAPI;
+  });
+
+  it("hands Accepted clips to a companion action after a dry run", async () => {
+    let finishSend;
+    const send = vi.fn(({ instanceIds, dryRun }) => {
+      const answer = {
+        success: true,
+        results: Object.fromEntries(
+          instanceIds.map((id) => [id, { result: "sent", why: "", estimate: 600 }])
+        ),
+      };
+      if (dryRun) return Promise.resolve(answer);
+      return new Promise((resolve) => {
+        finishSend = () => resolve(answer);
+      });
+    });
+    window.electronAPI = { companion: { send } };
+    const onCompanionSent = vi.fn();
+    const props = dialogProps({ companion, onCompanionSent });
+    render(<ProcessReviewResultsDialog {...props} />);
+
+    expect(screen.getByRole("heading", { name: "Send to polish" })).toBeInTheDocument();
+    expect(screen.getByText("Makes a better copy")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check 1" }));
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith({ action: "polish", instanceIds: [1], dryRun: true, again: false })
+    );
+    expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
+    expect(screen.getByText(/≈ 10 min/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send 1" }));
+    // Closing waits for the send.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Done" })).toBeDisabled());
+    await act(async () => finishSend());
+    expect(await screen.findByText("Sent 1")).toBeInTheDocument();
+    expect(onCompanionSent).toHaveBeenCalledWith([1]);
+    expect(screen.getByRole("button", { name: "Done" })).not.toBeDisabled();
+  });
+
+  it("offers nothing without a connected companion", () => {
+    render(<ProcessReviewResultsDialog {...dialogProps()} />);
+    expect(screen.queryByText(/Send to/)).toBeNull();
+  });
+});

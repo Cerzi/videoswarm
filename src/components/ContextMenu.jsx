@@ -88,6 +88,8 @@ const rootMenuSize = (element, items) => {
 };
 
 // A clip whose embedded ComfyUI prompt was read, or an MP4/MOV not read yet.
+const NO_COMPANION_ACTIONS = Object.freeze([]);
+
 const mayCarryWorkflow = (video) => {
   if (!video?.instanceId) return false;
   if (video.promptKey) return true;
@@ -107,6 +109,8 @@ const ContextMenu = ({
   reviewModeEnabled = true,
   // In a library-wide view: offer going to the clip's own folder.
   canGoToFolder = false,
+  // A connected companion app's actions, as it describes them.
+  companionActions = NO_COMPANION_ACTIONS,
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
@@ -209,6 +213,16 @@ const ContextMenu = ({
 
     const reviewTarget =
       selectionCount > 1 ? ` (${selectionCount} selected)` : '';
+    pushSection(
+      companionActions.map((companionAction) => ({
+        id: `companion-send-${companionAction.id}`,
+        label: `↗ ${companionAction.send}…${
+          selectionCount > 1 ? ` (${selectionCount} selected)` : ''
+        }`,
+        action: `companion:send:${companionAction.id}`,
+      }))
+    );
+
     pushSection([
       {
         id: 'metadata-open',
@@ -312,6 +326,7 @@ const ContextMenu = ({
   }, [
     canGoToFolder,
     canSingleFileOps,
+    companionActions,
     contextId,
     electronAPI,
     primaryVideo,
