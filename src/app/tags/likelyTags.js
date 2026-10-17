@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 // moment it is turned down, without waiting for a new answer.
 
 const MAX_SUGGESTION_ROWS = 2_000;
-const MAX_MIGHT_BE_ROWS = 20_000;
+const MAX_MIGHT_BE_ROWS = 50_000;
 const SUGGESTION_DELAY_MS = 200;
 const MIGHT_BE_DELAY_MS = 300;
 

@@ -126,8 +126,8 @@ if (!database || databaseLoadError) {
         dismissedTagIds: [idOf('sea')],
       });
       expect(byId.get(plain.instanceId)).toMatchObject({ promptKey: null, dismissedTagIds: [] });
-      expect(() => store.getTagSuggestionTargets(Array.from({ length: 20_001 }, (_, i) => i + 1))).toThrow(
-        /At most 20000/
+      expect(() => store.getTagSuggestionTargets(Array.from({ length: 50_001 }, (_, i) => i + 1))).toThrow(
+        /At most 50000/
       );
     });
 

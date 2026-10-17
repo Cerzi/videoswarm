@@ -194,17 +194,8 @@ function normalizeReviewViewDefinition(
     };
     // Where a saved view searches: the open folder (the default, so every
     // view saved before this axis existed means what it meant), or every
-    // indexed root. A library search is defined by its tags, a rating, prompt
-    // words or a tag clips might be; with none it stays a folder view.
-    const filters = normalized.filters;
-    const definesLibrarySearch =
-      filters.includeTags.length > 0 ||
-      filters.minRating >= 1 ||
-      filters.exactRating >= 1 ||
-      Boolean(filters.promptQuery) ||
-      Boolean(filters.mightBe);
-    normalized.searchScope =
-      input.searchScope === 'library' && definesLibrarySearch ? 'library' : 'folder';
+    // indexed root, narrowed by whatever filters it has or not at all.
+    normalized.searchScope = input.searchScope === 'library' ? 'library' : 'folder';
   }
 
   const serialized = JSON.stringify(normalized);

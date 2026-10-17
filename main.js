@@ -5851,7 +5851,7 @@ ipcMain.handle("prompts:search", async (_event, payload = {}) => {
 // rows and tags; main learns from prompts it reads itself and answers with
 // tag names and rows. Prompts never cross.
 const TAG_SUGGESTION_MAX_ROWS = 2_000;
-const TAG_MIGHT_BE_MAX_ROWS = 20_000;
+const TAG_MIGHT_BE_MAX_ROWS = 50_000;
 
 const tagSuggestionFailure = (error) => ({
   success: false,

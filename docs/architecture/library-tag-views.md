@@ -78,41 +78,36 @@ inventing a second one.
   budget, in the same style as the accepted-export snapshot, and reports when it
   truncated rather than silently returning a partial library.
 - An empty tag set means *no tag constraint* at the store level, so the query
-  itself still answers "everything within the bound". **The UI does not ask
-  it.** See below. No separate tag catalog is needed: the filter panel already
-  lists profile-wide tags with usage counts.
+  itself answers "everything within the bound". No separate tag catalog is
+  needed: the filter panel lists profile-wide tags with usage counts, loaded
+  at startup, before any folder is open.
 
-### A library search needs a tag or a rating
+### With nothing selected, the whole library
 
-This originally read "a library search with nothing selected returns everything
-within the bound", and shipping it showed that to be wrong. On a 24k-clip
-profile, flipping the scope control immediately read 20,000 records — the
-record cap — and reported itself truncated. A bound being hit is not a result
-anyone asked for, and the one gesture that reaches it was a single toggle.
+*Entire library* is always available, with or without a folder open. Tags,
+a rating (1 to 5 stars, minimum or exact), prompt words and *Might be* each
+narrow the query itself; with none of them it is the whole library
+(2026-10-17).
 
-So the scope control is unavailable until at least one include tag or a
-rating (1 to 5 stars, minimum or exact) is selected, and states why rather
-than only dimming: a disabled control that does not
-explain itself is a dead end. Removing the last tag while a search is open
-cannot be prevented by the control, so the guard also lives behind it — the
-view empties and asks for a tag instead of falling back to reading everything.
+History: this was refused for a while. On a 24k-clip profile the toggle read
+20,000 records, the record cap at the time, and reported itself truncated, so
+the scope control was disabled until a tag or a rating was chosen. The owner
+asked for the whole library on purpose, and folder views have no record cap
+at all (a recursive root loads every clip), so the cap was raised to 50,000
+records and 32 MiB of paths, well above a large profile. Past it the search
+keeps the newest clips (by file modification time) and says how many it is
+showing; the grid then sorts them as usual.
 
-A rating narrows the query itself (2026-10-17): "4 stars or more across the
-library" is a search on its own, and with tags it narrows them. Unrated clips
-never match a rating, and "exactly 0 stars" is not offered as a library
-search, since it would mean most of the library.
-
-The store keeps the unconstrained capability. The gate belongs at the point of
-user intent, not in the query: the store answers questions, and the UI decides
-which ones are worth asking.
+Unrated clips never match a rating, and "exactly 0 stars" is not a rating
+filter.
 
 ### Acceptance
 
 - A tagged clip is returned regardless of which indexed root holds it.
 - A clip whose instance is absent, or whose directory is absent, is not returned.
 - Exceeding the record or byte bound is reported, not truncated silently.
-- No user gesture issues a library query with no tags and no rating, and the
-  control that would says why it is unavailable.
+- With nothing selected, *Entire library* shows the whole library, from the
+  home screen too; past the cap it shows the newest clips and says so.
 - A rating alone searches every root; with tags it narrows them.
 
 ## 2. Snapshot, not a live collection

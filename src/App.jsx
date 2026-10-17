@@ -88,7 +88,6 @@ import { useSequences } from "./app/hooks/useSequences";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import {
-  hasLibrarySearchCriteria,
   librarySearchCriteria,
   librarySearchKey,
 } from "./app/librarySearch";
@@ -2549,22 +2548,9 @@ function App() {
         mightBe: (mightBe || "").trim(),
       };
 
-      // A library search is defined by its tags and its rating, so with
-      // neither there is no question to ask. Asking it anyway reads every clip
-      // in the profile into the grid up to the record cap, which is a bound to
-      // hit rather than a result to want. The scope control refuses this too;
-      // this is the guard behind it, and it also covers removing the last tag
-      // or the rating while a library search is open.
-      if (!hasLibrarySearchCriteria({ tags: requested, ...rating })) {
-        openTagCollection({
-          tags: [],
-          matchMode,
-          records: [],
-          truncated: false,
-        });
-        return true;
-      }
-
+      // With nothing to narrow it, a library search is the whole library, up
+      // to main's record cap; past the cap it keeps the newest clips and says
+      // so.
       const snapshot = window.electronAPI?.library?.taggedSnapshot;
       if (typeof snapshot !== "function") {
         notify("Tag views are unavailable", "error");
@@ -2588,9 +2574,9 @@ function App() {
         });
         if (result?.truncated) {
           notify(
-            `Showing the first ${Number(
+            `Showing the ${Number(
               result.recordLimit || records.length
-            ).toLocaleString()} matching clips`,
+            ).toLocaleString()} newest matching clips`,
             "info"
           );
         } else if (!records.length) {
@@ -2648,11 +2634,7 @@ function App() {
     [activeRootPath, filters, librarySearchScope, loadTagCollection]
   );
 
-  // A library search with no tags and no rating is waiting for one, not
-  // looking at an empty collection, and the grid has to say the difference.
   const libraryCriteria = useMemo(() => librarySearchCriteria(filters), [filters]);
-  const isEmptyLibrarySearch =
-    librarySearchScope === "library" && !hasLibrarySearchCriteria(libraryCriteria);
 
   // Tags and the rating narrow the library query itself rather than only the
   // loaded grid, so changing them while searching the library re-runs the read.
@@ -3953,7 +3935,7 @@ function App() {
         promptQuery: tagCollection.promptQuery || "",
         mightBe: tagCollection.mightBe || "",
       };
-      return hasLibrarySearchCriteria(library) ? { library } : null;
+      return { library };
     }
     if (!activeRootPath) return null;
     return { rootPath: activeRootPath, directory: currentDirectory, scope: folderScope };
@@ -4166,11 +4148,7 @@ function App() {
         scope: { mode: folderScope },
         // Saved during a library search, the view searches the library
         // wherever it is applied; otherwise it applies to the open folder.
-        searchScope:
-          librarySearchScope === "library" &&
-          hasLibrarySearchCriteria(librarySearchCriteria(filters))
-            ? "library"
-            : "folder",
+        searchScope: librarySearchScope === "library" ? "library" : "folder",
       };
       try {
         const view = await createSavedView(name, definition);
@@ -4212,9 +4190,7 @@ function App() {
       const nextScope = Object.values(FolderScope).includes(definition.scope?.mode)
         ? definition.scope.mode
         : FolderScope.ALL_DESCENDANTS;
-      const searchesLibrary =
-        definition.searchScope === "library" &&
-        hasLibrarySearchCriteria(librarySearchCriteria(definition.filters || {}));
+      const searchesLibrary = definition.searchScope === "library";
       if (searchesLibrary) {
         // The same search wherever it is applied from, the home screen
         // included: every indexed root, not the open folder.
@@ -6449,9 +6425,7 @@ function App() {
                     {orderedVideos.length === 0 && !isLoadingFolder && (
                       <div className="collection-empty-state" role="status">
                         <h3>
-                          {isEmptyLibrarySearch
-                            ? "Include a tag or a rating to search the library"
-                            : videos.length === 0
+                          {videos.length === 0
                             ? "No videos in this collection"
                             : filteredVideos.length === 0
                             ? "No videos match the active filters"

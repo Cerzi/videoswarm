@@ -19,20 +19,15 @@ describe("saved view search scope", () => {
     expect(saved(view({ searchScope: "somewhere" })).searchScope).toBe("folder");
   });
 
-  it("keeps a library scope only when an include tag defines the search", () => {
+  it("keeps a library scope whatever narrows it, nothing included", () => {
     expect(saved(view({ searchScope: "library" })).searchScope).toBe("library");
     expect(
       saved(view({ searchScope: "library", filters: { includeTags: [], excludeTags: ["x"] } })).searchScope
-    ).toBe("folder");
+    ).toBe("library");
   });
 
-  it("keeps a library scope defined by a rating, prompt words or a tag clips might be", () => {
-    const library = (filters) => saved(view({ searchScope: "library", filters })).searchScope;
-    expect(library({ minRating: 4 })).toBe("library");
-    expect(library({ exactRating: 2 })).toBe("library");
-    expect(library({ exactRating: 0 })).toBe("folder");
-    expect(library({ promptQuery: " lighthouse " })).toBe("library");
-    expect(library({ mightBe: "dance" })).toBe("library");
+  it("keeps prompt words and a tag clips might be", () => {
+    expect(saved(view({ filters: { promptQuery: " lighthouse " } })).filters.promptQuery).toBe("lighthouse");
     expect(saved(view({ filters: { mightBe: " dance " } })).filters.mightBe).toBe("dance");
     expect(saved(view()).filters).not.toHaveProperty("mightBe");
   });

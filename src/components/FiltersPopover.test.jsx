@@ -76,17 +76,16 @@ describe("FiltersPopover search scope", () => {
     expect(onSearchScopeChange).toHaveBeenCalledWith("library");
   });
 
-  // Without a tag the query has no constraint, so it would read the whole
-  // profile into the grid and report itself truncated. That is a bound to hit
-  // rather than a result anyone asked for.
-  it("will not start a library search with no tag to search for", () => {
+  // With nothing to narrow it, the library search is the whole library.
+  it("searches the whole library with no filter, even with no folder open", () => {
     const onSearchScopeChange = vi.fn();
-    renderScope({ filters: baseFilters, onSearchScopeChange });
+    renderScope({ filters: baseFilters, onSearchScopeChange, canReturnToFolder: false });
 
     const library = screen.getByRole("button", { name: "Entire library" });
-    expect(library).toBeDisabled();
+    expect(library).not.toBeDisabled();
     fireEvent.click(library);
-    expect(onSearchScopeChange).not.toHaveBeenCalled();
+    expect(onSearchScopeChange).toHaveBeenCalledWith("library");
+    expect(screen.getByRole("button", { name: "This folder" })).toBeDisabled();
   });
 
   it("offers a library search for a rating alone", () => {
@@ -98,29 +97,18 @@ describe("FiltersPopover search scope", () => {
     expect(onSearchScopeChange).toHaveBeenCalledWith("library");
   });
 
-  it("says why the library scope is unavailable instead of just dimming it", () => {
-    renderScope({ filters: baseFilters, onSearchScopeChange: vi.fn() });
-    expect(
-      screen.getByText(/Include a tag or a rating to search every root/)
-    ).toBeInTheDocument();
-  });
-
-  // Removing the last tag mid-search leaves the scope where it is; the panel
-  // has to ask for a tag rather than report an empty library.
-  it("asks for a tag when the last one is removed mid-search", () => {
+  // Removing the last tag mid-search leaves the whole library.
+  it("reports the whole library when the last filter is removed mid-search", () => {
     renderScope({
       filters: baseFilters,
       librarySearchScope: "library",
       onSearchScopeChange: vi.fn(),
       onRefreshLibrary: vi.fn(),
-      libraryResultCount: 0,
+      libraryResultCount: 1200,
     });
 
-    expect(
-      screen.getByText(/Include a tag or a rating to search every root/)
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/from every root/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    expect(screen.getByText(/1,200 clips from every root/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).not.toBeDisabled();
   });
 
   it("states that a library search is a snapshot and reports its size", () => {

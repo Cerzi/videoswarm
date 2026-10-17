@@ -4280,12 +4280,9 @@ describe("library search scope", () => {
     return { view, props: () => filtersPopoverSpy.mock.calls.at(-1)?.[0] };
   };
 
-  test("refuses a library search that has no tag to search for", async () => {
-    const taggedSnapshot = vi.fn(async () => ({
-      success: true,
-      records: [],
-      truncated: false,
-    }));
+  test("loads the whole library when nothing narrows the search", async () => {
+    const records = [{ id: "a" }, { id: "b" }];
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records, truncated: false }));
     window.electronAPI = { library: { taggedSnapshot } };
 
     const { props } = await renderWithTags([]);
@@ -4293,11 +4290,14 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    // Reading every clip in the profile is what this used to do, and the
-    // record cap then reported itself truncated as if that were an answer.
-    expect(taggedSnapshot).not.toHaveBeenCalled();
-    expect(openTagCollectionMock).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: [], records: [], truncated: false })
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", {
+      minRating: null,
+      exactRating: null,
+      promptQuery: "",
+      mightBe: "",
+    });
+    expect(openTagCollectionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tags: [], records, truncated: false })
     );
   });
 

@@ -85,10 +85,12 @@ class TagHierarchyError extends Error {
   }
 }
 
+// A library search with no filter is the whole library, so the cap sits well
+// above a large profile (folder views have none); past it the newest are kept.
 const LIBRARY_TAG_VIEW_LIMITS = Object.freeze({
   maxTags: 16,
-  maxRecords: 20_000,
-  maxPathBytes: 16 * 1024 * 1024,
+  maxRecords: 50_000,
+  maxPathBytes: 32 * 1024 * 1024,
 });
 // Generation versions read and summarize content keys in bounded pages; the
 // renderer asks for at most this many keys or instances at a time.
@@ -1720,7 +1722,9 @@ function createMetadataStore(db) {
           WHERE mds.fingerprint = fi.fingerprint AND mdt.name = @might_be_tag
         )
       )
-    ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
+    -- The grid sorts for itself; this order only decides which clips a
+    -- search past the record cap keeps: the newest.
+    ORDER BY fi.mtime_ms DESC, lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
   const cachedFileTagsForRoot = db.prepare(`
@@ -5421,7 +5425,7 @@ function createMetadataStore(db) {
     ON CONFLICT(fingerprint, tag_id) DO NOTHING;
   `);
 
-  const TAG_SUGGESTION_MAX_TARGETS = 20_000;
+  const TAG_SUGGESTION_MAX_TARGETS = 50_000;
   const idList = (value) =>
     String(value || '')
       .split(',')

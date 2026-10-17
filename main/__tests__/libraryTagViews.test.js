@@ -213,6 +213,30 @@ if (!database || databaseLoadError) {
       expect(complete.truncated).toBe(false);
     });
 
+    it('keeps the newest clips when a search passes the record cap', async () => {
+      const rootPath = path.join(tempDir, 'dated');
+      fs.mkdirSync(rootPath, { recursive: true });
+      const entries = ['old.mp4', 'newest.mp4', 'middle.mp4'].map((name, index) => {
+        const filePath = path.join(rootPath, name);
+        fs.writeFileSync(filePath, `body-${name}`);
+        const seconds = [1_000_000, 3_000_000, 2_000_000][index];
+        fs.utimesSync(filePath, seconds, seconds);
+        return { filePath, stats: fs.statSync(filePath) };
+      });
+      await store.indexFiles({ rootPath, entries });
+      store.reconcileLibraryRoot(
+        rootPath,
+        entries.map((entry) => entry.filePath),
+        { recursive: true, completeCoverage: true }
+      );
+      const bounded = store.getTaggedLibrarySnapshot({ maxRecords: 2 });
+      expect(bounded.truncated).toBe(true);
+      expect(bounded.records.map((record) => record.relativePath).sort()).toEqual([
+        'middle.mp4',
+        'newest.mp4',
+      ]);
+    });
+
     it('unions tags in any mode and intersects them by default', async () => {
       const both = await indexInto('alpha', 'both.mp4', 'both');
       const oneOnly = await indexInto('beta', 'one.mp4', 'one');
