@@ -72,7 +72,10 @@ const exactMatch = (a, b) => a === b;
  * whole run, for the "5 of 20" when filters hide some. Runs are formed before
  * filtering, so filters never regroup stacks.
  *
- * Returns `{ stacks: Map<key, { key, members, cover, total, similar }>,
+ * The cover follows the review rule and the strip is empty; stackFaces.js
+ * chooses both from first frames once they are known.
+ *
+ * Returns `{ stacks: Map<key, { key, members, cover, strip, total, similar }>,
  * keyById: Map<videoId, key> }`, where `similar` says the members' prompts
  * differ.
  */
@@ -93,6 +96,7 @@ export function buildPromptStacks(
           key,
           members,
           cover: chooseStackCover(members),
+          strip: [],
           total: run.length,
           similar: members.some((member) => member.promptKey !== members[0].promptKey),
         });

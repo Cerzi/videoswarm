@@ -172,6 +172,23 @@ if (!database || databaseLoadError) {
       expect(store.listPresentInstancesForPromptKey("raw prompt", 3)).toEqual([]);
     });
 
+    it("stores first-frame fingerprints per content and returns them by row", async () => {
+      const a = await indexClip(rootPath, "a.mp4", "content-a");
+      const copy = await indexClip(otherRootPath, "copy.mp4", "content-a");
+      const b = await indexClip(rootPath, "b.mp4", "content-b");
+      expect(store.getFrameRows([a.instance.id, b.instance.id], 1)).toEqual([
+        expect.objectContaining({ instanceId: a.instance.id, frameHash: null, rootPath }),
+        expect.objectContaining({ instanceId: b.instance.id, frameHash: null }),
+      ]);
+      expect(store.setFrameFingerprint(a.fingerprint, "00ff00ff00ff00ff", 1)).toBe(true);
+      const rows = store.getFrameRows([a.instance.id, copy.instance.id, b.instance.id], 1);
+      expect(rows.map((row) => row.frameHash)).toEqual(["00ff00ff00ff00ff", "00ff00ff00ff00ff", null]);
+      // Another version is not this one's fingerprint.
+      expect(store.getFrameRows([a.instance.id], 2)[0].frameHash).toBeNull();
+      expect(() => store.setFrameFingerprint(a.fingerprint, "not hex", 1)).toThrow(TypeError);
+      expect(store.setFrameFingerprint("no-such-content", "00ff00ff00ff00ff", 1)).toBe(false);
+    });
+
     it("refuses malformed keys and oversized requests", async () => {
       const a = await indexClip(rootPath, "a.mp4", "content-a");
       expect(() =>

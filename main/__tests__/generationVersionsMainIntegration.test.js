@@ -56,6 +56,17 @@ describe("generation versions main-process integration", () => {
     );
   });
 
+  it("reads stack frames by catalog row, bounded, and stops them with their owner", () => {
+    const handlers = section('ipcMain.handle("stacks:frame-fingerprints"', "// ===== Companion app IPC =====");
+    expect(handlers).toContain("maxEntries: STACK_FRAME_MAX_ROWS");
+    expect(handlers).toContain("maxEntries: STACK_STILL_MAX_ROWS");
+    expect(handlers).not.toContain("payload.path");
+    const lifecycle = section("function invalidateNativeWorkOwner", "function assertProfileReconfigurationActive");
+    expect(lifecycle.match(/stackFrameService\.cancelOwner\(ownerId\)/gu)).toHaveLength(2);
+    const profile = section("async function performProfileReconfiguration", "function reconfigureForProfile");
+    expect(profile).toContain("stackFrameService.cancelAll(");
+  });
+
   it("cancels a renderer's job on crash and destruction", () => {
     const lifecycle = section(
       "function invalidateNativeWorkOwner",

@@ -423,6 +423,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
         promptKeys: Array.isArray(promptKeys) ? promptKeys : [],
         threshold: Number(threshold),
       }),
+    // First frames of stack members, by catalog row: fingerprints (stored
+    // ones now, the rest as events) and small stills for a card's strip.
+    frameFingerprints: async (instanceIds) =>
+      ipcRenderer.invoke("stacks:frame-fingerprints", {
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+      }),
+    frameStills: async (instanceIds) =>
+      ipcRenderer.invoke("stacks:frame-stills", {
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+      }),
+    onFrameFingerprints: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("stacks:frame-fingerprints", handler);
+      return () => ipcRenderer.removeListener("stacks:frame-fingerprints", handler);
+    },
   },
 
   // A companion app on this computer (docs/architecture/companion-app.md).

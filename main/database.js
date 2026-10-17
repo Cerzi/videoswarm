@@ -846,6 +846,16 @@ function initDatabase(app, profilePath) {
         FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE SET NULL
       );
 
+      -- First-frame fingerprints of stacked clips (prompt-stacks.md,
+      -- Section 8): 64-bit difference hashes, per content.
+      CREATE TABLE IF NOT EXISTS frame_fingerprints (
+        fingerprint TEXT PRIMARY KEY,
+        frame_hash TEXT NOT NULL CHECK (length(frame_hash) = 16),
+        version INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS content_review (
         fingerprint TEXT PRIMARY KEY,
         state TEXT NOT NULL CHECK (
@@ -5118,6 +5128,26 @@ function createMetadataStore(db) {
     LIMIT @limit;
   `);
 
+  const frameRowsForInstances = db.prepare(`
+    SELECT fi.id AS instance_id, fi.fingerprint, fi.absolute_path,
+      lr.root_path, ff.frame_hash, ff.version AS frame_version
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    LEFT JOIN frame_fingerprints ff ON ff.fingerprint = fi.fingerprint
+    WHERE fi.id IN (SELECT value FROM json_each(@instance_ids))
+      AND fi.is_present != 0
+      AND fi.fingerprint IS NOT NULL;
+  `);
+  const upsertFrameFingerprint = db.prepare(`
+    INSERT INTO frame_fingerprints (fingerprint, frame_hash, version, updated_at)
+    SELECT @fingerprint, @frame_hash, @version, @updated_at
+    WHERE EXISTS (SELECT 1 FROM media_content WHERE fingerprint = @fingerprint)
+    ON CONFLICT(fingerprint) DO UPDATE SET
+      frame_hash = excluded.frame_hash,
+      version = excluded.version,
+      updated_at = excluded.updated_at;
+  `);
+
   function normalizeInstanceIdList(instanceIds) {
     if (instanceIds === null || instanceIds === undefined) return null;
     if (!Array.isArray(instanceIds)) {
@@ -5274,6 +5304,42 @@ function createMetadataStore(db) {
         };
       });
     return summaries;
+  }
+
+  /**
+   * Present catalog rows with their stored first-frame fingerprint, if any of
+   * `version`. Rows of contents without one are returned with `frameHash`
+   * null, for the caller to grab.
+   */
+  function getFrameRows(instanceIds, version) {
+    const ids = [...new Set((instanceIds || []).filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return [];
+    if (ids.length > 5000) throw new RangeError('At most 5000 frame rows can be read at once');
+    return frameRowsForInstances.all({ instance_ids: JSON.stringify(ids) }).map((row) => ({
+      instanceId: Number(row.instance_id),
+      fingerprint: row.fingerprint,
+      absolutePath: row.absolute_path,
+      rootPath: row.root_path,
+      frameHash:
+        Number(row.frame_version) === version && /^[0-9a-f]{16}$/u.test(row.frame_hash || '')
+          ? row.frame_hash
+          : null,
+    }));
+  }
+
+  function setFrameFingerprint(fingerprint, frameHash, version) {
+    if (typeof fingerprint !== 'string' || !fingerprint) return false;
+    if (!/^[0-9a-f]{16}$/u.test(frameHash || '')) {
+      throw new TypeError('A frame fingerprint is 16 hex digits');
+    }
+    return (
+      upsertFrameFingerprint.run({
+        fingerprint,
+        frame_hash: frameHash,
+        version,
+        updated_at: Date.now(),
+      }).changes > 0
+    );
   }
 
   function listPresentInstancesForPromptKey(promptKey, limit = 3) {
@@ -5805,6 +5871,8 @@ function createMetadataStore(db) {
     getGenerationVersionSummaries,
     getGenerationVersionSiblings,
     listPresentInstancesForPromptKey,
+    getFrameRows,
+    setFrameFingerprint,
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,

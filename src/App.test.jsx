@@ -3135,6 +3135,81 @@ describe("App hook composition", () => {
     }
   });
 
+  test("heads a stack with its most typical clip and shows the most different as stills", async () => {
+    const PK_A = `pk2-${"a".repeat(32)}`;
+    const bits = (count) => (count === 0 ? 0n : (1n << BigInt(count)) - 1n).toString(16).padStart(16, "0");
+    const clip = (n) => ({
+      id: `a${n}`,
+      name: `a${n}.mp4`,
+      dirname: "",
+      fingerprint: `fp-a${n}`,
+      instanceId: n,
+      promptKey: PK_A,
+      reviewState: "unreviewed",
+      createdMs: n,
+    });
+    const videos = [1, 2, 3, 4, 5].map(clip);
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: videos }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    // First frames 0, 10, 20, 30 and 40 bits apart: a3 is the most typical.
+    const hashes = { 1: bits(0), 2: bits(10), 3: bits(20), 4: bits(30), 5: bits(40) };
+    window.electronAPI = {
+      saveSettingsPartial: vi.fn(),
+      stacks: {
+        frameFingerprints: vi.fn(async (ids) => ({
+          success: true,
+          hashes: Object.fromEntries(ids.map((id) => [id, hashes[id]])),
+          pending: 0,
+        })),
+        frameStills: vi.fn(async (ids) => ({
+          success: true,
+          stills: Object.fromEntries(ids.map((id) => [id, `data:image/jpeg;base64,${id}`])),
+        })),
+        onFrameFingerprints: vi.fn(() => () => {}),
+      },
+    };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await act(async () => hotkeys().onToggleStacks());
+      await waitFor(() => expect(gridIds()).toEqual(["a3"]), { timeout: 3000 });
+      await waitFor(
+        () =>
+          expect(cardProps("a3").stackStrip).toEqual([
+            { id: "a1", src: "data:image/jpeg;base64,1" },
+            { id: "a2", src: "data:image/jpeg;base64,2" },
+            { id: "a5", src: "data:image/jpeg;base64,5" },
+          ]),
+        { timeout: 3000 }
+      );
+
+      await act(async () => cardProps("a3").onOpenStack("a3", "a5"));
+      await waitFor(() => expect(gridIds()).toEqual(["a1", "a2", "a3", "a4", "a5"]));
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith("a5");
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("lays the grid out in rows when chosen, and remembers it", async () => {
     const saveSettingsPartial = vi.fn();
     window.electronAPI = { saveSettingsPartial };

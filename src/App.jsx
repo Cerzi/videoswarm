@@ -139,6 +139,8 @@ import {
 import { useCompanion } from "./app/companion/useCompanion";
 import CompanionSendDialog from "./components/CompanionSendDialog";
 import { useViewHistory } from "./app/hooks/useViewHistory";
+import { useStackFrames } from "./app/stacks/useStackFrames";
+import { applyStackFaces } from "./app/stacks/stackFaces";
 import { companionCardProps } from "./app/companion/companionCard";
 import {
   COMPANION_PHASE_LABELS,
@@ -218,6 +220,8 @@ const expandFolderAncestors = (previous, relativePath) => {
   }
   return next;
 };
+
+const NO_STRIP_IDS = Object.freeze([]);
 
 function App() {
   // Selection state (SOLID). While prompt stacks are collapsed, every run of
@@ -849,7 +853,7 @@ function App() {
         : null,
     [groupByFolders, randomOrderMap, reviewScopeVideos, sortDir, sortKey, stackByPrompt]
   );
-  const promptStacks = useMemo(
+  const stackRuns = useMemo(
     () =>
       stackRunOrder
         ? buildPromptStacks(stackRunOrder, {
@@ -859,6 +863,20 @@ function App() {
           })
         : emptyPromptStacks(),
     [groupByFolders, promptsAlike, scopedFilteredVideos, stackRunOrder]
+  );
+  // Each stack card's header and strip, chosen from its clips' first frames
+  // (Section 8). The strips' stills are asked for only for cards on screen,
+  // which the layout reports further down.
+  const [stripStillIds, setStripStillIds] = useState(NO_STRIP_IDS);
+  const stackFrames = useStackFrames({
+    stacks: stackRuns.stacks,
+    enabled: stackByPrompt,
+    stillIds: stripStillIds,
+    resetKey: `${activeRootPath || ""}\u0000${tagCollection?.loadedAt || ""}`,
+  });
+  const promptStacks = useMemo(
+    () => applyStackFaces(stackRuns, stackFrames.hashOf),
+    [stackFrames.hashOf, stackRuns]
   );
   // An open stack follows its clips when runs re-form (alike prompts arrive,
   // a clip is added): it is whichever stack now holds them.
@@ -1814,16 +1832,20 @@ function App() {
     });
   }, []);
 
+  // A clip to bring into view once an opened stack is laid out.
+  const pendingStackFocusRef = useRef(null);
   const showStack = useCallback(
-    (key) => {
+    (key, focusId = null) => {
       const stack = promptStacks.stacks.get(key);
       if (!stack) return false;
       setOpenStackKey(key);
       // Inside a stack each run selects on its own. The units go now rather
-      // than at the next render, so the cover is selected alone and becomes
-      // the anchor for shift-range selection inside the stack.
+      // than at the next render, so the chosen clip is selected alone and
+      // becomes the anchor for shift-range selection inside the stack.
       selectionUnitsRef.current = null;
-      selection.selectExactly(stack.cover.id);
+      const focus = stack.members.some((member) => member.id === focusId) ? focusId : null;
+      selection.selectExactly(focus ?? stack.cover.id);
+      pendingStackFocusRef.current = focus;
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       return true;
     },
@@ -1831,13 +1853,14 @@ function App() {
   );
 
   // Opens the stack a collapsed card stands for; false for any other card.
+  // `focusId` opens it at one of its clips (a still in the card's strip).
   const handleOpenStack = useCallback(
-    (videoId) => {
+    (videoId, focusId = null) => {
       if (openStackKey) return false;
       const key = promptStacks.keyById.get(videoId);
       if (!key) return false;
       setOpenStackOrder(collapsedStackOrderRef.current);
-      return showStack(key);
+      return showStack(key, focusId);
     },
     [openStackKey, promptStacks, showStack]
   );
@@ -1847,7 +1870,7 @@ function App() {
   const handleOpenStackRef = useRef(handleOpenStack);
   handleOpenStackRef.current = handleOpenStack;
   const handleOpenStackFromCard = useCallback(
-    (videoId) => handleOpenStackRef.current(videoId),
+    (videoId, focusId) => handleOpenStackRef.current(videoId, focusId),
     []
   );
 
@@ -1888,6 +1911,52 @@ function App() {
     pendingStackRevealRef.current = null;
     scrollToId(id, { align: "center" });
   }, [openStack, orderedVideos, scrollToId]);
+
+  // A stack opened at one of its clips brings that clip into view.
+  useEffect(() => {
+    const id = pendingStackFocusRef.current;
+    if (id == null || !openStack) return;
+    if (!orderedVideos.some((video) => video.id === id)) return;
+    pendingStackFocusRef.current = null;
+    scrollToId(id, { align: "center" });
+  }, [openStack, orderedVideos, scrollToId]);
+
+  // The stills wanted now: the strips of stack cards that are mounted.
+  useEffect(() => {
+    const ids = [];
+    if (stackSelectionUnits) {
+      for (const item of virtualItems) {
+        const stack = promptStacks.stacks.get(promptStacks.keyById.get(item.id));
+        if (!stack || stack.cover?.id !== item.id) continue;
+        for (const member of stack.strip || []) {
+          const id = Number(member.instanceId);
+          if (Number.isSafeInteger(id) && id > 0) ids.push(id);
+        }
+      }
+    }
+    ids.sort((a, b) => a - b);
+    setStripStillIds((previous) =>
+      previous.length === ids.length && previous.every((id, at) => id === ids[at])
+        ? previous
+        : ids.length
+          ? ids
+          : NO_STRIP_IDS
+    );
+  }, [promptStacks, stackSelectionUnits, virtualItems]);
+
+  // Each stack card's strip as one array that only changes when its clips or
+  // stills do, so memoized cards skip renders.
+  const stripCacheRef = useRef(new Map());
+  const stackStripFor = (stack) => {
+    if (!stack?.strip?.length) return null;
+    const value = stack.strip.map((member) => ({ id: member.id, src: stackFrames.stillOf(member) }));
+    const signature = value.map((still) => `${still.id}\u0000${still.src ? still.src.length : 0}`).join("\u0001");
+    const cached = stripCacheRef.current.get(stack.key);
+    if (cached?.signature === signature) return cached.value;
+    if (stripCacheRef.current.size > 2000) stripCacheRef.current.clear();
+    stripCacheRef.current.set(stack.key, { signature, value });
+    return value;
+  };
 
   // Another folder, scope or collection is a different set of stacks.
   useEffect(() => {
@@ -6373,6 +6442,13 @@ function App() {
                                   ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
                                       ?.similar === true
                                   : false
+                              }
+                              stackStrip={
+                                stackSelectionUnits
+                                  ? stackStripFor(
+                                      promptStacks.stacks.get(promptStacks.keyById.get(video.id))
+                                    )
+                                  : null
                               }
                               onOpenStack={handleOpenStackFromCard}
                               isHoverAudioActive={

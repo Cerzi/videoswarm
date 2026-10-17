@@ -327,6 +327,10 @@ matches under the tag input, including in fullscreen. Check by hand:
 - View › Layout › Rows of equal height: rows of one height that read in sort
   order; Shift-click range selection follows the rows; zoom changes the row
   height; the choice survives a restart.
+- Stack cards: an undecided stack is headed by its most typical clip, with
+  three stills of the most different clips and `+N` along the bottom;
+  hovering a still shows it over the header, clicking opens the stack there.
+  First frames are grabbed only for clips in stacks.
 - Stacks only collapse neighbours: a batch run back to back collapses, the
   same prompt elsewhere in the sort stays separate, and re-sorting regroups.
 - Mouse back and forward (and Alt+←/→): open a stack, go back to the grid,

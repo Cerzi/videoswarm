@@ -143,6 +143,9 @@ const VideoCard = memo(function VideoCard({
   stackCount = 0,
   stackTotal = 0,
   stackSimilar = false,
+  // A few of the stack's other clips as stills ([{ id, src }]), to show how
+  // much it varies; one array per stack that changes only with its stills.
+  stackStrip = null,
   // A companion app's chip: its own label, a tone and a tooltip.
   companionChipLabel = null,
   companionChipTone = null,
@@ -1442,6 +1445,15 @@ const VideoCard = memo(function VideoCard({
     onOpenStack?.(videoId);
   }, [onOpenStack, videoId]);
 
+  // Hovering a still in the strip shows it over the header; clicking opens
+  // the stack at that clip.
+  const [peekSrc, setPeekSrc] = useState(null);
+  const stripShown = isStack && Array.isArray(stackStrip) && stackStrip.length > 0;
+  useEffect(() => {
+    if (!stripShown) setPeekSrc(null);
+  }, [stripShown]);
+  const stackMore = stripShown ? Math.max(0, stackCount - 1 - stackStrip.length) : 0;
+
   const handleMouseEnter = useCallback(() => {
     onHover?.(videoId);
     // Drag thumbnails are interaction affordances, not playback work. Capture
@@ -1610,6 +1622,45 @@ const VideoCard = memo(function VideoCard({
         </button>
       )}
 
+      {stripShown && peekSrc && (
+        <img className="video-item-stack-peek" src={peekSrc} alt="" draggable={false} />
+      )}
+
+      {stripShown && (
+        <div
+          className={`video-item-stack-strip${showFilenames ? " with-filename" : ""}`}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseLeave={() => setPeekSrc(null)}
+        >
+          {stackStrip.map((still) => (
+            <button
+              key={still.id}
+              type="button"
+              className="video-item-stack-still"
+              title="Open the stack at this clip"
+              aria-label="Open the stack at this clip"
+              onMouseEnter={() => setPeekSrc(still.src || null)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStack?.(videoId, still.id);
+              }}
+            >
+              {still.src ? <img src={still.src} alt="" draggable={false} /> : null}
+            </button>
+          ))}
+          {stackMore > 0 && (
+            <button
+              type="button"
+              className="video-item-stack-still video-item-stack-more"
+              title={`${stackMore} more · open the stack`}
+              onClick={handleOpenStackClick}
+            >
+              +{stackMore}
+            </button>
+          )}
+        </div>
+      )}
+
       {ratingValue !== null && (
         <div className="video-item-rating" title={`Rated ${ratingValue} / 5`}>
           {Array.from({ length: 5 }).map((_, index) => (
@@ -1622,7 +1673,7 @@ const VideoCard = memo(function VideoCard({
 
       {hasAudio && (
         <div
-          className={`video-item-audio ${showFilenames ? "with-filename" : ""}`}
+          className={`video-item-audio ${showFilenames ? "with-filename" : ""}${stripShown ? " with-strip" : ""}`}
           role="img"
           aria-label="Contains audio"
           title="Contains audio"
@@ -1633,7 +1684,7 @@ const VideoCard = memo(function VideoCard({
 
       {hasTags && (
         <div
-          className={`video-item-tags ${showFilenames ? "with-filename" : ""}`}
+          className={`video-item-tags ${showFilenames ? "with-filename" : ""}${stripShown ? " with-strip" : ""}`}
           title={video.tags.join(", ")}
         >
           {tagPreview.map((tag) => (

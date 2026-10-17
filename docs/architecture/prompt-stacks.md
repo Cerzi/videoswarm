@@ -1,6 +1,6 @@
 # Prompt Stacks
 
-Status: **Implemented** — all seven sections; deferred items below. Section 7
+Status: **Implemented** — all eight sections; deferred items below. Section 7
 is unverified by a human in the packaged app (see *Validation*).
 Last updated: 2026-10-17
 
@@ -348,6 +348,54 @@ Neighbour runs give fewer stacks than this by design, depending on the sort.
 - Prompt text never reaches the renderer, storage or logs.
 - The grid never waits on the answer.
 
+## 8. Stack cards: a header and a strip
+
+Status: **Implemented, unverified by a human** (2026-10-17)
+
+A single cover said a stack existed but not what was in it. A stack card now
+has a **header**, which plays as before, and along its bottom a **strip** of
+up to three stills of other clips in the stack, with a `+N` tile for the rest.
+
+- **Header.** Once anything in the stack is picked or rated, the best of it,
+  as Section 3's cover rule has it: this is a culling tool. Otherwise the
+  most typical clip: the one whose first frame differs least from all the
+  others.
+- **Strip.** How much the stack varies: each still is the clip whose first
+  frame differs most from the header and the stills already chosen, shown in
+  run order. Before fingerprints arrive the strip is spread evenly across the
+  run. (Prompt words were considered as a fallback and dropped: in a stack of
+  one exact prompt every clip has the same words.)
+- **Hover and click.** Hovering a still shows it over the header; clicking it
+  opens the stack at that clip, selected and in view. `+N` opens the stack.
+  The header keeps playing its own clip: switching the playing clip on hover
+  is deferred, because the card's media element lifecycle is the most
+  delicate code in the grid.
+- **No extra decoding in the grid.** Stills are images, so a screen of stack
+  cards plays no more video than before. On cards narrower than 170 px the
+  strip is hidden.
+
+### First frames
+
+- **Fingerprints** are asked for every clip in a stack, and only those: one
+  ffmpeg grab of the first frame shrunk to 9×8 greys, reduced to a 64-bit
+  difference hash, at low priority, two at a time. They are stored per
+  content in the profile database (`frame_fingerprints`), so each clip is
+  grabbed once. Two fingerprints are compared by the bits that differ.
+- **Stills** are 240 px JPEGs of the first frame, asked for only for the
+  strips of cards on screen, and kept in memory (600 at most in main, 800 in
+  the renderer).
+- The renderer names catalog rows; main checks each file resolves inside its
+  root before ffmpeg opens it. Without ffmpeg there are no fingerprints or
+  stills, and stack cards look as before.
+
+### Acceptance
+
+- An undecided stack is headed by its most typical clip, a decided one by its
+  best.
+- The strip shows clips unlike the header and each other.
+- Clicking a still opens the stack at that clip.
+- Clips outside stacks are never grabbed; a grab happens once per content.
+
 ## Deferred
 
 - **Visual similarity**, for clips without embedded metadata. Local model only;
@@ -357,8 +405,8 @@ Neighbour runs give fewer stacks than this by design, depending on the sort.
 - **A "stacks without a pick" filter**, the culling counterpart of the drafts
   worklist in `generation-versions.md`.
 - **Sorting stacks by size**, so the most repeated prompts come first.
-- **Scrubbing a stack card** across its runs, which needs still frames for
-  clips that are not loaded.
+- **Playing a strip clip in the header** on hover (Section 8 shows its
+  still instead).
 - **Library-wide stack counts** beside collection-local ones.
 
 ## Implementation order

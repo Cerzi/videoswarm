@@ -61,6 +61,12 @@ const generationKeyIndexer = createGenerationKeyIndexer();
 const { isGenerationKey, isPromptKey } = require("./main/generation-key");
 const { createPromptSimilarityService } = require("./main/prompt-similarity");
 const promptSimilarityService = createPromptSimilarityService();
+const {
+  FRAME_FINGERPRINT_VERSION,
+  createStackFrameService,
+} = require("./main/stack-frames");
+// First frames of stacked clips: fingerprints and small stills.
+const stackFrameService = createStackFrameService();
 // 1 stacks the exact prompt only; the rest are shares of words in common.
 const STACK_SIMILARITY_LEVELS = new Set([1, 0.9, 0.8, 0.7]);
 const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-runner");
@@ -1044,6 +1050,7 @@ function invalidateNativeWorkOwner(sender) {
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
+  stackFrameService.cancelOwner(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   return true;
@@ -1073,6 +1080,7 @@ function disposeNativeWorkOwner(sender) {
   thumbnailCache.cancelOwner(ownerId);
   generationMetadataService.cancelRenderer(ownerId);
   generationKeyIndexer.cancelOwner(ownerId);
+  stackFrameService.cancelOwner(ownerId);
   lastFrameCaptureService.cancelOwner(ownerId);
   proxyManager.disposeOwner(ownerId);
   pathAuthority.revokeOwner(ownerId);
@@ -2110,6 +2118,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
     "Profile changed during generation metadata parsing"
   );
   await generationKeyIndexer.cancelAllAndDrain();
+  stackFrameService.cancelAll("Profile changed while reading stack frames");
   promptSimilarityService.clear();
   // Prompts already in ComfyUI keep rendering; the profile's runner picks
   // them up again when that profile is next active.
@@ -5645,6 +5654,104 @@ ipcMain.handle("stacks:similar-prompts", async (_event, payload = {}) => {
   }
 });
 
+// First frames of stacked clips (docs/architecture/prompt-stacks.md,
+// Section 8). The renderer names catalog rows of stack members; main answers
+// stored fingerprints at once, grabs the missing ones in the background and
+// sends them as they come, and returns small stills for a card's strip.
+const STACK_FRAME_MAX_ROWS = 5000;
+const STACK_STILL_MAX_ROWS = 64;
+
+ipcMain.handle("stacks:frame-fingerprints", async (event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "frame fingerprint request");
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "frame fingerprint rows",
+      minEntries: 0,
+      maxEntries: STACK_FRAME_MAX_ROWS,
+    });
+    context = captureMetadataContext();
+    const rows = context.metadataStore.getFrameRows(instanceIds, FRAME_FINGERPRINT_VERSION);
+    const known = {};
+    const missing = [];
+    for (const row of rows) {
+      if (row.frameHash) known[row.instanceId] = row.frameHash;
+      else missing.push(row);
+    }
+    if (missing.length) {
+      const sender = event.sender;
+      registerNativeWorkOwner(sender);
+      const rowsByContent = new Map();
+      for (const row of missing) {
+        if (!rowsByContent.has(row.fingerprint)) rowsByContent.set(row.fingerprint, []);
+        rowsByContent.get(row.fingerprint).push(row.instanceId);
+      }
+      let batch = {};
+      let timer = null;
+      const publish = () => {
+        timer = null;
+        const hashes = batch;
+        batch = {};
+        if (Object.keys(hashes).length && !sender.isDestroyed?.()) {
+          sender.send("stacks:frame-fingerprints", { generation: context.generation, hashes });
+        }
+      };
+      void stackFrameService
+        .fingerprintRows(missing, {
+          ownerId: sender.id,
+          onResult: (fingerprint, hash) => {
+            try {
+              assertMetadataContextActive(context);
+              context.metadataStore.setFrameFingerprint(fingerprint, hash, FRAME_FINGERPRINT_VERSION);
+            } catch {
+              return;
+            }
+            for (const instanceId of rowsByContent.get(fingerprint) || []) batch[instanceId] = hash;
+            if (!timer) timer = setTimeout(publish, 500);
+          },
+        })
+        .then(() => {
+          clearTimeout(timer);
+          publish();
+        });
+    }
+    return {
+      success: true,
+      generation: context.generation,
+      hashes: known,
+      pending: missing.length,
+    };
+  } catch (error) {
+    return { success: false, code: error?.code || "STACK_FRAME_ERROR", error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("stacks:frame-stills", async (event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "frame still request");
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "frame still rows",
+      minEntries: 0,
+      maxEntries: STACK_STILL_MAX_ROWS,
+    });
+    context = captureMetadataContext();
+    const rows = context.metadataStore.getFrameRows(instanceIds, FRAME_FINGERPRINT_VERSION);
+    registerNativeWorkOwner(event.sender);
+    const stills = {};
+    await Promise.all(
+      rows.map(async (row) => {
+        const dataUrl = await stackFrameService.still(row, { ownerId: event.sender.id });
+        if (dataUrl) stills[row.instanceId] = dataUrl;
+      })
+    );
+    assertMetadataContextActive(context);
+    return { success: true, generation: context.generation, stills };
+  } catch (error) {
+    return { success: false, code: error?.code || "STACK_FRAME_ERROR", error: error?.message || String(error) };
+  }
+});
+
 // ===== Companion app IPC =====
 // docs/architecture/companion-app.md. The renderer names catalog rows and
 // action ids; main turns rows into paths, talks to the loopback companion and
@@ -6430,6 +6537,7 @@ async function performNativeShutdown() {
     folderWatcher: () => folderWatcher.dispose(),
     generationMetadata: () => generationMetadataService.shutdown(),
     generationKeys: () => generationKeyIndexer.shutdown(),
+    stackFrames: () => stackFrameService.shutdown(),
     frameCapture: () => lastFrameCaptureService.shutdown(),
     sequenceRenderer: () => sequenceRenderer.shutdown(),
     proxyManager: () => proxyManager.shutdown(),

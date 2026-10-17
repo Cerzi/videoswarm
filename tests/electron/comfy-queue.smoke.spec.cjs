@@ -6,7 +6,7 @@ const {
   launchProductionApp,
   chooseFolderThroughNativeDialog,
 } = require("./helpers/launchApp.cjs");
-const { writeVideo } = require("./helpers/videoFixture.cjs");
+const { writeTaggedVideo } = require("./helpers/videoFixture.cjs");
 const { createFakeComfyUi, historyEntry } = require("../../main/__tests__/helpers/fakeComfyUi.cjs");
 const { parseComfyGraphJson, stringifyComfyGraphJson } = require("../../main/comfy-graph-json.js");
 
@@ -20,55 +20,6 @@ const { parseComfyGraphJson, stringifyComfyGraphJson } = require("../../main/com
 
 const FIXTURES = path.join(__dirname, "..", "..", "main", "__tests__", "fixtures", "recipes");
 const load = (name) => parseComfyGraphJson(fs.readFileSync(path.join(FIXTURES, `${name}.json`), "utf8"));
-
-function box(type, ...payloads) {
-  const body = Buffer.concat(payloads);
-  const header = Buffer.alloc(8);
-  header.writeUInt32BE(8 + body.length, 0);
-  header.write(type, 4, "latin1");
-  return Buffer.concat([header, body]);
-}
-
-const uint32 = (value) => {
-  const buffer = Buffer.alloc(4);
-  buffer.writeUInt32BE(value);
-  return buffer;
-};
-
-// An MP4 carrying ComfyUI's tags as QuickTime `mdta` metadata, the way
-// ComfyUI's SaveVideo writes them: the tiny fixture video with a moov-level
-// meta box added, and its one chunk offset moved past it.
-function writeTaggedVideo(filePath, tags, token) {
-  writeVideo(filePath, token);
-  const video = fs.readFileSync(filePath);
-  const entries = Object.entries(tags);
-  const keys = box(
-    "keys",
-    uint32(0),
-    uint32(entries.length),
-    ...entries.map(([name]) => box("mdta", Buffer.from(name, "utf8")))
-  );
-  const items = entries.map(([, value], index) =>
-    box(uint32(index + 1).toString("latin1"), box("data", uint32(1), uint32(0), Buffer.from(value, "utf8")))
-  );
-  const meta = box("meta", uint32(0), box("hdlr", Buffer.alloc(8), Buffer.from("mdta"), Buffer.alloc(13)), keys, box("ilst", ...items));
-
-  const moovAt = video.indexOf("moov") - 4;
-  const moovSize = video.readUInt32BE(moovAt);
-  const moov = Buffer.from(video.subarray(moovAt, moovAt + moovSize));
-  const stco = moov.indexOf("stco");
-  const count = moov.readUInt32BE(stco + 8);
-  for (let index = 0; index < count; index += 1) {
-    const at = stco + 12 + index * 4;
-    moov.writeUInt32BE(moov.readUInt32BE(at) + meta.length, at);
-  }
-  const grown = Buffer.concat([moov, meta]);
-  grown.writeUInt32BE(grown.length, 0);
-  fs.writeFileSync(
-    filePath,
-    Buffer.concat([video.subarray(0, moovAt), grown, video.subarray(moovAt + moovSize)])
-  );
-}
 
 function nodeInfo() {
   const text = fs.readdirSync(FIXTURES).map((file) => fs.readFileSync(path.join(FIXTURES, file), "utf8")).join("\n");

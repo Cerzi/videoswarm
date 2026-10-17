@@ -145,10 +145,21 @@ describe("preload native-work bridge", () => {
     const { api, ipcRenderer } = loadPreload();
     await api.stacks.similarPrompts({ promptKeys: ["pk2-a"], threshold: 0.8, rootPath: "/nope" });
     await api.stacks.similarPrompts({ promptKeys: "bad", threshold: "0.9" });
+    await api.stacks.frameFingerprints([1, 2]);
+    await api.stacks.frameStills("bad");
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["stacks:similar-prompts", { promptKeys: ["pk2-a"], threshold: 0.8 }],
       ["stacks:similar-prompts", { promptKeys: [], threshold: 0.9 }],
+      ["stacks:frame-fingerprints", { instanceIds: [1, 2] }],
+      ["stacks:frame-stills", { instanceIds: [] }],
     ]);
+    const callback = vi.fn();
+    const unsubscribe = api.stacks.onFrameFingerprints(callback);
+    const [channel, handler] = ipcRenderer.on.mock.calls.at(-1);
+    expect(channel).toBe("stacks:frame-fingerprints");
+    handler({}, { hashes: { 1: "00ff00ff00ff00ff" } });
+    expect(callback).toHaveBeenCalledWith({ hashes: { 1: "00ff00ff00ff00ff" } });
+    unsubscribe();
   });
 
   it("exposes generation-version indexing with ids or library scope only", async () => {

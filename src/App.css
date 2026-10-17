@@ -910,7 +910,10 @@ body {
 .video-item {
   --card-radius: 8px;
   --card-inner-radius: 7px; /* inside the 1px border */
+  /* A stack card's strip of stills: its height follows the card's width. */
+  --stack-strip-height: clamp(22px, 13cqw, 64px);
   contain: layout style;
+  container-type: inline-size;
   border: 1px solid #333;
   border-radius: var(--card-radius);
   background: #1a1a1a;
@@ -1126,6 +1129,88 @@ body {
 
 .video-item-tags.with-filename {
   bottom: 30px;
+}
+
+/* Above a stack card's strip. */
+.video-item-tags.with-strip,
+.video-item-audio.with-strip {
+  bottom: calc(8px + var(--stack-strip-height) + 6px);
+}
+
+.video-item-tags.with-filename.with-strip,
+.video-item-audio.with-filename.with-strip {
+  bottom: calc(30px + var(--stack-strip-height) + 6px);
+}
+
+/* A stack card's strip (prompt-stacks.md, Section 8): stills of the clips
+   that differ most from the header, and how many more there are. Hidden on
+   cards too narrow to read it. */
+.video-item-stack-strip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: var(--stack-strip-height);
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.video-item-stack-strip.with-filename {
+  bottom: 30px;
+}
+
+.video-item-stack-still {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+
+.video-item-stack-still:hover,
+.video-item-stack-still:focus-visible {
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+.video-item-stack-still img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-item-stack-more {
+  color: #f1f3f5;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.video-item-stack-peek {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--card-inner-radius);
+  pointer-events: none;
+}
+
+@container (max-width: 169px) {
+  .video-item-stack-strip {
+    display: none;
+  }
+  .video-item-tags.with-strip,
+  .video-item-audio.with-strip {
+    bottom: 8px;
+  }
+  .video-item-tags.with-filename.with-strip,
+  .video-item-audio.with-filename.with-strip {
+    bottom: 30px;
+  }
 }
 
 .video-item-tag {

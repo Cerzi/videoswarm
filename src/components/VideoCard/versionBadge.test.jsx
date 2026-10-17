@@ -92,3 +92,37 @@ describe("VideoCard companion chip", () => {
     expect(document.querySelector(".video-item-companion")).toBeNull();
   });
 });
+
+describe("VideoCard stack strip", () => {
+  const strip = [
+    { id: "s1", src: "data:image/jpeg;base64,AAAA" },
+    { id: "s2", src: null },
+  ];
+
+  it("shows the strip's stills and how many more, and opens the stack at a still", async () => {
+    const onOpenStack = vi.fn();
+    const { container } = render(
+      <VideoCard {...baseProps()} stackCount={6} stackTotal={6} stackStrip={strip} onOpenStack={onOpenStack} />
+    );
+    const stills = screen.getAllByRole("button", { name: "Open the stack at this clip" });
+    expect(stills).toHaveLength(2);
+    expect(container.querySelectorAll(".video-item-stack-still img")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "+3" })).toBeInTheDocument();
+
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.mouseEnter(stills[0]);
+    expect(container.querySelector(".video-item-stack-peek")?.getAttribute("src")).toBe(strip[0].src);
+    fireEvent.mouseLeave(container.querySelector(".video-item-stack-strip"));
+    expect(container.querySelector(".video-item-stack-peek")).toBeNull();
+
+    fireEvent.click(stills[1]);
+    expect(onOpenStack).toHaveBeenCalledWith("clip", "s2");
+    fireEvent.click(screen.getByRole("button", { name: "+3" }));
+    expect(onOpenStack).toHaveBeenLastCalledWith("clip");
+  });
+
+  it("shows no strip on a card that is not a stack", () => {
+    const { container } = render(<VideoCard {...baseProps()} stackStrip={strip} />);
+    expect(container.querySelector(".video-item-stack-strip")).toBeNull();
+  });
+});
