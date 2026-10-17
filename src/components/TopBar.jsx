@@ -43,7 +43,7 @@ const SCOPE_OPTIONS = Object.freeze([
 // How the grid places cards.
 const GRID_LAYOUT_OPTIONS = Object.freeze([
   { value: "masonry", label: "Masonry columns", hint: "Columns of equal width; each card as tall as its clip" },
-  { value: "rows", label: "Rows of equal height", hint: "Rows of one height, read left to right in sort order" },
+  { value: "rows", label: "Justified rows", hint: "Rows that fill the width, read left to right in sort order" },
 ]);
 
 // How alike prompts must be to share a stack (docs/architecture/prompt-stacks.md, Section 7).

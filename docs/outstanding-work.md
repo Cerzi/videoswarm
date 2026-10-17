@@ -324,9 +324,12 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
-- View › Layout › Rows of equal height: rows of one height that read in sort
-  order; Shift-click range selection follows the rows; zoom changes the row
-  height; the choice survives a restart.
+- View › Layout › Justified rows: every row but the last fills the width
+  with no gap and no crop, rows read in sort order; Shift-click range
+  selection follows the rows; zoom changes the row height, and a zoom level
+  shows about as many clips as masonry columns do (portrait clips as wide as
+  a column); scrolling a large folder stays smooth; the choice survives a
+  restart.
 - Filters › Prompt: words narrow the grid to clips whose prompts contain
   them (word starts, `-word` excludes); a word only in the negative prompt
   finds nothing; with *Entire library*, prompt words alone search every

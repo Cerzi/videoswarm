@@ -283,36 +283,80 @@ describe('computeRowLayout', () => {
       ...overrides,
     });
   const clips = (...aspects) => aspects.map((aspectRatio, index) => ({ id: `c${index}`, aspectRatio }));
+  const rowsOf = (layout) => {
+    const byTop = new Map();
+    for (const position of layout.positions) {
+      if (!byTop.has(position.y)) byTop.set(position.y, []);
+      byTop.get(position.y).push(position);
+    }
+    return [...byTop.values()];
+  };
 
-  it('lays clips out left to right in rows of one height, in their order', () => {
+  it('lays clips out left to right in rows, in their order', () => {
     const layout = rows(makeItems(40));
-    const heights = new Set(layout.positions.map((position) => position.height));
-    expect(heights).toEqual(new Set([90]));
     expect(layout.visualOrderIds).toEqual(makeItems(40).map((item) => item.id));
     for (let index = 1; index < layout.positions.length; index += 1) {
       const previous = layout.positions[index - 1];
       const position = layout.positions[index];
       // Each clip is right of the one before, or starts the next row.
       expect(
-        (position.y === previous.y && position.x > previous.x) ||
+        (position.y === previous.y && position.x === previous.x + previous.width + 4) ||
           (position.y === previous.bottom + 4 && position.x === 10)
       ).toBe(true);
+      if (position.y === previous.y) expect(position.height).toBe(previous.height);
     }
     expect(layout.totalHeight).toBe(layout.positions.at(-1).bottom + 10);
   });
 
-  it('justifies a nearly full row and leaves the others and the last row ragged', () => {
-    // 90px rows: 16:9 is 160px wide. Five fit in 980px with 136px spare
-    // (over 12%), so that row stays ragged; six 1.75 clips leave 42px and
-    // fill the width.
-    const ragged = rows(clips(16 / 9, 16 / 9, 16 / 9, 16 / 9, 16 / 9, 16 / 9));
-    expect(ragged.positions[4].x + ragged.positions[4].width).toBeLessThan(990);
-    const full = rows(clips(1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75));
-    const firstRow = full.positions.filter((position) => position.y === 10);
-    expect(firstRow).toHaveLength(6);
-    expect(firstRow.at(-1).x + firstRow.at(-1).width).toBe(990);
-    const lastRow = full.positions.filter((position) => position.y > 10);
-    expect(lastRow.at(-1).x + lastRow.at(-1).width).toBeLessThan(990);
+  it('fills the width with every row but the last, without cropping', () => {
+    const layout = rows(makeItems(60));
+    const all = rowsOf(layout);
+    expect(all.length).toBeGreaterThan(3);
+    all.slice(0, -1).forEach((row) => {
+      expect(row[0].x).toBe(10);
+      expect(row.at(-1).x + row.at(-1).width).toBe(990);
+      // Around the target height, even with these extreme shapes.
+      expect(row[0].height / layout.rowHeight).toBeGreaterThan(0.6);
+      expect(row[0].height / layout.rowHeight).toBeLessThan(1.65);
+    });
+    for (const position of layout.positions) {
+      const raw = Number(position.item.aspectRatio);
+      const aspect = Number.isFinite(raw) ? Math.min(4, Math.max(0.25, raw)) : 16 / 9;
+      // Each card keeps its clip's shape (within a pixel of rounding).
+      expect(Math.abs(position.width - position.height * aspect)).toBeLessThanOrEqual(1 + aspect);
+    }
+    const last = all.at(-1);
+    expect(last[0].height).toBe(layout.rowHeight);
+    expect(last.at(-1).x + last.at(-1).width).toBeLessThanOrEqual(990);
+  });
+
+  it('breaks a row where its height stays nearest the target', () => {
+    // 16:9 clips are 160px wide in 90px rows: six fill 980px; a seventh
+    // would shrink the row to 0.85, so it waits.
+    const layout = rows(clips(...Array(7).fill(16 / 9)));
+    const [first, second] = rowsOf(layout);
+    expect(first).toHaveLength(6);
+    expect(first[0].height).toBe(90);
+    expect(second).toHaveLength(1);
+    // 1.85 clips are 161px wide in 87px rows: five leave 159px spare, and a
+    // sixth shrinks the row less (0.99) than growing it would (1.2), so it
+    // joins.
+    const wide = rowsOf(rows(clips(...Array(7).fill(1.85))));
+    expect(wide[0]).toHaveLength(6);
+    expect(wide[0][0].height).toBe(86);
+  });
+
+  it('sizes rows by the typical clip, so portrait clips are as wide as a column', () => {
+    const portrait = rows(clips(...Array(30).fill(9 / 16)));
+    // A portrait clip 160px wide is 284px tall, as in a 160px column.
+    expect(portrait.rowHeight).toBe(284);
+    expect(portrait.positions.at(-1).width).toBe(160);
+    // As many 16:9 clips as 9:16 ones: square on average.
+    const mixed = rows(clips(...Array(100).fill(9 / 16), ...Array(100).fill(16 / 9)));
+    expect(mixed.rowHeight).toBe(160);
+    // One more clip's shape does not move the target.
+    const more = rows(clips(...Array(100).fill(9 / 16), ...Array(100).fill(16 / 9), 4 / 3));
+    expect(more.rowHeight).toBe(160);
   });
 
   it('keeps a clip wider than the grid within it', () => {
@@ -320,10 +364,10 @@ describe('computeRowLayout', () => {
     expect(layout.positions[0].width).toBe(180);
   });
 
-  it('stops growing rows once a 16:9 clip fills the grid', () => {
+  it('stops growing rows once a typical clip fills the grid', () => {
     // 980px across: a zoom wider than that gives the 16:9 row of 980px.
     const fits = rows(clips(16 / 9), { targetTileWidth: 1900 });
-    expect(fits.positions[0].height).toBe(551);
+    expect(fits.positions[0].height).toBe(552);
     expect(fits.positions[0].width).toBe(980);
     expect(rows(clips(16 / 9), { targetTileWidth: 640 }).positions[0].height).toBe(360);
   });

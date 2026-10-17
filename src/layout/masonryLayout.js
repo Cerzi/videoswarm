@@ -182,17 +182,41 @@ export function computeMasonryLayout(items = [], options = {}) {
   };
 }
 
-// Rows of one height (View › Layout), an alternative to masonry columns: the
-// reading order is the sort order, so range selection reads naturally. A row
-// is justified to the full width by widening its cards a little, which
-// `object-fit: cover` turns into a slight crop, only when it is already this
-// close to full; otherwise its right edge stays ragged.
-const ROW_JUSTIFY_LIMIT = 0.12;
+// Rows (View › Layout), an alternative to masonry columns: the reading order
+// is the sort order, so range selection reads naturally. Every row but the
+// last fills the grid's width exactly with no crop, by scaling the whole row
+// (its height with its cards' widths), the justified layout photo grids use.
+// A row breaks before or after the clip that overflows it, whichever leaves
+// its height nearer the target, so heights stay close to it, closer the more
+// clips a row holds.
+
+// The typical clip's shape, for the target row height: the aspect ratio at
+// which rows give the clips, on average, the area masonry columns give them,
+// sqrt(mean(aspect) / mean(1 / aspect)). It is a clip's own shape when all
+// share one, and between the two for a mix (1:1 for as many 9:16 as 16:9
+// clips). Taken in steps of 2% so one clip's shape arriving rarely moves it
+// and reflows every row.
+const TYPICAL_ASPECT_STEP = Math.log(1.02);
+
+function typicalAspectRatio(aspects, fallback) {
+  if (!aspects.length) return fallback;
+  let wide = 0;
+  let tall = 0;
+  for (const aspect of aspects) {
+    wide += aspect;
+    tall += 1 / aspect;
+  }
+  const exact = Math.sqrt(wide / tall);
+  return Math.exp(Math.round(Math.log(exact) / TYPICAL_ASPECT_STEP) * TYPICAL_ASPECT_STEP);
+}
 
 /**
- * Build rows of equal height in the items' order, left to right, without
- * reading or writing the DOM. The row height is the height a 16:9 clip has
- * at `targetTileWidth`, so a zoom step means the same size in either layout.
+ * Build justified rows in the items' order, left to right, without reading
+ * or writing the DOM. The target row height is the height the collection's
+ * typical clip has at `targetTileWidth`, so a zoom step shows clips at about
+ * the same size in either layout, and about as many: a row of portrait clips
+ * is as tall as a portrait clip in a masonry column. The target is never
+ * taller than a typical clip as wide as the grid.
  * Returns the same shape as computeMasonryLayout; `columns` holds one list in
  * reading order, which the virtual window searches like a column.
  */
@@ -217,64 +241,8 @@ export function computeRowLayout(items = [], options = {}) {
     : defaultGetAspectRatio;
 
   const availableWidth = Math.max(1, containerWidth - padding * 2);
-  // A 16:9 card at the zoom's width; never wider than the grid, as a masonry
-  // column is never wider than the grid, so the largest zoom levels on a
-  // narrow window stop growing instead of cropping landscape clips.
-  const rowHeight = Math.max(
-    1,
-    Math.round(Math.min(targetTileWidth, availableWidth) / DEFAULT_ASPECT_RATIO)
-  );
-  const positions = [];
-  const positionsById = new Map();
-  let row = [];
-  let rowWidth = 0; // cards and the gaps between them
-  let y = padding;
-
-  const place = (justify) => {
-    if (!row.length) return;
-    const gaps = gap * (row.length - 1);
-    const cards = rowWidth - gaps;
-    const spare = availableWidth - rowWidth;
-    const scale = justify && spare > 0 && spare <= availableWidth * ROW_JUSTIFY_LIMIT
-      ? (cards + spare) / cards
-      : 1;
-    let x = padding;
-    row.forEach((entry, at) => {
-      const right = at === row.length - 1 && scale !== 1
-        ? padding + availableWidth
-        : x + Math.round(entry.width * scale);
-      const width = Math.max(1, right - x);
-      const style = {
-        position: 'absolute',
-        left: '0px',
-        top: '0px',
-        width: `${width}px`,
-        height: `${rowHeight}px`,
-        transform: `translate(${x}px, ${y}px)`,
-      };
-      const position = {
-        id: entry.id,
-        item: entry.item,
-        index: entry.index,
-        column: 0,
-        x,
-        y,
-        width,
-        height: rowHeight,
-        bottom: y + rowHeight,
-        style,
-      };
-      positions.push(position);
-      positionsById.set(entry.id, position);
-      x = right + gap;
-    });
-    y += rowHeight + gap;
-    row = [];
-    rowWidth = 0;
-  };
-
   const seen = new Set();
-  safeItems.forEach((item, index) => {
+  const entries = safeItems.map((item, index) => {
     const resolvedId = getId(item, index);
     const id = resolvedId == null ? index : resolvedId;
     if (seen.has(id)) {
@@ -287,13 +255,85 @@ export function computeRowLayout(items = [], options = {}) {
       minAspect,
       maxAspect
     );
-    const width = Math.min(availableWidth, Math.max(1, Math.round(rowHeight * aspectRatio)));
-    const needed = row.length ? rowWidth + gap + width : width;
-    if (row.length && needed > availableWidth) place(true);
-    rowWidth = row.length ? rowWidth + gap + width : width;
-    row.push({ id, item, index, width });
+    return { id, item, index, aspectRatio, width: 0 };
   });
-  place(false);
+  const typicalAspect = typicalAspectRatio(
+    entries.map((entry) => entry.aspectRatio),
+    defaultAspect
+  );
+  const rowHeight = Math.max(
+    1,
+    Math.round(Math.min(targetTileWidth, availableWidth) / typicalAspect)
+  );
+
+  const positions = [];
+  const positionsById = new Map();
+  let row = [];
+  let cards = 0; // the row's cards at the target height, without gaps
+  let y = padding;
+
+  const fill = (count, cardsWidth) => (availableWidth - gap * (count - 1)) / cardsWidth;
+
+  const place = (scale) => {
+    if (!row.length) return;
+    const height = Math.max(1, Math.round(rowHeight * scale));
+    const last = row.length - 1;
+    let before = 0;
+    row.forEach((entry, at) => {
+      const x = padding + Math.round(before * scale) + gap * at;
+      before += entry.width;
+      const right = at === last && scale !== 1
+        ? padding + availableWidth
+        : padding + Math.round(before * scale) + gap * at;
+      const width = Math.max(1, right - x);
+      const style = {
+        position: 'absolute',
+        left: '0px',
+        top: '0px',
+        width: `${width}px`,
+        height: `${height}px`,
+        transform: `translate(${x}px, ${y}px)`,
+      };
+      const position = {
+        id: entry.id,
+        item: entry.item,
+        index: entry.index,
+        column: 0,
+        x,
+        y,
+        width,
+        height,
+        bottom: y + height,
+        style,
+      };
+      positions.push(position);
+      positionsById.set(entry.id, position);
+    });
+    y += height + gap;
+    row = [];
+    cards = 0;
+  };
+
+  entries.forEach((entry) => {
+    entry.width = Math.min(availableWidth, rowHeight * entry.aspectRatio);
+    if (row.length && cards + entry.width + gap * row.length > availableWidth) {
+      // Break after this clip (the row shrinks) or before it (the row grows),
+      // whichever keeps the row's height nearer the target.
+      const shrink = fill(row.length + 1, cards + entry.width);
+      const grow = fill(row.length, cards);
+      if (shrink > 0 && Math.abs(Math.log(shrink)) < Math.abs(Math.log(grow))) {
+        row.push(entry);
+        cards += entry.width;
+        place(shrink);
+        return;
+      }
+      place(grow);
+    }
+    row.push(entry);
+    cards += entry.width;
+  });
+  // The last row keeps the target height and a ragged edge.
+  place(1);
 
   const contentBottom = positions.length ? positions[positions.length - 1].bottom : padding;
   return {
@@ -302,8 +342,9 @@ export function computeRowLayout(items = [], options = {}) {
     columns: [positions],
     visualOrderIds: positions.map((position) => position.id),
     columnCount: 1,
-    columnWidth: Math.round(rowHeight * DEFAULT_ASPECT_RATIO),
+    columnWidth: Math.round(rowHeight * typicalAspect),
     rowHeight,
+    typicalAspect,
     totalHeight: contentBottom + padding,
     padding,
     gap,

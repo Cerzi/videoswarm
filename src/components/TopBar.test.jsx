@@ -135,7 +135,7 @@ describe("TopBar", () => {
     render(<TopBar {...props} />);
     const menu = openMenu("View");
     expect(within(menu).getByRole("menuitemradio", { name: "Masonry columns" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Rows of equal height" }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Justified rows" }));
     expect(props.onGridLayoutChange).toHaveBeenCalledWith("rows");
   });
 
