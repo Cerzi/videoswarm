@@ -710,7 +710,7 @@ const FiltersPopover = forwardRef(
 
           <FilterRow
             label="Prompt"
-            hint={'Words match their starts, "quoted" words only themselves; all must appear, -word rules one out. Negative prompts are ignored.'}
+            hint={'Words match their starts. In quotes, a word matches only itself and several words match as a phrase, in order. All must appear; -word or -"phrase" rules one out. Negative prompts are ignored.'}
             status={
               promptSearch?.pending
                 ? "Searching prompts…"
@@ -727,7 +727,7 @@ const FiltersPopover = forwardRef(
                 onChange={(event) =>
                   onChange((prev) => ({ ...prev, promptQuery: event.target.value }))
                 }
-                placeholder={'words, "exact", -not'}
+                placeholder={'words, "exact phrase", -not'}
                 maxLength={200}
               />
             </div>

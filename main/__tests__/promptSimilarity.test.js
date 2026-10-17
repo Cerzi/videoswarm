@@ -272,8 +272,8 @@ describe("prompt search", () => {
       exclude: [starts("night")],
     });
     expect(parsePromptQuery('"Pan" -"pan-am" "golden hour" pan')).toEqual({
-      include: [exactly("pan"), exactly("golden"), exactly("hour"), starts("pan")],
-      exclude: [exactly("pan"), exactly("am")],
+      include: [exactly("pan"), { phrase: ["golden", "hour"] }, starts("pan")],
+      exclude: [{ phrase: ["pan", "am"] }],
     });
     // A quote still being typed already counts.
     expect(parsePromptQuery('city "pan')).toEqual({
@@ -290,8 +290,10 @@ describe("prompt search", () => {
       promptWithNegative("a woman dancing in a studio at noon", negative),
       promptWithNegative("an old lighthouse on a cliff in fog", negative),
       promptWithNegative("a sleeping panda in a bamboo forest", negative),
+      promptWithNegative("a wheat field at golden hour with wind", negative),
+      promptWithNegative("the last hour of golden evening light", negative),
     ]);
-    const [beach, studio, lighthouse, panda] = library.keys;
+    const [beach, studio, lighthouse, panda, field, evening] = library.keys;
     const search = new PromptSimilarityService({
       fsPromises: library.fsPromises,
       readIsoPayload: library.readIsoPayload,
@@ -312,7 +314,16 @@ describe("prompt search", () => {
     expect(await find('"panda" -"pan"')).toEqual([panda]);
     expect(await find('"panda" -pan')).toEqual([]);
     expect(await find('"woman" -"studi"')).toEqual([beach, studio].sort());
+    // Several words in quotes are a phrase: whole words, in that order.
+    expect(await find("golden hour")).toEqual([field, evening].sort());
+    expect(await find('"golden hour"')).toEqual([field]);
+    expect(await find('"hour golden"')).toEqual([]);
+    expect(await find('"golden hou"')).toEqual([]);
+    expect(await find('golden -"golden hour"')).toEqual([evening]);
+    // A phrase is matched within one text, never across into the negative
+    // prompt.
+    expect(await find('"with wind blurry"')).toEqual([]);
     // Prompts are read once; later searches are lookups.
-    expect(library.readIsoPayload).toHaveBeenCalledTimes(4);
+    expect(library.readIsoPayload).toHaveBeenCalledTimes(6);
   });
 });

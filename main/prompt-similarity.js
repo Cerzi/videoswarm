@@ -58,19 +58,16 @@ function createWordDictionary() {
       });
       return found;
     },
-    idsOf(text) {
-      const words = new Set();
+    /** A text's word numbers in order, repeats included, for phrases. */
+    sequenceOf(text) {
+      const sequence = [];
       for (const match of String(text).matchAll(WORD)) {
-        const word = match[0].toLowerCase();
-        let id = ids.get(word);
-        if (id === undefined) {
-          id = ids.size;
-          ids.set(word, id);
-          known.push(word);
-        }
-        words.add(id);
+        sequence.push(this.idOfToken(match[0].toLowerCase()));
       }
-      return Int32Array.from(words).sort();
+      return Int32Array.from(sequence);
+    },
+    idsOf(text) {
+      return Int32Array.from(new Set(this.sequenceOf(text))).sort();
     },
     /** The number of one whole token, such as a model file name. */
     idOfToken(token) {
@@ -97,29 +94,51 @@ const MAX_QUERY_TERMS = 16;
 // A term: an optional leading "-", then words in quotes (to the next quote,
 // or the end while one is still being typed) or a run without spaces.
 const QUERY_TERM = /(-?)(?:"([^"]*)"?|(\S+))/gu;
+const MAX_PHRASE_WORDS = 16;
 
 /**
- * A prompt search query as `{ include, exclude }` terms, lowercased:
- * `{ word, exact }` to find, and after a leading `-` to rule out. A word
- * matches the starts of words ("danc" finds "dancing"); in quotes it matches
- * only itself ("pan" finds "pan", not "panda"). Quoted words are each matched
- * on their own, not as a phrase. "dance-floor" is two words.
+ * A prompt search query as `{ include, exclude }` terms, lowercased, to find
+ * and, after a leading `-`, to rule out:
+ * - `{ word, exact: false }`: a word matching the starts of words ("danc"
+ *   finds "dancing"). "dance-floor" is two such words.
+ * - `{ word, exact: true }`: one word in quotes, matching only itself ("pan"
+ *   finds "pan", not "panda").
+ * - `{ phrase: [words] }`: several words in quotes, matching them whole and
+ *   in that order within one text ("golden hour").
  */
 function parsePromptQuery(query) {
   const include = new Map();
   const exclude = new Map();
   for (const match of String(query || "").toLowerCase().matchAll(QUERY_TERM)) {
-    const exact = match[2] !== undefined;
+    const quoted = match[2] !== undefined;
     const target = match[1] === "-" ? exclude : include;
-    for (const word of (exact ? match[2] : match[3]).matchAll(WORD)) {
-      const key = `${exact ? "=" : "^"}${word[0]}`;
-      if (!target.has(key)) target.set(key, { word: word[0], exact });
+    const words = [...(quoted ? match[2] : match[3]).matchAll(WORD)].map((word) => word[0]);
+    if (quoted && words.length > 1) {
+      const phrase = words.slice(0, MAX_PHRASE_WORDS);
+      const key = `"${phrase.join(" ")}`;
+      if (!target.has(key)) target.set(key, { phrase });
+      continue;
+    }
+    for (const word of words) {
+      const key = `${quoted ? "=" : "^"}${word}`;
+      if (!target.has(key)) target.set(key, { word, exact: quoted });
     }
   }
   return {
     include: [...include.values()].slice(0, MAX_QUERY_TERMS),
     exclude: [...exclude.values()].slice(0, MAX_QUERY_TERMS),
   };
+}
+
+/** Whether `sequence` holds `phrase` (word numbers) as a consecutive run. */
+function containsRun(sequence, phrase) {
+  const last = sequence.length - phrase.length;
+  for (let start = 0; start <= last; start += 1) {
+    let at = 0;
+    while (at < phrase.length && sequence[start + at] === phrase[at]) at += 1;
+    if (at === phrase.length) return true;
+  }
+  return false;
 }
 
 function hash(text) {
@@ -384,9 +403,10 @@ class PromptSimilarityService {
         if (!parts) continue;
         // Search reads every text but negative prompts, short ones included.
         const searchable = (deriveSearchTexts(prompt) || []).filter((text) => !text.negative);
-        const searchWords = new Set(
-          searchable.flatMap((text) => [...this.dictionary.idsOf(text.text)])
-        );
+        // Each positive text in word order, for phrases, and its words as a
+        // set, for everything else.
+        const searchSequences = searchable.map((text) => this.dictionary.sequenceOf(text.text));
+        const searchWords = new Set(searchSequences.flatMap((sequence) => [...sequence]));
         // Tag suggestions also learn from the weight files the graph loads.
         // A leading NUL keeps them apart from words, which never contain one.
         const features = new Set(searchWords);
@@ -400,6 +420,7 @@ class PromptSimilarityService {
             words: this.dictionary.idsOf(text),
           })),
           searchWords,
+          searchSequences,
           features: Int32Array.from(features).sort(),
         };
       } catch {
@@ -480,7 +501,7 @@ class PromptSimilarityService {
       const prompt = await this._promptFor(list[index], store, assertActive);
       assertActive?.();
       if (ticket !== this.searchTicket) return null;
-      if (prompt?.searchWords) read.push([list[index], prompt.searchWords]);
+      if (prompt?.searchWords) read.push([list[index], prompt]);
       else unread += 1;
       if ((index + 1) % this.limits.yieldEvery === 0) {
         await this.yieldToEventLoop();
@@ -489,21 +510,34 @@ class PromptSimilarityService {
       }
     }
     if (!terms.include.length && !terms.exclude.length) return { matches: [], unread };
-    const idsOf = (term) =>
-      term.exact
-        ? this.dictionary.idsExactly(term.word)
-        : this.dictionary.idsStartingWith(term.word);
-    const include = terms.include.map(idsOf);
-    const exclude = terms.exclude.map(idsOf);
     const has = (words, ids) => {
       for (const id of ids.size < words.size ? ids : words) {
         if ((ids.size < words.size ? words : ids).has(id)) return true;
       }
       return false;
     };
+    // Each term becomes a test of one prompt. A phrase's words are looked up
+    // whole; one never seen matches nothing. Its word set rules most prompts
+    // out before any text is scanned in order.
+    const testOf = (term) => {
+      if (term.phrase) {
+        const ids = term.phrase.map((word) => this.dictionary.idsExactly(word));
+        if (ids.some((found) => found.size === 0)) return () => false;
+        const run = Int32Array.from(ids.map((found) => found.values().next().value));
+        return (prompt) =>
+          [...run].every((id) => prompt.searchWords.has(id)) &&
+          (prompt.searchSequences || []).some((sequence) => containsRun(sequence, run));
+      }
+      const ids = term.exact
+        ? this.dictionary.idsExactly(term.word)
+        : this.dictionary.idsStartingWith(term.word);
+      return (prompt) => has(prompt.searchWords, ids);
+    };
+    const include = terms.include.map(testOf);
+    const exclude = terms.exclude.map(testOf);
     const matches = [];
-    for (const [key, words] of read) {
-      if (include.every((ids) => has(words, ids)) && !exclude.some((ids) => has(words, ids))) {
+    for (const [key, prompt] of read) {
+      if (include.every((test) => test(prompt)) && !exclude.some((test) => test(prompt))) {
         matches.push(key);
       }
     }

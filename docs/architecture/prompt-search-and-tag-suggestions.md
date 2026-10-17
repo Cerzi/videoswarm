@@ -42,11 +42,16 @@ Status: **Implemented, unverified by a human** (2026-10-17)
   itself, alone or with tags and a rating.
 - **Matching.** Words are matched case-insensitively against the starts of
   the prompt's words: `danc` finds *dance* and *dancing*. A word in quotes
-  matches only itself: `"pan"` finds *pan* but not *panda*. Every word must
-  appear; a word (or quoted word) starting with `-` must not. Quoted words
-  are each matched on their own: `"golden hour"` needs both words anywhere
-  in the prompt, not the phrase, since word sets keep no order. A quote
-  still being typed already counts.
+  matches only itself: `"pan"` finds *pan* but not *panda*. Several words in
+  quotes are a phrase: `"golden hour"` finds those whole words next to each
+  other in that order, within one positive text. Every term must appear; a
+  term starting with `-` (`-night`, `-"golden hour"`) must not. A quote still
+  being typed already counts.
+- **How.** Each prompt is kept twice in memory: as a set of word numbers,
+  which answers word terms and rules most prompts out, and as each positive
+  text's word numbers in order, which a phrase is then looked for in. The
+  ordered copy costs about 4 bytes a word (roughly 12 MB at the 20,000-prompt
+  cache cap).
 - **Negative prompts are ignored.** A text counts as negative when its node
   feeds a sampler's `negative` input and not its `positive` one, so searching
   `blurry` does not find every clip with a stock negative prompt. A text that
@@ -178,5 +183,5 @@ what the prompts of clips they did tag have in common
 
 ## Deferred
 
-- Phrase matching (word order) and fuzzy matching in prompt search.
+- Fuzzy matching in prompt search.
 - Searching WebM and MKV prompts in-process.
