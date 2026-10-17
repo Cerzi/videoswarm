@@ -73,6 +73,8 @@ async function launchProductionApp({
     XDG_CACHE_HOME: cacheDir,
     XDG_CONFIG_HOME: configDir,
     VIDEOSWARM_E2E: "1",
+    // Headless runs on a desktop: windows open without taking focus.
+    ...(process.env.VIDEOSWARM_E2E_HEADLESS === "1" ? { VIDEOSWARM_E2E_QUIET_WINDOW: "1" } : {}),
     ...extraEnv,
   };
   delete env.ELECTRON_RUN_AS_NODE;

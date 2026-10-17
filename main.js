@@ -18,6 +18,12 @@ const {
 const path = require("path");
 const fs = require("fs");
 const { pathToFileURL } = require("url");
+// Smoke tests on someone's desktop (VIDEOSWARM_E2E_QUIET_WINDOW): windows
+// open without taking focus or a taskbar entry, so a test run does not
+// interrupt whoever is working. A virtual display (xvfb-run) keeps them off
+// the screen entirely.
+const QUIET_TEST_WINDOW =
+  process.env.VIDEOSWARM_E2E === "1" && process.env.VIDEOSWARM_E2E_QUIET_WINDOW === "1";
 const fsPromises = fs.promises;
 // Portable mode (docs/architecture/portable-mode.md) is decided first, before
 // anything reads or writes a system location: Electron's folders, temporary
@@ -2390,6 +2396,7 @@ async function createWindow() {
     // Matches --color-bg so the window never flashes white; it is shown on
     // its first painted frame (see showWhenPainted below).
     show: false,
+    skipTaskbar: QUIET_TEST_WINDOW,
     backgroundColor: "#1e1e1e",
     webPreferences: {
       nodeIntegration: false,
@@ -2431,7 +2438,8 @@ async function createWindow() {
     clearTimeout(showFallbackTimer);
     if (windowShown || createdWindow.isDestroyed()) return;
     windowShown = true;
-    createdWindow.show();
+    if (QUIET_TEST_WINDOW) createdWindow.showInactive();
+    else createdWindow.show();
   };
   const showFallbackTimer = setTimeout(showWhenPainted, 3000);
   createdWindow.once("ready-to-show", showWhenPainted);
@@ -2656,6 +2664,10 @@ async function createWindow() {
 function focusMainWindow(window = mainWindow) {
   if (!window || window.isDestroyed()) return false;
   if (window.isMinimized()) window.restore();
+  if (QUIET_TEST_WINDOW) {
+    window.showInactive();
+    return true;
+  }
   window.show();
   window.focus();
   return true;

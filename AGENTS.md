@@ -58,8 +58,13 @@ Run focused tests for the area changed, then run the full suite before handing o
 - Renderer build smoke test: `npm run vite:build`
 - Electron-ABI SQLite suites: `npm run test:electron-abi`
 - Electron smoke specs against the built renderer: `npm run test:electron-smoke`
-  (set `VIDEOSWARM_E2E_HEADLESS=1` to keep windows off screen; the
-  transfer-affordance specs need `npx playwright install chromium` once)
+  (the transfer-affordance specs need `npx playwright install chromium` once).
+  On someone's desktop, never let test windows interrupt them: run GUI suites
+  under a virtual display, `VIDEOSWARM_E2E_HEADLESS=1 xvfb-run -a npm run
+  test:electron-smoke` (Electron cannot run with no display at all, and
+  `--headless` alone still opens real windows). Without `xvfb`,
+  `VIDEOSWARM_E2E_HEADLESS=1` at least opens them without taking focus or a
+  taskbar entry (`VIDEOSWARM_E2E_QUIET_WINDOW`).
 - Everything above in one command, the same set CI runs: `npm run verify`
 - Native/Electron dependency check after dependency changes: `npm run postinstall`
 - Package smoke test after packaging or Electron config changes: `npm run electron:pack` or `npm run electron:build`
