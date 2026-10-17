@@ -1688,3 +1688,36 @@ body {
   color: #8f979b;
   background: #1a1a1a;
 }
+
+/* The error boundary's page (src/components/AppErrorBoundary.jsx). */
+.app-error {
+  max-width: 40rem;
+  margin: 15vh auto 0;
+  padding: 0 1.5rem;
+  color: var(--color-text, #e8eaed);
+  font-family: inherit;
+}
+
+.app-error h1 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem;
+}
+
+.app-error__detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.8rem;
+}
+
+.app-error button {
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #3d3d3d);
+  background: var(--color-accent, #51cf66);
+  color: #051805;
+  font: inherit;
+  cursor: pointer;
+}
