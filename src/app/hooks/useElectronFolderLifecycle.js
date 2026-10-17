@@ -7,6 +7,7 @@ import {
   mergeScanLoadingProgress,
 } from "../loading/scanLoadingStatus";
 import { normalizePlaybackMode } from "../../playback/playbackPolicy";
+import { normalizeStackSimilarity } from "../stacks/useSimilarPromptGroups";
 import {
   FOLDER_OPEN_MILESTONES,
   beginFolderOpenMeasurement,
@@ -142,6 +143,7 @@ export function useElectronFolderLifecycle({
   setHoverAudioEnabled,
   setPlaybackDetailsVisible,
   setStackByPrompt,
+  setStackSimilarity,
   setSortKey,
   setSortDir,
   groupByFolders: _groupByFolders,
@@ -200,6 +202,7 @@ export function useElectronFolderLifecycle({
     setHoverAudioEnabled,
     setPlaybackDetailsVisible,
     setStackByPrompt,
+    setStackSimilarity,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -224,6 +227,7 @@ export function useElectronFolderLifecycle({
       setHoverAudioEnabled,
       setPlaybackDetailsVisible,
       setStackByPrompt,
+      setStackSimilarity,
       setSortKey,
       setSortDir,
       setGroupByFolders,
@@ -246,6 +250,7 @@ export function useElectronFolderLifecycle({
     setHoverAudioEnabled,
     setPlaybackDetailsVisible,
     setStackByPrompt,
+    setStackSimilarity,
     setSortKey,
     setSortDir,
     setGroupByFolders,
@@ -1132,6 +1137,7 @@ export function useElectronFolderLifecycle({
       setHoverAudioEnabled: applyHoverAudioEnabled,
       setPlaybackDetailsVisible: applyPlaybackDetailsVisible,
       setStackByPrompt: applyStackByPrompt,
+      setStackSimilarity: applyStackSimilarity,
       setSortKey: applySortKey,
       setSortDir: applySortDir,
       setGroupByFolders: applyGroupByFolders,
@@ -1159,6 +1165,8 @@ export function useElectronFolderLifecycle({
       applyPlaybackDetailsVisible?.(settings.playbackDetailsVisible === true);
     if (settings.stackByPrompt !== undefined)
       applyStackByPrompt?.(settings.stackByPrompt === true);
+    if (settings.stackSimilarity !== undefined)
+      applyStackSimilarity?.(normalizeStackSimilarity(settings.stackSimilarity));
     if (settings.zoomLevel !== undefined)
       applyZoomLevelFromSettings(settings.zoomLevel);
     if (settings.sortKey) applySortKey(settings.sortKey);

@@ -316,6 +316,10 @@ matches under the tag input, including in fullscreen. Check by hand:
   filtering or a library view of `dance` includes `bellydance` clips.
 - In a library view, a card's **Go to folder** opens its folder with the
   clip selected and in view, and the filters cleared.
+- Similar-prompt stacks (`architecture/prompt-stacks.md`, Section 7): with
+  stacks on, reworded runs of one idea join one stack a moment after the
+  folder opens; *View › Stacks* switches between *Same prompt only* and the
+  similar levels; a mixed stack's pill says "similar prompts".
 
 Decision waiting for the user:
 

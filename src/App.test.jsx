@@ -2995,6 +2995,78 @@ describe("App hook composition", () => {
     }
   });
 
+  test("stacks similar prompts together once main groups them", async () => {
+    const PK_A = `pk2-${"a".repeat(32)}`;
+    const PK_B = `pk2-${"b".repeat(32)}`;
+    const clip = (id, promptKey, createdMs) => ({
+      id,
+      name: `${id}.mp4`,
+      dirname: "",
+      fingerprint: `fp-${id}`,
+      promptKey,
+      reviewState: "unreviewed",
+      createdMs,
+    });
+    const videos = [clip("a1", PK_A, 1), clip("a2", PK_A, 2), clip("b1", PK_B, 3)];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    const saveSettingsPartial = vi.fn();
+    const similarGroups = vi.fn(async ({ threshold }) => ({
+      success: true,
+      groups: threshold <= 0.8 ? { [PK_B]: PK_A } : {},
+    }));
+    window.electronAPI = { saveSettingsPartial, stacks: { similarGroups } };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const headerProps = () => topBarSpy.mock.calls.at(-1)?.[0];
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      expect(headerProps().stackSimilarity).toBe(0.8);
+
+      await act(async () => headerProps().onStackSimilarityChange(0.9));
+      expect(saveSettingsPartial).toHaveBeenLastCalledWith({
+        stackSimilarity: 0.9,
+        stackByPrompt: true,
+      });
+      await waitFor(() =>
+        expect(similarGroups).toHaveBeenLastCalledWith({
+          entries: [
+            { promptKey: PK_A, count: 2 },
+            { promptKey: PK_B, count: 1 },
+          ],
+          threshold: 0.9,
+        })
+      );
+      await waitFor(() => expect(gridIds()).toEqual(["a2", "b1"]));
+
+      await act(async () => headerProps().onStackSimilarityChange(0.8));
+      await waitFor(() => expect(gridIds()).toEqual(["b1"]));
+      expect(cardProps("b1")).toMatchObject({ stackCount: 3, stackTotal: 3 });
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("restores recursive scope when navigating from a child folder to the root", async () => {
     const videos = [
       { id: "root", name: "root.mp4", dirname: "", reviewState: "reviewed" },

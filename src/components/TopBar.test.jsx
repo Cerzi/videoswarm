@@ -130,6 +130,22 @@ describe("TopBar", () => {
     expect(within(menu).getByText(/3 of 6 decoders in use · Linux: hardware video decode was not detected/)).toBeVisible();
   });
 
+  it("offers prompt stacking and how alike prompts must be in the View menu", () => {
+    const props = {
+      ...baseProps(),
+      stackByPrompt: true,
+      stackSimilarity: 0.8,
+      onStackByPromptToggle: vi.fn(),
+      onStackSimilarityChange: vi.fn(),
+    };
+    render(<TopBar {...props} />);
+    const menu = openMenu("View");
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Stack runs of a prompt" })).toHaveAttribute("aria-checked", "true");
+    expect(within(menu).getByRole("menuitemradio", { name: "Similar prompts" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Same prompt only" }));
+    expect(props.onStackSimilarityChange).toHaveBeenCalledWith(1);
+  });
+
   it("puts shortcuts, About and Support in ⋯", () => {
     const props = baseProps();
     render(<TopBar {...props} />);

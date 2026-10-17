@@ -141,6 +141,17 @@ describe("preload native-work bridge", () => {
     );
   });
 
+  it("sends similar-prompt requests as prompt keys and a threshold only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    const entries = [{ promptKey: "pk2-a", count: 3 }];
+    await api.stacks.similarGroups({ entries, threshold: 0.8, rootPath: "/nope" });
+    await api.stacks.similarGroups({ entries: "bad", threshold: "0.9" });
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["stacks:similar-groups", { entries, threshold: 0.8 }],
+      ["stacks:similar-groups", { entries: [], threshold: 0.9 }],
+    ]);
+  });
+
   it("exposes generation-version indexing with ids or library scope only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.generationVersions.index({ instanceIds: [1, 2], rootPath: "/nope" });

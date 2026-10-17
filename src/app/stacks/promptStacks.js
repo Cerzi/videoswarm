@@ -1,7 +1,7 @@
 // Prompt stacks in the renderer: every run of one prompt, collapsed into one
 // card. Stacks are formed from the clips the grid would show (after filters
 // and folder scope), so a stack only ever stands for clips the user can see.
-// See docs/architecture/prompt-stacks.md, Sections 3 to 5.
+// See docs/architecture/prompt-stacks.md, Sections 3 to 5 and 7.
 
 const REVIEW_RANK = Object.freeze({ pick: 2, reject: 0 });
 
@@ -60,22 +60,30 @@ function compareRanks(a, b) {
  * Groups `videos` (in grid order) by prompt key. Only groups of two or more
  * clips are stacks; a clip alone in its group, or without a key, is not.
  * `allVideos` is the whole collection, for the "5 of 20" total when filters
- * hide some runs.
+ * hide some runs. `groupOf(promptKey)` may map a prompt key to the key of a
+ * similar prompt it stacks with (Section 7); it returns the key itself, or
+ * nothing, otherwise.
  *
- * Returns `{ stacks: Map<key, { key, members, cover, total }>,
- * keyById: Map<videoId, key> }`.
+ * Returns `{ stacks: Map<key, { key, members, cover, total, similar }>,
+ * keyById: Map<videoId, key> }`, where `similar` says the members' prompts
+ * differ.
  */
-export function buildPromptStacks(videos, allVideos = videos) {
+export function buildPromptStacks(videos, allVideos = videos, groupOf = null) {
+  const keyOf = (video) => {
+    const key = video?.promptKey;
+    if (!key) return null;
+    return (groupOf && groupOf(key)) || key;
+  };
   const groups = new Map();
   for (const video of videos || []) {
-    const key = video?.promptKey;
+    const key = keyOf(video);
     if (!key || video.id == null) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(video);
   }
   const totals = new Map();
   for (const video of allVideos || []) {
-    const key = video?.promptKey;
+    const key = keyOf(video);
     if (key && groups.has(key)) totals.set(key, (totals.get(key) || 0) + 1);
   }
 
@@ -88,6 +96,7 @@ export function buildPromptStacks(videos, allVideos = videos) {
       members,
       cover: chooseStackCover(members),
       total: Math.max(members.length, totals.get(key) || 0),
+      similar: members.some((member) => member.promptKey !== members[0].promptKey),
     });
     for (const member of members) keyById.set(member.id, key);
   }

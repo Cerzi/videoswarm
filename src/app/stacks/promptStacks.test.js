@@ -61,6 +61,7 @@ describe("buildPromptStacks", () => {
     expect([...stacks.keys()]).toEqual([PK_A]);
     expect(stacks.get(PK_A).members.map((video) => video.id)).toEqual(["a1", "a2", "a3"]);
     expect(stacks.get(PK_A).total).toBe(3);
+    expect(stacks.get(PK_A).similar).toBe(false);
     expect(keyById.has("b1")).toBe(false);
     expect(keyById.has("none")).toBe(false);
   });
@@ -73,6 +74,19 @@ describe("buildPromptStacks", () => {
     expect(stacks.get(PK_A).total).toBe(3);
     // One visible run is not a stack, however many are hidden.
     expect(buildPromptStacks([all[0]], all).stacks.size).toBe(0);
+  });
+
+  it("stacks similar prompts under the key they map to", () => {
+    const all = [clip("a1", PK_A), clip("b1", PK_B), clip("c1", PK_C), clip("b2", PK_B)];
+    const groupOf = (key) => (key === PK_B ? PK_A : undefined);
+    const visible = all.slice(0, 3);
+    const { stacks, keyById } = buildPromptStacks(visible, all, groupOf);
+    expect([...stacks.keys()]).toEqual([PK_A]);
+    expect(stacks.get(PK_A).members.map((video) => video.id)).toEqual(["a1", "b1"]);
+    expect(stacks.get(PK_A).total).toBe(3);
+    expect(stacks.get(PK_A).similar).toBe(true);
+    expect(keyById.get("b1")).toBe(PK_A);
+    expect(keyById.has("c1")).toBe(false);
   });
 });
 

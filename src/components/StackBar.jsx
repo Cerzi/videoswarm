@@ -12,6 +12,7 @@ export default function StackBar({
   runs = 0,
   total = 0,
   seeds = 0,
+  prompts = 1,
   hasPrevious = false,
   hasNext = false,
   unreviewedCount = 0,
@@ -37,6 +38,7 @@ export default function StackBar({
         {" · "}
         {plural(runs, "run")}
         {seeds > 0 ? ` · ${plural(seeds, "seed")}` : ""}
+        {prompts > 1 ? ` · ${plural(prompts, "similar prompt")}` : ""}
         {hidden > 0 ? ` · ${hidden.toLocaleString()} more hidden by filters` : ""}
       </span>
       <span className="stack-bar__spacer" />

@@ -142,6 +142,7 @@ const VideoCard = memo(function VideoCard({
   // stands for, and how many the collection has when filters hide some.
   stackCount = 0,
   stackTotal = 0,
+  stackSimilar = false,
   onOpenStack,
 
   // limits & callbacks (owned by parent/orchestrator)
@@ -290,6 +291,7 @@ const VideoCard = memo(function VideoCard({
   const hasAudio = video?.hasAudio === true;
   const isStack = stackCount >= 2;
   const stackHidden = isStack ? Math.max(0, stackTotal - stackCount) : 0;
+  const stackOf = stackSimilar ? "similar prompts" : "this prompt";
 
   const aspectRatioHint = (() => {
     const direct = Number(video?.aspectRatio);
@@ -1582,10 +1584,10 @@ const VideoCard = memo(function VideoCard({
           className={`video-item-stack${ratingValue !== null ? " with-rating" : ""}`}
           title={
             stackHidden > 0
-              ? `${stackCount} of ${stackTotal} runs of this prompt match the filters · open the stack`
-              : `${stackCount} runs of this prompt · open the stack`
+              ? `${stackCount} of ${stackTotal} runs of ${stackOf} match the filters · open the stack`
+              : `${stackCount} runs of ${stackOf} · open the stack`
           }
-          aria-label={`Open the stack of ${stackCount} runs of this prompt`}
+          aria-label={`Open the stack of ${stackCount} runs of ${stackOf}`}
           onClick={handleOpenStackClick}
           onDoubleClick={(e) => e.stopPropagation()}
         >

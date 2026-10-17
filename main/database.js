@@ -5094,6 +5094,22 @@ function createMetadataStore(db) {
     LIMIT @limit;
   `);
 
+  // Similar-prompt stacks read a prompt back from one present clip carrying
+  // the key; main/prompt-similarity.js verifies it still matches.
+  const promptKeyInstanceRows = db.prepare(`
+    SELECT fi.absolute_path, fi.size, fi.mtime_ms, lr.root_path
+    FROM media_content mc
+    INNER JOIN file_instances fi ON fi.fingerprint = mc.fingerprint
+    INNER JOIN directories d ON d.id = fi.directory_id
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    WHERE mc.prompt_key = @prompt_key
+      AND mc.prompt_key_version = @prompt_version
+      AND fi.is_present != 0
+      AND d.is_present != 0
+    ORDER BY fi.id
+    LIMIT @limit;
+  `);
+
   function normalizeInstanceIdList(instanceIds) {
     if (instanceIds === null || instanceIds === undefined) return null;
     if (!Array.isArray(instanceIds)) {
@@ -5250,6 +5266,19 @@ function createMetadataStore(db) {
         };
       });
     return summaries;
+  }
+
+  function listPresentInstancesForPromptKey(promptKey, limit = 3) {
+    if (!isPromptKey(promptKey)) return [];
+    const bounded = Math.max(1, Math.min(16, Number(limit) || 3));
+    return promptKeyInstanceRows
+      .all({ prompt_key: promptKey, prompt_version: PROMPT_KEY_VERSION, limit: bounded })
+      .map((row) => ({
+        absolutePath: row.absolute_path,
+        rootPath: row.root_path,
+        size: Number(row.size || 0),
+        mtimeMs: Number(row.mtime_ms || 0),
+      }));
   }
 
   // Siblings are grouped by content; the representative instance of the
@@ -5767,6 +5796,7 @@ function createMetadataStore(db) {
     setGenerationKeys,
     getGenerationVersionSummaries,
     getGenerationVersionSiblings,
+    listPresentInstancesForPromptKey,
     clearFingerprintCache,
     dispose,
     getResourceSnapshot,

@@ -126,6 +126,11 @@ import {
   unreviewedStackFingerprints,
 } from "./app/stacks/promptStacks";
 import {
+  DEFAULT_STACK_SIMILARITY,
+  normalizeStackSimilarity,
+  useSimilarPromptGroups,
+} from "./app/stacks/useSimilarPromptGroups";
+import {
   REVIEW_FILTERS,
   REVIEW_STATES,
   normalizeReviewState,
@@ -233,6 +238,7 @@ function App() {
   // Prompt stacks: collapse every run of one prompt into one card, and the
   // stack open in its own view with the stack order it was opened from.
   const [stackByPrompt, setStackByPrompt] = useState(false);
+  const [stackSimilarity, setStackSimilarityState] = useState(DEFAULT_STACK_SIMILARITY);
   const [openStackKey, setOpenStackKey] = useState(null);
   const [openStackOrder, setOpenStackOrder] = useState([]);
   const [randomSeed, setRandomSeed] = useState(null);
@@ -556,6 +562,7 @@ function App() {
     setHoverAudioEnabled,
     setPlaybackDetailsVisible,
     setStackByPrompt,
+    setStackSimilarity: setStackSimilarityState,
     setSortKey,
     setSortDir,
     groupByFolders,
@@ -770,14 +777,29 @@ function App() {
   // Prompt stacks are formed from what the grid would show, so a stack only
   // stands for clips that pass the filters; the folder scope gives the
   // "5 of 20" total. See docs/architecture/prompt-stacks.md, Section 3.
+  // Similar prompts share a stack too, unless asked for the exact prompt
+  // only (Section 7).
+  const similarGroupOf = useSimilarPromptGroups({
+    videos: reviewScopeVideos,
+    enabled: stackByPrompt,
+    similarity: stackSimilarity,
+  });
   const promptStacks = useMemo(
     () =>
       stackByPrompt
-        ? buildPromptStacks(scopedFilteredVideos, reviewScopeVideos)
+        ? buildPromptStacks(scopedFilteredVideos, reviewScopeVideos, similarGroupOf)
         : emptyPromptStacks(),
-    [reviewScopeVideos, scopedFilteredVideos, stackByPrompt]
+    [reviewScopeVideos, scopedFilteredVideos, similarGroupOf, stackByPrompt]
   );
-  const openStack = openStackKey ? promptStacks.stacks.get(openStackKey) || null : null;
+  // An open stack follows its runs when similar groups arrive or regroup.
+  const openStack = openStackKey
+    ? promptStacks.stacks.get(openStackKey) ||
+      promptStacks.stacks.get(similarGroupOf(openStackKey)) ||
+      null
+    : null;
+  useEffect(() => {
+    if (openStack && openStack.key !== openStackKey) setOpenStackKey(openStack.key);
+  }, [openStack, openStackKey]);
   const gridVideos = useMemo(() => {
     if (openStack) return openStack.members;
     return collapsePromptStacks(scopedFilteredVideos, promptStacks);
@@ -1695,6 +1717,18 @@ function App() {
     });
   }, []);
 
+  // Choosing how alike prompts must be also turns stacking on.
+  const handleStackSimilarityChange = useCallback((value) => {
+    const next = normalizeStackSimilarity(value);
+    setOpenStackKey(null);
+    setStackSimilarityState(next);
+    setStackByPrompt(true);
+    window.electronAPI?.saveSettingsPartial?.({
+      stackSimilarity: next,
+      stackByPrompt: true,
+    });
+  }, []);
+
   const showStack = useCallback(
     (key) => {
       const stack = promptStacks.stacks.get(key);
@@ -1806,12 +1840,14 @@ function App() {
     const seeds = new Set(
       openStack.members.map((video) => video.generationKey).filter(Boolean)
     ).size;
+    const prompts = new Set(openStack.members.map((video) => video.promptKey)).size;
     return {
       position: live.indexOf(openStack.key) + 1,
       count: live.length,
       runs: openStack.members.length,
       total: openStack.total,
       seeds,
+      prompts,
       hasPrevious:
         neighbouringStack(openStackOrder, openStack.key, -1, promptStacks.stacks) != null,
       hasNext:
@@ -5442,6 +5478,8 @@ function App() {
             onGroupByFoldersToggle={toggleGroupByFolders}
             stackByPrompt={stackByPrompt}
             onStackByPromptToggle={toggleStackByPrompt}
+            stackSimilarity={stackSimilarity}
+            onStackSimilarityChange={handleStackSimilarityChange}
             showFolderHeaders={showFolderHeaders}
             onFolderHeadersToggle={setShowFolderHeaders}
             playbackMode={playbackMode}
@@ -6007,6 +6045,12 @@ function App() {
                                   ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
                                       ?.total || 0
                                   : 0
+                              }
+                              stackSimilar={
+                                stackSelectionUnits
+                                  ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))
+                                      ?.similar === true
+                                  : false
                               }
                               onOpenStack={handleOpenStackFromCard}
                               isHoverAudioActive={

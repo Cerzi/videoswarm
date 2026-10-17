@@ -57,7 +57,11 @@ const {
   createGenerationKeyIndexer,
 } = require("./main/generation-key-indexer");
 const generationKeyIndexer = createGenerationKeyIndexer();
-const { isGenerationKey } = require("./main/generation-key");
+const { isGenerationKey, isPromptKey } = require("./main/generation-key");
+const { createPromptSimilarityService } = require("./main/prompt-similarity");
+const promptSimilarityService = createPromptSimilarityService();
+// 1 stacks the exact prompt only; the rest are shares of words in common.
+const STACK_SIMILARITY_LEVELS = new Set([1, 0.9, 0.8, 0.7]);
 const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-runner");
 const { createComfyClient } = require("./main/comfy-client");
 const {
@@ -316,6 +320,9 @@ const defaultSettings = {
   playbackDetailsVisible: false,
   // Prompt stacks (docs/architecture/prompt-stacks.md): off unless asked for.
   stackByPrompt: false,
+  // How alike prompts must be to share a stack: 1 is the exact prompt, below
+  // that the share of words in common (Section 7).
+  stackSimilarity: 0.8,
   sortKey: "name",
   sortDir: "asc",
   groupByFolders: true,
@@ -1798,6 +1805,9 @@ function normaliseLoadedSettings(rawSettings) {
         : Boolean(source.showFilenames),
     playbackDetailsVisible: source.playbackDetailsVisible === true,
     stackByPrompt: source.stackByPrompt === true,
+    stackSimilarity: STACK_SIMILARITY_LEVELS.has(Number(source.stackSimilarity))
+      ? Number(source.stackSimilarity)
+      : defaultSettings.stackSimilarity,
     hoverAudioEnabled:
       source.hoverAudioEnabled === undefined
         ? defaultSettings.hoverAudioEnabled
@@ -2062,6 +2072,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
     "Profile changed during generation metadata parsing"
   );
   await generationKeyIndexer.cancelAllAndDrain();
+  promptSimilarityService.clear();
   // Prompts already in ComfyUI keep rendering; the profile's runner picks
   // them up again when that profile is next active.
   await disposeComfyRunner();
@@ -5530,6 +5541,61 @@ ipcMain.handle("generation-versions:cancel", async (event) => ({
   success: true,
   cancelled: generationKeyIndexer.cancelOwner(event.sender.id),
 }));
+
+// Similar-prompt stacks: see docs/architecture/prompt-stacks.md, Section 7.
+// The renderer sends prompt keys with clip counts and receives prompt keys;
+// prompts are read and compared here and never cross this boundary.
+const PROMPT_SIMILARITY_MAX_ENTRIES = 20_000;
+
+ipcMain.handle("stacks:similar-groups", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "similar prompt request");
+    const threshold = Number(payload.threshold);
+    if (!(threshold < 1 && STACK_SIMILARITY_LEVELS.has(threshold))) {
+      throw new TypeError("Unsupported prompt similarity");
+    }
+    if (
+      !Array.isArray(payload.entries) ||
+      payload.entries.length > PROMPT_SIMILARITY_MAX_ENTRIES
+    ) {
+      throw new TypeError("Prompt keys are outside the allowed bounds");
+    }
+    const seen = new Set();
+    const entries = [];
+    for (const entry of payload.entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const { promptKey, count } = entry;
+      if (!isPromptKey(promptKey) || seen.has(promptKey)) continue;
+      if (!Number.isSafeInteger(count) || count < 1) continue;
+      seen.add(promptKey);
+      entries.push({ promptKey, count });
+    }
+    context = captureMetadataContext();
+    const groups = await promptSimilarityService.similarGroups({
+      store: context.metadataStore,
+      entries,
+      threshold,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return {
+      success: true,
+      profileId: context.profileId,
+      generation: context.generation,
+      superseded: groups === null,
+      groups: groups || {},
+    };
+  } catch (error) {
+    return {
+      success: false,
+      profileId: context?.profileId || getActiveProfileId(),
+      generation: context?.generation ?? metadataProfileGeneration,
+      error: error?.message || String(error),
+      code: error?.code || "PROMPT_SIMILARITY_ERROR",
+    };
+  }
+});
 
 // ===== ComfyUI re-render queue IPC =====
 // The renderer sends clip paths it was shown (authorized like every native

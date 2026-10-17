@@ -40,6 +40,14 @@ const SCOPE_OPTIONS = Object.freeze([
   { value: FolderScope.CURRENT_SUBTREE, label: "Current subtree" },
 ]);
 
+// How alike prompts must be to share a stack (docs/architecture/prompt-stacks.md, Section 7).
+const STACK_SIMILARITY_OPTIONS = Object.freeze([
+  { value: 1, label: "Same prompt only", hint: "Stack only runs of the identical prompt" },
+  { value: 0.9, label: "Nearly the same prompt", hint: "Prompts sharing 90% of their words" },
+  { value: 0.8, label: "Similar prompts", hint: "Prompts sharing 80% of their words" },
+  { value: 0.7, label: "Loosely similar prompts", hint: "Prompts sharing 70% of their words" },
+]);
+
 const siblingLabel = (value) =>
   value?.name || value?.label || value?.path || value?.relativePath || "";
 
@@ -107,6 +115,8 @@ export default function TopBar({
   onGroupByFoldersToggle,
   stackByPrompt = false,
   onStackByPromptToggle,
+  stackSimilarity = 0.8,
+  onStackSimilarityChange,
   showFolderHeaders = false,
   onFolderHeadersToggle,
   playbackMode,
@@ -186,15 +196,6 @@ export default function TopBar({
     { type: "checkbox", id: "group", label: "Group by folders", checked: groupByFolders, onChange: () => onGroupByFoldersToggle?.(), disabled: busy },
     {
       type: "checkbox",
-      id: "stack-by-prompt",
-      label: "Stack runs of one prompt",
-      hint: "One card for every run of a prompt, read from embedded ComfyUI metadata (G)",
-      checked: stackByPrompt,
-      onChange: () => onStackByPromptToggle?.(),
-      disabled: busy,
-    },
-    {
-      type: "checkbox",
       id: "folder-groups",
       label: "Folder groups strip",
       hint: "Buttons for jumping between folder groups, shown while the sidebar is hidden",
@@ -202,6 +203,26 @@ export default function TopBar({
       onChange: (value) => onFolderHeadersToggle?.(value),
       disabled: busy || !groupByFolders,
     },
+    { type: "separator", id: "sep-stacks" },
+    { type: "heading", id: "stacks-heading", label: "Stacks" },
+    {
+      type: "checkbox",
+      id: "stack-by-prompt",
+      label: "Stack runs of a prompt",
+      hint: "One card for every run of a prompt, read from embedded ComfyUI metadata (G)",
+      checked: stackByPrompt,
+      onChange: () => onStackByPromptToggle?.(),
+      disabled: busy,
+    },
+    ...STACK_SIMILARITY_OPTIONS.map((option) => ({
+      type: "radio",
+      id: `stack-similarity-${option.value}`,
+      label: option.label,
+      hint: option.hint,
+      checked: stackByPrompt && Number(stackSimilarity) === option.value,
+      onSelect: () => onStackSimilarityChange?.(option.value),
+      disabled: busy,
+    })),
     { type: "separator", id: "sep-playback" },
     { type: "heading", id: "playback-heading", label: "Playback" },
     ...PLAYBACK_MODE_OPTIONS.map((option) => ({

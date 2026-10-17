@@ -37,6 +37,25 @@ describe("generation versions main-process integration", () => {
     expect(handlers).toContain("assertInteger(payload?.instanceId");
   });
 
+  it("bounds similar-prompt requests to prompt keys and known thresholds", () => {
+    const handler = section(
+      'ipcMain.handle("stacks:similar-groups"',
+      "// ===== ComfyUI re-render queue IPC ====="
+    );
+    expect(handler).toContain("PROMPT_SIMILARITY_MAX_ENTRIES");
+    expect(handler).toContain("!(threshold < 1 && STACK_SIMILARITY_LEVELS.has(threshold))");
+    expect(handler).toContain("isPromptKey(promptKey)");
+    expect(handler).toContain("assertActive: () => assertMetadataContextActive(context)");
+    expect(handler).not.toContain("payload.path");
+    const profile = section(
+      "async function performProfileReconfiguration",
+      "function reconfigureForProfile"
+    );
+    expect(profile.indexOf("promptSimilarityService.clear()")).toBeLessThan(
+      profile.indexOf("++metadataProfileGeneration")
+    );
+  });
+
   it("cancels a renderer's job on crash and destruction", () => {
     const lifecycle = section(
       "function invalidateNativeWorkOwner",

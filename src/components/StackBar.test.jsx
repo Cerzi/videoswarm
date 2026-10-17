@@ -11,6 +11,11 @@ describe("StackBar", () => {
     ).toBeInTheDocument();
   });
 
+  it("says when a stack holds similar prompts rather than one", () => {
+    render(<StackBar position={1} count={2} runs={5} total={5} prompts={3} />);
+    expect(screen.getByText("Stack 1 of 2 · 5 runs · 3 similar prompts")).toBeInTheDocument();
+  });
+
   it("steps, closes and rejects the rest through its buttons", () => {
     const onClose = vi.fn();
     const onPrevious = vi.fn();

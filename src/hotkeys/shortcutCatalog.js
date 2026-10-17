@@ -440,8 +440,8 @@ const STACK_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "toggle-stacks",
     keys: ["G"],
-    label: "Stack runs of one prompt",
-    detail: "Collapses every run of a prompt into one card; press again to show each clip.",
+    label: "Stack runs of a prompt",
+    detail: "Collapses every run of a prompt, or of similar prompts (View › Stacks), into one card; press again to show each clip.",
   }),
   freezeShortcut({
     id: "open-stack",

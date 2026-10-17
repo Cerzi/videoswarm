@@ -144,6 +144,34 @@ if (!database || databaseLoadError) {
       expect(tagged.records.map((record) => record.promptKey)).toEqual([PROMPT_A, PROMPT_A]);
     });
 
+    it("lists present instances carrying a prompt key for similar stacks", async () => {
+      const a = await indexClip(rootPath, "a.mp4", "content-a");
+      const b = await indexClip(otherRootPath, "b.mp4", "content-b");
+      const c = await indexClip(rootPath, "c.mp4", "content-c");
+      store.setGenerationKeys([
+        { fingerprint: a.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: b.fingerprint, generationKey: KEY_B, promptKey: PROMPT_A },
+        { fingerprint: c.fingerprint, generationKey: KEY_B, promptKey: PROMPT_B },
+      ]);
+
+      const rows = store.listPresentInstancesForPromptKey(PROMPT_A, 3);
+      expect(rows).toEqual([
+        expect.objectContaining({ absolutePath: path.join(rootPath, "a.mp4"), rootPath }),
+        expect.objectContaining({
+          absolutePath: path.join(otherRootPath, "b.mp4"),
+          rootPath: otherRootPath,
+        }),
+      ]);
+      expect(rows[0].size).toBe("content-a".length);
+      expect(store.listPresentInstancesForPromptKey(PROMPT_A, 1)).toHaveLength(1);
+
+      store.markFilesMissing([path.join(rootPath, "a.mp4")]);
+      expect(
+        store.listPresentInstancesForPromptKey(PROMPT_A, 3).map((row) => row.absolutePath)
+      ).toEqual([path.join(otherRootPath, "b.mp4")]);
+      expect(store.listPresentInstancesForPromptKey("raw prompt", 3)).toEqual([]);
+    });
+
     it("refuses malformed keys and oversized requests", async () => {
       const a = await indexClip(rootPath, "a.mp4", "content-a");
       expect(() =>

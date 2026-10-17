@@ -1,8 +1,8 @@
 # Prompt Stacks
 
-Status: **Implemented** — all six sections; deferred items below. Not yet
-run against a real library or in the packaged app (see *Validation*).
-Last updated: 2026-10-16
+Status: **Implemented** — all seven sections; deferred items below. Section 7
+is unverified by a human in the packaged app (see *Validation*).
+Last updated: 2026-10-17
 
 ## Summary
 
@@ -60,6 +60,9 @@ accepts loopback addresses only), and nothing in this feature changes that.
   embedded metadata, as the Generation panel already does.
 - The evaluation tool in Section 6 writes its detailed report only to a local
   file the user names, and prints counts only.
+- Similar-prompt stacks (Section 7) compare prompts in the main process. The
+  renderer sends prompt keys with clip counts and receives prompt keys; words
+  are held as numbered sets in memory only and never written or logged.
 - Any future visual mode must run on this machine; a cloud embedding service
   is out of scope.
 
@@ -145,8 +148,9 @@ Status: **Implemented** (2026-10-16)
 
 Status: **Implemented** (2026-10-16)
 
-- **Toggle.** *View → Stack runs of one prompt*, or `G`. Off by default;
-  remembered as the `stackByPrompt` setting.
+- **Toggle.** *View → Stacks → Stack runs of a prompt*, or `G`. Off by
+  default; remembered as the `stackByPrompt` setting. How alike prompts must
+  be is chosen beside it (Section 7).
 - **Collapse after filtering.** Stacks are formed from the clips that pass the
   current filters and folder scope. A stack card stands for its *matching*
   clips; when filters hide some runs of the prompt, the count reads `5/20`.
@@ -258,11 +262,76 @@ ways. The packaged Electron app was not run: in that container
 not reachable. `src/App.test.jsx` covers the same flow against the real
 `App`.
 
+## 7. Similar prompts
+
+Status: **Implemented, unverified by a human** (2026-10-17)
+
+Exact stacks were too narrow in practice. On the first real library measured
+(2,539 keyed clips), 1,892 prompt groups held 1,566 lone clips: most runs of
+one idea had been reworded between runs, usually in more than ten words. A
+stack now holds prompts that share most of their words.
+
+- **Choice.** *View → Stacks* offers *Same prompt only*, *Nearly the same
+  prompt* (90% of words in common), *Similar prompts* (80%, the default) and
+  *Loosely similar prompts* (70%). Choosing one turns stacking on. Remembered
+  as the `stackSimilarity` setting (`1`, `0.9`, `0.8` or `0.7`).
+- **Measure.** Jaccard similarity of the prompts' word sets: the long texts
+  the prompt key reads (Section 1), lowercased and split on letters and digits.
+  Short texts and seeds are ignored.
+- **Same input media.** Prompts over different input media never join; the
+  same words over another source clip, or another segment of it, are another
+  shot. This is the start-decides rule of `generation-versions.md`.
+- **Boilerplate.** A text in at least a quarter of the collection's prompt
+  groups (and at least three), beside at least three different other texts,
+  is left out of every comparison. That is how a shared negative prompt or
+  style suffix looks; one prompt reused over several input clips is not.
+- **Anchors, not chains.** Prompt groups are taken largest first. Each joins
+  the closest earlier *anchor* at or above the threshold, or becomes an anchor
+  itself. A group never joins one that joined, so a prompt refined one word at
+  a time cannot collapse a whole session into one stack. The stack's key is
+  its anchor's prompt key.
+- **Collection-wide grouping, filtered stacks.** Groups are formed over the
+  open collection (the folder scope), so filters do not regroup stacks; stacks
+  are then formed from the clips that pass the filters, as in Section 3.
+- **Asynchronous, exact meanwhile.** The renderer asks main for groups 250 ms
+  after the collection's prompt keys or counts change. Until the answer
+  arrives, and whenever main cannot answer (no readable clip, a WebM or MKV
+  clip, a profile switch), clips stack by exact prompt. An open stack follows
+  its runs when groups change.
+- **Saying so.** A stack of differing prompts says "runs of similar prompts"
+  on its pill, and its bar counts the prompts (`5 runs · 3 similar prompts`).
+
+### Cost
+
+Main reads one present MP4 or MOV per prompt key, once per session, and checks
+that it still holds the prompt the key came from. Clustering uses prefix
+filtering with positional pruning (PPJoin), which is exact for Jaccard and
+compares only prompts that share a rare word. On the library above (1,897
+groups, about 300 distinct words each) a request took about 70 ms in total, in
+slices of at most 25 ms with the event loop given back between them.
+
+### Measured
+
+On that library, at each level:
+
+| Level | Cards (from 1,897) | Stacks | Lone clips | Largest stack |
+|------:|-------------------:|-------:|-----------:|--------------:|
+| 90%   | 1,228              | 531    | 697        | 45            |
+| 80%   | 953                | 525    | 428        | 51            |
+| 70%   | 749                | 488    | 261        | 73            |
+
+Measured with a count-only script; no prompt text was printed or kept.
+
+### Acceptance
+
+- Reworded runs of one idea share a stack at the default level; unrelated
+  prompts do not, and different input media never do.
+- A chain of small edits does not join through intermediate prompts.
+- Prompt text never reaches the renderer, storage or logs.
+- The grid never waits on the answer.
+
 ## Deferred
 
-- **Similar-prompt stacking.** Waits on the Section 6 estimate from a real
-  library. If built: same input media required, boilerplate texts excluded by
-  frequency, anchor-based joining, and the card says the prompts differ.
 - **Visual similarity**, for clips without embedded metadata. Local model only;
   an opt-in *find similar clips* action is a better fit than stacking.
 - **Fullscreen navigation by stack** (left/right between stacks, up/down
@@ -282,6 +351,7 @@ not reachable. `src/App.test.jsx` covers the same flow against the real
 4. ~~Collapsed grid, stack cards and the toggle.~~ Done.
 5. ~~Stack view and stack navigation.~~ Done.
 6. ~~Selection, auto-advance by stack and *Reject unreviewed*.~~ Done.
+7. ~~Similar-prompt stacks.~~ Done.
 
 ## Implementation notes and decisions
 
@@ -313,3 +383,22 @@ not reachable. `src/App.test.jsx` covers the same flow against the real
   hook does.
 - Cards receive primitives and one stable callback, so stacks recomputing on
   every metadata update re-render only the cards whose counts change.
+
+### 2026-10-17 — Similar prompts
+
+- Main compares prompts, not the renderer: the renderer never holds prompt
+  text, and main already reads embedded metadata with path containment.
+  Similarity is not stored: it depends on the collection (anchors, the
+  boilerplate rule), and the prompts it needs are cached in memory after the
+  first read.
+- Words, not characters or embeddings: reworded runs keep most of their words,
+  and a word set needs no model, no tuning per library and no network.
+- Anchors rather than connected components, so that a run of small edits
+  cannot merge a session through its intermediate prompts.
+- The first version compared word sets as JavaScript `Set`s and took over a
+  second on 1,900 groups in the main process. Numbering words once per session
+  and pruning by prefix brought it to about 70 ms, sliced.
+- `scripts/prompt-stack-report.cjs` keeps its own estimate (Section 6), with a
+  frequency-only boilerplate rule. It predicted 929 cards at 80% for the
+  library above; the app gives 953, the difference being prompts over
+  different input media.
