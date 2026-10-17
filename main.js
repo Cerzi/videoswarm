@@ -4590,6 +4590,13 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     dedupe: true,
   });
   const matchMode = payload?.matchMode === "any" ? "any" : "all";
+  // A rating narrows the search as tags do: 1 to 5 stars, or none.
+  const ratingOf = (value, name) =>
+    value === null || value === undefined
+      ? null
+      : assertInteger(value, { name, min: 1, max: 5 });
+  const minRating = ratingOf(payload?.minRating, "tag view minimum rating");
+  const exactRating = ratingOf(payload?.exactRating, "tag view exact rating");
   // Folder checks are filesystem work, so they run before the synchronous
   // catalog read rather than inside it.
   const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
@@ -4603,6 +4610,8 @@ ipcMain.handle("library:tagged-snapshot", async (event, payload = {}) => {
     buildTaggedSnapshotResponse(metadataStore, {
       tagNames,
       matchMode,
+      minRating,
+      exactRating,
       unavailableRootPaths,
       generation: context.generation,
       assertActive: () => assertMetadataContextActive(context),

@@ -41,8 +41,9 @@ scope. Every view saved before the axis existed normalizes to `folder` and
 means exactly what it meant.
 
 - A view saved **during a library search** is a library view. A library
-  search is defined by its tags, so the main process keeps `library` only
-  when the view has an include tag, the same rule as the scope control.
+  search is defined by its tags and rating, so a view is saved as `library`
+  only when it has an include tag or a rating, the same rule as the scope
+  control.
 - **Applying a library view** always runs the library search with its tags
   and match mode, from a folder, from another library search, or from the
   home screen, where folder views stay unavailable. Leaving it returns to the
@@ -81,7 +82,7 @@ inventing a second one.
   it.** See below. No separate tag catalog is needed: the filter panel already
   lists profile-wide tags with usage counts.
 
-### A library search needs a tag
+### A library search needs a tag or a rating
 
 This originally read "a library search with nothing selected returns everything
 within the bound", and shipping it showed that to be wrong. On a 24k-clip
@@ -89,11 +90,17 @@ profile, flipping the scope control immediately read 20,000 records — the
 record cap — and reported itself truncated. A bound being hit is not a result
 anyone asked for, and the one gesture that reaches it was a single toggle.
 
-So the scope control is unavailable until at least one include tag is selected,
-and states why rather than only dimming: a disabled control that does not
+So the scope control is unavailable until at least one include tag or a
+rating (1 to 5 stars, minimum or exact) is selected, and states why rather
+than only dimming: a disabled control that does not
 explain itself is a dead end. Removing the last tag while a search is open
 cannot be prevented by the control, so the guard also lives behind it — the
 view empties and asks for a tag instead of falling back to reading everything.
+
+A rating narrows the query itself (2026-10-17): "4 stars or more across the
+library" is a search on its own, and with tags it narrows them. Unrated clips
+never match a rating, and "exactly 0 stars" is not offered as a library
+search, since it would mean most of the library.
 
 The store keeps the unconstrained capability. The gate belongs at the point of
 user intent, not in the query: the store answers questions, and the UI decides
@@ -104,8 +111,9 @@ which ones are worth asking.
 - A tagged clip is returned regardless of which indexed root holds it.
 - A clip whose instance is absent, or whose directory is absent, is not returned.
 - Exceeding the record or byte bound is reported, not truncated silently.
-- No user gesture issues a library query with no tags, and the control that
-  would says why it is unavailable.
+- No user gesture issues a library query with no tags and no rating, and the
+  control that would says why it is unavailable.
+- A rating alone searches every root; with tags it narrows them.
 
 ## 2. Snapshot, not a live collection
 

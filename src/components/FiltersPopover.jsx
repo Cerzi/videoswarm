@@ -14,6 +14,7 @@ import {
   COMPANION_PHASE_LABELS,
   normalizeCompanionFilters,
 } from "../app/companion/companionFilters";
+import { hasLibrarySearchCriteria, librarySearchCriteria } from "../app/librarySearch";
 
 const MIN_RATING_OPTIONS = [
   { value: null, label: "Any" },
@@ -138,7 +139,8 @@ const FiltersPopover = forwardRef(
       filters?.exactRating === 0 ? 0 : filters?.exactRating ?? null;
     const reviewFilter = normalizeReviewFilter(filters?.reviewFilter);
     const searchScope = librarySearchScope === "library" ? "library" : "folder";
-    const canSearchLibrary = includeTags.length > 0;
+    // Tags, a rating, or both define a library search.
+    const canSearchLibrary = hasLibrarySearchCriteria(librarySearchCriteria(filters || {}));
     const includeTagsMode = filters?.includeTagsMode === "any" ? "any" : "all";
     const maxMegapixels = sanitizeMegapixels(filters?.maxMegapixels);
     const minMegapixels = sanitizeMegapixels(filters?.minMegapixels);
@@ -604,8 +606,8 @@ const FiltersPopover = forwardRef(
                 value: "library",
                 label: "Entire library",
                 hint: canSearchLibrary
-                  ? "Search every indexed root. The tags above narrow the query itself."
-                  : "Include at least one tag above to search every root.",
+                  ? "Search every indexed root. The tags and rating narrow the query itself."
+                  : "Include a tag or a rating to search every root.",
               },
             ].map((option) => (
               <button
@@ -619,8 +621,8 @@ const FiltersPopover = forwardRef(
                 disabled={
                   typeof onSearchScopeChange !== "function" ||
                   (option.value === "folder" && !canReturnToFolder) ||
-                  // A library search is defined by its tags. Offering it with
-                  // none selected offers to read the whole library into the
+                  // A library search is defined by its tags and rating. Offering
+                  // it with neither offers to read the whole library into the
                   // grid, which is a bound to hit rather than a thing to want.
                   (option.value === "library" &&
                     searchScope !== "library" &&
@@ -636,7 +638,7 @@ const FiltersPopover = forwardRef(
             <div className="filters-library-status">
               <span className="filters-empty-hint">
                 {!canSearchLibrary
-                  ? "Include a tag above to search every root."
+                  ? "Include a tag or a rating to search every root."
                   : libraryResultCount === null
                     ? "Searching the library…"
                     : `${libraryResultCount.toLocaleString()} clip${
@@ -660,7 +662,7 @@ const FiltersPopover = forwardRef(
             // A disabled control that does not say why is a dead end, and the
             // reason is one line.
             <span className="filters-empty-hint">
-              Include a tag above to search every root.
+              Include a tag or a rating to search every root.
             </span>
           ) : null}
         </section>

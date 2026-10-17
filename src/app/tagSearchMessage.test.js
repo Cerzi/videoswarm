@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { emptyTagSearchMessage } from "./tagSearchMessage";
 
 describe("emptyTagSearchMessage", () => {
+  it("says which rating came back empty", () => {
+    expect(emptyTagSearchMessage([], "all", { minRating: 4 })).toBe(
+      "No clips are rated 4 stars or more"
+    );
+    expect(emptyTagSearchMessage([], "all", { exactRating: 1 })).toBe(
+      "No clips are rated exactly 1 star"
+    );
+    expect(emptyTagSearchMessage(["keeper"], "all", { minRating: 5 })).toBe(
+      'No clips carry "keeper" and are rated 5 stars or more'
+    );
+  });
+
   it("names the one tag that was searched for", () => {
     expect(emptyTagSearchMessage(["keeper"], "all")).toBe(
       'No clips carry "keeper"'

@@ -4067,18 +4067,19 @@ describe("App hook composition", () => {
 // a library-wide read with no tag to constrain it - including the case the
 // control cannot cover, where the last tag is removed mid-search.
 describe("library search scope", () => {
-  const openFiltersWith = (includeTags) => ({
+  const openFiltersWith = (includeTags, extra = {}) => ({
     ...filterStateReturn,
     isFiltersOpen: true,
     filters: {
       ...filterStateReturn.filters,
       includeTags,
       includeTagsMode: "all",
+      ...extra,
     },
   });
 
-  const renderWithTags = async (includeTags) => {
-    useFilterStateMock.mockImplementation(() => openFiltersWith(includeTags));
+  const renderWithTags = async (includeTags, extra) => {
+    useFilterStateMock.mockImplementation(() => openFiltersWith(includeTags, extra));
     vi.resetModules();
     const { default: App } = await import("./App.jsx");
     const view = render(<App />);
@@ -4180,7 +4181,7 @@ describe("library search scope", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Every keeper Library" }));
     });
-    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all"));
+    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null }));
     expect(taggedSnapshot).toHaveBeenCalledTimes(1);
     expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(libraryView.definition.filters);
   });
@@ -4198,6 +4199,26 @@ describe("library search scope", () => {
       await props()?.onSearchScopeChange?.("library");
     });
 
-    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all");
+    expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null });
+  });
+
+  test("searches the whole library by rating alone", async () => {
+    const taggedSnapshot = vi.fn(async () => ({
+      success: true,
+      records: [],
+      truncated: false,
+    }));
+    window.electronAPI = { library: { taggedSnapshot } };
+
+    const { props } = await renderWithTags([], { minRating: 4 });
+    expect(props()?.filters.minRating).toBe(4);
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+
+    expect(taggedSnapshot).toHaveBeenCalledWith([], "all", { minRating: 4, exactRating: null });
+    expect(openTagCollectionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tags: [], minRating: 4, exactRating: null })
+    );
   });
 });

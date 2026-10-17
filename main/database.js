@@ -1668,6 +1668,10 @@ function createMetadataStore(db) {
           ON t.name = json_extract(g.value, '$[0]')
         WHERE ft.fingerprint = fi.fingerprint
       ) >= @required_matches
+      -- A rating narrows the search too, so "4 stars or more" alone is a
+      -- library search. Unrated clips never match a rating.
+      AND (@min_rating IS NULL OR r.value >= @min_rating)
+      AND (@exact_rating IS NULL OR r.value = @exact_rating)
     ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
     LIMIT @limit;
   `);
@@ -3444,11 +3448,15 @@ function createMetadataStore(db) {
     const unavailableRootPaths = (
       Array.isArray(options.unavailableRootPaths) ? options.unavailableRootPaths : []
     ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
+    const ratingOf = (value) =>
+      Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
     const rows = taggedInstancesAcrossRoots.all({
       tag_groups: JSON.stringify(expandTagGroups(tagNames)),
       unavailable_root_paths: JSON.stringify(unavailableRootPaths),
       required_matches:
         tagNames.length === 0 ? 0 : matchMode === 'any' ? 1 : tagNames.length,
+      min_rating: ratingOf(options.minRating),
+      exact_rating: ratingOf(options.exactRating),
       limit: maxRecords + 1,
     });
     assertOperationActive(options.assertActive);

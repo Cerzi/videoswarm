@@ -120,6 +120,7 @@ describe("library tag view response", () => {
     const response = buildTaggedSnapshotResponse(store, {
       tagNames: ["keeper", "sleep"],
       matchMode: "any",
+      minRating: 4,
       unavailableRootPaths: [rootB],
       generation: 2,
       assertActive,
@@ -128,6 +129,8 @@ describe("library tag view response", () => {
     expect(store.getTaggedLibrarySnapshot).toHaveBeenCalledWith({
       tagNames: ["keeper", "sleep"],
       matchMode: "any",
+      minRating: 4,
+      exactRating: null,
       unavailableRootPaths: [rootB],
       assertActive,
     });

@@ -81,6 +81,11 @@ import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
 import { useSequences } from "./app/hooks/useSequences";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
+import {
+  hasLibrarySearchCriteria,
+  librarySearchCriteria,
+  librarySearchKey,
+} from "./app/librarySearch";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
 import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
 import usePlaybackCapabilities from "./app/hooks/usePlaybackCapabilities";
@@ -2388,18 +2393,19 @@ function App() {
   // otherwise untagging a clip would leave it sitting in a view defined by that
   // tag.
   const loadTagCollection = useCallback(
-    async (tags, matchMode = "all") => {
+    async (tags, matchMode = "all", { minRating = null, exactRating = null } = {}) => {
       const requested = (Array.isArray(tags) ? tags : [])
         .map((tag) => (tag ?? "").toString().trim())
         .filter(Boolean);
+      const rating = { minRating, exactRating };
 
-      // A library search is defined by its tags, so with none there is no
-      // question to ask. Asking it anyway reads every clip in the profile into
-      // the grid up to the record cap, which is a bound to hit rather than a
-      // result to want. The scope control refuses this too; this is the guard
-      // behind it, and it also covers removing the last tag while a library
-      // search is open.
-      if (!requested.length) {
+      // A library search is defined by its tags and its rating, so with
+      // neither there is no question to ask. Asking it anyway reads every clip
+      // in the profile into the grid up to the record cap, which is a bound to
+      // hit rather than a result to want. The scope control refuses this too;
+      // this is the guard behind it, and it also covers removing the last tag
+      // or the rating while a library search is open.
+      if (!hasLibrarySearchCriteria({ tags: requested, ...rating })) {
         openTagCollection({
           tags: [],
           matchMode,
@@ -2415,7 +2421,7 @@ function App() {
         return false;
       }
       try {
-        const result = await snapshot(requested, matchMode);
+        const result = await snapshot(requested, matchMode, rating);
         // A refused read is not an empty library. Reporting "no clips" for a
         // search that never ran sends the user hunting for missing tags
         // instead of telling them the search itself failed.
@@ -2426,6 +2432,7 @@ function App() {
         openTagCollection({
           tags: requested,
           matchMode,
+          ...rating,
           records,
           truncated: Boolean(result?.truncated),
         });
@@ -2433,11 +2440,11 @@ function App() {
           notify(
             `Showing the first ${Number(
               result.recordLimit || records.length
-            ).toLocaleString()} tagged clips`,
+            ).toLocaleString()} matching clips`,
             "info"
           );
         } else if (!records.length) {
-          notify(emptyTagSearchMessage(requested, matchMode), "info");
+          notify(emptyTagSearchMessage(requested, matchMode, rating), "info");
         }
         return true;
       } catch (error) {
@@ -2451,7 +2458,10 @@ function App() {
 
   const refreshTagCollection = useCallback(() => {
     if (!tagCollection) return false;
-    return loadTagCollection(tagCollection.tags, tagCollection.matchMode);
+    return loadTagCollection(tagCollection.tags, tagCollection.matchMode, {
+      minRating: tagCollection.minRating ?? null,
+      exactRating: tagCollection.exactRating ?? null,
+    });
   }, [loadTagCollection, tagCollection]);
 
   const tagViewRefreshRef = useRef(refreshTagCollection);
@@ -2472,7 +2482,8 @@ function App() {
         // Remember where this was entered from before the root is cleared.
         folderScopeReturnRef.current = activeRootPath || null;
         setLibrarySearchScope("library");
-        await loadTagCollection(filters.includeTags, filters.includeTagsMode);
+        const criteria = librarySearchCriteria(filters);
+        await loadTagCollection(criteria.tags, criteria.matchMode, criteria);
         return;
       }
       setLibrarySearchScope("folder");
@@ -2482,19 +2493,18 @@ function App() {
       // component, so naming it as a dependency here would be a use-before-init.
       if (returnTo) await openLibraryRootRef.current?.(returnTo);
     },
-    [activeRootPath, filters.includeTags, librarySearchScope, loadTagCollection]
+    [activeRootPath, filters, librarySearchScope, loadTagCollection]
   );
 
-  // A library search holding no tags is waiting for one, not looking at an
-  // empty collection, and the grid has to say the difference.
+  // A library search with no tags and no rating is waiting for one, not
+  // looking at an empty collection, and the grid has to say the difference.
+  const libraryCriteria = useMemo(() => librarySearchCriteria(filters), [filters]);
   const isEmptyLibrarySearch =
-    librarySearchScope === "library" && filters.includeTags.length === 0;
+    librarySearchScope === "library" && !hasLibrarySearchCriteria(libraryCriteria);
 
-  // Tags narrow the library query itself rather than only the loaded grid, so
-  // changing them while searching the library re-runs the read.
-  const includeTagsKey = `${filters.includeTagsMode}:${filters.includeTags.join(
-    "\u0000"
-  )}`;
+  // Tags and the rating narrow the library query itself rather than only the
+  // loaded grid, so changing them while searching the library re-runs the read.
+  const includeTagsKey = librarySearchKey(libraryCriteria);
   const lastLibraryTagsRef = useRef(includeTagsKey);
   const lastLibraryRequestRef = useRef(librarySearchRequest);
   useEffect(() => {
@@ -2511,10 +2521,9 @@ function App() {
     }
     lastLibraryTagsRef.current = includeTagsKey;
     lastLibraryRequestRef.current = librarySearchRequest;
-    loadTagCollection(filters.includeTags, filters.includeTagsMode);
+    loadTagCollection(libraryCriteria.tags, libraryCriteria.matchMode, libraryCriteria);
   }, [
-    filters.includeTags,
-    filters.includeTagsMode,
+    libraryCriteria,
     includeTagsKey,
     librarySearchRequest,
     librarySearchScope,
@@ -3856,7 +3865,8 @@ function App() {
         // Saved during a library search, the view searches the library
         // wherever it is applied; otherwise it applies to the open folder.
         searchScope:
-          librarySearchScope === "library" && (filters.includeTags || []).length
+          librarySearchScope === "library" &&
+          hasLibrarySearchCriteria(librarySearchCriteria(filters))
             ? "library"
             : "folder",
       };
@@ -3902,8 +3912,7 @@ function App() {
         : FolderScope.ALL_DESCENDANTS;
       const searchesLibrary =
         definition.searchScope === "library" &&
-        Array.isArray(definition.filters?.includeTags) &&
-        definition.filters.includeTags.length > 0;
+        hasLibrarySearchCriteria(librarySearchCriteria(definition.filters || {}));
       if (searchesLibrary) {
         // The same search wherever it is applied from, the home screen
         // included: every indexed root, not the open folder.
@@ -6100,7 +6109,7 @@ function App() {
                       <div className="collection-empty-state" role="status">
                         <h3>
                           {isEmptyLibrarySearch
-                            ? "Include a tag to search the library"
+                            ? "Include a tag or a rating to search the library"
                             : videos.length === 0
                             ? "No videos in this collection"
                             : filteredVideos.length === 0

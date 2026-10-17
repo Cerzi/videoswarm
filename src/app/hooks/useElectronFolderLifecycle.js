@@ -1069,7 +1069,14 @@ export function useElectronFolderLifecycle({
    * pointing at somewhere the visible clips may not live.
    */
   const openTagCollection = useCallback(
-    ({ tags = [], matchMode = "all", records = [], truncated = false } = {}) => {
+    ({
+      tags = [],
+      matchMode = "all",
+      minRating = null,
+      exactRating = null,
+      records = [],
+      truncated = false,
+    } = {}) => {
       cancelActiveFolderScan(false);
       retainedFolderScanRef.current = null;
       collectionOwnerScanIdRef.current = null;
@@ -1090,6 +1097,9 @@ export function useElectronFolderLifecycle({
       setTagCollection({
         tags: [...tags],
         matchMode: matchMode === "any" ? "any" : "all",
+        // A library search can be by rating as well as, or instead of, tags.
+        minRating,
+        exactRating,
         truncated: Boolean(truncated),
         // Distinguishes one snapshot from the next so collection ownership
         // changes on refresh and stale per-clip work is discarded.

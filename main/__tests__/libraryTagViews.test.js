@@ -239,6 +239,26 @@ if (!database || databaseLoadError) {
       ).toEqual(['both.mp4', 'one.mp4']);
     });
 
+    it('searches by rating alone, or narrows tags by it, across roots', async () => {
+      const five = await indexInto('alpha', 'five.mp4', 'five');
+      const four = await indexInto('beta', 'four.mp4', 'four');
+      const two = await indexInto('beta', 'two.mp4', 'two');
+      await indexInto('beta', 'unrated.mp4', 'unrated');
+      store.setRating([five.indexed.fingerprint], 5);
+      store.setRating([four.indexed.fingerprint], 4);
+      store.setRating([two.indexed.fingerprint], 2);
+      store.assignTags([four.indexed.fingerprint, two.indexed.fingerprint], ['keeper']);
+
+      const names = (snapshot) => snapshot.records.map((record) => record.relativePath).sort();
+      expect(names(store.getTaggedLibrarySnapshot({ minRating: 4 }))).toEqual(['five.mp4', 'four.mp4']);
+      expect(names(store.getTaggedLibrarySnapshot({ exactRating: 2 }))).toEqual(['two.mp4']);
+      expect(
+        names(store.getTaggedLibrarySnapshot({ tagNames: ['keeper'], minRating: 3 }))
+      ).toEqual(['four.mp4']);
+      // Out-of-range ratings are no constraint, never "unrated".
+      expect(store.getTaggedLibrarySnapshot({ minRating: 0 }).records).toHaveLength(4);
+    });
+
     it('treats an empty tag set as no tag constraint', async () => {
       const tagged = await indexInto('alpha', 'a.mp4', 'a');
       await indexInto('beta', 'b.mp4', 'b');

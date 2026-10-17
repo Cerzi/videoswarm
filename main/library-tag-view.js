@@ -37,11 +37,20 @@ async function findUnavailableRootPaths(rootPaths, { stat = fs.promises.stat } =
  * as an error.
  */
 function buildTaggedSnapshotResponse(metadataStore, options = {}) {
-  const { tagNames, matchMode, unavailableRootPaths, generation, assertActive } =
-    options;
+  const {
+    tagNames,
+    matchMode,
+    minRating = null,
+    exactRating = null,
+    unavailableRootPaths,
+    generation,
+    assertActive,
+  } = options;
   const snapshot = metadataStore.getTaggedLibrarySnapshot({
     tagNames,
     matchMode,
+    minRating,
+    exactRating,
     unavailableRootPaths,
     assertActive,
   });

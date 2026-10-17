@@ -89,10 +89,19 @@ describe("FiltersPopover search scope", () => {
     expect(onSearchScopeChange).not.toHaveBeenCalled();
   });
 
+  it("offers a library search for a rating alone", () => {
+    const onSearchScopeChange = vi.fn();
+    renderScope({ filters: { ...baseFilters, minRating: 4 }, onSearchScopeChange });
+    const library = screen.getByRole("button", { name: "Entire library" });
+    expect(library).not.toBeDisabled();
+    fireEvent.click(library);
+    expect(onSearchScopeChange).toHaveBeenCalledWith("library");
+  });
+
   it("says why the library scope is unavailable instead of just dimming it", () => {
     renderScope({ filters: baseFilters, onSearchScopeChange: vi.fn() });
     expect(
-      screen.getByText(/Include a tag above to search every root/)
+      screen.getByText(/Include a tag or a rating to search every root/)
     ).toBeInTheDocument();
   });
 
@@ -108,7 +117,7 @@ describe("FiltersPopover search scope", () => {
     });
 
     expect(
-      screen.getByText(/Include a tag above to search every root/)
+      screen.getByText(/Include a tag or a rating to search every root/)
     ).toBeInTheDocument();
     expect(screen.queryByText(/from every root/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();

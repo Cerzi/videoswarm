@@ -530,10 +530,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   library: {
-    taggedSnapshot: async (tags, matchMode) =>
+    // A library search: tags and/or a rating (1 to 5 stars).
+    taggedSnapshot: async (tags, matchMode, { minRating = null, exactRating = null } = {}) =>
       ipcRenderer.invoke("library:tagged-snapshot", {
         tags: Array.isArray(tags) ? tags : [],
         matchMode: matchMode === "any" ? "any" : "all",
+        ...(Number.isInteger(minRating) ? { minRating } : {}),
+        ...(Number.isInteger(exactRating) ? { exactRating } : {}),
       }),
     listRoots: async (options = {}) =>
       ipcRenderer.invoke("library:list-roots", options),
