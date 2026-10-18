@@ -141,6 +141,12 @@ const VideoCard = memo(function VideoCard({
   // only when its own group changes.
   versionCount = 0,
   versionSuperseded = false,
+  // In the versions view: the version's pill ("Best · 1920×1080") and where
+  // it lives, in place of the count.
+  versionLabel = null,
+  versionLocation = null,
+  // Opens this clip's versions side by side from the count pill.
+  onOpenVersions = null,
   // Prompt stacks (docs/architecture/prompt-stacks.md): the runs this card
   // stands for, and how many the collection has when filters hide some.
   stackCount = 0,
@@ -1463,6 +1469,12 @@ const VideoCard = memo(function VideoCard({
     onOpenStack?.(videoId);
   }, [onOpenStack, videoId]);
 
+  // Likewise the versions pill opens the versions side by side.
+  const handleOpenVersionsClick = useCallback((e) => {
+    e.stopPropagation();
+    onOpenVersions?.(videoId);
+  }, [onOpenVersions, videoId]);
+
   // Hovering a still in the strip plays that clip over the header
   // (StackPeek); clicking opens the stack at that clip.
   const [peekStill, setPeekStill] = useState(null);
@@ -1597,7 +1609,31 @@ const VideoCard = memo(function VideoCard({
         </div>
       )}
 
-      {versionCount >= 2 && (
+      {versionLabel ? (
+        <div
+          className={`video-item-versions video-item-versions--label${
+            hasReviewBadge ? " with-review" : ""
+          }`}
+          title={versionLocation || undefined}
+        >
+          {versionLabel}
+        </div>
+      ) : versionCount >= 2 && onOpenVersions ? (
+        <button
+          type="button"
+          className={`video-item-versions video-item-versions--button${
+            versionSuperseded ? " video-item-versions--superseded" : ""
+          }${hasReviewBadge ? " with-review" : ""}`}
+          title={`${versionCount} versions of this generation${
+            versionSuperseded ? " · a higher-resolution version exists" : ""
+          } · show them side by side`}
+          aria-label={`Show the ${versionCount} versions of this generation side by side`}
+          onClick={handleOpenVersionsClick}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          {versionCount} versions
+        </button>
+      ) : versionCount >= 2 ? (
         <div
           className={`video-item-versions${
             versionSuperseded ? " video-item-versions--superseded" : ""
@@ -1610,14 +1646,17 @@ const VideoCard = memo(function VideoCard({
         >
           {versionCount} versions
         </div>
-      )}
+      ) : null}
 
       {companionChips.map((chip, index) => (
         <div
           key={chip.key}
           className={`video-item-companion video-item-companion--${chip.tone || "info"}`}
           style={{
-            top: 8 + 22 * ((hasReviewBadge ? 1 : 0) + (versionCount >= 2 ? 1 : 0) + index),
+            top:
+              8 +
+              22 *
+                ((hasReviewBadge ? 1 : 0) + (versionLabel || versionCount >= 2 ? 1 : 0) + index),
           }}
           title={chip.title || chip.label}
         >

@@ -482,7 +482,7 @@ const STACK_SHORTCUTS = Object.freeze([
   freezeShortcut({
     id: "close-stack",
     keys: ["Esc"],
-    label: "Close the open stack",
+    label: "Close the versions side by side, or the open stack",
   }),
 ]);
 

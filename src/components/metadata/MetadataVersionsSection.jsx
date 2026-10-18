@@ -100,6 +100,16 @@ export default function MetadataVersionsSection({ video, active = true, generati
           Versions
         </span>
         <span className="metadata-panel__badge">{entry.versionCount}</span>
+        {typeof generationVersions?.onOpenView === "function" ? (
+          <button
+            type="button"
+            className="metadata-panel__versions-compare"
+            onClick={() => generationVersions.onOpenView(video.id)}
+            title="Show every version playing side by side"
+          >
+            Side by side
+          </button>
+        ) : null}
       </div>
       {loading && versions.length === 0 ? (
         <p className="metadata-panel__generation-status">Reading versions…</p>

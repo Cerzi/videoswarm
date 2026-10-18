@@ -884,3 +884,26 @@ body.metadata-panel-drag-active {
   color: rgba(255, 255, 255, 0.42);
   font-style: italic;
 }
+
+/* Opens the versions side by side (generation-versions.md, Section 8). */
+.metadata-panel__versions-compare {
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.metadata-panel__versions-compare:hover,
+.metadata-panel__versions-compare:focus-visible {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.09);
+  outline: none;
+}

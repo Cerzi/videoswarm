@@ -197,6 +197,7 @@ describe("preload native-work bridge", () => {
     await api.generationVersions.summaries(["gk1-x"]);
     await api.generationVersions.summaries(null);
     await api.generationVersions.siblings(7);
+    await api.generationVersions.open(7);
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["generation-versions:index", { instanceIds: [1, 2] }],
       ["generation-versions:index", { library: true }],
@@ -205,6 +206,7 @@ describe("preload native-work bridge", () => {
       ["generation-versions:summaries", { keys: ["gk1-x"] }],
       ["generation-versions:summaries", { keys: [] }],
       ["generation-versions:siblings", { instanceId: 7 }],
+      ["generation-versions:open", { instanceId: 7 }],
     ]);
 
     const callback = vi.fn();

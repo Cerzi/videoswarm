@@ -67,4 +67,28 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
   };
 }
 
-module.exports = { buildTaggedSnapshotResponse, findUnavailableRootPaths };
+/**
+ * Build the renderer's answer for the versions view: every present version of
+ * one clip's generation, library-wide, one record per content in version
+ * order, in the same playable shape as a tag view
+ * (docs/architecture/generation-versions.md, Section 8).
+ */
+function buildGenerationVersionsResponse(metadataStore, options = {}) {
+  const { instanceId, unavailableRootPaths, generation, assertActive } = options;
+  const found = metadataStore.getGenerationVersionRecords(instanceId, {
+    unavailableRootPaths,
+    assertActive,
+  });
+  return {
+    generationKey: found.generationKey,
+    records: createTaggedLibraryFiles(found.records, { generation }),
+    truncated: Boolean(found.truncated),
+    rootPaths: found.rootPaths,
+  };
+}
+
+module.exports = {
+  buildGenerationVersionsResponse,
+  buildTaggedSnapshotResponse,
+  findUnavailableRootPaths,
+};

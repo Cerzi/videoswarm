@@ -9,6 +9,13 @@ import React, {
 } from "react";
 import VideoCard from "./components/VideoCard/VideoCard";
 import StackBar from "./components/StackBar";
+import VersionsBar from "./components/VersionsBar";
+import {
+  buildVersionMembers,
+  versionCardLabel,
+  versionLocation,
+} from "./app/versions/versionView";
+import { normalizeVideoFromMain } from "./app/videoNormalization";
 import FullScreenModal from "./components/FullScreenModal";
 import ContextMenu from "./components/ContextMenu";
 import RecentFolders from "./components/RecentFolders";
@@ -229,6 +236,7 @@ const expandFolderAncestors = (previous, relativePath) => {
 };
 
 const NO_STRIP_IDS = Object.freeze([]);
+const NO_VERSION_GUESTS = Object.freeze([]);
 
 function App() {
   // Selection state (SOLID). While prompt stacks are collapsed, every run of
@@ -275,6 +283,12 @@ function App() {
   const [gridLayout, setGridLayout] = useState("masonry");
   const [openStackKey, setOpenStackKey] = useState(null);
   const [openStackOrder, setOpenStackOrder] = useState([]);
+  // One clip's versions side by side (generation-versions.md, Section 8):
+  // `{ originId, records, status, truncated }`, over whatever grid it was
+  // opened from.
+  const [versionView, setVersionView] = useState(null);
+  // Opens it from anywhere: the card pill and the details panel.
+  const handleOpenVersionsRef = useRef(null);
   const [randomSeed, setRandomSeed] = useState(null);
   const [isAboutOpen, setAboutOpen] = useState(false);
   const [isDataLocationOpen, setDataLocationOpen] = useState(false);
@@ -932,14 +946,36 @@ function App() {
   useEffect(() => {
     if (openStack && openStack.key !== openStackKey) setOpenStackKey(openStack.key);
   }, [openStack, openStackKey]);
+  // The versions view shows every version whatever the filters and folder:
+  // the collection's own clips where it holds them, and guests from main for
+  // the rest (generation-versions.md, Section 8).
+  const versionViewClips = useMemo(
+    () =>
+      versionView
+        ? buildVersionMembers(versionView.records, {
+            videos,
+            originId: versionView.originId,
+          })
+        : null,
+    [versionView, videos]
+  );
+  const versionGuests = versionViewClips?.guests || NO_VERSION_GUESTS;
+  const versionLabelById = useMemo(() => {
+    const labels = new Map();
+    versionViewClips?.members.forEach((video, index) => {
+      labels.set(video.id, versionCardLabel(index, video));
+    });
+    return labels;
+  }, [versionViewClips]);
   const gridVideos = useMemo(() => {
+    if (versionViewClips) return versionViewClips.members;
     if (openStack) return openStack.members;
     return collapsePromptStacks(scopedFilteredVideos, promptStacks);
-  }, [openStack, promptStacks, scopedFilteredVideos]);
-  // Inside an open stack every clip selects on its own.
+  }, [openStack, promptStacks, scopedFilteredVideos, versionViewClips]);
+  // Inside an open stack, or among versions, every clip selects on its own.
   const stackSelectionUnits = useMemo(
-    () => (openStack ? null : createStackSelectionUnits(promptStacks)),
-    [openStack, promptStacks]
+    () => (openStack || versionView ? null : createStackSelectionUnits(promptStacks)),
+    [openStack, promptStacks, versionView]
   );
   selectionUnitsRef.current = stackSelectionUnits;
   // A stack is never left partly selected, so an action on it can never
@@ -1250,6 +1286,7 @@ function App() {
     gridRef,
     scrollContainerElement,
     gridElement,
+    comparison: Boolean(versionView),
   });
   fullOrderedVideosRef.current = orderedVideos;
   revealScrollRef.current = scrollToId;
@@ -1384,10 +1421,15 @@ function App() {
     () => new Map(orderedVideos.map((video) => [video.id, video])),
     [orderedVideos]
   );
-  const allVideosById = useMemo(
-    () => new Map(videos.map((video) => [video.id, video])),
-    [videos]
-  );
+  // Versions from folders that are not open count as clips while they are
+  // shown, so they can be selected, rated, tagged and acted on.
+  const allVideosById = useMemo(() => {
+    const map = new Map(videos.map((video) => [video.id, video]));
+    for (const guest of versionGuests) {
+      if (!map.has(guest.id)) map.set(guest.id, guest);
+    }
+    return map;
+  }, [versionGuests, videos]);
   const allVideoIds = useMemo(() => new Set(allVideosById.keys()), [allVideosById]);
 
   // Sibling versions are named by catalog instance id; resolve them to clips
@@ -1397,8 +1439,11 @@ function App() {
     videos.forEach((video) => {
       if (video?.instanceId) map.set(video.instanceId, video.id);
     });
+    versionGuests.forEach((video) => {
+      if (video?.instanceId && !map.has(video.instanceId)) map.set(video.instanceId, video.id);
+    });
     return map;
-  }, [videos]);
+  }, [versionGuests, videos]);
   const resolveVersionTarget = useCallback(
     (instanceId) => {
       const id = videoIdByInstanceId.get(instanceId);
@@ -1411,6 +1456,12 @@ function App() {
     () => ({
       index: generationVersionIndex,
       resolveTarget: resolveVersionTarget,
+      // The details panel's way into the versions view, unless it is open.
+      onOpenView: versionView
+        ? null
+        : (videoId) => {
+            void handleOpenVersionsRef.current?.(videoId);
+          },
       onSelect: (instanceId) => {
         const id = videoIdByInstanceId.get(instanceId);
         if (!id || !videosById.has(id)) return;
@@ -1423,6 +1474,7 @@ function App() {
       resolveVersionTarget,
       scrollToId,
       selection.selectExactly,
+      versionView,
       videoIdByInstanceId,
       videosById,
     ]
@@ -1675,6 +1727,22 @@ function App() {
   );
 
 
+  // Edits reach versions from folders that are not open too: every list-wide
+  // update (metadata, trash) is an updater over the clip list, applied to the
+  // versions view's records as well.
+  const setVideosAndVersions = useCallback(
+    (update) => {
+      setVideos(update);
+      if (typeof update !== "function") return;
+      setVersionView((previous) =>
+        previous?.records?.length
+          ? { ...previous, records: update(previous.records) }
+          : previous
+      );
+    },
+    [setVideos]
+  );
+
   const {
     handleAddTags: applyAddTags,
     handleRemoveTag: applyRemoveTag,
@@ -1686,7 +1754,7 @@ function App() {
     refreshTagList,
   } = useMetadataActions({
     selectedFingerprints,
-    setVideos,
+    setVideos: setVideosAndVersions,
     setAvailableTags,
     notify,
     ownershipKey: reviewOwnershipKey,
@@ -1817,6 +1885,8 @@ function App() {
   );
   const reviewWorkflow = useReviewWorkflow({
     scopeVideos: reviewScopeVideos,
+    // Every version shown, even one outside the folder scope or the folder.
+    extraVideos: versionViewClips?.members || NO_VERSION_GUESTS,
     orderedVideoIds: orderForRange,
     selectedIds: selection.selected,
     selectExactly: selection.selectExactly,
@@ -1960,6 +2030,111 @@ function App() {
     pendingStackFocusRef.current = null;
     scrollToId(id, { align: "center" });
   }, [openStack, orderedVideos, scrollToId]);
+
+  // ----- Versions side by side -------------------------------------------
+  // See docs/architecture/generation-versions.md, Section 8.
+  const versionRequestRef = useRef(0);
+  const pendingVersionRevealRef = useRef(null);
+  const handleOpenVersions = useCallback(
+    async (videoId) => {
+      const origin = allVideosById.get(videoId);
+      const api = window.electronAPI?.generationVersions;
+      if (!origin?.instanceId || typeof api?.open !== "function") return false;
+      const request = ++versionRequestRef.current;
+      setVersionView({ originId: videoId, records: [], status: "loading", truncated: false });
+      // Each version selects on its own; the clip it was opened from starts
+      // selected.
+      selectionUnitsRef.current = null;
+      selection.selectExactly(videoId);
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      let result = null;
+      try {
+        result = await api.open(origin.instanceId);
+      } catch (error) {
+        result = { success: false, error: error?.message || String(error) };
+      }
+      if (request !== versionRequestRef.current) return true;
+      if (!result || result.success === false) {
+        notify("The other versions could not be read", "error");
+        setVersionView((previous) =>
+          previous?.originId === videoId ? { ...previous, status: "failed" } : previous
+        );
+        return true;
+      }
+      const seen = new Set();
+      const records = [];
+      for (const record of Array.isArray(result.records) ? result.records : []) {
+        const video = normalizeVideoFromMain(record);
+        if (video?.id == null || seen.has(video.id)) continue;
+        seen.add(video.id);
+        records.push(video);
+      }
+      setVersionView((previous) =>
+        previous?.originId === videoId
+          ? { ...previous, records, status: "ready", truncated: result.truncated === true }
+          : previous
+      );
+      return true;
+    },
+    [allVideosById, notify, selection.selectExactly]
+  );
+  // Cards get a stable callback, as for stacks.
+  handleOpenVersionsRef.current = handleOpenVersions;
+  const handleOpenVersionsFromCard = useCallback((videoId) => {
+    void handleOpenVersionsRef.current(videoId);
+  }, []);
+
+  // Back to the grid it was opened from, with that clip (or the collapsed
+  // stack holding it) selected and in view.
+  const handleCloseVersions = useCallback(() => {
+    if (!versionView) return;
+    versionRequestRef.current += 1;
+    const originId = versionView.originId;
+    setVersionView(null);
+    if (originId == null || !videos.some((video) => video.id === originId)) return;
+    selection.selectExactly(originId);
+    const stackKey = stackByPrompt && !openStack ? promptStacks.keyById.get(originId) : null;
+    pendingVersionRevealRef.current =
+      (stackKey && promptStacks.stacks.get(stackKey)?.cover?.id) ?? originId;
+  }, [openStack, promptStacks, selection.selectExactly, stackByPrompt, versionView, videos]);
+
+  useEffect(() => {
+    const id = pendingVersionRevealRef.current;
+    if (id == null || versionView) return;
+    pendingVersionRevealRef.current = null;
+    if (orderedVideos.some((video) => video.id === id)) scrollToId(id, { align: "center" });
+  }, [orderedVideos, scrollToId, versionView]);
+
+  // Another folder, scope or collection closes the view, as it closes a
+  // stack; so does every version going away.
+  const versionCollectionKey = `${activeRootPath || ""}\u0000${currentDirectory || ""}\u0000${folderScope}\u0000${
+    tagCollection?.loadedAt || ""
+  }`;
+  const versionCollectionKeyRef = useRef(versionCollectionKey);
+  useEffect(() => {
+    if (versionCollectionKeyRef.current === versionCollectionKey) return;
+    versionCollectionKeyRef.current = versionCollectionKey;
+    versionRequestRef.current += 1;
+    setVersionView(null);
+  }, [versionCollectionKey]);
+  useEffect(() => {
+    if (versionView && versionView.status !== "loading" && versionViewClips?.members.length === 0) {
+      setVersionView(null);
+    }
+  }, [versionView, versionViewClips]);
+
+  // Every version back to its first frame at once, to compare the same
+  // moment.
+  const handleRestartVersions = useCallback(() => {
+    const cards = gridRef.current?.querySelectorAll?.(".video-item video") || [];
+    for (const element of cards) {
+      try {
+        element.currentTime = 0;
+      } catch {
+        // A card between sources has nothing to rewind.
+      }
+    }
+  }, []);
 
   // The stills wanted now: the strips of stack cards that are mounted.
   useEffect(() => {
@@ -2433,7 +2608,7 @@ function App() {
     endMediaMutation,
     mediaScheduler,
     workSuspended,
-    setVideos,
+    setVideos: setVideosAndVersions,
     setSelected: selection.setSelected,
     setLoadedIds: setLoadedVideos,
     setPlayingIds: setActualPlaying,
@@ -3888,21 +4063,30 @@ function App() {
     onSetRating: handleRatingHotkey,
     onUndoReview: reviewModeEnabled ? handleReviewUndo : null,
     // While a stack is open, the folder keys step between stacks.
-    onPreviousFolder: openStack
+    onPreviousFolder: versionView
+      ? null
+      : openStack
       ? () => handleStepStack(-1)
       : !isLoadingFolder && siblingFolders.previous
         ? () => handlePreviousFolder(siblingFolders.previous)
         : null,
-    onNextFolder: openStack
+    onNextFolder: versionView
+      ? null
+      : openStack
       ? () => handleStepStack(1)
       : !isLoadingFolder && siblingFolders.next
         ? () => handleNextFolder(siblingFolders.next)
         : null,
-    onToggleStacks: !isLoadingFolder ? toggleStackByPrompt : null,
+    onToggleStacks: !isLoadingFolder && !versionView ? toggleStackByPrompt : null,
     onOpenStack: stackSelectionUnits ? handleOpenSelectedStack : null,
-    onCloseStack: openStack && !isLoadingFolder ? handleCloseStack : null,
+    // Esc leaves the versions view first, then an open stack.
+    onCloseStack: versionView
+      ? handleCloseVersions
+      : openStack && !isLoadingFolder
+        ? handleCloseStack
+        : null,
     onRejectUnreviewedInStack:
-      openStack && reviewModeEnabled ? handleRejectUnreviewedInStack : null,
+      openStack && !versionView && reviewModeEnabled ? handleRejectUnreviewedInStack : null,
     onOpenDetails: () => openMetadataPanel(),
     onAddToSequence: () => handleAddSelectionToSequence(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
@@ -6454,7 +6638,17 @@ function App() {
                       />
                     )}
 
-                  {openStackSummary && (
+                  {versionView ? (
+                    <VersionsBar
+                      count={versionViewClips?.members.length || 0}
+                      elsewhere={versionGuests.length}
+                      loading={versionView.status === "loading"}
+                      failed={versionView.status === "failed"}
+                      truncated={versionView.truncated}
+                      onClose={handleCloseVersions}
+                      onRestart={handleRestartVersions}
+                    />
+                  ) : openStackSummary && (
                     <StackBar
                       {...openStackSummary}
                       unreviewedCount={openStackUnreviewed.length}
@@ -6547,6 +6741,13 @@ function App() {
                               }
                               versionSuperseded={
                                 generationVersionIndex.get(video.id)?.superseded === true
+                              }
+                              versionLabel={versionLabelById.get(video.id) || null}
+                              versionLocation={
+                                versionView ? versionLocation(video) : null
+                              }
+                              onOpenVersions={
+                                versionView ? null : handleOpenVersionsFromCard
                               }
                               stackCount={
                                 stackSelectionUnits

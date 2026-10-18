@@ -269,6 +269,65 @@ if (!database || databaseLoadError) {
       });
     });
 
+    it("gives the versions view one playable record per version, library-wide", async () => {
+      const { buildGenerationVersionsResponse } = require("../library-tag-view");
+      const draft = await indexClip(rootPath, "draft.mp4", "draft", { width: 640, height: 360, durationMs: 5000 });
+      const final = await indexClip(otherRootPath, "final.mp4", "final", { width: 1280, height: 720, durationMs: 5000 });
+      const finalCopy = await indexClip(otherRootPath, "backup/final.mp4", "final");
+      const other = await indexClip(rootPath, "other.mp4", "other", { width: 320, height: 240 });
+      store.setGenerationKeys([
+        { fingerprint: draft.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: final.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: other.fingerprint, generationKey: KEY_B, promptKey: PROMPT_B },
+      ]);
+      store.setRating([final.fingerprint], 4);
+
+      const found = store.getGenerationVersionRecords(draft.instance.id);
+      expect(found).toMatchObject({ generationKey: KEY_A, truncated: false });
+      // Best first; the copy of the final is the same version, listed once.
+      expect(found.records.map((record) => record.fingerprint)).toEqual([
+        final.fingerprint,
+        draft.fingerprint,
+      ]);
+      expect(found.records[0]).toMatchObject({ rootPath: otherRootPath, rating: 4 });
+      expect(found.records[1]).toMatchObject({ instanceId: draft.instance.id, relativePath: "draft.mp4" });
+      expect(found.rootPaths.sort()).toEqual([otherRootPath, rootPath].sort());
+
+      // Asked from the copy, the copy stands for its own content.
+      const fromCopy = store.getGenerationVersionRecords(finalCopy.instance.id);
+      expect(fromCopy.records[0]).toMatchObject({ instanceId: finalCopy.instance.id });
+
+      // A root that cannot be opened is left out.
+      const reachable = store.getGenerationVersionRecords(draft.instance.id, {
+        unavailableRootPaths: [otherRootPath],
+      });
+      expect(reachable.records.map((record) => record.fingerprint)).toEqual([draft.fingerprint]);
+
+      // As the renderer receives them: playable, labelled and keyed by path.
+      const response = buildGenerationVersionsResponse(store, {
+        instanceId: draft.instance.id,
+        generation: 3,
+      });
+      expect(response.records).toHaveLength(2);
+      expect(response.records[0]).toMatchObject({
+        id: path.join(otherRootPath, "final.mp4"),
+        name: "final.mp4",
+        rootPath: otherRootPath,
+        generationKey: KEY_A,
+        dimensions: { width: 1280, height: 720 },
+      });
+      expect(response.records[0].sourceUrl).toMatch(/^videoswarm-media:\/\//u);
+
+      expect(store.getGenerationVersionRecords(other.instance.id).records).toHaveLength(1);
+      const unkeyed = await indexClip(rootPath, "unkeyed.mp4", "unkeyed");
+      expect(store.getGenerationVersionRecords(unkeyed.instance.id)).toEqual({
+        generationKey: null,
+        records: [],
+        truncated: false,
+        rootPaths: [],
+      });
+    });
+
     it("stops counting versions whose instances are all gone", async () => {
       const draft = await indexClip(rootPath, "draft.mp4", "draft", { width: 640, height: 360 });
       const final = await indexClip(otherRootPath, "final.mp4", "final", { width: 1280, height: 720 });

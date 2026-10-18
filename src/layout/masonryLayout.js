@@ -261,10 +261,17 @@ export function computeRowLayout(items = [], options = {}) {
     entries.map((entry) => entry.aspectRatio),
     defaultAspect
   );
+  // A caller may set the target outright (the versions view fits its row
+  // to the window); otherwise it follows the zoom.
   const rowHeight = Math.max(
     1,
-    Math.round(Math.min(targetTileWidth, availableWidth) / typicalAspect)
+    Math.round(
+      positiveNumber(options.rowHeight, 0) ||
+        Math.min(targetTileWidth, availableWidth) / typicalAspect
+    )
   );
+  // Ragged rows (the last) sit in the middle rather than at the left.
+  const center = options.center === true;
 
   const positions = [];
   const positionsById = new Map();
@@ -278,13 +285,16 @@ export function computeRowLayout(items = [], options = {}) {
     if (!row.length) return;
     const height = Math.max(1, Math.round(rowHeight * scale));
     const last = row.length - 1;
+    const left = center && scale === 1
+      ? padding + Math.max(0, Math.floor((availableWidth - Math.round(cards) - gap * last) / 2))
+      : padding;
     let before = 0;
     row.forEach((entry, at) => {
-      const x = padding + Math.round(before * scale) + gap * at;
+      const x = left + Math.round(before * scale) + gap * at;
       before += entry.width;
       const right = at === last && scale !== 1
         ? padding + availableWidth
-        : padding + Math.round(before * scale) + gap * at;
+        : left + Math.round(before * scale) + gap * at;
       const width = Math.max(1, right - x);
       const style = {
         position: 'absolute',
@@ -349,6 +359,27 @@ export function computeRowLayout(items = [], options = {}) {
     padding,
     gap,
   };
+}
+
+/**
+ * The row height at which clips of these aspect ratios sit side by side in
+ * one row that fits both the grid's width and the window's height (the
+ * versions view), or null when that row would be too low to compare in
+ * (`minHeight`), in which case the zoom's rows apply.
+ */
+export function fitComparisonRowHeight(
+  aspects,
+  { containerWidth, viewportHeight, padding = DEFAULT_PADDING, gap = DEFAULT_GAP, minHeight = 160 } = {}
+) {
+  const shapes = (Array.isArray(aspects) ? aspects : [])
+    .map((aspect) => normalizeAspectRatio(aspect, DEFAULT_ASPECT_RATIO, DEFAULT_MIN_ASPECT, DEFAULT_MAX_ASPECT));
+  if (!shapes.length) return null;
+  const across = positiveNumber(containerWidth, 1) - padding * 2 - gap * (shapes.length - 1);
+  const down = positiveNumber(viewportHeight, 0) - padding * 2;
+  const total = shapes.reduce((sum, aspect) => sum + aspect, 0);
+  // A pixel short of the width, so rounding never breaks the row.
+  const height = Math.floor(Math.min((across - shapes.length) / total, down));
+  return Number.isFinite(height) && height >= minHeight ? height : null;
 }
 
 function findFirstIntersectingPosition(column, top) {

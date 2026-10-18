@@ -6,6 +6,8 @@ import {
 
 export const REVIEW_WORKFLOW_MAX_PENDING = 32;
 
+const EMPTY_EXTRA_VIDEOS = Object.freeze([]);
+
 const asIdSet = (value) =>
   value instanceof Set ? new Set(value) : new Set(value || []);
 
@@ -151,6 +153,9 @@ const metadataMatches = (video, metadata) => {
 
 export default function useReviewWorkflow({
   scopeVideos = [],
+  // Clips outside the scope that decisions may still reach (versions from
+  // folders that are not open); progress counts the scope alone.
+  extraVideos = EMPTY_EXTRA_VIDEOS,
   orderedVideoIds = [],
   selectedIds = new Set(),
   selectExactly,
@@ -177,9 +182,15 @@ export default function useReviewWorkflow({
   const pendingEndRef = useRef(null);
   const previousOwnershipRef = useRef(ownershipKey);
 
+  const targetVideos = useMemo(
+    () => (extraVideos.length ? [...scopeVideos, ...extraVideos] : scopeVideos),
+    [extraVideos, scopeVideos]
+  );
+
   const inputRef = useRef({});
   inputRef.current = {
     scopeVideos,
+    targetVideos,
     orderedVideoIds,
     selectedIds,
     selectExactly,
@@ -214,14 +225,14 @@ export default function useReviewWorkflow({
   useEffect(() => {
     const overlay = metadataOverlayRef.current;
     if (overlay.size === 0) return;
-    const videosByFingerprint = makeFingerprintMap(scopeVideos);
+    const videosByFingerprint = makeFingerprintMap(targetVideos);
     for (const [fingerprint, metadata] of overlay) {
       const video = videosByFingerprint.get(fingerprint);
       if (!video || metadataMatches(video, metadata)) {
         overlay.delete(fingerprint);
       }
     }
-  }, [scopeVideos]);
+  }, [targetVideos]);
 
   useEffect(() => {
     const pending = pendingEndRef.current;
@@ -362,8 +373,8 @@ export default function useReviewWorkflow({
     completionGuard = null,
   }) => {
     const current = inputRef.current;
-    const videosById = makeVideoMap(current.scopeVideos);
-    const videosByFingerprint = makeFingerprintMap(current.scopeVideos);
+    const videosById = makeVideoMap(current.targetVideos);
+    const videosByFingerprint = makeFingerprintMap(current.targetVideos);
     const selection = asIdSet(current.selectedIds);
     const selectedVideos = Array.from(selection)
       .map((id) => videosById.get(id))
@@ -607,7 +618,7 @@ export default function useReviewWorkflow({
 
       recordRestoredMetadataOverlay({ snapshots: history.snapshots, result });
 
-      const latestVideos = makeVideoMap(inputRef.current.scopeVideos);
+      const latestVideos = makeVideoMap(inputRef.current.targetVideos);
       const restorableIds = history.selectionIds.filter((id) => latestVideos.has(id));
       const restoredSelection = new Set(restorableIds);
       inputRef.current.selectedIds = restoredSelection;

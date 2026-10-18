@@ -324,6 +324,13 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Versions side by side (`architecture/generation-versions.md`, Section 8):
+  clicking a card's "N versions" pill (or *Side by side* in the details
+  panel) shows every version in one row filling the window, best first,
+  including versions in folders that are not open, all playing; *Play
+  together from the start* restarts them at once; picking, rejecting,
+  rating or tagging any of them sticks; `Esc` returns to the grid with the
+  clip selected.
 - Background work note (`architecture/background-activity.md`): opening a
   large folder with stacks on shows "Reading prompts in clips · N left" at
   the right of the status line after a moment, and nothing when idle; the

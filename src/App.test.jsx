@@ -3143,6 +3143,95 @@ describe("App hook composition", () => {
     }
   });
 
+  test("shows a clip's versions side by side, from other folders too, and leads back", async () => {
+    const GK = `gk3-${"a".repeat(32)}`;
+    const draft = {
+      id: "/outputs/draft.mp4",
+      name: "draft.mp4",
+      dirname: "",
+      instanceId: 7,
+      fingerprint: "fp-draft",
+      generationKey: GK,
+      dimensions: { width: 640, height: 360 },
+      reviewState: "unreviewed",
+    };
+    const other = { id: "/outputs/other.mp4", name: "other.mp4", dirname: "", fingerprint: "fp-other" };
+    const videos = [draft, other];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: videos,
+    }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    const open = vi.fn(async () => ({
+      success: true,
+      generationKey: GK,
+      truncated: false,
+      records: [
+        {
+          id: "/finals/final.mp4",
+          instanceId: 9,
+          name: "final.mp4",
+          fingerprint: "fp-final",
+          rootPath: "/finals",
+          relativePath: "final.mp4",
+          generationKey: GK,
+          dimensions: { width: 1920, height: 1080 },
+          isElectronFile: true,
+        },
+        { ...draft, rootPath: "/outputs", relativePath: "draft.mp4" },
+      ],
+    }));
+    window.electronAPI = { saveSettingsPartial: vi.fn(), generationVersions: { open } };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      expect(gridIds()).toEqual([draft.id, other.id]);
+
+      await act(async () => cardProps(draft.id).onOpenVersions(draft.id));
+      expect(open).toHaveBeenCalledWith(7);
+      await waitFor(() => expect(gridIds()).toEqual(["/finals/final.mp4", draft.id]));
+      // Side by side in version order, whatever the sort.
+      expect(useMasonryLayoutMock.mock.calls.at(-1)[0].comparison).toBe(true);
+      expect(screen.getByRole("toolbar", { name: "Versions side by side" })).toHaveTextContent(
+        "2 versions of this generation, best first · 1 from folders that aren't open"
+      );
+      expect(cardProps("/finals/final.mp4")).toMatchObject({
+        versionLabel: "Best · 1920×1080",
+        versionLocation: "finals/final.mp4",
+        onOpenVersions: null,
+      });
+      expect(cardProps(draft.id).versionLabel).toBe("640×360");
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith(draft.id);
+
+      await act(async () => hotkeys().onCloseStack());
+      await waitFor(() => expect(gridIds()).toEqual([draft.id, other.id]));
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith(draft.id);
+      expect(screen.queryByRole("toolbar", { name: "Versions side by side" })).toBeNull();
+      expect(useMasonryLayoutMock.mock.calls.at(-1)[0].comparison).toBe(false);
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("heads a stack with its most typical clip and shows the most different as stills", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const bits = (count) => (count === 0 ? 0n : (1n << BigInt(count)) - 1n).toString(16).padStart(16, "0");

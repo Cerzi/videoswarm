@@ -1,5 +1,5 @@
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import VideoCard from "./VideoCard";
 import { createMediaSlotScheduler } from "../../services/mediaSlotScheduler";
@@ -42,6 +42,34 @@ describe("VideoCard generation versions badge", () => {
     const superseded = screen.getByText("3 versions");
     expect(superseded.getAttribute("title")).toMatch(/a higher-resolution version exists/);
     expect(superseded.className).toMatch(/video-item-versions--superseded/);
+  });
+
+  it("opens the versions side by side from the pill, without selecting the card", () => {
+    const onOpenVersions = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <VideoCard {...baseProps()} versionCount={3} onOpenVersions={onOpenVersions} onSelect={onSelect} />
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show the 3 versions of this generation side by side" })
+    );
+    expect(onOpenVersions).toHaveBeenCalledWith("clip");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows a version's size, and where it lives, in the versions view", () => {
+    render(
+      <VideoCard
+        {...baseProps()}
+        versionCount={3}
+        versionLabel="Best · 1920×1080"
+        versionLocation="finals/a.mp4"
+      />
+    );
+    const pill = screen.getByText("Best · 1920×1080");
+    expect(pill.getAttribute("title")).toBe("finals/a.mp4");
+    expect(pill.tagName).toBe("DIV");
+    expect(screen.queryByText("3 versions")).toBeNull();
   });
 
   it("moves below the review pill when both are shown", () => {

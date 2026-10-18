@@ -3535,6 +3535,59 @@ function createMetadataStore(db) {
    * collection is a snapshot. Records carry their owning root so the renderer
    * can group and authorize without a second lookup.
    */
+  // One present instance from a library-wide query (the tag view's and the
+  // versions view's columns) as a catalog record; tags are read once per
+  // content through `tagsByFingerprint`.
+  function mapLibraryInstanceRow(instance, tagsByFingerprint) {
+    const width = Number(instance.content_width || 0);
+    const height = Number(instance.content_height || 0);
+    const durationMs = normalizeDurationMs(instance.content_duration_ms);
+    const frameRate = normalizeFrameRate(instance.content_frame_rate);
+    if (!tagsByFingerprint.has(instance.fingerprint)) {
+      tagsByFingerprint.set(
+        instance.fingerprint,
+        tagsForFingerprint.all(instance.fingerprint).map((row) => row.name)
+      );
+    }
+    return {
+      instanceId: Number(instance.id),
+      rootPath: instance.owner_root_path,
+      relativePath: instance.relative_path,
+      absolutePath: instance.absolute_path,
+      size: Number(instance.size || 0),
+      mtimeMs: Number(instance.mtime_ms || 0),
+      createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
+      fingerprint: instance.fingerprint || null,
+      tags: tagsByFingerprint.get(instance.fingerprint) || [],
+      rating:
+        instance.rating_value !== null &&
+        instance.rating_value !== undefined &&
+        Number.isFinite(Number(instance.rating_value))
+          ? Number(instance.rating_value)
+          : null,
+      reviewState: REVIEW_STATES.has(instance.review_state)
+        ? instance.review_state
+        : 'unreviewed',
+      dimensions:
+        width > 0 && height > 0
+          ? {
+              width,
+              height,
+              aspectRatio: width / height,
+              ...(durationMs ? { durationMs } : {}),
+              ...(frameRate ? { frameRate } : {}),
+            }
+          : null,
+      hasAudio: mapHasAudio(instance.content_has_audio),
+      ...mapGenerationKeyFields(
+        instance.content_generation_key,
+        instance.content_generation_key_version,
+        instance.content_prompt_key,
+        instance.content_prompt_key_version
+      ),
+    };
+  }
+
   function getTaggedLibrarySnapshot(options = {}) {
     assertOperationActive(options.assertActive);
     const tagNames = [
@@ -3601,53 +3654,7 @@ function createMetadataStore(db) {
       if (pathBytes > maxPathBytes) {
         throw new RangeError('Tag view paths exceed the bounded query budget');
       }
-      const width = Number(instance.content_width || 0);
-      const height = Number(instance.content_height || 0);
-      const durationMs = normalizeDurationMs(instance.content_duration_ms);
-      const frameRate = normalizeFrameRate(instance.content_frame_rate);
-      if (!tagsByFingerprint.has(instance.fingerprint)) {
-        tagsByFingerprint.set(
-          instance.fingerprint,
-          tagsForFingerprint.all(instance.fingerprint).map((row) => row.name)
-        );
-      }
-      return {
-        instanceId: Number(instance.id),
-        rootPath: instance.owner_root_path,
-        relativePath: instance.relative_path,
-        absolutePath: instance.absolute_path,
-        size: Number(instance.size || 0),
-        mtimeMs: Number(instance.mtime_ms || 0),
-        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
-        fingerprint: instance.fingerprint || null,
-        tags: tagsByFingerprint.get(instance.fingerprint) || [],
-        rating:
-          instance.rating_value !== null &&
-          instance.rating_value !== undefined &&
-          Number.isFinite(Number(instance.rating_value))
-            ? Number(instance.rating_value)
-            : null,
-        reviewState: REVIEW_STATES.has(instance.review_state)
-          ? instance.review_state
-          : 'unreviewed',
-        dimensions:
-          width > 0 && height > 0
-            ? {
-                width,
-                height,
-                aspectRatio: width / height,
-                ...(durationMs ? { durationMs } : {}),
-                ...(frameRate ? { frameRate } : {}),
-              }
-            : null,
-        hasAudio: mapHasAudio(instance.content_has_audio),
-        ...mapGenerationKeyFields(
-          instance.content_generation_key,
-          instance.content_generation_key_version,
-          instance.content_prompt_key,
-          instance.content_prompt_key_version
-        ),
-      };
+      return mapLibraryInstanceRow(instance, tagsByFingerprint);
     });
     assertOperationActive(options.assertActive);
 
@@ -5231,6 +5238,47 @@ function createMetadataStore(db) {
     LIMIT @limit;
   `);
 
+  // Every present instance of one generation's versions, with the tag
+  // view's columns, for the versions view.
+  const generationVersionInstances = db.prepare(`
+    SELECT * FROM (
+    SELECT fi.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY fi.absolute_path
+        ORDER BY fi.last_seen_at DESC, LENGTH(lr.root_path) DESC, fi.id
+      ) AS path_rank,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM media_content mc
+    INNER JOIN file_instances fi ON fi.fingerprint = mc.fingerprint
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE mc.generation_key = @generation_key
+      AND mc.generation_key_version = @version
+      AND fi.is_present != 0
+      AND d.is_present != 0
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
+    )
+    WHERE path_rank = 1
+    ORDER BY fingerprint, id
+    LIMIT @limit;
+  `);
+
   // Similar-prompt stacks read a prompt back from one present clip carrying
   // the key; main/prompt-similarity.js verifies it still matches.
   const promptKeyInstanceRows = db.prepare(`
@@ -5838,6 +5886,72 @@ function createMetadataStore(db) {
     };
   }
 
+  /**
+   * Every present version of one clip's generation, library-wide, as catalog
+   * records in version order, one per content: the clip asked about for its
+   * own content, otherwise its most recently seen copy. For the versions view
+   * (docs/architecture/generation-versions.md, Section 8).
+   */
+  function getGenerationVersionRecords(instanceId, options = {}) {
+    assertOperationActive(options.assertActive);
+    if (!Number.isSafeInteger(instanceId) || instanceId < 1) {
+      throw new TypeError('A valid instance id is required');
+    }
+    const self = generationKeyForInstance.get(instanceId);
+    const selfFields = self
+      ? mapGenerationKeyFields(
+        self.generation_key,
+        self.generation_key_version,
+        self.prompt_key,
+        self.prompt_key_version
+      )
+      : {};
+    if (!selfFields.generationKey) {
+      return { generationKey: null, records: [], truncated: false, rootPaths: [] };
+    }
+    const unavailableRootPaths = (
+      Array.isArray(options.unavailableRootPaths) ? options.unavailableRootPaths : []
+    ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
+    const rows = generationVersionInstances.all({
+      generation_key: selfFields.generationKey,
+      version: GENERATION_KEY_VERSION,
+      unavailable_root_paths: JSON.stringify(unavailableRootPaths),
+      limit: GENERATION_VERSION_LIMITS.maxSiblingRows + 1,
+    });
+    assertOperationActive(options.assertActive);
+    const rowsTruncated = rows.length > GENERATION_VERSION_LIMITS.maxSiblingRows;
+    const byFingerprint = new Map();
+    for (const row of rows.slice(0, GENERATION_VERSION_LIMITS.maxSiblingRows)) {
+      if (!byFingerprint.has(row.fingerprint) || Number(row.id) === instanceId) {
+        byFingerprint.set(row.fingerprint, row);
+      }
+    }
+    // Version order, as the details panel lists siblings.
+    const pixels = (row) => Number(row.content_width || 0) * Number(row.content_height || 0);
+    const duration = (row) => normalizeDurationMs(row.content_duration_ms) || 0;
+    const ordered = [...byFingerprint.values()].sort(
+      (a, b) =>
+        pixels(b) - pixels(a) ||
+        duration(b) - duration(a) ||
+        Number(b.mtime_ms || 0) - Number(a.mtime_ms || 0) ||
+        (a.fingerprint < b.fingerprint ? -1 : 1)
+    );
+    let kept = ordered.slice(0, GENERATION_VERSION_LIMITS.maxSiblingVersions);
+    if (!kept.some((row) => Number(row.id) === instanceId)) {
+      const selfRow = ordered.find((row) => Number(row.id) === instanceId);
+      if (selfRow) kept = [...kept.slice(0, -1), selfRow];
+    }
+    const tagsByFingerprint = new Map();
+    const records = kept.map((row) => mapLibraryInstanceRow(row, tagsByFingerprint));
+    return {
+      generationKey: selfFields.generationKey,
+      records,
+      truncated:
+        rowsTruncated || ordered.length > GENERATION_VERSION_LIMITS.maxSiblingVersions,
+      rootPaths: [...new Set(records.map((record) => record.rootPath))],
+    };
+  }
+
   // A clip tagged "bellydance" counts toward "dance" too, once however many
   // of its tags sit under "dance". directCount is the tag's own clips.
   function listTags() {
@@ -6283,6 +6397,7 @@ function createMetadataStore(db) {
     setGenerationKeys,
     getGenerationVersionSummaries,
     getGenerationVersionSiblings,
+    getGenerationVersionRecords,
     listPresentInstancesForPromptKey,
     listLibraryPromptKeys,
     getFrameRows,

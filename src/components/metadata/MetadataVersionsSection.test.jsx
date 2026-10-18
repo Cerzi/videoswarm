@@ -46,6 +46,20 @@ describe("MetadataVersionsSection", () => {
     delete window.electronAPI;
   });
 
+  it("opens the versions side by side when the app offers it", async () => {
+    const { generationVersions, video } = setup();
+    const onOpenView = vi.fn();
+    const { rerender } = render(
+      <MetadataVersionsSection video={video} generationVersions={{ ...generationVersions, onOpenView }} />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Side by side" }));
+    expect(onOpenView).toHaveBeenCalledWith("draft");
+    // Not while they are already side by side.
+    rerender(<MetadataVersionsSection video={video} generationVersions={generationVersions} />);
+    expect(screen.queryByRole("button", { name: "Side by side" })).toBeNull();
+    await flush();
+  });
+
   it("lists siblings in version order and reveals only those in view", async () => {
     const { onSelect, generationVersions, video } = setup();
     render(<MetadataVersionsSection video={video} generationVersions={generationVersions} />);

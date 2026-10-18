@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeMasonryLayout,
   computeRowLayout,
+  fitComparisonRowHeight,
   getAnchorScrollAdjustment,
   getScrollTopForItem,
   getVirtualMasonryWindow,
@@ -370,6 +371,31 @@ describe('computeRowLayout', () => {
     expect(fits.positions[0].height).toBe(552);
     expect(fits.positions[0].width).toBe(980);
     expect(rows(clips(16 / 9), { targetTileWidth: 640 }).positions[0].height).toBe(360);
+  });
+
+  it('lays versions side by side in one centred row that fits the window', () => {
+    const versions = clips(16 / 9, 16 / 9);
+    const fit = (viewportHeight) =>
+      fitComparisonRowHeight(versions.map((clip) => clip.aspectRatio), {
+        containerWidth: 1000,
+        viewportHeight,
+        padding: 10,
+        gap: 4,
+      });
+    // As wide as the grid allows: 976px of cards for two 16:9 clips.
+    expect(fit(2000)).toBe(273);
+    const wide = rows(versions, { rowHeight: fit(2000), center: true });
+    expect(wide.positions.map((position) => position.y)).toEqual([10, 10]);
+    expect(wide.positions.every((position) => position.height === 273)).toBe(true);
+    // As tall as the window allows, in the middle.
+    expect(fit(200)).toBe(180);
+    const low = rows(versions, { rowHeight: fit(200), center: true });
+    expect(low.positions.map((position) => position.x)).toEqual([178, 502]);
+    expect(low.positions[1].x + low.positions[1].width + low.positions[0].x).toBe(1000);
+    // Too many to compare in one row: the zoom's rows apply.
+    expect(
+      fitComparisonRowHeight(Array(40).fill(16 / 9), { containerWidth: 1000, viewportHeight: 900 })
+    ).toBeNull();
   });
 
   it('serves the virtual window and scrolling like the column layout', () => {

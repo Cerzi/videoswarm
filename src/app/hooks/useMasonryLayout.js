@@ -10,6 +10,7 @@ import useIntersectionObserverRegistry from "../../hooks/ui-perf/useIntersection
 import {
   computeMasonryLayout,
   computeRowLayout,
+  fitComparisonRowHeight,
   getScrollTopForItem,
   getVirtualMasonryWindow,
 } from "../../layout/masonryLayout";
@@ -157,6 +158,9 @@ export function useMasonryLayout({
   scrollContainerElement = null,
   gridElement = null,
   pinnedIds = EMPTY_IDS,
+  // The versions view: clips stay in the order given (version order) and sit
+  // side by side in one row fitted to the window, whatever the zoom.
+  comparison = false,
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -314,14 +318,10 @@ export function useMasonryLayout({
     [sortKey, sortDir, randomOrderMap]
   );
 
-  const orderedVideos = useMemo(
-    () =>
-      groupAndSort(Array.isArray(filteredVideos) ? filteredVideos : [], {
-        groupByFolders,
-        comparator,
-      }),
-    [filteredVideos, groupByFolders, comparator]
-  );
+  const orderedVideos = useMemo(() => {
+    const list = Array.isArray(filteredVideos) ? filteredVideos : [];
+    return comparison ? list : groupAndSort(list, { groupByFolders, comparator });
+  }, [comparison, filteredVideos, groupByFolders, comparator]);
 
   const orderedIds = useMemo(
     () => orderedVideos.map((video) => video.id),
@@ -380,31 +380,55 @@ export function useMasonryLayout({
       (typeof window !== "undefined" ? window.innerWidth : targetTileWidth)
   );
 
-  const layout = useMemo(
-    () =>
-      (gridLayout === "rows" ? computeRowLayout : computeMasonryLayout)(layoutVideos, {
+  const comparisonViewportHeight = comparison
+    ? Math.max(
+        0,
+        viewportSize.height || (typeof window !== "undefined" ? window.innerHeight : 0)
+      )
+    : 0;
+  const layout = useMemo(() => {
+    const getAspectRatio = (video) => {
+      const override = aspectOverridesRef.current.get(video?.id);
+      const signature = signatureState.get(video?.id);
+      return override?.signature === signature
+        ? override.ratio
+        : baseAspectRatio(video);
+    };
+    const options = {
+      containerWidth,
+      targetTileWidth,
+      padding: LAYOUT_PADDING,
+      gap: LAYOUT_GAP,
+      getAspectRatio,
+    };
+    if (comparison) {
+      const rowHeight = fitComparisonRowHeight(layoutVideos.map(getAspectRatio), {
         containerWidth,
-        targetTileWidth,
+        viewportHeight: comparisonViewportHeight,
         padding: LAYOUT_PADDING,
         gap: LAYOUT_GAP,
-        getAspectRatio: (video) => {
-          const override = aspectOverridesRef.current.get(video?.id);
-          const signature = signatureState.get(video?.id);
-          return override?.signature === signature
-            ? override.ratio
-            : baseAspectRatio(video);
-        },
-      }),
-    [
-      aspectRevision,
-      containerWidth,
-      gridLayout,
-      layoutRevision,
+      });
+      return computeRowLayout(layoutVideos, {
+        ...options,
+        ...(rowHeight ? { rowHeight } : {}),
+        center: true,
+      });
+    }
+    return (gridLayout === "rows" ? computeRowLayout : computeMasonryLayout)(
       layoutVideos,
-      signatureState,
-      targetTileWidth,
-    ]
-  );
+      options
+    );
+  }, [
+    aspectRevision,
+    comparison,
+    comparisonViewportHeight,
+    containerWidth,
+    gridLayout,
+    layoutRevision,
+    layoutVideos,
+    signatureState,
+    targetTileWidth,
+  ]);
   layoutRef.current = layout;
 
   const viewportHeight = Math.max(

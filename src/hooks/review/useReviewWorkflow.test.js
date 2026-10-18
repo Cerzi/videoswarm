@@ -86,6 +86,21 @@ describe("useReviewWorkflow", () => {
     expect(result.current.canUndo).toBe(true);
   });
 
+  it("reaches a version shown from a folder that is not open, and counts only the scope", async () => {
+    const props = makeProps({
+      extraVideos: [video("elsewhere", "fp-elsewhere")],
+      orderedVideoIds: ["a", "b", "elsewhere"],
+      selectedIds: new Set(["elsewhere"]),
+    });
+    const { result } = renderHook(() => useReviewWorkflow(props));
+    expect(result.current.progress.total).toBe(2);
+
+    await act(async () => {
+      expect(await result.current.applyReviewState("pick")).toBe(true);
+    });
+    expect(props.setReviewState).toHaveBeenCalledWith("pick", ["fp-elsewhere"]);
+  });
+
   it("deduplicates a multi-selection without auto-advancing", async () => {
     const props = makeProps({
       scopeVideos: [video("a", "fp-a"), video("a-copy", "fp-a")],

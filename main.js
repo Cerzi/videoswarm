@@ -180,6 +180,7 @@ const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
 const {
+  buildGenerationVersionsResponse,
   buildTaggedSnapshotResponse,
   findUnavailableRootPaths,
 } = require("./main/library-tag-view");
@@ -6486,6 +6487,35 @@ ipcMain.handle("generation-versions:siblings", async (_event, payload = {}) => {
     (metadataStore) => metadataStore.getGenerationVersionSiblings(instanceId),
     "GENERATION_VERSION_SIBLINGS_ERROR"
   );
+});
+
+// The versions view: every version of a clip's generation as playable
+// records, including those in folders that are not open. Their roots are
+// granted as opening those folders would, so a version can be tagged,
+// rated, moved or shown in its folder from the view.
+ipcMain.handle("generation-versions:open", async (event, payload = {}) => {
+  assertPlainObject(payload, "generation versions view request");
+  const instanceId = assertInteger(payload?.instanceId, {
+    name: "generation version instance",
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
+    rootPaths: metadataStore.getLibraryRoots().map((root) => root.rootPath),
+  }));
+  if (rootsResult?.success === false) return rootsResult;
+  const unavailableRootPaths = await findUnavailableRootPaths(rootsResult.rootPaths);
+  const result = runLibraryCatalogOperation((metadataStore, context) =>
+    buildGenerationVersionsResponse(metadataStore, {
+      instanceId,
+      unavailableRootPaths,
+      generation: context.generation,
+      assertActive: () => assertMetadataContextActive(context),
+    })
+  );
+  if (result?.success === false) return result;
+  await grantKnownRendererRoots(event.sender, result.rootPaths);
+  return result;
 });
 
 ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {

@@ -490,6 +490,60 @@ and simply does not show the links.
 - No scan path — directory scan, polling scan or watcher — indexes a symbolic
   link.
 
+## 8. Versions side by side
+
+Status: **Implemented** (2026-10-18)
+
+The deferred side-by-side comparison, built like an open prompt stack
+([`prompt-stacks.md`](prompt-stacks.md), Section 4): its own view over the
+grid it was opened from.
+
+- **Opening.** A card's "N versions" pill is a button; the details panel's
+  *Versions* section has *Side by side*. Either shows every present version
+  of the clip's generation, whatever the filters, folder scope or open
+  folder, one card per version, best first (the order of Section 5).
+- **Library-wide.** `generation-versions:open` returns the versions as
+  playable records in a tag view's shape (`getGenerationVersionRecords`,
+  `buildGenerationVersionsResponse`), at most 32. A version the open
+  collection holds is shown as the collection's own clip (the clip it was
+  opened from, for its own content); the others are *guests*. Their roots
+  are granted as opening those folders would, and roots that cannot be
+  opened are left out.
+- **Layout.** One row, side by side, as large as fits both the window's
+  width and its height, centred, whatever the zoom
+  (`fitComparisonRowHeight` with the row layout); too many versions for one
+  usable row fall back to the zoom's rows. Each card's pill shows its size,
+  *Best* first, and its location on hover.
+- **The bar.** How many versions, how many are from folders that are not
+  open, *Play together from the start* (every version back to its first
+  frame at once), and *Back*. `Esc` goes back too, to the grid it came
+  from, with the clip it was opened from selected and in view (or the
+  collapsed stack holding it).
+- **Working on versions.** Each version selects on its own. Guests count as
+  clips while shown: selection, the details panel, ratings, tags, review
+  decisions (`useReviewWorkflow`'s `extraVideos`), trash and other actions
+  reach them, and every list-wide update to the collection is applied to
+  them too. Review progress still counts the folder alone.
+- **Closing by itself.** Another folder, folder scope or collection closes
+  the view, as does every version going away; `[`, `]`, `G` and
+  *Reject unreviewed* rest while it is open.
+
+### Acceptance
+
+- A clip with versions in a folder that is not open shows them all, playing,
+  in one row; the bar says how many are from elsewhere.
+- Decisions, ratings and tags on any version, the guests included, stick
+  and show at once.
+- `Esc` returns to the grid it was opened from with that clip selected.
+
+Verification: `generationVersionsDatabase.test.js` (records, one per
+version, library-wide, unavailable roots), `masonryLayout.test.js` (the
+fitted, centred row), `versionView.test.js`, `VersionsBar.test.jsx`,
+`versionBadge.test.jsx`, `MetadataVersionsSection.test.jsx`,
+`useReviewWorkflow.test.js` (decisions on a guest), `App.test.jsx` (opening,
+guests, labels, Esc), and `tests/electron/versions-view.smoke.spec.cjs` (the
+real app: versions from another folder, side by side, playing).
+
 ## Prior art: the `requeue` tag
 
 A standalone re-render tool writes a `requeue` tag into the
@@ -516,9 +570,9 @@ possible future cross-check, nothing more.
   support the masonry grid does not have. Prompt stacks
   ([`prompt-stacks.md`](prompt-stacks.md)) collapse the wider group, every run
   of one prompt, and open a stack as its own view instead of in place.
-- **Side-by-side comparison** of a group's versions.
 - **Revealing a sibling outside the collection** in its own folder from the
-  details panel.
+  details panel. *Side by side* (Section 8) shows and plays it where it is,
+  but does not open its folder.
 - **Keys from sidecars and non-ComfyUI producers.** The key reads the embedded
   API prompt only. Any producer that embeds an equivalent graph keys for free;
   others stay ungrouped.
@@ -532,6 +586,7 @@ possible future cross-check, nothing more.
    Done.
 3. ~~Library summaries, badges, details section and filters.~~ Done.
 4. ~~Link transfer and the watcher symlink guard.~~ Done.
+5. ~~Versions side by side.~~ Done.
 
 ## Implementation notes and decisions
 

@@ -1015,6 +1015,27 @@ body {
   border-style: dashed;
 }
 
+/* The count pill opens the versions side by side. */
+.video-item-versions--button {
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 650;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.video-item-versions--button:hover,
+.video-item-versions--button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.82);
+  outline: none;
+}
+
+/* In the versions view: each version's size, Best first. */
+.video-item-versions--label {
+  font-variant-numeric: tabular-nums;
+}
+
 /* A companion app's chip (docs/architecture/companion-app.md), under the
    review and version pills. The label is the companion's; only the tone is
    ours. Its top offset is set inline from the pills above it. */

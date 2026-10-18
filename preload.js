@@ -407,6 +407,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
     siblings: async (instanceId) =>
       ipcRenderer.invoke("generation-versions:siblings", { instanceId }),
+    // Every version as a playable clip, for the versions view.
+    open: async (instanceId) =>
+      ipcRenderer.invoke("generation-versions:open", { instanceId }),
     onProgress: (callback) => {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on("generation-versions:progress", handler);
