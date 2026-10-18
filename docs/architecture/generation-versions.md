@@ -735,6 +735,22 @@ possible future cross-check, nothing more.
   check, as for version 2, since neither version changes what is keyable;
   keyed content is re-read once in the background.
 
+### 2026-10-18 — Key version 4: JSON in a string
+
+- A re-render tool rescaled a video-to-video run's click coordinates, held
+  as a JSON string, to the final's frame size. Written in a spaced layout,
+  the string became a "text" of several words, so the final stopped pairing
+  with its draft.
+- Version 4 reads a string that parses as a JSON object or array by the
+  strings inside it, never its numbers or punctuation: coordinates and
+  settings no longer count, while a JSON list of prompts still does.
+  Prompt search reads such strings the same way. A string that only looks
+  like JSON, such as "[cinematic] a heron", stays a text.
+- The prompt key moves to version 3 with it. As before, content found
+  unkeyable stays settled (reading fewer texts cannot make it keyable);
+  keyed content is read again in the background, in the same pass that
+  reads workflow facts ([`workflow-filters.md`](workflow-filters.md)).
+
 ## References
 
 - Tag recognition and payload bounds:

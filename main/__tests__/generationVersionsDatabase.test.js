@@ -26,10 +26,10 @@ const sqliteDescribe = requireSqliteSuite(
     : null
 );
 
-const KEY_A = `gk3-${"a".repeat(32)}`;
-const KEY_B = `gk3-${"b".repeat(32)}`;
-const PROMPT_A = `pk2-${"a".repeat(32)}`;
-const PROMPT_B = `pk2-${"b".repeat(32)}`;
+const KEY_A = `gk4-${"a".repeat(32)}`;
+const KEY_B = `gk4-${"b".repeat(32)}`;
+const PROMPT_A = `pk3-${"a".repeat(32)}`;
+const PROMPT_B = `pk3-${"b".repeat(32)}`;
 
 if (!database || databaseLoadError) {
   sqliteDescribe("generation version storage", () => {});
@@ -219,7 +219,7 @@ if (!database || databaseLoadError) {
       expect(() => store.listGenerationKeyCandidates({ limit: 257 })).toThrow(RangeError);
       expect(() =>
         store.getGenerationVersionSummaries(
-          Array.from({ length: 4097 }, (_, index) => `gk3-${index.toString(16).padStart(32, "0")}`)
+          Array.from({ length: 4097 }, (_, index) => `gk4-${index.toString(16).padStart(32, "0")}`)
         )
       ).toThrow(RangeError);
     });

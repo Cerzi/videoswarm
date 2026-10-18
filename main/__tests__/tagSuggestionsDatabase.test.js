@@ -32,8 +32,8 @@ if (!database || databaseLoadError) {
   sqliteDescribe('tag suggestion storage', () => {});
 } else {
   const { initMetadataStore, getMetadataStore, resetDatabase } = database;
-  const pk = (letter) => `pk2-${letter.repeat(32)}`;
-  const gk = (letter) => `gk3-${letter.repeat(32)}`;
+  const pk = (letter) => `pk3-${letter.repeat(32)}`;
+  const gk = (letter) => `gk4-${letter.repeat(32)}`;
 
   sqliteDescribe('tag suggestion storage', () => {
     let tempDir;

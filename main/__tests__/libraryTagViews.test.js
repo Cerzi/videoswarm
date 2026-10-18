@@ -307,8 +307,8 @@ if (!database || databaseLoadError) {
     });
 
     it('narrows the library to clips whose prompt keys matched a prompt search', async () => {
-      const pk = (letter) => `pk2-${letter.repeat(32)}`;
-      const gk = (letter) => `gk3-${letter.repeat(32)}`;
+      const pk = (letter) => `pk3-${letter.repeat(32)}`;
+      const gk = (letter) => `gk4-${letter.repeat(32)}`;
       const a = await indexInto('alpha', 'a.mp4', 'alpha-a');
       const b = await indexInto('beta', 'b.mp4', 'beta-b');
       await indexInto('beta', 'plain.mp4', 'beta-plain');

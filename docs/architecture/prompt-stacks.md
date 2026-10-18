@@ -84,8 +84,10 @@ generation key and the prompt key from one parse. The prompt key reads:
 - **Not** seeds, numbers, model or LoRA names, node ids or topology. A seed
   sweep, a steps or CFG sweep and a checkpoint swap therefore share a stack.
 
-The key is `pk2-` followed by the first 128 bits of SHA-256 over a tagged,
-versioned canonical form, so it can never equal a generation key.
+The key is `pk3-` followed by the first 128 bits of SHA-256 over a tagged,
+versioned canonical form, so it can never equal a generation key. (Version 3,
+2026-10-18, reads a JSON string by the texts inside it, as generation key
+version 4 does; see `generation-versions.md`.)
 
 **It exists exactly when the generation key does**: it needs the same seed and
 the same four-word text, so seedless processing workflows stay unstacked. The

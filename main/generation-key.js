@@ -9,14 +9,18 @@ const { replaceNonFiniteJsonTokens } = require("./json-non-finite");
 // Version 2 also hashes texts of two or three words. Version 1 read only
 // texts of four or more, so same-seed runs of "a cat" and "a dog" sharing a
 // long negative prompt counted as versions of one generation.
-const GENERATION_KEY_VERSION = 3;
+// Version 4 reads a string holding a JSON object or array by the texts
+// inside it, ignoring its numbers: such a string is settings or coordinates,
+// and a tool that moves clicks to a new frame size or raises a setting no
+// longer splits a final from its draft.
+const GENERATION_KEY_VERSION = 4;
 const GENERATION_KEY_PREFIX = `gk${GENERATION_KEY_VERSION}-`;
 // The prompt key is the generation key without its seeds: every run of one
 // prompt, whatever its seed, sampler settings or model. It is hashed from the
 // same parts, so a clip has a prompt key exactly when it has a generation key
 // and each version group sits inside one prompt stack. See
 // docs/architecture/prompt-stacks.md.
-const PROMPT_KEY_VERSION = 2;
+const PROMPT_KEY_VERSION = 3;
 const PROMPT_KEY_PREFIX = `pk${PROMPT_KEY_VERSION}-`;
 
 const GENERATION_KEY_LIMITS = Object.freeze({
@@ -202,6 +206,46 @@ function mediaBasename(value) {
 
 // A text of four or more words, or `short` for two or three, normalized;
 // null for anything else.
+// The strings an input holds: itself, or, when it is a JSON object or array
+// (settings, coordinates, a list of prompts), the strings inside it, so its
+// numbers and punctuation never count as words. At most `limit` strings,
+// at most 16 levels deep.
+const MAX_JSON_DEPTH = 16;
+
+function jsonContainer(value) {
+  const source = value.trim();
+  const object = source.startsWith("{") && source.endsWith("}");
+  const array = source.startsWith("[") && source.endsWith("]");
+  if (!object && !array) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    try {
+      parsed = JSON.parse(replaceNonFiniteJsonTokens(source));
+    } catch {
+      return null;
+    }
+  }
+  return parsed && typeof parsed === "object" ? parsed : null;
+}
+
+function inputStrings(value, limit) {
+  const container = jsonContainer(value);
+  if (!container) return [value];
+  const found = [];
+  const walk = (node, depth) => {
+    if (found.length >= limit || depth > MAX_JSON_DEPTH) return;
+    if (typeof node === "string") {
+      found.push(node);
+    } else if (node && typeof node === "object") {
+      for (const child of Array.isArray(node) ? node : Object.values(node)) walk(child, depth + 1);
+    }
+  };
+  walk(container, 0);
+  return found;
+}
+
 function classifyText(value) {
   const words = value.trim().split(/\s+/);
   if (words[0] === "" || words.length < MIN_SHORT_TEXT_WORDS) return null;
@@ -257,14 +301,16 @@ function collectParts(graph, limits) {
         continue;
       }
       if (typeof value !== "string") continue;
-      const basename = mediaBasename(value);
-      if (basename !== null) {
-        nodeMedia.push(basename);
-        continue;
+      for (const entry of inputStrings(value, limits.maxTexts)) {
+        const basename = mediaBasename(entry);
+        if (basename !== null) {
+          nodeMedia.push(basename);
+          continue;
+        }
+        const text = classifyText(entry);
+        if (text?.short) add(shortTexts, text.text, limits.maxShortTexts);
+        else if (text) add(texts, text.text, limits.maxTexts);
       }
-      const text = classifyText(value);
-      if (text?.short) add(shortTexts, text.text, limits.maxShortTexts);
-      else if (text) add(texts, text.text, limits.maxTexts);
     }
     // A start applies to the media named on its own node only.
     const startSuffix = nodeStarts.length ? `@${nodeStarts.sort().join(",")}` : "";
@@ -405,11 +451,14 @@ function deriveSearchTexts(payload, options = {}) {
     const texts = [];
     for (const [id, inputs] of nodes) {
       for (const value of Object.values(inputs)) {
-        if (typeof value !== "string" || mediaBasename(value) !== null) continue;
-        const text = classifyText(value);
-        if (!text) continue;
-        texts.push({ text: text.text, negative: negative.has(id) && !positive.has(id) });
-        if (texts.length > limits.maxTexts + limits.maxShortTexts) return null;
+        if (typeof value !== "string") continue;
+        for (const entry of inputStrings(value, limits.maxTexts)) {
+          if (mediaBasename(entry) !== null) continue;
+          const text = classifyText(entry);
+          if (!text) continue;
+          texts.push({ text: text.text, negative: negative.has(id) && !positive.has(id) });
+          if (texts.length > limits.maxTexts + limits.maxShortTexts) return null;
+        }
       }
     }
     return texts;

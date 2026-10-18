@@ -92,7 +92,7 @@ describe("generation key fixtures", () => {
 
 describe("computeGenerationKey seeds", () => {
   it("requires a seed and a text", () => {
-    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk3-[0-9a-f]{32}$/);
+    expect(computeGenerationKey(samplerGraph())).toMatch(/^gk4-[0-9a-f]{32}$/);
     expect(computeGenerationKey(samplerGraph({ text: "too short here" }))).toBeNull();
     expect(
       computeGenerationKey(
@@ -287,11 +287,12 @@ describe("computeGenerationKey is total", () => {
     for (const value of [
       null,
       "",
-      "gk3-xyz",
+      "gk4-xyz",
       "gk1-" + "0".repeat(32),
       "gk2-" + "0".repeat(32),
-      "gk4-" + "0".repeat(32),
-      "gk3-" + "A".repeat(32),
+      "gk3-" + "0".repeat(32),
+      "gk5-" + "0".repeat(32),
+      "gk4-" + "A".repeat(32),
     ]) {
       expect(isGenerationKey(value)).toBe(false);
     }
@@ -304,7 +305,7 @@ describe("prompt key", () => {
   it("comes from the same parse as the generation key", () => {
     const keys = computeGenerationKeys(samplerGraph());
     expect(keys.generationKey).toBe(computeGenerationKey(samplerGraph()));
-    expect(keys.promptKey).toMatch(/^pk2-[0-9a-f]{32}$/);
+    expect(keys.promptKey).toMatch(/^pk3-[0-9a-f]{32}$/);
     expect(isPromptKey(keys.promptKey)).toBe(true);
     expect(isGenerationKey(keys.promptKey)).toBe(false);
     expect(isPromptKey(keys.generationKey)).toBe(false);
@@ -434,7 +435,7 @@ describe("prompt key", () => {
   });
 
   it("recognizes only well-formed prompt keys", () => {
-    for (const value of [null, "", "pk2-xyz", "pk1-" + "0".repeat(32), "pk3-" + "0".repeat(32), "pk2-" + "A".repeat(32)]) {
+    for (const value of [null, "", "pk3-xyz", "pk1-" + "0".repeat(32), "pk2-" + "0".repeat(32), "pk4-" + "0".repeat(32), "pk3-" + "A".repeat(32)]) {
       expect(isPromptKey(value)).toBe(false);
     }
   });
@@ -600,5 +601,42 @@ describe("workflow facts", () => {
     expect(
       deriveWorkflowFacts(JSON.stringify({ prompt: graph({ 1: { class_type: "AcmeLoader", inputs: {} } }) }))
     ).toMatchObject({ terms: ["acmeloader"] });
+  });
+});
+
+describe("JSON settings in a graph (key version 4)", () => {
+  const graphWith = (inputs) =>
+    JSON.stringify({
+      1: { class_type: "CLIPTextEncode", inputs: { text: "a heron standing in shallow water at dawn" } },
+      2: { class_type: "AcmeSampler", inputs: { seed: 7, steps: 20 } },
+      3: { class_type: "AcmePoints", inputs },
+    });
+
+  it("ignores the numbers in coordinates and settings, however they are laid out", () => {
+    const draft = computeGenerationKeys(graphWith({ coordinates: '[{"x":10,"y":20}]' }));
+    const moved = computeGenerationKeys(
+      graphWith({ coordinates: JSON.stringify([{ x: 20, y: 40 }], null, 2) })
+    );
+    const raised = computeGenerationKeys(
+      graphWith({ coordinates: '[{"x":10,"y":20}]', overrides: '{ "ref_mp": 1.5, "slots": [1, 2] }' })
+    );
+    expect(moved.generationKey).toBe(draft.generationKey);
+    expect(raised.generationKey).toBe(draft.generationKey);
+  });
+
+  it("still reads the texts inside a JSON string, such as a list of prompts", () => {
+    const one = computeGenerationKeys(graphWith({ prompts: JSON.stringify(["a heron taking flight over reeds"]) }));
+    const other = computeGenerationKeys(graphWith({ prompts: JSON.stringify(["a heron landing on a misty pond"]) }));
+    expect(one.generationKey).not.toBe(other.generationKey);
+    const words = deriveSearchTexts(graphWith({ coordinates: '[{"x": 10, "y": 20}]', prompts: '["a heron taking flight"]' }))
+      .map((entry) => entry.text);
+    expect(words).toContain("a heron taking flight");
+    expect(words.join(" ")).not.toMatch(/"x"|\{/u);
+  });
+
+  it("keeps a string that only looks like JSON as text", () => {
+    const bracketed = computeGenerationKeys(graphWith({ note: "[cinematic] a heron in the rain" }));
+    const plain = computeGenerationKeys(graphWith({}));
+    expect(bracketed.generationKey).not.toBe(plain.generationKey);
   });
 });
