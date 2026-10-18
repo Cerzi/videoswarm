@@ -20,7 +20,76 @@ export const createDefaultFilters = () => ({
   promptQuery: "",
   // A tag the clips might be: suggested it, not tagged with it (Section 2).
   mightBe: "",
+  // Frame rate bounds, and what the embedded workflow ran
+  // (docs/architecture/workflow-filters.md).
+  minFrameRate: null,
+  maxFrameRate: null,
+  minSteps: null,
+  maxSteps: null,
+  workflowInclude: "",
+  workflowExclude: "",
 });
+
+const MAX_FRAME_RATE = 1_000;
+export const sanitizeFrameRate = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.min(MAX_FRAME_RATE, Math.round(num * 100) / 100);
+};
+
+/** Frames per second, or null when the clip's timing has not been read. */
+export const videoFrameRate = (video) => {
+  const rate = Number(video?.dimensions?.frameRate ?? video?.frameRate);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+};
+
+// Rates are compared to the nearest whole frame, so 23.976 counts as 24.
+export const matchesFrameRate = (video, minFrameRate, maxFrameRate) => {
+  const min = sanitizeFrameRate(minFrameRate);
+  const max = sanitizeFrameRate(maxFrameRate);
+  if (min === null && max === null) return true;
+  const rate = videoFrameRate(video);
+  if (rate === null) return false;
+  if (min !== null && rate < min - 0.5) return false;
+  if (max !== null && rate > max + 0.5) return false;
+  return true;
+};
+
+const MAX_STEPS = 100_000;
+export const sanitizeSteps = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Math.round(Number(value));
+  return Number.isFinite(num) && num > 0 ? Math.min(MAX_STEPS, num) : null;
+};
+
+const MAX_WORKFLOW_WORDS_CHARS = 200;
+export const normalizeWorkflowWords = (value) =>
+  typeof value === "string" ? value.slice(0, MAX_WORKFLOW_WORDS_CHARS) : "";
+
+/**
+ * The words of a workflow filter: split at spaces and commas, lower-cased,
+ * at most eight. Each is matched inside node types and weight-file names.
+ */
+export const parseWorkflowWords = (value) =>
+  [
+    ...new Set(
+      normalizeWorkflowWords(value)
+        .split(/[\s,]+/u)
+        .map((word) => word.trim().toLowerCase())
+        .filter((word) => word.length > 0 && word.length <= 64)
+    ),
+  ].slice(0, 8);
+
+/** The workflow part of the filters, or null when none is set. */
+export const workflowFilterQuery = (filters) => {
+  const include = parseWorkflowWords(filters?.workflowInclude);
+  const exclude = parseWorkflowWords(filters?.workflowExclude);
+  const minSteps = sanitizeSteps(filters?.minSteps);
+  const maxSteps = sanitizeSteps(filters?.maxSteps);
+  if (!include.length && !exclude.length && minSteps === null && maxSteps === null) return null;
+  return { include, exclude, minSteps, maxSteps };
+};
 
 const MAX_PROMPT_QUERY_CHARS = 200;
 export const normalizePromptQuery = (value) =>
@@ -133,6 +202,12 @@ export const useFiltersActiveCount = (filters) =>
       versionCount +
       companionFilterCount(filters) +
       (normalizePromptQuery(filters.promptQuery).trim() ? 1 : 0) +
-      (normalizeMightBe(filters.mightBe) ? 1 : 0)
+      (normalizeMightBe(filters.mightBe) ? 1 : 0) +
+      (sanitizeFrameRate(filters.minFrameRate) !== null ? 1 : 0) +
+      (sanitizeFrameRate(filters.maxFrameRate) !== null ? 1 : 0) +
+      (sanitizeSteps(filters.minSteps) !== null ? 1 : 0) +
+      (sanitizeSteps(filters.maxSteps) !== null ? 1 : 0) +
+      (parseWorkflowWords(filters.workflowInclude).length ? 1 : 0) +
+      (parseWorkflowWords(filters.workflowExclude).length ? 1 : 0)
     );
   }, [filters]);

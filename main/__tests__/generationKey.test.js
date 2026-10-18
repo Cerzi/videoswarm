@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   GENERATION_KEY_LIMITS,
+  deriveWorkflowFacts,
   computeGenerationKey,
   computeGenerationKeys,
   deriveGenerationKeyParts,
@@ -545,5 +546,59 @@ describe("deriveSearchTexts", () => {
     );
     expect(texts).toEqual([{ text: TEXT_A, negative: false }]);
     expect(deriveSearchTexts("not json")).toBeNull();
+  });
+});
+
+describe("workflow facts", () => {
+  const graph = (nodes) => JSON.stringify(nodes);
+
+  it("collects node types and weight-file names, never text, and the largest steps", () => {
+    const facts = deriveWorkflowFacts(
+      graph({
+        1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "folder/Base-Model.safetensors" } },
+        2: { class_type: "LoraLoader", inputs: { lora_name: "loras\\Acme_Fast_Lora.safetensors" } },
+        3: { class_type: "AcmeSampler", inputs: { seed: 5, steps: 30, cfg: 6 } },
+        4: { class_type: "CLIPTextEncode", inputs: { text: "a red fox walking in fresh snow" } },
+        5: { class_type: "AcmeUpscaleLoader", inputs: { model_name: "4x-Acme.pth" } },
+        6: { class_type: "AcmeSampler", inputs: { steps: 8 } },
+      })
+    );
+    expect(facts).toEqual({
+      steps: 30,
+      terms: [
+        "4x-acme",
+        "acme_fast_lora",
+        "acmesampler",
+        "acmeupscaleloader",
+        "base-model",
+        "checkpointloadersimple",
+        "cliptextencode",
+        "loraloader",
+      ],
+    });
+    expect(JSON.stringify(facts)).not.toMatch(/fox|snow/u);
+  });
+
+  it("follows a steps setting fed from a primitive, one hop", () => {
+    const facts = deriveWorkflowFacts(
+      graph({
+        1: { class_type: "AcmeInt", inputs: { value: 24 } },
+        2: { class_type: "AcmeSampler", inputs: { num_steps: ["1", 0] } },
+      })
+    );
+    expect(facts.steps).toBe(24);
+  });
+
+  it("has no steps without a setting, and no facts without a graph", () => {
+    expect(deriveWorkflowFacts(graph({ 1: { class_type: "AcmeLoader", inputs: {} } }))).toEqual({
+      steps: null,
+      terms: ["acmeloader"],
+    });
+    expect(deriveWorkflowFacts("not a graph")).toBeNull();
+    expect(deriveWorkflowFacts(null)).toBeNull();
+    // An envelope with the graph inside counts too.
+    expect(
+      deriveWorkflowFacts(JSON.stringify({ prompt: graph({ 1: { class_type: "AcmeLoader", inputs: {} } }) }))
+    ).toMatchObject({ terms: ["acmeloader"] });
   });
 });

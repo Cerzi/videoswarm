@@ -111,6 +111,28 @@ function setup({ candidates, results = {}, probe, fsPromises, limits, active = (
 const found = (prompt) => ({ status: "found", payload: { prompt } });
 
 describe("generation key indexer", () => {
+  it("records workflow facts from the same read as the keys", async () => {
+    const graph = JSON.stringify({
+      1: { class_type: "AcmeLoader", inputs: { lora_name: "acme_fast.safetensors" } },
+      2: { class_type: "AcmeSampler", inputs: { steps: 6 } },
+    });
+    const { store, indexer, start } = setup({
+      candidates: [candidate(1, "fa"), candidate(2, "fb")],
+      results: {
+        "/library/fa.mp4": { status: "found", payload: { prompt: graph } },
+        "/library/fb.mp4": { status: "not-found" },
+      },
+    });
+    start();
+    await indexer.drain();
+    const written = Object.fromEntries(store.writes.flat().map((entry) => [entry.fingerprint, entry]));
+    expect(written.fa).toMatchObject({
+      workflowSteps: 6,
+      workflowTerms: ["acme_fast", "acmeloader", "acmesampler"],
+    });
+    expect(written.fb).toMatchObject({ workflowSteps: null, workflowTerms: null });
+  });
+
   it("reports its progress and waits between files while background work is paused", async () => {
     const activity = createBackgroundActivity({ clock: quietClock });
     const { indexer, start, readIsoPayload } = setup({

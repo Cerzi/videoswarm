@@ -419,3 +419,66 @@ describe("useFilterState might be", () => {
     expect(result.current.filteredVideos).toEqual([]);
   });
 });
+
+describe("useFilterState frame rate and workflow filters", () => {
+  const clips = [
+    { id: "raw", fingerprint: "fr", dimensions: { width: 640, height: 360, frameRate: 16 }, tags: [] },
+    { id: "film", fingerprint: "ff", dimensions: { width: 640, height: 360, frameRate: 23.976 }, tags: [] },
+    { id: "smooth", fingerprint: "fs", dimensions: { width: 640, height: 360, frameRate: 60 }, tags: [] },
+    { id: "untimed", fingerprint: "fu", dimensions: { width: 640, height: 360 }, tags: [] },
+  ];
+  const renderFilters = (props = {}) =>
+    renderHook((extra) =>
+      useFilterState({
+        videos: clips,
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+        ...props,
+        ...extra,
+      })
+    );
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  it("bounds the frame rate to the nearest frame and hides clips not yet timed", () => {
+    const { result } = renderFilters();
+    act(() => result.current.updateFilters({ minFrameRate: 24 }));
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["film", "smooth"]);
+    act(() => result.current.updateFilters({ minFrameRate: null, maxFrameRate: 24 }));
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["raw", "film"]);
+    expect(result.current.filtersActiveCount).toBe(1);
+  });
+
+  it("asks main which clips' workflows match and keeps only those", async () => {
+    vi.useFakeTimers();
+    const match = vi.fn(async () => ({ success: true, matches: ["fs"], unread: 1 }));
+    window.electronAPI = { workflow: { match } };
+    const { result, rerender } = renderFilters();
+    act(() => result.current.updateFilters({ workflowExclude: "Turbo, fast", minSteps: 12 }));
+    // Until main answers, nothing is hidden.
+    expect(result.current.filteredVideos).toHaveLength(4);
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(match).toHaveBeenCalledWith({
+      fingerprints: ["ff", "fr", "fs", "fu"],
+      include: [],
+      exclude: ["turbo", "fast"],
+      minSteps: 12,
+      maxSteps: null,
+    });
+    expect(result.current.filteredVideos.map((video) => video.id)).toEqual(["smooth"]);
+    expect(result.current.workflowSearch).toMatchObject({ pending: false, unread: 1 });
+    expect(result.current.filtersActiveCount).toBe(2);
+
+    // Background reading moves on: ask again.
+    rerender({ workflowRefreshKey: "1:40" });
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(match).toHaveBeenCalledTimes(2);
+  });
+});

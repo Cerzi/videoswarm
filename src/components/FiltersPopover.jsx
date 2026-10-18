@@ -3,7 +3,11 @@ import {
   REVIEW_FILTERS,
   normalizeReviewFilter,
 } from "../review/reviewState";
-import { sanitizeMegapixels } from "../app/filters/filtersUtils";
+import {
+  sanitizeFrameRate,
+  sanitizeMegapixels,
+  sanitizeSteps,
+} from "../app/filters/filtersUtils";
 import {
   VERSION_FILTERS,
   VERSION_FILTER_LABELS,
@@ -51,7 +55,39 @@ const VERSION_OPTIONS = [
   VERSION_FILTERS.ANY,
   VERSION_FILTERS.SUPERSEDED,
   VERSION_FILTERS.BEST,
+  VERSION_FILTERS.SUPERSEDES,
 ].map((value) => ({ value, label: VERSION_FILTER_LABELS[value] }));
+
+// Frame rate: raw generations run at a low rate, interpolated ones higher.
+const FRAME_RATE_MAX_OPTIONS = [
+  { value: null, label: "Any" },
+  ...[16, 24, 30].map((value) => ({ value, label: `\u2264 ${value} fps` })),
+];
+const FRAME_RATE_MIN_OPTIONS = [
+  { value: null, label: "Any" },
+  ...[24, 30, 60].map((value) => ({ value, label: `\u2265 ${value} fps` })),
+];
+
+// Steps: few-step (distilled or turbo) runs sit low, full runs well above.
+const STEPS_MAX_OPTIONS = [
+  { value: null, label: "Any" },
+  ...[8, 12].map((value) => ({ value, label: `\u2264 ${value}` })),
+];
+const STEPS_MIN_OPTIONS = [
+  { value: null, label: "Any" },
+  ...[12, 20, 30].map((value) => ({ value, label: `\u2265 ${value}` })),
+];
+
+// What the workflow filters can see right now.
+function describeWorkflowSearch(state) {
+  if (state?.pending) return "Matching workflows…";
+  if (state?.unread > 0) {
+    return `${state.unread.toLocaleString()} clip${
+      state.unread === 1 ? "'s workflow has" : "s' workflows have"
+    } not been read yet and ${state.unread === 1 ? "is" : "are"} hidden for now.`;
+  }
+  return null;
+}
 
 // One line saying what the version filters can currently see, because while
 // keys are still being read the answer is provisional.
@@ -208,6 +244,8 @@ const FiltersPopover = forwardRef(
       // filter's state, `{ pending, usable }` (src/app/tags/likelyTags.js).
       likelyTagStatus = null,
       mightBe = null,
+      // Workflow filter status: `{ pending, unread }` (useWorkflowSearch).
+      workflowSearch = null,
     },
     ref
   ) => {
@@ -756,6 +794,18 @@ const FiltersPopover = forwardRef(
           </FilterRow>
 
           <FilterRow
+            label="Frame rate"
+            hint="Clips whose timing has not been read yet are hidden while a frame rate filter is active. Rates count to the nearest frame, so 23.976 is 24."
+          >
+            {pillGroup("Maximum frame rate", FRAME_RATE_MAX_OPTIONS, sanitizeFrameRate(filters?.maxFrameRate), (value) =>
+              onChange((prev) => ({ ...prev, maxFrameRate: value }))
+            )}
+            {pillGroup("Minimum frame rate", FRAME_RATE_MIN_OPTIONS, sanitizeFrameRate(filters?.minFrameRate), (value) =>
+              onChange((prev) => ({ ...prev, minFrameRate: value }))
+            )}
+          </FilterRow>
+
+          <FilterRow
             label="Versions"
             hint="Versions are re-renders, upscales and sweeps of one generation, matched across every indexed folder. Best version with a maximum resolution lists drafts not yet re-rendered."
             status={versionStatus === DEFAULT_VERSION_STATUS ? null : versionStatus}
@@ -775,6 +825,52 @@ const FiltersPopover = forwardRef(
                   Search library
                 </button>
               ) : null}
+            </div>
+          </FilterRow>
+
+          <FilterRow
+            label="Workflow"
+            hint="Read from the ComfyUI workflow a clip embeds. Steps is its largest steps setting. Words match inside the names of the nodes it runs and the model, LoRA and other weight files it loads; all words must appear, and none of the words to leave out. Clips without a readable workflow are hidden while these are set."
+            status={describeWorkflowSearch(workflowSearch)}
+          >
+            <div className="filters-subrow">
+              <span className="filters-subrow__label">Steps</span>
+              {pillGroup("Maximum steps", STEPS_MAX_OPTIONS, sanitizeSteps(filters?.maxSteps), (value) =>
+                onChange((prev) => ({ ...prev, maxSteps: value }))
+              )}
+              {pillGroup("Minimum steps", STEPS_MIN_OPTIONS, sanitizeSteps(filters?.minSteps), (value) =>
+                onChange((prev) => ({ ...prev, minSteps: value }))
+              )}
+            </div>
+            <div className="filters-subrow">
+              <span className="filters-subrow__label">Uses</span>
+              <div className="filters-tag-search">
+                <input
+                  type="search"
+                  aria-label="Words the workflow uses"
+                  value={filters?.workflowInclude || ""}
+                  onChange={(event) =>
+                    onChange((prev) => ({ ...prev, workflowInclude: event.target.value }))
+                  }
+                  placeholder="node or model name words"
+                  maxLength={200}
+                />
+              </div>
+            </div>
+            <div className="filters-subrow">
+              <span className="filters-subrow__label">Leaves out</span>
+              <div className="filters-tag-search">
+                <input
+                  type="search"
+                  aria-label="Words the workflow leaves out"
+                  value={filters?.workflowExclude || ""}
+                  onChange={(event) =>
+                    onChange((prev) => ({ ...prev, workflowExclude: event.target.value }))
+                  }
+                  placeholder="e.g. a LoRA you want to skip"
+                  maxLength={200}
+                />
+              </div>
             </div>
           </FilterRow>
 

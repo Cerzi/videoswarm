@@ -453,9 +453,79 @@ function deriveResourceNames(payload, options = {}) {
   }
 }
 
+// Facts about the workflow a clip embeds, for filters
+// (docs/architecture/workflow-filters.md): the node types it runs, the weight
+// files it loads and its largest steps setting. Never a text input, so never
+// a prompt; producer-neutral, so no node type is special-cased. Bump the
+// version when what is collected changes: stored facts are then read again.
+const WORKFLOW_FACTS_VERSION = 1;
+const WORKFLOW_FACT_LIMITS = Object.freeze({ maxTerms: 512, maxTermChars: 128 });
+const STEPS_INPUT = /^(?:steps|num_steps|sampling_steps|total_steps)$/u;
+const MAX_STEPS = 100_000;
+
+function stepsValue(value, nodes, limits) {
+  let source = null;
+  if (value instanceof IntLiteral) source = value.source;
+  else if (isLink(value)) {
+    // One hop, as for seeds: a primitive node feeding the setting.
+    const node = nodes[linkTarget(value)];
+    if (isPlainObject(node?.inputs)) source = soleIntLiteral(node.inputs, limits);
+  }
+  const steps = source === null ? NaN : Number(source);
+  return Number.isSafeInteger(steps) && steps > 0 && steps <= MAX_STEPS ? steps : null;
+}
+
+/**
+ * `{ steps, terms }` for a clip's embedded graph, or null without one:
+ * `terms` are its node types and weight-file names, lower-cased, distinct and
+ * sorted; `steps` the largest steps setting, or null when it has none. Total:
+ * malformed input returns null and never throws.
+ */
+function deriveWorkflowFacts(payload, options = {}) {
+  const limits = { ...GENERATION_KEY_LIMITS, ...WORKFLOW_FACT_LIMITS, ...options };
+  try {
+    const graph = decodeGraph(payload, limits);
+    if (!graph) return null;
+    const terms = new Set();
+    let steps = null;
+    let nodes = 0;
+    const addTerm = (value) => {
+      const term = value.trim().toLowerCase();
+      if (!term || term.length > limits.maxTermChars || /[\r\n]/u.test(term)) return;
+      terms.add(term);
+      if (terms.size > limits.maxTerms) throw new KeyAbandoned("too many terms");
+    };
+    for (const id of Object.keys(graph)) {
+      if ((nodes += 1) > limits.maxNodes) return null;
+      const node = graph[id];
+      if (!isPlainObject(node)) continue;
+      if (typeof node.class_type === "string") addTerm(node.class_type);
+      const inputs = node.inputs;
+      if (!isPlainObject(inputs)) continue;
+      let inspected = 0;
+      for (const [name, value] of Object.entries(inputs)) {
+        if ((inspected += 1) > limits.maxInputsPerNode) break;
+        if (STEPS_INPUT.test(name.toLowerCase())) {
+          const found = stepsValue(value, graph, limits);
+          if (found !== null) steps = Math.max(steps ?? 0, found);
+          continue;
+        }
+        if (typeof value !== "string" || !WEIGHT_FILE.test(value.trim())) continue;
+        const parts = value.trim().split(/[\\/]/u);
+        addTerm(parts[parts.length - 1].replace(WEIGHT_FILE, ""));
+      }
+    }
+    return { steps, terms: [...terms].sort() };
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   GENERATION_KEY_LIMITS,
   GENERATION_KEY_VERSION,
+  WORKFLOW_FACTS_VERSION,
+  deriveWorkflowFacts,
   MEDIA_EXTENSIONS,
   PROMPT_KEY_VERSION,
   computeGenerationKey,

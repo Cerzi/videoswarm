@@ -11,11 +11,16 @@ function createCachedVideoFileObject(record, rootPath, options = {}) {
   const dateModified = new Date(modifiedMs);
   const width = Number(record.dimensions?.width || 0);
   const height = Number(record.dimensions?.height || 0);
+  // Timing travels too: frame rate filters and frame stepping read it.
+  const durationMs = Number(record.dimensions?.durationMs || 0);
+  const frameRate = Number(record.dimensions?.frameRate || 0);
   const dimensions = width > 0 && height > 0
     ? {
         width: Math.round(width),
         height: Math.round(height),
         aspectRatio: width / height,
+        ...(durationMs > 0 ? { durationMs } : {}),
+        ...(frameRate > 0 ? { frameRate } : {}),
       }
     : null;
   let dirname = path.relative(rootPath, path.dirname(filePath));

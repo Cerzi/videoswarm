@@ -32,6 +32,30 @@ describe("saved view search scope", () => {
     expect(saved(view()).filters).not.toHaveProperty("mightBe");
   });
 
+  it("keeps frame rate, steps and workflow words, and only when set", () => {
+    const filters = saved(
+      view({
+        filters: {
+          minFrameRate: "24",
+          maxFrameRate: 0,
+          minSteps: 12.4,
+          workflowInclude: " upscale ",
+          workflowExclude: "turbo",
+          versionFilter: "supersedes",
+        },
+      })
+    ).filters;
+    expect(filters).toMatchObject({
+      minFrameRate: 24,
+      minSteps: 12,
+      workflowInclude: "upscale",
+      workflowExclude: "turbo",
+      versionFilter: "supersedes",
+    });
+    expect(filters).not.toHaveProperty("maxFrameRate");
+    expect(saved(view()).filters).not.toHaveProperty("workflowInclude");
+  });
+
   it("is not part of a review checkpoint's view", () => {
     expect(normalizeReviewViewDefinition(view({ searchScope: "library" }))).not.toHaveProperty("searchScope");
   });

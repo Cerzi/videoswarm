@@ -33,6 +33,7 @@ const profileManager = require('./profile-manager');
 const { createComfyQueueStore } = require('./comfy-queue-store');
 const {
   GENERATION_KEY_VERSION,
+  WORKFLOW_FACTS_VERSION,
   PROMPT_KEY_VERSION,
   isGenerationKey,
   isPromptKey,
@@ -103,6 +104,12 @@ const GENERATION_VERSION_LIMITS = Object.freeze({
   maxSiblingRows: 512,
 });
 const SAVED_VIEW_LIMIT = 100;
+const WORKFLOW_FACT_LIMITS = Object.freeze({
+  maxTerms: 512,
+  maxTermChars: 128,
+  maxWords: 8,
+  maxMatchFingerprints: 100_000,
+});
 const SAVED_VIEW_NAME_LIMIT = 80;
 const SEQUENCE_LIMIT = 100;
 const SEQUENCE_NAME_LIMIT = 80;
@@ -1119,6 +1126,20 @@ function initDatabase(app, profilePath) {
       prompt_version: PROMPT_KEY_VERSION,
       generation_version: GENERATION_KEY_VERSION,
     });
+    // Workflow facts for filters (docs/architecture/workflow-filters.md): the
+    // largest steps setting, and the node types and weight-file names the
+    // embedded workflow uses, one per line. Never a text input or a prompt.
+    // A NULL version means not yet read; content without a workflow has a
+    // version and no facts.
+    if (!mediaContentColumns.has('workflow_steps')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN workflow_steps INTEGER;');
+    }
+    if (!mediaContentColumns.has('workflow_terms')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN workflow_terms TEXT;');
+    }
+    if (!mediaContentColumns.has('workflow_facts_version')) {
+      db.exec('ALTER TABLE media_content ADD COLUMN workflow_facts_version INTEGER;');
+    }
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_media_content_prompt_key
         ON media_content(prompt_key)
@@ -5126,7 +5147,9 @@ function createMetadataStore(db) {
 
   // --- Generation versions ------------------------------------------------
   // See docs/architecture/generation-versions.md. Only derived keys are
-  // stored; the graphs they come from never reach SQLite.
+  // stored, and for filters the node types, weight-file names and steps
+  // setting (docs/architecture/workflow-filters.md); text inputs, and so
+  // prompts, never reach SQLite.
 
   const generationKeysForFingerprints = db.prepare(`
     SELECT fingerprint, generation_key, generation_key_version, prompt_key,
@@ -5153,6 +5176,8 @@ function createMetadataStore(db) {
         OR mc.generation_key_version != @version
         OR mc.prompt_key_version IS NULL
         OR mc.prompt_key_version != @prompt_version
+        OR mc.workflow_facts_version IS NULL
+        OR mc.workflow_facts_version != @facts_version
       )
       AND (
         @instance_ids IS NULL
@@ -5173,6 +5198,8 @@ function createMetadataStore(db) {
         OR mc.generation_key_version != @version
         OR mc.prompt_key_version IS NULL
         OR mc.prompt_key_version != @prompt_version
+        OR mc.workflow_facts_version IS NULL
+        OR mc.workflow_facts_version != @facts_version
       )
       AND (
         @instance_ids IS NULL
@@ -5193,6 +5220,9 @@ function createMetadataStore(db) {
       generation_key_version = @version,
       prompt_key = @prompt_key,
       prompt_key_version = @prompt_version,
+      workflow_steps = @workflow_steps,
+      workflow_terms = @workflow_terms,
+      workflow_facts_version = @facts_version,
       updated_at = @updated_at
     WHERE fingerprint = @fingerprint;
   `);
@@ -5201,7 +5231,8 @@ function createMetadataStore(db) {
   const generationVersionSummaries = db.prepare(`
     SELECT mc.generation_key,
       COUNT(*) AS version_count,
-      MAX(COALESCE(mc.width, 0) * COALESCE(mc.height, 0)) AS max_pixels
+      MAX(COALESCE(mc.width, 0) * COALESCE(mc.height, 0)) AS max_pixels,
+      MIN(CASE WHEN mc.width > 0 AND mc.height > 0 THEN mc.width * mc.height END) AS min_pixels
     FROM media_content mc
     WHERE mc.generation_key IN (SELECT value FROM json_each(@keys))
       AND mc.generation_key_version = @version
@@ -5277,6 +5308,13 @@ function createMetadataStore(db) {
     WHERE path_rank = 1
     ORDER BY fingerprint, id
     LIMIT @limit;
+  `);
+
+  // Contents asked about whose workflow has not been read yet.
+  const workflowFactsUnread = db.prepare(`
+    SELECT COUNT(*) AS unread FROM media_content
+    WHERE fingerprint IN (SELECT value FROM json_each(@fingerprints))
+      AND (workflow_facts_version IS NULL OR workflow_facts_version != @facts_version);
   `);
 
   // Similar-prompt stacks read a prompt back from one present clip carrying
@@ -5384,6 +5422,7 @@ function createMetadataStore(db) {
         after_id: afterId,
         version: GENERATION_KEY_VERSION,
         prompt_version: PROMPT_KEY_VERSION,
+        facts_version: WORKFLOW_FACTS_VERSION,
         instance_ids: normalizeInstanceIdList(options.instanceIds),
         limit,
       })
@@ -5419,6 +5458,7 @@ function createMetadataStore(db) {
     const row = generationKeyCandidateCount.get({
       version: GENERATION_KEY_VERSION,
       prompt_version: PROMPT_KEY_VERSION,
+      facts_version: WORKFLOW_FACTS_VERSION,
       instance_ids: normalizeInstanceIdList(options.instanceIds),
     });
     return Number(row?.pending || 0);
@@ -5449,7 +5489,7 @@ function createMetadataStore(db) {
       if ((generationKey === null) !== (promptKey === null)) {
         throw new TypeError('Generation and prompt keys must be stored together');
       }
-      return { fingerprint, generationKey, promptKey };
+      return { fingerprint, generationKey, promptKey, ...normalizeWorkflowFacts(entry) };
     });
     assertOperationActive(options.assertActive);
     const updatedAt = Date.now();
@@ -5462,11 +5502,107 @@ function createMetadataStore(db) {
           version: GENERATION_KEY_VERSION,
           prompt_key: entry.promptKey,
           prompt_version: PROMPT_KEY_VERSION,
+          workflow_steps: entry.workflowSteps,
+          workflow_terms: entry.workflowTerms,
+          facts_version: WORKFLOW_FACTS_VERSION,
           updated_at: updatedAt,
         }).changes;
       });
     })();
     return updated;
+  }
+
+  // Workflow facts ride with the keys, read from the same file. Terms are
+  // node types and weight-file names: short, single-line, no prompt text.
+  function normalizeWorkflowFacts(entry) {
+    const steps = entry?.workflowSteps ?? null;
+    if (steps !== null && !(Number.isSafeInteger(steps) && steps > 0 && steps <= 100_000)) {
+      throw new TypeError('Invalid workflow steps');
+    }
+    const terms = entry?.workflowTerms ?? null;
+    if (terms !== null) {
+      if (!Array.isArray(terms) || terms.length > WORKFLOW_FACT_LIMITS.maxTerms) {
+        throw new TypeError('Invalid workflow terms');
+      }
+      for (const term of terms) {
+        if (
+          typeof term !== 'string' ||
+          !term ||
+          term.length > WORKFLOW_FACT_LIMITS.maxTermChars ||
+          /[\r\n]/u.test(term) ||
+          term !== term.toLowerCase()
+        ) {
+          throw new TypeError('Invalid workflow term');
+        }
+      }
+    }
+    return {
+      workflowSteps: steps,
+      workflowTerms: terms === null ? null : [...new Set(terms)].sort().join('\n'),
+    };
+  }
+
+  /**
+   * Which of these contents' workflows match: every `include` word appears
+   * in one of its node types or weight-file names, no `exclude` word does,
+   * and its steps setting is within the bounds. Content whose workflow has
+   * not been read, or has none, never matches. Words never leave main; only
+   * fingerprints come back.
+   */
+  function matchWorkflowFacts(fingerprints, options = {}) {
+    assertOperationActive(options.assertActive);
+    if (!Array.isArray(fingerprints)) throw new TypeError('Fingerprints must be an array');
+    if (fingerprints.length > WORKFLOW_FACT_LIMITS.maxMatchFingerprints) {
+      throw new RangeError('Too many clips in one workflow match');
+    }
+    const words = (list) =>
+      (Array.isArray(list) ? list : [])
+        .map((word) => String(word).trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, WORKFLOW_FACT_LIMITS.maxWords);
+    const include = words(options.include);
+    const exclude = words(options.exclude);
+    const bound = (value) =>
+      Number.isSafeInteger(value) && value > 0 && value <= 100_000 ? value : null;
+    const minSteps = bound(options.minSteps);
+    const maxSteps = bound(options.maxSteps);
+    const conditions = [
+      'workflow_facts_version = @facts_version',
+      'workflow_terms IS NOT NULL',
+      'fingerprint IN (SELECT value FROM json_each(@fingerprints))',
+    ];
+    const params = {
+      facts_version: WORKFLOW_FACTS_VERSION,
+      fingerprints: JSON.stringify(fingerprints.filter((value) => typeof value === 'string')),
+    };
+    if (minSteps !== null) {
+      conditions.push('workflow_steps >= @min_steps');
+      params.min_steps = minSteps;
+    }
+    if (maxSteps !== null) {
+      conditions.push('workflow_steps <= @max_steps');
+      params.max_steps = maxSteps;
+    }
+    include.forEach((word, index) => {
+      conditions.push(`instr(workflow_terms, @include_${index}) > 0`);
+      params[`include_${index}`] = word;
+    });
+    exclude.forEach((word, index) => {
+      conditions.push(`instr(workflow_terms, @exclude_${index}) = 0`);
+      params[`exclude_${index}`] = word;
+    });
+    const rows = db
+      .prepare(`SELECT fingerprint FROM media_content WHERE ${conditions.join(' AND ')}`)
+      .all(params);
+    const unread = workflowFactsUnread.get({
+      fingerprints: params.fingerprints,
+      facts_version: WORKFLOW_FACTS_VERSION,
+    });
+    assertOperationActive(options.assertActive);
+    return {
+      matches: rows.map((row) => row.fingerprint),
+      unread: Number(unread?.unread || 0),
+    };
   }
 
   function getGenerationVersionSummaries(keys) {
@@ -5483,6 +5619,9 @@ function createMetadataStore(db) {
         summaries[row.generation_key] = {
           versionCount: Number(row.version_count || 0),
           maxPixels: Number(row.max_pixels || 0),
+          // The smallest measured version, for "has a lower-resolution
+          // version"; 0 when none is measured.
+          minPixels: Number(row.min_pixels || 0),
         };
       });
     return summaries;
@@ -6398,6 +6537,7 @@ function createMetadataStore(db) {
     getGenerationVersionSummaries,
     getGenerationVersionSiblings,
     getGenerationVersionRecords,
+    matchWorkflowFacts,
     listPresentInstancesForPromptKey,
     listLibraryPromptKeys,
     getFrameRows,

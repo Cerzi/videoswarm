@@ -65,7 +65,18 @@ function normalizeMegapixels(value) {
 }
 
 // Generation-version filter; see docs/architecture/generation-versions.md.
-const VERSION_FILTERS = new Set(['any', 'superseded', 'best']);
+const VERSION_FILTERS = new Set(['any', 'superseded', 'best', 'supersedes']);
+
+// Frame rate and workflow filters (docs/architecture/workflow-filters.md).
+function normalizePositiveBound(value, max) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(max, Math.round(number * 100) / 100);
+}
+function normalizeWorkflowWords(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 200) : '';
+}
 
 // Companion app filters (docs/architecture/companion-app.md): a phase per
 // action id, as src/app/companion/companionFilters.js reads them.
@@ -157,6 +168,20 @@ function normalizeReviewViewDefinition(
     typeof filtersInput.promptQuery === 'string' ? filtersInput.promptQuery.trim().slice(0, 200) : '';
   const mightBe =
     typeof filtersInput.mightBe === 'string' ? filtersInput.mightBe.trim().slice(0, 256) : '';
+  // Present only when set, as above.
+  const workflow = {};
+  for (const [name, max] of [['minFrameRate', 1000], ['maxFrameRate', 1000]]) {
+    const bound = normalizePositiveBound(filtersInput[name], max);
+    if (bound !== null) workflow[name] = bound;
+  }
+  for (const name of ['minSteps', 'maxSteps']) {
+    const bound = normalizePositiveBound(filtersInput[name], 100_000);
+    if (bound !== null) workflow[name] = Math.round(bound);
+  }
+  for (const name of ['workflowInclude', 'workflowExclude']) {
+    const words = normalizeWorkflowWords(filtersInput[name]);
+    if (words) workflow[name] = words;
+  }
 
   const normalized = {
     version: REVIEW_VIEW_VERSION,
@@ -175,6 +200,7 @@ function normalizeReviewViewDefinition(
       ...companion,
       ...(promptQuery ? { promptQuery } : {}),
       ...(mightBe ? { mightBe } : {}),
+      ...workflow,
     },
     sort: {
       key: sortKey,

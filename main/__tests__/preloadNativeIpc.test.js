@@ -279,6 +279,16 @@ describe("preload native-work bridge", () => {
     ]);
   });
 
+  it("matches workflows with fingerprints, words and whole steps only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.workflow.match({ fingerprints: ["fa"], include: ["upscale"], minSteps: 12, maxSteps: 2.5 });
+    await api.workflow.match({ fingerprints: "fa", exclude: "turbo" });
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["workflow:match", { fingerprints: ["fa"], include: ["upscale"], exclude: [], minSteps: 12, maxSteps: null }],
+      ["workflow:match", { fingerprints: [], include: [], exclude: [], minSteps: null, maxSteps: null }],
+    ]);
+  });
+
   it("reads background activity and pauses it with a plain flag", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.activity.get();

@@ -109,7 +109,12 @@ import {
 import { createMediaSlotScheduler } from "./services/mediaSlotScheduler";
 import { thumbService } from "./services/thumbService";
 import { posterFrames } from "./services/posterFrameCache";
-import { createDefaultFilters } from "./app/filters/filtersUtils";
+import {
+  createDefaultFilters,
+  parseWorkflowWords,
+  sanitizeFrameRate,
+  sanitizeSteps,
+} from "./app/filters/filtersUtils";
 import { buildTagHierarchy } from "./app/filters/tagHierarchy";
 import { getOpaqueMediaSource } from "./utils/mediaSource";
 import {
@@ -798,6 +803,7 @@ function App() {
     clearVersionFilter,
     promptSearch,
     mightBe,
+    workflowSearch,
   } = useFilterState({
     videos,
     filtersButtonRef,
@@ -805,6 +811,10 @@ function App() {
     generationVersionIndex,
     tagHierarchy,
     companions,
+    // Workflows are read with generation keys; ask again as that goes on.
+    workflowRefreshKey: `${generationIndex.status?.running ? 1 : 0}:${
+      generationIndex.status?.processed || 0
+    }`,
   });
   // Which tags can be suggested, for Filters › Might be; asked while Filters
   // is open and again after a tag edit.
@@ -6142,6 +6152,7 @@ function App() {
             promptSearch={promptSearch}
             likelyTagStatus={likelyTagStatus}
             mightBe={mightBe}
+            workflowSearch={workflowSearch}
             />
           )}
 
@@ -6407,6 +6418,43 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {(() => {
+                // Frame rate and workflow (docs/architecture/workflow-filters.md).
+                const chips = [];
+                const minFps = sanitizeFrameRate(filters.minFrameRate);
+                const maxFps = sanitizeFrameRate(filters.maxFrameRate);
+                const minSteps = sanitizeSteps(filters.minSteps);
+                const maxSteps = sanitizeSteps(filters.maxSteps);
+                const uses = parseWorkflowWords(filters.workflowInclude);
+                const without = parseWorkflowWords(filters.workflowExclude);
+                if (minFps !== null) chips.push(["minFrameRate", `\u2265 ${minFps} fps`, null]);
+                if (maxFps !== null) chips.push(["maxFrameRate", `\u2264 ${maxFps} fps`, null]);
+                if (minSteps !== null) chips.push(["minSteps", `\u2265 ${minSteps} steps`, null]);
+                if (maxSteps !== null) chips.push(["maxSteps", `\u2264 ${maxSteps} steps`, null]);
+                if (uses.length) chips.push(["workflowInclude", `Uses ${uses.join(", ")}`, ""]);
+                if (without.length) chips.push(["workflowExclude", `Without ${without.join(", ")}`, ""]);
+                if (!chips.length) return null;
+                return (
+                  <div className="filters-summary__section">
+                    <span className="filters-summary__label">Workflow</span>
+                    <div className="filters-summary__chips">
+                      {chips.map(([field, label, cleared]) => (
+                        <button
+                          key={field}
+                          type="button"
+                          className="filters-summary__chip filters-summary__chip--review"
+                          onClick={() => updateFilters((prev) => ({ ...prev, [field]: cleared }))}
+                          title="Clear this filter"
+                        >
+                          {label}
+                          <span className="filters-summary__chip-remove">×</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {(Object.keys(normalizeCompanionFilters(filters.companionFilters)).length > 0 ||
                 filters.companionHideSent) && (

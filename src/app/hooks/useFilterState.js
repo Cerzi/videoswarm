@@ -11,6 +11,11 @@ import {
   useFiltersActiveCount,
   normalizeMightBe,
   normalizePromptQuery,
+  sanitizeFrameRate,
+  sanitizeSteps,
+  normalizeWorkflowWords,
+  matchesFrameRate,
+  workflowFilterQuery,
 } from "../filters/filtersUtils";
 import {
   REVIEW_FILTERS,
@@ -27,6 +32,7 @@ import {
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
 import { usePromptSearch } from "./usePromptSearch";
+import { useWorkflowSearch } from "./useWorkflowSearch";
 import {
   isLikelyTagTurnedDown,
   useMightBe,
@@ -67,6 +73,16 @@ const normalizeFiltersDraft = (draft, prev) => {
       resolveValue(draft?.companionHideSent, prev.companionHideSent) === true,
     promptQuery: normalizePromptQuery(resolveValue(draft?.promptQuery, prev.promptQuery)),
     mightBe: normalizeMightBe(resolveValue(draft?.mightBe, prev.mightBe)),
+    minFrameRate: sanitizeFrameRate(resolveValue(draft?.minFrameRate, prev.minFrameRate)),
+    maxFrameRate: sanitizeFrameRate(resolveValue(draft?.maxFrameRate, prev.maxFrameRate)),
+    minSteps: sanitizeSteps(resolveValue(draft?.minSteps, prev.minSteps)),
+    maxSteps: sanitizeSteps(resolveValue(draft?.maxSteps, prev.maxSteps)),
+    workflowInclude: normalizeWorkflowWords(
+      resolveValue(draft?.workflowInclude, prev.workflowInclude)
+    ),
+    workflowExclude: normalizeWorkflowWords(
+      resolveValue(draft?.workflowExclude, prev.workflowExclude)
+    ),
   };
 };
 
@@ -80,6 +96,9 @@ export function useFilterState({
   // Connected companion apps' sessions, each with what it says about each
   // clip by catalog row (src/app/companion/useCompanion.js).
   companions = null,
+  // Changes as workflows are read in the background, so a workflow filter
+  // asks again (docs/architecture/workflow-filters.md).
+  workflowRefreshKey = 0,
 }) {
   const [filters, setFilters] = useState(() => createDefaultFilters());
   // Words in the prompt: main answers which of the collection's prompt keys
@@ -90,6 +109,24 @@ export function useFilterState({
   // suggestions pick out (Section 2 there).
   const mightBe = useMightBe({ videos, tag: filters.mightBe });
   const mightBeMatches = mightBe.matches;
+  // Steps and words in the embedded workflow: main answers which of the
+  // collection's clips match.
+  const workflowQuery = useMemo(
+    () => workflowFilterQuery(filters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      filters.workflowInclude,
+      filters.workflowExclude,
+      filters.minSteps,
+      filters.maxSteps,
+    ]
+  );
+  const workflowSearch = useWorkflowSearch({
+    videos,
+    query: workflowQuery,
+    refreshKey: workflowRefreshKey,
+  });
+  const workflowMatches = workflowSearch.matches;
   const turnedDownVersion = useTurnedDownVersion();
   const [isFiltersOpen, setFiltersOpen] = useState(false);
 
@@ -125,6 +162,10 @@ export function useFilterState({
     const companionById = new Map(companionList.map((companion) => [companion.id, companion]));
     const promptActive =
       normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
+    const workflowActive = workflowFilterQuery(filters) !== null && workflowMatches instanceof Set;
+    const frameRateActive =
+      sanitizeFrameRate(filters.minFrameRate) !== null ||
+      sanitizeFrameRate(filters.maxFrameRate) !== null;
     // Until the first answer arrives nothing is known to match, so nothing
     // shows: the whole collection would read as "might be" the tag.
     const mightBeTag = normalizeMightBe(filters.mightBe);
@@ -147,7 +188,9 @@ export function useFilterState({
       versionFilter === VERSION_FILTERS.ANY &&
       !companionActive &&
       !promptActive &&
-      !mightBeTag
+      !mightBeTag &&
+      !workflowActive &&
+      !frameRateActive
     ) {
       return videos;
     }
@@ -208,6 +251,18 @@ export function useFilterState({
         return false;
       }
 
+      // A clip whose timing or workflow has not been read cannot be shown to
+      // match, so it is hidden rather than assumed to.
+      if (
+        frameRateActive &&
+        !matchesFrameRate(video, filters.minFrameRate, filters.maxFrameRate)
+      ) {
+        return false;
+      }
+      if (workflowActive && !(video.fingerprint && workflowMatches.has(video.fingerprint))) {
+        return false;
+      }
+
       // Tagged or turned down since main answered: done with, so gone.
       if (
         mightBeTag &&
@@ -253,6 +308,7 @@ export function useFilterState({
     companions,
     promptMatches,
     mightBeMatches,
+    workflowMatches,
     turnedDownVersion,
   ]);
 
@@ -382,6 +438,7 @@ export function useFilterState({
     filters,
     promptSearch,
     mightBe,
+    workflowSearch,
     setFiltersOpen,
     isFiltersOpen,
     updateFilters,

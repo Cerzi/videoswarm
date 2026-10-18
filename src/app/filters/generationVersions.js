@@ -8,6 +8,8 @@ export const VERSION_FILTERS = Object.freeze({
   ANY: "any",
   SUPERSEDED: "superseded",
   BEST: "best",
+  // A re-render or upscale of a smaller version, whatever made it.
+  SUPERSEDES: "supersedes",
 });
 
 const VERSION_FILTER_VALUES = new Set(Object.values(VERSION_FILTERS));
@@ -19,6 +21,7 @@ export const VERSION_FILTER_LABELS = Object.freeze({
   [VERSION_FILTERS.ANY]: "Any",
   [VERSION_FILTERS.SUPERSEDED]: "Has a higher-resolution version",
   [VERSION_FILTERS.BEST]: "Best version",
+  [VERSION_FILTERS.SUPERSEDES]: "Has a lower-resolution version",
 });
 
 export const videoPixelCount = (video) => {
@@ -51,11 +54,13 @@ export function buildGenerationVersionIndex(videos, summaries = {}) {
     if (!key) continue;
     let group = groups.get(key);
     if (!group) {
-      group = { contents: new Set(), maxPixels: 0 };
+      group = { contents: new Set(), maxPixels: 0, minPixels: 0 };
       groups.set(key, group);
     }
     group.contents.add(video.fingerprint || video.id);
-    group.maxPixels = Math.max(group.maxPixels, videoPixelCount(video));
+    const pixels = videoPixelCount(video);
+    group.maxPixels = Math.max(group.maxPixels, pixels);
+    if (pixels > 0) group.minPixels = group.minPixels ? Math.min(group.minPixels, pixels) : pixels;
   }
 
   const index = new Map();
@@ -66,10 +71,16 @@ export function buildGenerationVersionIndex(videos, summaries = {}) {
     const summary = summaries?.[key];
     const versionCount = Math.max(group.contents.size, Number(summary?.versionCount) || 0);
     const maxPixels = Math.max(group.maxPixels, Number(summary?.maxPixels) || 0);
+    const minPixels = [group.minPixels, Number(summary?.minPixels) || 0]
+      .filter((value) => value > 0)
+      .reduce((smallest, value) => Math.min(smallest, value), Infinity);
+    const pixels = videoPixelCount(video);
     index.set(video.id, {
       generationKey: key,
       versionCount,
-      superseded: maxPixels > videoPixelCount(video),
+      superseded: maxPixels > pixels,
+      // A smaller version exists: this is a re-render or upscale of it.
+      supersedes: pixels > 0 && minPixels < pixels,
     });
   }
   return index;
@@ -81,6 +92,7 @@ export function buildGenerationVersionIndex(videos, summaries = {}) {
 export function matchesVersionFilter(entry, filter) {
   const normalized = normalizeVersionFilter(filter);
   if (normalized === VERSION_FILTERS.ANY) return true;
+  if (normalized === VERSION_FILTERS.SUPERSEDES) return entry?.supersedes === true;
   const superseded = entry?.superseded === true;
   return normalized === VERSION_FILTERS.SUPERSEDED ? superseded : !superseded;
 }

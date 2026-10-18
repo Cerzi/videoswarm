@@ -179,6 +179,57 @@ describe("FiltersPopover generation versions", () => {
     expect(current).toMatchObject({ versionFilter: "best", maxMegapixels: 0.5 });
   });
 
+  it("sets frame rate, steps and workflow words, and says what it cannot see yet", () => {
+    let current = { ...filters };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    const { rerender } = render(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        workflowSearch={{ pending: false, unread: 12 }}
+      />
+    );
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Minimum frame rate" })).getByRole("button", {
+        name: "\u2265 30 fps",
+      })
+    );
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Minimum steps" })).getByRole("button", {
+        name: "\u2265 20",
+      })
+    );
+    fireEvent.change(screen.getByRole("searchbox", { name: "Words the workflow leaves out" }), {
+      target: { value: "turbo" },
+    });
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Generation versions" })).getByRole("button", {
+        name: "Has a lower-resolution version",
+      })
+    );
+    expect(current).toMatchObject({
+      minFrameRate: 30,
+      minSteps: 20,
+      workflowExclude: "turbo",
+      versionFilter: "supersedes",
+    });
+    expect(screen.getByText(/12 clips' workflows have not been read yet/)).toBeTruthy();
+    rerender(
+      <FiltersPopover
+        filters={current}
+        onChange={onChange}
+        onReset={vi.fn()}
+        onClose={vi.fn()}
+        workflowSearch={{ pending: true, unread: 0 }}
+      />
+    );
+    expect(screen.getByText("Matching workflows…")).toBeTruthy();
+  });
+
   it("states that results are provisional while keys are pending", () => {
     const onFind = vi.fn();
     const { rerender } = render(

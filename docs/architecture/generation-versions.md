@@ -404,6 +404,10 @@ A new `versionFilter` joins the filter state: `any` (default), `superseded`
 
 - *Has a higher-resolution version*: some version in the library has strictly
   more pixels.
+- *Has a lower-resolution version* (`supersedes`, added 2026-10-18): some
+  version has strictly fewer pixels, so this one is a re-render or upscale
+  of it. Unmeasured versions do not count. See
+  [`workflow-filters.md`](workflow-filters.md).
 - *Best version* is its exact inverse, so the two partition every collection.
   Ties at the top all count as best — a same-resolution sweep has no
   higher-resolution version, so none of it has been re-rendered. Clips without

@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { computeGenerationKeys } = require("./generation-key");
+const { computeGenerationKeys, deriveWorkflowFacts } = require("./generation-key");
 const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./container-tags");
 const { createEmbeddedMetadataProbe } = require("./embedded-metadata-probe");
 
@@ -56,6 +56,7 @@ class GenerationKeyIndexer {
     this.fsPromises = options.fsPromises || fs.promises;
     this.readIsoPayload = options.readIsoPayload || readIsoBmffEmbeddedPayload;
     this.computeKeys = options.computeKeys || computeGenerationKeys;
+    this.computeWorkflowFacts = options.computeWorkflowFacts || deriveWorkflowFacts;
     this.probeFactory =
       options.probeFactory ||
       (() => createEmbeddedMetadataProbe({ limits: { maxPending: 2 } }));
@@ -229,6 +230,8 @@ class GenerationKeyIndexer {
               fingerprint: candidate.fingerprint,
               generationKey: outcome.generationKey,
               promptKey: outcome.promptKey,
+              workflowSteps: outcome.workflowSteps ?? null,
+              workflowTerms: outcome.workflowTerms ?? null,
             });
           }
           pendingUpdates.push({
@@ -274,20 +277,32 @@ class GenerationKeyIndexer {
     return cache.get(rootPath);
   }
 
-  // Both keys from the payload's prompt, or none when there is no payload.
+  // Both keys from the payload's prompt, or none when there is no payload,
+  // and the workflow facts filters use (docs/architecture/workflow-filters.md)
+  // from the same read.
   _keysFor(payload) {
     const keys = this.computeKeys(payload?.prompt);
+    const facts = payload?.prompt ? this.computeWorkflowFacts(payload.prompt) : null;
     return {
       generationKey: keys?.generationKey || null,
       promptKey: keys?.promptKey || null,
+      workflowSteps: facts?.steps ?? null,
+      workflowTerms: facts ? facts.terms : null,
     };
   }
 
-  // Returns `{ definitive, generationKey, promptKey }`. Never throws for
-  // per-file failures; only cancellation escapes.
+  // Returns `{ definitive, generationKey, promptKey, workflowSteps,
+  // workflowTerms }`. Never throws for per-file failures; only cancellation
+  // escapes.
   async _evaluate(job, candidate, rootRealPaths) {
     const transient = { definitive: false, generationKey: null, promptKey: null };
-    const unkeyed = { definitive: true, generationKey: null, promptKey: null };
+    const unkeyed = {
+      definitive: true,
+      generationKey: null,
+      promptKey: null,
+      workflowSteps: null,
+      workflowTerms: null,
+    };
     const filePath = candidate.absolutePath;
     if (typeof filePath !== "string" || !filePath) return transient;
     try {

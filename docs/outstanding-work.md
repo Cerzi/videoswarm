@@ -324,6 +324,12 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Workflow filters (`architecture/workflow-filters.md`): after opening a
+  folder (and the background read finishing), Filters › Workflow › Leaves
+  out a LoRA word hides every clip made with it; Uses keeps only those;
+  Steps ≥ 20 hides few-step runs; Frame rate ≥ 30 keeps interpolated clips;
+  Versions › Has a lower-resolution version lists re-renders and upscales;
+  a smart view saved with them restores them.
 - Versions side by side (`architecture/generation-versions.md`, Section 8):
   clicking a card's "N versions" pill (or *Side by side* in the details
   panel) shows every version in one row filling the window, best first,

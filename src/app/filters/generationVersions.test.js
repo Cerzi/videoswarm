@@ -36,10 +36,25 @@ const videos = [
 describe("generation version index", () => {
   it("counts content once and marks lower-resolution versions superseded", () => {
     const index = buildGenerationVersionIndex(videos);
-    expect(index.get("draft")).toEqual({ generationKey: KEY_A, versionCount: 3, superseded: true });
-    expect(index.get("final")).toEqual({ generationKey: KEY_A, versionCount: 3, superseded: false });
+    expect(index.get("draft")).toEqual({
+      generationKey: KEY_A,
+      versionCount: 3,
+      superseded: true,
+      supersedes: false,
+    });
+    expect(index.get("final")).toEqual({
+      generationKey: KEY_A,
+      versionCount: 3,
+      superseded: false,
+      supersedes: true,
+    });
     expect(index.get("final-copy").superseded).toBe(false);
-    expect(index.get("sweep-1")).toEqual({ generationKey: KEY_B, versionCount: 2, superseded: false });
+    expect(index.get("sweep-1")).toEqual({
+      generationKey: KEY_B,
+      versionCount: 2,
+      superseded: false,
+      supersedes: false,
+    });
     // Unknown dimensions sort as zero pixels.
     expect(index.get("unmeasured").superseded).toBe(true);
     expect(index.has("unkeyed")).toBe(false);
@@ -49,7 +64,27 @@ describe("generation version index", () => {
     const index = buildGenerationVersionIndex([clip("sweep-1", "s1", KEY_B, 640, 360)], {
       [KEY_B]: { versionCount: 4, maxPixels: 1920 * 1080 },
     });
-    expect(index.get("sweep-1")).toEqual({ generationKey: KEY_B, versionCount: 4, superseded: true });
+    expect(index.get("sweep-1")).toEqual({
+      generationKey: KEY_B,
+      versionCount: 4,
+      superseded: true,
+      supersedes: false,
+    });
+    // And a smaller version elsewhere makes this one a re-render of it.
+    const upscaled = buildGenerationVersionIndex([clip("final", "ff", KEY_A, 1280, 720)], {
+      [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, minPixels: 640 * 360 },
+    });
+    expect(upscaled.get("final")).toMatchObject({ superseded: false, supersedes: true });
+  });
+
+  it("finds re-renders and upscales: versions with a smaller version", () => {
+    const index = buildGenerationVersionIndex(videos);
+    const found = videos.filter((video) =>
+      matchesVersionFilter(index.get(video.id), VERSION_FILTERS.SUPERSEDES)
+    );
+    // Same-size sweeps and unmeasured clips are not re-renders of anything.
+    expect(found.map((video) => video.id)).toEqual(["final", "final-copy"]);
+    expect(normalizeVersionFilter("supersedes")).toBe("supersedes");
   });
 
   it("partitions every collection into superseded and best", () => {

@@ -5918,6 +5918,55 @@ ipcMain.handle("prompts:search", async (_event, payload = {}) => {
   }
 });
 
+// Workflow filters (docs/architecture/workflow-filters.md): the renderer
+// sends its clips' fingerprints, words and steps bounds; main answers which
+// fingerprints match. Node types and file names never cross.
+const WORKFLOW_MATCH_MAX_FINGERPRINTS = 100_000;
+const workflowWords = (value, name) =>
+  assertStringArray(value ?? [], {
+    name,
+    minEntries: 0,
+    maxEntries: 8,
+    item: { minChars: 1, maxChars: 64, trim: true },
+    dedupe: true,
+  });
+const workflowSteps = (value, name) =>
+  value === null || value === undefined
+    ? null
+    : assertInteger(value, { name, min: 1, max: 100_000 });
+
+ipcMain.handle("workflow:match", async (_event, payload = {}) => {
+  assertPlainObject(payload, "workflow filter");
+  if (
+    !Array.isArray(payload.fingerprints) ||
+    payload.fingerprints.length > WORKFLOW_MATCH_MAX_FINGERPRINTS
+  ) {
+    throw new TypeError("Workflow filter fingerprints are outside the allowed bounds");
+  }
+  const fingerprints = [
+    ...new Set(
+      payload.fingerprints.filter(
+        (value) => typeof value === "string" && value.length > 0 && value.length <= 128
+      )
+    ),
+  ];
+  const include = workflowWords(payload.include, "workflow words to include");
+  const exclude = workflowWords(payload.exclude, "workflow words to exclude");
+  const minSteps = workflowSteps(payload.minSteps, "minimum steps");
+  const maxSteps = workflowSteps(payload.maxSteps, "maximum steps");
+  return runMetadataContextOperation(
+    (metadataStore, context) =>
+      metadataStore.matchWorkflowFacts(fingerprints, {
+        include,
+        exclude,
+        minSteps,
+        maxSteps,
+        assertActive: () => assertMetadataContextActive(context),
+      }),
+    "WORKFLOW_MATCH_ERROR"
+  );
+});
+
 // ===== Tag suggestion IPC =====
 // prompt-search-and-tag-suggestions.md, Section 2. The renderer names catalog
 // rows and tags; main learns from prompts it reads itself and answers with

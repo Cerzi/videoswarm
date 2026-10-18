@@ -236,8 +236,8 @@ if (!database || databaseLoadError) {
       ]);
 
       expect(store.getGenerationVersionSummaries([KEY_A, KEY_B, "junk"])).toEqual({
-        [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720 },
-        [KEY_B]: { versionCount: 1, maxPixels: 320 * 240 },
+        [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, minPixels: 640 * 360 },
+        [KEY_B]: { versionCount: 1, maxPixels: 320 * 240, minPixels: 320 * 240 },
       });
 
       const siblings = store.getGenerationVersionSiblings(draft.instance.id);
@@ -328,6 +328,69 @@ if (!database || databaseLoadError) {
       });
     });
 
+    it("keeps workflow facts with the keys and matches them by words and steps", async () => {
+      const turbo = await indexClip(rootPath, "turbo.mp4", "turbo");
+      const full = await indexClip(rootPath, "full.mp4", "full");
+      const bare = await indexClip(rootPath, "bare.mp4", "bare");
+      const unread = await indexClip(rootPath, "unread.mp4", "unread");
+      // Read before workflow facts existed: read again for them.
+      expect(store.countGenerationKeyCandidates({})).toBe(4);
+      store.setGenerationKeys([
+        {
+          fingerprint: turbo.fingerprint,
+          generationKey: KEY_A,
+          promptKey: PROMPT_A,
+          workflowSteps: 6,
+          workflowTerms: ["acmesampler", "acme_turbo_lora", "base-model"],
+        },
+        {
+          fingerprint: full.fingerprint,
+          generationKey: KEY_A,
+          promptKey: PROMPT_A,
+          workflowSteps: 30,
+          workflowTerms: ["acmesampler", "base-model", "acmeupscaleloader"],
+        },
+        // Read, and no workflow in it.
+        { fingerprint: bare.fingerprint, generationKey: null, promptKey: null },
+      ]);
+      expect(store.countGenerationKeyCandidates({})).toBe(1);
+      expect(() =>
+        store.setGenerationKeys([
+          { fingerprint: bare.fingerprint, generationKey: null, promptKey: null, workflowTerms: ["Upper"] },
+        ])
+      ).toThrow(TypeError);
+      expect(() =>
+        store.setGenerationKeys([
+          { fingerprint: bare.fingerprint, generationKey: null, promptKey: null, workflowSteps: 1.5 },
+        ])
+      ).toThrow(TypeError);
+
+      const all = [turbo, full, bare, unread].map((clip) => clip.fingerprint);
+      const match = (options) => store.matchWorkflowFacts(all, options).matches.sort();
+      expect(match({ exclude: ["turbo"] })).toEqual([full.fingerprint]);
+      expect(match({ include: ["TURBO"] })).toEqual([turbo.fingerprint]);
+      expect(match({ include: ["upscale", "base"] })).toEqual([full.fingerprint]);
+      expect(match({ minSteps: 12 })).toEqual([full.fingerprint]);
+      expect(match({ maxSteps: 8 })).toEqual([turbo.fingerprint]);
+      // No words and no bounds: every clip with a readable workflow.
+      expect(match({})).toEqual([turbo.fingerprint, full.fingerprint].sort());
+      expect(store.matchWorkflowFacts(all, {}).unread).toBe(1);
+    });
+
+    it("tells the smallest measured version apart, for re-renders and upscales", async () => {
+      const draft = await indexClip(rootPath, "draft.mp4", "draft", { width: 640, height: 360 });
+      const final = await indexClip(otherRootPath, "final.mp4", "final", { width: 1280, height: 720 });
+      const unmeasured = await indexClip(otherRootPath, "odd.mp4", "odd");
+      store.setGenerationKeys([
+        { fingerprint: draft.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: final.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: unmeasured.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+      ]);
+      expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
+        [KEY_A]: { versionCount: 3, maxPixels: 1280 * 720, minPixels: 640 * 360 },
+      });
+    });
+
     it("stops counting versions whose instances are all gone", async () => {
       const draft = await indexClip(rootPath, "draft.mp4", "draft", { width: 640, height: 360 });
       const final = await indexClip(otherRootPath, "final.mp4", "final", { width: 1280, height: 720 });
@@ -337,7 +400,7 @@ if (!database || databaseLoadError) {
       ]);
       store.markFilesMissing([path.join(otherRootPath, "final.mp4")]);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
-        [KEY_A]: { versionCount: 1, maxPixels: 640 * 360 },
+        [KEY_A]: { versionCount: 1, maxPixels: 640 * 360, minPixels: 640 * 360 },
       });
       expect(
         store.getGenerationVersionSiblings(draft.instance.id).versions
@@ -422,6 +485,8 @@ if (!database || databaseLoadError) {
         ALTER TABLE media_content DROP COLUMN prompt_key;
         ALTER TABLE media_content DROP COLUMN prompt_key_version;
       `);
+      // Workflow facts already read, so only the key upgrade is at stake.
+      raw.exec("UPDATE media_content SET workflow_facts_version = 1;");
       raw.close();
 
       initMetadataStore({ getPath: () => tempDir }, tempDir);
@@ -443,7 +508,7 @@ if (!database || databaseLoadError) {
       ).toEqual([keyed.fingerprint, pending.fingerprint].sort());
       expect(store.countGenerationKeyCandidates({})).toBe(2);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
-        [KEY_A]: { versionCount: 1, maxPixels: 0 },
+        [KEY_A]: { versionCount: 1, maxPixels: 0, minPixels: 0 },
       });
 
       store.setGenerationKeys([
@@ -477,6 +542,8 @@ if (!database || databaseLoadError) {
           "UPDATE media_content SET generation_key = NULL, generation_key_version = 2, prompt_key = NULL, prompt_key_version = 1 WHERE fingerprint = ?;"
         )
         .run(unkeyed.fingerprint);
+      // Workflow facts already read, so only the key upgrade is at stake.
+      raw.exec("UPDATE media_content SET workflow_facts_version = 1;");
       raw.close();
 
       initMetadataStore({ getPath: () => tempDir }, tempDir);
@@ -492,6 +559,36 @@ if (!database || databaseLoadError) {
       expect(store.listGenerationKeyCandidates({}).map((row) => row.fingerprint)).toEqual([
         keyed.fingerprint,
       ]);
+    });
+
+    it("reads every file once more for workflow facts, then settles", async () => {
+      const keyed = await indexClip(rootPath, "keyed.mp4", "keyed-content");
+      const unkeyed = await indexClip(rootPath, "unkeyed.mp4", "unkeyed-content");
+      store.setGenerationKeys([
+        { fingerprint: keyed.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
+        { fingerprint: unkeyed.fingerprint, generationKey: null, promptKey: null },
+      ]);
+      resetDatabase();
+      // The state a build from before workflow facts leaves.
+      const BetterSqlite = require("better-sqlite3");
+      const raw = new BetterSqlite(path.join(tempDir, "videoswarm-meta.db"));
+      raw.exec(`
+        ALTER TABLE media_content DROP COLUMN workflow_steps;
+        ALTER TABLE media_content DROP COLUMN workflow_terms;
+        ALTER TABLE media_content DROP COLUMN workflow_facts_version;
+      `);
+      raw.close();
+      initMetadataStore({ getPath: () => tempDir }, tempDir);
+      store = getMetadataStore();
+      // A file without a key may still embed a workflow (an upscale pass
+      // has no seed), so both are due once; their keys stay meanwhile.
+      expect(store.countGenerationKeyCandidates({})).toBe(2);
+      expect(store.getGenerationVersionSummaries([KEY_A])[KEY_A].versionCount).toBe(1);
+      store.setGenerationKeys([
+        { fingerprint: keyed.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A, workflowTerms: ["acmesampler"] },
+        { fingerprint: unkeyed.fingerprint, generationKey: null, promptKey: null },
+      ]);
+      expect(store.countGenerationKeyCandidates({})).toBe(0);
     });
 
     it("upgrades a version 1 database without re-reading unkeyable files", async () => {
@@ -513,6 +610,8 @@ if (!database || databaseLoadError) {
       raw
         .prepare("UPDATE media_content SET generation_key = NULL, generation_key_version = 1 WHERE fingerprint = ?;")
         .run(unkeyed.fingerprint);
+      // Workflow facts already read, so only the key upgrade is at stake.
+      raw.exec("UPDATE media_content SET workflow_facts_version = 1;");
       raw.close();
 
       initMetadataStore({ getPath: () => tempDir }, tempDir);

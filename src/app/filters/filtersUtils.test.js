@@ -1,6 +1,8 @@
 import { renderHook } from "@testing-library/react";
 import {
   createDefaultFilters,
+  parseWorkflowWords,
+  workflowFilterQuery,
   formatMegapixelLabel,
   sanitizeMegapixels,
   videoMegapixels,
@@ -28,6 +30,24 @@ describe("filtersUtils", () => {
       companionHideSent: false,
       promptQuery: "",
       mightBe: "",
+      minFrameRate: null,
+      maxFrameRate: null,
+      minSteps: null,
+      maxSteps: null,
+      workflowInclude: "",
+      workflowExclude: "",
+    });
+  });
+
+  it("reads workflow words and leaves the workflow filter off when none is set", () => {
+    expect(parseWorkflowWords(" Turbo, Fast  turbo,,x")).toEqual(["turbo", "fast", "x"]);
+    expect(parseWorkflowWords("a b c d e f g h i j")).toHaveLength(8);
+    expect(workflowFilterQuery({})).toBeNull();
+    expect(workflowFilterQuery({ workflowInclude: " ", minSteps: "20" })).toEqual({
+      include: [],
+      exclude: [],
+      minSteps: 20,
+      maxSteps: null,
     });
   });
 

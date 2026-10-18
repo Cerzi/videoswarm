@@ -428,6 +428,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
   },
 
+  // Workflow filters: fingerprints, words and steps bounds in, matching
+  // fingerprints out. Node types and file names never cross.
+  workflow: {
+    match: async ({ fingerprints, include, exclude, minSteps, maxSteps } = {}) =>
+      ipcRenderer.invoke("workflow:match", {
+        fingerprints: Array.isArray(fingerprints) ? fingerprints : [],
+        include: Array.isArray(include) ? include : [],
+        exclude: Array.isArray(exclude) ? exclude : [],
+        minSteps: Number.isInteger(minSteps) ? minSteps : null,
+        maxSteps: Number.isInteger(maxSteps) ? maxSteps : null,
+      }),
+  },
+
   // Tag suggestions learned from the library's tags and prompts: catalog
   // rows and tag names in, tag names and rows out. Prompts never cross.
   tagSuggestions: {
