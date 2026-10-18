@@ -1,4 +1,34 @@
 import React from "react";
+import { LARGE_SELECTION, selectionWarning } from "../app/selectionLimits";
+
+// How many clips are selected, a way to clear them, and what a selection
+// that large cannot do at once.
+function SelectionNote({ count, onClear }) {
+  if (!(count > 0)) return null;
+  const warning = selectionWarning(count);
+  return (
+    <>
+      <span aria-hidden="true">·</span>
+      <span
+        className={`debug-info__selection${count >= LARGE_SELECTION ? " debug-info__selection--large" : ""}`}
+        role="status"
+      >
+        {count.toLocaleString()} selected
+      </span>
+      {warning ? <span className="debug-info__warning">{warning}</span> : null}
+      {typeof onClear === "function" ? (
+        <button
+          type="button"
+          className="debug-info__clear"
+          onClick={onClear}
+          title="Clear the selection (Esc)"
+        >
+          Clear
+        </button>
+      ) : null}
+    </>
+  );
+}
 
 // The status line under the top bar. By default only what a reviewer uses:
 // how many clips, and how they are sorted. View › Playback details adds the
@@ -25,6 +55,9 @@ export default function DebugSummary({
   companionNote = null,
   // Shown at the line's right end: the background work note.
   trailing = null,
+  // How many clips are selected, and clearing them.
+  selectedCount = 0,
+  onClearSelection = null,
 }) {
   if (!detailed) {
     const stacked = stackCount > 0 && Number.isFinite(stackedClips);
@@ -44,6 +77,7 @@ export default function DebugSummary({
         {sortStatus && <span>{sortStatus}</span>}
         {companionNote && <span aria-hidden="true">·</span>}
         {companionNote && <span className="debug-info__warning">{companionNote}</span>}
+        <SelectionNote count={selectedCount} onClear={onClearSelection} />
         {trailing}
       </div>
     );
@@ -92,6 +126,7 @@ export default function DebugSummary({
         </span>
       )}
       <span>👁️ {inView} in view</span>
+      <SelectionNote count={selectedCount} onClear={onClearSelection} />
 
       {memoryStatus && (
         <>

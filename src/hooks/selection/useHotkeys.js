@@ -51,6 +51,9 @@ const readOptions = ({ run, getSelection, opts }) => {
     onOpenStack,
     onCloseStack,
     onRejectUnreviewedInStack,
+    // Ctrl/⌘+A selects every clip the grid shows; Esc clears the selection.
+    onSelectAll,
+    onClearSelection,
   } = opts;
   return {
     run,
@@ -74,6 +77,8 @@ const readOptions = ({ run, getSelection, opts }) => {
     onOpenStack,
     onCloseStack,
     onRejectUnreviewedInStack,
+    onSelectAll,
+    onClearSelection,
   };
 };
 
@@ -121,6 +126,8 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         onOpenStack,
         onCloseStack,
         onRejectUnreviewedInStack,
+        onSelectAll,
+        onClearSelection,
       } = readOptions(latestRef.current);
       const target = e.target;
       if (target) {
@@ -140,6 +147,19 @@ export default function useHotkeys(run, getSelection, opts = {}) {
 
       const sel = getSelection();
       const size = sel?.size ?? 0;
+
+      // Every clip the grid shows, on screen or not; never the page's text.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "a" &&
+        onSelectAll
+      ) {
+        e.preventDefault();
+        onSelectAll();
+        return;
+      }
 
       if (size) {
         if (
@@ -247,6 +267,17 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         if (e.key === "Escape" && onCloseStack) {
           e.preventDefault();
           onCloseStack();
+          return;
+        }
+        // Esc meant for a dialog or menu never also drops the selection.
+        if (
+          e.key === "Escape" &&
+          size > 0 &&
+          onClearSelection &&
+          !target?.closest?.('[role="dialog"], [role="menu"], [role="listbox"]')
+        ) {
+          e.preventDefault();
+          onClearSelection();
           return;
         }
         if (

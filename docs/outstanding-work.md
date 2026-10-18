@@ -324,6 +324,11 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Ctrl+A (⌘A) after filtering selects every clip the grid shows, including
+  ones far off screen and every run of a collapsed stack; the status line
+  says "N selected" with *Clear*, the count turns amber from 1,000, and past
+  2,000 or 20,000 it says what cannot be done at once; Esc clears; Ctrl+A in
+  a text field still selects its text. Then move the selection.
 - Workflow filters (`architecture/workflow-filters.md`): after opening a
   folder (and the background read finishing), Filters › Workflow › Leaves
   out a LoRA word hides every clip made with it; Uses keeps only those;

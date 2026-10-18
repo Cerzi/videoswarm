@@ -1081,6 +1081,34 @@ body {
   color: #ffb020;
 }
 
+/* The selection's count, standing out once it is large (Ctrl+A over a
+   library), and a quiet way to clear it. */
+.debug-info__selection {
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-info__selection--large {
+  color: #ffb020;
+  font-weight: 600;
+}
+
+.debug-info__clear {
+  padding: 0 0.4rem;
+  border: 1px solid #3d4245;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.debug-info__clear:hover,
+.debug-info__clear:focus-visible {
+  border-color: #6c757a;
+  color: #e8eaed;
+  outline: none;
+}
+
 /* Prompt stacks: one card stands for every run of a prompt. The pill opens
    the stack; a double outline marks the card without changing the masonry
    layout. It is drawn over the video (an inset shadow on the card would sit

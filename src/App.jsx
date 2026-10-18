@@ -4050,6 +4050,13 @@ function App() {
     [handleFolderNavigate]
   );
 
+  // Ctrl/⌘+A: every clip the grid shows, on screen or not. A collapsed
+  // stack's card stands for all its runs, so they are selected too.
+  const handleSelectAll = useCallback(() => {
+    if (!orderedVideos.length) return;
+    selection.setSelectedIds(orderedVideos.map((video) => video.id));
+  }, [orderedVideos, selection.setSelectedIds]);
+
   const appHotkeysEnabled =
     !isHotkeyHelpOpen &&
     !isAboutOpen &&
@@ -4097,6 +4104,8 @@ function App() {
         : null,
     onRejectUnreviewedInStack:
       openStack && !versionView && reviewModeEnabled ? handleRejectUnreviewedInStack : null,
+    onSelectAll: orderedVideos.length ? handleSelectAll : null,
+    onClearSelection: selection.clear,
     onOpenDetails: () => openMetadataPanel(),
     onAddToSequence: () => handleAddSelectionToSequence(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
@@ -6546,6 +6555,8 @@ function App() {
             playbackMode={playbackMode}
             playbackTelemetry={playbackTelemetry}
             workSuspensionReason={workSuspensionReason}
+            selectedCount={selection.size}
+            onClearSelection={selection.clear}
             trailing={<BackgroundActivityStatus />}
           />
 

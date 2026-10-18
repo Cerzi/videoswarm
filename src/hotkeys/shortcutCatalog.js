@@ -399,6 +399,18 @@ const LIBRARY_SHORTCUTS = Object.freeze([
 
 const SELECTION_SHORTCUTS = Object.freeze([
   freezeShortcut({
+    id: "select-all",
+    keys: ["Ctrl / ⌘", "A"],
+    label: "Select every clip in the grid",
+    detail: "Every clip the filters show, not only those on screen. The status line says how many.",
+  }),
+  freezeShortcut({
+    id: "clear-selection",
+    keys: ["Esc"],
+    label: "Clear the selection",
+    detail: "After an open stack or versions view is closed.",
+  }),
+  freezeShortcut({
     id: "open-selection-details",
     keys: ["I"],
     label: "Open Details",

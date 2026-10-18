@@ -3111,6 +3111,12 @@ describe("App hook composition", () => {
       const { unitsRef } = useSelectionStateMock.mock.calls[0][0];
       expect(unitsRef.current.membersOf(unitsRef.current.unitOf("a1"))).toEqual(["a1", "a2"]);
 
+      // Ctrl+A selects every card the grid shows; the stacks' units widen
+      // each to all of its runs.
+      await act(async () => hotkeys().onSelectAll());
+      expect(selectionMock.setSelectedIds).toHaveBeenLastCalledWith(["a2", "solo", "b2"]);
+      expect(hotkeys().onClearSelection).toBe(selectionMock.clear);
+
       await act(async () => cardProps("a2").onOpenStack("a2"));
       await waitFor(() => expect(gridIds()).toEqual(["a1", "a2"]));
       expect(screen.getByText("Stack 1 of 2 · 2 runs")).toBeInTheDocument();

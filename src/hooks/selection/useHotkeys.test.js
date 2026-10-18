@@ -23,6 +23,58 @@ describe('useHotkeys', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  test('Ctrl/Cmd + A selects every clip instead of the page text, but not in a text field', () => {
+    const onSelectAll = vi.fn();
+    getSelection.mockReturnValue(new Set());
+    renderHook(() => useHotkeys(run, getSelection, { onSelectAll }));
+    const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(onSelectAll).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', metaKey: true }));
+    expect(onSelectAll).toHaveBeenCalledTimes(2);
+    // Shift or Alt with it is something else.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, shiftKey: true }));
+    expect(onSelectAll).toHaveBeenCalledTimes(2);
+
+    const input = document.createElement('input');
+    document.body.append(input);
+    const inField = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    input.dispatchEvent(inField);
+    expect(onSelectAll).toHaveBeenCalledTimes(2);
+    expect(inField.defaultPrevented).toBe(false);
+    input.remove();
+  });
+
+  test('Esc clears the selection, after an open stack and never from a dialog', () => {
+    const onClearSelection = vi.fn();
+    const onCloseStack = vi.fn();
+    const { rerender } = renderHook(
+      ({ closeStack }) => useHotkeys(run, getSelection, { onClearSelection, onCloseStack: closeStack }),
+      { initialProps: { closeStack: onCloseStack } }
+    );
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onCloseStack).toHaveBeenCalledTimes(1);
+    expect(onClearSelection).not.toHaveBeenCalled();
+
+    rerender({ closeStack: null });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const button = document.createElement('button');
+    dialog.append(button);
+    document.body.append(dialog);
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+    dialog.remove();
+
+    getSelection.mockReturnValue(new Set());
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
   test('Ctrl/Cmd + C triggers COPY_PATH (multi allowed)', () => {
     renderHook(() => useHotkeys(run, getSelection));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
