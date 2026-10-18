@@ -35,6 +35,17 @@ describe("companion filters", () => {
     expect(parseCompanionFilterKey("polish")).toBeNull();
   });
 
+  it("finds what is left to finish: anything but done, where the action applies", () => {
+    for (const phase of ["not-sent", "under-way", "stopped"]) {
+      expect(matches(entry(phase), { "c1/polish": "not-done" })).toBe(true);
+    }
+    expect(matches(entry("done"), { "c1/polish": "not-done" })).toBe(false);
+    expect(matches(entry("n/a"), { "c1/polish": "not-done" })).toBe(false);
+    // Unanswered clips are shown, as for every companion filter.
+    expect(matches(undefined, { "c1/polish": "not-done" })).toBe(true);
+    expect(normalizeCompanionFilters({ "c1/polish": "not-done" })).toEqual({ "c1/polish": "not-done" });
+  });
+
   it("matches a phase per companion action, with sent covering under way, done and stopped", () => {
     expect(matches(entry("not-sent"), { "c1/polish": "not-sent" })).toBe(true);
     expect(matches(entry("done"), { "c1/polish": "not-sent" })).toBe(false);

@@ -69,6 +69,7 @@ describe("saved view companion filters", () => {
           companionFilters: {
             polish: "not-sent",
             "c2/upscale": "done",
+            "c3/finish": "not-done",
             enlarge: "sideways",
             "Bad Id": "sent",
           },
@@ -77,7 +78,11 @@ describe("saved view companion filters", () => {
       })
     ).filters;
     // A plain action id is from when a profile had one companion: the first.
-    expect(filters.companionFilters).toEqual({ "c1/polish": "not-sent", "c2/upscale": "done" });
+    expect(filters.companionFilters).toEqual({
+      "c1/polish": "not-sent",
+      "c2/upscale": "done",
+      "c3/finish": "not-done",
+    });
     expect(filters.companionHideSent).toBe(true);
   });
 

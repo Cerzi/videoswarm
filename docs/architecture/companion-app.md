@@ -206,7 +206,10 @@ companion authors must be told before it ships.
   card re-renders only when its own chips change.
 - **Filters** (Filters › each companion's name): *Hide clips already sent*,
   across every action of every companion, and per action any, not sent,
-  sent, under way, done or stopped. Filters are keyed `c1/polish`. A clip a
+  sent, under way, done, not done or stopped. *Not done* (added 2026-10-18)
+  is anything short of done where the action applies: not sent, under way or
+  stopped, never "does not apply"; the worklist of what is left to finish.
+  Filters are keyed `c1/polish`. A clip a
   companion has not answered for yet always passes that companion's
   filters. Saved views keep them; a view without them is stored exactly as
   before.

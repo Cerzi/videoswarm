@@ -81,7 +81,7 @@ function normalizeWorkflowWords(value) {
 // Companion app filters (docs/architecture/companion-app.md): a phase per
 // action id, as src/app/companion/companionFilters.js reads them.
 const COMPANION_PHASE_FILTERS = new Set([
-  'not-sent', 'sent', 'under-way', 'done', 'stopped', 'n/a',
+  'not-sent', 'sent', 'under-way', 'done', 'stopped', 'n/a', 'not-done',
 ]);
 const COMPANION_ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 

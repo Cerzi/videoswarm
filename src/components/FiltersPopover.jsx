@@ -156,7 +156,7 @@ function renderTagChip(tag, onRemove, variant) {
 // Phases a companion action can be filtered by (src/app/companion/companionFilters.js).
 const COMPANION_FILTER_OPTIONS = [
   { value: "any", label: "Any" },
-  ...["not-sent", "sent", "under-way", "done", "stopped"].map((value) => ({
+  ...["not-sent", "sent", "under-way", "done", "not-done", "stopped"].map((value) => ({
     value,
     label: COMPANION_PHASE_LABELS[value],
   })),

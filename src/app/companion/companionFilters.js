@@ -11,6 +11,9 @@ export const COMPANION_PHASE_FILTERS = Object.freeze([
   "done",
   "stopped",
   "n/a",
+  // Anything short of done that the action applies to: never sent, under
+  // way or stopped. The worklist of what is left to finish.
+  "not-done",
 ]);
 
 export const COMPANION_PHASE_LABELS = Object.freeze({
@@ -20,6 +23,7 @@ export const COMPANION_PHASE_LABELS = Object.freeze({
   done: "Done",
   stopped: "Stopped",
   "n/a": "Does not apply",
+  "not-done": "Not done",
 });
 
 const SENT_PHASES = new Set(["under-way", "done", "stopped"]);
@@ -70,7 +74,13 @@ export function matchesCompanionFilters(entryFor, companionIds, companionFilters
     const parsed = parseCompanionFilterKey(key);
     const stage = parsed && entryFor(parsed.companionId)?.actions?.[parsed.actionId];
     if (!stage) continue;
-    if (wanted === "sent" ? !isCompanionSent(stage) : stage.phase !== wanted) return false;
+    if (wanted === "sent") {
+      if (!isCompanionSent(stage)) return false;
+    } else if (wanted === "not-done") {
+      if (stage.phase === "done" || stage.phase === "n/a") return false;
+    } else if (stage.phase !== wanted) {
+      return false;
+    }
   }
   return true;
 }
