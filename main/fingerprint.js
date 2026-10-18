@@ -11,6 +11,11 @@ const DEFAULT_SAMPLE_SIZE = 64 * 1024; // 64KB front/back sampling
 // Both values are produced from one read. v1 is not dead weight: it is the
 // only exact proof that a stored v1 row belongs to the bytes now on disk, so
 // the catalog can re-key that row instead of guessing or orphaning metadata.
+//
+// v2 is also a contract: companion apps compute it to recognise a clip after
+// it moves (docs/architecture/companion-app.md), and
+// main/__tests__/fingerprintContract.test.js pins it. Changing what goes into
+// it means a new version, announced to companion authors first.
 const FINGERPRINT_VERSION = 'v2';
 const LEGACY_FINGERPRINT_VERSION = 'v1';
 

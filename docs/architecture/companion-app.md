@@ -156,6 +156,20 @@ nothing. A companion may refuse a malformed map with 400. Response:
 - Sending may take seconds per batch; Video Swarm sends in chunks and shows
   progress. A later chunk should see an earlier chunk's clips as sent.
 
+### Recognising a clip after it moves
+
+Requests name clips by path, which a move, rename or copy changes. A
+companion that wants to keep knowing a clip may compute Video Swarm's own
+content fingerprint itself (`main/fingerprint.js`, version 2): SHA-256 over
+the first 64 KiB, then the last 64 KiB (the first again when the file is no
+larger), then the size in decimal, written `v2-<size in hex>-<digest in hex>`.
+It depends on the bytes only, never on the name, folder or file times.
+
+This makes the algorithm part of the protocol.
+`main/__tests__/fingerprintContract.test.js` pins its output and writes it
+out; changing what goes into it means a new fingerprint version, and
+companion authors must be told before it ships.
+
 ## Behaviour in Video Swarm
 
 ### Implemented
