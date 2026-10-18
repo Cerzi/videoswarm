@@ -24,7 +24,7 @@ order:
 
 | Kind | Shown as | Reported by | Paused |
 |---|---|---|---|
-| `prompts` | Reading prompts in clips | `generation-key-indexer.js`, per job: files read of the job's total | Yes, between files |
+| `prompts` | Reading clips' workflows | `generation-key-indexer.js`, per job: files read of the job's total | Yes, between files |
 | `playback-proxies` | Building playback proxies | `proxy-manager.js`, per proxy queued and finished | Yes, queued proxies wait |
 | `stack-frames` | Reading first frames for stacks | `stack-frames.js`, per fingerprint queued and finished | Yes, queued grabs wait |
 | `tag-suggestions` | Learning tag suggestions | `tag-suggestions.js`, tags learned of the total | No |

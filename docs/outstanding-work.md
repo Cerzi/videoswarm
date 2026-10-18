@@ -343,7 +343,7 @@ matches under the tag input, including in fullscreen. Check by hand:
   rating or tagging any of them sticks; `Esc` returns to the grid with the
   clip selected.
 - Background work note (`architecture/background-activity.md`): opening a
-  large folder with stacks on shows "Reading prompts in clips · N left" at
+  large folder with stacks on shows "Reading clips' workflows · N left" at
   the right of the status line after a moment, and nothing when idle; the
   panel lists each kind with a bar; Pause stops new proxy encodes and prompt
   reading (CPU drops once a running encode finishes) while playback and

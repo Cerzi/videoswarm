@@ -16,7 +16,7 @@ describe("BackgroundActivityView", () => {
 
   it("names the first piece of work and how much is left, with a count of the rest", () => {
     render(<BackgroundActivityView paused={false} activities={[prompts, proxies]} />);
-    const chip = screen.getByRole("button", { name: /Reading prompts in clips · 1,241 left/ });
+    const chip = screen.getByRole("button", { name: /Reading clips' workflows · 1,241 left/ });
     expect(chip).toHaveTextContent("+1");
     expect(chip).toHaveAttribute("aria-expanded", "false");
   });
@@ -111,7 +111,7 @@ describe("BackgroundActivityStatus", () => {
   it("pauses through the bridge and shows the pause at once", async () => {
     const { api } = bridge({ paused: false, activities: [{ ...prompts, startedAt: 0 }] });
     render(<BackgroundActivityStatus />);
-    fireEvent.click(await screen.findByRole("button", { name: /Reading prompts in clips/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Reading clips' workflows/ }));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     });

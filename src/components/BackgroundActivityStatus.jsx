@@ -7,7 +7,8 @@ import "./BackgroundActivityStatus.css";
 // owns its updates, so they never re-render the grid.
 
 export const ACTIVITY_LABELS = Object.freeze({
-  prompts: "Reading prompts in clips",
+  // Generation keys and workflow facts, from one read of each file.
+  prompts: "Reading clips' workflows",
   "playback-proxies": "Building playback proxies",
   "stack-frames": "Reading first frames for stacks",
   "tag-suggestions": "Learning tag suggestions",

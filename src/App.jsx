@@ -5067,7 +5067,8 @@ function App() {
       setSortDir(view.sort.dir);
       setGroupByFolders(view.sort.groupByFolders);
       setRandomSeed(view.sort.randomSeed);
-      updateFilters(view.filters);
+      // As for a smart view: the saved filters, and every other one cleared.
+      updateFilters({ ...createDefaultFilters(), ...(view.filters || {}) });
       selection.clear();
       if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       return normalized;
