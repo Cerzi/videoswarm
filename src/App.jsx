@@ -4372,6 +4372,13 @@ function App() {
           companionHideSent: filters.companionHideSent === true,
           promptQuery: (filters.promptQuery || "").trim(),
           mightBe: (filters.mightBe || "").trim(),
+          // docs/architecture/workflow-filters.md
+          minFrameRate: filters.minFrameRate ?? null,
+          maxFrameRate: filters.maxFrameRate ?? null,
+          minSteps: filters.minSteps ?? null,
+          maxSteps: filters.maxSteps ?? null,
+          workflowInclude: (filters.workflowInclude || "").trim(),
+          workflowExclude: (filters.workflowExclude || "").trim(),
         },
         sort: {
           key: sortKey,
@@ -4413,7 +4420,9 @@ function App() {
       if (!definition || definition.version !== 1) return;
       closeFullScreenRef.current?.();
       captureFolderViewState();
-      updateFilters(definition.filters || {});
+      // A view stands for all of the filters: one it does not mention (saved
+      // before that filter existed, or left unset) is cleared, not kept.
+      updateFilters({ ...createDefaultFilters(), ...(definition.filters || {}) });
       setSortKey(definition.sort?.key || SortKey.NAME);
       setSortDir(definition.sort?.dir === "desc" ? "desc" : "asc");
       setGroupByFolders(definition.sort?.groupByFolders !== false);

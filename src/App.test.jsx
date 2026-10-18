@@ -3573,9 +3573,10 @@ describe("App hook composition", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Needs review" }));
-    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith({
-      reviewFilter: "unreviewed",
-    });
+    // The view's filters, and every other filter back to its default.
+    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewFilter: "unreviewed", includeTags: [], promptQuery: "" })
+    );
     expect(selectionMock.clear).toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Include subfolders" }));
@@ -4434,6 +4435,40 @@ describe("library search scope", () => {
     );
   });
 
+  test("saves the frame rate, steps and workflow filters with a view", async () => {
+    const createSavedView = vi.fn(async (name) => ({ id: 6, name }));
+    useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, createSavedView }));
+    withOpenRoot();
+
+    await renderWithTags(["keeper"], {
+      minFrameRate: 30,
+      minSteps: 20,
+      workflowInclude: " upscale ",
+      workflowExclude: "turbo",
+      companionFilters: { "c1/requeue": "done" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save current smart view" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Smart view name" }), {
+      target: { value: "Full runs" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    expect(createSavedView).toHaveBeenCalledWith(
+      "Full runs",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          minFrameRate: 30,
+          minSteps: 20,
+          maxSteps: null,
+          workflowInclude: "upscale",
+          workflowExclude: "turbo",
+          companionFilters: { "c1/requeue": "done" },
+        }),
+      })
+    );
+  });
+
   test("saves a view made in a folder as a folder view", async () => {
     const createSavedView = vi.fn(async (name) => ({ id: 5, name }));
     useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, createSavedView }));
@@ -4477,7 +4512,16 @@ describe("library search scope", () => {
     });
     await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", { minRating: null, exactRating: null, promptQuery: "", mightBe: "" }));
     expect(taggedSnapshot).toHaveBeenCalledTimes(1);
-    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(libraryView.definition.filters);
+    // The view stands for all of the filters: those it does not mention are cleared.
+    expect(filterStateReturn.updateFilters).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...libraryView.definition.filters,
+        promptQuery: "",
+        workflowExclude: "",
+        companionFilters: {},
+        minSteps: null,
+      })
+    );
   });
 
   test("runs the search once a tag constrains it", async () => {
