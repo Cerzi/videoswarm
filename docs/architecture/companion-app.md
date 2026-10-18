@@ -123,11 +123,22 @@ Request: `{"paths": ["/abs/path.mp4", ...]}`, at most 500 paths. Response:
 Request:
 
 ```json
-{ "action": "polish", "paths": ["/abs/path.mp4"], "dry_run": true, "again": false }
+{
+  "action": "polish",
+  "paths": ["/abs/path.mp4"],
+  "ratings": { "/abs/path.mp4": 4 },
+  "dry_run": true,
+  "again": false
+}
 ```
 
 At most 500 paths. `dry_run` changes nothing and answers what would happen.
-`again` asks to send clips that were sent before. Response:
+`again` asks to send clips that were sent before. `ratings` (optional, added
+2026-10-18) maps each rated clip's path, exactly as in `paths`, to its stars,
+a whole number from 0 to 5; unrated clips are left out, and so is the field
+when none is rated. It goes with every chunk, dry runs included, so a
+companion can order what it is sent best first; one that ignores it loses
+nothing. A companion may refuse a malformed map with 400. Response:
 
 ```json
 {

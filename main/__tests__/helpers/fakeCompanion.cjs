@@ -76,6 +76,18 @@ function createFakeCompanion({ description = DEFAULT_DESCRIPTION } = {}) {
       }
 
       if (url.pathname === "/api/send") {
+        // As the protocol says: stars by sent path, whole numbers 0 to 5.
+        if (
+          body.ratings !== undefined &&
+          (!body.ratings ||
+            typeof body.ratings !== "object" ||
+            Array.isArray(body.ratings) ||
+            Object.values(body.ratings).some(
+              (value) => typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 5
+            ))
+        ) {
+          return reply(res, 400, { error: "ratings should map paths to a number of stars from 0 to 5" });
+        }
         const results = {};
         for (const filePath of body.paths || []) {
           const planned = state.plan?.(body.action, filePath, body.again === true) || {

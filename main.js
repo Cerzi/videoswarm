@@ -6154,13 +6154,28 @@ ipcMain.handle("companion:describe", async (_event, payload = {}) => {
 // Present catalog rows as `{ paths, idsByPath }`, skipping rows that are gone.
 function companionPathsForInstances(metadataStore, instanceIds) {
   const idsByPath = new Map();
+  const fingerprintByPath = new Map();
   for (const instanceId of instanceIds) {
     const instance = metadataStore.getFileInstanceLocation(instanceId);
     if (instance?.present && instance.absolutePath) {
       idsByPath.set(instance.absolutePath, instanceId);
+      if (instance.fingerprint) fingerprintByPath.set(instance.absolutePath, instance.fingerprint);
     }
   }
-  return { paths: [...idsByPath.keys()], idsByPath };
+  return { paths: [...idsByPath.keys()], idsByPath, fingerprintByPath };
+}
+
+// Each rated clip's stars, by the path it is sent as, so the companion can
+// put the best first (docs/architecture/companion-app.md); unrated clips are
+// left out.
+function companionRatingsForPaths(metadataStore, fingerprintByPath) {
+  const metadata = metadataStore.getMetadataForFingerprints([...fingerprintByPath.values()]);
+  const ratings = {};
+  for (const [filePath, fingerprint] of fingerprintByPath) {
+    const rating = metadata[fingerprint]?.rating;
+    if (Number.isInteger(rating) && rating >= 0 && rating <= 5) ratings[filePath] = rating;
+  }
+  return ratings;
 }
 
 function byInstance(resultsByPath, idsByPath) {
@@ -6206,7 +6221,7 @@ ipcMain.handle("companion:send", async (event, payload = {}) => {
       maxEntries: COMPANION_LIMITS.maxSendPaths,
     });
     context = captureMetadataContext();
-    const { paths, idsByPath } = companionPathsForInstances(
+    const { paths, idsByPath, fingerprintByPath } = companionPathsForInstances(
       context.metadataStore,
       instanceIds
     );
@@ -6214,9 +6229,11 @@ ipcMain.handle("companion:send", async (event, payload = {}) => {
       await assertRendererPath(event, filePath, "file");
     }
     assertMetadataContextActive(context);
+    const ratings = companionRatingsForPaths(context.metadataStore, fingerprintByPath);
     const outcome = await companionServiceFor(payload.companionId).send({
       action,
       paths,
+      ratings,
       dryRun: payload.dryRun === true,
       again: payload.again === true,
     });

@@ -49,7 +49,7 @@ function createCompanionService({
     );
   }
 
-  async function send({ action, paths, dryRun = false, again = false }) {
+  async function send({ action, paths, ratings = null, dryRun = false, again = false }) {
     const description = await describe();
     if (!description.actions.some((entry) => entry.id === action)) {
       throw Object.assign(new Error("The companion app does not offer that action"), {
@@ -57,7 +57,7 @@ function createCompanionService({
       });
     }
     const { url } = connection();
-    return createClient({ url }).send({ action, paths, dryRun, again });
+    return createClient({ url }).send({ action, paths, ratings, dryRun, again });
   }
 
   // A one-off check of an address the user typed, connected or not.

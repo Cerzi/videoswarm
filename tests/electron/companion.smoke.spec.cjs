@@ -73,8 +73,11 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     expect(lookup.body.paths.sort()).toEqual([0, 1, 2].map(pathOf).sort());
     expect(lookup.host).toMatch(/^127\.0\.0\.1:\d+$/u);
 
-    // Send one clip: the dialog opens on the dry run, then sends.
+    // Send one rated clip: the dialog opens on the dry run, then sends, its
+    // stars going with both.
     await card(page, "clip-0001.mp4").click();
+    await page.keyboard.press("4");
+    await expect(card(page, "clip-0001.mp4").locator(".video-item-rating")).toBeVisible();
     await card(page, "clip-0001.mp4").click({ button: "right" });
     await expect(page.getByRole("menuitem", { name: /Send to the cut… · Fake editor/ })).toBeVisible();
     await page.getByRole("menuitem", { name: /Send to polish… · Fake companion/ }).click();
@@ -84,7 +87,14 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await expect(dialog.getByText("Sent 1")).toBeVisible();
     const sends = fake.state.requests.filter((request) => request.path === "/api/send");
     expect(sends.map((request) => request.body.dry_run)).toEqual([true, false]);
-    expect(sends[1].body).toEqual({ action: "polish", paths: [pathOf(1)], dry_run: false, again: false });
+    expect(sends[0].body.ratings).toEqual({ [pathOf(1)]: 4 });
+    expect(sends[1].body).toEqual({
+      action: "polish",
+      paths: [pathOf(1)],
+      ratings: { [pathOf(1)]: 4 },
+      dry_run: false,
+      again: false,
+    });
     // The other app was not sent anything.
     expect(editor.state.requests.filter((request) => request.path === "/api/send")).toEqual([]);
     await dialog.getByRole("button", { name: "Done" }).click();

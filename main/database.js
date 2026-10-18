@@ -1638,7 +1638,7 @@ function createMetadataStore(db) {
     SELECT * FROM file_instances WHERE id = ?;
   `);
   const fileInstanceLocationById = db.prepare(`
-    SELECT id, absolute_path, is_present FROM file_instances WHERE id = ?;
+    SELECT id, absolute_path, is_present, fingerprint FROM file_instances WHERE id = ?;
   `);
   const fileInstanceUpsert = db.prepare(`
     INSERT INTO file_instances (
@@ -3901,6 +3901,7 @@ function createMetadataStore(db) {
       id: Number(row.id),
       absolutePath: row.absolute_path,
       present: Boolean(row.is_present),
+      fingerprint: row.fingerprint || null,
     };
   }
 

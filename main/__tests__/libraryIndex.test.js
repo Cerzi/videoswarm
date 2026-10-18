@@ -308,6 +308,7 @@ if (!database || databaseLoadError) {
         id: indexed.instance.id,
         absolutePath: clip.filePath,
         present: true,
+        fingerprint: indexed.fingerprint,
       });
       store.markFileMissing(clip.filePath, { rootPath });
       expect(store.getFileInstanceLocation(indexed.instance.id)).toMatchObject({

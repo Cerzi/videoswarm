@@ -257,15 +257,28 @@ function createCompanionClient({
     return normalizeLookup(await request("/api/lookup", { paths: wanted }), wanted, actionIds);
   }
 
-  async function send({ action, paths, dryRun = false, again = false }) {
+  // `ratings` maps a sent path to its stars, 0 to 5; unrated clips are left
+  // out, and so is the field when none is rated.
+  async function send({ action, paths, ratings = null, dryRun = false, again = false }) {
     if (typeof action !== "string" || !ACTION_ID.test(action)) {
       throw new CompanionClientError("COMPANION_REQUEST_INVALID", "Unknown companion action");
     }
     const wanted = assertPaths(paths, MAX_SEND_PATHS);
     if (wanted.length === 0) return new Map();
+    const stars = {};
+    for (const filePath of wanted) {
+      const rating = ratings?.[filePath];
+      if (Number.isInteger(rating) && rating >= 0 && rating <= 5) stars[filePath] = rating;
+    }
     const raw = await request(
       "/api/send",
-      { action, paths: wanted, dry_run: dryRun === true, again: again === true },
+      {
+        action,
+        paths: wanted,
+        ...(Object.keys(stars).length ? { ratings: stars } : {}),
+        dry_run: dryRun === true,
+        again: again === true,
+      },
       { timeout: sendTimeoutMs }
     );
     return normalizeSendResults(raw, wanted);

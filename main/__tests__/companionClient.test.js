@@ -218,6 +218,22 @@ describe("createCompanionClient against a fake companion", () => {
     });
   });
 
+  it("sends rated clips' stars with every chunk, dry runs included, and leaves unrated ones out", async () => {
+    fake = createFakeCompanion();
+    const url = await fake.start();
+    const client = createCompanionClient({ url });
+    const CLIP_B = "/library/b.mp4";
+    const ratings = { [CLIP_A]: 4, [CLIP_B]: 0, "/library/not-sent.mp4": 5 };
+    await client.send({ action: "polish", paths: [CLIP_A, CLIP_B], ratings, dryRun: true });
+    expect(fake.state.requests.at(-1).body).toMatchObject({
+      ratings: { [CLIP_A]: 4, [CLIP_B]: 0 },
+      dry_run: true,
+    });
+    // Not whole stars from 0 to 5: left out rather than refused.
+    await client.send({ action: "polish", paths: [CLIP_A, CLIP_B], ratings: { [CLIP_A]: 2.5, [CLIP_B]: true } });
+    expect(fake.state.requests.at(-1).body).not.toHaveProperty("ratings");
+  });
+
   it("reports a companion that is down or refuses", async () => {
     fake = createFakeCompanion();
     const url = await fake.start();
