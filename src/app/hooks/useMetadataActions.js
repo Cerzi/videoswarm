@@ -5,6 +5,25 @@ import {
   reviewStateLabel,
 } from "../../review/reviewState";
 
+// Main takes at most this many clips per metadata change
+// (IPC_LIMITS.maxArrayEntries, REVIEW_RESTORE_MAX_SNAPSHOTS); a larger
+// selection goes in batches, one after another, with their updates put
+// together. A batch that fails stops the rest and is reported with the
+// updates already made, so the grid shows what was changed.
+export const METADATA_BATCH = 20_000;
+
+export async function inMetadataBatches(items, call, batchSize = METADATA_BATCH) {
+  if (items.length <= batchSize) return call(items);
+  const merged = { updates: {} };
+  for (let start = 0; start < items.length; start += batchSize) {
+    const result = await call(items.slice(start, start + batchSize));
+    if (result?.error) return { ...merged, error: result.error };
+    Object.assign(merged.updates, result?.updates || {});
+    if (Array.isArray(result?.tags)) merged.tags = result.tags;
+  }
+  return merged;
+}
+
 export function useMetadataActions({
   selectedFingerprints,
   setVideos,
@@ -69,8 +88,13 @@ export function useMetadataActions({
         return { success: false, error: "No valid tags supplied" };
       }
       try {
-        const result = await api.addTags(fingerprints, cleanNames);
-        if (result?.error) throw new Error(result.error);
+        const result = await inMetadataBatches(fingerprints, (batch) =>
+          api.addTags(batch, cleanNames)
+        );
+        if (result?.error) {
+          if (result.updates) applyMetadataPatch(result.updates);
+          throw new Error(result.error);
+        }
         if (!completionIsCurrent(requestedOwnership, completionGuard)) {
           return staleSuccess(result);
         }
@@ -117,8 +141,13 @@ export function useMetadataActions({
         return { success: false, error: "No valid tag target supplied" };
       }
       try {
-        const result = await api.removeTag(fingerprints, cleanName);
-        if (result?.error) throw new Error(result.error);
+        const result = await inMetadataBatches(fingerprints, (batch) =>
+          api.removeTag(batch, cleanName)
+        );
+        if (result?.error) {
+          if (result.updates) applyMetadataPatch(result.updates);
+          throw new Error(result.error);
+        }
         if (!completionIsCurrent(requestedOwnership, completionGuard)) {
           return staleSuccess(result);
         }
@@ -164,8 +193,11 @@ export function useMetadataActions({
         return { success: false, error: "No reviewable clips selected" };
       }
       try {
-        const result = await api.setRating(fingerprints, value);
+        const result = await inMetadataBatches(fingerprints, (batch) =>
+          api.setRating(batch, value)
+        );
         if (result?.error) {
+          if (result.updates) applyMetadataPatch(result.updates);
           throw new Error(result.error);
         }
         if (!completionIsCurrent(requestedOwnership, completionGuard)) {
@@ -228,8 +260,11 @@ export function useMetadataActions({
       const reviewState = normalizeReviewState(value);
 
       try {
-        const result = await api.setReviewState(fingerprints, reviewState);
+        const result = await inMetadataBatches(fingerprints, (batch) =>
+          api.setReviewState(batch, reviewState)
+        );
         if (result?.error) {
+          if (result.updates) applyMetadataPatch(result.updates);
           throw new Error(result.error);
         }
         if (!completionIsCurrent(requestedOwnership, completionGuard)) {
@@ -289,8 +324,11 @@ export function useMetadataActions({
       }
 
       try {
-        const result = await api.restoreReview(cleanSnapshots);
+        const result = await inMetadataBatches(cleanSnapshots, (batch) =>
+          api.restoreReview(batch)
+        );
         if (result?.error) {
+          if (result.updates) applyMetadataPatch(result.updates);
           throw new Error(result.error);
         }
         if (!completionIsCurrent(requestedOwnership, completionGuard)) {

@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import { useMetadataActions } from "./useMetadataActions";
+import { METADATA_BATCH, inMetadataBatches, useMetadataActions } from "./useMetadataActions";
 
 const noop = () => {};
 
@@ -473,5 +473,55 @@ describe("useMetadataActions", () => {
     expect(restoreResult.success).toBe(false);
     expect(notify).toHaveBeenCalledWith("Failed to undo review change", "error");
     consoleSpy.mockRestore();
+  });
+});
+
+describe("metadata changes in batches", () => {
+  afterEach(() => {
+    delete window.electronAPI;
+  });
+
+  it("splits what main cannot take at once and puts the updates together", async () => {
+    const call = vi.fn(async (batch) => ({
+      updates: Object.fromEntries(batch.map((item) => [item, { rating: 3 }])),
+      tags: [batch.length],
+    }));
+    const items = ["a", "b", "c", "d", "e"];
+    const result = await inMetadataBatches(items, call, 2);
+    expect(call.mock.calls.map(([batch]) => batch)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+    expect(Object.keys(result.updates)).toEqual(items);
+    expect(result.tags).toEqual([1]);
+    // Within the limit: one call, its own answer.
+    const single = await inMetadataBatches(["a"], async () => ({ updates: { a: {} }, extra: true }), 2);
+    expect(single).toEqual({ updates: { a: {} }, extra: true });
+  });
+
+  it("stops at a failed batch and keeps the updates already made", async () => {
+    const call = vi.fn(async (batch) =>
+      batch.includes("c") ? { error: "Profile changed" } : { updates: { [batch[0]]: { rating: 1 } } }
+    );
+    const result = await inMetadataBatches(["a", "b", "c", "d"], call, 2);
+    expect(result).toEqual({ updates: { a: { rating: 1 } }, error: "Profile changed" });
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it("rates a selection larger than one request", async () => {
+    const fingerprints = Array.from({ length: METADATA_BATCH + 3 }, (_, index) => `fp${index}`);
+    const setRating = vi.fn(async (batch, value) => ({
+      updates: Object.fromEntries(batch.map((fingerprint) => [fingerprint, { rating: value }])),
+    }));
+    window.electronAPI = { metadata: { setRating } };
+    let videos = [{ id: "last", fingerprint: `fp${METADATA_BATCH + 2}`, rating: null, tags: [] }];
+    const setVideos = (updater) => {
+      videos = typeof updater === "function" ? updater(videos) : updater;
+    };
+    const { result } = renderHook(() =>
+      useMetadataActions({ selectedFingerprints: fingerprints, setVideos, setAvailableTags: noop, notify: noop })
+    );
+    await act(async () => {
+      expect((await result.current.handleSetRating(4)).success).toBe(true);
+    });
+    expect(setRating.mock.calls.map(([batch]) => batch.length)).toEqual([METADATA_BATCH, 3]);
+    expect(videos[0].rating).toBe(4);
   });
 });

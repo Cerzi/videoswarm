@@ -233,6 +233,7 @@ const {
   createDirectoryAggregateBatcher,
 } = require("./main/directory-aggregate-batcher");
 const {
+  DEFAULT_MAX_TRASH_ITEMS,
   DEFAULT_TRASH_PREFLIGHT_CONCURRENCY,
   createTrashConfirmationStore,
   mapTrashWorkBounded,
@@ -3811,7 +3812,7 @@ ipcMain.handle("confirm-move-to-trash", async (event, payload = {}) => {
   const requestedPaths = assertStringArray(payload.paths, {
     name: "trash confirmation paths",
     minEntries: 1,
-    maxEntries: 2_000,
+    maxEntries: DEFAULT_MAX_TRASH_ITEMS,
     item: { minChars: 1, maxChars: IPC_LIMITS.maxPathChars, trim: true },
     dedupe: true,
   });
@@ -6603,7 +6604,7 @@ ipcMain.handle("bulk-move-to-trash", async (event, payload) => {
   const paths = assertStringArray(payload.paths, {
     name: "trash paths",
     minEntries: 1,
-    maxEntries: 2_000,
+    maxEntries: DEFAULT_MAX_TRASH_ITEMS,
     item: { minChars: 1, maxChars: IPC_LIMITS.maxPathChars, trim: true },
     dedupe: true,
   });

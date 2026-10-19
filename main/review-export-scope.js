@@ -1,7 +1,9 @@
 "use strict";
 
-const ACCEPTED_COPY_MAX_MEDIA = 20_000;
-const ACCEPTED_COPY_MAX_PATH_BYTES = 16 * 1024 * 1024;
+// As many clips as a library view holds (50,000), so whatever Ctrl+A selects
+// can be moved, copied or linked in one operation; paths are bounded too.
+const ACCEPTED_COPY_MAX_MEDIA = 50_000;
+const ACCEPTED_COPY_MAX_PATH_BYTES = 48 * 1024 * 1024;
 const REVIEW_EXPORT_SCOPES = Object.freeze([
   "all-descendants",
   "current-folder",

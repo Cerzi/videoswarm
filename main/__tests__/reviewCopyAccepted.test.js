@@ -482,9 +482,9 @@ describe("Copy Accepted native coordinator", () => {
         rootPath,
         directory: "",
         scope: "all-descendants",
-        limit: 20_001,
-        maxRecords: 20_000,
-        maxPathBytes: 16 * 1024 * 1024,
+        limit: 50_001,
+        maxRecords: 50_000,
+        maxPathBytes: 48 * 1024 * 1024,
         assertActive: expect.any(Function),
       })
     );

@@ -147,7 +147,9 @@ identity-binding flow. It targets only present, local Electron-backed video
 instances whose exact review state is `reject`; neutral Reviewed clips are
 never treated as accepted or rejected. Rejected non-local instances remain in
 the counts but are disclosed separately and are not submitted to the native
-file action. The existing 2,000-local-file safety bound remains. A larger set
+file action. The safety bound is 20,000 local files (raised from 2,000 on
+2026-10-19, with the native trash's own bound, so one confirmation covers a
+Ctrl+A selection). A larger set
 is not silently truncated: the action is disabled with guidance to narrow the
 folder scope and process explicit batches.
 
@@ -326,7 +328,7 @@ destructive work already under way.
 
 Status: **Unimplemented**
 
-- Result sets above 2,000 rejects without narrowing folder scope. A future
+- Result sets above 20,000 rejects without narrowing folder scope. A future
   main-owned streaming job would need bounded progress and cancellation while
   retaining the native confirmation and identity-binding guarantees.
 
@@ -398,7 +400,7 @@ Accepted clip Copy is **Implemented**.
   scope. The main process reads present `pick`
   instances from profile-local SQLite and never accepts renderer media/path
   records as copy authority.
-- Planning is bounded to 20,000 accepted media instances, 16 MiB of aggregate
+- Planning is bounded to 50,000 accepted media instances, 48 MiB of aggregate
   path material, eight expiring native plans, and 100 retained native issue
   samples. Renderer disclosure is further reduced to six safe relative-path
   samples.

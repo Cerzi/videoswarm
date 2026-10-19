@@ -1,7 +1,10 @@
 const crypto = require("crypto");
 const path = require("path");
 
-const DEFAULT_MAX_TRASH_ITEMS = 2_000;
+// As many as one move, tag change or review decision takes (20,000), so a
+// selection made with Ctrl+A is trashed after one confirmation. The work is
+// bounded, concurrent and reports progress.
+const DEFAULT_MAX_TRASH_ITEMS = 20_000;
 const DEFAULT_TRASH_CONFIRMATION_TTL_MS = 30_000;
 const DEFAULT_MAX_TRASH_CONFIRMATION_GRANTS = 64;
 // Electron exposes only a single-item trash primitive. A small worker pool

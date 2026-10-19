@@ -211,7 +211,7 @@ describe("ProcessReviewResultsDialog", () => {
 
   it("never submits part of an over-limit reject set", () => {
     const onTrashRejects = vi.fn();
-    const rejects = Array.from({ length: 2_001 }, (_, index) => ({
+    const rejects = Array.from({ length: 20_001 }, (_, index) => ({
       instanceId: index + 1,
       reviewState: "reject",
       isElectronFile: true,
@@ -223,8 +223,8 @@ describe("ProcessReviewResultsDialog", () => {
       />
     );
 
-    expect(screen.getByText(/safety limit is 2,000/i)).toBeInTheDocument();
-    const button = screen.getByRole("button", { name: "Move 2,001 to the Trash" });
+    expect(screen.getByText(/safety limit is 20,000/i)).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Move 20,001 to the Trash" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(onTrashRejects).not.toHaveBeenCalled();

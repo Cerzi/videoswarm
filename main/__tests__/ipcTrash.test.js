@@ -185,7 +185,7 @@ describe("authorized trash service", () => {
     const authorizePath = vi.fn();
     await expect(
       trashAuthorizedPaths({ paths: [], shell, authorizePath })
-    ).rejects.toThrow(/1-2000/);
+    ).rejects.toThrow(/1-20000/);
     await expect(
       trashAuthorizedPaths({
         paths: ["/a", "/b"],

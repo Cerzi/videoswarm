@@ -20,8 +20,8 @@ const completeRoot = Object.freeze({
 
 describe("review export scope", () => {
   it("exports stable Copy Accepted bounds for database integration", () => {
-    expect(ACCEPTED_COPY_MAX_MEDIA).toBe(20_000);
-    expect(ACCEPTED_COPY_MAX_PATH_BYTES).toBe(16 * 1024 * 1024);
+    expect(ACCEPTED_COPY_MAX_MEDIA).toBe(50_000);
+    expect(ACCEPTED_COPY_MAX_PATH_BYTES).toBe(48 * 1024 * 1024);
   });
 
   it("normalizes portable directory paths and rejects traversal", () => {

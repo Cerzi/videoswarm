@@ -1,6 +1,7 @@
 import { REVIEW_STATES, normalizeReviewState } from "./reviewState";
 
-export const REVIEW_RESULTS_TRASH_LIMIT = 2_000;
+// What main's trash takes after one confirmation (DEFAULT_MAX_TRASH_ITEMS).
+export const REVIEW_RESULTS_TRASH_LIMIT = 20_000;
 
 const hasRating = (value) => {
   if (value === null || value === undefined || value === "") return false;

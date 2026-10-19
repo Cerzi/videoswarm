@@ -19,8 +19,8 @@ describe("DebugSummary selection note", () => {
   });
 
   it("makes a large selection stand out and says what it cannot do at once", () => {
-    render(<DebugSummary total={48_213} selectedCount={48_213} onClearSelection={vi.fn()} />);
-    expect(screen.getByText("48,213 selected").className).toMatch(/debug-info__selection--large/);
-    expect(screen.getByText(/Too many to move, copy, tag or rate at once/)).toBeInTheDocument();
+    render(<DebugSummary total={52_000} selectedCount={52_000} onClearSelection={vi.fn()} />);
+    expect(screen.getByText("52,000 selected").className).toMatch(/debug-info__selection--large/);
+    expect(screen.getByText(/Too many to move or copy at once/)).toBeInTheDocument();
   });
 });
