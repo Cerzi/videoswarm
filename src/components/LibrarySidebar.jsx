@@ -226,6 +226,12 @@ function LibrarySidebarContentView({
   onSaveCurrentView,
   onDeleteSavedView,
   smartViewsEnabled = true,
+  // Unfinished review passes to resume (docs/architecture/review-passes.md):
+  // `{ id, name, clipCount, decided, finishedAt }`.
+  reviewPasses = [],
+  activeReviewPassId = null,
+  onOpenReviewPass,
+  onDeleteReviewPass,
   disabled = false,
   reviewModeEnabled = true,
 }) {
@@ -437,6 +443,49 @@ function LibrarySidebarContentView({
           <p className="library-sidebar__empty">Save filters for repeat browsing setups.</p>
         )}
       </section>
+
+      {reviewModeEnabled && reviewPasses.some((pass) => !pass.finishedAt) ? (
+        <section className="library-sidebar__section library-sidebar__section--views">
+          <header className="library-sidebar__section-header">
+            <div>
+              <span className="library-sidebar__eyebrow">Unfinished</span>
+              <h2>Review passes</h2>
+            </div>
+          </header>
+          <ul className="library-saved-view-list" aria-label="Review passes">
+            {reviewPasses
+              .filter((pass) => !pass.finishedAt)
+              .map((pass) => (
+                <li key={pass.id}>
+                  <button
+                    type="button"
+                    className="library-saved-view-list__apply"
+                    onClick={() => onOpenReviewPass?.(pass.id)}
+                    disabled={disabled}
+                    aria-current={pass.id === activeReviewPassId ? "true" : undefined}
+                    title={`Resume reviewing ${pass.name}`}
+                  >
+                    <span aria-hidden="true">▸</span>
+                    <span className="library-saved-view-list__name">{pass.name}</span>
+                    <span className="library-saved-view-list__scope">
+                      {`${(pass.decided || 0).toLocaleString()} / ${(pass.clipCount || 0).toLocaleString()}`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="library-saved-view-list__delete"
+                    onClick={() => onDeleteReviewPass?.(pass.id)}
+                    aria-label={`Forget review pass ${pass.name}`}
+                    title="Forget this pass; the clips and their decisions stay"
+                    disabled={disabled}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="library-sidebar__section library-sidebar__section--folders">
         <header className="library-sidebar__section-header">

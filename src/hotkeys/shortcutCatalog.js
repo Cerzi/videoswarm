@@ -49,6 +49,23 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     action: "rating",
   }),
   freezeShortcut({
+    id: "review-pass-start",
+    keys: ["Shift", "R"],
+    label: "Review these clips as a pass",
+    detail: "Freezes the clips shown, or the selection, in their order; resume it from the sidebar.",
+  }),
+  freezeShortcut({
+    id: "review-quick-first",
+    keys: ["Shift", "1"],
+    label: "Accept and send to the first quick action",
+    detail: "The first one-click action a connected companion app offers.",
+  }),
+  freezeShortcut({
+    id: "review-quick-second",
+    keys: ["Shift", "2"],
+    label: "Accept and send to the second quick action",
+  }),
+  freezeShortcut({
     id: "review-clear-rating",
     keys: ["0"],
     label: "Clear star rating",

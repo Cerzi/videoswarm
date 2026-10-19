@@ -178,6 +178,7 @@ const {
 } = require("./main/directory-scan-progress");
 const {
   createCachedLibraryResponse,
+  createTaggedLibraryFiles,
 } = require("./main/cached-library-snapshot");
 const {
   buildGenerationVersionsResponse,
@@ -6553,6 +6554,118 @@ ipcMain.handle("generation-versions:siblings", async (_event, payload = {}) => {
   return runMetadataContextOperation(
     (metadataStore) => metadataStore.getGenerationVersionSiblings(instanceId),
     "GENERATION_VERSION_SIBLINGS_ERROR"
+  );
+});
+
+// ===== Review passes =====
+// docs/architecture/review-passes.md. The renderer freezes clips it shows
+// (fingerprints and catalog rows, in order) into a pass; opening one returns
+// them as playable records, their roots granted as for the versions view.
+const REVIEW_PASS_MAX_CLIPS = 50_000;
+const reviewPassId = (value) =>
+  assertInteger(value, { name: "review pass", min: 1, max: Number.MAX_SAFE_INTEGER });
+
+ipcMain.handle("review-passes:create", async (_event, payload = {}) => {
+  assertPlainObject(payload, "review pass");
+  if (!Array.isArray(payload.clips) || payload.clips.length < 1 || payload.clips.length > REVIEW_PASS_MAX_CLIPS) {
+    throw new TypeError(`A review pass holds 1 to ${REVIEW_PASS_MAX_CLIPS.toLocaleString()} clips`);
+  }
+  const clips = payload.clips.map((clip) => ({
+    fingerprint: typeof clip?.fingerprint === "string" ? clip.fingerprint.slice(0, 512) : "",
+    instanceId: Number.isSafeInteger(clip?.instanceId) ? clip.instanceId : null,
+  }));
+  const name = assertString(payload.name, { name: "review pass name", minChars: 1, maxChars: 120, trim: true });
+  const source = payload.source === "selection" ? "selection" : "results";
+  const location =
+    payload.location && typeof payload.location === "object" && !Array.isArray(payload.location)
+      ? {
+          rootPath:
+            typeof payload.location.rootPath === "string"
+              ? assertString(payload.location.rootPath, { name: "review pass root", maxChars: IPC_LIMITS.maxPathChars })
+              : null,
+          directory:
+            typeof payload.location.directory === "string"
+              ? assertString(payload.location.directory, { name: "review pass folder", maxChars: IPC_LIMITS.maxPathChars })
+              : "",
+        }
+      : null;
+  return runMetadataContextOperation(
+    (metadataStore) => ({
+      pass: metadataStore.createReviewPass({
+        name,
+        source,
+        definition: source === "results" ? payload.definition || null : null,
+        location,
+        clips,
+      }),
+    }),
+    "REVIEW_PASS_ERROR"
+  );
+});
+
+ipcMain.handle("review-passes:list", async () =>
+  runMetadataContextOperation(
+    (metadataStore) => ({ passes: metadataStore.listReviewPasses() }),
+    "REVIEW_PASS_ERROR"
+  )
+);
+
+ipcMain.handle("review-passes:open", async (event, payload = {}) => {
+  assertPlainObject(payload, "review pass");
+  const id = reviewPassId(payload.id);
+  const rootsResult = runLibraryCatalogOperation((metadataStore) => ({
+    rootPaths: metadataStore.getLibraryRoots().map((root) => root.rootPath),
+  }));
+  if (rootsResult?.success === false) return rootsResult;
+  const unavailableRootPaths = await findUnavailableRootPaths(rootsResult.rootPaths);
+  const result = runLibraryCatalogOperation((metadataStore, context) => {
+    const found = metadataStore.getReviewPassRecords(id, {
+      unavailableRootPaths,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    if (!found) throw Object.assign(new Error("That review pass is gone"), { code: "REVIEW_PASS_GONE" });
+    return {
+      pass: found.pass,
+      // Each record keeps its place in the pass.
+      records: found.records
+        .map((record) => {
+          const [file] = createTaggedLibraryFiles([record], { generation: context.generation });
+          return file ? { ...file, passPosition: record.passPosition } : null;
+        })
+        .filter(Boolean),
+      rootPaths: found.rootPaths,
+    };
+  });
+  if (result?.success === false) return result;
+  await grantKnownRendererRoots(event.sender, result.rootPaths);
+  return result;
+});
+
+ipcMain.handle("review-passes:cursor", async (_event, payload = {}) => {
+  assertPlainObject(payload, "review pass cursor");
+  const id = reviewPassId(payload.id);
+  const position = assertInteger(payload.position, { name: "review pass position", min: 0, max: REVIEW_PASS_MAX_CLIPS });
+  return runMetadataContextOperation(
+    (metadataStore) => ({ updated: metadataStore.setReviewPassCursor(id, position) }),
+    "REVIEW_PASS_ERROR"
+  );
+});
+
+ipcMain.handle("review-passes:finish", async (_event, payload = {}) => {
+  assertPlainObject(payload, "review pass");
+  const id = reviewPassId(payload.id);
+  return runMetadataContextOperation(
+    (metadataStore) => ({ updated: metadataStore.finishReviewPass(id) }),
+    "REVIEW_PASS_ERROR"
+  );
+});
+
+ipcMain.handle("review-passes:delete", async (_event, payload = {}) => {
+  assertPlainObject(payload, "review pass");
+  const id = reviewPassId(payload.id);
+  return runMetadataContextOperation(
+    (metadataStore) => ({ deleted: metadataStore.deleteReviewPass(id) }),
+    "REVIEW_PASS_ERROR"
   );
 });
 

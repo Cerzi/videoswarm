@@ -75,6 +75,25 @@ describe('useHotkeys', () => {
     expect(onClearSelection).toHaveBeenCalledTimes(1);
   });
 
+  test('Shift+R starts a review pass and Shift+1/2 send to quick actions, by physical key', () => {
+    const onStartReviewPass = vi.fn();
+    const onQuickReview = vi.fn();
+    renderHook(() => useHotkeys(run, getSelection, { onStartReviewPass, onQuickReview }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', code: 'KeyR', shiftKey: true }));
+    expect(onStartReviewPass).toHaveBeenCalledTimes(1);
+    // A layout's shifted symbol does not matter: the digit key does.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '!', code: 'Digit1', shiftKey: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '"', code: 'Digit2', shiftKey: true }));
+    expect(onQuickReview.mock.calls).toEqual([[0], [1]]);
+    // Without a selection there is nothing to send.
+    getSelection.mockReturnValue(new Set());
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '!', code: 'Digit1', shiftKey: true }));
+    expect(onQuickReview).toHaveBeenCalledTimes(2);
+    // Plain R stays Reviewed's compatibility key.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR' }));
+    expect(onStartReviewPass).toHaveBeenCalledTimes(1);
+  });
+
   test('Ctrl/Cmd + C triggers COPY_PATH (multi allowed)', () => {
     renderHook(() => useHotkeys(run, getSelection));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));

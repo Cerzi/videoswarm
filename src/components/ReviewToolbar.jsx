@@ -49,6 +49,9 @@ export default function ReviewToolbar({
   onReviewAllUnreviewed,
   onShowReviewTarget,
   onIndexSubfolders,
+  // Freezes what is shown, or the selection, into a review pass
+  // (docs/architecture/review-passes.md): `{ count, selection, onStart }`.
+  passControl = null,
   initialFolded = [],
 }) {
   const barRef = useRef(null);
@@ -108,6 +111,25 @@ export default function ReviewToolbar({
             onIndexSubfolders={onIndexSubfolders}
             compact={isFolded("sessionDetail")}
           />
+        ) : null}
+
+        {passControl && passControl.count > 0 ? (
+          <button
+            type="button"
+            className="review-toolbar__utility review-toolbar__pass"
+            disabled={isBusy}
+            onClick={() => passControl.onStart?.()}
+            title={
+              passControl.selection
+                ? "Review just the selected clips, in this order, as a pass you can resume (Shift+R)"
+                : "Review every clip shown, in this order, as a pass you can resume; they stay put even if they stop matching (Shift+R)"
+            }
+          >
+            {passControl.selection
+              ? `Review ${formatCount(passControl.count)} selected`
+              : `Review these ${formatCount(passControl.count)}`}
+            <kbd>⇧R</kbd>
+          </button>
         ) : null}
 
         {total > 0 && !isFolded("progress") ? (

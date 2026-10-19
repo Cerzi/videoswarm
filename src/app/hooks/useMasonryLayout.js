@@ -161,6 +161,8 @@ export function useMasonryLayout({
   // The versions view: clips stay in the order given (version order) and sit
   // side by side in one row fitted to the window, whatever the zoom.
   comparison = false,
+  // A review pass: clips stay in the order given, laid out as usual.
+  keepOrder = false,
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -320,8 +322,8 @@ export function useMasonryLayout({
 
   const orderedVideos = useMemo(() => {
     const list = Array.isArray(filteredVideos) ? filteredVideos : [];
-    return comparison ? list : groupAndSort(list, { groupByFolders, comparator });
-  }, [comparison, filteredVideos, groupByFolders, comparator]);
+    return comparison || keepOrder ? list : groupAndSort(list, { groupByFolders, comparator });
+  }, [comparison, keepOrder, filteredVideos, groupByFolders, comparator]);
 
   const orderedIds = useMemo(
     () => orderedVideos.map((video) => video.id),

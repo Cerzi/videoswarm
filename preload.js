@@ -428,6 +428,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
   },
 
+  // Review passes: a frozen list of clips to review, kept to resume
+  // (docs/architecture/review-passes.md). Fingerprints and catalog rows in.
+  reviewPasses: {
+    create: async ({ name, source, definition, location, clips } = {}) =>
+      ipcRenderer.invoke("review-passes:create", {
+        name: typeof name === "string" ? name : "",
+        source: source === "selection" ? "selection" : "results",
+        definition: definition && typeof definition === "object" ? definition : null,
+        location: location && typeof location === "object" ? location : null,
+        clips: Array.isArray(clips) ? clips : [],
+      }),
+    list: async () => ipcRenderer.invoke("review-passes:list"),
+    open: async (id) => ipcRenderer.invoke("review-passes:open", { id }),
+    setCursor: async (id, position) => ipcRenderer.invoke("review-passes:cursor", { id, position }),
+    finish: async (id) => ipcRenderer.invoke("review-passes:finish", { id }),
+    remove: async (id) => ipcRenderer.invoke("review-passes:delete", { id }),
+  },
+
   // Workflow filters: fingerprints, words and steps bounds in, matching
   // fingerprints out. Node types and file names never cross.
   workflow: {

@@ -104,6 +104,8 @@ const GENERATION_VERSION_LIMITS = Object.freeze({
   maxSiblingRows: 512,
 });
 const SAVED_VIEW_LIMIT = 100;
+// A pass holds as many clips as a library view (50,000); ten are kept.
+const REVIEW_PASS_LIMITS = Object.freeze({ maxClips: 50_000, keep: 10, maxNameChars: 120 });
 const WORKFLOW_FACT_LIMITS = Object.freeze({
   maxTerms: 512,
   maxTermChars: 128,
@@ -1028,6 +1030,30 @@ function initDatabase(app, profilePath) {
       -- The local read API looks clips up by path.
       CREATE INDEX IF NOT EXISTS idx_file_instances_absolute_path
         ON file_instances(absolute_path);
+
+      -- Review passes (docs/architecture/review-passes.md): a frozen list of
+      -- clips to review, by content, in the order they were shown, and how
+      -- far the review has got. A few are kept to resume.
+      CREATE TABLE IF NOT EXISTS review_passes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('results', 'selection')),
+        definition_json TEXT,
+        location_json TEXT,
+        clip_count INTEGER NOT NULL,
+        cursor_position INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        finished_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS review_pass_clips (
+        pass_id INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        instance_id INTEGER,
+        PRIMARY KEY (pass_id, position),
+        FOREIGN KEY (pass_id) REFERENCES review_passes(id) ON DELETE CASCADE
+      );
     `);
 
     // Tag hierarchy: each tag may have one parent ("bellydance" under
@@ -5272,6 +5298,88 @@ function createMetadataStore(db) {
 
   // Every present instance of one generation's versions, with the tag
   // view's columns, for the versions view.
+  // Review passes. A clip is decided once it has a review state other than
+  // unreviewed, a rating counting as reviewed, as everywhere else.
+  const reviewPassInsert = db.prepare(`
+    INSERT INTO review_passes (
+      name, source, definition_json, location_json, clip_count, cursor_position,
+      created_at, updated_at
+    ) VALUES (@name, @source, @definition_json, @location_json, @clip_count, 0, @now, @now);
+  `);
+  const reviewPassClipInsert = db.prepare(`
+    INSERT INTO review_pass_clips (pass_id, position, fingerprint, instance_id)
+    VALUES (?, ?, ?, ?);
+  `);
+  const reviewPassSummaries = db.prepare(`
+    SELECT p.*,
+      (
+        SELECT COUNT(*) FROM review_pass_clips c
+        LEFT JOIN ratings r ON r.fingerprint = c.fingerprint
+        LEFT JOIN content_review cr ON cr.fingerprint = c.fingerprint
+        WHERE c.pass_id = p.id
+          AND COALESCE(cr.state,
+            CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+          ) != 'unreviewed'
+      ) AS decided
+    FROM review_passes p
+    ORDER BY p.updated_at DESC, p.id DESC;
+  `);
+  const reviewPassById = db.prepare('SELECT * FROM review_passes WHERE id = ?;');
+  const reviewPassPrune = db.prepare(`
+    DELETE FROM review_passes WHERE id IN (
+      SELECT id FROM review_passes
+      ORDER BY (finished_at IS NULL) DESC, updated_at DESC, id DESC
+      LIMIT -1 OFFSET @keep
+    );
+  `);
+  const reviewPassCursor = db.prepare(`
+    UPDATE review_passes SET cursor_position = @position, updated_at = @now WHERE id = @id;
+  `);
+  const reviewPassFinish = db.prepare(`
+    UPDATE review_passes SET finished_at = COALESCE(finished_at, @now), updated_at = @now
+    WHERE id = @id;
+  `);
+  const reviewPassDelete = db.prepare('DELETE FROM review_passes WHERE id = ?;');
+  // Each position's clip as one present instance: the one the pass was made
+  // from while it is present, otherwise the copy seen most recently.
+  const reviewPassInstances = db.prepare(`
+    SELECT * FROM (
+    SELECT c.position AS pass_position, fi.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY c.position
+        ORDER BY (fi.id = c.instance_id) DESC, fi.last_seen_at DESC, fi.id
+      ) AS position_rank,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM review_pass_clips c
+    INNER JOIN file_instances fi ON fi.fingerprint = c.fingerprint
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE c.pass_id = @pass_id
+      AND fi.is_present != 0
+      AND d.is_present != 0
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
+    )
+    WHERE position_rank = 1
+    ORDER BY pass_position;
+  `);
+
   const generationVersionInstances = db.prepare(`
     SELECT * FROM (
     SELECT fi.*,
@@ -6092,6 +6200,140 @@ function createMetadataStore(db) {
     };
   }
 
+  function mapReviewPassRow(row) {
+    if (!row) return null;
+    const parse = (value) => {
+      if (!value) return null;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    };
+    return {
+      id: Number(row.id),
+      name: row.name,
+      source: row.source,
+      definition: parse(row.definition_json),
+      location: parse(row.location_json),
+      clipCount: Number(row.clip_count || 0),
+      decided: row.decided === undefined ? undefined : Number(row.decided || 0),
+      cursorPosition: Number(row.cursor_position || 0),
+      createdAt: Number(row.created_at || 0),
+      updatedAt: Number(row.updated_at || 0),
+      finishedAt: row.finished_at === null || row.finished_at === undefined ? null : Number(row.finished_at),
+    };
+  }
+
+  function normalizeReviewPassId(value) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id < 1) throw new TypeError('A valid review pass id is required');
+    return id;
+  }
+
+  /**
+   * Freezes clips into a review pass (docs/architecture/review-passes.md):
+   * `clips` are `{ fingerprint, instanceId }` in the order shown, at most
+   * 50,000, each content once. A pass made from results keeps the view it
+   * was made with (`definition`, as a smart view's) and where (`location`),
+   * to run the search again. Only the newest ten are kept, finished first
+   * to go.
+   */
+  function createReviewPass(input = {}) {
+    const source = input.source === 'selection' ? 'selection' : input.source === 'results' ? 'results' : null;
+    if (!source) throw new TypeError('A review pass comes from results or a selection');
+    const name = String(input.name ?? '').trim().slice(0, REVIEW_PASS_LIMITS.maxNameChars);
+    if (!name) throw new TypeError('A review pass needs a name');
+    const clips = Array.isArray(input.clips) ? input.clips : null;
+    if (!clips || clips.length === 0 || clips.length > REVIEW_PASS_LIMITS.maxClips) {
+      throw new RangeError(
+        `A review pass holds 1 to ${REVIEW_PASS_LIMITS.maxClips.toLocaleString()} clips`
+      );
+    }
+    const seen = new Set();
+    const ordered = [];
+    for (const clip of clips) {
+      const fingerprint = typeof clip?.fingerprint === 'string' ? clip.fingerprint : '';
+      if (!fingerprint || fingerprint.length > 512 || seen.has(fingerprint)) continue;
+      seen.add(fingerprint);
+      const instanceId = Number(clip.instanceId);
+      ordered.push([fingerprint, Number.isSafeInteger(instanceId) && instanceId > 0 ? instanceId : null]);
+    }
+    if (!ordered.length) throw new TypeError('A review pass needs clips with content');
+    const definition =
+      source === 'results' && input.definition ? normalizeSavedViewDefinition(input.definition) : null;
+    const location =
+      input.location && typeof input.location === 'object'
+        ? {
+            rootPath: typeof input.location.rootPath === 'string' ? input.location.rootPath : null,
+            directory: typeof input.location.directory === 'string' ? input.location.directory : '',
+          }
+        : null;
+    const now = Date.now();
+    let passId = null;
+    db.transaction(() => {
+      const result = reviewPassInsert.run({
+        name,
+        source,
+        definition_json: definition ? JSON.stringify(definition) : null,
+        location_json: location ? JSON.stringify(location) : null,
+        clip_count: ordered.length,
+        now,
+      });
+      passId = Number(result.lastInsertRowid);
+      ordered.forEach(([fingerprint, instanceId], position) => {
+        reviewPassClipInsert.run(passId, position, fingerprint, instanceId);
+      });
+      reviewPassPrune.run({ keep: REVIEW_PASS_LIMITS.keep });
+    })();
+    return mapReviewPassRow(reviewPassById.get(passId));
+  }
+
+  function listReviewPasses() {
+    return reviewPassSummaries.all().map(mapReviewPassRow);
+  }
+
+  /** A pass and its clips as library records, in order; gone clips left out. */
+  function getReviewPassRecords(passId, options = {}) {
+    assertOperationActive(options.assertActive);
+    const id = normalizeReviewPassId(passId);
+    const pass = mapReviewPassRow(reviewPassById.get(id));
+    if (!pass) return null;
+    const unavailableRootPaths = (
+      Array.isArray(options.unavailableRootPaths) ? options.unavailableRootPaths : []
+    ).filter((rootPath) => typeof rootPath === 'string' && rootPath);
+    const rows = reviewPassInstances.all({
+      pass_id: id,
+      unavailable_root_paths: JSON.stringify(unavailableRootPaths),
+    });
+    assertOperationActive(options.assertActive);
+    const tagsByFingerprint = new Map();
+    const records = rows.map((row, index) => {
+      if ((index & 255) === 255) assertOperationActive(options.assertActive);
+      return { ...mapLibraryInstanceRow(row, tagsByFingerprint), passPosition: Number(row.pass_position) };
+    });
+    return {
+      pass,
+      records,
+      rootPaths: [...new Set(records.map((record) => record.rootPath))],
+    };
+  }
+
+  function setReviewPassCursor(passId, position) {
+    const id = normalizeReviewPassId(passId);
+    const at = Number(position);
+    if (!Number.isSafeInteger(at) || at < 0) throw new TypeError('A valid position is required');
+    return reviewPassCursor.run({ id, position: at, now: Date.now() }).changes > 0;
+  }
+
+  function finishReviewPass(passId) {
+    return reviewPassFinish.run({ id: normalizeReviewPassId(passId), now: Date.now() }).changes > 0;
+  }
+
+  function deleteReviewPass(passId) {
+    return reviewPassDelete.run(normalizeReviewPassId(passId)).changes > 0;
+  }
+
   // A clip tagged "bellydance" counts toward "dance" too, once however many
   // of its tags sit under "dance". directCount is the tag's own clips.
   function listTags() {
@@ -6539,6 +6781,12 @@ function createMetadataStore(db) {
     getGenerationVersionSiblings,
     getGenerationVersionRecords,
     matchWorkflowFacts,
+    createReviewPass,
+    listReviewPasses,
+    getReviewPassRecords,
+    setReviewPassCursor,
+    finishReviewPass,
+    deleteReviewPass,
     listPresentInstancesForPromptKey,
     listLibraryPromptKeys,
     getFrameRows,

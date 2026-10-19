@@ -10,6 +10,7 @@ import React, {
 import VideoCard from "./components/VideoCard/VideoCard";
 import StackBar from "./components/StackBar";
 import VersionsBar from "./components/VersionsBar";
+import ReviewPassBar from "./components/ReviewPassBar";
 import {
   buildVersionMembers,
   versionCardLabel,
@@ -252,6 +253,8 @@ const expandFolderAncestors = (previous, relativePath) => {
 
 const NO_STRIP_IDS = Object.freeze([]);
 const NO_VERSION_GUESTS = Object.freeze([]);
+// As many clips as a library view holds (main's REVIEW_PASS_MAX_CLIPS).
+const REVIEW_PASS_MAX_CLIPS = 50_000;
 
 function App() {
   // Selection state (SOLID). While prompt stacks are collapsed, every run of
@@ -302,6 +305,10 @@ function App() {
   // `{ originId, records, status, truncated }`, over whatever grid it was
   // opened from.
   const [versionView, setVersionView] = useState(null);
+  // A review pass (docs/architecture/review-passes.md): a frozen list of
+  // clips under review, `{ id, name, source, definition, location, records,
+  // positions: Map<fingerprint, position> }`, over whatever grid was open.
+  const [reviewPass, setReviewPass] = useState(null);
   // Opens it from anywhere: the card pill and the details panel.
   const handleOpenVersionsRef = useRef(null);
   const [randomSeed, setRandomSeed] = useState(null);
@@ -983,7 +990,19 @@ function App() {
         : null,
     [versionView, videos]
   );
-  const versionGuests = versionViewClips?.guests || NO_VERSION_GUESTS;
+  const reviewPassClips = useMemo(
+    () =>
+      reviewPass ? buildVersionMembers(reviewPass.records, { videos, originId: null }) : null,
+    [reviewPass, videos]
+  );
+  // Clips shown from outside the open collection: versions and a review
+  // pass's clips from folders that are not open.
+  const versionGuests = useMemo(() => {
+    const versions = versionViewClips?.guests || NO_VERSION_GUESTS;
+    const pass = reviewPassClips?.guests || NO_VERSION_GUESTS;
+    if (!pass.length) return versions;
+    return versions.length ? [...versions, ...pass] : pass;
+  }, [reviewPassClips, versionViewClips]);
   const versionLabelById = useMemo(() => {
     const labels = new Map();
     versionViewClips?.members.forEach((video, index) => {
@@ -993,13 +1012,17 @@ function App() {
   }, [versionViewClips]);
   const gridVideos = useMemo(() => {
     if (versionViewClips) return versionViewClips.members;
+    // A review pass shows its frozen list, whatever the filters say now.
+    if (reviewPassClips) return reviewPassClips.members;
     if (openStack) return openStack.members;
     return collapsePromptStacks(scopedFilteredVideos, promptStacks);
-  }, [openStack, promptStacks, scopedFilteredVideos, versionViewClips]);
-  // Inside an open stack, or among versions, every clip selects on its own.
+  }, [openStack, promptStacks, reviewPassClips, scopedFilteredVideos, versionViewClips]);
+  // Inside an open stack, among versions or in a pass, every clip selects on
+  // its own.
   const stackSelectionUnits = useMemo(
-    () => (openStack || versionView ? null : createStackSelectionUnits(promptStacks)),
-    [openStack, promptStacks, versionView]
+    () =>
+      openStack || versionView || reviewPass ? null : createStackSelectionUnits(promptStacks),
+    [openStack, promptStacks, reviewPass, versionView]
   );
   selectionUnitsRef.current = stackSelectionUnits;
   // A stack is never left partly selected, so an action on it can never
@@ -1311,6 +1334,8 @@ function App() {
     scrollContainerElement,
     gridElement,
     comparison: Boolean(versionView),
+    // A pass keeps the order it was frozen in.
+    keepOrder: Boolean(reviewPass),
   });
   fullOrderedVideosRef.current = orderedVideos;
   revealScrollRef.current = scrollToId;
@@ -1808,11 +1833,15 @@ function App() {
           : `web:${webCollectionEpoch}`,
       currentDirectory,
       folderScope,
+      // A review pass is its own scope: entering or leaving one starts a new
+      // undo history.
+      reviewPass?.id ?? null,
     ]),
     [
       activeRootPath,
       currentDirectory,
       folderScope,
+      reviewPass?.id,
       reviewProfileEpoch,
       webCollectionEpoch,
     ]
@@ -1827,6 +1856,11 @@ function App() {
       setVideos(update);
       if (typeof update !== "function") return;
       setVersionView((previous) =>
+        previous?.records?.length
+          ? { ...previous, records: update(previous.records) }
+          : previous
+      );
+      setReviewPass((previous) =>
         previous?.records?.length
           ? { ...previous, records: update(previous.records) }
           : previous
@@ -1976,7 +2010,8 @@ function App() {
     ]
   );
   const reviewWorkflow = useReviewWorkflow({
-    scopeVideos: reviewScopeVideos,
+    // In a review pass, progress, targets and advancing are the pass's.
+    scopeVideos: reviewPassClips ? reviewPassClips.members : reviewScopeVideos,
     // Every version shown, even one outside the folder scope or the folder.
     extraVideos: versionViewClips?.members || NO_VERSION_GUESTS,
     orderedVideoIds: orderForRange,
@@ -2208,6 +2243,8 @@ function App() {
     versionCollectionKeyRef.current = versionCollectionKey;
     versionRequestRef.current += 1;
     setVersionView(null);
+    // A review pass closes too; it stays listed to resume.
+    setReviewPass(null);
   }, [versionCollectionKey]);
   useEffect(() => {
     if (versionView && versionView.status !== "loading" && versionViewClips?.members.length === 0) {
@@ -4139,6 +4176,9 @@ function App() {
     selection.setSelectedIds(orderedVideos.map((video) => video.id));
   }, [orderedVideos, selection.setSelectedIds]);
 
+  // Review pass keys reach handlers defined further down.
+  const reviewPassKeysRef = useRef({});
+
   const appHotkeysEnabled =
     !isHotkeyHelpOpen &&
     !isAboutOpen &&
@@ -4187,6 +4227,14 @@ function App() {
     onRejectUnreviewedInStack:
       openStack && !versionView && reviewModeEnabled ? handleRejectUnreviewedInStack : null,
     onSelectAll: orderedVideos.length ? handleSelectAll : null,
+    // Shift+R freezes what is shown into a review pass; Shift+1/2 accept and
+    // send to a companion's quick action.
+    onStartReviewPass: reviewModeEnabled && !reviewPass
+      ? () => reviewPassKeysRef.current.start?.()
+      : null,
+    onQuickReview: reviewModeEnabled
+      ? (index) => reviewPassKeysRef.current.quick?.(index)
+      : null,
     onClearSelection: selection.clear,
     onOpenDetails: () => openMetadataPanel(),
     onAddToSequence: () => handleAddSelectionToSequence(),
@@ -4443,45 +4491,52 @@ function App() {
     [notify, setLibraryRootPinned]
   );
 
+  // The current filters, sort and scope as a smart view's definition: what
+  // a smart view saves, and what a review pass started from results keeps.
+  const buildCurrentViewDefinition = useCallback(
+    () => ({
+      version: 1,
+      filters: {
+        includeTags: filters.includeTags || [],
+        excludeTags: filters.excludeTags || [],
+        minRating: filters.minRating ?? null,
+        exactRating: filters.exactRating ?? null,
+        reviewFilter: filters.reviewFilter || REVIEW_FILTERS.ANY,
+        // A worklist that loses its resolution bound on save is a different
+        // list, so every filter the panel offers is saved.
+        includeTagsMode: filters.includeTagsMode === "any" ? "any" : "all",
+        minMegapixels: filters.minMegapixels ?? null,
+        maxMegapixels: filters.maxMegapixels ?? null,
+        versionFilter: normalizeVersionFilter(filters.versionFilter),
+        companionFilters: filters.companionFilters || {},
+        companionHideSent: filters.companionHideSent === true,
+        promptQuery: (filters.promptQuery || "").trim(),
+        mightBe: (filters.mightBe || "").trim(),
+        // docs/architecture/workflow-filters.md
+        minFrameRate: filters.minFrameRate ?? null,
+        maxFrameRate: filters.maxFrameRate ?? null,
+        minSteps: filters.minSteps ?? null,
+        maxSteps: filters.maxSteps ?? null,
+        workflowInclude: (filters.workflowInclude || "").trim(),
+        workflowExclude: (filters.workflowExclude || "").trim(),
+      },
+      sort: {
+        key: sortKey,
+        dir: sortDir,
+        groupByFolders,
+        randomSeed,
+      },
+      scope: { mode: folderScope },
+      // Saved during a library search, the view searches the library
+      // wherever it is applied; otherwise it applies to the open folder.
+      searchScope: librarySearchScope === "library" ? "library" : "folder",
+    }),
+    [filters, folderScope, groupByFolders, librarySearchScope, randomSeed, sortDir, sortKey]
+  );
+
   const handleSaveCurrentView = useCallback(
     async (name) => {
-      const definition = {
-        version: 1,
-        filters: {
-          includeTags: filters.includeTags || [],
-          excludeTags: filters.excludeTags || [],
-          minRating: filters.minRating ?? null,
-          exactRating: filters.exactRating ?? null,
-          reviewFilter: filters.reviewFilter || REVIEW_FILTERS.ANY,
-          // A worklist that loses its resolution bound on save is a different
-          // list, so every filter the panel offers is saved.
-          includeTagsMode: filters.includeTagsMode === "any" ? "any" : "all",
-          minMegapixels: filters.minMegapixels ?? null,
-          maxMegapixels: filters.maxMegapixels ?? null,
-          versionFilter: normalizeVersionFilter(filters.versionFilter),
-          companionFilters: filters.companionFilters || {},
-          companionHideSent: filters.companionHideSent === true,
-          promptQuery: (filters.promptQuery || "").trim(),
-          mightBe: (filters.mightBe || "").trim(),
-          // docs/architecture/workflow-filters.md
-          minFrameRate: filters.minFrameRate ?? null,
-          maxFrameRate: filters.maxFrameRate ?? null,
-          minSteps: filters.minSteps ?? null,
-          maxSteps: filters.maxSteps ?? null,
-          workflowInclude: (filters.workflowInclude || "").trim(),
-          workflowExclude: (filters.workflowExclude || "").trim(),
-        },
-        sort: {
-          key: sortKey,
-          dir: sortDir,
-          groupByFolders,
-          randomSeed,
-        },
-        scope: { mode: folderScope },
-        // Saved during a library search, the view searches the library
-        // wherever it is applied; otherwise it applies to the open folder.
-        searchScope: librarySearchScope === "library" ? "library" : "folder",
-      };
+      const definition = buildCurrentViewDefinition();
       try {
         const view = await createSavedView(name, definition);
         if (!view) throw new Error("Saved views are unavailable");
@@ -4492,17 +4547,7 @@ function App() {
         notify(error?.message || "Failed to save smart view", "error");
         throw error;
       }
-    }, [
-      createSavedView,
-      filters,
-      folderScope,
-      groupByFolders,
-      librarySearchScope,
-      notify,
-      randomSeed,
-      sortDir,
-      sortKey,
-    ]
+    }, [buildCurrentViewDefinition, createSavedView, notify]
   );
 
   const handleApplySavedView = useCallback(
@@ -4574,6 +4619,268 @@ function App() {
     },
     [deleteSavedView, notify]
   );
+
+  // ----- Review passes -----------------------------------------------------
+  // See docs/architecture/review-passes.md. A pass freezes the clips being
+  // looked at (or the selection) in their order; it is kept in the profile to
+  // resume, and progress counts it alone.
+  const [reviewPassList, setReviewPassList] = useState([]);
+  const refreshReviewPasses = useCallback(async () => {
+    const list = window.electronAPI?.reviewPasses?.list;
+    if (typeof list !== "function") return;
+    try {
+      const result = await list();
+      if (result?.success !== false) {
+        setReviewPassList(Array.isArray(result?.passes) ? result.passes : []);
+      }
+    } catch {
+      // Keep the last list.
+    }
+  }, []);
+  useEffect(() => {
+    void refreshReviewPasses();
+  }, [refreshReviewPasses, reviewProfileEpoch]);
+
+  // The clips a new pass would freeze, in on-screen order: the selection when
+  // two or more are selected, else everything the grid shows, a collapsed
+  // stack standing for all of its runs.
+  const reviewPassCandidates = useCallback(() => {
+    const expand = (video) => {
+      const key = stackSelectionUnits ? promptStacks.keyById.get(video.id) : null;
+      return (key && promptStacks.stacks.get(key)?.members) || [video];
+    };
+    const chosen = selection.size >= 2 ? selection.selected : null;
+    const clips = [];
+    for (const video of orderedVideos) {
+      for (const member of expand(video)) {
+        if (!chosen || chosen.has(member.id)) clips.push(member);
+      }
+    }
+    return { source: chosen ? "selection" : "results", clips };
+  }, [orderedVideos, promptStacks, selection.selected, selection.size, stackSelectionUnits]);
+  const reviewPassCandidateCount =
+    selection.size >= 2
+      ? selection.size
+      : stackSelectionUnits
+        ? scopedFilteredVideos.length
+        : orderedVideos.length;
+
+  const pendingPassRevealRef = useRef(null);
+  const passCursorRef = useRef(null);
+  const showReviewPass = useCallback((pass, records, positions, cursorPosition = 0) => {
+    setVersionView(null);
+    setReviewPass({ ...pass, records, positions });
+    passCursorRef.current = { id: pass.id, position: cursorPosition, dirty: false };
+    selectionUnitsRef.current = null;
+    const at =
+      records.find((record) => (positions.get(record.fingerprint) ?? 0) >= cursorPosition) ||
+      records[0];
+    pendingPassRevealRef.current = at?.fingerprint || null;
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, []);
+
+  const handleStartReviewPass = useCallback(async () => {
+    const api = window.electronAPI?.reviewPasses;
+    if (typeof api?.create !== "function") return;
+    const { source, clips } = reviewPassCandidates();
+    const positions = new Map();
+    const records = [];
+    for (const video of clips) {
+      if (!video?.fingerprint || positions.has(video.fingerprint)) continue;
+      positions.set(video.fingerprint, records.length);
+      records.push(video);
+    }
+    if (!records.length) {
+      notify("Nothing here can be reviewed as a pass yet", "info");
+      return;
+    }
+    if (records.length > REVIEW_PASS_MAX_CLIPS) {
+      notify(
+        `A review pass holds at most ${REVIEW_PASS_MAX_CLIPS.toLocaleString()} clips; narrow the search first`,
+        "error"
+      );
+      return;
+    }
+    const place = tagCollection
+      ? "Library search"
+      : `${rootDisplayName || "Folder"}${currentDirectory ? ` / ${currentDirectory}` : ""}`;
+    let result = null;
+    try {
+      result = await api.create({
+        name: source === "selection" ? `${records.length.toLocaleString()} selected clips` : place,
+        source,
+        definition: source === "results" ? buildCurrentViewDefinition() : null,
+        location: tagCollection ? null : { rootPath: activeRootPath, directory: currentDirectory || "" },
+        clips: records.map((video) => ({
+          fingerprint: video.fingerprint,
+          instanceId: Number.isSafeInteger(Number(video.instanceId)) ? Number(video.instanceId) : null,
+        })),
+      });
+    } catch (error) {
+      result = { success: false, error: error?.message };
+    }
+    if (!result?.pass) {
+      notify(result?.error || "The review pass could not be started", "error");
+      return;
+    }
+    showReviewPass(result.pass, records, positions, 0);
+    notify(`Reviewing ${records.length.toLocaleString()} clips`, "info");
+    void refreshReviewPasses();
+  }, [
+    activeRootPath,
+    buildCurrentViewDefinition,
+    currentDirectory,
+    notify,
+    refreshReviewPasses,
+    reviewPassCandidates,
+    rootDisplayName,
+    showReviewPass,
+    tagCollection,
+  ]);
+
+  const handleOpenReviewPass = useCallback(
+    async (id) => {
+      const api = window.electronAPI?.reviewPasses;
+      if (typeof api?.open !== "function") return;
+      let result = null;
+      try {
+        result = await api.open(id);
+      } catch (error) {
+        result = { success: false, error: error?.message };
+      }
+      if (!result?.pass) {
+        notify(result?.error || "That review pass could not be opened", "error");
+        void refreshReviewPasses();
+        return;
+      }
+      const positions = new Map();
+      const records = [];
+      for (const record of Array.isArray(result.records) ? result.records : []) {
+        const video = normalizeVideoFromMain(record);
+        if (!video?.fingerprint || positions.has(video.fingerprint)) continue;
+        const position = Number(record.passPosition);
+        positions.set(video.fingerprint, Number.isSafeInteger(position) ? position : records.length);
+        records.push(video);
+      }
+      if (!records.length) {
+        notify("None of that pass's clips can be found any more", "info");
+        return;
+      }
+      showReviewPass(result.pass, records, positions, result.pass.cursorPosition || 0);
+    },
+    [notify, refreshReviewPasses, showReviewPass]
+  );
+
+  // Where a pass has got to, saved as the selection moves through it.
+  const saveReviewPassCursor = useCallback(() => {
+    const cursor = passCursorRef.current;
+    if (!cursor?.dirty) return;
+    cursor.dirty = false;
+    void window.electronAPI?.reviewPasses?.setCursor?.(cursor.id, cursor.position);
+  }, []);
+  useEffect(() => {
+    if (!reviewPass || metadataAnchorId == null) return undefined;
+    const fingerprint = allVideosById.get(metadataAnchorId)?.fingerprint;
+    const position = fingerprint ? reviewPass.positions.get(fingerprint) : undefined;
+    const cursor = passCursorRef.current;
+    if (position === undefined || !cursor || cursor.id !== reviewPass.id || cursor.position === position) {
+      return undefined;
+    }
+    cursor.position = position;
+    cursor.dirty = true;
+    const timer = setTimeout(saveReviewPassCursor, 800);
+    return () => clearTimeout(timer);
+  }, [allVideosById, metadataAnchorId, reviewPass, saveReviewPassCursor]);
+
+  // A pass opened (or resumed) lands on its clip once it is laid out.
+  useEffect(() => {
+    const fingerprint = pendingPassRevealRef.current;
+    if (!fingerprint || !reviewPassClips) return;
+    const target = reviewPassClips.members.find((video) => video.fingerprint === fingerprint);
+    if (!target || !orderedVideos.some((video) => video.id === target.id)) return;
+    pendingPassRevealRef.current = null;
+    selection.selectExactly(target.id);
+    scrollToId(target.id, { align: "center" });
+  }, [orderedVideos, reviewPassClips, scrollToId, selection.selectExactly]);
+
+  // Done once every clip has a decision; it then leaves the list to resume.
+  const reviewPassDone = Boolean(
+    reviewPass && reviewWorkflow.progress.total > 0 && reviewWorkflow.progress.unreviewed === 0
+  );
+  const finishedPassRef = useRef(null);
+  useEffect(() => {
+    if (!reviewPassDone || finishedPassRef.current === reviewPass?.id) return;
+    finishedPassRef.current = reviewPass.id;
+    Promise.resolve(window.electronAPI?.reviewPasses?.finish?.(reviewPass.id)).finally(() => {
+      void refreshReviewPasses();
+    });
+  }, [refreshReviewPasses, reviewPass, reviewPassDone]);
+
+  const handleExitReviewPass = useCallback(() => {
+    if (!reviewPass) return;
+    saveReviewPassCursor();
+    setReviewPass(null);
+    void refreshReviewPasses();
+  }, [refreshReviewPasses, reviewPass, saveReviewPassCursor]);
+
+  // From the end of a pass made from results: the same search again, which
+  // now shows what has started matching since.
+  const handleRerunReviewPass = useCallback(() => {
+    const pass = reviewPass;
+    if (!pass?.definition) return;
+    setReviewPass(null);
+    handleApplySavedView({ name: pass.name, definition: pass.definition });
+  }, [handleApplySavedView, reviewPass]);
+
+  const handleDeleteReviewPass = useCallback(
+    async (id) => {
+      try {
+        await window.electronAPI?.reviewPasses?.remove?.(id);
+      } catch (error) {
+        notify(error?.message || "That review pass could not be removed", "error");
+      }
+      if (reviewPass?.id === id) setReviewPass(null);
+      void refreshReviewPasses();
+    },
+    [notify, refreshReviewPasses, reviewPass]
+  );
+
+  // Shift+1 / Shift+2: accept the selection and send it to the first or
+  // second quick action the connected apps offer, in their order.
+  const handleQuickReview = useCallback(
+    (index) => {
+      if (!reviewModeEnabled) return;
+      const quick = companionActionsRef.current.filter((action) => action.quick === true);
+      const action = quick[index];
+      if (!action) {
+        notify(
+          index === 0
+            ? "No connected app offers a quick action"
+            : "No connected app offers a second quick action",
+          "info"
+        );
+        return;
+      }
+      const targets = [...selection.selected].map((id) => allVideosById.get(id)).filter(Boolean);
+      if (!targets.length) return;
+      void handleCompanionSend({
+        companion: { id: action.companionId, name: action.companionName },
+        action,
+        videos: targets,
+      });
+      void reviewWorkflow.applyReviewState(REVIEW_STATES.PICK);
+    },
+    [
+      allVideosById,
+      handleCompanionSend,
+      notify,
+      reviewModeEnabled,
+      reviewWorkflow.applyReviewState,
+      selection.selected,
+    ]
+  );
+
+  reviewPassKeysRef.current = { start: handleStartReviewPass, quick: handleQuickReview };
 
   const handleChooseFolder = useCallback(async () => {
     closeFullScreenRef.current?.();
@@ -6221,6 +6528,15 @@ function App() {
               onReviewAllUnreviewed={handleReviewAllUnreviewed}
               onShowReviewTarget={handleShowReviewTarget}
               onIndexSubfolders={handleIndexSubfoldersForReview}
+              passControl={
+                reviewPass
+                  ? null
+                  : {
+                      count: reviewPassCandidateCount,
+                      selection: selection.size >= 2,
+                      onStart: handleStartReviewPass,
+                    }
+              }
             />
           )}
 
@@ -6647,7 +6963,7 @@ function App() {
           {!activeRootPath && !tagCollection && videos.length === 0 && !isLoadingFolder ? (
             <div className="library-home-workspace">
               {isLibrarySidebarOpen &&
-                (pinnedRoots.length > 0 || savedViews.length > 0) && (
+                (pinnedRoots.length > 0 || savedViews.length > 0 || reviewPassList.length > 0) && (
                 <LibrarySidebar
                   tree={null}
                   pinnedRoots={pinnedRoots}
@@ -6660,6 +6976,10 @@ function App() {
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
                   onDeleteSavedView={handleDeleteSavedView}
+                  reviewPasses={reviewPassList}
+                  activeReviewPassId={reviewPass?.id ?? null}
+                  onOpenReviewPass={handleOpenReviewPass}
+                  onDeleteReviewPass={handleDeleteReviewPass}
                   smartViewsEnabled={false}
                   reviewModeEnabled={reviewModeEnabled}
                 />
@@ -6715,6 +7035,10 @@ function App() {
                         onApplySavedView: handleApplySavedView,
                         onSaveCurrentView: handleSaveCurrentView,
                         onDeleteSavedView: handleDeleteSavedView,
+                        reviewPasses: reviewPassList,
+                        activeReviewPassId: reviewPass?.id ?? null,
+                        onOpenReviewPass: handleOpenReviewPass,
+                        onDeleteReviewPass: handleDeleteReviewPass,
                         disabled: isLoadingFolder,
                         reviewModeEnabled,
                       },
@@ -6789,6 +7113,17 @@ function App() {
                       />
                     )}
 
+                  {reviewPass && !versionView ? (
+                    <ReviewPassBar
+                      name={reviewPass.name}
+                      decided={reviewWorkflow.progress.total - reviewWorkflow.progress.unreviewed}
+                      total={reviewWorkflow.progress.total}
+                      done={reviewPassDone}
+                      canRerun={Boolean(reviewPass.definition)}
+                      onExit={handleExitReviewPass}
+                      onRerun={handleRerunReviewPass}
+                    />
+                  ) : null}
                   {versionView ? (
                     <VersionsBar
                       count={versionViewClips?.members.length || 0}
@@ -6799,7 +7134,7 @@ function App() {
                       onClose={handleCloseVersions}
                       onRestart={handleRestartVersions}
                     />
-                  ) : openStackSummary && (
+                  ) : !reviewPass && openStackSummary && (
                     <StackBar
                       {...openStackSummary}
                       unreviewedCount={openStackUnreviewed.length}

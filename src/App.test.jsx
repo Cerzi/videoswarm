@@ -940,6 +940,65 @@ describe("App hook composition", () => {
     }
   });
 
+  test("Shift+1 accepts the selection and sends it to the first quick action", async () => {
+    const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, fingerprint: "fp-a", isElectronFile: true };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [clip],
+      activeRootPath: "/library",
+      libraryRoot: { rootPath: "/library", name: "library", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "library" }],
+    }));
+    const send = vi.fn(async () => ({ success: true, results: { 7: { result: "sent", why: "" } } }));
+    window.electronAPI = {
+      saveSettingsPartial: vi.fn(),
+      companion: {
+        getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
+        onConnectionsChanged: vi.fn(() => () => {}),
+        describe: vi.fn().mockResolvedValue({
+          success: true,
+          name: "Helper",
+          actions: [
+            { id: "slow", label: "Slow", send: "Send slowly", quick: false },
+            { id: "finish", label: "Finish", send: "Finish it", quick: true },
+          ],
+        }),
+        lookup: vi.fn().mockResolvedValue({ success: true, results: {} }),
+        send,
+      },
+    };
+    const previousOrdered = masonryReturn.orderedVideos;
+    const previousSelected = selectionMock.selected;
+    const previousSize = selectionMock.size;
+    masonryReturn.orderedVideos = [clip];
+    selectionMock.selected = new Set([clip.id]);
+    selectionMock.size = 1;
+    const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await waitFor(() => expect(window.electronAPI.companion.describe).toHaveBeenCalled());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => hotkeys().onQuickReview(0));
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      expect(send.mock.calls[1][0]).toMatchObject({ companionId: "c1", action: "finish", instanceIds: [7], dryRun: false });
+      await waitFor(() =>
+        expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith("pick", ["fp-a"])
+      );
+      // No second quick action: it says so and sends nothing.
+      await act(async () => hotkeys().onQuickReview(1));
+      expect(await screen.findByText(/No connected app offers a second quick action/)).toBeInTheDocument();
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+      selectionMock.selected = previousSelected;
+      selectionMock.size = previousSize;
+    }
+  });
+
   test("opens a clip's workflow in ComfyUI from its context menu and says why not", async () => {
     const clip = {
       id: "/library/clip.mp4",

@@ -54,6 +54,10 @@ const readOptions = ({ run, getSelection, opts }) => {
     // Ctrl/⌘+A selects every clip the grid shows; Esc clears the selection.
     onSelectAll,
     onClearSelection,
+    // Shift+R starts a review pass; Shift+1 / Shift+2 accept and send to the
+    // first or second companion quick action.
+    onStartReviewPass,
+    onQuickReview,
   } = opts;
   return {
     run,
@@ -79,6 +83,8 @@ const readOptions = ({ run, getSelection, opts }) => {
     onRejectUnreviewedInStack,
     onSelectAll,
     onClearSelection,
+    onStartReviewPass,
+    onQuickReview,
   };
 };
 
@@ -128,6 +134,8 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         onRejectUnreviewedInStack,
         onSelectAll,
         onClearSelection,
+        onStartReviewPass,
+        onQuickReview,
       } = readOptions(latestRef.current);
       const target = e.target;
       if (target) {
@@ -147,6 +155,22 @@ export default function useHotkeys(run, getSelection, opts = {}) {
 
       const sel = getSelection();
       const size = sel?.size ?? 0;
+
+      // Shift with a digit or R, by physical key so a layout's shifted
+      // symbol does not matter.
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
+        if (e.code === "KeyR" && onStartReviewPass) {
+          e.preventDefault();
+          onStartReviewPass();
+          return;
+        }
+        const quickIndex = e.code === "Digit1" ? 0 : e.code === "Digit2" ? 1 : -1;
+        if (quickIndex >= 0 && onQuickReview && size > 0) {
+          e.preventDefault();
+          onQuickReview(quickIndex);
+          return;
+        }
+      }
 
       // Every clip the grid shows, on screen or not; never the page's text.
       if (

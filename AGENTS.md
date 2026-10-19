@@ -92,6 +92,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
   - `background-activity.js`: what background work is running (kinds and counts only) for the status line's note, and the pause that holds proxies, prompt reading and stack fingerprints; producers report into it and the shared `child-process-runner.js` holds queued work while paused (see `docs/architecture/background-activity.md`). New long-running background work should report here and honour the pause.
   - `local-api/`: the opt-in, loopback-only, token-guarded local read API other apps on this computer use to read clips' tags, ratings and review states and a change log (see `docs/architecture/local-read-api.md`). It only reads; never return prompt text or a path the caller did not send.
   - `comfy-safety.js`: the "never silently wrong" net the runner applies before sending a re-render (dependency check, red flags, declared/known/review buckets, per-clip confirmation; Section 10 of `docs/architecture/comfy-queue-integration.md`). It names no custom node class; keep it that way.
+- Review passes (frozen, resumable review lists) live in `main/database.js` (`review_passes`) and `src/App.jsx`; see `docs/architecture/review-passes.md`.
 - `src/App.jsx`: top-level renderer orchestration and state wiring.
 - `src/components/`: React UI components. `VideoCard/` contains the most sensitive playback/DOM handling.
 - `src/hooks/video-collection/`: progressive rendering, playback orchestration, and resource/memory limits.

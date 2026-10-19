@@ -279,6 +279,26 @@ describe("preload native-work bridge", () => {
     ]);
   });
 
+  it("creates, lists, opens and forgets review passes with plain values", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.reviewPasses.create({ name: "A1", source: "results", definition: { version: 1 }, clips: [{ fingerprint: "f", instanceId: 2 }] });
+    await api.reviewPasses.create({ source: "elsewhere", clips: "x" });
+    await api.reviewPasses.list();
+    await api.reviewPasses.open(4);
+    await api.reviewPasses.setCursor(4, 7);
+    await api.reviewPasses.finish(4);
+    await api.reviewPasses.remove(4);
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["review-passes:create", { name: "A1", source: "results", definition: { version: 1 }, location: null, clips: [{ fingerprint: "f", instanceId: 2 }] }],
+      ["review-passes:create", { name: "", source: "results", definition: null, location: null, clips: [] }],
+      ["review-passes:list"],
+      ["review-passes:open", { id: 4 }],
+      ["review-passes:cursor", { id: 4, position: 7 }],
+      ["review-passes:finish", { id: 4 }],
+      ["review-passes:delete", { id: 4 }],
+    ]);
+  });
+
   it("matches workflows with fingerprints, words and whole steps only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.workflow.match({ fingerprints: ["fa"], include: ["upscale"], minSteps: 12, maxSteps: 2.5 });

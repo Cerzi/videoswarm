@@ -324,6 +324,13 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Review passes (`architecture/review-passes.md`): with filters applied (or
+  two or more clips selected), *Review these N* (or Shift+R) shows just
+  those clips, frozen, with "0 of N decided"; deciding clips counts up and
+  they stay put even under an *Unreviewed* filter; *Exit pass* returns to
+  the grid and the pass waits under Library › Review passes; resuming lands
+  on the last clip; at the end a search pass offers *Run the search again*.
+  Shift+1 accepts and sends to the first companion quick action.
 - Companion one-click sends: once requeue marks an action `quick`, hovering
   a card it has not sent shows that action's button, and one click sends it
   with a toast; *Send to …* on a selection sends at once when nothing would
