@@ -1,13 +1,13 @@
 import React, { useId, useRef } from "react";
 import { LibrarySidebarContent } from "./LibrarySidebar";
-import { DetailsIcon, GenerationIcon, LibraryIcon, SequenceIcon } from "./UiIcons";
+import { DetailsIcon, GenerationIcon, LibraryIcon } from "./UiIcons";
 import "./WorkspaceSidebar.css";
 
 // The sidebar is an activity rail (UX redesign D7): a strip of icons, one per
 // feature, beside one panel at the sidebar's full width. Clicking an icon
 // shows its panel; clicking the open one collapses the sidebar to the rail.
-// A feature joins by adding an entry to `panels`, so a queue or sequences
-// panel never squeezes the others.
+// A feature joins by adding an entry to `panels`, so a new panel never
+// squeezes the others.
 //   panels: [{ id, label, icon, badge: { text, label }, content }]
 
 const normalizeSelectionCount = (value) => {
@@ -47,9 +47,7 @@ function EmptyGeneration({ selectedCount }) {
 
 // The panels every collection has. Details and Generation are present only
 // while Details is docked; floating Details lives over the grid instead,
-// with Generation as its last section. Sequences is present whenever the
-// caller supplies it, in both Details modes: sequences belong to the
-// profile, not to the selection.
+// with Generation as its last section.
 export function buildWorkspacePanels({
   libraryProps = {},
   disabled = false,
@@ -57,8 +55,6 @@ export function buildWorkspacePanels({
   detailsContent = null,
   generationContent = null,
   selectionCount = 0,
-  sequencesContent = null,
-  sequenceEntryCount = 0,
 }) {
   const safeLibraryProps = libraryProps && typeof libraryProps === "object"
     ? libraryProps
@@ -95,21 +91,6 @@ export function buildWorkspacePanels({
       label: "Generation",
       icon: <GenerationIcon />,
       content: generationContent ?? <EmptyGeneration selectedCount={selectedCount} />,
-    });
-  }
-  if (sequencesContent) {
-    const entryCount = normalizeSelectionCount(sequenceEntryCount);
-    panels.push({
-      id: "sequences",
-      label: "Sequences",
-      icon: <SequenceIcon />,
-      badge: entryCount > 0
-        ? {
-          text: entryCount.toLocaleString(),
-          label: `${entryCount.toLocaleString()} ${entryCount === 1 ? "clip" : "clips"} in the sequence`,
-        }
-        : null,
-      content: sequencesContent,
     });
   }
   return panels;

@@ -3,7 +3,6 @@ import { useEffect, useRef } from "react";
 import { ActionIds } from "../actions/actions";
 import { isEnabledForToolbar } from "../actions/actionPolicies";
 import {
-  ADD_TO_SEQUENCE_KEYS,
   FOLDER_DIRECTION_BY_KEY,
   REVIEW_CLEAR_RATING_KEYS,
   REVIEW_RATING_BY_KEY,
@@ -44,7 +43,6 @@ const readOptions = ({ run, getSelection, opts }) => {
     onNextFolder,
     onOpenHelp,
     onOpenDetails,
-    onAddToSequence,
     // Prompt stacks: `onOpenStack(selection)` returns true when Enter opened
     // a stack, so a selected stack never falls through to opening clips.
     onToggleStacks,
@@ -76,7 +74,6 @@ const readOptions = ({ run, getSelection, opts }) => {
     onNextFolder,
     onOpenHelp,
     onOpenDetails,
-    onAddToSequence,
     onToggleStacks,
     onOpenStack,
     onCloseStack,
@@ -127,7 +124,6 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         onNextFolder,
         onOpenHelp,
         onOpenDetails,
-        onAddToSequence,
         onToggleStacks,
         onOpenStack,
         onCloseStack,
@@ -196,19 +192,6 @@ export default function useHotkeys(run, getSelection, opts = {}) {
         ) {
           e.preventDefault();
           onOpenDetails();
-          return;
-        }
-        if (
-          !e.ctrlKey &&
-          !e.metaKey &&
-          !e.altKey &&
-          !e.shiftKey &&
-          !e.repeat &&
-          onAddToSequence &&
-          ADD_TO_SEQUENCE_KEYS.includes(e.key.toLowerCase())
-        ) {
-          e.preventDefault();
-          onAddToSequence(sel);
           return;
         }
         if (e.key === "Enter") {

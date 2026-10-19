@@ -131,11 +131,10 @@ Things to try, and what to judge:
   View › Playback details brings back the decoder figures.
 - **Preferences** (Ctrl+,): playback, profiles, data location and the
   ComfyUI address. Try switching and creating a profile.
-- **The sidebar's activity rail: Library, Details, Generation, Sequences.**
+- **The sidebar's activity rail: Library, Details, Generation.**
   - Clicking the open icon collapses the sidebar.
   - Details comes forward when you select a clip. Generation stays in
     front while you step through clips reading prompts.
-  - Is four icons comfortable?
 - **Details.** Review, rating and tags come first, then versions and file
   facts. Try **Copy** on the prompts, and highlighting a prompt then
   pressing Ctrl+C.
@@ -145,11 +144,6 @@ Things to try, and what to judge:
   usual window size, is anything you rely on folded away?
 - **Opening folders.** New folders open at the top, including with
   subfolders, Name ↓ or Random.
-- **Clip sequences.**
-  - Add clips with **B**, the context menu or **+ Sequence**.
-  - Reorder by drag or Alt+↑/↓, then Play.
-  - Try the three exports under **Files**: numbered copy, one video, and
-    renaming the originals. Rename on copies of real clips first.
 
 Still unconfirmed from rc.5:
 
@@ -186,43 +180,21 @@ one command. CI already ran the smoke specs on every push to `main`.
   `.github/ISSUE_TEMPLATE/bug_report.yml`, push the `v0.6.0-rc.6` tag, then
   inspect and publish the draft release the workflow creates.
 
-## 5a. Clip sequences
+## 5a. Clip sequences: removed
 
-Status: **Implemented** (2026-09-29), merged into `main` — see
-[`architecture/clip-sequences.md`](architecture/clip-sequences.md)
+Status: **Removed** (2026-10-19), by the user's decision.
 
-Sequences are a panel on the activity rail. Clips are added with **B**, the
-context menu or **+ Sequence** in Details, and reordered by drag or
-Alt+↑/↓. Three exports sit under **Files**:
+Sequences (an ordered list of clips on the activity rail, with Play and
+three exports: a numbered copy with `concat.txt`, one video through ffmpeg,
+and renaming the originals into order) went unused. Ordering and joining
+clips is an editor's job; Video Swarm keeps to reviewing and sorting them.
+The **B** key, *Add to sequence* in the context menu, **+ Sequence** in
+Details, the panel, its dialogs and the fullscreen play-through all went
+with it. Profiles that had sequences keep their tables, unused.
 
-- **Numbered copy.** Copies with `010_` prefixes plus an ffmpeg
-  `concat.txt`.
-- **One video.** Stream copy when every clip matches, otherwise a re-encode
-  that lists each mismatch first. It can be cancelled and never leaves a
-  partial file.
-- **Rename originals.** Two-phase and all-or-nothing, never overwrites, and
-  renames everything back if a step fails.
-
-Export and rename refuse while a clip is missing, naming the positions.
-
-Two bugs were found and fixed on the way:
-
-- New and Rename used `window.prompt`, which Electron does not implement,
-  so both did nothing in the real app.
-- A multi-clip add went in click order instead of sort order.
-
-Left open:
-
-- **Thumbnails in the panel.** Decoding a frame per entry would compete
-  with the grid's decoder budget.
-- **Single-clip rename.** The module supports it, but there is no UI.
-- **Copy frame during sequence playback** uses a canvas capture, as tag
-  views already do.
-- **One unavoidable race in rename.** Node's `rename` replaces an existing
-  file, so a file created between the last check and the rename itself
-  could still be replaced.
-
-`wip/clip-sequences` (`02106f2`) is kept unchanged as the original.
+The code is on the local branch `archive/clip-sequences` and in git history
+(last at `5b91e33`); `wip/clip-sequences` and `claude/clip-sequences` still
+hold the original work.
 
 ## 5b. Feature bloat: the UX redesign
 
@@ -471,19 +443,8 @@ From the overnight work on 2026-09-29.
 **Re-render safety net (1-5):** withdrawn 2026-10-19 with the in-house
 re-render (Section 1c).
 
-**Clip sequences:**
-
-6. **B** adds to the sequence. E, Final Cut's "append", clashes with
-   fullscreen's next-clip key.
-7. **Numbered copy is all-or-nothing:** any name already taken blocks it,
-   where other transfers skip. Make it skip instead?
-8. **A clip used twice** is copied twice by the numbered copy, but renaming
-   the originals refuses.
-9. **Re-encode defaults:**
-   - the most common frame size and rate;
-   - clips of other sizes letterboxed;
-   - silence added where a clip lacks sound;
-   - the output named after the sequence.
+**Clip sequences (6-9):** withdrawn 2026-10-19 with the feature (Section
+5a).
 
 **Other:**
 

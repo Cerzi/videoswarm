@@ -38,7 +38,7 @@ order:
   (the first change after a quiet spell at once), and `activity:get` reads
   one.
 - Not shown: work with its own place in the window (folder scans, copying,
-  trash, sequence renders), and small work done for a card
+  trash), and small work done for a card
   on screen (poster frames, thumbnails, drag icons, a stack strip's stills,
   frame captures).
 

@@ -233,13 +233,8 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     collectionOwnerKey = "default",
     canNavigatePrevious = true,
     canNavigateNext = true,
-    // Sequence sessions play one clip after another instead of looping the
-    // current one. Scoped to the session rather than made a mode: ordinary
-    // grid review still loops, which is what a single-clip loupe is for.
-    advanceOnEnd = false,
     // The viewer's own play-through: the next clip starts as soon as this one
-    // ends, and the last wraps back to the first. A sequence session's own
-    // end-of-clip rule takes precedence, so the toggle is hidden there.
+    // ends, and the last wraps back to the first.
     autoContinue = false,
     onAutoContinueChange,
     onBoundary,
@@ -309,11 +304,9 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   videoRef.current = video;
   const workSuspendedRef = useRef(Boolean(workSuspended));
   workSuspendedRef.current = Boolean(workSuspended);
-  const advanceOnEndRef = useRef(Boolean(advanceOnEnd));
-  advanceOnEndRef.current = Boolean(advanceOnEnd);
   const autoContinueRef = useRef(Boolean(autoContinue));
   autoContinueRef.current = Boolean(autoContinue);
-  const continuesOnEnd = Boolean(advanceOnEnd || autoContinue);
+  const continuesOnEnd = Boolean(autoContinue);
   const persistedAudioEnabledRef = useRef(Boolean(audioEnabled));
   persistedAudioEnabledRef.current = Boolean(audioEnabled);
   const mutedPreferenceRef = useRef(!audioEnabled);
@@ -706,22 +699,13 @@ const FullScreenModal = forwardRef(function FullScreenModal(
   );
 
   /**
-   * End of clip, in a sequence session.
+   * End of clip, with auto-continue on.
    *
    * Advancing reuses the ordinary navigation path, so the decoder lease is
    * handed over exactly as a Next press hands it over -- this changes when the
-   * loupe moves on, never how. The last entry ends the session instead of
-   * wrapping: a story that silently restarts reads as a bug, not a loop.
+   * loupe moves on, never how.
    */
   const handleMediaEnded = useCallback(() => {
-    if (advanceOnEndRef.current) {
-      if (canNavigateNext === false) {
-        requestClose("sequence-complete");
-        return;
-      }
-      requestNavigate("next");
-      return;
-    }
     if (!autoContinueRef.current || closeRequestedRef.current) return;
     if (canNavigateNext !== false) {
       requestNavigate("next");
@@ -738,7 +722,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
       element.currentTime = 0;
     } catch {}
     void attemptPlay(element, activeReleaseRef.current);
-  }, [attemptPlay, canNavigateNext, requestClose, requestNavigate, stopFrameHold]);
+  }, [attemptPlay, canNavigateNext, requestNavigate, stopFrameHold]);
 
   const toggleAutoContinue = useCallback(() => {
     const next = !autoContinueRef.current;
@@ -867,7 +851,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
     element.addEventListener("error", handleMediaError);
     element.preload = "auto";
     element.crossOrigin = "anonymous";
-    element.loop = !(advanceOnEndRef.current || autoContinueRef.current);
+    element.loop = !autoContinueRef.current;
     element.playsInline = true;
     element.muted = mutedPreferenceRef.current;
     setIsMuted(mutedPreferenceRef.current);
@@ -1404,7 +1388,7 @@ const FullScreenModal = forwardRef(function FullScreenModal(
             >
               {isMuted ? "Muted" : "Audio on"}
             </button>
-            {onAutoContinueChange && !advanceOnEnd ? (
+            {onAutoContinueChange ? (
               <button
                 type="button"
                 className="fullscreen-review__button fullscreen-review__button--toggle"

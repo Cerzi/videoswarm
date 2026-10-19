@@ -21,7 +21,6 @@ function DockedMetadataInspector({
   onSetReviewState,
   onFocusSelection,
   onTransferSelection,
-  onAddToSequence,
   onUndock,
   reviewModeEnabled = true,
 }) {
@@ -78,19 +77,6 @@ function DockedMetadataInspector({
               title="Transfer the selection: move, copy or link it into another folder"
             >
               <span>Transfer</span>
-            </button>
-          ) : null}
-          {typeof onAddToSequence === "function" ? (
-            <button
-              type="button"
-              className="metadata-panel__button metadata-panel__button--compact"
-              onClick={() => onAddToSequence()}
-              aria-label={`Add ${count} selected clip${
-                count === 1 ? "" : "s"
-              } to the sequence`}
-              title="Append to the active sequence in the grid's sort order (B)"
-            >
-              <span>+ Sequence</span>
             </button>
           ) : null}
           <button

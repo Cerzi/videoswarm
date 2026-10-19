@@ -1373,7 +1373,7 @@ describe("FullScreenModal media ownership", () => {
   });
 });
 
-describe("FullScreenModal sequence play-through", () => {
+describe("FullScreenModal end of clip", () => {
   let pauseSpy;
   let loadSpy;
   let playSpy;
@@ -1422,87 +1422,6 @@ describe("FullScreenModal sequence play-through", () => {
     expect(element.loop).toBe(true);
     fireEvent.ended(element);
     expect(onNavigate).not.toHaveBeenCalled();
-  });
-
-  it("advances to the next entry at the end of a clip", () => {
-    const onNavigate = vi.fn();
-    render(
-      <FullScreenModal
-        video={clip("one")}
-        onClose={vi.fn()}
-        onNavigate={onNavigate}
-        showFilenames={false}
-        advanceOnEnd
-        canNavigateNext
-      />
-    );
-
-    const element = document.body.querySelector("video");
-    expect(element.loop).toBe(false);
-    fireEvent.ended(element);
-    expect(onNavigate).toHaveBeenCalledWith("next");
-  });
-
-  it("ends the session on the last entry rather than wrapping", () => {
-    const onClose = vi.fn();
-    const onNavigate = vi.fn();
-    render(
-      <FullScreenModal
-        video={clip("last")}
-        onClose={onClose}
-        onNavigate={onNavigate}
-        showFilenames={false}
-        advanceOnEnd
-        canNavigateNext={false}
-      />
-    );
-
-    fireEvent.ended(document.body.querySelector("video"));
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledWith("sequence-complete");
-  });
-
-  it("keeps the loop attribute in step with the session on rerender", () => {
-    const common = {
-      video: clip("one"),
-      onClose: vi.fn(),
-      onNavigate: vi.fn(),
-      showFilenames: false,
-    };
-    const rendered = render(<FullScreenModal {...common} advanceOnEnd />);
-    const element = document.body.querySelector("video");
-    expect(element.loop).toBe(false);
-
-    // React restores the declarative attribute on rerender, so the two have to
-    // agree or a sequence session silently starts looping again.
-    rendered.rerender(<FullScreenModal {...common} advanceOnEnd />);
-    expect(element.loop).toBe(false);
-
-    rendered.rerender(<FullScreenModal {...common} advanceOnEnd={false} />);
-    expect(element.loop).toBe(true);
-  });
-
-  it("releases the element once when a sequence session ends", () => {
-    const onClose = vi.fn();
-    const rendered = render(
-      <FullScreenModal
-        video={clip("last")}
-        onClose={onClose}
-        onNavigate={vi.fn()}
-        showFilenames={false}
-        advanceOnEnd
-        canNavigateNext={false}
-      />
-    );
-    const element = document.body.querySelector("video");
-
-    fireEvent.ended(element);
-    // A second end event after the close request must not re-close.
-    fireEvent.ended(element);
-    expect(onClose).toHaveBeenCalledTimes(1);
-
-    rendered.unmount();
-    expect(element.getAttribute("src")).toBeNull();
   });
 });
 
@@ -1614,20 +1533,4 @@ describe("FullScreenModal auto-continue", () => {
     expect(playSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves a sequence session's own end rule in charge", () => {
-    const onClose = vi.fn();
-    const onNavigate = vi.fn();
-    renderModal({
-      onClose,
-      onNavigate,
-      autoContinue: true,
-      advanceOnEnd: true,
-      canNavigateNext: false,
-    });
-
-    expect(screen.queryByRole("button", { name: "Auto-continue" })).toBeNull();
-    fireEvent.ended(document.body.querySelector("video"));
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledWith("sequence-complete");
-  });
 });

@@ -201,8 +201,8 @@ describe('ContextMenu', () => {
     );
 
     const rootMenu = screen.getByRole('menu', { name: /Actions for Video a/i });
-    // Bottom-clamped: 440 - 8 margin - the menu's estimated 388 px.
-    expect(rootMenu).toHaveStyle({ left: '212px', top: '44px' });
+    // Bottom-clamped: 440 - 8 margin - the menu's estimated 352 px.
+    expect(rootMenu).toHaveStyle({ left: '212px', top: '80px' });
 
     const copyMenu = openSubmenu(/Copy$/i);
     expect(copyMenu).toHaveStyle({ left: '8px' });
@@ -272,9 +272,9 @@ describe('ContextMenu', () => {
       side: 'left',
       rect: expect.objectContaining({
         x: 212,
-        y: 44,
+        y: 80,
         left: 212,
-        top: 44,
+        top: 80,
         right: 492,
         width: 280,
       }),

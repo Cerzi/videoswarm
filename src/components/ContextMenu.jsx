@@ -324,13 +324,6 @@ const ContextMenu = ({
         ],
       },
       {
-        id: 'sequence-add',
-        label: `🎬 Add to sequence${
-          selectionCount > 1 ? ` (${selectionCount} selected)` : ''
-        }`,
-        action: 'sequence:add',
-      },
-      {
         id: 'transfer-files',
         label: `📁 ${menuLabel('transfer-files')}`,
         action: 'transfer-files',
