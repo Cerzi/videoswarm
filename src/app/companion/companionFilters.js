@@ -1,8 +1,11 @@
 // Filtering by what companion apps say (docs/architecture/companion-app.md).
 // A filter names a companion by its id and one of its actions by id
 // (`c1/polish`) and asks for a phase; a companion's own words never appear
-// here. A clip a companion has not answered for yet passes every filter on
-// that companion, so nothing is hidden on a guess.
+// here. A phase filter shows only clips the companion has answered for: one
+// it has not answered yet (or never will, being missing) cannot be shown to
+// be "Done", so it is hidden and counted in the status line instead. "Hide
+// clips already sent" keeps an unanswered clip, since hiding it would be the
+// guess.
 
 export const COMPANION_PHASE_FILTERS = Object.freeze([
   "not-sent",
@@ -57,33 +60,45 @@ export function normalizeCompanionFilters(value) {
 
 export const isCompanionSent = (stage) => SENT_PHASES.has(stage?.phase);
 
+const PASS = Object.freeze({ pass: true, unansweredBy: null });
+const FAIL = Object.freeze({ pass: false, unansweredBy: null });
+
 /**
  * Whether a clip passes the per-action filters and, with `hideSent`, was
- * never sent for any action of any companion. `entryFor(companionId)` is what
- * that companion said about the clip (`{ actions: { [id]: { phase } } }`), or
- * nothing yet; `companionIds` are the companions to judge it by.
+ * never sent for any action of any companion: `{ pass, unansweredBy }`.
+ * `entryFor(companionId)` is what that companion said about the clip
+ * (`{ actions: { [id]: { phase } } }`), or nothing yet; `companionIds` are
+ * the companions to judge it by. A clip that fails only for want of an
+ * answer names the first companion it waits on in `unansweredBy`.
  */
-export function matchesCompanionFilters(entryFor, companionIds, companionFilters, hideSent = false) {
+export function companionFilterVerdict(entryFor, companionIds, companionFilters, hideSent = false) {
   if (hideSent) {
     for (const id of companionIds) {
       const stages = entryFor(id)?.actions;
-      if (stages && Object.values(stages).some(isCompanionSent)) return false;
+      if (stages && Object.values(stages).some(isCompanionSent)) return FAIL;
     }
   }
+  let unansweredBy = null;
   for (const [key, wanted] of Object.entries(companionFilters || {})) {
     const parsed = parseCompanionFilterKey(key);
-    const stage = parsed && entryFor(parsed.companionId)?.actions?.[parsed.actionId];
-    if (!stage) continue;
+    if (!parsed) continue;
+    const stage = entryFor(parsed.companionId)?.actions?.[parsed.actionId];
+    if (!stage) {
+      unansweredBy ??= parsed.companionId;
+      continue;
+    }
     if (wanted === "sent") {
-      if (!isCompanionSent(stage)) return false;
+      if (!isCompanionSent(stage)) return FAIL;
     } else if (wanted === "not-done") {
-      if (stage.phase === "done" || stage.phase === "n/a") return false;
+      if (stage.phase === "done" || stage.phase === "n/a") return FAIL;
     } else if (stage.phase !== wanted) {
-      return false;
+      return FAIL;
     }
   }
-  return true;
+  return unansweredBy ? { pass: false, unansweredBy } : PASS;
 }
+
+export const matchesCompanionFilters = (...args) => companionFilterVerdict(...args).pass;
 
 export const companionFilterCount = (filters) =>
   Object.keys(normalizeCompanionFilters(filters?.companionFilters)).length +

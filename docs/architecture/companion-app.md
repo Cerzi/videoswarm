@@ -220,10 +220,13 @@ companion authors must be told before it ships.
   sent, under way, done, not done or stopped. *Not done* (added 2026-10-18)
   is anything short of done where the action applies: not sent, under way or
   stopped, never "does not apply"; the worklist of what is left to finish.
-  Filters are keyed `c1/polish`. A clip a
-  companion has not answered for yet always passes that companion's
-  filters. Saved views keep them; a view without them is stored exactly as
-  before.
+  Filters are keyed `c1/polish`. A phase filter shows only clips the
+  companion has answered for (changed 2026-10-19: unanswered clips used to
+  pass, filling a *Done* list with unknowns). A missing clip is never asked
+  about, so it never matches; a present clip still waiting is counted in the
+  status line, "214 clips not checked yet by <name>". *Hide clips already
+  sent* keeps unanswered clips. Saved views keep the filters; a view without
+  them is stored exactly as before.
 
 - **Sending** (`src/components/CompanionSendPanel.jsx`). *Send to …* items,
   named by each companion (and followed by its name when several are
@@ -265,8 +268,6 @@ companion authors must be told before it ships.
 - A change feed (`/api/changes` with a revision counter), so work done
   outside Video Swarm shows without waiting for focus.
 - Keyboard shortcuts for sending.
-- Clips the companion has not answered for are always shown; a stricter
-  mode that hides them until answered.
 
 ## Acceptance
 

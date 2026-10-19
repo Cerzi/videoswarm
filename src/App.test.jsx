@@ -220,6 +220,7 @@ const filterStateReturn = {
   resetFilters: vi.fn(),
   filteredVideos: [],
   filteredVideoIds: new Set(),
+  companionUnchecked: new Map(),
   filtersActiveCount: 0,
   ratingSummary: {},
   handleRemoveIncludeFilter: vi.fn(),
@@ -321,6 +322,7 @@ const loadingOverlaySpy = vi.fn();
 const metadataPanelSpy = vi.fn();
 const contextMenuSpy = vi.fn();
 const fullScreenModalSpy = vi.fn();
+const debugSummarySpy = vi.fn();
 const fullScreenReleaseNowSpy = vi.fn();
 const setLibraryRootPinnedMock = vi.fn();
 const refreshLibraryRootsMock = vi.fn();
@@ -496,7 +498,10 @@ vi.mock("./components/FiltersPopover", async () => {
 });
 vi.mock("./components/DebugSummary", () => ({
   __esModule: true,
-  default: () => null,
+  default: (props) => {
+    debugSummarySpy(props);
+    return null;
+  },
 }));
 
 vi.mock("./hooks/useFullScreenModal", () => ({
@@ -878,6 +883,33 @@ describe("App hook composition", () => {
       masonryReturn.orderedVideos = previousOrdered;
       masonryReturn.virtualItems = previousItems;
     }
+  });
+
+  test("says in the status line how many clips wait on a companion's answer", async () => {
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      companionUnchecked: new Map([["c1", 214]]),
+    }));
+    window.electronAPI = {
+      companion: {
+        getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
+        onConnectionsChanged: vi.fn(() => () => {}),
+        describe: vi.fn().mockResolvedValue({
+          success: true,
+          name: "Helper",
+          actions: [{ id: "polish", label: "Polish", send: "Send to polish" }],
+        }),
+        lookup: vi.fn().mockResolvedValue({ success: true, results: {} }),
+      },
+    };
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    await waitFor(() =>
+      expect(debugSummarySpy.mock.calls.at(-1)?.[0].companionNote).toBe(
+        "214 clips not checked yet by Helper"
+      )
+    );
   });
 
   test("sends a right-clicked clip to a companion action in one click, and says why one is not sent", async () => {

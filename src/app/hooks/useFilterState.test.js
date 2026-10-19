@@ -268,7 +268,9 @@ describe("useFilterState companion filters", () => {
   it("filters by an action's phase and combines with other filters", () => {
     const { result } = renderFilters();
     act(() => result.current.updateFilters({ companionFilters: { "c1/polish": "sent" } }));
-    expect(ids(result)).toEqual(["polishing", "taken-back", "unknown"]);
+    // Not answered for yet: hidden from a phase filter, and counted.
+    expect(ids(result)).toEqual(["polishing", "taken-back"]);
+    expect(result.current.companionUnchecked).toEqual(new Map([["c1", 1]]));
     act(() =>
       result.current.updateFilters({
         companionFilters: { "c1/polish": "not-sent", enlarge: "not-sent", bogus: "x" },
@@ -279,7 +281,25 @@ describe("useFilterState companion filters", () => {
       "c1/polish": "not-sent",
       "c1/enlarge": "not-sent",
     });
-    expect(ids(result)).toEqual(["unknown"]);
+    expect(ids(result)).toEqual([]);
+  });
+
+  it("hides a missing clip from phase filters without counting it as waiting", () => {
+    const { result } = renderHook(() =>
+      useFilterState({
+        videos: [...clips, { id: "gone", instanceId: 5, reviewState: "pick", present: false }],
+        filtersButtonRef: createRef(),
+        filtersPopoverRef: createRef(),
+        companions: [{ id: "c1", entries: companionEntries }],
+      })
+    );
+    act(() => result.current.updateFilters({ companionFilters: { "c1/polish": "stopped" } }));
+    expect(ids(result)).toEqual(["taken-back"]);
+    expect(result.current.companionUnchecked).toEqual(new Map([["c1", 1]]));
+    // Never asked about, so never sent: Hide clips already sent keeps it.
+    act(() => result.current.updateFilters({ companionFilters: {}, companionHideSent: true }));
+    expect(ids(result)).toEqual(["fresh", "unknown", "gone"]);
+    expect(result.current.companionUnchecked.size).toBe(0);
   });
 
   it("asks each companion about its own actions", () => {
@@ -289,7 +309,9 @@ describe("useFilterState companion filters", () => {
       { id: "c2", entries: editor },
     ]);
     act(() => result.current.updateFilters({ companionFilters: { "c2/cut": "not-sent" } }));
-    expect(ids(result)).toEqual(["fresh", "polishing", "taken-back"]);
+    // c2 has answered for clip 4 only, which is done.
+    expect(ids(result)).toEqual([]);
+    expect(result.current.companionUnchecked).toEqual(new Map([["c2", 3]]));
     act(() => result.current.updateFilters({ companionFilters: {}, companionHideSent: true }));
     expect(ids(result)).toEqual(["fresh"]);
   });

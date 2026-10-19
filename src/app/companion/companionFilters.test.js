@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   companionFilterCount,
+  companionFilterVerdict,
   matchesCompanionFilters,
   normalizeCompanionFilters,
   parseCompanionFilterKey,
@@ -41,8 +42,8 @@ describe("companion filters", () => {
     }
     expect(matches(entry("done"), { "c1/polish": "not-done" })).toBe(false);
     expect(matches(entry("n/a"), { "c1/polish": "not-done" })).toBe(false);
-    // Unanswered clips are shown, as for every companion filter.
-    expect(matches(undefined, { "c1/polish": "not-done" })).toBe(true);
+    // Unanswered (or missing) clips wait for an answer, as for every phase.
+    expect(matches(undefined, { "c1/polish": "not-done" })).toBe(false);
     expect(normalizeCompanionFilters({ "c1/polish": "not-done" })).toEqual({ "c1/polish": "not-done" });
   });
 
@@ -67,9 +68,31 @@ describe("companion filters", () => {
     expect(matches(entry("not-sent"), {}, true, entry("done"))).toBe(false);
   });
 
-  it("lets a clip a companion has not answered for through", () => {
-    expect(matches(undefined, { "c1/polish": "done" }, true)).toBe(true);
-    expect(matches(entry(null, "done"), { "c1/polish": "done" })).toBe(true);
+  it("hides a clip a phase filter's companion has not answered for, naming it", () => {
+    // Not answered yet, or missing and so never asked: not shown as "Done".
+    expect(matches(undefined, { "c1/polish": "done" })).toBe(false);
+    expect(matches(entry(null, "done"), { "c1/polish": "done" })).toBe(false);
+    expect(matches(undefined, { "c1/polish": "not-done" })).toBe(false);
+    expect(companionFilterVerdict(from(undefined), ids, { "c1/polish": "done" })).toEqual({
+      pass: false,
+      unansweredBy: "c1",
+    });
+    // A definite mismatch from another app is a plain no, not a wait.
+    expect(
+      companionFilterVerdict(from(undefined, entry("not-sent")), ids, {
+        "c1/polish": "done",
+        "c2/polish": "done",
+      })
+    ).toEqual({ pass: false, unansweredBy: null });
+    expect(companionFilterVerdict(from(entry("done")), ids, { "c1/polish": "done" })).toEqual({
+      pass: true,
+      unansweredBy: null,
+    });
+  });
+
+  it("keeps an unanswered clip under Hide clips already sent", () => {
+    expect(matches(undefined, {}, true)).toBe(true);
+    expect(matches(undefined, {}, true, undefined)).toBe(true);
   });
 
   it("counts each action filter and the hide-sent switch", () => {

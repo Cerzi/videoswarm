@@ -28,7 +28,7 @@ import {
   normalizeVersionFilter,
 } from "../filters/generationVersions";
 import {
-  matchesCompanionFilters,
+  companionFilterVerdict,
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
 import { usePromptSearch } from "./usePromptSearch";
@@ -39,6 +39,9 @@ import {
   useTurnedDownVersion,
 } from "../tags/likelyTags";
 import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
+
+// Companion id -> clips waiting on its answer under a phase filter.
+const NO_UNCHECKED = new Map();
 
 const resolveValue = (value, fallback) =>
   value === undefined ? fallback : value;
@@ -142,7 +145,9 @@ export function useFilterState({
     setFilters(createDefaultFilters());
   }, []);
 
-  const filteredVideos = useMemo(() => {
+  // The filtered list, and per companion the clips hidden only because it
+  // has not answered for them yet (counted for the status line).
+  const { list: filteredVideos, unchecked: companionUnchecked } = useMemo(() => {
     const includeTags = filters.includeTags ?? [];
     const excludeTags = filters.excludeTags ?? [];
     const minRating = sanitizeMinRating(filters.minRating);
@@ -192,10 +197,11 @@ export function useFilterState({
       !workflowActive &&
       !frameRateActive
     ) {
-      return videos;
+      return { list: videos, unchecked: NO_UNCHECKED };
     }
 
-    return videos.filter((video) => {
+    const unchecked = new Map();
+    const list = videos.filter((video) => {
       const tagList = Array.isArray(video.tags)
         ? video.tags.map((tag) => (tag ?? "").toString().trim().toLowerCase()).filter(Boolean)
         : [];
@@ -274,30 +280,34 @@ export function useFilterState({
         return false;
       }
 
-      if (
-        companionActive &&
-        !matchesCompanionFilters(
+      const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
+
+      if (exactRating !== null) {
+        if ((ratingValue ?? null) !== exactRating) return false;
+      } else if (minRating !== null && (ratingValue ?? 0) < minRating) {
+        return false;
+      }
+
+      // Last, so a clip counted as waiting on a companion matches the rest.
+      if (companionActive) {
+        const verdict = companionFilterVerdict(
           (id) => companionById.get(id)?.entries?.get(video.instanceId),
           companionIds,
           companionFilters,
           companionHideSent
-        )
-      ) {
-        return false;
-      }
-
-      const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
-
-      if (exactRating !== null) {
-        return (ratingValue ?? null) === exactRating;
-      }
-
-      if (minRating !== null) {
-        return (ratingValue ?? 0) >= minRating;
+        );
+        if (!verdict.pass) {
+          // A missing clip is never asked about, so it is not waiting.
+          if (verdict.unansweredBy && video.present !== false) {
+            unchecked.set(verdict.unansweredBy, (unchecked.get(verdict.unansweredBy) || 0) + 1);
+          }
+          return false;
+        }
       }
 
       return true;
     });
+    return { list, unchecked: unchecked.size ? unchecked : NO_UNCHECKED };
     // turnedDownVersion: a clip turned down leaves at once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -445,6 +455,7 @@ export function useFilterState({
     resetFilters,
     filteredVideos,
     filteredVideoIds,
+    companionUnchecked,
     filtersActiveCount,
     ratingSummary,
     resolutionSummary,

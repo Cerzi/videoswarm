@@ -795,6 +795,7 @@ function App() {
     updateFilters,
     resetFilters,
     filteredVideos,
+    companionUnchecked,
     filtersActiveCount,
     ratingSummary,
     resolutionSummary,
@@ -4556,6 +4557,21 @@ function App() {
 
   reviewPassKeysRef.current = { start: handleStartReviewPass, quick: handleQuickReview };
 
+  // The status line on companion apps: any not answering, and the clips a
+  // phase filter hides while they wait for an app's answer.
+  const companionNote = useMemo(() => {
+    const parts = [];
+    const offline = companions
+      .filter((companion) => companion.status === "offline")
+      .map((companion) => companion.name || "A companion app");
+    if (offline.length) parts.push(`${offline.join(", ")} not answering`);
+    for (const [id, count] of companionUnchecked) {
+      const name = companions.find((companion) => companion.id === id)?.name || "the companion app";
+      parts.push(`${count.toLocaleString()} clip${count === 1 ? "" : "s"} not checked yet by ${name}`);
+    }
+    return parts.length ? parts.join(" · ") : null;
+  }, [companionUnchecked, companions]);
+
   const handleChooseFolder = useCallback(async () => {
     closeFullScreenRef.current?.();
     await reviewSessions.flush();
@@ -6580,14 +6596,7 @@ function App() {
             total={videoCollection.stats.total}
             stackedClips={stackSelectionUnits ? scopedFilteredVideos.length : null}
             stackCount={stackSelectionUnits ? promptStacks.stacks.size : 0}
-            companionNote={
-              companions.some((companion) => companion.status === "offline")
-                ? `${companions
-                    .filter((companion) => companion.status === "offline")
-                    .map((companion) => companion.name || "A companion app")
-                    .join(", ")} not answering`
-                : null
-            }
+            companionNote={companionNote}
             rendered={virtualItems.length}
             playing={videoCollection.stats.playing}
             inView={visibleVideos.size}
