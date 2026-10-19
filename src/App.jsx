@@ -5381,9 +5381,18 @@ function App() {
     ]
   );
 
+  // A sort the user picks starts from the top of its new order. Layout
+  // anchoring (useMasonryLayout) keeps the place only for reorders they did
+  // not ask for, such as a rating moving a clip.
+  const returnToTop = useCallback(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, []);
+
   const handleSortChange = useCallback(
     (value) => {
       const { sortKey: key, sortDir: dir } = parseSortValue(value);
+      if (key === sortKey && dir === sortDir) return;
+      returnToTop();
       setSortKey(key);
       setSortDir(dir);
       let seed = randomSeed;
@@ -5398,11 +5407,12 @@ function App() {
         randomSeed: seed,
       });
     },
-    [groupByFolders, randomSeed]
+    [groupByFolders, randomSeed, returnToTop, sortDir, sortKey]
   );
 
   const toggleGroupByFolders = useCallback(() => {
     const next = !groupByFolders;
+    returnToTop();
     setGroupByFolders(next);
     window.electronAPI?.saveSettingsPartial?.({
       sortKey,
@@ -5410,10 +5420,11 @@ function App() {
       groupByFolders: next,
       randomSeed,
     });
-  }, [groupByFolders, sortKey, sortDir, randomSeed]);
+  }, [groupByFolders, sortKey, sortDir, randomSeed, returnToTop]);
 
   const reshuffleRandom = useCallback(() => {
     const seed = Date.now();
+    returnToTop();
     setRandomSeed(seed);
     window.electronAPI?.saveSettingsPartial?.({
       sortKey,
@@ -5421,7 +5432,7 @@ function App() {
       groupByFolders,
       randomSeed: seed,
     });
-  }, [sortKey, sortDir, groupByFolders]);
+  }, [sortKey, sortDir, groupByFolders, returnToTop]);
 
   const applyReviewCheckpointView = useCallback(
     (checkpoint) => {

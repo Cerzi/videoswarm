@@ -1171,6 +1171,32 @@ describe("App hook composition", () => {
     await waitFor(() => expect(viewport.scrollTop).toBe(0));
   });
 
+  test("a sort the user picks starts at the top of the grid", async () => {
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    await act(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    );
+    const viewport = document.querySelector(".content-region__viewport");
+    const headerProps = () => topBarSpy.mock.calls.at(-1)?.[0];
+
+    viewport.scrollTop = 240;
+    act(() => headerProps().onSortChange("rating-desc"));
+    expect(viewport.scrollTop).toBe(0);
+    expect(headerProps().sortKey).toBe("rating");
+
+    // Picking the sort already in use, or reshuffling and grouping, too.
+    viewport.scrollTop = 240;
+    act(() => headerProps().onSortChange("rating-desc"));
+    expect(viewport.scrollTop).toBe(240);
+    act(() => headerProps().onReshuffle());
+    expect(viewport.scrollTop).toBe(0);
+    viewport.scrollTop = 240;
+    act(() => headerProps().onGroupByFoldersToggle());
+    expect(viewport.scrollTop).toBe(0);
+  });
+
   test("propagates minimized-window suspension through all expensive work", async () => {
     useWindowWorkSuspensionMock.mockReturnValue({
       isSuspended: true,

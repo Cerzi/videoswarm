@@ -515,8 +515,9 @@ From the overnight work on 2026-09-29.
 
 **Other:**
 
-10. **Changing the sort while scrolled down** still keeps the top card in
-    view, wherever it moves to. Should a new sort always return to the top?
+10. **Changing the sort while scrolled down:** decided 2026-10-19 and done:
+    a sort, reshuffle or folder grouping the user picks returns to the top;
+    reorders they did not ask for (a rating moving a clip) keep the place.
 11. **The detached re-render engine** (Section 9) waits for the go-ahead.
 12. **Releasing rc.6:** decided 2026-10-19: not yet. `main` stays local,
     unpushed and untagged, until a build has proved stable in use
