@@ -135,7 +135,11 @@ const VideoCard = memo(function VideoCard({
   isVisible,
   playbackSuspended = false,
   workSuspended = false,
+  // Off for a card shown bigger than its proxy looks sharp at; a proxy
+  // already playing is then swapped for the original.
   proxyPlaybackEnabled = false,
+  // The width, in device pixels, to capture this card's still frame at.
+  posterWidth = undefined,
   showFilenames = true,
   reviewModeEnabled = true,
   // Generation versions: primitives only, so the memoized card re-renders
@@ -207,6 +211,10 @@ const VideoCard = memo(function VideoCard({
   const visibilityRef = useRef(Boolean(isVisible));
   const fullPathRef = useRef(video?.fullPath ?? null);
   const signatureRef = useRef(null);
+  const proxyAllowedRef = useRef(proxyPlaybackEnabled);
+  proxyAllowedRef.current = proxyPlaybackEnabled;
+  const posterWidthRef = useRef(posterWidth);
+  posterWidthRef.current = posterWidth;
 
   const clickTimeoutRef = useRef(null);
   const hoverIntentTimeoutRef = useRef(null);
@@ -548,6 +556,18 @@ const VideoCard = memo(function VideoCard({
     setLoading(false);
     lastFailureAtRef.current = 0;
   }, [cancelLoadAttempt, mediaIdentity, onMediaInvalidated, videoId]);
+
+  // A card grown past what its proxy shows sharply plays the original: a
+  // proxy already playing is let go, and the card reloads (its still frame
+  // covers the swap).
+  useEffect(() => {
+    if (proxyPlaybackEnabled) return;
+    if (videoRef.current?.dataset?.usingProxy !== "true") return;
+    cancelLoadAttempt();
+    onMediaInvalidated?.(videoId);
+    setLoaded(false);
+    setLoading(false);
+  }, [cancelLoadAttempt, onMediaInvalidated, proxyPlaybackEnabled, videoId]);
 
   useEffect(() => {
     if (!workSuspended) return;
@@ -989,7 +1009,7 @@ const VideoCard = memo(function VideoCard({
           }
           setLoaded(true);
           notifyReady();
-          posterFrames.capture(signatureRef.current, el);
+          posterFrames.capture(signatureRef.current, el, posterWidthRef.current);
         };
 
         let recoveryInFlight = false;
@@ -1135,11 +1155,16 @@ const VideoCard = memo(function VideoCard({
                   enabled: true,
                 });
                 if (!isCurrentAttempt()) return;
-                selectedSourceUrl =
-                  normalizeOpaqueMediaSource(resolved?.sourceUrl) || opaqueSource;
-                proxyStatus = resolved?.status || "unavailable";
+                // The card may have outgrown the proxy while it resolved.
+                selectedSourceUrl = proxyAllowedRef.current
+                  ? normalizeOpaqueMediaSource(resolved?.sourceUrl) || opaqueSource
+                  : opaqueSource;
+                proxyStatus = proxyAllowedRef.current
+                  ? resolved?.status || "unavailable"
+                  : "disabled";
               }
               el.dataset.proxyStatus = proxyStatus;
+              el.dataset.usingProxy = String(selectedSourceUrl !== opaqueSource);
               el.src = selectedSourceUrl;
             } else if (video.file) {
               const ownedUrl = URL.createObjectURL(video.file);

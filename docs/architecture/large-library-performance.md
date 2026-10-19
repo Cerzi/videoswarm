@@ -418,7 +418,10 @@ uses a 120-second timeout, caps stdout/stderr at 1 MiB/256 KiB, cancels work on
 owner, profile, window, or app teardown, and uses atomic publication. Completed
 proxies are capped at 512 entries and 1 GiB with disk-byte LRU eviction. A
 proxy is selected only on a subsequent media load after it is cached; originals
-remain untouched and are always the fallback. A proxy keeps the source's first
+remain untouched and are always the fallback. A card shown more than 15%
+larger than its proxy, in device pixels, plays the original instead
+(`src/utils/cardMediaSize.js`); a card already playing its proxy reloads
+with the original when it grows past that, or when proxies are switched off. A proxy keeps the source's first
 audio track (AAC), so hover audio sounds the same whether a card plays its
 proxy or its original; the grid plays both muted. The cache's format version
 is part of every proxy's name and of its index: proxies of an earlier format
@@ -474,7 +477,9 @@ Grid still frames (`src/services/posterFrameCache.js`) let an unloaded card
 show its clip's first frame instead of an empty tile. One frame per file
 signature is captured soon after the card's first `loadeddata`, one capture
 per idle callback, scaled to at most 480 px wide and JPEG-encoded off the main
-thread. Frames are memory-only, capped at 2,000 entries and 64 MiB of encoded
+thread. A card shown wider asks for its own width in device pixels, rounded up
+in 160 px steps to at most 1,280, and a wider frame replaces a narrower one,
+including one taken from the card's smaller proxy. Frames are memory-only, capped at 2,000 entries and 64 MiB of encoded
 bytes with least-recently-used eviction that revokes each object URL. At most
 32 captures wait, newest kept; a hidden or minimized window drops them and
 captures nothing until it is restored.

@@ -124,6 +124,58 @@ describe("posterFrameCache", () => {
     expect(cache.get("third")).not.toBeNull();
   });
 
+  it("captures a bigger card's frame wider, replacing the smaller one", async () => {
+    const { cache, canvases, revoked, runIdle } = setup({ blobSize: 1000 });
+    const original = makeVideo({ width: 1920, height: 1080 });
+
+    cache.capture("sig", original);
+    await runIdle();
+    expect(canvases[0]).toMatchObject({ width: 480, height: 270 });
+
+    // A card asking for no more than it has is already served.
+    expect(cache.capture("sig", original, 400)).toBe(false);
+
+    expect(cache.capture("sig", original, 1120)).toBe(true);
+    await runIdle();
+    expect(canvases[1]).toMatchObject({ width: 1120, height: 630 });
+    expect(cache.get("sig")).toBe("blob:poster-2");
+    expect(revoked).toEqual(["blob:poster-1"]);
+    expect(cache.getSnapshot()).toMatchObject({ entries: 1, bytes: 1000 });
+
+    // Never wider than the largest width; a smaller card keeps the big frame.
+    expect(cache.capture("sig", original, 4000)).toBe(true);
+    await runIdle();
+    expect(canvases[2]).toMatchObject({ width: 1280, height: 720 });
+    expect(cache.capture("sig", original, 480)).toBe(false);
+  });
+
+  it("lets the original replace a frame taken from a smaller proxy", async () => {
+    const { cache, canvases, runIdle } = setup();
+    const proxy = makeVideo({ width: 405, height: 720 });
+    const original = makeVideo({ width: 1080, height: 1920 });
+
+    cache.capture("sig", proxy, 640);
+    await runIdle();
+    expect(canvases[0]).toMatchObject({ width: 405, height: 720 });
+    expect(cache.capture("sig", proxy, 640)).toBe(false);
+
+    expect(cache.capture("sig", original, 640)).toBe(true);
+    await runIdle();
+    expect(canvases[1]).toMatchObject({ width: 640, height: 1138 });
+  });
+
+  it("widens a queued capture instead of queueing it twice", async () => {
+    const { cache, canvases, runIdle } = setup();
+    const video = makeVideo({ width: 1920, height: 1080 });
+    cache.capture("sig", video);
+    expect(cache.capture("sig", video, 480)).toBe(false);
+    expect(cache.capture("sig", video, 960)).toBe(true);
+    expect(cache.getSnapshot().pending).toBe(1);
+    await runIdle();
+    expect(canvases).toHaveLength(1);
+    expect(canvases[0].width).toBe(960);
+  });
+
   it("does no capture work while suspended and drops a cleared generation", async () => {
     const { cache, runIdle, canvases, idle } = setup();
     cache.capture("queued", makeVideo());

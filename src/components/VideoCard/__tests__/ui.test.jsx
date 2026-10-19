@@ -569,6 +569,115 @@ describe("VideoCard", () => {
     expect(lastVideoEl.load).toHaveBeenCalledOnce();
   });
 
+  it("swaps a playing proxy for the original once the card outgrows it", async () => {
+    const proxyUrl =
+      "videoswarm-media://proxy/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const resolveSource = vi.fn().mockResolvedValue({ status: "cached", sourceUrl: proxyUrl });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { playback: { resolveSource } },
+    });
+    const onMediaInvalidated = vi.fn();
+    const video = {
+      id: "outgrown",
+      instanceId: 53,
+      name: "outgrown.mp4",
+      fullPath: "/source/outgrown.mp4",
+      sourceUrl: "videoswarm-media://instance/53?v=1",
+      isElectronFile: true,
+    };
+    const rendered = render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        onMediaInvalidated={onMediaInvalidated}
+        proxyPlaybackEnabled
+      />
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const proxyElement = lastVideoEl;
+    expect(proxyElement.src).toBe(proxyUrl);
+    expect(proxyElement.dataset.usingProxy).toBe("true");
+
+    rendered.rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        onMediaInvalidated={onMediaInvalidated}
+        proxyPlaybackEnabled={false}
+      />
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onMediaInvalidated).toHaveBeenCalledWith("outgrown");
+    expect(proxyElement.src).toBe("");
+    expect(lastVideoEl).not.toBe(proxyElement);
+    expect(lastVideoEl.src).toBe("videoswarm-media://instance/53?v=1");
+    expect(lastVideoEl.dataset.usingProxy).toBe("false");
+    expect(resolveSource).toHaveBeenCalledOnce();
+
+    // Shrinking again leaves the original playing.
+    const originalElement = lastVideoEl;
+    rendered.rerender(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        onMediaInvalidated={onMediaInvalidated}
+        proxyPlaybackEnabled
+      />
+    );
+    await act(async () => {});
+    expect(lastVideoEl).toBe(originalElement);
+    expect(onMediaInvalidated).toHaveBeenCalledOnce();
+  });
+
+  it("plays the original when the card outgrows the proxy while it resolves", async () => {
+    let resolveProxy;
+    const resolveSource = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveProxy = resolve;
+        })
+    );
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { playback: { resolveSource } },
+    });
+    const video = {
+      id: "outgrown-early",
+      instanceId: 54,
+      name: "early.mp4",
+      fullPath: "/source/early.mp4",
+      sourceUrl: "videoswarm-media://instance/54?v=1",
+      isElectronFile: true,
+    };
+    const rendered = render(<VideoCard {...baseProps} video={video} proxyPlaybackEnabled />);
+    await act(async () => {});
+    const element = lastVideoEl;
+    rendered.rerender(
+      <VideoCard {...baseProps} video={video} proxyPlaybackEnabled={false} />
+    );
+    await act(async () => {
+      resolveProxy({
+        status: "cached",
+        sourceUrl:
+          "videoswarm-media://proxy/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(lastVideoEl).toBe(element);
+    expect(element.src).toBe("videoswarm-media://instance/54?v=1");
+    expect(element.dataset.usingProxy).toBe("false");
+    expect(element.dataset.proxyStatus).toBe("disabled");
+  });
+
   it("does not apply a proxy resolution that settles after unmount", async () => {
     let resolveProxy;
     const resolveSource = vi.fn(
@@ -1090,13 +1199,21 @@ describe("VideoCard", () => {
     expect(poster?.getAttribute("src")).toBe("blob:poster-frame");
     idle.unmount();
 
-    render(<VideoCard {...baseProps} video={video} canLoadMoreVideos={() => true} />);
+    render(
+      <VideoCard
+        {...baseProps}
+        video={video}
+        canLoadMoreVideos={() => true}
+        posterWidth={960}
+      />
+    );
     await act(async () => {});
     expect(capture).not.toHaveBeenCalled();
     await act(async () => {
       lastVideoEl.dispatchEvent(new Event("loadeddata"));
     });
-    expect(capture).toHaveBeenCalledWith(signatureForVideo(video), lastVideoEl);
+    // Captured as wide as the card is shown.
+    expect(capture).toHaveBeenCalledWith(signatureForVideo(video), lastVideoEl, 960);
 
     capture.mockRestore();
     get.mockRestore();

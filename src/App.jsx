@@ -118,6 +118,7 @@ import {
 } from "./app/filters/filtersUtils";
 import { buildTagHierarchy } from "./app/filters/tagHierarchy";
 import { getOpaqueMediaSource } from "./utils/mediaSource";
+import { posterWidthFor, proxyIsSharpEnough } from "./utils/cardMediaSize";
 import {
   resetTurnedDownTags,
   turnDownLikelyTag,
@@ -7177,6 +7178,7 @@ function App() {
                     >
                       {virtualItems.map((position) => {
                         const video = position.item;
+                        const pixelRatio = window.devicePixelRatio || 1;
                         return (
                           <div
                             key={position.id}
@@ -7207,7 +7209,16 @@ function App() {
                               isPlaying={videoCollection.isVideoPlaying(video.id)}
                               playbackSuspended={Boolean(fullScreenVideo) || gridPlaybackPaused}
                               workSuspended={workSuspended}
-                              proxyPlaybackEnabled={proxyPlaybackEnabled}
+                              proxyPlaybackEnabled={
+                                proxyPlaybackEnabled &&
+                                proxyIsSharpEnough(
+                                  video.dimensions,
+                                  position.width,
+                                  position.height,
+                                  pixelRatio
+                                )
+                              }
+                              posterWidth={posterWidthFor(position.width, pixelRatio)}
                               isNear={ioRegistry.isNear}
                               onStartLoading={handleVideoStartLoading}
                               onStopLoading={handleVideoStopLoading}

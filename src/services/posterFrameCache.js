@@ -10,12 +10,16 @@
 // JPEG-encoded off the main thread (OffscreenCanvas.convertToBlob). Frames
 // live in memory only, bounded by entry count and encoded bytes, keyed by the
 // file signature so an edited file never shows its previous frame.
+//
+// Ordinary cards get a 480-pixel frame. A bigger card asks for its own width
+// (up to 1280) and replaces a smaller frame of the same clip.
 
 const DEFAULTS = Object.freeze({
   maxEntries: 2000,
   maxBytes: 64 * 1024 * 1024,
   maxPending: 32,
   maxWidth: 480,
+  largestWidth: 1280,
   quality: 0.72,
 });
 
@@ -50,14 +54,15 @@ export function createPosterFrameCache({
   maxBytes = DEFAULTS.maxBytes,
   maxPending = DEFAULTS.maxPending,
   maxWidth = DEFAULTS.maxWidth,
+  largestWidth = DEFAULTS.largestWidth,
   quality = DEFAULTS.quality,
   createCanvas = defaultCreateCanvas,
   scheduleIdle = defaultScheduleIdle,
   createObjectURL = (blob) => URL.createObjectURL(blob),
   revokeObjectURL = (url) => URL.revokeObjectURL(url),
 } = {}) {
-  const entries = new Map(); // signature -> { url, bytes }, oldest first
-  const pending = new Map(); // signature -> video element, oldest first
+  const entries = new Map(); // signature -> { url, bytes, width }, oldest first
+  const pending = new Map(); // signature -> { element, width }, oldest first
   let totalBytes = 0;
   let pumpScheduled = false;
   let capturing = false;
@@ -75,24 +80,43 @@ export function createPosterFrameCache({
     }
   };
 
-  const store = (signature, blob) => {
+  const wantedWidth = (width) =>
+    Math.min(largestWidth, Math.max(maxWidth, Math.round(Number(width) || 0)));
+
+  // Whether the stored frame already serves a card wanting this width from
+  // this source: as wide, or as wide as the source (a proxy's frame does not
+  // stop a wider one from the original).
+  const covers = (entry, width, sourceWidth) =>
+    Boolean(entry && entry.width >= Math.min(width, sourceWidth || Infinity));
+
+  const remove = (signature) => {
+    const entry = entries.get(signature);
+    if (!entry) return;
+    entries.delete(signature);
+    totalBytes -= entry.bytes;
+    revokeObjectURL(entry.url);
+  };
+
+  const store = (signature, blob, width) => {
     const bytes = Number(blob?.size) || 0;
     if (bytes <= 0 || bytes > maxBytes) return;
+    remove(signature);
     const url = createObjectURL(blob);
-    entries.set(signature, { url, bytes });
+    entries.set(signature, { url, bytes, width });
     totalBytes += bytes;
     evictOverflow();
   };
 
-  const captureNow = async (signature, element, captureGeneration) => {
+  const captureNow = async (signature, element, targetWidth, captureGeneration) => {
     if (!element?.isConnected || element.readyState < HAVE_CURRENT_DATA) return;
     const sourceWidth = Number(element.videoWidth) || 0;
     const sourceHeight = Number(element.videoHeight) || 0;
     if (sourceWidth <= 0 || sourceHeight <= 0) return;
 
-    const scale = Math.min(1, maxWidth / sourceWidth);
+    const scale = Math.min(1, targetWidth / sourceWidth);
     const width = Math.max(1, Math.round(sourceWidth * scale));
     const height = Math.max(1, Math.round(sourceHeight * scale));
+    if (covers(entries.get(signature), width)) return;
     const canvas = createCanvas(width, height);
     const context = canvas?.getContext?.("2d", {
       alpha: false,
@@ -111,10 +135,10 @@ export function createPosterFrameCache({
     } catch {
       blob = null;
     }
-    if (!blob || captureGeneration !== generation || entries.has(signature)) {
+    if (!blob || captureGeneration !== generation || covers(entries.get(signature), width)) {
       return;
     }
-    store(signature, blob);
+    store(signature, blob, width);
   };
 
   const schedulePump = () => {
@@ -128,10 +152,10 @@ export function createPosterFrameCache({
     if (suspended || capturing) return;
     const next = pending.entries().next().value;
     if (!next) return;
-    const [signature, element] = next;
+    const [signature, { element, width }] = next;
     pending.delete(signature);
     capturing = true;
-    captureNow(signature, element, generation)
+    captureNow(signature, element, width, generation)
       .catch(() => {})
       .finally(() => {
         capturing = false;
@@ -150,17 +174,26 @@ export function createPosterFrameCache({
       return entry.url;
     },
 
-    /** Queue a capture of the element's current frame, once per signature. */
-    capture(signature, element) {
+    /**
+     * Queue a capture of the element's current frame for a card wanting
+     * this width: once per signature, again only for a wider card.
+     */
+    capture(signature, element, width = maxWidth) {
       if (!signature || !element || suspended) return false;
-      if (entries.has(signature) || pending.has(signature)) return false;
+      const target = wantedWidth(width);
+      if (covers(entries.get(signature), target, Number(element.videoWidth))) return false;
+      const queued = pending.get(signature);
+      if (queued) {
+        if (queued.width >= target) return false;
+        pending.delete(signature);
+      }
       while (pending.size >= maxPending) {
         // The newest requests are the cards on screen now.
         const oldest = pending.keys().next().value;
         if (oldest === undefined) break;
         pending.delete(oldest);
       }
-      pending.set(signature, element);
+      pending.set(signature, { element, width: target });
       schedulePump();
       return true;
     },

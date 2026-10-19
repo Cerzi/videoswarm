@@ -331,6 +331,10 @@ matches under the tag input, including in fullscreen. Check by hand:
   the grid and the pass waits under Library › Review passes; resuming lands
   on the last clip; at the end a search pass offers *Run the search again*.
   Shift+1 accepts and sends to the first companion quick action.
+- Big cards look sharp at the largest zoom levels: a card shown more than
+  about 15% larger than its 720p proxy plays the original (a playing proxy
+  swaps over as you zoom in, briefly showing its still frame), and its still
+  frame is captured as wide as the card, up to 1280 px.
 - Companion one-click sends: once requeue marks an action `quick`, hovering
   a card it has not sent shows that action's button, and one click sends it
   with a toast; *Send to …* on a selection sends at once when nothing would
