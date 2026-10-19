@@ -13,7 +13,6 @@ const {
   clipboard,
   protocol,
   session,
-  Tray,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -131,7 +130,6 @@ backgroundActivity.onPauseChange((paused) => {
 });
 // 1 stacks the exact prompt only; the rest are shares of words in common.
 const STACK_SIMILARITY_LEVELS = new Set([1, 0.9, 0.8, 0.7]);
-const { createComfyRunner, ORDERS: COMFY_QUEUE_ORDERS } = require("./main/comfy-runner");
 const { createComfyClient } = require("./main/comfy-client");
 const { createComfyWorkflowWindow } = require("./main/comfy-workflow-window");
 const {
@@ -156,11 +154,7 @@ const {
   parseComfyUrl,
   validateComfyConnection,
 } = require("./main/comfy-connection");
-const { learnRecipe, pairFromRequeueTags } = require("./main/comfy-recipe");
-const { createQueueTray } = require("./main/comfy-tray");
 const { isIsoBmffPath, readIsoBmffEmbeddedPayload } = require("./main/container-tags");
-const { computeFingerprint } = require("./main/fingerprint");
-const { stringifyComfyGraphJson } = require("./main/comfy-graph-json");
 const { migrateLegacyProfileData } = require("./main/profile-migration");
 const { pollFolderForChanges } = require("./main/polling-scanner");
 const {
@@ -1701,26 +1695,17 @@ function wireWatcherEvents(win) {
   });
 }
 
-// ===== ComfyUI re-render queue =====
-// The engine lives in the main process (docs/architecture/
-// comfy-queue-integration.md, Decisions 1-3): one runner per active profile,
-// talking only to a loopback ComfyUI the user switched on. Closing the window
-// while a queue is active leaves Video Swarm in the tray.
-let comfyRunner = null;
-let comfyTray = null;
-let comfyQuitConfirmed = false;
-let comfyQuitPrompt = null;
-const COMFY_MAX_QUEUE_ADD = 512;
-const COMFY_MAX_EXAMPLES = 16;
-const COMFY_MAX_CONFIRM = 32;
+// ===== ComfyUI address =====
+// Where a clip's embedded workflow opens: a loopback ComfyUI only, per
+// profile. Video Swarm never queues anything there; re-rendering is left to
+// companion apps (docs/architecture/companion-app.md).
 
 function comfyConnectionSetting() {
   return normalizeComfyConnection(currentSettings?.comfyConnection);
 }
 
 // A clip's workflow in the user's ComfyUI, in a window of its own
-// (main/comfy-workflow-window.js). It needs only the address: viewing a
-// workflow queues nothing, so the re-render queue need not be switched on.
+// (main/comfy-workflow-window.js). Viewing a workflow queues nothing.
 const comfyWorkflowWindow = createComfyWorkflowWindow({
   BrowserWindow,
   session,
@@ -1731,108 +1716,6 @@ const comfyWorkflowWindow = createComfyWorkflowWindow({
       ? assetPath("assets", "icons", "videoswarm.ico")
       : assetPath("assets", "icons", "videoswarm.png"),
 });
-
-// A draft's (or final's) embedded ComfyUI graphs. MP4 and MOV only for now:
-// ComfyUI's own SaveVideo writes MP4.
-async function readComfyGraphs(filePath, { includeRequeue = false } = {}) {
-  if (!isIsoBmffPath(filePath)) {
-    throw new Error("Only MP4 and MOV renders can be re-rendered");
-  }
-  const result = await readIsoBmffEmbeddedPayload(filePath, {}, {
-    includeWorkflow: true,
-    includeRequeue,
-  });
-  if (result.status === "unreadable") throw new Error(`No readable file at ${filePath}`);
-  if (result.status !== "found" || !result.payload?.prompt) {
-    throw new Error("The file carries no ComfyUI prompt");
-  }
-  return result.payload;
-}
-
-function broadcastComfyQueueEvent(event) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("comfy-queue:changed", event);
-  }
-  if (comfyTray?.visible && comfyRunner) comfyTray.update(comfyRunner.snapshot());
-}
-
-function startComfyRunnerForProfile() {
-  comfyRunner = createComfyRunner({
-    store: getMetadataStore().comfyQueue,
-    getConnection: comfyConnectionSetting,
-    readDraft: (filePath) => readComfyGraphs(filePath),
-    emit: broadcastComfyQueueEvent,
-    logger: console,
-  });
-  // Pick up this profile's prompts still in ComfyUI from before a restart.
-  void comfyRunner.resume().catch((error) => {
-    console.warn("[comfy] Could not resume the re-render queue", error);
-  });
-}
-
-async function disposeComfyRunner() {
-  const runner = comfyRunner;
-  comfyRunner = null;
-  await runner?.dispose();
-}
-
-function requireComfyRunner() {
-  if (!comfyRunner || profileReconfigurationInProgress) {
-    throw Object.assign(new Error("The profile is changing; try again"), {
-      code: "PROFILE_RECONFIGURATION_IN_PROGRESS",
-    });
-  }
-  return comfyRunner;
-}
-
-function showComfyTray() {
-  if (!comfyTray) {
-    comfyTray = createQueueTray({
-      Tray,
-      Menu,
-      nativeImage,
-      iconPath: assetPath("assets", "icons", "videoswarm.png"),
-      onShow: () => {
-        void ensureMainWindow()
-          .then((window) => focusMainWindow(window))
-          .catch((error) => console.error("[comfy] Failed to show the window", error));
-      },
-      onStopQueue: () => {
-        void comfyRunner?.stop().catch((error) => console.warn("[comfy] Stop failed", error));
-      },
-      onQuit: () => app.quit(),
-    });
-  }
-  comfyTray.show(comfyRunner?.snapshot());
-}
-
-// Quitting while a prompt is in ComfyUI asks first. The prompt keeps
-// rendering there and is adopted when Video Swarm next starts.
-async function confirmQuitDuringComfyRender() {
-  if (comfyQuitPrompt) return comfyQuitPrompt;
-  comfyQuitPrompt = dialog
-    .showMessageBox(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null, {
-      type: "question",
-      buttons: ["Quit", "Cancel"],
-      defaultId: 1,
-      cancelId: 1,
-      message: "A re-render is still in ComfyUI",
-      detail:
-        "It keeps rendering in ComfyUI, and Video Swarm picks it up the next time it starts. " +
-        "Nothing else in the queue is sent until then.",
-    })
-    .then(({ response }) => {
-      if (response !== 0) return;
-      comfyQuitConfirmed = true;
-      comfyRunner?.stopFeeding();
-      app.quit();
-    })
-    .catch((error) => console.error("[comfy] Quit confirmation failed", error))
-    .finally(() => {
-      comfyQuitPrompt = null;
-    });
-  return comfyQuitPrompt;
-}
 
 // ===== Settings load/save =====
 function computeDefaultZoomLevel() {
@@ -2165,7 +2048,6 @@ async function initializeProfileRuntime(
   assertProfileReconfigurationActive(generation);
   configuredMetadataProfileGeneration = generation;
   directoryAggregateBatcher.activate({ profileId: targetId, generation });
-  startComfyRunnerForProfile(settings);
   return settings;
 }
 
@@ -2193,9 +2075,6 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
   stackFrameService.cancelAll("Profile changed while reading stack frames");
   promptSimilarityService.clear();
   tagSuggestionService.clear();
-  // Prompts already in ComfyUI keep rendering; the profile's runner picks
-  // them up again when that profile is next active.
-  await disposeComfyRunner();
   lastFrameCaptureService.cancelAll("Profile changed during frame capture");
   mediaProtocolService.cancelActiveStreams();
   await Promise.all([
@@ -2380,7 +2259,6 @@ async function deleteProfileWithTransition(profileId, { broadcast = true } = {})
 
 // ===== Window/Menu =====
 async function createWindow() {
-  comfyTray?.destroy();
   if (nativeShutdownPreparing || nativeShutdownRequested) return null;
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   const settings = await loadSettings();
@@ -6304,10 +6182,9 @@ ipcMain.handle("activity:set-paused", async (_event, payload = {}) => {
   return backgroundActivity.setPaused(payload.paused === true);
 });
 
-// ===== ComfyUI re-render queue IPC =====
-// The renderer sends clip paths it was shown (authorized like every native
-// action), recipe and queue ids, and settings; never a URL beyond the
-// loopback connection setting, and never a graph.
+// ===== ComfyUI address IPC =====
+// Only the loopback address is set from the renderer; opening a workflow
+// names a catalog row, and main reads the graph.
 
 ipcMain.handle("comfy:connection:get", async () => comfyConnectionSetting());
 
@@ -6315,28 +6192,10 @@ ipcMain.handle("comfy:connection:set", async (_event, payload = {}) => {
   assertPlainObject(payload, "ComfyUI connection");
   assertPayloadSize(payload, 16 * 1024);
   const context = captureSettingsContext();
-  const value = await validateComfyConnection({
-    enabled: payload.enabled === true,
-    url: payload.url,
-    outputDir: payload.outputDir,
-  });
+  const value = validateComfyConnection({ url: payload.url });
   await saveSettingsPartial({ comfyConnection: value }, context.profileId);
   assertSettingsContextActive(context);
-  comfyRunner?.reconfigure();
-  if (value.enabled) void comfyRunner?.resume();
   return value;
-});
-
-// A native picker for ComfyUI's output folder. It grants nothing: the path
-// only comes back through comfy:connection:set, which validates it.
-ipcMain.handle("comfy:connection:choose-output-dir", async (event) => {
-  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-  const result = await dialog.showOpenDialog(ownerWindow || undefined, {
-    properties: ["openDirectory"],
-    title: "ComfyUI output folder",
-  });
-  if (result.canceled || !result.filePaths?.length) return { canceled: true };
-  return { canceled: false, path: result.filePaths[0] };
 });
 
 // Read-only: GET /queue and two node definitions. Nothing is queued.
@@ -6401,131 +6260,6 @@ ipcMain.handle("comfy:open-workflow", async (event, payload = {}) => {
     };
   }
 });
-
-const comfyQueueStore = () => getMetadataStore().comfyQueue;
-const assertComfyId = (value, name) => assertInteger(value, { name, min: 1 });
-
-ipcMain.handle("comfy:recipes:list", async () => comfyQueueStore().listRecipes());
-
-ipcMain.handle("comfy:recipes:get", async (_event, payload = {}) => {
-  assertPlainObject(payload, "recipe request");
-  const recipe = comfyQueueStore().getRecipe(assertComfyId(payload.id, "Recipe id"));
-  // Exact 64-bit values reach the renderer as their digits.
-  return recipe ? JSON.parse(stringifyComfyGraphJson(recipe)) : null;
-});
-
-ipcMain.handle("comfy:recipes:delete", async (_event, payload = {}) => {
-  assertPlainObject(payload, "recipe request");
-  return { deleted: comfyQueueStore().deleteRecipe(assertComfyId(payload.id, "Recipe id")) };
-});
-
-// Learn a recipe from example pairs: a draft and its quality version, or a
-// standalone tool's final alone (it carries its draft's graphs).
-ipcMain.handle("comfy:recipes:learn", async (event, payload = {}) => {
-  assertPlainObject(payload, "recipe learning request");
-  assertPayloadSize(payload, 256 * 1024);
-  const name = assertString(payload.name, { name: "Recipe name", minChars: 1, maxChars: 120 });
-  if (!Array.isArray(payload.examples) || payload.examples.length > COMFY_MAX_EXAMPLES) {
-    throw new TypeError(`Give up to ${COMFY_MAX_EXAMPLES} example pairs`);
-  }
-  const pairs = [];
-  for (const example of payload.examples) {
-    assertPlainObject(example, "recipe example");
-    const final = await assertRendererPath(event, example.finalPath, "file");
-    const label = path.basename(final.path);
-    if (example.draftPath === undefined || example.draftPath === null) {
-      const tags = await readComfyGraphs(final.path, { includeRequeue: true });
-      const result = pairFromRequeueTags(tags, label);
-      if (result.error) return { error: result.error };
-      pairs.push(result.pair);
-    } else {
-      const draft = await assertRendererPath(event, example.draftPath, "file");
-      pairs.push({
-        label,
-        draft: await readComfyGraphs(draft.path),
-        final: await readComfyGraphs(final.path),
-      });
-    }
-  }
-  const learned = learnRecipe(pairs, { name });
-  if (learned.error) return { error: learned.error };
-  return { recipe: comfyQueueStore().saveRecipe({ name, recipe: learned.recipe }) };
-});
-
-ipcMain.handle("comfy:queue:add", async (event, payload = {}) => {
-  assertPlainObject(payload, "queue request");
-  assertPayloadSize(payload, 512 * 1024);
-  const recipeId = assertComfyId(payload.recipeId, "Recipe id");
-  if (!Array.isArray(payload.clips) || payload.clips.length > COMFY_MAX_QUEUE_ADD) {
-    throw new TypeError(`Queue up to ${COMFY_MAX_QUEUE_ADD} clips at a time`);
-  }
-  const settings = payload.settings ?? {};
-  const choices = payload.choices ?? {};
-  assertPlainObject(settings, "recipe settings");
-  assertPlainObject(choices, "recipe choices");
-  const clips = [];
-  for (const clip of payload.clips) {
-    assertPlainObject(clip, "queued clip");
-    const authorized = await assertRendererPath(event, clip.fullPath, "file");
-    const { fingerprint } = await computeFingerprint(authorized.path);
-    clips.push({ fingerprint, draftPath: authorized.path });
-  }
-  return requireComfyRunner().addClips({ clips, recipeId, knobs: { settings, choices } });
-});
-
-ipcMain.handle("comfy:queue:list", async () => requireComfyRunner().snapshot());
-
-ipcMain.handle("comfy:queue:history", async (_event, payload = {}) => {
-  assertPlainObject(payload, "history request");
-  const limit = payload.limit === undefined ? 200 : assertInteger(payload.limit, { name: "History limit", min: 1, max: 500 });
-  return requireComfyRunner().history({ limit });
-});
-
-ipcMain.handle("comfy:queue:start", async () => {
-  await requireComfyRunner().start();
-  return requireComfyRunner().snapshot();
-});
-
-ipcMain.handle("comfy:queue:stop", async () => {
-  await requireComfyRunner().stop();
-  return requireComfyRunner().snapshot();
-});
-
-ipcMain.handle("comfy:queue:order", async (_event, payload = {}) => {
-  assertPlainObject(payload, "queue order");
-  const order = assertString(payload.order, { name: "Queue order", minChars: 1, maxChars: 32 });
-  if (!COMFY_QUEUE_ORDERS.includes(order)) throw new TypeError(`Unknown queue order: ${order}`);
-  requireComfyRunner().setOrder(order);
-  return requireComfyRunner().snapshot();
-});
-
-// Confirm holds on one clip by the ids its last check reported (main/
-// comfy-safety.js, "never silently wrong"). The runner accepts only holds
-// that clip reported and that can be confirmed; a refusal never can.
-ipcMain.handle("comfy:queue:confirm", async (_event, payload = {}) => {
-  assertPlainObject(payload, "hold confirmation");
-  assertPayloadSize(payload, 16 * 1024);
-  const id = assertComfyId(payload.id, "Queue item id");
-  const holds = assertStringArray(payload.holds, {
-    name: "Holds to confirm",
-    minEntries: 1,
-    maxEntries: COMFY_MAX_CONFIRM,
-    item: { minChars: 1, maxChars: 200 },
-  });
-  return { ok: requireComfyRunner().confirm(id, holds) };
-});
-
-for (const [channel, action] of [
-  ["comfy:queue:retry", (runner, id) => runner.retry(id)],
-  ["comfy:queue:render-again", (runner, id) => runner.renderAgain(id)],
-  ["comfy:queue:remove", (runner, id) => runner.remove(id)],
-]) {
-  ipcMain.handle(channel, async (_event, payload = {}) => {
-    assertPlainObject(payload, "queue item request");
-    const runner = requireComfyRunner();
-    return { ok: await action(runner, assertComfyId(payload.id, "Queue item id")) };
-  });
-}
 
 ipcMain.handle("generation-versions:summaries", async (_event, payload = {}) => {
   assertPlainObject(payload, "generation version summary request");
@@ -7069,7 +6803,6 @@ async function performNativeShutdown() {
   lastFrameCaptureService.cancelAll("Application shutdown requested");
   mediaProtocolService.cancelActiveStreams();
   const flushFailures = await settleShutdownTasks("flush", {
-    comfyQueue: () => disposeComfyRunner(),
     generationMetadata: () => generationMetadataDrain,
     generationKeys: () => generationKeyDrain,
     directoryAggregates: () => flushDirectoryAggregates(),
@@ -7096,7 +6829,6 @@ async function performNativeShutdown() {
   const pendingProfileReconfiguration = profileReconfigureQueue;
   await pendingProfileReconfiguration.catch(() => {});
   await settleShutdownTasks("dispose", {
-    comfyTray: () => comfyTray?.destroy(),
     folderWatcher: () => folderWatcher.dispose(),
     generationMetadata: () => generationMetadataService.shutdown(),
     backgroundActivity: () => backgroundActivity.shutdown(),
@@ -7126,12 +6858,6 @@ function beginNativeShutdown() {
 }
 
 app.on("window-all-closed", () => {
-  // A re-render queue keeps going with the window closed: Video Swarm stays
-  // in the tray until the queue is done and the user quits.
-  if (comfyRunner?.isActive() && !nativeShutdownPreparing) {
-    showComfyTray();
-    return;
-  }
   if (process.platform !== "darwin") {
     app.quit();
   }
@@ -7198,11 +6924,6 @@ app.on("activate", () => {
 app.on("before-quit", (event) => {
   if (!ownsSingleInstanceLock) return;
   if (nativeShutdownComplete) return;
-  if (!comfyQuitConfirmed && !nativeShutdownPromise && comfyRunner?.hasPromptInComfy()) {
-    event.preventDefault();
-    void confirmQuitDuringComfyRender();
-    return;
-  }
   event.preventDefault();
   if (nativeShutdownPromise) return;
   beginNativeShutdown().finally(() => {

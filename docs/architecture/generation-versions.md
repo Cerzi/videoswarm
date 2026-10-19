@@ -759,7 +759,7 @@ possible future cross-check, nothing more.
   [`large-library-performance.md`](large-library-performance.md).
 - Library-wide collections and cross-root transfer:
   [`library-tag-views.md`](library-tag-views.md).
-- The external re-render tool and the split of responsibilities: see
-  [`comfy-queue-integration.md`](comfy-queue-integration.md), Summary.
+- External re-render tools connect as companion apps:
+  [`companion-app.md`](companion-app.md).
 - Transfer planning, bounds and collision policy:
   [`review-workflow.md`](review-workflow.md).

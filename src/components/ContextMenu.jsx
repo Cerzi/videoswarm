@@ -210,7 +210,7 @@ const ContextMenu = ({
         id: 'open-workflow',
         label: `🧩 Open workflow in ComfyUI${selectionCount > 1 ? ' (this item)' : ''}`,
         action: 'comfy:open-workflow',
-        disabled: typeof electronAPI?.comfyQueue?.openWorkflow !== 'function',
+        disabled: typeof electronAPI?.comfy?.openWorkflow !== 'function',
         disabledReason: 'Desktop integration is unavailable',
       } : null,
     ]);

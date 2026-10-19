@@ -1021,7 +1021,7 @@ describe("App hook composition", () => {
       .fn()
       .mockResolvedValueOnce({ success: true, kind: "workflow" })
       .mockResolvedValueOnce({ success: false, code: "COMFY_UNAVAILABLE", error: "x" });
-    window.electronAPI = { comfyQueue: { openWorkflow } };
+    window.electronAPI = { comfy: { openWorkflow } };
     const previousOrdered = masonryReturn.orderedVideos;
     masonryReturn.orderedVideos = [clip];
     try {

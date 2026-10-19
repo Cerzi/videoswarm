@@ -3351,7 +3351,7 @@ function App() {
   const handleOpenWorkflow = useCallback(
     async (video) => {
       const instanceId = Number(video?.instanceId);
-      const openWorkflow = window.electronAPI?.comfyQueue?.openWorkflow;
+      const openWorkflow = window.electronAPI?.comfy?.openWorkflow;
       if (!Number.isSafeInteger(instanceId) || instanceId <= 0) return;
       if (typeof openWorkflow !== "function") return;
       let result;

@@ -572,73 +572,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
     newToken: async () => ipcRenderer.invoke("local-api:new-token"),
   },
 
-  // Re-rendering through a ComfyUI on this computer. Clips are named by the
-  // paths the renderer was shown; everything else is ids and settings.
-  comfyQueue: {
+  // The user's ComfyUI on this computer: its loopback address, a read-only
+  // connection test, and a clip's workflow opened in it. Nothing is queued.
+  comfy: {
     // Opens a clip's embedded workflow in a ComfyUI window; names the
     // catalog row only.
     openWorkflow: async (instanceId) =>
       ipcRenderer.invoke("comfy:open-workflow", { instanceId }),
     getConnection: async () => ipcRenderer.invoke("comfy:connection:get"),
-    setConnection: async ({ enabled, url, outputDir } = {}) =>
+    setConnection: async ({ url } = {}) =>
       ipcRenderer.invoke("comfy:connection:set", {
-        enabled: enabled === true,
         url: typeof url === "string" ? url : undefined,
-        outputDir: typeof outputDir === "string" ? outputDir : null,
       }),
-    chooseOutputDir: async () =>
-      ipcRenderer.invoke("comfy:connection:choose-output-dir"),
     testConnection: async (url) =>
       ipcRenderer.invoke(
         "comfy:connection:test",
         typeof url === "string" ? { url } : {}
       ),
-    recipes: {
-      list: async () => ipcRenderer.invoke("comfy:recipes:list"),
-      get: async (id) => ipcRenderer.invoke("comfy:recipes:get", { id }),
-      delete: async (id) => ipcRenderer.invoke("comfy:recipes:delete", { id }),
-      // examples: [{ finalPath, draftPath? }]; a standalone tool's final alone
-      // carries its draft.
-      learn: async ({ name, examples } = {}) =>
-        ipcRenderer.invoke("comfy:recipes:learn", {
-          name,
-          examples: Array.isArray(examples)
-            ? examples.map((example) => ({
-                finalPath: example?.finalPath,
-                draftPath: example?.draftPath ?? null,
-              }))
-            : [],
-        }),
-    },
-    add: async ({ recipeId, clips, settings, choices } = {}) =>
-      ipcRenderer.invoke("comfy:queue:add", {
-        recipeId,
-        clips: Array.isArray(clips)
-          ? clips.map((clip) => ({ fullPath: clip?.fullPath }))
-          : [],
-        settings: settings ?? {},
-        choices: choices ?? {},
-      }),
-    list: async () => ipcRenderer.invoke("comfy:queue:list"),
-    history: async (limit) =>
-      ipcRenderer.invoke("comfy:queue:history", limit === undefined ? {} : { limit }),
-    start: async () => ipcRenderer.invoke("comfy:queue:start"),
-    stop: async () => ipcRenderer.invoke("comfy:queue:stop"),
-    setOrder: async (order) => ipcRenderer.invoke("comfy:queue:order", { order }),
-    retry: async (id) => ipcRenderer.invoke("comfy:queue:retry", { id }),
-    renderAgain: async (id) => ipcRenderer.invoke("comfy:queue:render-again", { id }),
-    // Confirm a held clip's holds by the ids its `review.holds` listed.
-    confirm: async (id, holds) =>
-      ipcRenderer.invoke("comfy:queue:confirm", {
-        id,
-        holds: Array.isArray(holds) ? holds.filter((hold) => typeof hold === "string") : [],
-      }),
-    remove: async (id) => ipcRenderer.invoke("comfy:queue:remove", { id }),
-    onChanged: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("comfy-queue:changed", handler);
-      return () => ipcRenderer.removeListener("comfy-queue:changed", handler);
-    },
   },
 
   library: {

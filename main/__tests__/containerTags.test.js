@@ -97,17 +97,15 @@ describe("readIsoBmffEmbeddedPayload", () => {
     ).toEqual({ prompt: PROMPT, workflow: '{"nodes":[]}' });
   });
 
-  it("returns a final's requeue tag only when asked", async () => {
+  it("leaves other tools' tags out of the payload", async () => {
     const buffer = mp4({
-      moovChildren: [box("udta", mdtaMeta([["workflow", "{}"], ["prompt", PROMPT], ["requeue", '{"source_prompt":{}}']]))],
+      moovChildren: [box("udta", mdtaMeta([["workflow", "{}"], ["prompt", PROMPT], ["provenance", '{"source_prompt":{}}']]))],
     });
     const filePath = path.join(temporaryDirectory(), "final.mp4");
     fs.writeFileSync(filePath, buffer);
-    expect((await readIsoBmffEmbeddedPayload(filePath, {}, { includeWorkflow: true })).payload.requeue).toBeUndefined();
-    expect((await readIsoBmffEmbeddedPayload(filePath, {}, { includeRequeue: true })).payload).toEqual({
+    expect((await readIsoBmffEmbeddedPayload(filePath, {}, { includeWorkflow: true })).payload).toEqual({
       prompt: PROMPT,
       workflow: "{}",
-      requeue: '{"source_prompt":{}}',
     });
   });
 

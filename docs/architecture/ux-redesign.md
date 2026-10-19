@@ -71,8 +71,7 @@ View menu, the ⋯ menu, Preferences).
 - **Status line (D2)**: clip count, sort and grouping only, unless View ›
   Playback details is on.
 - **Preferences (D8)**: profiles, data location, playback defaults and the
-  ComfyUI connection — also the home for the queue engine's settings when
-  it moves to its own process (see `comfy-queue-integration.md`).
+  ComfyUI address.
 - **Details (D1)**: docked in the workspace sidebar by default.
 
 ### D7: an activity rail instead of more tabs
@@ -121,15 +120,12 @@ squeezing any of them. **Accepted** by the user (2026-09-28).
    - **Data location**: the path in use, and "Change data location…",
      which opens the existing dialog on top. Escape closes only that
      dialog.
-   - **ComfyUI**: the opt-in connection, meaning the switch, the address,
-     the output folder with Browse…, a read-only Test connection, and
-     Save, all through the validated `comfy:connection:*` IPC. Browse
-     uses a new `comfy:connection:choose-output-dir`, which grants
-     nothing.
+   - **ComfyUI**: the address where a clip's workflow opens, a read-only
+     Test connection, and Save, through the validated `comfy:connection:*`
+     IPC. (The re-render switch and output folder went with the in-house
+     re-render queue on 2026-10-19.)
 
-   The re-render engine's own settings will be one more entry in
-   `PREFERENCE_SECTIONS`. The native Profiles and Options › Data Location
-   menus stay.
+   The native Profiles and Options › Data Location menus stay.
 5. **Details docked by default (D1), then the activity rail (D7).**
    - **5a, D1.** Status: **Implemented**, **Verified** (2026-09-28). New
      profiles start docked. Existing settings hold "floating" only because
@@ -200,5 +196,4 @@ front, as it keeps Generation. See `clip-sequences.md`, Section 3 and its
 ## References
 
 - The audit: outstanding work 5b in [`../outstanding-work.md`](../outstanding-work.md).
-- Re-render queue surfaces: [`comfy-queue-integration.md`](comfy-queue-integration.md).
 - Clip sequences: [`clip-sequences.md`](clip-sequences.md) (on `claude/clip-sequences`).

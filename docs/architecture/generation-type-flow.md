@@ -129,10 +129,10 @@ slot `(nodeId, slot)` a socket type, with the evidence it came from:
    `cfg`, `denoise`→`FLOAT`; and switch inputs named `any_NN`→`*`. An output
    slot's type is the type of the input that consumes it, so one named
    consumer types the producer.
-4. **Catalogued** — with the optional ComfyUI connection of
-   [`comfy-queue-integration.md`](comfy-queue-integration.md) switched on,
-   `/object_info` gives every installed class's socket types. This is
-   **Deferred** until that connection exists; the reader must work without it.
+4. **Catalogued** — a running ComfyUI's `/object_info` gives every
+   installed class's socket types. **Deferred**: Video Swarm only knows
+   ComfyUI's address for opening workflows, and the reader must work
+   without it.
 
 A link's type is its producer's output type, else its consumer's input type,
 with two refinements the real corpus forced: a **concrete type beats `*`**
@@ -497,12 +497,11 @@ the column is added later with the current check.
   suite `generationMetadataQuality.test.js`; `npm test -- --run`,
   `npm run test:electron-abi`, zero-warning lint and the Vite build.
 
-### 2026-09-28 — Shared with the recipe learner
+### 2026-09-28 — Shared with the recipe learner (removed 2026-10-19)
 
-- `readComfyGraph` (socket typing, pass-through and primitive resolution
-  without the panel's roles) and `isSavingNode` are exported for
-  `main/comfy-recipe.js`, so a re-render recipe and the Generation panel agree
-  on what a switch or primitive carries. The panel's results are unchanged.
+- `readComfyGraph` and `isSavingNode` were exported for the in-house
+  re-render recipe learner. Both went with it when re-rendering was left to
+  companion apps. The panel's results are unchanged.
 
 ## References
 
@@ -510,6 +509,6 @@ the column is added later with the current check.
   [`embedded-generation-metadata.md`](embedded-generation-metadata.md).
 - Version ordering limitation:
   [`generation-versions.md`](generation-versions.md).
-- The optional ComfyUI connection:
-  [`comfy-queue-integration.md`](comfy-queue-integration.md).
+- The ComfyUI address, for opening a clip's workflow:
+  [`comfy-workflow-window.md`](comfy-workflow-window.md).
 - Prototype: kept outside this repository.

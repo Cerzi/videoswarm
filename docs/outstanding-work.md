@@ -56,35 +56,25 @@ them and lost nothing the previous parser found. A Acme prompt is still
 shown as its composer's fields (candidate fragments, Partial), because the
 composer builds the final text at run time.
 
-## 1c. Re-rendering inside Video Swarm: engine safety built, interface open
+## 1c. Re-rendering inside Video Swarm: removed
 
-Status: **Accepted**; Phases 1 and 2 **Implemented** (2026-09-28); the
-"never silently wrong" safety net **Implemented** (2026-09-29); the interface
-(Phase 3), two-pass rendering (Phase 4) and the detached engine
-**Unimplemented** — see
-[`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md)
+Status: **Removed** (2026-10-19), by the user's decision.
 
-- **Phases 1 and 2.** The recipe learner, matcher and apply are pure modules
-  (`main/comfy-recipe.js`) and reproduce real Omni and long-form finals from
-  held-out drafts. The connection, checks, queue and runner run in the main
-  process with their IPC. Decided by the user: a loopback-only, opt-in
-  ComfyUI connection, a tray icon while a queue runs, single-pass only for
-  version 1.
-- **Safety net (Section 10).** `main/comfy-safety.js` walks downstream from
-  every input a recipe changes and holds the clip when the change reaches an
-  unknown node carrying literal data. That is how the V2V hybrid's SAM3
-  clicks are caught. It also flags save nodes other than `SaveVideo`, nodes
-  that write files, continuation runs and missing inputs. Each clip is sorted
-  into *declared*, *known* or *review*. The runner never sends a held clip;
-  `comfy:queue:confirm` records a person's confirmation of a hold that can be
-  confirmed.
-- **Waiting for the user:** five questions about how strict the net is
-  (Section 7 below), and the go-ahead for the detached engine (Section 9 of
-  the architecture doc).
-- **Next:** the interface: Queue and Finished panels on the sidebar's
-  activity rail, the recipe screen, "Queue with recipe…" and badges. Then
-  Phase 4: out-of-memory retries, RAM and time estimates, two-pass rendering.
-  Both may land in the detached engine rather than the main process.
+- **What it was.** An in-house re-render queue: a recipe learner from
+  draft/final pairs, a loopback ComfyUI connection with pre-queue checks, a
+  queue and runner in the profile database, a tray while a queue ran, and a
+  "never silently wrong" safety net. Its interface was never built.
+- **Why removed.** Re-rendering is done by companion apps
+  ([`architecture/companion-app.md`](architecture/companion-app.md)), which
+  already re-render and upscale from Video Swarm in one click. Two engines
+  doing the same work would drift.
+- **What stays.** The ComfyUI address in Preferences and its read-only
+  Test, for *Open workflow in ComfyUI*
+  ([`architecture/comfy-workflow-window.md`](architecture/comfy-workflow-window.md)).
+- **Existing data.** Profiles that had the queue keep its tables, unused;
+  nothing reads or writes them. Old settings' re-render switch and output
+  folder are dropped the next time settings are saved.
+- The code is in git history; its last version is at `5b91e33`.
 
 ## 1b. An empty non-recursive folder reports a failed scan
 
@@ -140,7 +130,7 @@ Things to try, and what to judge:
 - **The status line.** Is it enough to show just the clip count and sort?
   View › Playback details brings back the decoder figures.
 - **Preferences** (Ctrl+,): playback, profiles, data location and the
-  ComfyUI connection. Try switching and creating a profile.
+  ComfyUI address. Try switching and creating a profile.
 - **The sidebar's activity rail: Library, Details, Generation, Sequences.**
   - Clicking the open icon collapses the sidebar.
   - Details comes forward when you select a clip. Generation stays in
@@ -478,26 +468,8 @@ and the native Linux decoder. The backup refs (`backup/main-before-squash`,
 
 From the overnight work on 2026-09-29.
 
-**Re-render safety net** (`comfy-queue-integration.md` Section 10):
-
-1. **"Anything downstream unknown" is read narrowly:** unknown *and*
-   carrying literal data. Read literally, every Omni and long-form clip
-   would be held, because custom nodes sit downstream of every change.
-2. **The changed node's own other inputs are trusted** to the example pairs,
-   because every pair shows that node before and after. Keep this, or
-   tighten it?
-3. **Should a dependency hold be confirmable?** For V2V, confirming means
-   rendering with the draft's clicks. The alternative is refusing until an
-   adapter exists.
-4. **Confirmation is a separate call** (`comfy:queue:confirm`), not a rule
-   choice, because choices define what counts as the same render and apply
-   to a whole batch.
-5. **Known gaps:**
-   - Scalars that are not named as geometry (a frame index, a time) are not
-     caught.
-   - Declared quality mode cannot be seen in API-only or subgraph workflows.
-   - Only absolute paths are checked.
-   - V2V still needs its own adapter to actually re-render.
+**Re-render safety net (1-5):** withdrawn 2026-10-19 with the in-house
+re-render (Section 1c).
 
 **Clip sequences:**
 
@@ -518,7 +490,8 @@ From the overnight work on 2026-09-29.
 10. **Changing the sort while scrolled down:** decided 2026-10-19 and done:
     a sort, reshuffle or folder grouping the user picks returns to the top;
     reorders they did not ask for (a rating moving a clip) keep the place.
-11. **The detached re-render engine** (Section 9) waits for the go-ahead.
+11. **The detached re-render engine:** withdrawn 2026-10-19 with the
+    in-house re-render (Section 1c).
 12. **Releasing rc.6:** decided 2026-10-19: not yet. `main` stays local,
     unpushed and untagged, until a build has proved stable in use
     (Sections 4 and 5).
@@ -529,5 +502,5 @@ From the overnight work on 2026-09-29.
   [`architecture/generation-versions.md`](architecture/generation-versions.md)
 - Scope, matching and the tag-view record contract:
   [`architecture/library-tag-views.md`](architecture/library-tag-views.md)
-- Why re-queueing stays external: [`architecture/comfy-queue-integration.md`](architecture/comfy-queue-integration.md), Summary
+- Re-rendering from Video Swarm, through companion apps: [`architecture/companion-app.md`](architecture/companion-app.md)
 - Transfer bounds and collision policy: [`architecture/review-workflow.md`](architecture/review-workflow.md)

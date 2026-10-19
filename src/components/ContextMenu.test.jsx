@@ -436,7 +436,7 @@ describe('ContextMenu', () => {
 
   test('offers the ComfyUI workflow for a clip carrying a prompt', () => {
     const onAction = vi.fn();
-    const electronAPI = { comfyQueue: { openWorkflow: vi.fn() } };
+    const electronAPI = { comfy: { openWorkflow: vi.fn() } };
     const clip = (extra) => () => ({ id: 'a', name: 'a.webm', instanceId: 7, ...extra });
     const menu = (getClip) => render(
       <ContextMenu

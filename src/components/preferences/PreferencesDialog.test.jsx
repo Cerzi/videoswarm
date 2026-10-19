@@ -38,10 +38,9 @@ const installApi = () => {
       };
     }),
   };
-  const comfyQueue = {
-    getConnection: vi.fn().mockResolvedValue({ enabled: false, url: "http://127.0.0.1:8188", outputDir: null }),
-    setConnection: vi.fn(async (value) => ({ ...value, outputDir: value.outputDir || null })),
-    chooseOutputDir: vi.fn().mockResolvedValue({ canceled: false, path: "/comfy/output" }),
+  const comfy = {
+    getConnection: vi.fn().mockResolvedValue({ url: "http://127.0.0.1:8188" }),
+    setConnection: vi.fn(async (value) => ({ url: value.url })),
     testConnection: vi.fn().mockResolvedValue({ ok: true, url: "http://127.0.0.1:8188", running: 1, pending: 2 }),
   };
   const dataLocation = {
@@ -93,10 +92,10 @@ const installApi = () => {
     })),
   };
   const copyToClipboard = vi.fn(async () => {});
-  window.electronAPI = { profiles, comfyQueue, dataLocation, companion, localApi, copyToClipboard };
+  window.electronAPI = { profiles, comfy, dataLocation, companion, localApi, copyToClipboard };
   return {
     profiles,
-    comfyQueue,
+    comfy,
     dataLocation,
     companion,
     localApi,
@@ -260,31 +259,26 @@ describe("PreferencesDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("tests and saves the ComfyUI connection", async () => {
+  it("tests and saves the ComfyUI address", async () => {
     render(<PreferencesDialog open onClose={vi.fn()} initialSection="comfy" {...playbackProps()} />);
     const address = await screen.findByRole("textbox", { name: "Address" });
     await waitFor(() => expect(address).toHaveValue("http://127.0.0.1:8188"));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
-    await waitFor(() => expect(api.comfyQueue.testConnection).toHaveBeenCalledWith("http://127.0.0.1:8188"));
+    await waitFor(() => expect(api.comfy.testConnection).toHaveBeenCalledWith("http://127.0.0.1:8188"));
     expect(await screen.findByRole("status")).toHaveTextContent("1 running, 2 waiting");
     expect(screen.getByRole("status")).toHaveTextContent("Nothing was sent.");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to ComfyUI/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
-    await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "ComfyUI's output folder" })).toHaveValue("/comfy/output")
-    );
+    // Only the address: no re-render switch or output folder.
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
+    fireEvent.change(address, { target: { value: "http://localhost:8190" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(api.comfyQueue.setConnection).toHaveBeenCalledWith({
-        enabled: true,
-        url: "http://127.0.0.1:8188",
-        outputDir: "/comfy/output",
-      })
+      expect(api.comfy.setConnection).toHaveBeenCalledWith({ url: "http://localhost:8190" })
     );
-    expect(await screen.findByText("Saved. Re-rendering is on.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
   });
 
   it("adds, tests and saves companion apps, naming what each offers", async () => {
@@ -354,17 +348,18 @@ describe("PreferencesDialog", () => {
   });
 
   it("shows the main process's reason when a connection is refused", async () => {
-    api.comfyQueue.setConnection.mockRejectedValueOnce(
+    api.comfy.setConnection.mockRejectedValueOnce(
       new Error(
-        "Error invoking remote method 'comfy:connection:set': ComfyConnectionError: Choose ComfyUI's output folder, so finals can be saved beside their drafts"
+        "Error invoking remote method 'comfy:connection:set': ComfyConnectionError: Only a ComfyUI on this computer can be used: localhost, 127.0.0.1 or [::1]"
       )
     );
     render(<PreferencesDialog open onClose={vi.fn()} initialSection="comfy" {...playbackProps()} />);
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue("http://127.0.0.1:8188"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to ComfyUI/ }));
+    const address = screen.getByRole("textbox", { name: "Address" });
+    await waitFor(() => expect(address).toHaveValue("http://127.0.0.1:8188"));
+    fireEvent.change(address, { target: { value: "http://10.0.0.2:8188" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /^Choose ComfyUI's output folder, so finals can be saved beside their drafts$/
+      /^Only a ComfyUI on this computer can be used: localhost, 127\.0\.0\.1 or \[::1\]$/
     );
   });
 });

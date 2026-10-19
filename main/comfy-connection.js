@@ -1,23 +1,15 @@
-const fs = require('fs');
 const net = require('net');
-const path = require('path');
 
-// The ComfyUI connection setting, per profile. Off by default; when on, only a
-// loopback address is accepted, never another host, so Video Swarm never
-// reaches the network beyond this machine. The output directory is where
-// ComfyUI saves, needed to put a final beside its draft.
-// See docs/architecture/comfy-queue-integration.md, Section 7.
+// The ComfyUI address setting, per profile: where a clip's embedded workflow
+// opens (docs/architecture/comfy-workflow-window.md). Only a loopback
+// address is accepted, never another host, so Video Swarm never reaches the
+// network beyond this machine.
 
 const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const MAX_URL_LENGTH = 256;
-const MAX_PATH_LENGTH = 4096;
 
-const DEFAULT_COMFY_CONNECTION = Object.freeze({
-  enabled: false,
-  url: DEFAULT_COMFY_URL,
-  outputDir: null,
-});
+const DEFAULT_COMFY_CONNECTION = Object.freeze({ url: DEFAULT_COMFY_URL });
 
 class ComfyConnectionError extends Error {
   constructor(code, message) {
@@ -64,59 +56,25 @@ function isLoopbackAddress(address) {
   return false;
 }
 
-// The stored setting, made safe: anything unusable turns the connection off.
+// The stored setting, made safe: an unusable address falls back to the
+// default. Fields from the removed re-render queue are dropped.
 function normalizeComfyConnection(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  let url = DEFAULT_COMFY_URL;
-  let urlValid = true;
-  if (source.url !== undefined) {
-    try {
-      url = parseComfyUrl(source.url);
-    } catch {
-      urlValid = false;
-    }
+  if (source.url === undefined) return { url: DEFAULT_COMFY_URL };
+  try {
+    return { url: parseComfyUrl(source.url) };
+  } catch {
+    return { url: DEFAULT_COMFY_URL };
   }
-  const outputDir =
-    typeof source.outputDir === 'string' &&
-    source.outputDir.length <= MAX_PATH_LENGTH &&
-    path.isAbsolute(source.outputDir)
-      ? path.normalize(source.outputDir)
-      : null;
-  return { enabled: source.enabled === true && urlValid, url, outputDir };
 }
 
-// Validate a connection change from the user: the address must be loopback
-// and the output directory must exist.
+// Validate an address change from the user.
 // @returns the normalized setting, or throws ComfyConnectionError
-async function validateComfyConnection(input, { fsPromises = fs.promises } = {}) {
+function validateComfyConnection(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ComfyConnectionError('COMFY_SETTING_INVALID', 'Expected a connection setting');
   }
-  const url = parseComfyUrl(input.url ?? DEFAULT_COMFY_URL);
-  let outputDir = null;
-  if (input.outputDir !== undefined && input.outputDir !== null && input.outputDir !== '') {
-    if (typeof input.outputDir !== 'string' || input.outputDir.length > MAX_PATH_LENGTH || !path.isAbsolute(input.outputDir)) {
-      throw new ComfyConnectionError('COMFY_OUTPUT_DIR_INVALID', "ComfyUI's output folder must be an absolute path");
-    }
-    let stats;
-    try {
-      outputDir = await fsPromises.realpath(input.outputDir);
-      stats = await fsPromises.stat(outputDir);
-    } catch {
-      throw new ComfyConnectionError('COMFY_OUTPUT_DIR_MISSING', `No folder at ${input.outputDir}`);
-    }
-    if (!stats.isDirectory()) {
-      throw new ComfyConnectionError('COMFY_OUTPUT_DIR_MISSING', `${input.outputDir} is not a folder`);
-    }
-  }
-  const enabled = input.enabled === true;
-  if (enabled && !outputDir) {
-    throw new ComfyConnectionError(
-      'COMFY_OUTPUT_DIR_REQUIRED',
-      "Choose ComfyUI's output folder, so finals can be saved beside their drafts"
-    );
-  }
-  return { enabled, url, outputDir };
+  return { url: parseComfyUrl(input.url ?? DEFAULT_COMFY_URL) };
 }
 
 module.exports = {

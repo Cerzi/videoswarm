@@ -32,8 +32,8 @@ it is whenever the user is generating.
   clips whose prompt was read, or not read yet), and **Workflow** in the
   Generation panel when the payload is embedded in the file.
 - **Which ComfyUI.** The address in *Preferences › ComfyUI*, default
-  `http://127.0.0.1:8188`. Only loopback addresses are accepted, as for the
-  re-render queue; re-rendering need not be switched on.
+  `http://127.0.0.1:8188`. Only loopback addresses are accepted. Video
+  Swarm never queues anything there.
 - **One window.** The first open creates it; later opens load into it and
   bring it forward. `Ctrl+W` closes it, and it closes with the main window.
 - **Which graph.** The editor workflow when the clip carries one, loaded with

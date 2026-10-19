@@ -85,7 +85,7 @@ describe("companion main-process integration", () => {
     expect(lookup).toContain("maxEntries: COMPANION_LIMITS.maxLookupPaths");
     expect(lookup).toContain("companionServiceFor(payload.companionId)");
     expect(lookup).not.toContain("payload.paths");
-    const send = section('ipcMain.handle("companion:send"', "// ===== ComfyUI re-render queue IPC");
+    const send = section('ipcMain.handle("companion:send"', "// ===== ComfyUI address IPC");
     expect(send).toContain("maxEntries: COMPANION_LIMITS.maxSendPaths");
     expect(send).toContain('await assertRendererPath(event, filePath, "file")');
     expect(send).not.toContain("payload.paths");

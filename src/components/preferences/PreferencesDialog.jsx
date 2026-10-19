@@ -8,8 +8,7 @@ import "./PreferencesDialog.css";
 
 // Settings that are set once and rarely revisited (UX redesign D8). Daily
 // toggles stay in the top bar's View menu; playback appears in both, with
-// the longer explanations here. A future section (the re-render engine's
-// own settings) is one more entry in PREFERENCE_SECTIONS.
+// the longer explanations here.
 export const PREFERENCE_SECTIONS = Object.freeze([
   { id: "playback", label: "Playback" },
   { id: "profiles", label: "Profiles" },
@@ -373,20 +372,19 @@ function describeTest(result) {
   return { type: "success", text: `ComfyUI answered at ${result.url} (${load}). Nothing was sent.` };
 }
 
+// Where a clip's workflow opens (docs/architecture/comfy-workflow-window.md).
+// Video Swarm never queues anything in ComfyUI; re-rendering belongs to
+// companion apps.
 function ComfySection({ active }) {
-  const api = window.electronAPI?.comfyQueue;
+  const api = window.electronAPI?.comfy;
   const [saved, setSaved] = useState(null);
-  const [enabled, setEnabled] = useState(false);
   const [url, setUrl] = useState("");
-  const [outputDir, setOutputDir] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
 
   const apply = useCallback((connection) => {
     setSaved(connection);
-    setEnabled(connection?.enabled === true);
     setUrl(connection?.url || "");
-    setOutputDir(connection?.outputDir || "");
   }, []);
 
   useEffect(() => {
@@ -406,14 +404,10 @@ function ComfySection({ active }) {
   }, [active, api, apply]);
 
   if (!api) {
-    return <p className="preferences__intro">ComfyUI re-rendering is not available in this build.</p>;
+    return <p className="preferences__intro">Opening workflows in ComfyUI is not available in this build.</p>;
   }
 
-  const dirty =
-    saved &&
-    (enabled !== (saved.enabled === true) ||
-      url !== (saved.url || "") ||
-      outputDir !== (saved.outputDir || ""));
+  const dirty = saved && url !== (saved.url || "");
 
   const perform = async (action) => {
     setBusy(true);
@@ -433,29 +427,15 @@ function ComfySection({ active }) {
       onSubmit={(event) => {
         event.preventDefault();
         void perform(async () => {
-          const next = await api.setConnection({ enabled, url, outputDir: outputDir || null });
-          apply(next);
-          setStatus({
-            type: "success",
-            text: next.enabled ? "Saved. Re-rendering is on." : "Saved. Re-rendering is off.",
-          });
+          apply(await api.setConnection({ url }));
+          setStatus({ type: "success", text: "Saved." });
         });
       }}
     >
       <p className="preferences__intro">
-        Re-render drafts at quality settings through a ComfyUI running on this computer. Off by
-        default; only local addresses (localhost, 127.0.0.1, [::1]) are accepted, never the internet.
-        The address is also where a clip&apos;s workflow opens, with or without re-rendering.
+        Where a clip&apos;s workflow opens, from its context menu. Only a ComfyUI on this computer
+        (localhost, 127.0.0.1, [::1]) is accepted, and nothing is ever queued in it.
       </p>
-      <label className="preferences__choice">
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-        <span>
-          <span className="preferences__choice-label">Connect to ComfyUI</span>
-          <span className="preferences__hint">
-            While a queue is rendering, closing the window keeps Video Swarm in the system tray.
-          </span>
-        </span>
-      </label>
       <label className="preferences__field">
         <span>Address</span>
         <input
@@ -466,31 +446,6 @@ function ComfySection({ active }) {
           onChange={(event) => setUrl(event.target.value)}
         />
       </label>
-      <div className="preferences__row">
-        <label className="preferences__field">
-          <span>ComfyUI&apos;s output folder</span>
-          <input
-            type="text"
-            value={outputDir}
-            spellCheck={false}
-            placeholder="Needed to save finals beside their drafts"
-            onChange={(event) => setOutputDir(event.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className="preferences__button"
-          disabled={busy}
-          onClick={() =>
-            perform(async () => {
-              const result = await api.chooseOutputDir?.();
-              if (result && !result.canceled && result.path) setOutputDir(result.path);
-            })
-          }
-        >
-          Browse…
-        </button>
-      </div>
       <div className="preferences__actions">
         <button
           type="button"
