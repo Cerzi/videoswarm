@@ -191,3 +191,25 @@ describe("VideoCard one-click companion buttons", () => {
     expect(container.querySelector(".video-item-quick")).toBeNull();
   });
 });
+
+describe("VideoCard clicks", () => {
+  it("keeps a later single click single after its callbacks change", () => {
+    vi.useFakeTimers();
+    try {
+      const onSelect = vi.fn();
+      const props = baseProps();
+      const { container, rerender } = render(
+        <VideoCard {...props} onSelect={onSelect} cancelQueuedLoadSlot={vi.fn()} />
+      );
+      const card = container.querySelector(".video-item");
+      fireEvent.click(card);
+      // New callbacks re-run the card's cleanup while it stays mounted.
+      rerender(<VideoCard {...props} onSelect={onSelect} cancelQueuedLoadSlot={vi.fn()} />);
+      vi.advanceTimersByTime(400);
+      fireEvent.click(card);
+      expect(onSelect.mock.calls.map((call) => call[3])).toEqual([false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

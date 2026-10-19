@@ -1428,9 +1428,15 @@ const VideoCard = memo(function VideoCard({
     return () => {
       mountedRef.current = false;
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+      // This cleanup also runs while the card stays mounted, when the
+      // callbacks it depends on change. A cleared timer must not be left
+      // behind: the next single click would then read as a double-click
+      // and open fullscreen.
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
       if (hoverIntentTimeoutRef.current) {
         clearTimeout(hoverIntentTimeoutRef.current);
+        hoverIntentTimeoutRef.current = null;
       }
       cancelThumbnailCapture("card-unmounted");
       cancelLoadAttempt();
