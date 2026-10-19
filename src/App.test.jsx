@@ -880,17 +880,15 @@ describe("App hook composition", () => {
     }
   });
 
-  test("sends a right-clicked clip to a companion action through the dry-run dialog", async () => {
+  test("sends a right-clicked clip to a companion action in one click, and says why one is not sent", async () => {
     const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, isElectronFile: true };
     useElectronLifecycleMock.mockImplementation(() => ({ ...electronLifecycleReturn, videos: [clip] }));
     useContextMenuMock.mockImplementation(() => ({
       ...contextMenuReturn,
       contextMenu: { visible: true, position: { x: 10, y: 10 }, contextId: clip.id },
     }));
-    const send = vi.fn().mockResolvedValue({
-      success: true,
-      results: { 7: { result: "sent", why: "", estimate: 90 } },
-    });
+    let plan = { result: "sent", why: "", estimate: 90 };
+    const send = vi.fn(async () => ({ success: true, results: { 7: plan } }));
     window.electronAPI = {
       companion: {
         getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
@@ -916,18 +914,26 @@ describe("App hook composition", () => {
           ["c1", "polish"],
         ])
       );
+      // Every clip would be sent: the dry run, then the send, and no dialog.
       await act(async () => menu().onAction("companion:send:c1:polish"));
-      expect(await screen.findByRole("dialog", { name: "Send to polish" })).toBeInTheDocument();
-      await waitFor(() =>
-        expect(send).toHaveBeenCalledWith({
-          companionId: "c1",
-          action: "polish",
-          instanceIds: [7],
-          dryRun: true,
-          again: false,
-        })
-      );
-      expect(await screen.findByText("1 will be sent")).toBeInTheDocument();
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      expect(send.mock.calls.map(([call]) => call.dryRun)).toEqual([true, false]);
+      expect(send.mock.calls[1][0]).toEqual({
+        companionId: "c1",
+        action: "polish",
+        instanceIds: [7],
+        dryRun: false,
+        again: false,
+      });
+      expect(await screen.findByText(/Polish: sent 1 clip \(≈ 2 min\)/)).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Send to polish" })).toBeNull();
+
+      // One clip the app would skip: its reason, still no dialog.
+      plan = { result: "skipped", why: "Already in line" };
+      await act(async () => menu().onAction("companion:send:c1:polish"));
+      expect(await screen.findByText(/Polish: skipped · Already in line/)).toBeInTheDocument();
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(screen.queryByRole("dialog", { name: "Send to polish" })).toBeNull();
     } finally {
       masonryReturn.orderedVideos = previousOrdered;
       useContextMenuMock.mockImplementation(() => contextMenuReturn);

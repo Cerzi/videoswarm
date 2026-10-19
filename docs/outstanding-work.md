@@ -324,6 +324,10 @@ matches under the tag input, including in fullscreen. Check by hand:
   5-star clip from every root.
 - File details show the resolution with its megapixels, e.g.
   `1920×1080 (2.1MP)`.
+- Companion one-click sends: once requeue marks an action `quick`, hovering
+  a card it has not sent shows that action's button, and one click sends it
+  with a toast; *Send to …* on a selection sends at once when nothing would
+  be skipped, and opens the dialog when something would.
 - Ctrl+A (⌘A) after filtering selects every clip the grid shows, including
   ones far off screen and every run of a collapsed stack; the status line
   says "N selected" with *Clear*, the count turns amber from 1,000, and past

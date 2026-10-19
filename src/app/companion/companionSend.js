@@ -73,3 +73,40 @@ export function rowsToSend(results) {
   }
   return rows;
 }
+
+/**
+ * Sends `instanceIds` to a companion's action in one click
+ * (docs/architecture/companion-app.md): the dry run first, then, when every
+ * clip would be sent, the send itself. Resolves to
+ * `{ status: "sent", rows }` after sending, `{ status: "review", dry }` when
+ * some clip would be skipped or refused (the caller shows why), or
+ * `{ status: "error", error }`.
+ */
+export async function sendWithoutReview({ companionId, actionId, instanceIds, send }) {
+  const call = send || window.electronAPI?.companion?.send;
+  if (typeof call !== "function") return { status: "error", error: "Companion apps are unavailable" };
+  const runChunks = async (rows, dryRun) => {
+    const results = new Map();
+    for (let start = 0; start < rows.length; start += COMPANION_SEND_CHUNK) {
+      const chunk = rows.slice(start, start + COMPANION_SEND_CHUNK);
+      let answer;
+      try {
+        answer = await call({ companionId, action: actionId, instanceIds: chunk, dryRun, again: false });
+      } catch (error) {
+        answer = { success: false, error: error?.message };
+      }
+      if (!answer?.success) throw new Error(answer?.error || "The companion app did not answer");
+      for (const [id, entry] of Object.entries(answer.results || {})) results.set(Number(id), entry);
+    }
+    return results;
+  };
+  try {
+    const dry = await runChunks(instanceIds, true);
+    const rows = rowsToSend(dry);
+    if (rows.length !== instanceIds.length || rows.length === 0) return { status: "review", dry };
+    const final = await runChunks(rows, false);
+    return { status: "sent", rows, final };
+  } catch (error) {
+    return { status: "error", error: error?.message || String(error) };
+  }
+}

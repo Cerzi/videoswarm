@@ -29,7 +29,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     },
   });
   const editorUrl = await editor.start();
-  const folderPath = createVideoFolder(tempRoot, 3, "companion-clips");
+  const folderPath = createVideoFolder(tempRoot, 4, "companion-clips");
   const pathOf = (index) => path.join(folderPath, `clip-000${index}.mp4`);
   fake.state.clips.set(pathOf(0), {
     kind: "render",
@@ -70,25 +70,31 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await expect(chips.nth(1)).toHaveAttribute("title", "Fake editor\nCut: Used in a cut");
     await expect(card(page, "clip-0001.mp4").locator(".video-item-companion")).toHaveCount(0);
     const lookup = fake.state.requests.find((request) => request.path === "/api/lookup");
-    expect(lookup.body.paths.sort()).toEqual([0, 1, 2].map(pathOf).sort());
+    expect(lookup.body.paths.sort()).toEqual([0, 1, 2, 3].map(pathOf).sort());
     expect(lookup.host).toMatch(/^127\.0\.0\.1:\d+$/u);
 
-    // Send one rated clip: the dialog opens on the dry run, then sends, its
-    // stars going with both.
+    // Send two clips, one of which the app would skip: the dialog opens on
+    // the dry run to say so, then sends the other, its stars going with it.
+    fake.state.plan = (action, filePath) =>
+      filePath === pathOf(0)
+        ? { result: "skipped", why: "Already in line" }
+        : { result: "sent", why: "", estimate: 60 };
     await card(page, "clip-0001.mp4").click();
     await page.keyboard.press("4");
     await expect(card(page, "clip-0001.mp4").locator(".video-item-rating")).toBeVisible();
+    await card(page, "clip-0000.mp4").click({ modifiers: ["Control"] });
     await card(page, "clip-0001.mp4").click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: /Send to the cut… · Fake editor/ })).toBeVisible();
-    await page.getByRole("menuitem", { name: /Send to polish… · Fake companion/ }).click();
+    await expect(page.getByRole("menuitem", { name: /Send to the cut · Fake editor/ })).toBeVisible();
+    await page.getByRole("menuitem", { name: /Send to polish · Fake companion \(2 selected\)/ }).click();
     const dialog = page.getByRole("dialog", { name: "Send to polish" });
     await expect(dialog.getByText("1 will be sent")).toBeVisible();
     await dialog.getByRole("button", { name: "Send 1" }).click();
     await expect(dialog.getByText("Sent 1")).toBeVisible();
     const sends = fake.state.requests.filter((request) => request.path === "/api/send");
-    expect(sends.map((request) => request.body.dry_run)).toEqual([true, false]);
+    // The one-click dry run, the dialog's own, then the send.
+    expect(sends.map((request) => request.body.dry_run)).toEqual([true, true, false]);
     expect(sends[0].body.ratings).toEqual({ [pathOf(1)]: 4 });
-    expect(sends[1].body).toEqual({
+    expect(sends.at(-1).body).toEqual({
       action: "polish",
       paths: [pathOf(1)],
       ratings: { [pathOf(1)]: 4 },
@@ -99,6 +105,18 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     expect(editor.state.requests.filter((request) => request.path === "/api/send")).toEqual([]);
     await dialog.getByRole("button", { name: "Done" }).click();
     await expect(card(page, "clip-0001.mp4").locator(".video-item-companion")).toHaveText("polish waiting");
+    fake.state.plan = null;
+
+    // One click on a card: the app's quick action, sent at once, no dialog.
+    await card(page, "clip-0002.mp4").hover();
+    await card(page, "clip-0002.mp4").getByRole("button", { name: "Polish" }).click();
+    await expect(page.getByText("Polish: sent 1 clip (≈ 1 min)")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Send to polish" })).toHaveCount(0);
+    await expect(card(page, "clip-0002.mp4").locator(".video-item-companion")).toHaveText("polish waiting");
+    // Sent: no button any more.
+    await page.mouse.move(0, 0);
+    await card(page, "clip-0002.mp4").hover();
+    await expect(card(page, "clip-0002.mp4").getByRole("button", { name: "Polish" })).toHaveCount(0);
 
     // A path the renderer was never shown cannot be sent.
     const refused = await page.evaluate(() =>
@@ -111,7 +129,8 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await page.getByRole("checkbox", { name: "Hide clips already sent to any of these apps" }).check();
     await expect(card(page, "clip-0000.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0001.mp4")).toHaveCount(0);
-    await expect(card(page, "clip-0002.mp4")).toBeVisible();
+    await expect(card(page, "clip-0002.mp4")).toHaveCount(0);
+    await expect(card(page, "clip-0003.mp4")).toBeVisible();
 
     expect(rendererErrors).toEqual([]);
   } finally {

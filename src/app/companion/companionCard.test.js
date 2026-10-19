@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { companionCardChips, createCompanionChipCache } from "./companionCard";
+import {
+  companionCardChips,
+  companionQuickActions,
+  createCompanionChipCache,
+  createCompanionQuickActionCache,
+} from "./companionCard";
 
 const session = (id, name, entries) => ({
   id,
@@ -35,5 +40,44 @@ describe("companion card chips", () => {
     const changed = chipsFor([session("c1", "Helper", [[7, entry("Done", "done")]])], 7);
     expect(changed).not.toBe(first);
     expect(chipsFor([], 7)).toBe(chipsFor([], 9));
+  });
+});
+
+describe("companion one-click buttons", () => {
+  const app = (overrides = {}) => ({
+    id: "c1",
+    name: "Helper",
+    status: "online",
+    actions: [
+      { id: "polish", label: "Polish", send: "Send to polish", hint: "", quick: true },
+      { id: "enlarge", label: "Enlarge", send: "Send to enlarge", hint: "", quick: false },
+    ],
+    entries: new Map([
+      [1, { actions: { polish: { phase: "not-sent" }, enlarge: { phase: "not-sent" } } }],
+      [2, { actions: { polish: { phase: "under-way" } } }],
+    ]),
+    ...overrides,
+  });
+
+  it("offers each quick action the app says the clip has not been sent for", () => {
+    expect(companionQuickActions([app()], 1)).toEqual([
+      { key: "c1/polish", companionId: "c1", actionId: "polish", label: "Polish", title: "Send to polish" },
+    ]);
+    // Already under way, not answered for, or the app is offline: nothing.
+    expect(companionQuickActions([app()], 2)).toEqual([]);
+    expect(companionQuickActions([app()], 3)).toEqual([]);
+    expect(companionQuickActions([app({ status: "offline" })], 1)).toEqual([]);
+  });
+
+  it("names the app when several are connected, and keeps a card's array while it reads the same", () => {
+    const second = app({ id: "c2", name: "Editor" });
+    expect(companionQuickActions([app(), second], 1).map((button) => button.title)).toEqual([
+      "Send to polish · Helper",
+      "Send to polish · Editor",
+    ]);
+    const buttonsFor = createCompanionQuickActionCache();
+    const first = buttonsFor([app()], 1);
+    expect(buttonsFor([app()], 1)).toBe(first);
+    expect(buttonsFor([app()], 2)).toEqual([]);
   });
 });

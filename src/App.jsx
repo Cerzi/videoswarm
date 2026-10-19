@@ -159,7 +159,17 @@ import CompanionSendDialog from "./components/CompanionSendDialog";
 import { useViewHistory } from "./app/hooks/useViewHistory";
 import { useStackFrames } from "./app/stacks/useStackFrames";
 import { applyStackFaces } from "./app/stacks/stackFaces";
-import { createCompanionChipCache } from "./app/companion/companionCard";
+import {
+  createCompanionChipCache,
+  createCompanionQuickActionCache,
+} from "./app/companion/companionCard";
+import {
+  COMPANION_SEND_CHUNK,
+  companionRowsOf,
+  formatEstimate,
+  sendWithoutReview,
+  summarizeSendResults,
+} from "./app/companion/companionSend";
 import {
   COMPANION_PHASE_LABELS,
   normalizeCompanionFilters,
@@ -786,6 +796,10 @@ function App() {
   );
   // One chip per app on a card, the same array while it reads the same.
   const companionChipsFor = useMemo(() => createCompanionChipCache(), []);
+  // A card's one-click buttons, the same array while they read the same.
+  const companionQuickActionsFor = useMemo(() => createCompanionQuickActionCache(), []);
+  const companionsRef = useRef(companions);
+  companionsRef.current = companions;
 
   const {
     filters,
@@ -1713,6 +1727,74 @@ function App() {
   const notify = useCallback((message, type = "info") => {
     showToast(message, type);
   }, []);
+
+  // Sending to a companion app's action in one click
+  // (docs/architecture/companion-app.md): when the dry run says every clip
+  // would be sent, they are, with a toast; one clip that would not be says
+  // why; several with some skipped or refused open the send dialog.
+  const handleCompanionSend = useCallback(
+    async ({ companion, action, videos: targets }) => {
+      const { instanceIds } = companionRowsOf(targets);
+      if (!instanceIds.length) {
+        notify("Only indexed local clips can be sent", "info");
+        return;
+      }
+      if (instanceIds.length > COMPANION_SEND_CHUNK) {
+        notify(`Checking ${instanceIds.length.toLocaleString()} clips with ${companion.name}…`, "info");
+      }
+      const outcome = await sendWithoutReview({
+        companionId: companion.id,
+        actionId: action.id,
+        instanceIds,
+      });
+      const owner = companionsRef.current.find((entry) => entry.id === companion.id);
+      if (outcome.status === "sent") {
+        owner?.refresh?.(outcome.rows);
+        const summary = summarizeSendResults(outcome.final);
+        const estimate = formatEstimate(summary.estimate);
+        notify(
+          `${action.label}: sent ${summary.sent.toLocaleString()} clip${summary.sent === 1 ? "" : "s"}${
+            estimate ? ` (${estimate})` : ""
+          }`,
+          "success"
+        );
+      } else if (outcome.status === "review") {
+        if (instanceIds.length === 1) {
+          const entry = outcome.dry.get(instanceIds[0]);
+          notify(
+            `${action.label}: ${entry?.result === "skipped" ? "skipped" : "not sent"}${
+              entry?.why ? ` · ${entry.why}` : ""
+            }`,
+            "info"
+          );
+        } else {
+          setCompanionSend({ companion, action, videos: targets });
+        }
+      } else {
+        notify(`${companion.name || "The companion app"}: ${outcome.error}`, "error");
+      }
+    },
+    [notify]
+  );
+  // A card's one-click button: that clip, that app's action. Cards get a
+  // stable callback.
+  const handleQuickActionRef = useRef(null);
+  handleQuickActionRef.current = (videoId, companionId, actionId) => {
+    const action = companionActionsRef.current.find(
+      (entry) => entry.companionId === companionId && entry.id === actionId
+    );
+    const video = allVideosById.get(videoId);
+    if (!action || !video) return;
+    void handleCompanionSend({
+      companion: { id: companionId, name: action.companionName },
+      action,
+      videos: [video],
+    });
+  };
+  const handleQuickAction = useCallback(
+    (videoId, companionId, actionId) => handleQuickActionRef.current?.(videoId, companionId, actionId),
+    []
+  );
 
   const reviewOwnershipKey = useMemo(
     () => JSON.stringify([
@@ -3283,7 +3365,7 @@ function App() {
           selection.size > 1 ? [...selection.selected] : [contextMenu.contextId];
         const targets = ids.map((id) => getById(id)).filter(Boolean);
         if (action && targets.length) {
-          setCompanionSend({
+          void handleCompanionSend({
             companion: { id: action.companionId, name: action.companionName },
             action,
             videos: targets,
@@ -6831,6 +6913,8 @@ function App() {
                                   : 0
                               }
                               companionChips={companionChipsFor(companions, video.instanceId)}
+                              quickActions={companionQuickActionsFor(companions, video.instanceId)}
+                              onQuickAction={handleQuickAction}
                               stackSimilar={
                                 stackSelectionUnits
                                   ? promptStacks.stacks.get(promptStacks.keyById.get(video.id))

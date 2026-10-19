@@ -45,7 +45,7 @@ function cleanText(value, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
-/** `{ protocol, name, actions: [{ id, label, send, hint }] }` or throws. */
+/** `{ protocol, name, actions: [{ id, label, send, hint, quick }] }` or throws. */
 function normalizeDescription(raw) {
   if (!isObject(raw)) {
     throw new CompanionClientError("COMPANION_BAD_RESPONSE", "The companion's description is not an object");
@@ -70,6 +70,9 @@ function normalizeDescription(raw) {
       label,
       send: cleanText(entry.send, 48) || `Send to ${label}`,
       hint: cleanText(entry.hint, 200),
+      // Offered as a one-click button on a card the action has not been
+      // sent for. Optional; anything but true is false.
+      quick: entry.quick === true,
     });
   }
   return {

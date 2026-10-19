@@ -159,3 +159,35 @@ describe("VideoCard stack strip", () => {
     expect(container.querySelector(".video-item-stack-strip")).toBeNull();
   });
 });
+
+describe("VideoCard one-click companion buttons", () => {
+  const quickActions = [
+    { key: "c1/polish", companionId: "c1", actionId: "polish", label: "Polish", title: "Send to polish" },
+  ];
+
+  it("shows the buttons only while the pointer is over the card, and sends without selecting", () => {
+    const onQuickAction = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(
+      <VideoCard {...baseProps()} quickActions={quickActions} onQuickAction={onQuickAction} onSelect={onSelect} />
+    );
+    const card = container.querySelector(".video-item");
+    expect(screen.queryByRole("button", { name: "Polish" })).toBeNull();
+    fireEvent.mouseEnter(card);
+    const button = screen.getByRole("button", { name: "Polish" });
+    expect(button).toHaveAttribute("title", "Send to polish");
+    fireEvent.click(button);
+    expect(onQuickAction).toHaveBeenCalledWith("clip", "c1", "polish");
+    expect(onSelect).not.toHaveBeenCalled();
+    // Clicked once: not again until the pointer comes back.
+    expect(button).toBeDisabled();
+    fireEvent.mouseLeave(card);
+    expect(screen.queryByRole("button", { name: "Polish" })).toBeNull();
+  });
+
+  it("shows no buttons on a card without them", () => {
+    const { container } = render(<VideoCard {...baseProps()} onQuickAction={vi.fn()} />);
+    fireEvent.mouseEnter(container.querySelector(".video-item"));
+    expect(container.querySelector(".video-item-quick")).toBeNull();
+  });
+});

@@ -66,7 +66,13 @@ Request: `{}`. Response:
   "protocol": 1,
   "name": "Example helper",
   "actions": [
-    { "id": "polish", "label": "Polish", "send": "Send to polish", "hint": "Makes a better copy" }
+    {
+      "id": "polish",
+      "label": "Polish",
+      "send": "Send to polish",
+      "hint": "Makes a better copy",
+      "quick": true
+    }
   ]
 }
 ```
@@ -75,6 +81,10 @@ Request: `{}`. Response:
 - `actions`: at most 8. `id` matches `^[a-z][a-z0-9_-]{0,31}$`; `label` (32
   characters at most) names the action in filters and dialogs; `send` (48)
   is the menu item, `Send to <label>` when absent; `hint` (200) is optional.
+- `quick` (optional, added 2026-10-19): `true` offers the action as a
+  one-click button, labelled with `label`, on the card under the pointer
+  whenever the clip's lookup says that action is `not-sent`. Anything but
+  `true` means no button. Keep labels short for it.
 - *Test connection* in Preferences uses this call and sends nothing else.
 
 ### `POST /api/lookup`
@@ -216,18 +226,33 @@ companion authors must be told before it ships.
 
 - **Sending** (`src/components/CompanionSendPanel.jsx`). *Send to …* items,
   named by each companion (and followed by its name when several are
-  connected), in a clip's context menu act on the whole selection. The dialog opens on the dry run: how many will be sent, the
-  estimate, and skips and refusals grouped by reason. *Send again clips sent
-  before* re-runs it with `again`. *Send* sends only what the dry run said
-  would be sent, in chunks of 100, with progress and *Stop*; the clips are
-  looked up again straight after.
+  connected), in a clip's context menu act on the whole selection.
+  - **One click** (2026-10-19, `sendWithoutReview` in
+    `src/app/companion/companionSend.js`): the dry run runs first; when it
+    says every clip would be sent, they are, with a toast saying how many
+    and the estimate. One clip that would be skipped or refused gets a toast
+    with the app's reason instead. Several with any skip or refusal open the
+    dialog, so nothing is left out silently.
+  - **The dialog** opens on the dry run: how many will be sent, the
+    estimate, and skips and refusals grouped by reason. *Send again clips
+    sent before* re-runs it with `again`. *Send* sends only what the dry run
+    said would be sent, in chunks of 100, with progress and *Stop*; the
+    clips are looked up again straight after.
+- **One-click card buttons** (2026-10-19). An action described with
+  `quick: true` shows as a small button, labelled by the app, on the card
+  under the pointer, when the app's lookup says that clip has not been sent
+  for it. Clicking sends that clip in one click as above, without selecting
+  it; once it is sent the lookup no longer says `not-sent` and the button
+  goes. Only a card with buttons tracks the pointer, so hovering across
+  the grid re-renders nothing else.
 - **Process review results** offers each companion's actions for the
   Accepted clips in scope, above moving rejects and copying Accepted clips, with the same
   dry run. The dialog cannot close while a send runs.
 - `tests/electron/companion.smoke.spec.cjs` runs the whole path in the real
-  app against two fakes at once: connecting both, a chip from each, sending
-  to one through the dialog (the other is sent nothing), refusing a row the
-  renderer was never shown, and hiding sent clips.
+  app against two fakes at once: connecting both, a chip from each, a
+  selection with a skipped clip opening the dialog (the other app is sent
+  nothing), a card's one-click button sending without one, refusing a row
+  the renderer was never shown, and hiding sent clips.
 
 ## Deferred
 

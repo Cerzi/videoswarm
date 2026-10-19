@@ -51,3 +51,52 @@ export function createCompanionChipCache() {
     return chips;
   };
 }
+
+const NO_QUICK_ACTIONS = Object.freeze([]);
+
+/**
+ * A card's one-click companion buttons: every action an app marks `quick`
+ * that it says this clip has not been sent for. Nothing while an app has not
+ * answered for the clip, so a button never offers what might be done.
+ */
+export function companionQuickActions(companions, instanceId) {
+  const buttons = [];
+  for (const companion of companions || []) {
+    if (companion.status !== "online") continue;
+    const entry = companion.entries?.get(instanceId);
+    if (!entry) continue;
+    for (const action of companion.actions || []) {
+      if (action.quick !== true || entry.actions?.[action.id]?.phase !== "not-sent") continue;
+      buttons.push({
+        key: `${companion.id}/${action.id}`,
+        companionId: companion.id,
+        actionId: action.id,
+        label: action.label,
+        title:
+          companions.length > 1 && companion.name
+            ? `${action.send} · ${companion.name}`
+            : action.hint
+              ? `${action.send}: ${action.hint}`
+              : action.send,
+      });
+    }
+  }
+  return buttons.length ? buttons : NO_QUICK_ACTIONS;
+}
+
+/** As createCompanionChipCache, for the one-click buttons. */
+export function createCompanionQuickActionCache() {
+  const held = new Map();
+  return (companions, instanceId) => {
+    const buttons = companionQuickActions(companions, instanceId);
+    if (buttons === NO_QUICK_ACTIONS) {
+      held.delete(instanceId);
+      return NO_QUICK_ACTIONS;
+    }
+    const signature = JSON.stringify(buttons);
+    const previous = held.get(instanceId);
+    if (previous?.signature === signature) return previous.buttons;
+    held.set(instanceId, { signature, buttons });
+    return buttons;
+  };
+}

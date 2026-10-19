@@ -119,6 +119,7 @@ const playWithTimeout = async (element, timeoutMs = RECOVERY_TIMEOUT_MS) => {
 };
 
 const NO_COMPANION_CHIPS = Object.freeze([]);
+const NO_QUICK_ACTIONS = Object.freeze([]);
 
 const VideoCard = memo(function VideoCard({
   video,
@@ -159,6 +160,10 @@ const VideoCard = memo(function VideoCard({
   stackPeekScheduler = null,
   // Companion apps' chips, one per app: `[{ key, label, tone, title }]`.
   companionChips = NO_COMPANION_CHIPS,
+  // One-click companion buttons (`{ key, companionId, actionId, label,
+  // title }`), shown while the pointer is over the card.
+  quickActions = NO_QUICK_ACTIONS,
+  onQuickAction = null,
   onOpenStack,
 
   // limits & callbacks (owned by parent/orchestrator)
@@ -1484,7 +1489,19 @@ const VideoCard = memo(function VideoCard({
   }, [stripShown]);
   const stackMore = stripShown ? Math.max(0, stackCount - 1 - stackStrip.length) : 0;
 
+  // Only a card with one-click buttons tracks the pointer in state, so
+  // hovering across the grid re-renders nothing else.
+  const [pointerOver, setPointerOver] = useState(false);
+  const [quickSent, setQuickSent] = useState(null);
+  const hasQuickActionsRef = useRef(false);
+  hasQuickActionsRef.current = quickActions.length > 0;
+  const pointerOverRef = useRef(false);
+
   const handleMouseEnter = useCallback(() => {
+    if (hasQuickActionsRef.current) {
+      pointerOverRef.current = true;
+      setPointerOver(true);
+    }
     onHover?.(videoId);
     // Drag thumbnails are interaction affordances, not playback work. Capture
     // on intent instead of doing canvas/PNG/native I/O for every newly playing
@@ -1507,6 +1524,11 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   const handleMouseLeave = useCallback(() => {
+    if (pointerOverRef.current) {
+      pointerOverRef.current = false;
+      setPointerOver(false);
+      setQuickSent(null);
+    }
     if (hoverIntentTimeoutRef.current) {
       clearTimeout(hoverIntentTimeoutRef.current);
       hoverIntentTimeoutRef.current = null;
@@ -1645,6 +1667,32 @@ const VideoCard = memo(function VideoCard({
           }
         >
           {versionCount} versions
+        </div>
+      ) : null}
+
+      {pointerOver && quickActions.length > 0 && typeof onQuickAction === "function" ? (
+        <div
+          className={`video-item-quick${showFilenames ? " with-filename" : ""}`}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {quickActions.map((button) => (
+            <button
+              key={button.key}
+              type="button"
+              className="video-item-quick__button"
+              title={button.title}
+              disabled={quickSent === button.key}
+              onClick={(e) => {
+                e.stopPropagation();
+                setQuickSent(button.key);
+                onQuickAction(videoId, button.companionId, button.actionId);
+              }}
+            >
+              {button.label}
+            </button>
+          ))}
         </div>
       ) : null}
 

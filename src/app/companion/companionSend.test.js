@@ -1,5 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import {
+  COMPANION_SEND_CHUNK,
+  sendWithoutReview,
   companionRowsOf,
   formatEstimate,
   rowsToSend,
@@ -95,5 +97,43 @@ describe("useCompanionSend", () => {
     send.mockResolvedValueOnce({ success: false, error: "Not answering" });
     await act(async () => result.current.check(false));
     expect(result.current).toMatchObject({ phase: "error", error: "Not answering" });
+  });
+});
+
+describe("sending in one click", () => {
+  const answering = (plan) =>
+    vi.fn(async ({ instanceIds, dryRun }) => ({
+      success: true,
+      dryRun,
+      results: Object.fromEntries(instanceIds.map((id) => [id, plan(id, dryRun)])),
+    }));
+
+  it("sends at once when the dry run says every clip would be sent, in chunks", async () => {
+    const send = answering(() => ({ result: "sent", why: "", estimate: 30 }));
+    const instanceIds = Array.from({ length: COMPANION_SEND_CHUNK + 5 }, (_, index) => index + 1);
+    const outcome = await sendWithoutReview({ companionId: "c1", actionId: "polish", instanceIds, send });
+    expect(outcome.status).toBe("sent");
+    expect(outcome.rows).toEqual(instanceIds);
+    expect(send.mock.calls.map(([call]) => [call.dryRun, call.instanceIds.length])).toEqual([
+      [true, COMPANION_SEND_CHUNK],
+      [true, 5],
+      [false, COMPANION_SEND_CHUNK],
+      [false, 5],
+    ]);
+  });
+
+  it("sends nothing when some clip would be skipped or refused, and says why", async () => {
+    const send = answering((id) => (id === 2 ? { result: "refused", why: "No workflow" } : { result: "sent" }));
+    const outcome = await sendWithoutReview({ companionId: "c1", actionId: "polish", instanceIds: [1, 2], send });
+    expect(outcome.status).toBe("review");
+    expect(outcome.dry.get(2)).toMatchObject({ result: "refused", why: "No workflow" });
+    expect(send.mock.calls.every(([call]) => call.dryRun)).toBe(true);
+  });
+
+  it("reports an app that does not answer", async () => {
+    const send = vi.fn(async () => ({ success: false, error: "Not answering" }));
+    await expect(
+      sendWithoutReview({ companionId: "c1", actionId: "polish", instanceIds: [1], send })
+    ).resolves.toEqual({ status: "error", error: "Not answering" });
   });
 });

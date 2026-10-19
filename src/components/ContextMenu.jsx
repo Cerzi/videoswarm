@@ -223,7 +223,9 @@ const ContextMenu = ({
     pushSection(
       companionActions.map((companionAction) => ({
         id: `companion-send-${companionAction.companionId}-${companionAction.id}`,
-        label: `↗ ${companionAction.send}…${
+        // Sends at once when the dry run is clean; the dialog opens only to
+        // show what would be skipped or refused.
+        label: `↗ ${companionAction.send}${
           severalCompanions && companionAction.companionName
             ? ` · ${companionAction.companionName}`
             : ''

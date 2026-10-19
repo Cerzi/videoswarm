@@ -10,7 +10,7 @@ const DEFAULT_DESCRIPTION = Object.freeze({
   protocol: 1,
   name: "Fake companion",
   actions: [
-    { id: "polish", label: "Polish", send: "Send to polish", hint: "Makes a better copy" },
+    { id: "polish", label: "Polish", send: "Send to polish", hint: "Makes a better copy", quick: true },
     { id: "enlarge", label: "Enlarge", send: "Send to enlarge" },
   ],
 });

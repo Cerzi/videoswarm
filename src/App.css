@@ -1010,6 +1010,48 @@ body {
   top: 30px;
 }
 
+/* One-click companion buttons, on the card under the pointer
+   (docs/architecture/companion-app.md). */
+.video-item-quick {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+}
+
+.video-item-quick.with-filename {
+  bottom: 30px;
+}
+
+.video-item-quick__button {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #f1f3f5;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.video-item-quick__button:hover,
+.video-item-quick__button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.88);
+  outline: none;
+}
+
+.video-item-quick__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .video-item-versions--superseded {
   color: rgba(255, 255, 255, 0.55);
   border-style: dashed;

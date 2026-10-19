@@ -385,7 +385,7 @@ describe('ContextMenu', () => {
         ]}
       />
     );
-    fireEvent.click(screen.getByRole('menuitem', { name: /Send to enlarge… \(3 selected\)/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Send to enlarge \(3 selected\)/ }));
     expect(onAction).toHaveBeenCalledWith('companion:send:c1:enlarge');
   });
 
@@ -406,7 +406,7 @@ describe('ContextMenu', () => {
         ]}
       />
     );
-    fireEvent.click(screen.getByRole('menuitem', { name: /Send to polish… · Editor$/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Send to polish · Editor$/ }));
     expect(onAction).toHaveBeenCalledWith('companion:send:c2:polish');
   });
 

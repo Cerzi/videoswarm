@@ -120,17 +120,19 @@ describe("companion answers", () => {
       protocol: 1,
       name: "  A helper\napp ",
       actions: [
-        { id: "polish", label: "Polish" },
+        { id: "polish", label: "Polish", quick: true },
         { id: "polish", label: "Again" },
         { id: "Bad Id", label: "Nope" },
         { id: "enlarge", label: "" },
-        { id: "trim", label: "Trim", send: "Trim it", hint: "x".repeat(400) },
+        { id: "trim", label: "Trim", send: "Trim it", hint: "x".repeat(400), quick: "yes" },
       ],
     });
     expect(description.name).toBe("A helper app");
     expect(description.actions.map((action) => action.id)).toEqual(["polish", "trim"]);
     expect(description.actions[0].send).toBe("Send to Polish");
     expect(description.actions[1].hint).toHaveLength(200);
+    // A one-click card button only when the app says so, in so many words.
+    expect(description.actions.map((action) => action.quick)).toEqual([true, false]);
     expect(() => normalizeDescription({ protocol: 2, actions: [] })).toThrow(/protocol 2/u);
   });
 
