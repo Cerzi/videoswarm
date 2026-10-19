@@ -451,7 +451,8 @@ Status: **Tidied** (2026-09-29); the push is the user's to do
 
 **Not pushed yet.** `main`, `claude/clip-sequences` and
 `wip/clip-sequences` exist only on this machine; `main` is dozens of commits
-ahead of `origin/main`. Pushing is the user's step:
+ahead of `origin/main`. Decided 2026-10-19: it stays local until a build has
+proved stable. Pushing is the user's step:
 
     git push origin main claude/clip-sequences wip/clip-sequences
 
@@ -517,7 +518,9 @@ From the overnight work on 2026-09-29.
 10. **Changing the sort while scrolled down** still keeps the top card in
     view, wherever it moves to. Should a new sort always return to the top?
 11. **The detached re-render engine** (Section 9) waits for the go-ahead.
-12. **Releasing rc.6:** see Section 5.
+12. **Releasing rc.6:** decided 2026-10-19: not yet. `main` stays local,
+    unpushed and untagged, until a build has proved stable in use
+    (Sections 4 and 5).
 
 ## References
 
