@@ -100,3 +100,20 @@ export function createCompanionQuickActionCache() {
     return buttons;
   };
 }
+
+/**
+ * Buttons with the key that also reaches them: Shift+1 and Shift+2 accept a
+ * clip and send it to the first and second quick action across the connected
+ * apps, in their order (`actions` as App lists them), whichever buttons this
+ * clip offers. The fullscreen viewer shows the key on its buttons.
+ */
+export function withQuickShortcuts(buttons, actions) {
+  if (!buttons?.length) return buttons || NO_QUICK_ACTIONS;
+  const order = (actions || [])
+    .filter((action) => action.quick === true)
+    .map((action) => `${action.companionId}/${action.id}`);
+  return buttons.map((button) => {
+    const index = order.indexOf(button.key);
+    return index === 0 || index === 1 ? { ...button, shortcut: `Shift+${index + 1}` } : button;
+  });
+}

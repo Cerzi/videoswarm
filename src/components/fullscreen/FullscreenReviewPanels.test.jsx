@@ -53,6 +53,44 @@ describe("FullscreenReviewPanels", () => {
     expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);
   });
 
+  it("shows companion chips and one-click buttons for the clip on screen", () => {
+    const onQuickAction = vi.fn();
+    const chips = [{ key: "c1", label: "Waiting #2", tone: "progress", title: "Finish: second in line" }];
+    const buttons = [
+      { key: "c1/finish", companionId: "c1", actionId: "finish", label: "Finish", title: "Finish it", shortcut: "Shift+1" },
+      { key: "c1/enlarge", companionId: "c1", actionId: "enlarge", label: "Enlarge", title: "Enlarge it" },
+    ];
+    const rail = (clip) => (
+      <FullscreenReviewRail
+        video={clip}
+        companionChips={chips}
+        quickActions={buttons}
+        onQuickAction={onQuickAction}
+      />
+    );
+    const { rerender } = render(rail(video));
+
+    expect(screen.getByText("Waiting #2")).toHaveAttribute("title", "Finish: second in line");
+    const finish = screen.getByRole("button", { name: "Finish" });
+    expect(finish).toHaveAttribute("title", "Finish it. Shift+1 also accepts it.");
+    expect(finish.querySelector("kbd")?.textContent).toBe("⇧1");
+    expect(screen.getByRole("button", { name: "Enlarge" }).querySelector("kbd")).toBeNull();
+
+    // One click sends once; the next clip gets fresh buttons.
+    fireEvent.click(finish);
+    fireEvent.click(finish);
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith("c1", "finish");
+    expect(finish).toBeDisabled();
+    rerender(rail({ ...video, id: "clip-2" }));
+    expect(screen.getByRole("button", { name: "Finish" })).not.toBeDisabled();
+  });
+
+  it("shows no companion section with nothing to show", () => {
+    render(<FullscreenReviewRail video={video} />);
+    expect(screen.queryByLabelText("Companion apps")).toBeNull();
+  });
+
   it("keeps rating available while review mode controls and status are hidden", () => {
     const onSetRating = vi.fn();
     render(

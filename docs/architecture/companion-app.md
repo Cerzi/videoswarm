@@ -83,7 +83,8 @@ Request: `{}`. Response:
   is the menu item, `Send to <label>` when absent; `hint` (200) is optional.
 - `quick` (optional, added 2026-10-19): `true` offers the action as a
   one-click button, labelled with `label`, on the card under the pointer
-  whenever the clip's lookup says that action is `not-sent`. Anything but
+  and in the fullscreen viewer, whenever the clip's lookup says that action
+  is `not-sent`. Anything but
   `true` means no button. Keep labels short for it.
 - *Test connection* in Preferences uses this call and sends nothing else.
 
@@ -245,6 +246,11 @@ companion authors must be told before it ships.
   it; once it is sent the lookup no longer says `not-sent` and the button
   goes. Only a card with buttons tracks the pointer, so hovering across
   the grid re-renders nothing else.
+- **In fullscreen** (2026-10-19). The review rail shows each app's chip for
+  the clip on screen and the same one-click buttons. A button sends only;
+  the first two quick actions across the apps carry their keys, `⇧1` and
+  `⇧2`, which accept the clip as well (`review-passes.md`, Quick review
+  keys).
 - **Process review results** offers each companion's actions for the
   Accepted clips in scope, above moving rejects and copying Accepted clips, with the same
   dry run. The dialog cannot close while a send runs.

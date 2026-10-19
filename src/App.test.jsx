@@ -999,6 +999,119 @@ describe("App hook composition", () => {
     }
   });
 
+  test("in fullscreen, shows the clip's companion chip and buttons, and Shift+1 sends and accepts it", async () => {
+    const clip = {
+      id: "/library/a.mp4",
+      name: "a.mp4",
+      dirname: "",
+      instanceId: 7,
+      fingerprint: "fp-a",
+      isElectronFile: true,
+      reviewState: "unreviewed",
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: [clip],
+      activeRootPath: "/library",
+      libraryRoot: { rootPath: "/library", name: "library", pinned: true },
+    }));
+    const send = vi.fn(async () => ({ success: true, results: { 7: { result: "sent", why: "" } } }));
+    window.electronAPI = {
+      saveSettingsPartial: vi.fn(),
+      companion: {
+        getConnections: vi.fn().mockResolvedValue([{ id: "c1", enabled: true, url: "http://127.0.0.1:9" }]),
+        onConnectionsChanged: vi.fn(() => () => {}),
+        describe: vi.fn().mockResolvedValue({
+          success: true,
+          name: "Helper",
+          actions: [{ id: "finish", label: "Finish", send: "Finish it", quick: true }],
+        }),
+        lookup: vi.fn().mockResolvedValue({
+          success: true,
+          results: {
+            7: {
+              kind: "render",
+              chip: { label: "New", tone: "info" },
+              actions: { finish: { phase: "not-sent", why: "" } },
+            },
+          },
+        }),
+        send,
+      },
+    };
+    const previousOrdered = masonryReturn.orderedVideos;
+    masonryReturn.orderedVideos = [clip];
+    useFullScreenModalMock.mockReturnValue({
+      isOpen: true,
+      currentVideo: clip,
+      fullScreenVideo: clip,
+      currentIndex: 0,
+      fullScreenIndex: 0,
+      currentViewIndex: 0,
+      fullScreenCount: 1,
+      isInCurrentView: true,
+      isCurrentInView: true,
+      hasPrevious: false,
+      hasNext: false,
+      capturedNextId: null,
+      collectionOwnerKey: "profile:/library",
+      sessionToken: "fullscreen-session",
+      open: vi.fn(),
+      close: vi.fn(),
+      navigateFullScreen: vi.fn(),
+      peekNavigation: vi.fn(),
+      sourceRemoved: vi.fn(),
+    });
+    metadataActionsReturn.handleSetReviewState.mockResolvedValue({
+      success: true,
+      updates: { "fp-a": { reviewState: "pick" } },
+    });
+    const modal = () => fullScreenModalSpy.mock.calls.at(-1)?.[0];
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await waitFor(() =>
+        expect(modal()?.reviewRail.props.quickActions).toEqual([
+          expect.objectContaining({ key: "c1/finish", label: "Finish", shortcut: "Shift+1" }),
+        ]),
+        { timeout: 3000 }
+      );
+      expect(modal().reviewRail.props.companionChips).toEqual([
+        expect.objectContaining({ key: "c1", label: "New", tone: "info" }),
+      ]);
+
+      // Shift+1 by physical key, whatever it prints: sent, then accepted.
+      let handled;
+      act(() => {
+        handled = modal().onShortcut({ event: { shiftKey: true, code: "Digit1", key: "!" }, key: "!" });
+      });
+      expect(handled).toBe(true);
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      expect(send.mock.calls[1][0]).toMatchObject({ companionId: "c1", action: "finish", instanceIds: [7], dryRun: false });
+      await waitFor(() =>
+        expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith("pick", ["fp-a"], {
+          completionGuard: expect.any(Function),
+        })
+      );
+
+      // A button sends only, as on a card.
+      metadataActionsReturn.handleSetReviewState.mockClear();
+      await act(async () => modal().reviewRail.props.onQuickAction("c1", "finish"));
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+      expect(metadataActionsReturn.handleSetReviewState).not.toHaveBeenCalled();
+
+      // Shift+2 with no second quick action says so and sends nothing.
+      act(() => {
+        modal().onShortcut({ event: { shiftKey: true, code: "Digit2", key: "@" }, key: "@" });
+      });
+      expect(await screen.findByText(/No connected app offers a second quick action/)).toBeInTheDocument();
+      expect(send).toHaveBeenCalledTimes(4);
+    } finally {
+      masonryReturn.orderedVideos = previousOrdered;
+    }
+  });
+
   test("opens a clip's workflow in ComfyUI from its context menu and says why not", async () => {
     const clip = {
       id: "/library/clip.mp4",

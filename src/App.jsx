@@ -157,6 +157,7 @@ import { applyStackFaces } from "./app/stacks/stackFaces";
 import {
   createCompanionChipCache,
   createCompanionQuickActionCache,
+  withQuickShortcuts,
 } from "./app/companion/companionCard";
 import {
   COMPANION_SEND_CHUNK,
@@ -4509,13 +4510,11 @@ function App() {
     [notify, refreshReviewPasses, reviewPass]
   );
 
-  // Shift+1 / Shift+2: accept the selection and send it to the first or
-  // second quick action the connected apps offer, in their order.
-  const handleQuickReview = useCallback(
+  // The first or second quick action the connected apps offer, in their
+  // order; a toast says so when there is none.
+  const quickActionAt = useCallback(
     (index) => {
-      if (!reviewModeEnabled) return;
-      const quick = companionActionsRef.current.filter((action) => action.quick === true);
-      const action = quick[index];
+      const action = companionActionsRef.current.filter((entry) => entry.quick === true)[index];
       if (!action) {
         notify(
           index === 0
@@ -4523,8 +4522,19 @@ function App() {
             : "No connected app offers a second quick action",
           "info"
         );
-        return;
       }
+      return action || null;
+    },
+    [notify]
+  );
+
+  // Shift+1 / Shift+2: accept the selection and send it to the first or
+  // second quick action the connected apps offer, in their order.
+  const handleQuickReview = useCallback(
+    (index) => {
+      if (!reviewModeEnabled) return;
+      const action = quickActionAt(index);
+      if (!action) return;
       const targets = [...selection.selected].map((id) => allVideosById.get(id)).filter(Boolean);
       if (!targets.length) return;
       void handleCompanionSend({
@@ -4537,7 +4547,7 @@ function App() {
     [
       allVideosById,
       handleCompanionSend,
-      notify,
+      quickActionAt,
       reviewModeEnabled,
       reviewWorkflow.applyReviewState,
       selection.selected,
@@ -4975,8 +4985,38 @@ function App() {
     [captureFullscreenTarget, notify, runActionForVideos]
   );
 
+  // Shift+1 / Shift+2 in fullscreen: the clip on screen is sent and
+  // accepted, advancing as marking it does.
+  const handleFullscreenQuickReview = useCallback(
+    (index) => {
+      const action = quickActionAt(index);
+      const target = captureFullscreenTarget();
+      if (!action || !target?.video) return;
+      void handleCompanionSend({
+        companion: { id: action.companionId, name: action.companionName },
+        action,
+        videos: [target.video],
+      });
+      void handleFullscreenReviewState(REVIEW_STATES.PICK);
+    },
+    [captureFullscreenTarget, handleCompanionSend, handleFullscreenReviewState, quickActionAt]
+  );
+
   const handleFullscreenShortcut = useCallback(
-    ({ key }) => {
+    ({ event, key }) => {
+      // By physical key, as in the grid, and before the printed key: some
+      // layouts print a digit with Shift held.
+      if (
+        event?.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        (event.code === "Digit1" || event.code === "Digit2")
+      ) {
+        if (!reviewModeEnabled) return false;
+        handleFullscreenQuickReview(event.code === "Digit1" ? 0 : 1);
+        return true;
+      }
       const binding = resolveFullscreenShortcut(key);
       if (!binding) return false;
       if (binding.command === FULLSCREEN_COMMANDS.REVIEW_STATE) {
@@ -4999,6 +5039,7 @@ function App() {
       return false;
     },
     [
+      handleFullscreenQuickReview,
       handleFullscreenRating,
       handleFullscreenReviewState,
       handleFullscreenUndo,
@@ -6949,6 +6990,14 @@ function App() {
                   onSetRating={handleFullscreenRating}
                   onUndo={handleFullscreenUndo}
                   onAutoAdvanceChange={handleReviewAutoAdvanceChange}
+                  companionChips={companionChipsFor(companions, fullScreenVideo.instanceId)}
+                  quickActions={withQuickShortcuts(
+                    companionQuickActionsFor(companions, fullScreenVideo.instanceId),
+                    companionActions
+                  )}
+                  onQuickAction={(companionId, actionId) =>
+                    handleQuickAction(fullScreenVideo.id, companionId, actionId)
+                  }
                 />
               }
               detailsOpen={fullscreenDetailsOpen}

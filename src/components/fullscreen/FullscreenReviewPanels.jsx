@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActionIds } from "../../hooks/actions/actions";
 import {
   FULLSCREEN_SHORTCUT_HELP_SECTIONS,
@@ -76,6 +76,67 @@ export function FullscreenProgressContent({ progress }) {
   );
 }
 
+const NO_COMPANION_ITEMS = Object.freeze([]);
+
+// Connected companion apps on the clip on screen: each app's chip, and the
+// same one-click buttons a card shows (an action the app says this clip has
+// not been sent for). A button sends only; its key, Shift+1 or Shift+2, also
+// accepts the clip. Keyed by clip, so a pressed button resets on the next.
+function CompanionSection({ chips, buttons, onQuickAction }) {
+  const [sentKey, setSentKey] = useState(null);
+  if (!chips.length && !buttons.length) return null;
+  return (
+    <div className="fullscreen-review-panel__companion" aria-label="Companion apps">
+      {chips.length ? (
+        <div className="fullscreen-review-panel__companion-chips">
+          {chips.map((chip) => (
+            <span
+              key={chip.key}
+              className={`fullscreen-review-panel__companion-chip fullscreen-review-panel__companion-chip--${
+                chip.tone || "info"
+              }`}
+              title={chip.title || chip.label}
+            >
+              {chip.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {buttons.length && typeof onQuickAction === "function" ? (
+        <div className="fullscreen-review-panel__companion-actions">
+          {buttons.map((button) => {
+            const digit = button.shortcut ? button.shortcut.slice(-1) : null;
+            return (
+              <button
+                key={button.key}
+                type="button"
+                className="fullscreen-review-panel__companion-button"
+                title={
+                  button.shortcut
+                    ? `${button.title}. ${button.shortcut} also accepts it.`
+                    : button.title
+                }
+                disabled={sentKey === button.key}
+                onClick={() => {
+                  setSentKey(button.key);
+                  onQuickAction(button.companionId, button.actionId);
+                }}
+              >
+                <span>{button.label}</span>
+                {digit ? (
+                  <span className="fullscreen-review-panel__review-shortcut" aria-hidden="true">
+                    <kbd>⇧{digit}</kbd>
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function FullscreenReviewRail({
   video,
   busy = false,
@@ -86,6 +147,9 @@ export function FullscreenReviewRail({
   onSetRating,
   onUndo,
   onAutoAdvanceChange,
+  companionChips = NO_COMPANION_ITEMS,
+  quickActions = NO_COMPANION_ITEMS,
+  onQuickAction,
 }) {
   const reviewState = normalizeReviewState(video?.reviewState);
   const rating = Number.isFinite(Number(video?.rating))
@@ -127,6 +191,13 @@ export function FullscreenReviewRail({
           })}
         </div>
       ) : null}
+
+      <CompanionSection
+        key={video?.id ?? "none"}
+        chips={companionChips}
+        buttons={quickActions}
+        onQuickAction={onQuickAction}
+      />
 
       <div className="fullscreen-review-panel__rating" aria-label="Rating">
         <span>Rating</span>

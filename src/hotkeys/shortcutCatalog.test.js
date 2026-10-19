@@ -3,6 +3,7 @@ import {
   FULLSCREEN_FRAME_SHORTCUTS,
   FULLSCREEN_NAVIGATION_SHORTCUTS,
   FULLSCREEN_PLAYER_SHORTCUTS,
+  FULLSCREEN_REVIEW_SHORTCUTS,
   FULLSCREEN_SHORTCUTS,
   FULLSCREEN_SHORTCUT_BY_KEY,
   FULLSCREEN_SHORTCUT_HELP_SECTIONS,
@@ -67,10 +68,17 @@ describe("fullscreen review loupe shortcut catalog", () => {
       "fullscreen-frame-forward",
       "fullscreen-copy-frame",
     ]);
+    // Every review key but starting a pass, which works on the grid.
+    expect(FULLSCREEN_REVIEW_SHORTCUTS).toEqual(
+      REVIEW_SHORTCUTS.filter(({ id }) => id !== "review-pass-start")
+    );
+    expect(FULLSCREEN_REVIEW_SHORTCUTS.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(["review-quick-first", "review-quick-second"])
+    );
     expect(FULLSCREEN_SHORTCUTS).toEqual([
       ...FULLSCREEN_NAVIGATION_SHORTCUTS,
       ...FULLSCREEN_FRAME_SHORTCUTS,
-      ...REVIEW_SHORTCUTS,
+      ...FULLSCREEN_REVIEW_SHORTCUTS,
       ...FULLSCREEN_PLAYER_SHORTCUTS.slice(-2),
     ]);
     expect(FULLSCREEN_SHORTCUT_HELP_SECTIONS.map(({ id }) => id)).toEqual([
@@ -80,7 +88,7 @@ describe("fullscreen review loupe shortcut catalog", () => {
       "fullscreen-utility",
     ]);
     expect(FULLSCREEN_SHORTCUT_HELP_SECTIONS[2].shortcuts).toBe(
-      REVIEW_SHORTCUTS
+      FULLSCREEN_REVIEW_SHORTCUTS
     );
 
     const globalFullscreen = HOTKEY_SECTIONS.find(

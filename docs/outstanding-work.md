@@ -293,6 +293,10 @@ matches under the tag input, including in fullscreen. Check by hand:
   the grid and the pass waits under Library › Review passes; resuming lands
   on the last clip; at the end a search pass offers *Run the search again*.
   Shift+1 accepts and sends to the first companion quick action.
+- In fullscreen with a companion app connected: the rail shows its chip
+  and one-click buttons for the clip on screen (the first two quick
+  actions marked ⇧1 and ⇧2); a button sends only, Shift+1 / Shift+2 send
+  and accept, and the buttons go once the app says the clip is sent.
 - Big cards look sharp at the largest zoom levels: a card shown more than
   about 15% larger than its 720p proxy plays the original (a playing proxy
   swaps over as you zoom in, briefly showing its still frame), and its still

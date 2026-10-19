@@ -4,6 +4,7 @@ import {
   companionQuickActions,
   createCompanionChipCache,
   createCompanionQuickActionCache,
+  withQuickShortcuts,
 } from "./companionCard";
 
 const session = (id, name, entries) => ({
@@ -79,5 +80,35 @@ describe("companion one-click buttons", () => {
     const first = buttonsFor([app()], 1);
     expect(buttonsFor([app()], 1)).toBe(first);
     expect(buttonsFor([app()], 2)).toEqual([]);
+  });
+});
+
+describe("quick action keys on buttons", () => {
+  const button = (companionId, actionId) => ({
+    key: `${companionId}/${actionId}`,
+    companionId,
+    actionId,
+    label: actionId,
+    title: actionId,
+  });
+  const actions = [
+    { id: "polish", companionId: "c1", quick: true },
+    { id: "enlarge", companionId: "c1", quick: false },
+    { id: "polish", companionId: "c2", quick: true },
+    { id: "caption", companionId: "c2", quick: true },
+  ];
+
+  it("names Shift+1 and Shift+2 by the quick actions' order across apps", () => {
+    const named = withQuickShortcuts(
+      [button("c2", "polish"), button("c2", "caption"), button("c1", "polish")],
+      actions
+    );
+    expect(named.map((entry) => entry.shortcut ?? null)).toEqual(["Shift+2", null, "Shift+1"]);
+  });
+
+  it("keeps a clip's key even when the first action is already sent", () => {
+    // c1/polish was sent, so its button is gone; c2/polish is still Shift+2.
+    expect(withQuickShortcuts([button("c2", "polish")], actions)[0].shortcut).toBe("Shift+2");
+    expect(withQuickShortcuts([], actions)).toEqual([]);
   });
 });

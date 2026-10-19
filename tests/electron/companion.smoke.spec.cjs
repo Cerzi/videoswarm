@@ -29,7 +29,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     },
   });
   const editorUrl = await editor.start();
-  const folderPath = createVideoFolder(tempRoot, 4, "companion-clips");
+  const folderPath = createVideoFolder(tempRoot, 5, "companion-clips");
   const pathOf = (index) => path.join(folderPath, `clip-000${index}.mp4`);
   fake.state.clips.set(pathOf(0), {
     kind: "render",
@@ -70,7 +70,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await expect(chips.nth(1)).toHaveAttribute("title", "Fake editor\nCut: Used in a cut");
     await expect(card(page, "clip-0001.mp4").locator(".video-item-companion")).toHaveCount(0);
     const lookup = fake.state.requests.find((request) => request.path === "/api/lookup");
-    expect(lookup.body.paths.sort()).toEqual([0, 1, 2, 3].map(pathOf).sort());
+    expect(lookup.body.paths.sort()).toEqual([0, 1, 2, 3, 4].map(pathOf).sort());
     expect(lookup.host).toMatch(/^127\.0\.0\.1:\d+$/u);
 
     // Send two clips, one of which the app would skip: the dialog opens on
@@ -118,6 +118,27 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await card(page, "clip-0002.mp4").hover();
     await expect(card(page, "clip-0002.mp4").getByRole("button", { name: "Polish" })).toHaveCount(0);
 
+    // In fullscreen: the rail shows the clip's button with its key, and
+    // Shift+1 (by physical key) sends the clip on screen and accepts it.
+    await card(page, "clip-0004.mp4").dblclick();
+    const modal = page.locator(".fullscreen-modal");
+    await expect(modal.locator(".fullscreen-review__title")).toHaveText("clip-0004.mp4");
+    const rail = modal.getByRole("complementary", { name: "Review controls" });
+    const railButton = rail.getByRole("button", { name: "Polish" });
+    await expect(railButton.locator("kbd")).toHaveText("⇧1");
+    const realSends = () =>
+      fake.state.requests.filter((request) => request.path === "/api/send" && !request.body.dry_run);
+    expect(realSends()).toHaveLength(2);
+    await page.keyboard.press("Shift+Digit1");
+    await expect.poll(() => realSends().length).toBe(3);
+    expect(realSends().at(-1).body).toMatchObject({ action: "polish", paths: [pathOf(4)] });
+    await expect(railButton).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
+    await expect(
+      card(page, "clip-0004.mp4").locator('.video-item-review[title="Review state: Accept"]')
+    ).toBeVisible();
+
     // A path the renderer was never shown cannot be sent.
     const refused = await page.evaluate(() =>
       window.electronAPI.companion.send({ companionId: "c1", action: "polish", instanceIds: [999_999] })
@@ -130,6 +151,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await expect(card(page, "clip-0000.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0001.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0002.mp4")).toHaveCount(0);
+    await expect(card(page, "clip-0004.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0003.mp4")).toBeVisible();
 
     expect(rendererErrors).toEqual([]);

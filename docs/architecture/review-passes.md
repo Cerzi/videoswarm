@@ -77,6 +77,12 @@ in their order (a one-click send: dry run, then send, a dialog only for
 skips and refusals), and accepted. With *Advance after marking* on, the next
 clip is selected. With no such action, a toast says so and nothing changes.
 
+In fullscreen (2026-10-19) the same keys act on the clip on screen: it is
+sent, then accepted as the rail's *Accept* does, advancing when *Advance
+after marking* is on. A single clip's skip or refusal is a toast, so no
+dialog opens behind the viewer. Fullscreen's shortcut guide lists them;
+`Shift+R` stays a grid key.
+
 ## Verification
 
 - `main/__tests__/reviewPassesDatabase.test.js` (Electron ABI): order and
@@ -85,7 +91,10 @@ clip is selected. With no such action, a toast says so and nothing changes.
 - `src/hooks/selection/useHotkeys.test.js`: `Shift+R`, `Shift+1/2` by
   physical key, nothing without a selection.
 - `src/components/ReviewPassBar.test.jsx`, `main/__tests__/preloadNativeIpc.test.js`.
-- `src/App.test.jsx`: `Shift+1` accepts and sends to the first quick action.
+- `src/App.test.jsx`: `Shift+1` accepts and sends to the first quick action,
+  in the grid and in fullscreen (by physical key, whatever it prints).
+- `src/components/fullscreen/FullscreenReviewPanels.test.jsx`: the rail's
+  chips and one-click buttons, their keys, one send per click.
 - `tests/electron/review-pass.smoke.spec.cjs`: the real app freezes a
   selection, counts a decision, leaves it, resumes it from the sidebar,
   finishes it, and starts a pass over everything shown with `Shift+R`.

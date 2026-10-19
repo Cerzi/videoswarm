@@ -345,3 +345,79 @@
     scroll-behavior: auto;
   }
 }
+
+/* Companion apps on the clip on screen (docs/architecture/companion-app.md):
+   each app's chip, with the label and tone it chose, then its one-click
+   buttons. */
+.fullscreen-review-panel__companion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fullscreen-review-panel__companion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.fullscreen-review-panel__companion-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f1f3f5;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.fullscreen-review-panel__companion-chip--progress {
+  border-color: rgba(77, 166, 255, 0.75);
+  color: #b9dcff;
+}
+
+.fullscreen-review-panel__companion-chip--warning {
+  border-color: rgba(255, 176, 32, 0.8);
+  color: #ffd58a;
+}
+
+.fullscreen-review-panel__companion-chip--done {
+  border-color: rgba(76, 175, 80, 0.75);
+  color: #bfe8c1;
+}
+
+.fullscreen-review-panel__companion-chip--muted {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.fullscreen-review-panel__companion-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.4rem;
+}
+
+.fullscreen-review-panel__companion-button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 2.15rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgba(77, 166, 255, 0.45);
+  border-radius: 0.5rem;
+  background: rgba(77, 166, 255, 0.1);
+  color: #e9f0f7;
+  cursor: pointer;
+}
+
+.fullscreen-review-panel__companion-button:hover:not(:disabled) {
+  background: rgba(77, 166, 255, 0.2);
+}
+
+.fullscreen-review-panel__companion-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}

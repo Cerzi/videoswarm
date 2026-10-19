@@ -58,7 +58,8 @@ export const REVIEW_SHORTCUTS = Object.freeze([
     id: "review-quick-first",
     keys: ["Shift", "1"],
     label: "Accept and send to the first quick action",
-    detail: "The first one-click action a connected companion app offers.",
+    detail:
+      "The first one-click action a connected companion app offers. In fullscreen, the clip on screen.",
   }),
   freezeShortcut({
     id: "review-quick-second",
@@ -233,12 +234,18 @@ export const FULLSCREEN_PLAYER_SHORTCUTS = Object.freeze([
   ...FULLSCREEN_UTILITY_SHORTCUTS,
 ]);
 
-// Complete loupe help/dispatch catalog. Review entries are shared by identity
-// with the grid workflow so aliases and rating semantics cannot drift.
+// The review keys that act in fullscreen: all but starting a review pass,
+// which works on the grid. The entries are shared by identity with the grid
+// workflow so aliases and rating semantics cannot drift.
+export const FULLSCREEN_REVIEW_SHORTCUTS = Object.freeze(
+  REVIEW_SHORTCUTS.filter((shortcut) => shortcut.id !== "review-pass-start")
+);
+
+// Complete loupe help/dispatch catalog.
 export const FULLSCREEN_SHORTCUTS = Object.freeze([
   ...FULLSCREEN_NAVIGATION_SHORTCUTS,
   ...FULLSCREEN_FRAME_SHORTCUTS,
-  ...REVIEW_SHORTCUTS,
+  ...FULLSCREEN_REVIEW_SHORTCUTS,
   ...FULLSCREEN_UTILITY_SHORTCUTS,
 ]);
 
@@ -256,7 +263,7 @@ export const FULLSCREEN_SHORTCUT_HELP_SECTIONS = Object.freeze([
   Object.freeze({
     id: "fullscreen-review",
     title: "Review current clip",
-    shortcuts: REVIEW_SHORTCUTS,
+    shortcuts: FULLSCREEN_REVIEW_SHORTCUTS,
   }),
   Object.freeze({
     id: "fullscreen-utility",
