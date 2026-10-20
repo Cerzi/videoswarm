@@ -206,7 +206,8 @@ companion authors must be told before it ships.
 - **Chips** (`src/app/companion/useCompanion.js`). Each companion has its
   own session. Every clip in the open collection is looked up once, in
   chunks of 500, so filters can judge the whole collection; new clips are
-  looked up as they arrive. After that only clips under way are asked again,
+  looked up as they arrive, and so are clips shown from outside it (a
+  review pass's or the versions view's guests, 2026-10-20). After that only clips under way are asked again,
   every 4 s while the window is visible, and everything on focus at most
   every 30 s. While a companion is not answering, its last answers stand,
   the status line says so, and Video Swarm tries again every 30 s. A card

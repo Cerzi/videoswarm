@@ -97,6 +97,29 @@ describe("useCompanion", () => {
     expect(api.lookup).toHaveBeenCalledWith("c1", [9]);
   });
 
+  it("asks about guests shown from outside the collection, once each, never missing ones", async () => {
+    const { api } = createApi();
+    const { result, rerender } = renderHook(({ guests }) => useFirstCompanion({ videos: clips(2), guests }), {
+      initialProps: { guests: null },
+    });
+    await flush(1000);
+    expect(api.lookup).toHaveBeenCalledWith("c1", [1, 2]);
+
+    // A review pass brings clips from a folder that is not open (one of them
+    // also in the collection, one missing).
+    api.lookup.mockClear();
+    rerender({
+      guests: [
+        { id: "g7", instanceId: 7 },
+        { id: "c2", instanceId: 2 },
+        { id: "g8", instanceId: 8, present: false },
+      ],
+    });
+    await flush(500);
+    expect(api.lookup.mock.calls).toEqual([["c1", [7]]]);
+    expect(result.current.entries.get(7).actions.polish.phase).toBe("not-sent");
+  });
+
   it("goes offline when a lookup fails, and catches up when it answers again", async () => {
     const { api } = createApi();
     api.lookup.mockResolvedValueOnce({ success: false, code: "COMPANION_UNAVAILABLE" });

@@ -17,11 +17,18 @@ const MAX_STALE_ENTRIES = 5000;
 const EMPTY_ENTRIES = new Map();
 const NO_ACTIONS = Object.freeze([]);
 
-function rowsOf(videos) {
+// Catalog rows to ask about: the collection's present clips, then guests
+// shown from outside it (a review pass or the versions view), each once.
+function rowsOf(videos, guests) {
   const rows = [];
-  for (const video of videos || []) {
-    const id = Number(video?.instanceId);
-    if (Number.isSafeInteger(id) && id > 0 && video.present !== false) rows.push(id);
+  const seen = new Set();
+  for (const list of [videos, guests]) {
+    for (const video of list || []) {
+      const id = Number(video?.instanceId);
+      if (!Number.isSafeInteger(id) || id <= 0 || video.present === false || seen.has(id)) continue;
+      seen.add(id);
+      rows.push(id);
+    }
   }
   return rows;
 }
@@ -37,14 +44,14 @@ export const MAX_COMPANIONS = 4;
  * refreshAll }`, where `status` is "off", "connecting", "online" or
  * "offline", and `entries` maps catalog row -> `{ kind, chip, actions }`.
  */
-export function useCompanion({ videos, suspended = false, connection = null }) {
+export function useCompanion({ videos, guests = null, suspended = false, connection = null }) {
   const api = typeof window !== "undefined" ? window.electronAPI?.companion : null;
   const [description, setDescription] = useState(null);
   const [status, setStatus] = useState("off");
   const [entries, setEntries] = useState(EMPTY_ENTRIES);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
-  const rows = useMemo(() => rowsOf(videos), [videos]);
+  const rows = useMemo(() => rowsOf(videos, guests), [guests, videos]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   // Everything below belongs to one connection; a new one starts afresh.
@@ -218,7 +225,7 @@ const NO_COMPANIONS = Object.freeze([]);
  * `useCompanion`); those switched off are left out. Asks main for the list
  * again whenever `refreshKey` changes (a profile switch) and when it changes.
  */
-export function useCompanions({ videos, suspended = false, refreshKey = 0 }) {
+export function useCompanions({ videos, guests = null, suspended = false, refreshKey = 0 }) {
   const api = typeof window !== "undefined" ? window.electronAPI?.companion : null;
   const [connections, setConnections] = useState(NO_CONNECTIONS);
 
@@ -241,10 +248,10 @@ export function useCompanions({ videos, suspended = false, refreshKey = 0 }) {
   }, [api, refreshKey]);
 
   // Hooks run in a fixed order, so the sessions are fixed slots.
-  const first = useCompanion({ videos, suspended, connection: connections[0] || null });
-  const second = useCompanion({ videos, suspended, connection: connections[1] || null });
-  const third = useCompanion({ videos, suspended, connection: connections[2] || null });
-  const fourth = useCompanion({ videos, suspended, connection: connections[3] || null });
+  const first = useCompanion({ videos, guests, suspended, connection: connections[0] || null });
+  const second = useCompanion({ videos, guests, suspended, connection: connections[1] || null });
+  const third = useCompanion({ videos, guests, suspended, connection: connections[2] || null });
+  const fourth = useCompanion({ videos, guests, suspended, connection: connections[3] || null });
   return useMemo(() => {
     const active = [first, second, third, fourth].filter((companion) => companion.status !== "off");
     return active.length ? active : NO_COMPANIONS;

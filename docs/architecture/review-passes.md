@@ -45,7 +45,8 @@ Decided with the user on 2026-10-19:
   undo history.
 - **Clips from folders that are not open** (a library search) are guests,
   as in the versions view (`generation-versions.md`, Section 8): selectable,
-  reviewed, rated, tagged and acted on, their roots granted.
+  reviewed, rated, tagged and acted on, their roots granted. Companion apps
+  are asked about them too, so they show chips and one-click buttons.
 - **Done** once every clip has a decision: Accepted, Reviewed or Rejected (a
   rating counts as reviewed, as everywhere). A done pass is marked finished
   and leaves the sidebar list.

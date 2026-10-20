@@ -751,9 +751,12 @@ function App() {
 
   // Companion apps' view of the collection (docs/architecture/companion-app.md):
   // every app the profile connects, each with its own session. A profile
-  // switch asks for the profile's list again.
+  // switch asks for the profile's list again. Clips shown from outside the
+  // collection (versionGuests, below) are asked about too.
+  const [companionGuests, setCompanionGuests] = useState(NO_VERSION_GUESTS);
   const companions = useCompanions({
     videos,
+    guests: companionGuests,
     suspended: workSuspended,
     refreshKey: reviewProfileEpoch,
   });
@@ -984,6 +987,7 @@ function App() {
     if (!pass.length) return versions;
     return versions.length ? [...versions, ...pass] : pass;
   }, [reviewPassClips, versionViewClips]);
+  useEffect(() => setCompanionGuests(versionGuests), [versionGuests]);
   const versionLabelById = useMemo(() => {
     const labels = new Map();
     versionViewClips?.members.forEach((video, index) => {
