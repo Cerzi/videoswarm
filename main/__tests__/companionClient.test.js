@@ -16,7 +16,7 @@ const {
   normalizeLookup,
   normalizeSendResults,
 } = require("../companion-client");
-const { createFakeCompanion } = require("./helpers/fakeCompanion.cjs");
+const { createFakeCompanion, TARGET_DESCRIPTION } = require("./helpers/fakeCompanion.cjs");
 
 const CLIP_A = "/library/run/clip-a.mp4";
 const CLIP_B = "/library/run/clip-b.mp4";
@@ -133,7 +133,31 @@ describe("companion answers", () => {
     expect(description.actions[1].hint).toHaveLength(200);
     // A one-click card button only when the app says so, in so many words.
     expect(description.actions.map((action) => action.quick)).toEqual([true, false]);
+    // No targets or withdraw unless declared.
+    expect(description.actions[0]).not.toHaveProperty("targets");
+    expect(description.actions[0].withdraw).toBe(false);
     expect(() => normalizeDescription({ protocol: 2, actions: [] })).toThrow(/protocol 2/u);
+  });
+
+  it("reads an action that sends into targets, with its picker wording", () => {
+    const [add] = normalizeDescription(TARGET_DESCRIPTION).actions;
+    expect(add).toEqual({
+      id: "add",
+      label: "Add to project",
+      send: "Add to",
+      hint: "",
+      quick: false,
+      withdraw: true,
+      targets: { label: "Project", new: "New project…" },
+      pick: "Add to project…",
+    });
+    const [plain] = normalizeDescription({
+      protocol: 1,
+      actions: [{ id: "add", label: "Add", send: "Add to", targets: { label: "" } }],
+    }).actions;
+    // Without wording of its own: the send words, and no making new ones.
+    expect(plain.pick).toBe("Add to…");
+    expect(plain.targets).toEqual({ label: "Target", new: "" });
   });
 
   it("reads lookups for asked-for paths and known actions only", () => {
@@ -198,7 +222,8 @@ describe("createCompanionClient against a fake companion", () => {
     expect(before.get(CLIP_A).actions.polish.phase).toBe("not-sent");
 
     const dry = await client.send({ action: "polish", paths: [CLIP_A], dryRun: true });
-    expect(dry.get(CLIP_A)).toMatchObject({ result: "sent", estimate: 60 });
+    expect(dry.results.get(CLIP_A)).toMatchObject({ result: "sent", estimate: 60 });
+    expect(dry.target).toBeNull();
     expect((await client.lookup([CLIP_A], ["polish"])).get(CLIP_A).actions.polish.phase).toBe(
       "not-sent"
     );
@@ -220,6 +245,57 @@ describe("createCompanionClient against a fake companion", () => {
       again: false,
       client: "videoswarm",
     });
+  });
+
+  it("lists targets, sends into one or a new one, and takes back only its own adds", async () => {
+    fake = createFakeCompanion({ description: TARGET_DESCRIPTION });
+    fake.state.targets = [
+      { id: "/projects/one", label: "One", detail: "3 clips", current: false },
+      { id: "/projects/two", label: "Two", detail: "x".repeat(300), current: true },
+      { id: "/projects/three", label: "Three", detail: "", current: true },
+      { id: "/projects/one", label: "Duplicate", detail: "", current: false },
+      { id: "", label: "No id" },
+    ];
+    const url = await fake.start();
+    const client = createCompanionClient({ url });
+
+    const targets = await client.targets("add");
+    expect(targets.map((target) => [target.label, target.current])).toEqual([
+      ["One", false],
+      ["Two", true],
+      ["Three", false],
+    ]);
+    expect(targets[1].detail).toHaveLength(120);
+
+    // No target: refused, as the protocol asks.
+    const none = await client.send({ action: "add", paths: [CLIP_A], dryRun: true });
+    expect(none.results.get(CLIP_A)).toMatchObject({ result: "refused", why: "Choose a project" });
+
+    const sent = await client.send({ action: "add", paths: [CLIP_A], target: "/projects/one" });
+    expect(sent.results.get(CLIP_A).result).toBe("sent");
+    expect(sent.target).toEqual({ id: "/projects/one", label: "One" });
+    expect(fake.state.requests.at(-1).body).toMatchObject({ target: "/projects/one", client: "videoswarm" });
+
+    // A new target is made by a real send only, and answered with its id.
+    const dryNew = await client.send({ action: "add", paths: [CLIP_B], target: { new: "Fresh" }, dryRun: true });
+    expect(dryNew.results.get(CLIP_B).result).toBe("sent");
+    expect(fake.state.targets.some((target) => target.label === "Fresh")).toBe(false);
+    const made = await client.send({ action: "add", paths: [CLIP_B], target: { new: "Fresh" } });
+    expect(made.target).toEqual({ id: "/projects/Fresh", label: "Fresh" });
+
+    const back = await client.withdraw({ action: "add", paths: [CLIP_A, CLIP_B], target: "/projects/one" });
+    expect(back.results.get(CLIP_A)).toEqual({ result: "withdrawn", why: "" });
+    expect(back.results.get(CLIP_B)).toEqual({ result: "skipped", why: "Not added by this app" });
+    expect(fake.state.requests.at(-1).body).toEqual({
+      action: "add",
+      paths: [CLIP_A, CLIP_B],
+      target: "/projects/one",
+      client: "videoswarm",
+    });
+
+    await expect(
+      client.send({ action: "add", paths: [CLIP_A], target: { new: "x".repeat(81) } })
+    ).rejects.toMatchObject({ code: "COMPANION_REQUEST_INVALID" });
   });
 
   it("sends rated clips' stars with every chunk, dry runs included, and leaves unrated ones out", async () => {

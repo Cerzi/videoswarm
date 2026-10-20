@@ -86,7 +86,37 @@ Request: `{}`. Response:
   and in the fullscreen viewer, whenever the clip's lookup says that action
   is `not-sent`. Anything but
   `true` means no button. Keep labels short for it.
+- `withdraw` (optional, added 2026-10-20): `true` when the action's sends
+  can be taken back with `/api/withdraw`, which Video Swarm offers as
+  *Undo*.
+- `targets` (optional, added 2026-10-20): the action sends into a place the
+  user picks, such as a project: `{"label": "Project", "new": "New
+  project…"}` (32 and 48 characters; without `new`, none can be made).
+  `pick` (48) is then the picker's menu item, e.g. `Add to project…`, and
+  the one-click item for the companion's current target reads `<send>
+  <target label>`, so `send` should read like `Add to`. The targets
+  themselves come from `/api/targets`, never from this cached answer.
 - *Test connection* in Preferences uses this call and sends nothing else.
+
+### `POST /api/targets` (added 2026-10-20)
+
+Request: `{"action": "add"}`. Response: `{"targets": [{"id", "label",
+"detail", "current"}]}`, in display order (recent first), at most 200;
+`label` 48 characters, `detail` one line of 120, shown as is; the first
+`current: true` is the companion's current target. Asked afresh whenever a
+menu or the picker opens, so it should answer in well under 300 ms.
+
+`id` is opaque and may be a folder path: Video Swarm keeps it in its main
+process, hands the window a short handle in its place, and never shows or
+logs it.
+
+### `POST /api/withdraw` (added 2026-10-20)
+
+Request: `{"action", "paths", "target"?, "client": "videoswarm"}`, at most
+500 paths. Only what this client sent can be taken back. Response:
+`{"results": {path: {"result": "withdrawn" | "skipped" | "refused", "why"}},
+"target"?}`. Video Swarm's *Undo* withdraws exactly the paths a send
+answered `sent`, with the same target.
 
 ### `POST /api/lookup`
 
@@ -146,7 +176,13 @@ Request:
 
 At most 500 paths. `dry_run` changes nothing and answers what would happen.
 `client` (added 2026-10-20) is always `videoswarm`, so a companion can tell
-what this app sent.
+what this app sent. For an action with targets, `target` (added 2026-10-20)
+is an id from `/api/targets` or `{"new": "<name>"}` (one line, 80
+characters); a companion answers every path `refused` ("Choose a project")
+when none is named. The answer then includes `"target": {"id", "label"}`:
+for `new`, the target a real send made, whose id Video Swarm uses for the
+remaining chunks and for *Undo*. A dry run with `new` makes nothing and
+answers as if the target were empty.
 `again` asks to send clips that were sent before. `ratings` (optional, added
 2026-10-18) maps each rated clip's path, exactly as in `paths`, to its stars,
 a whole number from 0 to 5; unrated clips are left out, and so is the field

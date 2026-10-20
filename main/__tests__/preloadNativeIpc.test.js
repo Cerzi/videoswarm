@@ -236,6 +236,10 @@ describe("preload native-work bridge", () => {
     await api.companion.lookup("c1", [1, 2]);
     await api.companion.lookup(null, "bad");
     await api.companion.send({ companionId: "c2", action: "polish", instanceIds: [3], dryRun: true, paths: ["/x"] });
+    await api.companion.targets("c2", "add");
+    await api.companion.send({ companionId: "c2", action: "add", instanceIds: [3], target: { handle: "t4", id: "/x" } });
+    await api.companion.send({ companionId: "c2", action: "add", instanceIds: [3], target: { new: "Fresh" } });
+    await api.companion.withdraw({ companionId: "c2", action: "add", instanceIds: [3], target: "/raw/path" });
     expect(ipcRenderer.invoke.mock.calls).toEqual([
       ["companion:connections:get"],
       [
@@ -257,6 +261,17 @@ describe("preload native-work bridge", () => {
         "companion:send",
         { companionId: "c2", action: "polish", instanceIds: [3], dryRun: true, again: false },
       ],
+      ["companion:targets", { companionId: "c2", action: "add" }],
+      // A target is a handle or a new name, never an id or path.
+      [
+        "companion:send",
+        { companionId: "c2", action: "add", instanceIds: [3], dryRun: false, again: false, target: { handle: "t4" } },
+      ],
+      [
+        "companion:send",
+        { companionId: "c2", action: "add", instanceIds: [3], dryRun: false, again: false, target: { new: "Fresh" } },
+      ],
+      ["companion:withdraw", { companionId: "c2", action: "add", instanceIds: [3] }],
     ]);
     const callback = vi.fn();
     const unsubscribe = api.companion.onConnectionsChanged(callback);

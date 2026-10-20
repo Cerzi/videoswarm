@@ -15,9 +15,30 @@ const DEFAULT_DESCRIPTION = Object.freeze({
   ],
 });
 
+// An app whose action sends into a target the user picks (a project),
+// adding to it, and can take adds back. Made-up names throughout.
+const TARGET_DESCRIPTION = Object.freeze({
+  protocol: 1,
+  name: "Fake editor",
+  actions: [
+    {
+      id: "add",
+      label: "Add to project",
+      send: "Add to",
+      pick: "Add to project…",
+      withdraw: true,
+      targets: { label: "Project", new: "New project…" },
+    },
+  ],
+});
+
 function createFakeCompanion({ description = DEFAULT_DESCRIPTION } = {}) {
   const state = {
     description,
+    // Targets for actions that have them: [{ id, label, detail, current }].
+    targets: [],
+    // target id -> Map(path -> client that added it)
+    members: new Map(),
     // path -> { kind, chip, actions: { id: { phase, why } } }
     clips: new Map(),
     requests: [],
@@ -61,9 +82,63 @@ function createFakeCompanion({ description = DEFAULT_DESCRIPTION } = {}) {
 
       if (url.pathname === "/api/describe") return reply(res, 200, state.description);
 
+      const declared = state.description.actions.find((action) => action.id === body.action);
+      if (url.pathname === "/api/targets") return reply(res, 200, { targets: state.targets });
+
+      if (declared?.targets && (url.pathname === "/api/send" || url.pathname === "/api/withdraw")) {
+        let target = null;
+        if (typeof body.target === "string") {
+          target = state.targets.find((entry) => entry.id === body.target) || null;
+          if (!target) return reply(res, 404, { error: "No such project" });
+        } else if (body.target && typeof body.target.new === "string") {
+          target = { id: `/projects/${body.target.new}`, label: body.target.new, detail: "New", current: false };
+          if (!body.dry_run && url.pathname === "/api/send") {
+            state.targets.unshift(target);
+            state.members.set(target.id, new Map());
+          }
+        }
+        const members = (target && state.members.get(target.id)) || new Map();
+        const results = {};
+        for (const filePath of body.paths || []) {
+          if (url.pathname === "/api/withdraw") {
+            if (members.get(filePath) === body.client) {
+              members.delete(filePath);
+              results[filePath] = { result: "withdrawn", why: "" };
+            } else {
+              results[filePath] = { result: "skipped", why: "Not added by this app" };
+            }
+          } else if (!target) {
+            results[filePath] = { result: "refused", why: "Choose a project" };
+          } else if (members.has(filePath)) {
+            results[filePath] = { result: "skipped", why: `Already in ${target.label}` };
+          } else {
+            results[filePath] = { result: "sent", why: "" };
+            if (!body.dry_run) {
+              if (!state.members.has(target.id)) state.members.set(target.id, members);
+              members.set(filePath, body.client);
+            }
+          }
+        }
+        return reply(res, 200, {
+          results,
+          ...(target ? { target: { id: target.id, label: target.label } } : {}),
+          dry_run: body.dry_run === true,
+        });
+      }
+
       if (url.pathname === "/api/lookup") {
         const clips = {};
+        const current = state.targets.find((entry) => entry.current);
         for (const filePath of body.paths || []) {
+          const added = current && state.members.get(current.id)?.has(filePath);
+          if (added) {
+            clips[filePath] = {
+              kind: "video",
+              chip: { label: `In ${current.label}`, tone: "done" },
+              actions: { add: { phase: "done", why: `In ${current.label}` } },
+            };
+            continue;
+          }
           clips[filePath] = state.clips.get(filePath) || {
             kind: "video",
             chip: null,
@@ -122,4 +197,4 @@ function createFakeCompanion({ description = DEFAULT_DESCRIPTION } = {}) {
   };
 }
 
-module.exports = { createFakeCompanion, DEFAULT_DESCRIPTION };
+module.exports = { createFakeCompanion, DEFAULT_DESCRIPTION, TARGET_DESCRIPTION };

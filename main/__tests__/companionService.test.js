@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { createCompanionService } = require("../companion-service");
-const { createFakeCompanion } = require("./helpers/fakeCompanion.cjs");
+const { createFakeCompanion, TARGET_DESCRIPTION } = require("./helpers/fakeCompanion.cjs");
 
 const CLIP = "/library/run/clip-a.mp4";
 
@@ -56,8 +56,42 @@ describe("createCompanionService", () => {
       code: "COMPANION_UNKNOWN_ACTION",
     });
     const outcome = await service.send({ action: "enlarge", paths: [CLIP], dryRun: true });
-    expect(outcome.get(CLIP).result).toBe("sent");
+    expect(outcome.results.get(CLIP).result).toBe("sent");
     expect(fake.state.requests.at(-1).body).toMatchObject({ action: "enlarge", dry_run: true });
+    // An action without Undo cannot be taken back.
+    await expect(service.withdraw({ action: "enlarge", paths: [CLIP] })).rejects.toMatchObject({
+      code: "COMPANION_NO_WITHDRAW",
+    });
+  });
+
+  it("hands out target handles, never ids, and resolves them for sends and withdraws", async () => {
+    const { service } = await connected({ description: TARGET_DESCRIPTION });
+    fake.state.targets = [
+      { id: "/projects/one", label: "One", detail: "", current: true },
+      { id: "/projects/two", label: "Two", detail: "", current: false },
+    ];
+    const targets = await service.targets("add");
+    expect(targets).toEqual([
+      { handle: "t1", label: "One", detail: "", current: true },
+      { handle: "t2", label: "Two", detail: "", current: false },
+    ]);
+    expect(JSON.stringify(targets)).not.toContain("/projects");
+    // Asked afresh each time; the same id keeps its handle.
+    expect((await service.targets("add"))[1].handle).toBe("t2");
+
+    const sent = await service.send({ action: "add", paths: [CLIP], target: { handle: "t2" } });
+    expect(fake.state.requests.at(-1).body.target).toBe("/projects/two");
+    expect(sent.target).toEqual({ handle: "t2", label: "Two" });
+
+    const made = await service.send({ action: "add", paths: [CLIP], target: { new: "Fresh" } });
+    expect(made.target).toEqual({ handle: "t3", label: "Fresh" });
+
+    const back = await service.withdraw({ action: "add", paths: [CLIP], target: { handle: "t2" } });
+    expect(back.results.get(CLIP).result).toBe("withdrawn");
+
+    await expect(
+      service.send({ action: "add", paths: [CLIP], target: { handle: "t99" } })
+    ).rejects.toMatchObject({ code: "COMPANION_TARGET_UNKNOWN" });
   });
 });
 

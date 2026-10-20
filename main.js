@@ -5689,11 +5689,41 @@ ipcMain.handle("companion:lookup", async (_event, payload = {}) => {
 
 // Sending asks the companion to act on files, so every path must be one the
 // renderer was shown, as for native file actions.
+// What a send or withdraw names as its target: a handle main gave out
+// (`{ handle }`) or a new one's name (`{ new }`); never an id or a path.
+function companionTargetFromPayload(value) {
+  if (value === undefined || value === null) return null;
+  assertPlainObject(value, "companion target");
+  if (value.handle !== undefined) {
+    return { handle: assertString(value.handle, { name: "companion target", minChars: 2, maxChars: 11 }) };
+  }
+  return {
+    new: assertString(value.new, {
+      name: "new companion target",
+      minChars: 1,
+      maxChars: COMPANION_LIMITS.maxNewTargetChars,
+      trim: true,
+    }),
+  };
+}
+
+// The targets an action sends into, by handle, asked for afresh each time.
+ipcMain.handle("companion:targets", async (_event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "companion targets");
+    const action = assertString(payload.action, { name: "companion action", minChars: 1, maxChars: 32 });
+    return { success: true, targets: await companionServiceFor(payload.companionId).targets(action) };
+  } catch (error) {
+    return companionFailure(error);
+  }
+});
+
 ipcMain.handle("companion:send", async (event, payload = {}) => {
   let context = null;
   try {
     assertPlainObject(payload, "companion send");
     const action = assertString(payload.action, { name: "companion action", minChars: 1, maxChars: 32 });
+    const target = companionTargetFromPayload(payload.target);
     const instanceIds = assertInstanceIdArray(payload.instanceIds, {
       name: "companion send rows",
       maxEntries: COMPANION_LIMITS.maxSendPaths,
@@ -5714,9 +5744,40 @@ ipcMain.handle("companion:send", async (event, payload = {}) => {
       ratings,
       dryRun: payload.dryRun === true,
       again: payload.again === true,
+      target,
     });
     assertMetadataContextActive(context);
-    return { success: true, dryRun: payload.dryRun === true, results: byInstance(outcome, idsByPath) };
+    return {
+      success: true,
+      dryRun: payload.dryRun === true,
+      results: byInstance(outcome.results, idsByPath),
+      target: outcome.target,
+    };
+  } catch (error) {
+    return companionFailure(error);
+  }
+});
+
+// Takes back clips this app sent (Undo after a send), by catalog row.
+ipcMain.handle("companion:withdraw", async (event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "companion withdraw");
+    const action = assertString(payload.action, { name: "companion action", minChars: 1, maxChars: 32 });
+    const target = companionTargetFromPayload(payload.target);
+    const instanceIds = assertInstanceIdArray(payload.instanceIds, {
+      name: "companion withdraw rows",
+      maxEntries: COMPANION_LIMITS.maxSendPaths,
+    });
+    context = captureMetadataContext();
+    const { paths, idsByPath } = companionPathsForInstances(context.metadataStore, instanceIds);
+    for (const filePath of paths) {
+      await assertRendererPath(event, filePath, "file");
+    }
+    assertMetadataContextActive(context);
+    const outcome = await companionServiceFor(payload.companionId).withdraw({ action, paths, target });
+    assertMetadataContextActive(context);
+    return { success: true, results: byInstance(outcome.results, idsByPath), target: outcome.target };
   } catch (error) {
     return companionFailure(error);
   }

@@ -22,6 +22,13 @@ const MAX_ACTIONS = 8;
 const PHASES = new Set(["not-sent", "under-way", "done", "stopped", "n/a"]);
 const TONES = new Set(["progress", "warning", "done", "info", "muted"]);
 const SEND_RESULTS = new Set(["sent", "skipped", "refused"]);
+const WITHDRAW_RESULTS = new Set(["withdrawn", "skipped", "refused"]);
+// Targets (2026-10-20): an action can send into one of the companion's own
+// places, say a project. Their ids are opaque (often folder paths): kept in
+// the main process, never shown or logged.
+const MAX_TARGETS = 200;
+const MAX_TARGET_ID_CHARS = 4096;
+const MAX_NEW_TARGET_CHARS = 80;
 const ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 const KIND = /^[a-z][a-z0-9_/-]{0,31}$/u;
 
@@ -48,7 +55,17 @@ function cleanText(value, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
-/** `{ protocol, name, actions: [{ id, label, send, hint, quick }] }` or throws. */
+// What an action that sends into a target says about them: what one is
+// called and the wording for making a new one ("" when it cannot).
+function normalizeTargetsDeclaration(raw) {
+  if (!isObject(raw)) return null;
+  return { label: cleanText(raw.label, 32) || "Target", new: cleanText(raw.new, 48) };
+}
+
+/**
+ * `{ protocol, name, actions: [{ id, label, send, hint, quick, withdraw,
+ * targets, pick }] }` or throws.
+ */
 function normalizeDescription(raw) {
   if (!isObject(raw)) {
     throw new CompanionClientError("COMPANION_BAD_RESPONSE", "The companion's description is not an object");
@@ -68,14 +85,21 @@ function normalizeDescription(raw) {
     const label = cleanText(entry.label, 32);
     if (!label) continue;
     seen.add(entry.id);
+    const send = cleanText(entry.send, 48) || `Send to ${label}`;
+    const targets = normalizeTargetsDeclaration(entry.targets);
     actions.push({
       id: entry.id,
       label,
-      send: cleanText(entry.send, 48) || `Send to ${label}`,
+      send,
       hint: cleanText(entry.hint, 200),
       // Offered as a one-click button on a card the action has not been
       // sent for. Optional; anything but true is false.
       quick: entry.quick === true,
+      // Sends can be taken back through /api/withdraw.
+      withdraw: entry.withdraw === true,
+      // Sends go into a target the user picks (`{ label, new }`), and `pick`
+      // is the picker's menu item.
+      ...(targets ? { targets, pick: cleanText(entry.pick, 48) || `${send}…` } : {}),
     });
   }
   return {
@@ -145,6 +169,68 @@ function normalizeSendResults(raw, paths) {
       result,
       why: cleanText(entry?.why, 300),
       estimate: Number.isFinite(estimate) && estimate >= 0 ? estimate : null,
+    });
+  }
+  return outcome;
+}
+
+/**
+ * A target list, in the companion's order, as `[{ id, label, detail,
+ * current }]`: at most 200, each id once, the first `current` the only one.
+ */
+function normalizeTargets(raw) {
+  const list = isObject(raw) && Array.isArray(raw.targets) ? raw.targets : [];
+  const targets = [];
+  const seen = new Set();
+  let hasCurrent = false;
+  for (const entry of list) {
+    if (targets.length >= MAX_TARGETS) break;
+    if (!isObject(entry) || typeof entry.id !== "string" || !entry.id) continue;
+    if (entry.id.length > MAX_TARGET_ID_CHARS || seen.has(entry.id)) continue;
+    const label = cleanText(entry.label, 48);
+    if (!label) continue;
+    seen.add(entry.id);
+    const current = entry.current === true && !hasCurrent;
+    if (current) hasCurrent = true;
+    targets.push({ id: entry.id, label, detail: cleanText(entry.detail, 120), current });
+  }
+  return targets;
+}
+
+// The target a send or withdraw answered with, `{ id, label }`, or null.
+function normalizeAnsweredTarget(raw) {
+  const target = isObject(raw) ? raw.target : null;
+  if (!isObject(target) || typeof target.id !== "string" || !target.id) return null;
+  if (target.id.length > MAX_TARGET_ID_CHARS) return null;
+  return { id: target.id, label: cleanText(target.label, 48) || "" };
+}
+
+// What a request names as its target: an id the companion gave, or a new
+// one's name. Nothing for an action without targets.
+function requestTarget(target) {
+  if (target === undefined || target === null) return {};
+  if (typeof target === "string" && target && target.length <= MAX_TARGET_ID_CHARS) {
+    return { target };
+  }
+  if (isObject(target) && typeof target.new === "string") {
+    const name = cleanText(target.new, MAX_NEW_TARGET_CHARS + 1);
+    if (name && name.length <= MAX_NEW_TARGET_CHARS) return { target: { new: name } };
+  }
+  throw new CompanionClientError("COMPANION_REQUEST_INVALID", "That target cannot be sent");
+}
+
+/**
+ * The outcome of a withdraw for each asked-for path, as a Map of path ->
+ * `{ result: "withdrawn" | "skipped" | "refused" | "unknown", why }`.
+ */
+function normalizeWithdrawResults(raw, paths) {
+  const results = isObject(raw) && isObject(raw.results) ? raw.results : {};
+  const outcome = new Map();
+  for (const filePath of paths) {
+    const entry = Object.prototype.hasOwnProperty.call(results, filePath) ? results[filePath] : null;
+    outcome.set(filePath, {
+      result: isObject(entry) && WITHDRAW_RESULTS.has(entry.result) ? entry.result : "unknown",
+      why: cleanText(entry?.why, 300),
     });
   }
   return outcome;
@@ -263,14 +349,26 @@ function createCompanionClient({
     return normalizeLookup(await request("/api/lookup", { paths: wanted }), wanted, actionIds);
   }
 
-  // `ratings` maps a sent path to its stars, 0 to 5; unrated clips are left
-  // out, and so is the field when none is rated.
-  async function send({ action, paths, ratings = null, dryRun = false, again = false }) {
+  const assertAction = (action) => {
     if (typeof action !== "string" || !ACTION_ID.test(action)) {
       throw new CompanionClientError("COMPANION_REQUEST_INVALID", "Unknown companion action");
     }
+  };
+
+  async function targets(action) {
+    assertAction(action);
+    return normalizeTargets(await request("/api/targets", { action }));
+  }
+
+  // `ratings` maps a sent path to its stars, 0 to 5; unrated clips are left
+  // out, and so is the field when none is rated. `target` is an id from
+  // targets(), or `{ new: name }`. Answers `{ results, target }`, the target
+  // being what the companion says it sent into (a new one's id included).
+  async function send({ action, paths, ratings = null, dryRun = false, again = false, target = null }) {
+    assertAction(action);
     const wanted = assertPaths(paths, MAX_SEND_PATHS);
-    if (wanted.length === 0) return new Map();
+    const named = requestTarget(target);
+    if (wanted.length === 0) return { results: new Map(), target: null };
     const stars = {};
     for (const filePath of wanted) {
       const rating = ratings?.[filePath];
@@ -284,14 +382,30 @@ function createCompanionClient({
         ...(Object.keys(stars).length ? { ratings: stars } : {}),
         dry_run: dryRun === true,
         again: again === true,
+        ...named,
         client: CLIENT_NAME,
       },
       { timeout: sendTimeoutMs }
     );
-    return normalizeSendResults(raw, wanted);
+    return { results: normalizeSendResults(raw, wanted), target: normalizeAnsweredTarget(raw) };
   }
 
-  return { url: origin.origin, describe, lookup, send };
+  // Takes back what this app sent (only that: the companion matches it by
+  // `client`). Answers `{ results, target }` as send() does.
+  async function withdraw({ action, paths, target = null }) {
+    assertAction(action);
+    const wanted = assertPaths(paths, MAX_SEND_PATHS);
+    const named = requestTarget(target);
+    if (wanted.length === 0) return { results: new Map(), target: null };
+    const raw = await request(
+      "/api/withdraw",
+      { action, paths: wanted, ...named, client: CLIENT_NAME },
+      { timeout: sendTimeoutMs }
+    );
+    return { results: normalizeWithdrawResults(raw, wanted), target: normalizeAnsweredTarget(raw) };
+  }
+
+  return { url: origin.origin, describe, lookup, targets, send, withdraw };
 }
 
 module.exports = {
@@ -299,6 +413,7 @@ module.exports = {
     maxLookupPaths: MAX_LOOKUP_PATHS,
     maxSendPaths: MAX_SEND_PATHS,
     maxActions: MAX_ACTIONS,
+    maxNewTargetChars: MAX_NEW_TARGET_CHARS,
   }),
   CompanionClientError,
   PHASES,

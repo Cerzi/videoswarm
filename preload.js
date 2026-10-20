@@ -36,6 +36,14 @@ function normalizePlaybackSourceRequest(payload) {
   };
 }
 
+// A companion send's target as main accepts it: a handle main gave out, or a
+// new target's name; anything else is left out.
+function companionTarget(target) {
+  if (typeof target?.handle === "string") return { target: { handle: target.handle } };
+  if (typeof target?.new === "string") return { target: { new: target.new } };
+  return {};
+}
+
 function normalizeAcceptedCopyPlanId(value) {
   return typeof value === "string" && value.length > 0 && value.length <= 128
     ? value
@@ -530,13 +538,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
         companionId: typeof companionId === "string" ? companionId : "",
         instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
       }),
-    send: async ({ companionId, action, instanceIds, dryRun = false, again = false } = {}) =>
+    // The targets an action sends into (a project, say), by handle.
+    targets: async (companionId, action) =>
+      ipcRenderer.invoke("companion:targets", {
+        companionId: typeof companionId === "string" ? companionId : "",
+        action: typeof action === "string" ? action : "",
+      }),
+    // `target`: `{ handle }` from targets(), or `{ new: name }`.
+    send: async ({ companionId, action, instanceIds, dryRun = false, again = false, target } = {}) =>
       ipcRenderer.invoke("companion:send", {
         companionId: typeof companionId === "string" ? companionId : "",
         action: typeof action === "string" ? action : "",
         instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
         dryRun: dryRun === true,
         again: again === true,
+        ...companionTarget(target),
+      }),
+    withdraw: async ({ companionId, action, instanceIds, target } = {}) =>
+      ipcRenderer.invoke("companion:withdraw", {
+        companionId: typeof companionId === "string" ? companionId : "",
+        action: typeof action === "string" ? action : "",
+        instanceIds: Array.isArray(instanceIds) ? instanceIds : [],
+        ...companionTarget(target),
       }),
     onConnectionsChanged: (callback) => {
       const handler = (_event, payload) => callback(payload);
