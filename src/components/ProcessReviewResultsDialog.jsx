@@ -332,7 +332,9 @@ export default function ProcessReviewResultsDialog({
           <div className="review-results-dialog__actions">
             {processingReady
               ? (companions || []).flatMap((companion) =>
-                  (companion.actions || []).map((action) => (
+                  // An action that sends into a target (a project) needs one
+                  // picked: the context menu's picker does that.
+                  (companion.actions || []).filter((action) => !action.targets).map((action) => (
                     <CompanionSendPanel
                       key={`${companion.id}/${action.id}`}
                       companionId={companion.id}

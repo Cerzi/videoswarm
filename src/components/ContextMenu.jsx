@@ -89,6 +89,7 @@ const rootMenuSize = (element, items) => {
 
 // A clip whose embedded ComfyUI prompt was read, or an MP4/MOV not read yet.
 const NO_COMPANION_ACTIONS = Object.freeze([]);
+const NO_COMPANION_TARGETS = Object.freeze({});
 
 const mayCarryWorkflow = (video) => {
   if (!video?.instanceId) return false;
@@ -112,6 +113,9 @@ const ContextMenu = ({
   // Connected companion apps' actions, as they describe them, each with its
   // app's id and name: `[{ companionId, companionName, id, label, send }]`.
   companionActions = NO_COMPANION_ACTIONS,
+  // For actions that send into a target (a project): each one's current
+  // target, `{ "c2/add": { handle, label } }`, once the app has said.
+  companionTargets = NO_COMPANION_TARGETS,
   // While Filters › Might be shows a tag's suggestions: tag them or rule
   // them out.
   mightBeTag = '',
@@ -220,18 +224,40 @@ const ContextMenu = ({
     // With several apps connected, each action says whose it is.
     const severalCompanions =
       new Set(companionActions.map((companionAction) => companionAction.companionId)).size > 1;
+    const whose = (companionAction) =>
+      severalCompanions && companionAction.companionName
+        ? ` · ${companionAction.companionName}`
+        : '';
+    const howMany = selectionCount > 1 ? ` (${selectionCount} selected)` : '';
     pushSection(
-      companionActions.map((companionAction) => ({
-        id: `companion-send-${companionAction.companionId}-${companionAction.id}`,
-        // Sends at once when the dry run is clean; the dialog opens only to
-        // show what would be skipped or refused.
-        label: `↗ ${companionAction.send}${
-          severalCompanions && companionAction.companionName
-            ? ` · ${companionAction.companionName}`
-            : ''
-        }${selectionCount > 1 ? ` (${selectionCount} selected)` : ''}`,
-        action: `companion:send:${companionAction.companionId}:${companionAction.id}`,
-      }))
+      companionActions.flatMap((companionAction) => {
+        const key = `${companionAction.companionId}:${companionAction.id}`;
+        if (companionAction.targets) {
+          // Into the app's current target in one click, or one picked.
+          const current = companionTargets[`${companionAction.companionId}/${companionAction.id}`];
+          return [
+            current
+              ? {
+                id: `companion-add-current-${companionAction.companionId}-${companionAction.id}`,
+                label: `↗ ${companionAction.send} ${current.label}${whose(companionAction)}${howMany}`,
+                action: `companion:add-current:${key}`,
+              }
+              : null,
+            {
+              id: `companion-pick-${companionAction.companionId}-${companionAction.id}`,
+              label: `↗ ${companionAction.pick || companionAction.send}${whose(companionAction)}${howMany}`,
+              action: `companion:pick:${key}`,
+            },
+          ].filter(Boolean);
+        }
+        return [{
+          id: `companion-send-${companionAction.companionId}-${companionAction.id}`,
+          // Sends at once when the dry run is clean; the dialog opens only to
+          // show what would be skipped or refused.
+          label: `↗ ${companionAction.send}${whose(companionAction)}${howMany}`,
+          action: `companion:send:${key}`,
+        }];
+      })
     );
 
     if (mightBeTag) {
@@ -346,6 +372,7 @@ const ContextMenu = ({
     canGoToFolder,
     canSingleFileOps,
     companionActions,
+    companionTargets,
     contextId,
     electronAPI,
     mightBeTag,

@@ -26,6 +26,27 @@ describe("toast stack", () => {
     expect(document.getElementById(TOAST_STACK_ID)).toBeNull();
   });
 
+  it("offers one button, such as Undo, that acts once and closes the toast", () => {
+    vi.useFakeTimers();
+    const onClick = vi.fn();
+    const toast = showToast("Added 3 clips to Demo", "success", { action: { label: "Undo", onClick } });
+    expect(toast.style.pointerEvents).toBe("auto");
+    expect(toast.textContent).toContain("Added 3 clips to Demo");
+    const button = toast.querySelector("button");
+    expect(button.textContent).toBe("Undo");
+    button.click();
+    button.click();
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(toast.isConnected).toBe(false);
+
+    // Untouched, it stays long enough to reach.
+    const later = showToast("Added 1 clip", "success", { action: { label: "Undo", onClick } });
+    vi.advanceTimersByTime(3000);
+    expect(later.isConnected).toBe(true);
+    vi.advanceTimersByTime(5000);
+    expect(later.isConnected).toBe(false);
+  });
+
   it("keeps the memory warning out of the toast corner and out of the way", () => {
     render(<MemoryAlert memStatus={{ isNearLimit: true, currentMemoryMB: 3000, memoryPressure: 91 }} />);
     const alert = document.body.querySelector("div[style*='position: fixed']");

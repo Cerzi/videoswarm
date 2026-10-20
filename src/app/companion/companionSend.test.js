@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import {
   COMPANION_SEND_CHUNK,
+  checkTargetSend,
+  sendToTarget,
   sendWithoutReview,
+  withdrawRows,
   companionRowsOf,
   formatEstimate,
   rowsToSend,
@@ -135,5 +138,79 @@ describe("sending in one click", () => {
     await expect(
       sendWithoutReview({ companionId: "c1", actionId: "polish", instanceIds: [1], send })
     ).resolves.toEqual({ status: "error", error: "Not answering" });
+  });
+});
+
+describe("sending into a target", () => {
+  // A fake app: a project holding rows; a real send of a new one makes it.
+  function projectApp(already = []) {
+    const members = new Set(already);
+    const labels = { t1: "Proj" };
+    let made = 0;
+    const send = vi.fn(async ({ instanceIds, dryRun, target }) => {
+      if (target?.new && !dryRun) {
+        made += 1;
+        labels.t9 = target.new;
+      }
+      const results = Object.fromEntries(
+        instanceIds.map((id) => [id, members.has(id) ? { result: "skipped", why: "Already there" } : { result: "sent", why: "" }])
+      );
+      if (!dryRun) instanceIds.forEach((id) => members.add(id));
+      const handle = target?.handle || (target?.new && !dryRun ? "t9" : null);
+      return { success: true, results, ...(handle ? { target: { handle, label: labels[handle] } } : {}) };
+    });
+    return { send, made: () => made };
+  }
+
+  it("adds what is not there yet, making a new target once across chunks", async () => {
+    const app = projectApp([2]);
+    const ids = Array.from({ length: COMPANION_SEND_CHUNK + 5 }, (_, index) => index + 1);
+    const outcome = await sendToTarget({
+      companionId: "c2",
+      actionId: "add",
+      instanceIds: ids,
+      target: { new: "Fresh" },
+      send: app.send,
+    });
+    expect(outcome.status).toBe("sent");
+    expect(outcome.rows).toHaveLength(ids.length - 1);
+    expect(outcome.target).toEqual({ handle: "t9", label: "Fresh" });
+    expect(app.made()).toBe(1);
+    // The dry run names the new target; the real send's later chunks the handle.
+    const real = app.send.mock.calls.filter(([request]) => !request.dryRun).map(([request]) => request.target);
+    expect(real).toEqual([{ new: "Fresh" }, { handle: "t9" }]);
+  });
+
+  it("says when nothing would be added, and checks without sending", async () => {
+    const app = projectApp([1, 2]);
+    await expect(
+      sendToTarget({ companionId: "c2", actionId: "add", instanceIds: [1, 2], target: { handle: "t1" }, send: app.send })
+    ).resolves.toMatchObject({ status: "none" });
+    const checked = await checkTargetSend({
+      companionId: "c2",
+      actionId: "add",
+      instanceIds: [1, 3],
+      target: { handle: "t1" },
+      send: app.send,
+    });
+    expect([...checked.dry.values()].map((entry) => entry.result)).toEqual(["skipped", "sent"]);
+    expect(app.send.mock.calls.every(([request]) => request.dryRun)).toBe(true);
+  });
+
+  it("takes rows back in chunks with the same target", async () => {
+    const withdraw = vi.fn(async ({ instanceIds }) => ({
+      success: true,
+      results: Object.fromEntries(instanceIds.map((id) => [id, { result: "withdrawn", why: "" }])),
+    }));
+    const outcome = await withdrawRows({
+      companionId: "c2",
+      actionId: "add",
+      instanceIds: [1, 2],
+      target: { handle: "t1" },
+      withdraw,
+    });
+    expect(outcome.status).toBe("done");
+    expect(outcome.results.get(2).result).toBe("withdrawn");
+    expect(withdraw).toHaveBeenCalledWith({ companionId: "c2", action: "add", instanceIds: [1, 2], target: { handle: "t1" } });
   });
 });

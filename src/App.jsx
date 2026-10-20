@@ -151,6 +151,7 @@ import {
 } from "./app/stacks/promptStacks";
 import { useCompanions } from "./app/companion/useCompanion";
 import CompanionSendDialog from "./components/CompanionSendDialog";
+import CompanionTargetPicker from "./components/CompanionTargetPicker";
 import { useViewHistory } from "./app/hooks/useViewHistory";
 import { useStackFrames } from "./app/stacks/useStackFrames";
 import { applyStackFaces } from "./app/stacks/stackFaces";
@@ -163,8 +164,10 @@ import {
   COMPANION_SEND_CHUNK,
   companionRowsOf,
   formatEstimate,
+  sendToTarget,
   sendWithoutReview,
   summarizeSendResults,
+  withdrawRows,
 } from "./app/companion/companionSend";
 import {
   COMPANION_PHASE_LABELS,
@@ -249,6 +252,7 @@ const expandFolderAncestors = (previous, relativePath) => {
 
 const NO_STRIP_IDS = Object.freeze([]);
 const NO_VERSION_GUESTS = Object.freeze([]);
+const NO_MENU_TARGETS = Object.freeze({});
 // As many clips as a library view holds (main's REVIEW_PASS_MAX_CLIPS).
 const REVIEW_PASS_MAX_CLIPS = 50_000;
 
@@ -321,6 +325,12 @@ function App() {
   // Clips on their way to a companion app's action:
   // `{ companion: { id, name, refresh }, action, videos }`.
   const [companionSend, setCompanionSend] = useState(null);
+  // A companion action's target picker (Add to project…):
+  // `{ companion: { id, name }, action, videos }`.
+  const [companionPick, setCompanionPick] = useState(null);
+  // The current target of each action with targets, asked for when the
+  // context menu opens: `{ "c2/add": { handle, label } }`.
+  const [menuTargets, setMenuTargets] = useState(NO_MENU_TARGETS);
   const [tagRefreshToken, setTagRefreshToken] = useState(0);
   const [librarySearchScope, setLibrarySearchScope] = useState("folder");
   // Bumped to re-run the library search even when its tags did not change,
@@ -1725,10 +1735,44 @@ function App() {
     [sortKey, sortDir, groupByFolders]
   );
 
-  // Simple toast used by actions layer
-  const notify = useCallback((message, type = "info") => {
-    showToast(message, type);
+  // Simple toast used by actions layer; `options.action` adds a button
+  // such as Undo.
+  const notify = useCallback((message, type = "info", options = undefined) => {
+    showToast(message, type, options);
   }, []);
+
+  // Undo after a send to a companion action that can take sends back: only
+  // the rows that were sent, with the same target.
+  const companionUndo = useCallback(
+    ({ companion, action, rows, target = null, done }) =>
+      action?.withdraw && rows?.length
+        ? {
+            label: "Undo",
+            onClick: async () => {
+              const outcome = await withdrawRows({
+                companionId: companion.id,
+                actionId: action.id,
+                instanceIds: rows,
+                target,
+              });
+              companionsRef.current.find((entry) => entry.id === companion.id)?.refresh?.(rows);
+              if (outcome.status !== "done") {
+                notify(`${companion.name || "The companion app"}: ${outcome.error}`, "error");
+                return;
+              }
+              const back = [...outcome.results.values()].filter((entry) => entry.result === "withdrawn").length;
+              const left = rows.length - back;
+              notify(
+                `${done}: took back ${back.toLocaleString()} clip${back === 1 ? "" : "s"}${
+                  left ? `; ${left.toLocaleString()} could not be` : ""
+                }`,
+                left ? "warning" : "success"
+              );
+            },
+          }
+        : undefined,
+    [notify]
+  );
 
   // Sending to a companion app's action in one click
   // (docs/architecture/companion-app.md): when the dry run says every clip
@@ -1758,7 +1802,8 @@ function App() {
           `${action.label}: sent ${summary.sent.toLocaleString()} clip${summary.sent === 1 ? "" : "s"}${
             estimate ? ` (${estimate})` : ""
           }`,
-          "success"
+          "success",
+          { action: companionUndo({ companion, action, rows: outcome.rows, done: action.label }) }
         );
       } else if (outcome.status === "review") {
         if (instanceIds.length === 1) {
@@ -1776,8 +1821,99 @@ function App() {
         notify(`${companion.name || "The companion app"}: ${outcome.error}`, "error");
       }
     },
-    [notify]
+    [companionUndo, notify]
   );
+
+  // Adding clips to one of an action's targets, such as a project
+  // (docs/architecture/companion-app.md): what is already there stays, the
+  // rest is added, and the toast offers Undo. The target used is remembered
+  // for the picker, per action, for the session.
+  const lastCompanionTargetRef = useRef(new Map());
+  const handleCompanionAddToTarget = useCallback(
+    async ({ companion, action, videos: targets, target, label }) => {
+      const { instanceIds } = companionRowsOf(targets);
+      if (!instanceIds.length) {
+        notify("Only indexed local clips can be sent", "info");
+        return;
+      }
+      const outcome = await sendToTarget({
+        companionId: companion.id,
+        actionId: action.id,
+        instanceIds,
+        target,
+      });
+      const owner = companionsRef.current.find((entry) => entry.id === companion.id);
+      const name = outcome.target?.label || label || "";
+      if (outcome.status === "sent") {
+        owner?.refresh?.(instanceIds);
+        if (outcome.target?.handle) {
+          lastCompanionTargetRef.current.set(`${companion.id}/${action.id}`, outcome.target.handle);
+        }
+        const added = outcome.rows.length;
+        const there = summarizeSendResults(outcome.dry).skipped;
+        notify(
+          `Added ${added.toLocaleString()} clip${added === 1 ? "" : "s"} to ${name}${
+            there ? `; ${there.toLocaleString()} already there` : ""
+          }`,
+          "success",
+          {
+            action: companionUndo({
+              companion,
+              action,
+              rows: outcome.rows,
+              target: outcome.target?.handle ? { handle: outcome.target.handle } : null,
+              done: name,
+            }),
+          }
+        );
+      } else if (outcome.status === "none") {
+        const summary = summarizeSendResults(outcome.dry);
+        const reason = summary.refusedReasons[0]?.why || summary.skippedReasons[0]?.why;
+        notify(
+          summary.skipped === instanceIds.length
+            ? `Already in ${name}`
+            : `Nothing added to ${name}${reason ? `: ${reason}` : ""}`,
+          "info"
+        );
+      } else {
+        notify(`${companion.name || "The companion app"}: ${outcome.error}`, "error");
+      }
+    },
+    [companionUndo, notify]
+  );
+
+  // The menu's one-click "Add to <current target>" needs the app's current
+  // target, which changes as the user works there: asked for each time the
+  // menu opens, and used only if it answers within 300 ms, so a late answer
+  // never moves the menu under the pointer.
+  useEffect(() => {
+    if (!contextMenu.visible) {
+      setMenuTargets(NO_MENU_TARGETS);
+      return undefined;
+    }
+    const list = window.electronAPI?.companion?.targets;
+    const withTargets = companionActionsRef.current.filter((action) => action.targets);
+    if (typeof list !== "function" || !withTargets.length) return undefined;
+    let alive = true;
+    const startedAt = Date.now();
+    for (const action of withTargets) {
+      Promise.resolve(list(action.companionId, action.id))
+        .then((answer) => {
+          if (!alive || Date.now() - startedAt > 300 || !answer?.success) return;
+          const current = (answer.targets || []).find((target) => target.current);
+          if (!current) return;
+          setMenuTargets((previous) => ({
+            ...previous,
+            [`${action.companionId}/${action.id}`]: { handle: current.handle, label: current.label },
+          }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      alive = false;
+    };
+  }, [contextMenu.visible, contextMenu.contextId]);
+
   // A card's one-click button: that clip, that app's action. Cards get a
   // stable callback.
   const handleQuickActionRef = useRef(null);
@@ -3088,6 +3224,31 @@ function App() {
         if (video) void handleOpenWorkflow(video);
         return;
       }
+      if (actionId.startsWith("companion:add-current:") || actionId.startsWith("companion:pick:")) {
+        const picking = actionId.startsWith("companion:pick:");
+        const key = actionId.slice(picking ? "companion:pick:".length : "companion:add-current:".length);
+        const action = companionActionsRef.current.find(
+          (entry) => `${entry.companionId}:${entry.id}` === key
+        );
+        const ids =
+          selection.size > 1 ? [...selection.selected] : [contextMenu.contextId];
+        const targets = ids.map((id) => getById(id)).filter(Boolean);
+        if (!action || !targets.length) return;
+        const companion = { id: action.companionId, name: action.companionName };
+        const current = menuTargets[`${action.companionId}/${action.id}`];
+        if (picking || !current) {
+          setCompanionPick({ companion, action, videos: targets });
+          return;
+        }
+        void handleCompanionAddToTarget({
+          companion,
+          action,
+          videos: targets,
+          target: { handle: current.handle },
+          label: current.label,
+        });
+        return;
+      }
       if (actionId.startsWith("companion:send:")) {
         const action = companionActionsRef.current.find(
           (entry) => `companion:send:${entry.companionId}:${entry.id}` === actionId
@@ -3192,7 +3353,9 @@ function App() {
       openMetadataPanel,
       metadataAnchorId,
       contextMetadataFingerprints,
+      handleCompanionAddToTarget,
       handleOpenWorkflow,
+      menuTargets,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
       reviewModeEnabled,
@@ -3862,7 +4025,8 @@ function App() {
     !fullScreenVideo &&
     !contextMenu.visible &&
     !isFiltersOpen &&
-    !isProcessResultsOpen;
+    !isProcessResultsOpen &&
+    !companionPick;
 
   useHotkeys(runForHotkeys, () => selection.selected, {
     enabled: appHotkeysEnabled,
@@ -6297,6 +6461,25 @@ function App() {
             trashProgress={trashProgress}
             companions={onlineCompanions}
           />
+          <CompanionTargetPicker
+            open={Boolean(companionPick)}
+            companion={companionPick?.companion || null}
+            action={companionPick?.action || null}
+            videos={companionPick?.videos || NO_VERSION_GUESTS}
+            lastHandle={
+              companionPick
+                ? lastCompanionTargetRef.current.get(
+                    `${companionPick.companion.id}/${companionPick.action.id}`
+                  ) || null
+                : null
+            }
+            onClose={() => setCompanionPick(null)}
+            onConfirm={({ target, label }) => {
+              const pick = companionPick;
+              setCompanionPick(null);
+              if (pick) void handleCompanionAddToTarget({ ...pick, target, label });
+            }}
+          />
           <CompanionSendDialog
             open={Boolean(companionSend)}
             companionId={companionSend?.companion.id || null}
@@ -7071,6 +7254,7 @@ function App() {
               reviewModeEnabled={reviewModeEnabled}
               canGoToFolder={Boolean(tagCollection)}
               companionActions={companionActions.length ? companionActions : undefined}
+              companionTargets={menuTargets}
               mightBeTag={(filters.mightBe || "").trim()}
             />
           )}

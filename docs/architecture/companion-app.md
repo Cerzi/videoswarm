@@ -297,6 +297,21 @@ companion authors must be told before it ships.
   the first two quick actions across the apps carry their keys, `⇧1` and
   `⇧2`, which accept the clip as well (`review-passes.md`, Quick review
   keys).
+- **Targets** (2026-10-20). For an action with `targets`, the context menu
+  asks `/api/targets` as it opens and, if the app names a current target
+  within 300 ms, offers *<send> <target>* (say *Add to Demo*) in one click;
+  *<pick>* (*Add to project…*) opens a picker
+  (`src/components/CompanionTargetPicker.jsx`): a search box, the targets
+  in the app's order with their detail line, and *New project…* last. It
+  starts on the current target, else the one used last this session, and
+  dry-runs every choice, so its footer says "2 of 5 already there, 3 will
+  be added"; Enter adds, Esc cancels. Adding sends what the dry run said
+  would be added and leaves the rest; the toast ("Added 3 clips to Demo")
+  offers Undo. *Process review results* leaves these actions out: they need
+  a target picked.
+- **Undo** (2026-10-20). After a one-click send or an add, an action with
+  `withdraw` gets *Undo* in its toast (8 s), which takes back exactly the
+  clips that were sent, from the same target, and looks them up again.
 - **Process review results** offers each companion's actions for the
   Accepted clips in scope, above moving rejects and copying Accepted clips, with the same
   dry run. The dialog cannot close while a send runs.

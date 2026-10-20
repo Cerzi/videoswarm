@@ -85,27 +85,130 @@ export function rowsToSend(results) {
 export async function sendWithoutReview({ companionId, actionId, instanceIds, send }) {
   const call = send || window.electronAPI?.companion?.send;
   if (typeof call !== "function") return { status: "error", error: "Companion apps are unavailable" };
-  const runChunks = async (rows, dryRun) => {
-    const results = new Map();
-    for (let start = 0; start < rows.length; start += COMPANION_SEND_CHUNK) {
-      const chunk = rows.slice(start, start + COMPANION_SEND_CHUNK);
+  try {
+    const { results: dry } = await runSendChunks(call, { companionId, actionId, rows: instanceIds, dryRun: true });
+    const rows = rowsToSend(dry);
+    if (rows.length !== instanceIds.length || rows.length === 0) return { status: "review", dry };
+    const { results: final } = await runSendChunks(call, { companionId, actionId, rows, dryRun: false });
+    return { status: "sent", rows: rowsToSend(final), final };
+  } catch (error) {
+    return { status: "error", error: error?.message || String(error) };
+  }
+}
+
+/**
+ * Sends rows in chunks of COMPANION_SEND_CHUNK, merging the answers by row.
+ * For an action with targets, `target` is `{ handle }` or `{ new: name }`:
+ * a real send of a new target makes it with the first chunk, and the later
+ * chunks go to the handle it answered with. Resolves to `{ results, target }`
+ * (`{ handle, label }` or null); throws when the app does not answer.
+ */
+async function runSendChunks(call, { companionId, actionId, rows, dryRun, target = null }) {
+  const results = new Map();
+  let named = target;
+  let answered = null;
+  for (let start = 0; start < rows.length; start += COMPANION_SEND_CHUNK) {
+    const chunk = rows.slice(start, start + COMPANION_SEND_CHUNK);
+    let answer;
+    try {
+      answer = await call({
+        companionId,
+        action: actionId,
+        instanceIds: chunk,
+        dryRun,
+        again: false,
+        ...(named ? { target: named } : {}),
+      });
+    } catch (error) {
+      answer = { success: false, error: error?.message };
+    }
+    if (!answer?.success) throw new Error(answer?.error || "The companion app did not answer");
+    for (const [id, entry] of Object.entries(answer.results || {})) results.set(Number(id), entry);
+    if (answer.target?.handle) {
+      answered = { handle: answer.target.handle, label: answer.target.label || "" };
+      if (!dryRun) named = { handle: answered.handle };
+    }
+  }
+  return { results, target: answered };
+}
+
+/**
+ * Checks what adding `instanceIds` to a target would do, without doing it:
+ * `{ status: "checked", dry }` or `{ status: "error", error }`.
+ */
+export async function checkTargetSend({ companionId, actionId, instanceIds, target, send }) {
+  const call = send || window.electronAPI?.companion?.send;
+  if (typeof call !== "function") return { status: "error", error: "Companion apps are unavailable" };
+  try {
+    const { results } = await runSendChunks(call, {
+      companionId,
+      actionId,
+      rows: instanceIds,
+      dryRun: true,
+      target,
+    });
+    return { status: "checked", dry: results };
+  } catch (error) {
+    return { status: "error", error: error?.message || String(error) };
+  }
+}
+
+/**
+ * Sends `instanceIds` into a target (`{ handle }` or `{ new: name }`): a dry
+ * run, then what it said would be sent; what is already there or refused is
+ * left as it is, which adding to a project can always do. Resolves to
+ * `{ status: "sent", rows, dry, final, target }` (the rows actually sent, for
+ * Undo), `{ status: "none", dry }` when nothing would be, or
+ * `{ status: "error", error }`.
+ */
+export async function sendToTarget({ companionId, actionId, instanceIds, target, send }) {
+  const call = send || window.electronAPI?.companion?.send;
+  if (typeof call !== "function") return { status: "error", error: "Companion apps are unavailable" };
+  try {
+    const { results: dry } = await runSendChunks(call, {
+      companionId,
+      actionId,
+      rows: instanceIds,
+      dryRun: true,
+      target,
+    });
+    const rows = rowsToSend(dry);
+    if (!rows.length) return { status: "none", dry };
+    const sent = await runSendChunks(call, { companionId, actionId, rows, dryRun: false, target });
+    return {
+      status: "sent",
+      rows: rowsToSend(sent.results),
+      dry,
+      final: sent.results,
+      target: sent.target,
+    };
+  } catch (error) {
+    return { status: "error", error: error?.message || String(error) };
+  }
+}
+
+/**
+ * Takes back rows this app sent (Undo), in chunks: `{ status: "done",
+ * results }` (row -> `{ result: "withdrawn" | "skipped" | "refused", why }`)
+ * or `{ status: "error", error }`.
+ */
+export async function withdrawRows({ companionId, actionId, instanceIds, target = null, withdraw }) {
+  const call = withdraw || window.electronAPI?.companion?.withdraw;
+  if (typeof call !== "function") return { status: "error", error: "Companion apps are unavailable" };
+  const results = new Map();
+  try {
+    for (let start = 0; start < instanceIds.length; start += COMPANION_SEND_CHUNK) {
+      const chunk = instanceIds.slice(start, start + COMPANION_SEND_CHUNK);
       let answer;
       try {
-        answer = await call({ companionId, action: actionId, instanceIds: chunk, dryRun, again: false });
+        answer = await call({ companionId, action: actionId, instanceIds: chunk, ...(target ? { target } : {}) });
       } catch (error) {
         answer = { success: false, error: error?.message };
       }
       if (!answer?.success) throw new Error(answer?.error || "The companion app did not answer");
       for (const [id, entry] of Object.entries(answer.results || {})) results.set(Number(id), entry);
     }
-    return results;
-  };
-  try {
-    const dry = await runChunks(instanceIds, true);
-    const rows = rowsToSend(dry);
-    if (rows.length !== instanceIds.length || rows.length === 0) return { status: "review", dry };
-    const final = await runChunks(rows, false);
-    return { status: "sent", rows, final };
+    return { status: "done", results };
   } catch (error) {
     return { status: "error", error: error?.message || String(error) };
   }

@@ -1,0 +1,87 @@
+/* The target picker (CompanionTargetPicker.jsx): a narrower review-results
+   dialog with a search box and one row per target. */
+.companion-picker {
+  width: min(520px, 100%);
+}
+
+.companion-picker__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.companion-picker__search {
+  width: 100%;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.6rem;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.companion-picker__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(46vh, 360px);
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.companion-picker__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.companion-picker__row:last-child {
+  border-bottom: 0;
+}
+
+.companion-picker__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.companion-picker__row[aria-selected="true"] {
+  background: rgba(81, 207, 102, 0.14);
+  box-shadow: inset 3px 0 0 rgba(81, 207, 102, 0.8);
+}
+
+.companion-picker__row--new .companion-picker__label {
+  color: #b2f2bb;
+}
+
+.companion-picker__label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.companion-picker__current {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b2f2bb;
+}
+
+.companion-picker__detail,
+.companion-picker__note {
+  margin: 0;
+  color: var(--color-text-muted, #aab2b6);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-picker__summary {
+  margin-right: auto;
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #aab2b6);
+}

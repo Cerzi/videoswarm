@@ -389,6 +389,38 @@ describe('ContextMenu', () => {
     expect(onAction).toHaveBeenCalledWith('companion:send:c1:enlarge');
   });
 
+  test('adds to the app\'s current target in one click, or opens its picker', () => {
+    const onAction = vi.fn();
+    const addAction = {
+      companionId: 'c2',
+      companionName: 'Editor',
+      id: 'add',
+      label: 'Add to project',
+      send: 'Add to',
+      pick: 'Add to project…',
+      targets: { label: 'Project', new: 'New project…' },
+    };
+    const props = {
+      visible: true,
+      position: { x: 100, y: 100 },
+      contextId: 'a',
+      selectionCount: 2,
+      getById,
+      onClose: () => {},
+      onAction,
+      companionActions: [addAction],
+    };
+    const { rerender } = render(<ContextMenu {...props} />);
+    // Until the app names its current target, only the picker.
+    expect(screen.queryByRole('menuitem', { name: /^↗ Add to Demo/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Send to/ })).toBeNull();
+    rerender(<ContextMenu {...props} companionTargets={{ 'c2/add': { handle: 't1', label: 'Demo' } }} />);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to Demo \(2 selected\)/ }));
+    expect(onAction).toHaveBeenCalledWith('companion:add-current:c2:add');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to project… \(2 selected\)/ }));
+    expect(onAction).toHaveBeenCalledWith('companion:pick:c2:add');
+  });
+
   test('names the app beside its actions when several are connected', () => {
     const onAction = vi.fn();
     render(

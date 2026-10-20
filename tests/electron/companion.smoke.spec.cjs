@@ -144,7 +144,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     const refused = await page.evaluate(() =>
       window.electronAPI.companion.send({ companionId: "c1", action: "polish", instanceIds: [999_999] })
     );
-    expect(refused).toEqual({ success: true, dryRun: false, results: {} });
+    expect(refused).toEqual({ success: true, dryRun: false, results: {}, target: null });
 
     // Hide clips already sent: only the untouched clip stays.
     await page.getByRole("button", { name: /^(Open filters|Filters)/ }).first().click();

@@ -293,6 +293,11 @@ matches under the tag input, including in fullscreen. Check by hand:
   the grid and the pass waits under Library › Review passes; resuming lands
   on the last clip; at the end a search pass offers *Run the search again*.
   Shift+1 accepts and sends to the first companion quick action.
+- With an app offering targets connected (a project editor): right-click
+  shows *Add to <open project>* and *Add to project…*; the picker searches,
+  starts on the open project, says "2 of 5 already there, 3 will be added",
+  and Enter adds; the toast's Undo takes them back. Filters has a *Hide
+  clips already sent* switch per app.
 - The review bar leads with the green *Review these N* (⇧R); *Whole folder*
   with *Find Unreviewed* follows it as the second option.
 - In fullscreen with a companion app connected: the rail shows its chip
