@@ -202,3 +202,18 @@
     transition: none;
   }
 }
+
+/* "Review these N": the main way to review, ahead of the whole-folder
+   controls. */
+.review-toolbar__pass--primary {
+  color: #d3f9d8;
+  background: rgba(81, 207, 102, 0.14);
+  border-color: rgba(81, 207, 102, 0.5);
+  font-weight: 600;
+}
+
+.review-toolbar__pass--primary:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(81, 207, 102, 0.24);
+  border-color: rgba(81, 207, 102, 0.7);
+}

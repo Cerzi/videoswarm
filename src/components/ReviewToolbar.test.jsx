@@ -100,6 +100,36 @@ describe("ReviewToolbar", () => {
     expect(onStartSession).toHaveBeenCalledOnce();
   });
 
+  it("leads with Review these N, the whole-folder review following as the second option", () => {
+    const onStart = vi.fn();
+    const onStartSession = vi.fn();
+    const { container, rerender } = render(
+      <ReviewToolbar
+        progress={progress}
+        session={{ mode: "none" }}
+        onStartSession={onStartSession}
+        passControl={{ count: 240, selection: false, onStart }}
+      />
+    );
+    const pass = screen.getByRole("button", { name: /Review these 240/ });
+    const folder = screen.getByRole("button", { name: "Find next Unreviewed" });
+    expect(pass).toHaveClass("review-toolbar__pass--primary");
+    expect(pass.compareDocumentPosition(folder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(container.querySelector(".review-session")).getByText("Whole folder")).toBeVisible();
+    expect(folder).not.toHaveClass("review-session__primary");
+    fireEvent.click(pass);
+    fireEvent.click(folder);
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(onStartSession).toHaveBeenCalledOnce();
+
+    // Inside a pass there is no pass button, and the folder review is as before.
+    rerender(
+      <ReviewToolbar progress={progress} session={{ mode: "none" }} onStartSession={onStartSession} />
+    );
+    expect(screen.queryByRole("button", { name: /Review these/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Whole folder")).not.toBeInTheDocument();
+  });
+
   it("keeps every control reachable when the bar is folded to fit", () => {
     const onAutoAdvanceChange = vi.fn();
     const onUndo = vi.fn();

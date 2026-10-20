@@ -69,6 +69,7 @@ export default function ReviewToolbar({
     initialFolded,
   });
   if (total === 0 && !session) return null;
+  const hasPass = Boolean(passControl && passControl.count > 0);
 
   const reviewedTotal = Math.min(
     total,
@@ -98,25 +99,13 @@ export default function ReviewToolbar({
   return (
     <section className="review-toolbar" aria-label="Review workflow">
       <div className="review-toolbar__scroller" ref={barRef}>
-        {session ? (
-          <ReviewSessionControls
-            session={session}
-            disabled={isBusy || Boolean(session.disabled)}
-            onStart={onStartSession}
-            onContinue={onContinueSession}
-            onMove={onMoveSession}
-            onForget={onForgetSession}
-            onReviewAllUnreviewed={onReviewAllUnreviewed}
-            onShowTarget={onShowReviewTarget}
-            onIndexSubfolders={onIndexSubfolders}
-            compact={isFolded("sessionDetail")}
-          />
-        ) : null}
-
-        {passControl && passControl.count > 0 ? (
+        {/* The main way to review: what is on screen, or the selection, as a
+           pass (docs/architecture/review-passes.md). The whole-folder
+           review follows it as the second option. */}
+        {hasPass ? (
           <button
             type="button"
-            className="review-toolbar__utility review-toolbar__pass"
+            className="review-toolbar__utility review-toolbar__pass review-toolbar__pass--primary"
             disabled={isBusy}
             onClick={() => passControl.onStart?.()}
             title={
@@ -130,6 +119,22 @@ export default function ReviewToolbar({
               : `Review these ${formatCount(passControl.count)}`}
             <kbd>⇧R</kbd>
           </button>
+        ) : null}
+
+        {session ? (
+          <ReviewSessionControls
+            session={session}
+            disabled={isBusy || Boolean(session.disabled)}
+            onStart={onStartSession}
+            onContinue={onContinueSession}
+            onMove={onMoveSession}
+            onForget={onForgetSession}
+            onReviewAllUnreviewed={onReviewAllUnreviewed}
+            onShowTarget={onShowReviewTarget}
+            onIndexSubfolders={onIndexSubfolders}
+            compact={isFolded("sessionDetail")}
+            secondary={hasPass}
+          />
         ) : null}
 
         {total > 0 && !isFolded("progress") ? (

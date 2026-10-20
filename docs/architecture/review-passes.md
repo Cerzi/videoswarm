@@ -13,7 +13,11 @@ it can be resumed after leaving it or restarting.
 Decided with the user on 2026-10-19:
 
 - **Starting:** a new control in the review bar, beside the existing review
-  mode switch, which is unchanged.
+  mode switch, which is unchanged. On 2026-10-20 the user made it the main
+  way to review: *Review these N* comes first in the bar, highlighted, and
+  the whole-folder review (*Find Unreviewed*, *Resume*, the saved position)
+  follows it as the second option, labelled *Whole folder* and not
+  highlighted.
 - **Memory:** one active pass, plus up to ten listed in the sidebar to
   resume. The per-folder Continue Review checkpoint is unchanged.
 - **Keys:** `Shift+1` / `Shift+2` accept the selection and send it to the

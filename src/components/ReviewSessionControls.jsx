@@ -50,6 +50,9 @@ export default function ReviewSessionControls({
   onShowTarget,
   onIndexSubfolders,
   compact = false,
+  // Beside "Review these N", the main way to review, these controls are the
+  // second option: labelled "Whole folder", with nothing highlighted.
+  secondary = false,
 }) {
   const [confirmation, setConfirmation] = useState(null);
   const confirmationInvokedByRef = useRef(null);
@@ -58,6 +61,7 @@ export default function ReviewSessionControls({
 
   const mode = modeOf(session);
   const status = primaryStatusFor(mode);
+  const primaryClass = secondary ? undefined : "review-session__primary";
   const hasCheckpoint = mode !== "none" && mode !== "unavailable";
   const isRestoring = mode === "restoring";
 
@@ -92,6 +96,7 @@ export default function ReviewSessionControls({
   // The hint under the status. A narrow review bar keeps only the status and
   // offers the hint as a tooltip (and to screen readers) instead.
   const details = [
+    secondary ? status : null,
     session.savedAtLabel,
     session.locationLabel && mode === "elsewhere" ? session.locationLabel : null,
     mode === "none" ? "Marks work now; your first review or rating saves this position." : null,
@@ -113,7 +118,7 @@ export default function ReviewSessionControls({
       >
         <span className="review-session__indicator" aria-hidden="true" />
         <span className="review-session__copy">
-          <strong>{status}</strong>
+          <strong>{secondary ? "Whole folder" : status}</strong>
           {details.map((detail) => (
             <span key={detail} className="review-session__detail">{detail}</span>
           ))}
@@ -139,7 +144,7 @@ export default function ReviewSessionControls({
         {mode === "active" ? (
           <button
             type="button"
-            className="review-session__primary"
+            className={primaryClass}
             disabled={disabled || typeof onContinue !== "function"}
             onClick={() => onContinue?.()}
             aria-label={
@@ -158,7 +163,7 @@ export default function ReviewSessionControls({
           <>
             <button
               type="button"
-              className="review-session__primary"
+              className={primaryClass}
               disabled={disabled || typeof onContinue !== "function"}
               onClick={() => onContinue?.()}
               aria-label={
@@ -187,7 +192,7 @@ export default function ReviewSessionControls({
         {mode === "available" ? (
           <button
             type="button"
-            className="review-session__primary"
+            className={primaryClass}
             disabled={disabled || typeof onContinue !== "function"}
             onClick={() => onContinue?.()}
             aria-label={
@@ -203,7 +208,7 @@ export default function ReviewSessionControls({
         {mode === "complete-view" && onReviewAllUnreviewed ? (
           <button
             type="button"
-            className="review-session__primary"
+            className={primaryClass}
             disabled={disabled || typeof onReviewAllUnreviewed !== "function"}
             onClick={() => onReviewAllUnreviewed()}
           >
@@ -214,7 +219,7 @@ export default function ReviewSessionControls({
         {mode === "index-required" && onIndexSubfolders ? (
           <button
             type="button"
-            className="review-session__primary"
+            className={primaryClass}
             disabled={disabled || typeof onIndexSubfolders !== "function"}
             onClick={() => onIndexSubfolders()}
           >
@@ -225,7 +230,7 @@ export default function ReviewSessionControls({
         {session.showTarget && onShowTarget ? (
           <button
             type="button"
-            className="review-session__primary"
+            className={primaryClass}
             disabled={disabled || typeof onShowTarget !== "function"}
             onClick={() => onShowTarget()}
           >
