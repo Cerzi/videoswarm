@@ -89,6 +89,17 @@ const COMPANION_ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 // id, saved when a profile had one companion, belongs to the first.
 const COMPANION_FILTER_KEY = /^c[1-9]\/[a-z][a-z0-9_-]{0,31}$/;
 
+// The apps whose "Hide clips already sent" switch is on, as sorted ids. A
+// view saved with the old single switch (`true`) meant the first app.
+const COMPANION_ID = /^c[1-9]$/u;
+function normalizeCompanionHideSent(value) {
+  if (value === true) return ['c1'];
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id) => typeof id === 'string' && COMPANION_ID.test(id)))]
+    .sort()
+    .slice(0, 8);
+}
+
 function normalizeCompanionFilters(value) {
   const result = {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
@@ -160,9 +171,10 @@ function normalizeReviewViewDefinition(
 
   // Present only when set, so views saved without them keep their shape.
   const companionFilters = normalizeCompanionFilters(filtersInput.companionFilters);
+  const companionHideSent = normalizeCompanionHideSent(filtersInput.companionHideSent);
   const companion = {
     ...(Object.keys(companionFilters).length ? { companionFilters } : {}),
-    ...(filtersInput.companionHideSent === true ? { companionHideSent: true } : {}),
+    ...(companionHideSent.length ? { companionHideSent } : {}),
   };
   const promptQuery =
     typeof filtersInput.promptQuery === 'string' ? filtersInput.promptQuery.trim().slice(0, 200) : '';

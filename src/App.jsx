@@ -169,6 +169,7 @@ import {
 import {
   COMPANION_PHASE_LABELS,
   normalizeCompanionFilters,
+  normalizeCompanionHideSent,
   parseCompanionFilterKey,
 } from "./app/companion/companionFilters";
 import {
@@ -4179,7 +4180,7 @@ function App() {
         maxMegapixels: filters.maxMegapixels ?? null,
         versionFilter: normalizeVersionFilter(filters.versionFilter),
         companionFilters: filters.companionFilters || {},
-        companionHideSent: filters.companionHideSent === true,
+        companionHideSent: normalizeCompanionHideSent(filters.companionHideSent),
         promptQuery: (filters.promptQuery || "").trim(),
         mightBe: (filters.mightBe || "").trim(),
         // docs/architecture/workflow-filters.md
@@ -6542,7 +6543,7 @@ function App() {
               })()}
 
               {(Object.keys(normalizeCompanionFilters(filters.companionFilters)).length > 0 ||
-                filters.companionHideSent) && (
+                normalizeCompanionHideSent(filters.companionHideSent).length > 0) && (
                 <div className="filters-summary__section">
                   <span className="filters-summary__label">
                     {companions.length === 1 ? companions[0].name || "Companion app" : "Companion apps"}
@@ -6576,19 +6577,30 @@ function App() {
                         );
                       }
                     )}
-                    {filters.companionHideSent && (
-                      <button
-                        type="button"
-                        className="filters-summary__chip filters-summary__chip--review"
-                        onClick={() =>
-                          updateFilters((prev) => ({ ...prev, companionHideSent: false }))
-                        }
-                        title="Show clips already sent again"
-                      >
-                        Hiding clips already sent
-                        <span className="filters-summary__chip-remove">×</span>
-                      </button>
-                    )}
+                    {normalizeCompanionHideSent(filters.companionHideSent).map((id) => {
+                      const owner = companions.find((entry) => entry.id === id);
+                      return (
+                        <button
+                          key={`hide-sent-${id}`}
+                          type="button"
+                          className="filters-summary__chip filters-summary__chip--review"
+                          onClick={() =>
+                            updateFilters((prev) => ({
+                              ...prev,
+                              companionHideSent: normalizeCompanionHideSent(prev.companionHideSent).filter(
+                                (entry) => entry !== id
+                              ),
+                            }))
+                          }
+                          title="Show clips already sent again"
+                        >
+                          {companions.length > 1 && owner?.name
+                            ? `Hiding clips sent to ${owner.name}`
+                            : "Hiding clips already sent"}
+                          <span className="filters-summary__chip-remove">×</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -27,7 +27,7 @@ describe("filtersUtils", () => {
       maxMegapixels: null,
       versionFilter: "any",
       companionFilters: {},
-      companionHideSent: false,
+      companionHideSent: [],
       promptQuery: "",
       mightBe: "",
       minFrameRate: null,

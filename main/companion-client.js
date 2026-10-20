@@ -9,6 +9,9 @@ const { loopbackLookup, parseCompanionUrl } = require("./companion-connection");
 // own words: Video Swarm renders them and never interprets them.
 
 const PROTOCOL_VERSION = 1;
+// Names Video Swarm to the companion on every send, so a companion can tell
+// what this app sent (and later let it take back only that).
+const CLIENT_NAME = "videoswarm";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SEND_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -281,6 +284,7 @@ function createCompanionClient({
         ...(Object.keys(stars).length ? { ratings: stars } : {}),
         dry_run: dryRun === true,
         again: again === true,
+        client: CLIENT_NAME,
       },
       { timeout: sendTimeoutMs }
     );

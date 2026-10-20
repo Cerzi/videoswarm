@@ -3,6 +3,7 @@ import {
   companionFilterCount,
   companionFilterVerdict,
   matchesCompanionFilters,
+  normalizeCompanionHideSent,
   normalizeCompanionFilters,
   parseCompanionFilterKey,
 } from "./companionFilters";
@@ -17,7 +18,9 @@ const entry = (polish, enlarge) => ({
 // Clip entries from two companions, by id.
 const from = (c1, c2) => (id) => (id === "c1" ? c1 : id === "c2" ? c2 : undefined);
 const ids = ["c1", "c2"];
-const matches = (c1, filters, hideSent, c2) => matchesCompanionFilters(from(c1, c2), ids, filters, hideSent);
+// `hideSent`: true for both apps' switches, or the ids switched on.
+const matches = (c1, filters, hideSent, c2) =>
+  matchesCompanionFilters(from(c1, c2), filters, hideSent === true ? ids : hideSent || []);
 
 describe("companion filters", () => {
   it("keeps only well-formed filters, a plain action id belonging to the first companion", () => {
@@ -73,18 +76,18 @@ describe("companion filters", () => {
     expect(matches(undefined, { "c1/polish": "done" })).toBe(false);
     expect(matches(entry(null, "done"), { "c1/polish": "done" })).toBe(false);
     expect(matches(undefined, { "c1/polish": "not-done" })).toBe(false);
-    expect(companionFilterVerdict(from(undefined), ids, { "c1/polish": "done" })).toEqual({
+    expect(companionFilterVerdict(from(undefined), { "c1/polish": "done" })).toEqual({
       pass: false,
       unansweredBy: "c1",
     });
     // A definite mismatch from another app is a plain no, not a wait.
     expect(
-      companionFilterVerdict(from(undefined, entry("not-sent")), ids, {
+      companionFilterVerdict(from(undefined, entry("not-sent")), {
         "c1/polish": "done",
         "c2/polish": "done",
       })
     ).toEqual({ pass: false, unansweredBy: null });
-    expect(companionFilterVerdict(from(entry("done")), ids, { "c1/polish": "done" })).toEqual({
+    expect(companionFilterVerdict(from(entry("done")), { "c1/polish": "done" })).toEqual({
       pass: true,
       unansweredBy: null,
     });
@@ -95,10 +98,25 @@ describe("companion filters", () => {
     expect(matches(undefined, {}, true, undefined)).toBe(true);
   });
 
-  it("counts each action filter and the hide-sent switch", () => {
+  it("hides what was sent to the apps switched on only, one switch per app", () => {
+    // Sent to the second app only: hidden by its switch, not by the first's.
+    expect(matches(entry("not-sent"), {}, ["c2"], entry("done"))).toBe(false);
+    expect(matches(entry("not-sent"), {}, ["c1"], entry("done"))).toBe(true);
+    expect(matches(entry("under-way"), {}, ["c1"], entry("not-sent"))).toBe(false);
+  });
+
+  it("reads the switch list, a view's old single switch meaning the first app", () => {
+    expect(normalizeCompanionHideSent(true)).toEqual(["c1"]);
+    expect(normalizeCompanionHideSent(false)).toEqual([]);
+    expect(normalizeCompanionHideSent(undefined)).toEqual([]);
+    expect(normalizeCompanionHideSent(["c2", "c1", "c2", "x9", 3, "c10"])).toEqual(["c1", "c2"]);
+  });
+
+  it("counts each action filter and each hide-sent switch", () => {
     expect(
       companionFilterCount({ companionFilters: { "c1/polish": "sent" }, companionHideSent: true })
     ).toBe(2);
+    expect(companionFilterCount({ companionHideSent: ["c1", "c2"] })).toBe(2);
     expect(companionFilterCount({})).toBe(0);
   });
 });

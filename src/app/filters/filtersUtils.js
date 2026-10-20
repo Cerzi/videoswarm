@@ -15,7 +15,8 @@ export const createDefaultFilters = () => ({
   versionFilter: VERSION_FILTERS.ANY,
   // Per companion action id, a phase (src/app/companion/companionFilters.js).
   companionFilters: {},
-  companionHideSent: false,
+  // The apps whose "Hide clips already sent" switch is on (`["c1"]`).
+  companionHideSent: [],
   // Words in the prompt (prompt-search-and-tag-suggestions.md).
   promptQuery: "",
   // A tag the clips might be: suggested it, not tagged with it (Section 2).

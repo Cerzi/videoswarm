@@ -83,7 +83,11 @@ describe("saved view companion filters", () => {
       "c2/upscale": "done",
       "c3/finish": "not-done",
     });
-    expect(filters.companionHideSent).toBe(true);
+    // The old single switch is the first app's; the list is one per app.
+    expect(filters.companionHideSent).toEqual(["c1"]);
+    expect(
+      saved(view({ filters: { companionHideSent: ["c3", "c1", "c3", "nope"] } })).filters.companionHideSent
+    ).toEqual(["c1", "c3"]);
   });
 
   it("leaves a view without them exactly as before", () => {

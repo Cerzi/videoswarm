@@ -18,6 +18,7 @@ import {
   COMPANION_PHASE_LABELS,
   companionFilterKey,
   normalizeCompanionFilters,
+  normalizeCompanionHideSent,
 } from "../app/companion/companionFilters";
 
 // Short labels keep each rating on one line beside its label.
@@ -250,6 +251,7 @@ const FiltersPopover = forwardRef(
     ref
   ) => {
     const companionFilters = normalizeCompanionFilters(filters?.companionFilters);
+    const hideSentIds = normalizeCompanionHideSent(filters?.companionHideSent);
     const includeTags = filters?.includeTags ?? [];
     const excludeTags = filters?.excludeTags ?? [];
     const minRating = filters?.minRating ?? null;
@@ -874,11 +876,11 @@ const FiltersPopover = forwardRef(
             </div>
           </FilterRow>
 
-          {(companions || []).map((companion, index) => (
+          {(companions || []).map((companion) => (
             <FilterRow
               key={companion.id}
               label={companion.name || "Companion app"}
-              hint="Clips it has not answered for yet are always shown."
+              hint="A phase shows only clips this app has answered for; the status line counts those still waiting. Hiding clips already sent keeps clips it has not answered for."
               status={
                 companion.status === "offline"
                   ? "Not answering; showing its last answers."
@@ -887,23 +889,32 @@ const FiltersPopover = forwardRef(
                     : null
               }
             >
-              {/* One switch for every app: sent anywhere is sent. */}
-              {index === 0 ? (
-                <label className="filters-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={filters?.companionHideSent === true}
-                    onChange={(event) =>
-                      onChange((prev) => ({ ...prev, companionHideSent: event.target.checked }))
-                    }
-                  />
-                  <span>
-                    {companions.length > 1
-                      ? "Hide clips already sent to any of these apps"
-                      : "Hide clips already sent"}
-                  </span>
-                </label>
-              ) : null}
+              {/* One switch per app: what one app was sent says nothing
+                  about another's worklist. */}
+              <label className="filters-checkbox">
+                <input
+                  type="checkbox"
+                  checked={hideSentIds.includes(companion.id)}
+                  onChange={(event) =>
+                    onChange((prev) => {
+                      const others = normalizeCompanionHideSent(prev.companionHideSent).filter(
+                        (id) => id !== companion.id
+                      );
+                      return {
+                        ...prev,
+                        companionHideSent: event.target.checked
+                          ? normalizeCompanionHideSent([...others, companion.id])
+                          : others,
+                      };
+                    })
+                  }
+                />
+                <span>
+                  {companions.length > 1
+                    ? `Hide clips already sent to ${companion.name || "this app"}`
+                    : "Hide clips already sent"}
+                </span>
+              </label>
               {(companion.actions || []).map((action) => {
                 const key = companionFilterKey(companion.id, action.id);
                 const current = companionFilters[key] || "any";

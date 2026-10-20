@@ -33,6 +33,8 @@ const SENT_PHASES = new Set(["under-way", "done", "stopped"]);
 const ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 const FILTER_KEY = /^(c[1-9])\/([a-z][a-z0-9_-]{0,31})$/u;
 const MAX_ACTION_FILTERS = 8;
+const COMPANION_ID = /^c[1-9]$/u;
+const MAX_COMPANION_IDS = 8;
 
 /** A filter's key: the companion's id and the action's. */
 export const companionFilterKey = (companionId, actionId) => `${companionId}/${actionId}`;
@@ -58,25 +60,37 @@ export function normalizeCompanionFilters(value) {
   return result;
 }
 
+/**
+ * The apps whose "Hide clips already sent" switch is on, as sorted ids
+ * (`["c1"]`). One switch per app (2026-10-20): adding a clip to one app's
+ * project should not empty another app's worklist. A view saved with the
+ * old single switch (`true`) meant the first app, as a plain action id does.
+ */
+export function normalizeCompanionHideSent(value) {
+  if (value === true) return ["c1"];
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id) => typeof id === "string" && COMPANION_ID.test(id)))]
+    .sort()
+    .slice(0, MAX_COMPANION_IDS);
+}
+
 export const isCompanionSent = (stage) => SENT_PHASES.has(stage?.phase);
 
 const PASS = Object.freeze({ pass: true, unansweredBy: null });
 const FAIL = Object.freeze({ pass: false, unansweredBy: null });
 
 /**
- * Whether a clip passes the per-action filters and, with `hideSent`, was
- * never sent for any action of any companion: `{ pass, unansweredBy }`.
- * `entryFor(companionId)` is what that companion said about the clip
- * (`{ actions: { [id]: { phase } } }`), or nothing yet; `companionIds` are
- * the companions to judge it by. A clip that fails only for want of an
- * answer names the first companion it waits on in `unansweredBy`.
+ * Whether a clip passes the per-action filters and was never sent for any
+ * action of the apps in `hideSentIds` (their "Hide clips already sent"
+ * switches): `{ pass, unansweredBy }`. `entryFor(companionId)` is what that
+ * companion said about the clip (`{ actions: { [id]: { phase } } }`), or
+ * nothing yet. A clip that fails only for want of an answer names the first
+ * companion it waits on in `unansweredBy`.
  */
-export function companionFilterVerdict(entryFor, companionIds, companionFilters, hideSent = false) {
-  if (hideSent) {
-    for (const id of companionIds) {
-      const stages = entryFor(id)?.actions;
-      if (stages && Object.values(stages).some(isCompanionSent)) return FAIL;
-    }
+export function companionFilterVerdict(entryFor, companionFilters, hideSentIds = []) {
+  for (const id of hideSentIds || []) {
+    const stages = entryFor(id)?.actions;
+    if (stages && Object.values(stages).some(isCompanionSent)) return FAIL;
   }
   let unansweredBy = null;
   for (const [key, wanted] of Object.entries(companionFilters || {})) {
@@ -102,4 +116,4 @@ export const matchesCompanionFilters = (...args) => companionFilterVerdict(...ar
 
 export const companionFilterCount = (filters) =>
   Object.keys(normalizeCompanionFilters(filters?.companionFilters)).length +
-  (filters?.companionHideSent === true ? 1 : 0);
+  normalizeCompanionHideSent(filters?.companionHideSent).length;

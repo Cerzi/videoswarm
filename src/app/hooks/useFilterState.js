@@ -29,6 +29,7 @@ import {
 } from "../filters/generationVersions";
 import {
   companionFilterVerdict,
+  normalizeCompanionHideSent,
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
 import { usePromptSearch } from "./usePromptSearch";
@@ -72,8 +73,9 @@ const normalizeFiltersDraft = (draft, prev) => {
     companionFilters: normalizeCompanionFilters(
       resolveValue(draft?.companionFilters, prev.companionFilters)
     ),
-    companionHideSent:
-      resolveValue(draft?.companionHideSent, prev.companionHideSent) === true,
+    companionHideSent: normalizeCompanionHideSent(
+      resolveValue(draft?.companionHideSent, prev.companionHideSent)
+    ),
     promptQuery: normalizePromptQuery(resolveValue(draft?.promptQuery, prev.promptQuery)),
     mightBe: normalizeMightBe(resolveValue(draft?.mightBe, prev.mightBe)),
     minFrameRate: sanitizeFrameRate(resolveValue(draft?.minFrameRate, prev.minFrameRate)),
@@ -158,12 +160,11 @@ export function useFilterState({
     const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
     const versionFilter = normalizeVersionFilter(filters.versionFilter);
     const companionFilters = normalizeCompanionFilters(filters.companionFilters);
-    const companionHideSent = filters.companionHideSent === true;
+    const companionHideSent = normalizeCompanionHideSent(filters.companionHideSent);
     const companionList = Array.isArray(companions) ? companions : [];
     const companionActive =
       companionList.length > 0 &&
-      (companionHideSent || Object.keys(companionFilters).length > 0);
-    const companionIds = companionList.map((companion) => companion.id);
+      (companionHideSent.length > 0 || Object.keys(companionFilters).length > 0);
     const companionById = new Map(companionList.map((companion) => [companion.id, companion]));
     const promptActive =
       normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
@@ -292,7 +293,6 @@ export function useFilterState({
       if (companionActive) {
         const verdict = companionFilterVerdict(
           (id) => companionById.get(id)?.entries?.get(video.instanceId),
-          companionIds,
           companionFilters,
           companionHideSent
         );

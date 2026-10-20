@@ -212,11 +212,13 @@ describe("createCompanionClient against a fake companion", () => {
       expect(request).toMatchObject({ method: "POST", type: "application/json" });
       expect(request.host).toMatch(/^127\.0\.0\.1:\d+$/u);
     }
+    // Every send names Video Swarm, so a companion knows what it sent.
     expect(fake.state.requests.at(-2).body).toEqual({
       action: "polish",
       paths: [CLIP_A],
       dry_run: false,
       again: false,
+      client: "videoswarm",
     });
   });
 

@@ -139,11 +139,14 @@ Request:
   "paths": ["/abs/path.mp4"],
   "ratings": { "/abs/path.mp4": 4 },
   "dry_run": true,
-  "again": false
+  "again": false,
+  "client": "videoswarm"
 }
 ```
 
 At most 500 paths. `dry_run` changes nothing and answers what would happen.
+`client` (added 2026-10-20) is always `videoswarm`, so a companion can tell
+what this app sent.
 `again` asks to send clips that were sent before. `ratings` (optional, added
 2026-10-18) maps each rated clip's path, exactly as in `paths`, to its stars,
 a whole number from 0 to 5; unrated clips are left out, and so is the field
@@ -217,7 +220,10 @@ companion authors must be told before it ships.
   connected); the chips stay the same array while they read the same, so a
   card re-renders only when its own chips change.
 - **Filters** (Filters › each companion's name): *Hide clips already sent*,
-  across every action of every companion, and per action any, not sent,
+  one switch per companion across its actions (2026-10-20: it was one switch
+  for all of them, so adding a clip to one app's project would empty another
+  app's worklist; a view saved with the old switch on means the first app),
+  and per action any, not sent,
   sent, under way, done, not done or stopped. *Not done* (added 2026-10-18)
   is anything short of done where the action applies: not sent, under way or
   stopped, never "does not apply"; the worklist of what is left to finish.

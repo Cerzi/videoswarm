@@ -428,7 +428,7 @@ describe("FiltersPopover companion app", () => {
     expect(current.companionFilters).toEqual({ "c1/polish": "not-sent" });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Hide clips already sent" }));
-    expect(current.companionHideSent).toBe(true);
+    expect(current.companionHideSent).toEqual(["c1"]);
   });
 
   it("says when the companion is not answering", () => {
@@ -464,8 +464,12 @@ describe("FiltersPopover companion app", () => {
     const editor = within(screen.getByRole("region", { name: "Editor" }));
     fireEvent.click(within(editor.getByRole("group", { name: "Use" })).getByRole("button", { name: "Done" }));
     expect(current.companionFilters).toEqual({ "c3/polish": "done" });
-    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
-    expect(screen.getByRole("checkbox", { name: "Hide clips already sent to any of these apps" })).toBeInTheDocument();
+    // One hide-sent switch per app, each its own.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(editor.getByRole("checkbox", { name: "Hide clips already sent to Editor" }));
+    expect(current.companionHideSent).toEqual(["c3"]);
+    fireEvent.click(screen.getByRole("checkbox", { name: `Hide clips already sent to ${companion.name}` }));
+    expect(current.companionHideSent).toEqual(["c1", "c3"]);
   });
 });
 

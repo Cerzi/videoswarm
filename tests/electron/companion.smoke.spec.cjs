@@ -100,6 +100,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
       ratings: { [pathOf(1)]: 4 },
       dry_run: false,
       again: false,
+      client: "videoswarm",
     });
     // The other app was not sent anything.
     expect(editor.state.requests.filter((request) => request.path === "/api/send")).toEqual([]);
@@ -147,7 +148,7 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
 
     // Hide clips already sent: only the untouched clip stays.
     await page.getByRole("button", { name: /^(Open filters|Filters)/ }).first().click();
-    await page.getByRole("checkbox", { name: "Hide clips already sent to any of these apps" }).check();
+    await page.getByRole("checkbox", { name: "Hide clips already sent to Fake companion" }).check();
     await expect(card(page, "clip-0000.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0001.mp4")).toHaveCount(0);
     await expect(card(page, "clip-0002.mp4")).toHaveCount(0);

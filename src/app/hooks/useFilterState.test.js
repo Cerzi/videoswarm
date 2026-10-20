@@ -312,8 +312,15 @@ describe("useFilterState companion filters", () => {
     // c2 has answered for clip 4 only, which is done.
     expect(ids(result)).toEqual([]);
     expect(result.current.companionUnchecked).toEqual(new Map([["c2", 3]]));
-    act(() => result.current.updateFilters({ companionFilters: {}, companionHideSent: true }));
+    // One switch per app: the first app's leaves what only the second sent.
+    act(() => result.current.updateFilters({ companionFilters: {}, companionHideSent: ["c1"] }));
+    expect(ids(result)).toEqual(["fresh", "unknown"]);
+    act(() => result.current.updateFilters({ companionHideSent: ["c1", "c2"] }));
     expect(ids(result)).toEqual(["fresh"]);
+    expect(result.current.filtersActiveCount).toBe(2);
+    // A view saved with the old single switch means the first app.
+    act(() => result.current.updateFilters({ companionHideSent: true }));
+    expect(result.current.filters.companionHideSent).toEqual(["c1"]);
   });
 
   it("ignores companion filters while there is no companion", () => {
