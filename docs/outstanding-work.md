@@ -298,6 +298,9 @@ matches under the tag input, including in fullscreen. Check by hand:
   starts on the open project, says "2 of 5 already there, 3 will be added",
   and Enter adds; the toast's Undo takes them back. Filters has a *Hide
   clips already sent* switch per app.
+- With an app that tags clips (characters, say): the card chip's tooltip
+  and Details list them; Filters › the app's row filters by them with a
+  type-ahead, any or all; Prompt words find them too.
 - The review bar leads with the green *Review these N* (⇧R); *Whole folder*
   with *Find Unreviewed* follows it as the second option.
 - In fullscreen with a companion app connected: the rail shows its chip

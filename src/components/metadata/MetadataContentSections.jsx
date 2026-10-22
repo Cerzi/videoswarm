@@ -669,3 +669,36 @@ export const MetadataTagsSection = forwardRef(function MetadataTagsSection(
     </>
   );
 });
+
+/**
+ * A companion app's own tags for the selection (such as the characters a
+ * render was cast with), under the app's name and what it calls them. Read
+ * only: they belong to the app. `groups` from companionTagGroups().
+ */
+export function MetadataCompanionTagsSection({ groups = [], selectionCount = 1 }) {
+  if (!groups.length) return null;
+  return (
+    <section className="metadata-panel__section metadata-panel__section--companion-tags">
+      {groups.map((group) => (
+        <div key={group.key} className="metadata-panel__partial-group">
+          <div className="metadata-panel__section-header">
+            <span>{group.label}</span>
+            <span className="metadata-panel__badge">{group.name}</span>
+          </div>
+          <div className="metadata-panel__chips" role="list" aria-label={`${group.label} from ${group.name}`}>
+            {group.tags.map(({ tag, count }) => (
+              <span key={tag} role="listitem" className="metadata-panel__chip metadata-panel__chip--ghost">
+                <span>{tag}</span>
+                {selectionCount > 1 ? (
+                  <span className="metadata-panel__chip-count">
+                    {count}/{selectionCount}
+                  </span>
+                ) : null}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}

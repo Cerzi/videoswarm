@@ -12,6 +12,7 @@ import { normalizeVersionFilter } from "../app/filters/generationVersions";
 import {
   normalizeCompanionFilters,
   normalizeCompanionHideSent,
+  normalizeCompanionTagFilters,
 } from "../app/companion/companionFilters";
 
 export const DEFAULT_FOLDER_VIEW_CACHE_LIMIT = 128;
@@ -42,6 +43,7 @@ const normalizeFilters = (filters) => ({
   versionFilter: normalizeVersionFilter(filters?.versionFilter),
   companionFilters: normalizeCompanionFilters(filters?.companionFilters),
   companionHideSent: normalizeCompanionHideSent(filters?.companionHideSent),
+  companionTags: normalizeCompanionTagFilters(filters?.companionTags),
   promptQuery: normalizePromptQuery(filters?.promptQuery),
   mightBe: normalizeMightBe(filters?.mightBe),
 });

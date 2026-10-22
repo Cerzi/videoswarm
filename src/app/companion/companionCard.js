@@ -20,6 +20,10 @@ export function companionCardChips(companions, instanceId) {
       if (!stage || stage.phase === "n/a") continue;
       lines.push(`${action.label}: ${stage.why || COMPANION_PHASE_LABELS[stage.phase] || stage.phase}`);
     }
+    // The app's own tags for the clip, under what it calls them.
+    if (companion.tags?.label && entry.tags?.length) {
+      lines.push(`${companion.tags.label}: ${entry.tags.join(", ")}`);
+    }
     const reasons = lines.length ? lines.join("\n") : label;
     chips.push({
       key: companion.id,
@@ -116,4 +120,33 @@ export function withQuickShortcuts(buttons, actions) {
     const index = order.indexOf(button.key);
     return index === 0 || index === 1 ? { ...button, shortcut: `Shift+${index + 1}` } : button;
   });
+}
+
+/**
+ * The selected clips' tags from each app that declares tags, for Details:
+ * `[{ key, name, label, tags: [{ tag, count }] }]`, most shared first. The
+ * owner's library words, read from memory only.
+ */
+export function companionTagGroups(companions, videos) {
+  const groups = [];
+  for (const companion of companions || []) {
+    if (!companion.tags?.label) continue;
+    const counts = new Map();
+    for (const video of videos || []) {
+      for (const tag of companion.entries?.get(video?.instanceId)?.tags || []) {
+        const key = tag.toLowerCase();
+        const found = counts.get(key);
+        if (found) found.count += 1;
+        else counts.set(key, { tag, count: 1 });
+      }
+    }
+    if (!counts.size) continue;
+    groups.push({
+      key: companion.id,
+      name: companion.name || "Companion app",
+      label: companion.tags.label,
+      tags: [...counts.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)),
+    });
+  }
+  return groups;
 }

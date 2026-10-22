@@ -160,6 +160,37 @@ describe("companion answers", () => {
     expect(plain.targets).toEqual({ label: "Target", new: "" });
   });
 
+  it("reads what a companion's tags are called, and each clip's tags", () => {
+    const described = normalizeDescription({
+      protocol: 1,
+      actions: [],
+      tags: { label: " Characters\n", hint: "From the references a render was cast with" },
+    });
+    expect(described.tags).toEqual({ label: "Characters", hint: "From the references a render was cast with" });
+    expect(normalizeDescription({ protocol: 1, actions: [], tags: { label: "" } })).not.toHaveProperty("tags");
+
+    const result = normalizeLookup(
+      {
+        clips: {
+          [CLIP_A]: {
+            kind: "render",
+            chip: null,
+            actions: {},
+            tags: ["Alba", "Alba", " Bram\t", "", 7, "x".repeat(80), ...Array.from({ length: 70 }, (_, i) => `t${i}`)],
+          },
+          [CLIP_B]: { kind: "render", chip: null, actions: {}, tags: [] },
+        },
+      },
+      [CLIP_A, CLIP_B],
+      []
+    );
+    const tags = result.get(CLIP_A).tags;
+    expect(tags.slice(0, 3)).toEqual(["Alba", "Bram", `${"x".repeat(63)}…`]);
+    expect(tags).toHaveLength(64);
+    // None: no field at all.
+    expect(result.get(CLIP_B)).not.toHaveProperty("tags");
+  });
+
   it("reads lookups for asked-for paths and known actions only", () => {
     const result = normalizeLookup(
       {

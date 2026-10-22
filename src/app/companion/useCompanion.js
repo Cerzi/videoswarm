@@ -40,9 +40,11 @@ export const MAX_COMPANIONS = 4;
 
 /**
  * One companion's session, for `connection` (`{ id, enabled, url }`, or
- * nothing). Returns `{ id, status, name, actions, entries, refresh,
+ * nothing). Returns `{ id, status, name, actions, tags, entries, refresh,
  * refreshAll }`, where `status` is "off", "connecting", "online" or
- * "offline", and `entries` maps catalog row -> `{ kind, chip, actions }`.
+ * "offline", `tags` says what its clip tags are called (or is null), and
+ * `entries` maps catalog row -> `{ kind, chip, actions, tags? }`. Tags are
+ * the owner's library words: memory only, for the session.
  */
 export function useCompanion({ videos, guests = null, suspended = false, connection = null }) {
   const api = typeof window !== "undefined" ? window.electronAPI?.companion : null;
@@ -149,7 +151,12 @@ export function useCompanion({ videos, guests = null, suspended = false, connect
       }
       if (!alive || session !== sessionRef.current) return;
       if (result?.success) {
-        setDescription({ name: result.name, actions: result.actions || NO_ACTIONS });
+        setDescription({
+          name: result.name,
+          actions: result.actions || NO_ACTIONS,
+          // What its lookup tags are called (`{ label, hint }`), if it has any.
+          tags: result.tags?.label ? result.tags : null,
+        });
         // Ask again about everything once back, not only what was waiting.
         session.asked.clear();
         setStatus("online");
@@ -211,9 +218,10 @@ export function useCompanion({ videos, guests = null, suspended = false, connect
 
   const name = description?.name || null;
   const actions = description?.actions || NO_ACTIONS;
+  const tags = description?.tags || null;
   return useMemo(
-    () => ({ id, status, name, actions, entries, refresh: enqueue, refreshAll }),
-    [actions, enqueue, entries, id, name, refreshAll, status]
+    () => ({ id, status, name, actions, tags, entries, refresh: enqueue, refreshAll }),
+    [actions, enqueue, entries, id, name, refreshAll, status, tags]
   );
 }
 

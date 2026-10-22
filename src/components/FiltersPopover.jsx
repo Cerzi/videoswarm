@@ -19,7 +19,11 @@ import {
   companionFilterKey,
   normalizeCompanionFilters,
   normalizeCompanionHideSent,
+  normalizeCompanionTagFilters,
 } from "../app/companion/companionFilters";
+import CompanionTagFilter from "./CompanionTagFilter";
+
+const NO_KNOWN_TAGS = Object.freeze([]);
 
 // Short labels keep each rating on one line beside its label.
 const MIN_RATING_OPTIONS = [
@@ -239,6 +243,8 @@ const FiltersPopover = forwardRef(
       onSetTagParent,
       // Connected companion apps: `[{ id, name, actions, status }]`.
       companions = [],
+      // Each app's tags answered this session, for its tag filter's type-ahead.
+      companionKnownTags = null,
       // Prompt search status: `{ pending, unread }` (usePromptSearch).
       promptSearch = null,
       // Which tags can be suggested, `{ tags, pending }`, and the "Might be"
@@ -252,6 +258,9 @@ const FiltersPopover = forwardRef(
   ) => {
     const companionFilters = normalizeCompanionFilters(filters?.companionFilters);
     const hideSentIds = normalizeCompanionHideSent(filters?.companionHideSent);
+    const companionTags = normalizeCompanionTagFilters(filters?.companionTags);
+    // The tags each app has answered with this session, for the type-ahead.
+    const knownTagsFor = (companion) => companionKnownTags?.[companion.id] || NO_KNOWN_TAGS;
     const includeTags = filters?.includeTags ?? [];
     const excludeTags = filters?.excludeTags ?? [];
     const minRating = filters?.minRating ?? null;
@@ -751,7 +760,7 @@ const FiltersPopover = forwardRef(
 
           <FilterRow
             label="Prompt"
-            hint={'Words match their starts. In quotes, a word matches only itself and several words match as a phrase, in order. All must appear; -word or -"phrase" rules one out. Negative prompts are ignored.'}
+            hint={'Words match their starts. In quotes, a word matches only itself and several words match as a phrase, in order. All must appear; -word or -"phrase" rules one out. Negative prompts are ignored. A companion app\'s tags for a clip (such as its characters) are searched too.'}
             status={
               promptSearch?.pending
                 ? "Searching prompts…"
@@ -934,6 +943,22 @@ const FiltersPopover = forwardRef(
                   </div>
                 );
               })}
+              {companion.tags ? (
+                <CompanionTagFilter
+                  label={companion.tags.label}
+                  hint={companion.tags.hint}
+                  known={knownTagsFor(companion)}
+                  value={companionTags[companion.id] || null}
+                  onChange={(next) =>
+                    onChange((prev) => {
+                      const tags = { ...normalizeCompanionTagFilters(prev.companionTags) };
+                      if (next) tags[companion.id] = next;
+                      else delete tags[companion.id];
+                      return { ...prev, companionTags: tags };
+                    })
+                  }
+                />
+              ) : null}
             </FilterRow>
           ))}
         </div>

@@ -10,6 +10,7 @@ import {
   reviewStateLabel,
 } from "../../review/reviewState";
 import {
+  MetadataCompanionTagsSection,
   MetadataFileFactsSection,
   MetadataGenerationSection,
   MetadataTagsSection,
@@ -418,6 +419,7 @@ export function FullscreenDetailsDock({
   onAddTags,
   onRemoveTag,
   onApplyTag,
+  companionTags = null,
 }) {
   const info = useMemo(
     () => deriveSingleSelectionInfo(video ? [video] : [], video ? 1 : 0),
@@ -441,6 +443,7 @@ export function FullscreenDetailsDock({
         onRemoveTag={onRemoveTag}
         onApplyTagToSelection={onApplyTag}
       />
+      <MetadataCompanionTagsSection groups={companionTags || []} selectionCount={1} />
       <MetadataVersionsSection video={video} generationVersions={generationVersions} />
       <MetadataFileFactsSection info={info} includeRelativePath />
       <MetadataGenerationSection

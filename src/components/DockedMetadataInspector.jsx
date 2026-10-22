@@ -13,6 +13,7 @@ function DockedMetadataInspector({
   selectionKey,
   availableTags = [],
   generationVersions = null,
+  companionTags = null,
   onAddTag,
   onRemoveTag,
   onApplyTagToSelection,
@@ -103,6 +104,7 @@ function DockedMetadataInspector({
           active
           selectionKey={selectionKey}
           generationVersions={generationVersions}
+          companionTags={companionTags}
           showGeneration={false}
           onAddTag={onAddTag}
           onRemoveTag={onRemoveTag}

@@ -1,6 +1,7 @@
 import React, { createRef } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
+  MetadataCompanionTagsSection,
   MetadataFileFactsSection,
   MetadataGenerationSection,
   MetadataTagsSection,
@@ -469,5 +470,20 @@ describe("reusable metadata content sections", () => {
       );
       expect(container.querySelector(".metadata-panel__likely")).toBeNull();
     });
+  });
+});
+
+describe("MetadataCompanionTagsSection", () => {
+  const groups = [
+    { key: "c1", name: "Helper", label: "Characters", tags: [{ tag: "Alba", count: 2 }, { tag: "Bram", count: 1 }] },
+  ];
+  it("lists an app's tags under what it calls them and its name, with counts for a selection", () => {
+    const { rerender } = render(<MetadataCompanionTagsSection groups={groups} selectionCount={2} />);
+    const list = screen.getByRole("list", { name: "Characters from Helper" });
+    expect(list.textContent).toBe("Alba2/2Bram1/2");
+    rerender(<MetadataCompanionTagsSection groups={groups} selectionCount={1} />);
+    expect(screen.getByRole("list", { name: "Characters from Helper" }).textContent).toBe("AlbaBram");
+    rerender(<MetadataCompanionTagsSection groups={[]} />);
+    expect(screen.queryByRole("list")).toBeNull();
   });
 });

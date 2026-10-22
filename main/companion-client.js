@@ -29,6 +29,11 @@ const WITHDRAW_RESULTS = new Set(["withdrawn", "skipped", "refused"]);
 const MAX_TARGETS = 200;
 const MAX_TARGET_ID_CHARS = 4096;
 const MAX_NEW_TARGET_CHARS = 80;
+// Tags (2026-10-22): words a companion keeps about a clip, such as the
+// characters a render was cast with. The owner's own library words: kept in
+// memory for the session, never stored or logged.
+const MAX_CLIP_TAGS = 64;
+const MAX_TAG_CHARS = 64;
 const ACTION_ID = /^[a-z][a-z0-9_-]{0,31}$/u;
 const KIND = /^[a-z][a-z0-9_/-]{0,31}$/u;
 
@@ -53,6 +58,29 @@ function cleanText(value, maxChars) {
     .replace(/\s+/gu, " ")
     .trim();
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+// What a companion's lookup tags are: a label to show ("Characters") and a
+// one-line hint. Video Swarm shows them and never interprets them.
+function normalizeTagsDeclaration(raw) {
+  if (!isObject(raw)) return null;
+  const label = cleanText(raw.label, 32);
+  return label ? { label, hint: cleanText(raw.hint, 200) } : null;
+}
+
+// A clip's tags from a lookup: one-line strings, each once, at most 64.
+function normalizeClipTags(raw) {
+  if (!Array.isArray(raw)) return null;
+  const tags = [];
+  const seen = new Set();
+  for (const value of raw) {
+    if (tags.length >= MAX_CLIP_TAGS) break;
+    const tag = cleanText(value, MAX_TAG_CHARS);
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+  }
+  return tags.length ? tags : null;
 }
 
 // What an action that sends into a target says about them: what one is
@@ -102,10 +130,12 @@ function normalizeDescription(raw) {
       ...(targets ? { targets, pick: cleanText(entry.pick, 48) || `${send}…` } : {}),
     });
   }
+  const tags = normalizeTagsDeclaration(raw.tags);
   return {
     protocol: PROTOCOL_VERSION,
     name: cleanText(raw.name, 48) || "Companion app",
     actions,
+    ...(tags ? { tags } : {}),
   };
 }
 
@@ -142,10 +172,12 @@ function normalizeLookup(raw, paths, actionIds) {
       const stage = normalizeStage(stages[id]);
       if (stage) actions[id] = stage;
     }
+    const tags = normalizeClipTags(entry.tags);
     result.set(filePath, {
       kind: typeof entry.kind === "string" && KIND.test(entry.kind) ? entry.kind : null,
       chip: normalizeChip(entry.chip),
       actions,
+      ...(tags ? { tags } : {}),
     });
   }
   return result;

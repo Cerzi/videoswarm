@@ -90,9 +90,25 @@ describe("saved view companion filters", () => {
     ).toEqual(["c1", "c3"]);
   });
 
+  it("keeps the companion tags chosen to filter by, per app", () => {
+    const filters = saved(
+      view({
+        filters: {
+          companionTags: {
+            c1: { tags: ["Alba", "alba", " Bram "], mode: "all" },
+            c2: { tags: [] },
+            nope: { tags: ["x"] },
+          },
+        },
+      })
+    ).filters;
+    expect(filters.companionTags).toEqual({ c1: { tags: ["Alba", "Bram"], mode: "all" } });
+  });
+
   it("leaves a view without them exactly as before", () => {
     const filters = saved(view({ filters: { companionFilters: {}, companionHideSent: false } })).filters;
     expect(filters).not.toHaveProperty("companionFilters");
     expect(filters).not.toHaveProperty("companionHideSent");
+    expect(filters).not.toHaveProperty("companionTags");
   });
 });

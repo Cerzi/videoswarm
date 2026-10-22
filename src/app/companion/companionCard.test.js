@@ -4,6 +4,7 @@ import {
   companionQuickActions,
   createCompanionChipCache,
   createCompanionQuickActionCache,
+  companionTagGroups,
   withQuickShortcuts,
 } from "./companionCard";
 
@@ -110,5 +111,48 @@ describe("quick action keys on buttons", () => {
     // c1/polish was sent, so its button is gone; c2/polish is still Shift+2.
     expect(withQuickShortcuts([button("c2", "polish")], actions)[0].shortcut).toBe("Shift+2");
     expect(withQuickShortcuts([], actions)).toEqual([]);
+  });
+});
+
+describe("companion chip tooltips", () => {
+  it("lists the app's tags for the clip under what it calls them", () => {
+    const companion = {
+      id: "c1",
+      name: "Helper",
+      tags: { label: "Characters", hint: "" },
+      actions: [{ id: "polish", label: "Polish" }],
+      entries: new Map([
+        [1, { chip: { label: "Done", tone: "done" }, actions: { polish: { phase: "done", why: "" } }, tags: ["Alba", "Bram"] }],
+      ]),
+    };
+    expect(companionCardChips([companion], 1)[0].title).toBe("Polish: Done\nCharacters: Alba, Bram");
+  });
+});
+
+describe("companion tags for Details", () => {
+  it("groups the selection's tags per app, most shared first", () => {
+    const tagging = {
+      id: "c1",
+      name: "Helper",
+      tags: { label: "Characters", hint: "" },
+      entries: new Map([
+        [1, { tags: ["Bram", "Alba"] }],
+        [2, { tags: ["alba"] }],
+        [3, {}],
+      ]),
+    };
+    const silent = { id: "c2", name: "Other", entries: new Map([[1, { tags: ["Ignored"] }]]) };
+    expect(companionTagGroups([tagging, silent], [{ instanceId: 1 }, { instanceId: 2 }, { instanceId: 3 }])).toEqual([
+      {
+        key: "c1",
+        name: "Helper",
+        label: "Characters",
+        tags: [
+          { tag: "Alba", count: 2 },
+          { tag: "Bram", count: 1 },
+        ],
+      },
+    ]);
+    expect(companionTagGroups([tagging], [{ instanceId: 3 }])).toEqual([]);
   });
 });

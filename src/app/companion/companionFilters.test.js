@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   companionFilterCount,
   companionFilterVerdict,
+  companionTagsSearch,
+  parseTagQuery,
   matchesCompanionFilters,
+  matchesCompanionTags,
   normalizeCompanionHideSent,
+  normalizeCompanionTagFilters,
   normalizeCompanionFilters,
   parseCompanionFilterKey,
 } from "./companionFilters";
@@ -118,5 +122,47 @@ describe("companion filters", () => {
     ).toBe(2);
     expect(companionFilterCount({ companionHideSent: ["c1", "c2"] })).toBe(2);
     expect(companionFilterCount({})).toBe(0);
+  });
+
+  it("keeps a tag filter per app: each tag once, at most 20, any or all", () => {
+    expect(
+      normalizeCompanionTagFilters({
+        c1: { tags: [" Alba ", "alba", "Bram", "", 3], mode: "all" },
+        c2: { tags: [], mode: "any" },
+        x9: { tags: ["Nope"] },
+        c3: { tags: Array.from({ length: 30 }, (_, i) => `t${i}`), mode: "sideways" },
+      })
+    ).toEqual({
+      c1: { tags: ["Alba", "Bram"], mode: "all" },
+      c3: { tags: Array.from({ length: 20 }, (_, i) => `t${i}`), mode: "any" },
+    });
+    expect(normalizeCompanionTagFilters("bad")).toEqual({});
+  });
+
+  it("matches a clip's companion tags, any or all, whatever their case", () => {
+    expect(matchesCompanionTags(["Alba", "Cora"], { tags: ["alba", "Bram"], mode: "any" })).toBe(true);
+    expect(matchesCompanionTags(["Alba", "Cora"], { tags: ["alba", "Bram"], mode: "all" })).toBe(false);
+    expect(matchesCompanionTags(undefined, { tags: ["Alba"], mode: "any" })).toBe(false);
+  });
+
+  it("filters by tags, waiting for an app that has not answered", () => {
+    const tagged = { actions: {}, tags: ["Alba"] };
+    const tags = { c1: { tags: ["Alba"], mode: "any" } };
+    expect(companionFilterVerdict(from(tagged), {}, [], tags)).toEqual({ pass: true, unansweredBy: null });
+    expect(companionFilterVerdict(from({ actions: {} }), {}, [], tags).pass).toBe(false);
+    expect(companionFilterVerdict(from(undefined), {}, [], tags)).toEqual({ pass: false, unansweredBy: "c1" });
+    expect(companionFilterCount({ companionTags: { c1: { tags: ["Alba"] } }, companionHideSent: ["c2"] })).toBe(2);
+  });
+
+  it("searches companion tags as prompt search reads words", () => {
+    const tags = ["Alba Varga", "Bram"];
+    const found = (query) => companionTagsSearch(tags, parseTagQuery(query));
+    expect(found("alb")).toEqual({ found: true, ruledOut: false });
+    expect(found('"alb"').found).toBe(false);
+    expect(found('"alba varga" bram').found).toBe(true);
+    expect(found('"varga alba"').found).toBe(false);
+    expect(found("alba cora").found).toBe(false);
+    expect(found("-bram")).toEqual({ found: false, ruledOut: true });
+    expect(companionTagsSearch(undefined, parseTagQuery("alba"))).toEqual({ found: false, ruledOut: false });
   });
 });

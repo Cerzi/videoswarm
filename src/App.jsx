@@ -152,12 +152,14 @@ import {
 import { useCompanions } from "./app/companion/useCompanion";
 import CompanionSendDialog from "./components/CompanionSendDialog";
 import CompanionTargetPicker from "./components/CompanionTargetPicker";
+import { knownCompanionTags } from "./components/CompanionTagFilter";
 import { useViewHistory } from "./app/hooks/useViewHistory";
 import { useStackFrames } from "./app/stacks/useStackFrames";
 import { applyStackFaces } from "./app/stacks/stackFaces";
 import {
   createCompanionChipCache,
   createCompanionQuickActionCache,
+  companionTagGroups,
   withQuickShortcuts,
 } from "./app/companion/companionCard";
 import {
@@ -173,6 +175,7 @@ import {
   COMPANION_PHASE_LABELS,
   normalizeCompanionFilters,
   normalizeCompanionHideSent,
+  normalizeCompanionTagFilters,
   parseCompanionFilterKey,
 } from "./app/companion/companionFilters";
 import {
@@ -253,6 +256,7 @@ const expandFolderAncestors = (previous, relativePath) => {
 const NO_STRIP_IDS = Object.freeze([]);
 const NO_VERSION_GUESTS = Object.freeze([]);
 const NO_MENU_TARGETS = Object.freeze({});
+const NO_KNOWN_TAGS = Object.freeze({});
 // As many clips as a library view holds (main's REVIEW_PASS_MAX_CLIPS).
 const REVIEW_PASS_MAX_CLIPS = 50_000;
 
@@ -792,7 +796,7 @@ function App() {
   companionActionsRef.current = companionActions;
   const companionPanels = useMemo(
     () =>
-      companions.map(({ id, name, actions, status }) => ({ id, name, actions, status })),
+      companions.map(({ id, name, actions, status, tags }) => ({ id, name, actions, status, tags })),
     [companions]
   );
   // One chip per app on a card, the same array while it reads the same.
@@ -1537,6 +1541,24 @@ function App() {
       .map((id) => allVideosById.get(id))
       .filter(Boolean);
   }, [allVideosById, selection.selected]);
+  // Every tag each app has answered with this session, for the Filters
+  // type-ahead; worked out only while Filters is open.
+  const companionKnownTags = useMemo(
+    () =>
+      isFiltersOpen
+        ? Object.fromEntries(
+            companions
+              .filter((companion) => companion.tags)
+              .map((companion) => [companion.id, knownCompanionTags(companion.entries)])
+          )
+        : NO_KNOWN_TAGS,
+    [companions, isFiltersOpen]
+  );
+  // Companion apps' own tags for the selection, for Details (memory only).
+  const selectedCompanionTags = useMemo(
+    () => companionTagGroups(companions, selectedVideos),
+    [companions, selectedVideos]
+  );
 
   const metadataSelectionKey = useMemo(
     () => JSON.stringify(Array.from(selection.selected, String).sort()),
@@ -4345,6 +4367,7 @@ function App() {
         versionFilter: normalizeVersionFilter(filters.versionFilter),
         companionFilters: filters.companionFilters || {},
         companionHideSent: normalizeCompanionHideSent(filters.companionHideSent),
+        companionTags: normalizeCompanionTagFilters(filters.companionTags),
         promptQuery: (filters.promptQuery || "").trim(),
         mightBe: (filters.mightBe || "").trim(),
         // docs/architecture/workflow-filters.md
@@ -6429,6 +6452,7 @@ function App() {
               }
               onSetTagParent={handleSetTagParent}
             companions={companionPanels}
+            companionKnownTags={companionKnownTags}
             promptSearch={promptSearch}
             likelyTagStatus={likelyTagStatus}
             mightBe={mightBe}
@@ -6726,7 +6750,8 @@ function App() {
               })()}
 
               {(Object.keys(normalizeCompanionFilters(filters.companionFilters)).length > 0 ||
-                normalizeCompanionHideSent(filters.companionHideSent).length > 0) && (
+                normalizeCompanionHideSent(filters.companionHideSent).length > 0 ||
+                Object.keys(normalizeCompanionTagFilters(filters.companionTags)).length > 0) && (
                 <div className="filters-summary__section">
                   <span className="filters-summary__label">
                     {companions.length === 1 ? companions[0].name || "Companion app" : "Companion apps"}
@@ -6760,6 +6785,28 @@ function App() {
                         );
                       }
                     )}
+                    {Object.entries(normalizeCompanionTagFilters(filters.companionTags)).map(([id, tagFilter]) => {
+                      const owner = companions.find((entry) => entry.id === id);
+                      const label = owner?.tags?.label || "Tags";
+                      return (
+                        <button
+                          key={`tags-${id}`}
+                          type="button"
+                          className="filters-summary__chip filters-summary__chip--review"
+                          onClick={() =>
+                            updateFilters((prev) => {
+                              const next = { ...normalizeCompanionTagFilters(prev.companionTags) };
+                              delete next[id];
+                              return { ...prev, companionTags: next };
+                            })
+                          }
+                          title="Clear this filter"
+                        >
+                          {`${label}${tagFilter.tags.length > 1 ? ` (${tagFilter.mode})` : ""}: ${tagFilter.tags.join(", ")}`}
+                          <span className="filters-summary__chip-remove">×</span>
+                        </button>
+                      );
+                    })}
                     {normalizeCompanionHideSent(filters.companionHideSent).map((id) => {
                       const owner = companions.find((entry) => entry.id === id);
                       return (
@@ -6912,6 +6959,7 @@ function App() {
                           onSetReviewState={reviewWorkflow.applyReviewState}
                           reviewModeEnabled={reviewModeEnabled}
                           generationVersions={gridGenerationVersions}
+                          companionTags={selectedCompanionTags}
                           onFocusSelection={focusSelection}
                           onTransferSelection={handleRequestTransfer}
                           onUndock={handleUndockMetadataPanel}
@@ -7144,6 +7192,7 @@ function App() {
                 generationExpanded={metadataGenerationExpanded}
                 onGenerationExpandedChange={setMetadataGenerationExpanded}
                 generationVersions={gridGenerationVersions}
+                companionTags={selectedCompanionTags}
                 focusToken={metadataFocusToken}
                 onFocusSelection={focusSelection}
                 onTransferSelection={handleRequestTransfer}
@@ -7228,6 +7277,7 @@ function App() {
                   onAddTags={handleFullscreenAddTags}
                   onRemoveTag={handleFullscreenRemoveTag}
                   onApplyTag={handleFullscreenApplyTag}
+                  companionTags={companionTagGroups(companions, [fullScreenVideo])}
                 />
               }
               transientOpen={Boolean(fullscreenTransientSurface)}

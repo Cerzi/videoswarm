@@ -17,6 +17,8 @@ export const createDefaultFilters = () => ({
   companionFilters: {},
   // The apps whose "Hide clips already sent" switch is on (`["c1"]`).
   companionHideSent: [],
+  // A companion's own tags for a clip: `{ c1: { tags: [...], mode } }`.
+  companionTags: {},
   // Words in the prompt (prompt-search-and-tag-suggestions.md).
   promptQuery: "",
   // A tag the clips might be: suggested it, not tagged with it (Section 2).

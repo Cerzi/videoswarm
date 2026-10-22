@@ -369,6 +369,67 @@ describe("useFilterState prompt search", () => {
   });
 });
 
+describe("useFilterState companion tags", () => {
+  const clips = [
+    { id: "a", instanceId: 1, promptKey: "pk-a", reviewState: "unreviewed" },
+    { id: "b", instanceId: 2, promptKey: "pk-b", reviewState: "unreviewed" },
+    { id: "c", instanceId: 3, promptKey: "pk-c", reviewState: "unreviewed" },
+    { id: "unasked", instanceId: 4, promptKey: "pk-d", reviewState: "unreviewed" },
+  ];
+  const companion = {
+    id: "c1",
+    tags: { label: "Characters", hint: "" },
+    entries: new Map([
+      [1, { actions: {}, tags: ["Alba", "Bram"] }],
+      [2, { actions: {}, tags: ["Alba"] }],
+      [3, { actions: {} }],
+    ]),
+  };
+  afterEach(() => {
+    vi.useRealTimers();
+    delete window.electronAPI;
+  });
+  const ids = (result) => result.current.filteredVideos.map((video) => video.id);
+
+  it("filters by an app's tags, any or all, counting clips it has not answered for", () => {
+    const { result } = renderHook(() =>
+      useFilterState({ videos: clips, filtersButtonRef: createRef(), filtersPopoverRef: createRef(), companions: [companion] })
+    );
+    act(() => result.current.updateFilters({ companionTags: { c1: { tags: ["alba", "Bram"], mode: "any" } } }));
+    expect(ids(result)).toEqual(["a", "b"]);
+    expect(result.current.companionUnchecked).toEqual(new Map([["c1", 1]]));
+    expect(result.current.filtersActiveCount).toBe(1);
+    act(() => result.current.updateFilters({ companionTags: { c1: { tags: ["Alba", "Bram"], mode: "all" } } }));
+    expect(ids(result)).toEqual(["a"]);
+  });
+
+  it("finds clips by their companion tags in prompt search, and rules them out", async () => {
+    vi.useFakeTimers();
+    // No prompt says "bram"; prompt c says "dune".
+    const search = vi.fn(async (keys, query) => ({
+      success: true,
+      matches: query.includes("dune") ? ["pk-c"] : [],
+      unread: 0,
+    }));
+    window.electronAPI = { prompts: { search } };
+    const { result } = renderHook(() =>
+      useFilterState({ videos: clips, filtersButtonRef: createRef(), filtersPopoverRef: createRef(), companions: [companion] })
+    );
+    const settle = async () => {
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+      });
+    };
+    act(() => result.current.updateFilters({ promptQuery: "bram" }));
+    await settle();
+    expect(ids(result)).toEqual(["a"]);
+    act(() => result.current.updateFilters({ promptQuery: "dune -alba" }));
+    await settle();
+    expect(ids(result)).toEqual(["c"]);
+  });
+});
+
 describe("useFilterState might be", () => {
   const clips = [
     { id: "a", instanceId: 1, fingerprint: "fp-a", promptKey: "pk-a", tags: [], reviewState: "unreviewed" },

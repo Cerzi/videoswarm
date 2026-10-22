@@ -14,6 +14,7 @@ import {
   MetadataFileFactsSection,
   MetadataGenerationSection,
   MetadataTagsSection,
+  MetadataCompanionTagsSection,
 } from "./MetadataContentSections";
 import MetadataVersionsSection from "./MetadataVersionsSection";
 import { EraserIcon } from "../UiIcons";
@@ -83,6 +84,8 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
     reviewModeEnabled = true,
     generationVersions = null,
     showGeneration = true,
+    // Companion apps' own tags for the selection (companionTagGroups()).
+    companionTags = null,
   },
   inputRef
 ) {
@@ -232,6 +235,8 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
           onApplyTagToSelection={onApplyTagToSelection}
         />
       </div>
+
+      <MetadataCompanionTagsSection groups={companionTags || []} selectionCount={derivedSelectionCount} />
 
       {derivedSelectionCount === 1 ? (
         <MetadataVersionsSection

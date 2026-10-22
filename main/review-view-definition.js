@@ -100,6 +100,28 @@ function normalizeCompanionHideSent(value) {
     .slice(0, 8);
 }
 
+// Tags chosen to filter by, per app: `{ c1: { tags, mode } }`, as
+// src/app/companion/companionFilters.js reads them. These are the user's
+// own filter choices; a companion's answers are never stored.
+function normalizeCompanionTagFilters(value) {
+  const result = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
+  for (const [id, entry] of Object.entries(value)) {
+    if (!COMPANION_ID.test(id) || !entry || typeof entry !== 'object') continue;
+    const tags = [];
+    const seen = new Set();
+    for (const raw of Array.isArray(entry.tags) ? entry.tags : []) {
+      if (tags.length >= 20) break;
+      const tag = typeof raw === 'string' ? raw.trim().slice(0, 64) : '';
+      if (!tag || seen.has(tag.toLowerCase())) continue;
+      seen.add(tag.toLowerCase());
+      tags.push(tag);
+    }
+    if (tags.length) result[id] = { tags, mode: entry.mode === 'all' ? 'all' : 'any' };
+  }
+  return result;
+}
+
 function normalizeCompanionFilters(value) {
   const result = {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
@@ -172,9 +194,11 @@ function normalizeReviewViewDefinition(
   // Present only when set, so views saved without them keep their shape.
   const companionFilters = normalizeCompanionFilters(filtersInput.companionFilters);
   const companionHideSent = normalizeCompanionHideSent(filtersInput.companionHideSent);
+  const companionTags = normalizeCompanionTagFilters(filtersInput.companionTags);
   const companion = {
     ...(Object.keys(companionFilters).length ? { companionFilters } : {}),
     ...(companionHideSent.length ? { companionHideSent } : {}),
+    ...(Object.keys(companionTags).length ? { companionTags } : {}),
   };
   const promptQuery =
     typeof filtersInput.promptQuery === 'string' ? filtersInput.promptQuery.trim().slice(0, 200) : '';

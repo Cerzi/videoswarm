@@ -29,7 +29,10 @@ import {
 } from "../filters/generationVersions";
 import {
   companionFilterVerdict,
+  companionTagsSearch,
   normalizeCompanionHideSent,
+  normalizeCompanionTagFilters,
+  parseTagQuery,
   normalizeCompanionFilters,
 } from "../companion/companionFilters";
 import { usePromptSearch } from "./usePromptSearch";
@@ -76,6 +79,7 @@ const normalizeFiltersDraft = (draft, prev) => {
     companionHideSent: normalizeCompanionHideSent(
       resolveValue(draft?.companionHideSent, prev.companionHideSent)
     ),
+    companionTags: normalizeCompanionTagFilters(resolveValue(draft?.companionTags, prev.companionTags)),
     promptQuery: normalizePromptQuery(resolveValue(draft?.promptQuery, prev.promptQuery)),
     mightBe: normalizeMightBe(resolveValue(draft?.mightBe, prev.mightBe)),
     minFrameRate: sanitizeFrameRate(resolveValue(draft?.minFrameRate, prev.minFrameRate)),
@@ -161,13 +165,28 @@ export function useFilterState({
     const versionFilter = normalizeVersionFilter(filters.versionFilter);
     const companionFilters = normalizeCompanionFilters(filters.companionFilters);
     const companionHideSent = normalizeCompanionHideSent(filters.companionHideSent);
+    const companionTags = normalizeCompanionTagFilters(filters.companionTags);
     const companionList = Array.isArray(companions) ? companions : [];
     const companionActive =
       companionList.length > 0 &&
-      (companionHideSent.length > 0 || Object.keys(companionFilters).length > 0);
+      (companionHideSent.length > 0 ||
+        Object.keys(companionFilters).length > 0 ||
+        Object.keys(companionTags).length > 0);
     const companionById = new Map(companionList.map((companion) => [companion.id, companion]));
     const promptActive =
       normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
+    // Companion tags searched alongside prompts, when any app has tags.
+    const taggingCompanions = companionList.filter((companion) => companion.tags);
+    const promptTagTerms =
+      promptActive && taggingCompanions.length ? parseTagQuery(filters.promptQuery) : null;
+    const companionTagSearchFor = (video) => {
+      const tags = [];
+      for (const companion of taggingCompanions) {
+        const found = companion.entries?.get(video.instanceId)?.tags;
+        if (found) tags.push(...found);
+      }
+      return companionTagsSearch(tags, promptTagTerms);
+    };
     const workflowActive = workflowFilterQuery(filters) !== null && workflowMatches instanceof Set;
     const frameRateActive =
       sanitizeFrameRate(filters.minFrameRate) !== null ||
@@ -254,8 +273,12 @@ export function useFilterState({
         return false;
       }
 
-      if (promptActive && !(video.promptKey && promptMatches.has(video.promptKey))) {
-        return false;
+      // Prompt words also find a companion's tags for the clip; a word to
+      // rule out that a tag holds rules the clip out.
+      if (promptActive) {
+        const inPrompt = Boolean(video.promptKey && promptMatches.has(video.promptKey));
+        const tagSearch = promptTagTerms ? companionTagSearchFor(video) : null;
+        if (tagSearch?.ruledOut || (!inPrompt && !tagSearch?.found)) return false;
       }
 
       // A clip whose timing or workflow has not been read cannot be shown to
@@ -294,7 +317,8 @@ export function useFilterState({
         const verdict = companionFilterVerdict(
           (id) => companionById.get(id)?.entries?.get(video.instanceId),
           companionFilters,
-          companionHideSent
+          companionHideSent,
+          companionTags
         );
         if (!verdict.pass) {
           // A missing clip is never asked about, so it is not waiting.

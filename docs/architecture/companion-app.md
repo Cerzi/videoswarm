@@ -156,6 +156,14 @@ Request: `{"paths": ["/abs/path.mp4", ...]}`, at most 500 paths. Response:
   `done` or `stopped`. `why` (300 characters at most) is shown in tooltips.
   The companion's own states stay its own: Video Swarm reads only `phase`.
 - `kind` is optional and informational (`^[a-z][a-z0-9_/-]{0,31}$`).
+- `tags` (optional, added 2026-10-22): words the companion keeps about the
+  clip, such as the characters a render was cast with; up to 64 strings of
+  64 characters, each once, absent when there are none. They are named by
+  the description's top-level `"tags": {"label": "Characters", "hint":
+  "<one line>"}` (32 and 200 characters), shown verbatim; Video Swarm never
+  interprets them. They are the owner's library words: kept in memory for
+  the session like every answer, never written to the profile database and
+  never logged.
 - Paths not asked for, stages for undescribed actions and stages without a
   known phase are ignored.
 
@@ -309,6 +317,19 @@ companion authors must be told before it ships.
   would be added and leaves the rest; the toast ("Added 3 clips to Demo")
   offers Undo. *Process review results* leaves these actions out: they need
   a target picked.
+- **Tags** (2026-10-22). For an app that declares `tags`: the card chip's
+  tooltip adds "<label>: a, b"; Details (docked, floating and fullscreen)
+  lists the selection's tags under the label and the app's name, with
+  counts for several clips; Filters › the app's row has "<label>", a
+  type-ahead over the tags it has answered with this session (a name not
+  seen yet can be typed too), matching any or all of the chosen tags. That
+  filter needs an answer like a phase filter, is keyed per app
+  (`companionTags: {"c1": {"tags", "mode"}}`), counts in the filter badge
+  and is saved with smart views. *Prompt* words also search these tags: a
+  clip shows when its prompt matches or its tags hold every word, and a
+  `-word` its tags hold rules it out. A saved view stores the tag names
+  chosen to filter by, as it stores any filter; the answers themselves are
+  never stored.
 - **Undo** (2026-10-20). After a one-click send or an add, an action with
   `withdraw` gets *Undo* in its toast (8 s), which takes back exactly the
   clips that were sent, from the same target, and looks them up again.

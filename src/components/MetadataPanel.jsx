@@ -80,6 +80,7 @@ const MetadataPanel = forwardRef((
     generationExpanded,
     onGenerationExpandedChange,
     generationVersions = null,
+    companionTags = null,
     focusToken,
     onFocusSelection,
     onTransferSelection,
@@ -748,6 +749,7 @@ const MetadataPanel = forwardRef((
             generationExpanded={generationExpanded}
             onGenerationExpandedChange={onGenerationExpandedChange}
             generationVersions={generationVersions}
+            companionTags={companionTags}
             onAddTag={onAddTag}
             onRemoveTag={onRemoveTag}
             onApplyTagToSelection={onApplyTagToSelection}

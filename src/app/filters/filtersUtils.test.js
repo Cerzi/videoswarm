@@ -28,6 +28,7 @@ describe("filtersUtils", () => {
       versionFilter: "any",
       companionFilters: {},
       companionHideSent: [],
+      companionTags: {},
       promptQuery: "",
       mightBe: "",
       minFrameRate: null,
