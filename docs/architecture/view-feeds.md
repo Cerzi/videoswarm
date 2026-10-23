@@ -42,7 +42,7 @@ Status: **Proposed**
   default and only available while the API is on. Its note says what it
   allows: "Apps you give the token to can list your saved views and the
   files each one matches."
-- With it off, the feed endpoints answer 403 `FEEDS_OFF`, and `describe`
+- With it off, the feed endpoints answer 403 `LOCAL_API_FEEDS_OFF`, and `describe`
   says `feeds: false`, so a caller can tell the user where to turn it on.
 - A saved view can be left out: each view gets **Share with apps** (on by
   default once the switch is on) in its menu. A view not shared is neither
@@ -55,26 +55,28 @@ Status: **Proposed**
 ### `POST /api/v1/views`
 
 `{}` → `{ "views": [{ "id": 12, "name": "Dancing 3★+", "updatedAt": …,
-"revision": "…" }], "profile", "revision" }`: every shared view. `revision`
-(per view) changes when the view's definition changes.
+"revision": "…" }], "profile": "p-…", "revision": 1234 }`: every shared
+view of the open profile. A view's `revision` changes when its definition
+or name changes.
 
 ### `POST /api/v1/views/clips`
 
 ```json
-{ "view": 12, "unless": "f3a9…" }
+{ "view": 12, "profile": "p-…", "unless": "f3a9…", "after": null, "limit": 5000 }
 ```
 
 →
 
 ```json
 {
-  "view": 12,
+  "view": { "id": 12, "name": "Dancing 3★+", "revision": "…" },
   "etag": "f3a9…",
   "unchanged": false,
   "clips": [
     {
       "path": "/abs/clip.mp4",
       "contentId": "v2-…",
+      "available": true,
       "rating": 4,
       "review": "pick",
       "tags": [{ "name": "bellydance", "path": ["dance", "bellydance"] }],
@@ -83,28 +85,57 @@ Status: **Proposed**
       "width": 1280, "height": 720, "durationMs": 5000
     }
   ],
-  "truncated": false,
+  "total": 8231,
+  "next": "c-…",
   "ignored": [],
   "profile": "p-…",
   "revision": 1234
 }
 ```
 
+- **The whole set, in pages.** No cap on the set: every matching clip is
+  returned, each content once (the copy seen most recently), in the
+  view's sort order, `limit` per page (default and most 5,000). `next` is
+  a cursor for the following page, null on the last. `total` is the size of
+  the whole set. All pages of one answer belong to one snapshot named by
+  `etag`; if the set changes between pages, the next page answers 409
+  `LOCAL_API_FEED_CHANGED` and the caller starts again from the first
+  page. A caller never sees part of a set as the whole of it.
+- **Unchanged.** A caller that sends its last `etag` as `unless` (on the
+  first page) gets `{ "unchanged": true }` and no clips when nothing moved
+  in or out and no returned field changed.
+- **Profile.** `profile` is on every response. A caller that sends the
+  `profile` it followed the view under gets 409
+  `LOCAL_API_PROFILE_CHANGED` if Video Swarm has since switched profile,
+  so a view id is never read under another profile; it then drops its
+  `etag` and decides again.
 - `path` is absolute and native to this computer, as the catalog holds it,
   so a caller can play the file in place without copying it.
-- `tags` carry each tag's name and its place in the tag tree (`path`), so a
-  caller can use them as words of its own (a follower uses them to steer
-  which clips it picks).
-- The whole matching set, each content once (the copy seen most
-  recently), in the view's sort order. `etag` is a hash of the answer; a
-  caller that sends it back as `unless` gets `{ "unchanged": true }` and
-  no clips when nothing moved in or out or changed.
-- At most 50,000 clips (`truncated` says more matched).
-- `ignored` names parts of the view that cannot be applied outside the
-  window (Section 3), so the caller can say "this view also filters on X,
+- `available` is false for a clip whose library folder cannot be opened
+  now (an unplugged drive, an unreachable share). Such clips stay in the
+  set, so a drive coming and going does not churn a project; a caller
+  skips them until they are available again.
+- `tags` have the same shape as `/clips`: each tag's name and its place in
+  the tag tree (`path`), parents first.
+- `view` repeats the view's id, name and revision, so a caller can label
+  what it follows without a second call.
+- `ignored` lists **parts of the view's definition** that cannot be applied
+  outside the window (Section 3), such as `"companionFilters"` or
+  `"mightBe"`; it never holds clips. The answer is the view as if those
+  parts were off, and the caller can say "this view also filters on X,
   which apps can't see".
-- Unknown or unshared view: 404 `VIEW_NOT_FOUND`. A profile switch shows in
-  `profile`, as everywhere in the API.
+
+### Errors
+
+| Situation | Answer |
+|-----------|--------|
+| Video Swarm closed, or the API switched off | Nothing listens on the port (connection refused). `local-api.json` says `"enabled": false` when it is switched off. |
+| Wrong or missing token | 401 `LOCAL_API_UNAUTHORIZED` |
+| *Let apps follow saved views* off | 403 `LOCAL_API_FEEDS_OFF` |
+| The view exists but is not shared | 403 `LOCAL_API_VIEW_NOT_SHARED` |
+| No such view in this profile (deleted) | 404 `LOCAL_API_VIEW_NOT_FOUND` |
+| Profile switched since `profile` | 409 `LOCAL_API_PROFILE_CHANGED` |
+| Set changed between pages | 409 `LOCAL_API_FEED_CHANGED` |
 
 Polling: a follower asks `views/clips` with its `etag` every 30 s, or when
 `/changes` reports a change or `/views` a new view revision.
@@ -161,8 +192,9 @@ Not built here; written down so both sides agree.
 - On open, and every 30 s while open, it asks `views/clips` with its last
   `etag`; added clips join the project's library (and are analysed in the
   background), removed ones leave it.
-- If Video Swarm is closed, the switch is off or the view is gone, the
-  project keeps its last set and says why.
+- If Video Swarm is closed, the API or the feed switch is off, or the
+  view is not shared, the project keeps its last set and says why. If the
+  view is gone (404), it keeps its last set and asks for another view.
 - A clip that leaves the view while in use is not cut mid-play; it is
   simply not chosen again (a live set re-plans without it).
 - A changed `contentId` at a known path means the file's content changed:
@@ -171,8 +203,11 @@ Not built here; written down so both sides agree.
 
 ## Acceptance
 
-- With the switch off, `views` and `views/clips` answer 403; on, a shared
-  view lists and an unshared one does not.
+- With the switch off, `views` and `views/clips` answer 403
+  `LOCAL_API_FEEDS_OFF`; on, a shared view lists and an unshared one does
+  not; each error case in Section 2 answers its own code.
+- A set larger than one page comes back whole across pages, and a change
+  between pages answers `LOCAL_API_FEED_CHANGED`.
 - A view "rating ≥ 4" answers exactly the clips the grid shows for it in a
   library search; rating a clip 5 adds it to the next answer, lowering it to
   3 removes it, and an unchanged poll answers `unchanged`.
