@@ -112,6 +112,9 @@ export default function TopBar({
   // review
   reviewModeEnabled = true,
   onReviewModeToggle,
+  // rating arena
+  arenaOpen = false,
+  onArenaToggle,
   // view menu
   showFilenames = true,
   onFilenamesToggle,
@@ -434,6 +437,13 @@ export default function TopBar({
         </label>
       ) : null}
 
+      {onArenaToggle ? (
+        <button type="button" className={`toggle-button topbar__arena ${arenaOpen ? "active" : ""}`}
+          onClick={() => onArenaToggle()} aria-pressed={arenaOpen} disabled={busy && !arenaOpen}
+          title={arenaOpen ? "Leave the arena (Esc)" : "Arena: rate clips a few at a time, side by side, from across the library"}>
+          Arena
+        </button>
+      ) : null}
       <button type="button" className={`toggle-button topbar__review ${reviewModeEnabled ? "active" : ""}`}
         onClick={() => onReviewModeToggle?.()} aria-pressed={reviewModeEnabled} disabled={busy}
         title={reviewModeEnabled ? "Turn off review: hide the review bar and review badges" : "Turn on review: accept, reject and track progress"}>

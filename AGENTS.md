@@ -91,6 +91,7 @@ Expected current test behavior: the suite passes, but some tests print known Rea
   - `background-activity.js`: what background work is running (kinds and counts only) for the status line's note, and the pause that holds proxies, prompt reading and stack fingerprints; producers report into it and the shared `child-process-runner.js` holds queued work while paused (see `docs/architecture/background-activity.md`). New long-running background work should report here and honour the pause.
   - `local-api/`: the opt-in, loopback-only, token-guarded local read API other apps on this computer use to read clips' tags, ratings and review states and a change log (see `docs/architecture/local-read-api.md`). It only reads; never return prompt text or a path the caller did not send.
 - Review passes (frozen, resumable review lists) live in `main/database.js` (`review_passes`) and `src/App.jsx`; see `docs/architecture/review-passes.md`.
+- The rating arena (rounds of clips rated side by side) is dealt in `main/rating-arena.js`, stored in `arena_checks`, and shown by `src/app/arena/` and `src/components/ArenaBar.jsx`; see `docs/architecture/rating-arena.md`.
 - `src/App.jsx`: top-level renderer orchestration and state wiring.
 - `src/components/`: React UI components. `VideoCard/` contains the most sensitive playback/DOM handling.
 - `src/hooks/video-collection/`: progressive rendering, playback orchestration, and resource/memory limits.

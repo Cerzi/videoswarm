@@ -513,6 +513,55 @@ const STACK_SHORTCUTS = Object.freeze([
   }),
 ]);
 
+// The rating arena's own keys (docs/architecture/rating-arena.md, Section 4).
+// Ratings, review keys and Z work there as in the grid.
+export const ARENA_TAG_KEYS = Object.freeze(["q", "w", "e"]);
+export const ARENA_TYPE_TAG_KEYS = Object.freeze(["t"]);
+
+const ARENA_SHORTCUTS = Object.freeze([
+  freezeShortcut({
+    id: "arena-rate",
+    keys: ["1–5"],
+    label: "Rate the selected clip",
+    detail: "Rating New in a Place round deals the next round after a short beat. 0 clears a rating.",
+  }),
+  freezeShortcut({
+    id: "arena-select",
+    keys: ["←", "→"],
+    keyJoiner: "or",
+    label: "Select the previous or next clip of the round",
+  }),
+  freezeShortcut({
+    id: "arena-next",
+    keys: ["Enter"],
+    label: "Next round",
+    detail: "Finishes a tier check or border as it stands; in Place, skips New and leaves it unrated.",
+  }),
+  freezeShortcut({
+    id: "arena-undo",
+    keys: ["Z"],
+    label: "Undo the last change",
+    detail: "If it ended the round before, that round comes back. Works with review mode off too.",
+  }),
+  freezeShortcut({
+    id: "arena-suggested-tag",
+    keys: ARENA_TAG_KEYS.map((key) => key.toUpperCase()),
+    keyJoiner: "or",
+    label: "Apply the first, second or third suggested tag to New",
+  }),
+  freezeShortcut({
+    id: "arena-type-tag",
+    keys: ARENA_TYPE_TAG_KEYS.map((key) => key.toUpperCase()),
+    label: "Type a tag for the selected clip",
+  }),
+  freezeShortcut({
+    id: "arena-close",
+    keys: ["Esc"],
+    label: "Leave the arena",
+    detail: "A toast sums up the session. Backspace and Delete never trash a clip in the arena.",
+  }),
+]);
+
 export const HOTKEY_SECTIONS = Object.freeze([
   Object.freeze({
     id: "application",
@@ -543,6 +592,12 @@ export const HOTKEY_SECTIONS = Object.freeze([
     title: "Prompt stacks",
     description: "Every run of one prompt as one card.",
     shortcuts: STACK_SHORTCUTS,
+  }),
+  Object.freeze({
+    id: "arena",
+    title: "Rating arena",
+    description: "Rounds of clips rated side by side (the Arena button).",
+    shortcuts: ARENA_SHORTCUTS,
   }),
   Object.freeze({
     id: "view",

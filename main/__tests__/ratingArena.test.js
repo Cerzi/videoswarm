@@ -284,6 +284,18 @@ describe("RatingArenaService", () => {
     expect(next.round.clips[0].role).toBe("new");
   });
 
+  it("drops a prepared first round once the round shown rated enough to place against", async () => {
+    const store = fakeStore([["a", null], ["b", null], ["c", null], ["d", null], ["e", null], ["f", null]]);
+    const arena = new RatingArenaService({ random: seeded(3) });
+    const { session } = arena.start({ store });
+    const options = { kind: "mixed", match: "any" };
+    const first = await arena.round({ store, session, options });
+    expect(first.round.kind).toBe("first");
+    first.round.clips.forEach((clip, index) => store.judgements.ratings.set(clip.fingerprint, [1, 3, 5][index]));
+    const next = await arena.round({ store, session, options });
+    expect(["place", "tier", "border"]).toContain(next.round.kind);
+  });
+
   it("limits the pool to the clips shown, and forgets sessions on a profile switch", async () => {
     const store = fakeStore([["a", null], ["b", 3], ["c", 5]]);
     const arena = new RatingArenaService();

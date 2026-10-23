@@ -476,19 +476,23 @@ class RatingArenaService {
     const session = this._session(sessionId);
     const key = JSON.stringify([options.kind, options.border, options.match]);
     const judgements = store.getArenaJudgements();
+    const standing = partitionPool(session.pool, judgements, new Set()).all;
     let dealt = null;
     const prepared = session.prepared;
     session.prepared = null;
     if (prepared?.key === key) {
       const round = await prepared.promise.catch(() => null);
-      if (round?.kind && roundStillFits(round, judgements, session.poolSet)) dealt = round;
+      // A first round prepared before anything was rated gives way to Place
+      // once the round shown has rated enough clips to compare with.
+      const outgrown = round?.kind === "first" && ENOUGH.place(standing);
+      if (round?.kind && !outgrown && roundStillFits(round, judgements, session.poolSet)) dealt = round;
     }
     if (!dealt) {
       dealt = await this._deal(session, store, options, judgements, this._recentSet(session), assertActive);
     }
     assertActive?.();
     this._session(sessionId);
-    const counts = countsOf(partitionPool(session.pool, judgements, new Set()).all);
+    const counts = countsOf(standing);
     if (!dealt?.kind) return { round: null, counts, reason: dealt?.reason || "mixed" };
 
     const round = { id: session.nextRoundId, kind: dealt.kind, clips: dealt.clips, checkIds: [] };

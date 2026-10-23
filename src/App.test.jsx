@@ -3354,6 +3354,131 @@ describe("App hook composition", () => {
     }
   });
 
+  test("deals arena rounds side by side, moves on once New is rated, and sums up on leaving", async () => {
+    // The collection holds New under another id; the references are guests.
+    const own = { id: "/outputs/new.mp4", name: "new.mp4", dirname: "", instanceId: 30, fingerprint: "fp-new" };
+    const videos = [own, { id: "/outputs/other.mp4", name: "other.mp4", dirname: "", instanceId: 31, fingerprint: "fp-other" }];
+    let held = videos;
+    const setHeld = (update) => {
+      held = typeof update === "function" ? update(held) : update;
+    };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: held,
+      setVideos: setHeld,
+      activeRootPath: "/outputs",
+      libraryRoot: { rootPath: "/outputs", name: "outputs", pinned: true },
+      directorySummaries: [{ relativePath: "", name: "outputs" }],
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: videos }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    const record = (instanceId, fingerprint, rating = null) => ({
+      id: `/a1/${fingerprint}.mp4`,
+      instanceId,
+      name: `${fingerprint}.mp4`,
+      fingerprint,
+      rootPath: "/a1",
+      relativePath: `${fingerprint}.mp4`,
+      rating,
+      isElectronFile: true,
+    });
+    const rounds = [
+      {
+        success: true,
+        round: {
+          id: 1,
+          kind: "place",
+          // Dealt out of order: the view puts New first, then low to high.
+          clips: [
+            { instanceId: 15, role: "reference", rating: 5 },
+            { instanceId: 7, role: "new", rating: null },
+            { instanceId: 11, role: "reference", rating: 1 },
+          ],
+        },
+        records: [record(15, "fp-five", 5), record(7, "fp-new"), record(11, "fp-one", 1)],
+        counts: { unrated: 5, rated: 2, byRating: { 1: 1, 5: 1 }, total: 7 },
+      },
+      {
+        success: true,
+        round: { id: 2, kind: "tier", clips: [{ instanceId: 11, role: "check", rating: 1 }, { instanceId: 12, role: "check", rating: 1 }] },
+        records: [record(11, "fp-one", 1), record(12, "fp-one-b", 1)],
+        counts: { unrated: 4, rated: 3, byRating: { 1: 1, 3: 1, 5: 1 }, total: 7 },
+      },
+      { success: true, round: null, reason: "mixed", counts: { unrated: 4, rated: 3, byRating: {}, total: 7 } },
+    ];
+    const arenaApi = {
+      start: vi.fn(async () => ({ success: true, session: "s1", counts: rounds[0].counts })),
+      round: vi.fn(async () => rounds.shift()),
+      finish: vi.fn(async ({ round }) => ({
+        success: true,
+        outcomes: round === 1 ? { placed: 1 } : { held: 2 },
+      })),
+      end: vi.fn(async () => ({ success: true })),
+    };
+    window.electronAPI = { saveSettingsPartial: vi.fn(), arena: arenaApi };
+    const gridIds = () =>
+      useMasonryLayoutMock.mock.calls.at(-1)?.[0].filteredVideos.map((video) => video.id);
+    const cardProps = (id) =>
+      videoCardSpy.mock.calls.map(([props]) => props).filter((props) => props.video.id === id).at(-1);
+    const setVideos = () => useMetadataActionsMock.mock.calls.at(-1)[0].setVideos;
+
+    try {
+      vi.resetModules();
+      const { default: App } = await import("./App.jsx");
+      render(<App />);
+      await act(async () => topBarSpy.mock.calls.at(-1)[0].onArenaToggle());
+      expect(arenaApi.start).toHaveBeenCalledWith({ scope: "library" });
+      expect(arenaApi.round).toHaveBeenCalledWith({ session: "s1", kind: "mixed", border: null, match: "similar" });
+      await waitFor(() => expect(gridIds()).toEqual([own.id, "/a1/fp-one.mp4", "/a1/fp-five.mp4"]));
+      const layout = useMasonryLayoutMock.mock.calls.at(-1)[0];
+      expect(layout).toMatchObject({ comparison: true, keepOrder: true });
+      expect(cardProps(own.id).versionLabel).toBe("New");
+      expect(cardProps("/a1/fp-five.mp4").versionLabel).toBe("5★");
+      expect(selectionMock.selectExactly).toHaveBeenLastCalledWith(own.id);
+      const bar = screen.getByRole("toolbar", { name: "Rating arena" });
+      expect(bar).toHaveTextContent("Round 1 · 5 unrated left");
+      expect(bar).toHaveTextContent("Where does New go?");
+      expect(within(bar).getByRole("button", { name: /Skip/ })).toBeEnabled();
+
+      // Backspace never trashes in the arena.
+      const backspace = new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true });
+      document.body.dispatchEvent(backspace);
+      expect(backspace.defaultPrevented).toBe(true);
+
+      // Rating New (as a metadata update does) ends the round after a beat.
+      act(() =>
+        setVideos()((list) =>
+          list.map((video) => (video.fingerprint === "fp-new" ? { ...video, rating: 3 } : video))
+        )
+      );
+      expect(cardProps(own.id).versionLabel).toBe("New → 3★");
+      await waitFor(() => expect(arenaApi.finish).toHaveBeenCalledWith({ session: "s1", round: 1 }));
+      await waitFor(() => expect(gridIds()).toEqual(["/a1/fp-one.mp4", "/a1/fp-one-b.mp4"]));
+      expect(screen.getByRole("toolbar", { name: "Rating arena" })).toHaveTextContent("Tier check");
+      expect(screen.getByRole("toolbar", { name: "Rating arena" })).toHaveTextContent("1 placed");
+
+      // Enter finishes a tier check as it stands.
+      fireEvent.keyDown(document.body, { key: "Enter" });
+      await waitFor(() => expect(arenaApi.finish).toHaveBeenCalledWith({ session: "s1", round: 2 }));
+      await waitFor(() =>
+        expect(screen.getByRole("toolbar", { name: "Rating arena" })).toHaveTextContent("Nothing to rate here")
+      );
+
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      await waitFor(() => expect(arenaApi.end).toHaveBeenCalledWith("s1"));
+      expect(screen.queryByRole("toolbar", { name: "Rating arena" })).toBeNull();
+      await waitFor(() => expect(document.body).toHaveTextContent("Arena: 2 rounds · 1 placed · 2 held"));
+      expect(gridIds()).toEqual(videos.map((video) => video.id));
+    } finally {
+      useMasonryLayoutMock.mockImplementation(() => masonryReturn);
+    }
+  });
+
   test("heads a stack with its most typical clip and shows the most different as stills", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const bits = (count) => (count === 0 ? 0n : (1n << BigInt(count)) - 1n).toString(16).padStart(16, "0");

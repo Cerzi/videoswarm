@@ -1,6 +1,7 @@
 # Rating Arena
 
-Status: **Unimplemented** (designed 2026-10-23).
+Status: **Implemented** (designed and built 2026-10-23); Sections 8 and 9
+are deferred.
 
 ## Summary
 
@@ -33,7 +34,7 @@ Decided with the user on 2026-10-23:
 
 ## 1. Rounds
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 A round is two to four clips shown together with one question.
 
@@ -57,7 +58,7 @@ A round is two to four clips shown together with one question.
 
 ## 2. Choosing clips
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 - **Pool.** *Library*: every present clip in roots that can be opened,
   each content once (the copy seen most recently), except rejected ones,
@@ -82,11 +83,13 @@ Status: **Unimplemented**
   1 each (2 in a border), halving every 60 days. One clip in five is
   picked ignoring holds altogether, so nothing settles for good.
 - **Ready at once.** Main prepares the next round while the current one is
-  shown.
+  shown, and hands it out only if it still fits: its clips unrejected, *New*
+  still unrated, the others at the ratings they were dealt with, and a
+  first round only while there is still too little rated for Place.
 
 ## 3. The view
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 Built like the versions view (`generation-versions.md`, Section 8): its own
 view over the grid, with the grid's cards, playback, selection, Details and
@@ -110,11 +113,16 @@ menus.
   (placed, moved, held, tagged) and a streak of rounds finished without
   skipping, *Play together from the start*, and *Back*.
 - **Leaving:** `Esc` or *Back* returns to the grid, and a toast sums up the
-  session. Another folder, scope or collection closes the arena too.
+  session. Another folder, scope or collection closes the arena too. A
+  round changed and left, or brought back by Undo, is recorded on leaving;
+  an untouched one is not.
+- **Entry:** the *Arena* button in the top bar, beside *Review*. Inside the
+  arena the versions pill, stacks (`G`), folder keys (`[` `]`) and review
+  passes (`Shift+R`, *Review these*) are off.
 
 ## 4. Keys
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 Listed in `src/hotkeys/shortcutCatalog.js` under the arena.
 
@@ -124,7 +132,7 @@ Listed in `src/hotkeys/shortcutCatalog.js` under the arena.
 | `0` | Clear the selected clip's rating. |
 | `←` `→` | Select the previous or next clip of the round. |
 | `Enter` | Next round. In Place this skips *New*, which stays unrated. |
-| `Z` | Undo the last change; if it ended the previous round, that round comes back. |
+| `Z` | Undo the last change, with review mode on or off; if it ended the previous round, that round comes back as it was dealt. |
 | `Q` `W` `E` | Apply the first, second or third suggested tag to *New*. |
 | `T` | Type a tag for the selected clip. |
 | `A` `S` `X` `U` | Review mode only: Accept, Reviewed, Reject, Unreviewed. |
@@ -135,7 +143,7 @@ neither does that in the arena (`Backspace` does nothing there).
 
 ## 5. Review decisions and tags
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 - **Decisions.** With review mode on, `A`, `S`, `X` and `U` set the
   selected clip's review state, and its card shows it as in the grid. In
@@ -151,7 +159,7 @@ Status: **Unimplemented**
 
 ## 6. Storage and privacy
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 - **`arena_checks`** in the profile database: one row per clip per round
   finished (content fingerprint, time, round kind, outcome — placed, held,
@@ -169,15 +177,20 @@ Status: **Unimplemented**
 
 ## 7. IPC
 
-Status: **Unimplemented**
+Status: **Implemented**
 
 - `arena:start` `{ scope: "library" | "clips", instanceIds? }` builds the
   pool and returns `{ session, counts }` (unrated, and clips per rating).
 - `arena:round` `{ session, kind, border?, match }` returns
-  `{ kind, records, roles, counts }`: playable records in a tag view's
-  shape, and each record's part (*new*, *reference*, *check*). Roots are
-  granted as a versions view grants them.
-- `arena:finish` `{ session, round, outcomes }` records the round's rows.
+  `{ round: { id, kind, clips: [{ instanceId, role, rating }] }, records,
+  counts }`: each clip's part (*new*, *reference*, *check*) and the rating
+  it was dealt with, by catalog row, and playable records in a tag view's
+  shape; `round` is null with a `reason` when the pool has nothing for the
+  kind. Roots are granted as a versions view grants them.
+- `arena:finish` `{ session, round }` records the round's rows from the
+  ratings and review states as they stand in the database, replacing rows
+  written when the same round was finished before, and returns the
+  outcome counts. The renderer waits for its own review writes first.
 - `arena:end` `{ session }` lets the pool go.
 - Preload: `window.electronAPI.arena`.
 
@@ -214,6 +227,18 @@ ranking settles in a few dozen duels. The ranking would show as a sort,
   `X` does nothing.
 - Suggested tags apply with `Q`, `W` and `E`.
 - No prompt text reaches the renderer, storage or logs.
+
+## Where it lives
+
+- Main: `main/rating-arena.js` (dealing, sessions, outcomes),
+  `main/database.js` (`arena_checks`, pool and records), the `arena:*`
+  handlers in `main.js`, and `alikeScores` in `main/prompt-similarity.js`.
+- Renderer: `src/app/arena/arenaView.js` (pure: labels, order, keys,
+  counts), `src/app/arena/useRatingArena.js` (the session), the wiring in
+  `src/App.jsx`, and `src/components/ArenaBar.jsx`.
+- Tests: `main/__tests__/ratingArena*.test.js`, `src/app/arena/*.test.js`,
+  the arena test in `src/App.test.jsx`, and
+  `tests/electron/rating-arena.smoke.spec.cjs`.
 
 ## Implementation order
 

@@ -11,6 +11,21 @@ import VideoCard from "./components/VideoCard/VideoCard";
 import StackBar from "./components/StackBar";
 import VersionsBar from "./components/VersionsBar";
 import ReviewPassBar from "./components/ReviewPassBar";
+import ArenaBar from "./components/ArenaBar";
+import useRatingArena from "./app/arena/useRatingArena";
+import {
+  addArenaOutcomes,
+  arenaCardLabel,
+  arenaKeyCommand,
+  arenaRoundChanged,
+  arenaRoundDone,
+  arenaStreak,
+  arenaSummary,
+  buildArenaClips,
+  emptyArenaStats,
+  isTypingTarget,
+  stepArenaSelection,
+} from "./app/arena/arenaView";
 import {
   buildVersionMembers,
   versionCardLabel,
@@ -115,6 +130,7 @@ import { posterWidthFor, proxyIsSharpEnough } from "./utils/cardMediaSize";
 import {
   resetTurnedDownTags,
   turnDownLikelyTag,
+  useLikelyTags,
   useLikelyTagStatus,
 } from "./app/tags/likelyTags";
 import {
@@ -255,6 +271,10 @@ const expandFolderAncestors = (previous, relativePath) => {
 
 const NO_STRIP_IDS = Object.freeze([]);
 const NO_VERSION_GUESTS = Object.freeze([]);
+// The arena: the beat between rating New and the next round, and the most
+// clips "These clips" takes (main allows as many as a review pass).
+const ARENA_BEAT_MS = 400;
+const ARENA_MAX_SCOPE_CLIPS = 50_000;
 const NO_MENU_TARGETS = Object.freeze({});
 const NO_KNOWN_TAGS = Object.freeze({});
 // As many clips as a library view holds (main's REVIEW_PASS_MAX_CLIPS).
@@ -313,6 +333,14 @@ function App() {
   // clips under review, `{ id, name, source, definition, location, records,
   // positions: Map<fingerprint, position> }`, over whatever grid was open.
   const [reviewPass, setReviewPass] = useState(null);
+  // The rating arena (docs/architecture/rating-arena.md): rounds of clips
+  // rated side by side, dealt by main, over whatever grid was open. `notify`
+  // is defined further down, so it is reached through a ref.
+  const arenaNotifyRef = useRef(null);
+  const ratingArena = useRatingArena({
+    notify: (...args) => arenaNotifyRef.current?.(...args),
+  });
+  const arena = ratingArena.arena;
   // Opens it from anywhere: the card pill and the details panel.
   const handleOpenVersionsRef = useRef(null);
   const [randomSeed, setRandomSeed] = useState(null);
@@ -994,35 +1022,54 @@ function App() {
       reviewPass ? buildVersionMembers(reviewPass.records, { videos, originId: null }) : null,
     [reviewPass, videos]
   );
-  // Clips shown from outside the open collection: versions and a review
-  // pass's clips from folders that are not open.
+  // The arena's round: the collection's own clips where it holds them, guests
+  // from main for the rest, in the round's order.
+  const arenaClips = useMemo(
+    () => (arena ? buildArenaClips(arena.round, arena.records, videos) : null),
+    [arena, videos]
+  );
+  // Clips shown from outside the open collection: versions, a review pass's
+  // clips and the arena's from folders that are not open.
   const versionGuests = useMemo(() => {
-    const versions = versionViewClips?.guests || NO_VERSION_GUESTS;
-    const pass = reviewPassClips?.guests || NO_VERSION_GUESTS;
-    if (!pass.length) return versions;
-    return versions.length ? [...versions, ...pass] : pass;
-  }, [reviewPassClips, versionViewClips]);
+    const lists = [
+      versionViewClips?.guests,
+      reviewPassClips?.guests,
+      arenaClips?.guests,
+    ].filter((list) => list?.length);
+    if (lists.length === 0) return NO_VERSION_GUESTS;
+    return lists.length === 1 ? lists[0] : lists.flat();
+  }, [arenaClips, reviewPassClips, versionViewClips]);
   useEffect(() => setCompanionGuests(versionGuests), [versionGuests]);
   const versionLabelById = useMemo(() => {
     const labels = new Map();
+    if (arenaClips) {
+      arenaClips.members.forEach((video) => {
+        labels.set(video.id, arenaCardLabel(arenaClips.parts.get(video.id), video));
+      });
+      return labels;
+    }
     versionViewClips?.members.forEach((video, index) => {
       labels.set(video.id, versionCardLabel(index, video));
     });
     return labels;
-  }, [versionViewClips]);
+  }, [arenaClips, versionViewClips]);
   const gridVideos = useMemo(() => {
+    // The arena shows its round over everything else.
+    if (arenaClips) return arenaClips.members;
     if (versionViewClips) return versionViewClips.members;
     // A review pass shows its frozen list, whatever the filters say now.
     if (reviewPassClips) return reviewPassClips.members;
     if (openStack) return openStack.members;
     return collapsePromptStacks(scopedFilteredVideos, promptStacks);
-  }, [openStack, promptStacks, reviewPassClips, scopedFilteredVideos, versionViewClips]);
-  // Inside an open stack, among versions or in a pass, every clip selects on
-  // its own.
+  }, [arenaClips, openStack, promptStacks, reviewPassClips, scopedFilteredVideos, versionViewClips]);
+  // Inside an open stack, among versions, in a pass or the arena, every clip
+  // selects on its own.
   const stackSelectionUnits = useMemo(
     () =>
-      openStack || versionView || reviewPass ? null : createStackSelectionUnits(promptStacks),
-    [openStack, promptStacks, reviewPass, versionView]
+      openStack || versionView || reviewPass || arena
+        ? null
+        : createStackSelectionUnits(promptStacks),
+    [arena, openStack, promptStacks, reviewPass, versionView]
   );
   selectionUnitsRef.current = stackSelectionUnits;
   // A stack is never left partly selected, so an action on it can never
@@ -1333,9 +1380,9 @@ function App() {
     gridRef,
     scrollContainerElement,
     gridElement,
-    comparison: Boolean(versionView),
-    // A pass keeps the order it was frozen in.
-    keepOrder: Boolean(reviewPass),
+    comparison: Boolean(versionView || arena),
+    // A pass keeps the order it was frozen in; the arena, its round's.
+    keepOrder: Boolean(reviewPass || arena),
   });
   fullOrderedVideosRef.current = orderedVideos;
   revealScrollRef.current = scrollToId;
@@ -1506,7 +1553,7 @@ function App() {
       index: generationVersionIndex,
       resolveTarget: resolveVersionTarget,
       // The details panel's way into the versions view, unless it is open.
-      onOpenView: versionView
+      onOpenView: versionView || arena
         ? null
         : (videoId) => {
             void handleOpenVersionsRef.current?.(videoId);
@@ -1519,6 +1566,7 @@ function App() {
       },
     }),
     [
+      arena,
       generationVersionIndex,
       resolveVersionTarget,
       scrollToId,
@@ -1762,6 +1810,7 @@ function App() {
   const notify = useCallback((message, type = "info", options = undefined) => {
     showToast(message, type, options);
   }, []);
+  arenaNotifyRef.current = notify;
 
   // Undo after a send to a companion action that can take sends back: only
   // the rows that were sent, with the same target.
@@ -1988,8 +2037,9 @@ function App() {
           ? { ...previous, records: update(previous.records) }
           : previous
       );
+      ratingArena.updateRecords(update);
     },
-    [setVideos]
+    [ratingArena.updateRecords, setVideos]
   );
 
   const {
@@ -2132,11 +2182,18 @@ function App() {
       reviewSessions.saveNow,
     ]
   );
+  const reviewExtraVideos = useMemo(() => {
+    const versions = versionViewClips?.members || NO_VERSION_GUESTS;
+    const round = arenaClips?.members || NO_VERSION_GUESTS;
+    if (!round.length) return versions;
+    return versions.length ? [...versions, ...round] : round;
+  }, [arenaClips, versionViewClips]);
   const reviewWorkflow = useReviewWorkflow({
     // In a review pass, progress, targets and advancing are the pass's.
     scopeVideos: reviewPassClips ? reviewPassClips.members : reviewScopeVideos,
-    // Every version shown, even one outside the folder scope or the folder.
-    extraVideos: versionViewClips?.members || NO_VERSION_GUESTS,
+    // Every version or arena clip shown, even one outside the folder scope or
+    // the folder.
+    extraVideos: reviewExtraVideos,
     orderedVideoIds: orderForRange,
     selectedIds: selection.selected,
     selectExactly: selection.selectExactly,
@@ -2409,6 +2466,231 @@ function App() {
       }
     }
   }, []);
+
+  // ----- Rating arena ----------------------------------------------------
+  // See docs/architecture/rating-arena.md, Sections 3 to 5.
+  const arenaRound = arena?.round || null;
+  const arenaVideoForPart = useMemo(() => {
+    const byPart = new Map();
+    if (arenaClips) {
+      const byId = new Map(arenaClips.members.map((video) => [video.id, video]));
+      arenaClips.parts.forEach((part, id) => byPart.set(part, byId.get(id)));
+    }
+    return (part) => byPart.get(part);
+  }, [arenaClips]);
+  const arenaReady = arena?.status === "ready";
+  const arenaDone = arenaReady && arenaRoundDone(arenaRound, arenaVideoForPart);
+  const arenaChanged = arenaRoundChanged(arenaRound, arenaVideoForPart);
+  const arenaStats = useMemo(
+    () =>
+      (arena?.finished || []).reduce(
+        (stats, entry) => addArenaOutcomes(stats, entry.outcomes),
+        emptyArenaStats()
+      ),
+    [arena?.finished]
+  );
+  const arenaStreakCount = useMemo(() => arenaStreak(arena?.finished), [arena?.finished]);
+  // Suggested tags go to New: the selected clip when it is one of a first
+  // round's new clips, else the round's first.
+  const arenaTagTarget = useMemo(() => {
+    if (!arenaClips) return null;
+    const isNew = (video) => arenaClips.parts.get(video.id)?.role === "new";
+    const selectedId = selection.selected.size === 1 ? [...selection.selected][0] : null;
+    const selected = arenaClips.members.find((video) => video.id === selectedId);
+    if (selected && isNew(selected)) return selected;
+    return arenaClips.members.find(isNew) || null;
+  }, [arenaClips, selection.selected]);
+  const arenaTagTargets = useMemo(
+    () => (arenaTagTarget ? [arenaTagTarget] : NO_VERSION_GUESTS),
+    [arenaTagTarget]
+  );
+  const arenaLikelyTags = useLikelyTags(arenaTagTargets, { active: Boolean(arenaTagTarget) });
+  const arenaSuggestions = useMemo(() => arenaLikelyTags.slice(0, 3), [arenaLikelyTags]);
+  const [arenaTagBoxOpen, setArenaTagBoxOpen] = useState(false);
+  // The library's tags, most used first, offered as a tag is typed.
+  const arenaHasRound = Boolean(arenaRound);
+  const availableTagNames = useMemo(() => {
+    if (!arenaHasRound) return NO_VERSION_GUESTS;
+    return [...availableTags]
+      .sort((a, b) => (b?.usageCount || 0) - (a?.usageCount || 0))
+      .map((tag) => (typeof tag === "string" ? tag : tag?.name))
+      .filter(Boolean);
+  }, [arenaHasRound, availableTags]);
+  // "These N clips": what the grid behind shows.
+  const arenaScopeInstanceIds = useMemo(() => {
+    if (!arena) return [];
+    const ids = [];
+    for (const video of scopedFilteredVideos) {
+      const id = Number(video?.instanceId);
+      if (Number.isSafeInteger(id) && id > 0) ids.push(id);
+      if (ids.length >= ARENA_MAX_SCOPE_CLIPS) break;
+    }
+    return ids;
+  }, [arena, scopedFilteredVideos]);
+
+  // Writes of ratings and review states land in main before a round is
+  // finished, since main reads them back to record how it ended.
+  const reviewBusyRef = useRef(false);
+  reviewBusyRef.current = reviewWorkflow.isBusy;
+  const waitForReviewWrites = useCallback(async () => {
+    for (let tries = 0; tries < 80 && reviewBusyRef.current; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }, []);
+  // The round the last change ended by itself, which Undo brings back.
+  const arenaAutoEndedRef = useRef(null);
+  const handleArenaNext = useCallback(
+    async ({ auto = false } = {}) => {
+      const roundId = arenaRound?.id ?? null;
+      setArenaTagBoxOpen(false);
+      await waitForReviewWrites();
+      arenaAutoEndedRef.current = auto ? roundId : null;
+      await ratingArena.next({ finish: true });
+    },
+    [arenaRound?.id, ratingArena.next, waitForReviewWrites]
+  );
+
+  // Rating or rejecting New ends Place after a short beat, so the change is
+  // seen. Armed only once the round has been seen undecided, so a round
+  // brought back by Undo waits for the undo to land.
+  const arenaArmedRef = useRef(null);
+  useEffect(() => {
+    const id = arenaRound?.id ?? null;
+    if (id == null || !arenaReady) return undefined;
+    if (!arenaDone) {
+      arenaArmedRef.current = id;
+      return undefined;
+    }
+    if (arenaArmedRef.current !== id) return undefined;
+    const timer = setTimeout(() => {
+      arenaArmedRef.current = null;
+      void handleArenaNext({ auto: true });
+    }, ARENA_BEAT_MS);
+    return () => clearTimeout(timer);
+  }, [arenaDone, arenaReady, arenaRound?.id, handleArenaNext]);
+
+  // Each round opens with its first clip selected, at the top.
+  const arenaSelectedRoundRef = useRef(null);
+  useEffect(() => {
+    const id = arenaRound?.id ?? null;
+    if (id == null || arenaSelectedRoundRef.current === id) return;
+    const first = arenaClips?.members[0];
+    if (!first) return;
+    arenaSelectedRoundRef.current = id;
+    selection.selectExactly(first.id);
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [arenaClips, arenaRound?.id, selection.selectExactly]);
+
+  const handleOpenArena = useCallback(() => {
+    if (arena) return;
+    // The arena opens over the grid; a versions view behind it closes.
+    versionRequestRef.current += 1;
+    setVersionView(null);
+    selectionUnitsRef.current = null;
+    arenaSelectedRoundRef.current = null;
+    arenaAutoEndedRef.current = null;
+    void ratingArena.open({ scope: "library" });
+  }, [arena, ratingArena.open]);
+
+  const handleCloseArena = useCallback(async () => {
+    if (!arena) return;
+    const tagged = ratingArena.tagged;
+    setArenaTagBoxOpen(false);
+    selection.clear();
+    // A round changed and left, or brought back by Undo, still counts.
+    const stats = await ratingArena.close({ finishCurrent: arena.restored || arenaChanged });
+    const summary = arenaSummary(stats, tagged);
+    if (summary) notify(summary, "success");
+  }, [arena, arenaChanged, notify, ratingArena.close, ratingArena.tagged, selection.clear]);
+
+  const handleArenaOptions = useCallback(
+    (options) => {
+      // An untouched round is dropped for one of the new kind; a changed one
+      // is finished first.
+      arenaAutoEndedRef.current = null;
+      void ratingArena.setOptions(options, { finishCurrent: arenaChanged });
+    },
+    [arenaChanged, ratingArena.setOptions]
+  );
+  const handleArenaScope = useCallback(
+    (scope) => {
+      if (!arena || scope === arena.scope) return;
+      if (scope === "clips" && arenaScopeInstanceIds.length === 0) return;
+      arenaSelectedRoundRef.current = null;
+      arenaAutoEndedRef.current = null;
+      void ratingArena.open({
+        scope,
+        instanceIds: scope === "clips" ? arenaScopeInstanceIds : null,
+      });
+    },
+    [arena, arenaScopeInstanceIds, ratingArena.open]
+  );
+
+  // Z in the arena: if the last change ended the round before, that round
+  // comes back, then the change is undone as anywhere else.
+  const handleArenaUndo = useCallback(() => {
+    if (
+      arena?.previous &&
+      !arenaChanged &&
+      arenaAutoEndedRef.current != null &&
+      arenaAutoEndedRef.current === arena.previous.round.id &&
+      reviewWorkflow.canUndo
+    ) {
+      arenaAutoEndedRef.current = null;
+      arenaSelectedRoundRef.current = null;
+      ratingArena.restorePrevious();
+    }
+    return reviewWorkflow.undo();
+  }, [arena, arenaChanged, ratingArena.restorePrevious, reviewWorkflow.canUndo, reviewWorkflow.undo]);
+
+  const handleArenaTag = useCallback(
+    async (tagName, video) => {
+      const name = String(tagName || "").trim();
+      if (!name || !video?.fingerprint) return;
+      const result = await handleAddTags([name], [video.fingerprint]);
+      if (result?.success !== false) ratingArena.noteTagged();
+    },
+    [handleAddTags, ratingArena.noteTagged]
+  );
+  const handleArenaSuggestion = useCallback(
+    (index) => {
+      const suggestion = arenaSuggestions[index];
+      if (suggestion && arenaTagTarget) void handleArenaTag(suggestion.tag, arenaTagTarget);
+    },
+    [arenaSuggestions, arenaTagTarget, handleArenaTag]
+  );
+  const handleArenaDismissSuggestion = useCallback(
+    (index) => {
+      const suggestion = arenaSuggestions[index];
+      if (!suggestion || !arenaTagTarget?.fingerprint) return;
+      void turnDownLikelyTag([arenaTagTarget.fingerprint], suggestion.tag);
+    },
+    [arenaSuggestions, arenaTagTarget]
+  );
+  const arenaSelectedVideo = useMemo(() => {
+    if (!arenaClips || selection.selected.size !== 1) return null;
+    const id = [...selection.selected][0];
+    return arenaClips.members.find((video) => video.id === id) || null;
+  }, [arenaClips, selection.selected]);
+  const handleArenaTypedTag = useCallback(
+    (name) => {
+      setArenaTagBoxOpen(false);
+      const target = arenaSelectedVideo || arenaTagTarget;
+      if (target) void handleArenaTag(name, target);
+    },
+    [arenaSelectedVideo, arenaTagTarget, handleArenaTag]
+  );
+
+  // Another folder, scope or collection closes the arena, as it closes the
+  // versions view.
+  const arenaCollectionKeyRef = useRef(versionCollectionKey);
+  useEffect(() => {
+    if (arenaCollectionKeyRef.current === versionCollectionKey) return;
+    arenaCollectionKeyRef.current = versionCollectionKey;
+    void handleCloseArena();
+    // Only a new collection closes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionCollectionKey]);
 
   // The stills wanted now: the strips of stack cards that are mounted.
   useEffect(() => {
@@ -3786,9 +4068,10 @@ function App() {
   const handleReviewHotkey = useCallback(
     (reviewState) =>
       reviewModeEnabled
-        ? reviewWorkflow.applyReviewState(reviewState)
+        ? // The arena moves on by rounds, never by advancing.
+          reviewWorkflow.applyReviewState(reviewState, arena ? { allowAdvance: false } : undefined)
         : false,
-    [reviewModeEnabled, reviewWorkflow.applyReviewState]
+    [arena, reviewModeEnabled, reviewWorkflow.applyReviewState]
   );
   const handleRatingHotkey = useCallback(
     (rating) => reviewWorkflow.applyRating(rating),
@@ -4068,23 +4351,24 @@ function App() {
     maxZoomIndex: ZOOM_MAX_INDEX,
     onSetReviewState: reviewModeEnabled ? handleReviewHotkey : null,
     onSetRating: handleRatingHotkey,
-    onUndoReview: reviewModeEnabled ? handleReviewUndo : null,
+    // Z undoes ratings in the arena, review mode or not.
+    onUndoReview: arena ? handleArenaUndo : reviewModeEnabled ? handleReviewUndo : null,
     // While a stack is open, the folder keys step between stacks.
-    onPreviousFolder: versionView
+    onPreviousFolder: versionView || arena
       ? null
       : openStack
       ? () => handleStepStack(-1)
       : !isLoadingFolder && siblingFolders.previous
         ? () => handlePreviousFolder(siblingFolders.previous)
         : null,
-    onNextFolder: versionView
+    onNextFolder: versionView || arena
       ? null
       : openStack
       ? () => handleStepStack(1)
       : !isLoadingFolder && siblingFolders.next
         ? () => handleNextFolder(siblingFolders.next)
         : null,
-    onToggleStacks: !isLoadingFolder && !versionView ? toggleStackByPrompt : null,
+    onToggleStacks: !isLoadingFolder && !versionView && !arena ? toggleStackByPrompt : null,
     onOpenStack: stackSelectionUnits ? handleOpenSelectedStack : null,
     // Esc leaves the versions view first, then an open stack.
     onCloseStack: versionView
@@ -4097,7 +4381,7 @@ function App() {
     onSelectAll: orderedVideos.length ? handleSelectAll : null,
     // Shift+R freezes what is shown into a review pass; Shift+1/2 accept and
     // send to a companion's quick action.
-    onStartReviewPass: reviewModeEnabled && !reviewPass
+    onStartReviewPass: reviewModeEnabled && !reviewPass && !arena
       ? () => reviewPassKeysRef.current.start?.()
       : null,
     onQuickReview: reviewModeEnabled
@@ -4107,6 +4391,48 @@ function App() {
     onOpenDetails: () => openMetadataPanel(),
     onOpenHelp: () => setHotkeyHelpOpen(true),
   });
+
+  // The arena's own keys (rating-arena.md, Section 4), ahead of the grid's:
+  // Enter deals the next round instead of opening a clip, and Backspace never
+  // trashes one. Ratings, review keys and Z stay the grid's.
+  const arenaKeysRef = useRef({});
+  arenaKeysRef.current = {
+    canNext: Boolean(arenaRound) && arenaReady,
+    next: () => void handleArenaNext(),
+    close: () => void handleCloseArena(),
+    step: (direction) => {
+      const ids = arenaClips?.members.map((video) => video.id) || [];
+      const current = selection.selected.size === 1 ? [...selection.selected][0] : null;
+      const id = stepArenaSelection(ids, current, direction);
+      if (id != null) selection.selectExactly(id);
+    },
+    tag: (index) => handleArenaSuggestion(index),
+    typeTag: () => {
+      if (arenaRound) setArenaTagBoxOpen(true);
+    },
+  };
+  const arenaOpen = Boolean(arena);
+  useEffect(() => {
+    if (!arenaOpen || !appHotkeysEnabled) return undefined;
+    const onKey = (event) => {
+      if (isTypingTarget(event.target)) return;
+      if (event.target?.closest?.('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+      const command = arenaKeyCommand(event);
+      if (!command) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const keys = arenaKeysRef.current;
+      if (command === "next") {
+        if (keys.canNext) keys.next();
+      } else if (command === "close") keys.close();
+      else if (command === "previous-clip") keys.step(-1);
+      else if (command === "next-clip") keys.step(1);
+      else if (command === "type-tag") keys.typeTag();
+      else if (typeof command === "object") keys.tag(command.tag);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [appHotkeysEnabled, arenaOpen]);
 
   const handleOpenLibraryRoot = useCallback(
     async (rootPath) => {
@@ -6388,6 +6714,8 @@ function App() {
             minimumZoomLevel={getMinimumZoomLevel()}
             reviewModeEnabled={reviewModeEnabled}
             onReviewModeToggle={toggleReviewMode}
+            arenaOpen={Boolean(arena)}
+            onArenaToggle={arena ? () => void handleCloseArena() : handleOpenArena}
             showFilenames={showFilenames}
             onFilenamesToggle={toggleFilenames}
             hoverAudioEnabled={hoverAudioEnabled}
@@ -6442,7 +6770,8 @@ function App() {
               onShowReviewTarget={handleShowReviewTarget}
               onIndexSubfolders={handleIndexSubfoldersForReview}
               passControl={
-                reviewPass
+                // No pass from inside the arena: it deals its own clips.
+                reviewPass || arena
                   ? null
                   : {
                       count: reviewPassCandidateCount,
@@ -7014,7 +7343,36 @@ function App() {
                       />
                     )}
 
-                  {reviewPass && !versionView ? (
+                  {arena ? (
+                    <ArenaBar
+                      arena={arena}
+                      stats={arenaStats}
+                      streak={arenaStreakCount}
+                      tagged={ratingArena.tagged}
+                      clipsInView={arenaScopeInstanceIds.length}
+                      canNext={Boolean(arenaRound) && arenaReady}
+                      nextLabel={
+                        arenaRound?.kind === "place" && !arenaDone ? "Skip" : "Next"
+                      }
+                      suggestions={arenaSuggestions}
+                      availableTags={availableTagNames}
+                      tagBoxOpen={arenaTagBoxOpen}
+                      tagTargetName={(arenaSelectedVideo || arenaTagTarget)?.name || ""}
+                      onKindChange={(kind) => handleArenaOptions({ kind })}
+                      onBorderChange={(border) => handleArenaOptions({ border })}
+                      onScopeChange={handleArenaScope}
+                      onMatchChange={(match) => handleArenaOptions({ match })}
+                      onNext={() => void handleArenaNext()}
+                      onRestart={handleRestartVersions}
+                      onClose={() => void handleCloseArena()}
+                      onApplySuggestion={handleArenaSuggestion}
+                      onDismissSuggestion={handleArenaDismissSuggestion}
+                      onOpenTagBox={() => setArenaTagBoxOpen(true)}
+                      onCloseTagBox={() => setArenaTagBoxOpen(false)}
+                      onSubmitTag={handleArenaTypedTag}
+                    />
+                  ) : null}
+                  {reviewPass && !versionView && !arena ? (
                     <ReviewPassBar
                       name={reviewPass.name}
                       decided={reviewWorkflow.progress.total - reviewWorkflow.progress.unreviewed}
@@ -7025,7 +7383,7 @@ function App() {
                       onRerun={handleRerunReviewPass}
                     />
                   ) : null}
-                  {versionView ? (
+                  {arena ? null : versionView ? (
                     <VersionsBar
                       count={versionViewClips?.members.length || 0}
                       elsewhere={versionGuests.length}
@@ -7141,10 +7499,10 @@ function App() {
                               }
                               versionLabel={versionLabelById.get(video.id) || null}
                               versionLocation={
-                                versionView ? versionLocation(video) : null
+                                versionView || arena ? versionLocation(video) : null
                               }
                               onOpenVersions={
-                                versionView ? null : handleOpenVersionsFromCard
+                                versionView || arena ? null : handleOpenVersionsFromCard
                               }
                               stackCount={
                                 stackSelectionUnits
