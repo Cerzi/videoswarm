@@ -93,6 +93,23 @@ if (!database || databaseLoadError) {
       expect(feedPaths()).toEqual([kept.filePath, old.filePath, older.filePath, sibling.filePath].sort());
     });
 
+    it('leaves out a copy of an archived clip kept in another folder', async () => {
+      const kept = await clip('new/a.mp4');
+      const old = await clip('old/b.mp4');
+      const copyPath = path.join(rootPath, 'picks', 'b-copy.mp4');
+      fs.mkdirSync(path.dirname(copyPath), { recursive: true });
+      fs.copyFileSync(old.filePath, copyPath);
+      await store.indexFiles({ rootPath, entries: [{ filePath: copyPath, stats: fs.statSync(copyPath) }] });
+      seen.push(copyPath);
+      store.reconcileLibraryRoot(rootPath, seen, { recursive: true, completeCoverage: true });
+      expect(feedPaths()).toContain(copyPath);
+
+      store.setFolderArchived(path.join(rootPath, 'old'), true);
+      expect(feedPaths()).toEqual([kept.filePath]);
+      expect(searchPaths()).toEqual([kept.filePath]);
+      expect(arenaPrints()).toEqual([kept.fingerprint]);
+    });
+
     it('rates an archived folder when only its clips are asked for', async () => {
       await clip('new/a.mp4');
       const old = await clip('old/b.mp4');

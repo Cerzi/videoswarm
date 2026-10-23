@@ -113,10 +113,15 @@ const WORKFLOW_FACT_LIMITS = Object.freeze({
   maxMatchFingerprints: 100_000,
 });
 const SAVED_VIEW_NAME_LIMIT = 80;
-// Not under an archived folder (docs/architecture/library-archive.md), as SQL
-// on an alias of file_instances.
-const notArchived = (alias) =>
-  `NOT EXISTS (SELECT 1 FROM archived_folders af WHERE substr(${alias}.absolute_path, 1, length(af.prefix)) = af.prefix)`;
+// Not archived (docs/architecture/library-archive.md), as SQL on an alias of
+// file_instances: no present copy of the clip is under an archived folder,
+// so its copies elsewhere are left out too. The list is read once per query.
+const notArchived = (alias) => `${alias}.fingerprint NOT IN (
+  SELECT ai.fingerprint FROM file_instances ai
+  INNER JOIN archived_folders af
+    ON substr(ai.absolute_path, 1, length(af.prefix)) = af.prefix
+  WHERE ai.is_present != 0 AND ai.fingerprint IS NOT NULL
+)`;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;

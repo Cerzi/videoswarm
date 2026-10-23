@@ -15,8 +15,12 @@ arena mode", to be ignored completely.
 
 ## 1. What an archive leaves out
 
-A clip is archived when its path is under an archived folder. Archived clips
-are left out of:
+A clip is archived when any present copy of it is under an archived folder:
+the archive goes by content, so copies of an archived clip kept elsewhere
+(the same folder indexed under another path, or files copied out of it) are
+archived too. Found on 2026-10-23: an archived root had most of its clips
+duplicated in other roots, and those copies kept turning up in the arena.
+Archived clips are left out of:
 
 - **the rating arena** (`rating-arena.md`, Section 2): over the library, and
   over the grid's clips. One exception: when the grid's clips are *all*
@@ -44,9 +48,12 @@ user gave are evidence, wherever the clip lives), and generation versions
 `archived_folders (prefix TEXT PRIMARY KEY, archived_at)` in the profile
 database. `prefix` is the folder's absolute path ending in the path
 separator, so `old/` never matches `older/`. Queries test
-`substr(absolute_path, 1, length(prefix)) = prefix` (`notArchived` in
-`main/database.js`). Matching by absolute path rather than by root means a
+`substr(absolute_path, 1, length(prefix)) = prefix` to find the archived
+copies, and `notArchived` in `main/database.js` leaves out every row whose
+content has one (the list is read once per query; about 30 ms on a library
+of 25,000 files). Matching by absolute path rather than by root means a
 folder indexed inside another indexed folder is archived under both roots.
+A copy that went missing does not keep its content archived.
 
 Archiving a folder takes in the folders already archived under it. A folder
 under an archived one cannot be archived or brought back on its own: it
