@@ -35,6 +35,13 @@ test("library view: save a smart view while searching the entire library", async
     const views = await page.evaluate(() => window.electronAPI.library.listSavedViews());
     const list = Array.isArray(views) ? views : views?.views || [];
     expect(list.find((view) => view.name === "Everything")?.definition?.searchScope).toBe("library");
+
+    // Details names the smart views a selected clip is part of.
+    await page.locator(".video-item").first().click();
+    const details = page.getByRole("region", { name: "Docked selection details" });
+    const section = details.locator(".metadata-panel__smart-views");
+    await expect(section).toContainText("Smart views");
+    await expect(section.getByRole("button", { name: /Everything/ })).toBeVisible();
     expect(rendererErrors).toEqual([]);
   } finally {
     await electronApp.close().catch(() => {});

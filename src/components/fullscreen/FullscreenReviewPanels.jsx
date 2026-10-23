@@ -20,6 +20,7 @@ import {
 } from "../metadata/metadataContent";
 import "./FullscreenReviewPanels.css";
 import MetadataVersionsSection from "../metadata/MetadataVersionsSection";
+import MetadataSmartViewsSection from "../metadata/MetadataSmartViewsSection";
 import { showInFileManagerLabel } from "../../platform/fileManagerTerms";
 
 const RATINGS = [1, 2, 3, 4, 5];
@@ -445,6 +446,7 @@ export function FullscreenDetailsDock({
       />
       <MetadataCompanionTagsSection groups={companionTags || []} selectionCount={1} />
       <MetadataVersionsSection video={video} generationVersions={generationVersions} />
+      <MetadataSmartViewsSection video={video} />
       <MetadataFileFactsSection info={info} includeRelativePath />
       <MetadataGenerationSection
         state={generationMetadataState}

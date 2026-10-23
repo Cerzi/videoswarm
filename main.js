@@ -4902,6 +4902,28 @@ ipcMain.handle("library:update-saved-view", async (_event, payload = {}) =>
   }))
 );
 
+// The smart views one clip is part of, for the details pane.
+ipcMain.handle("library:views-for-clip", async (_event, payload = {}) => {
+  let context = null;
+  try {
+    assertPlainObject(payload, "smart views for a clip");
+    const instanceId = Number(payload.instanceId);
+    if (!Number.isSafeInteger(instanceId) || instanceId < 1) {
+      throw new TypeError("A valid instance id is required");
+    }
+    context = captureMetadataContext();
+    const found = await viewFeedService.viewsForClip({
+      store: context.metadataStore,
+      instanceId,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    assertMetadataContextActive(context);
+    return { success: true, ...found };
+  } catch (error) {
+    return { success: false, code: error?.code || "VIEWS_FOR_CLIP_ERROR", error: error?.message || String(error) };
+  }
+});
+
 ipcMain.handle("library:delete-saved-view", async (_event, payload = {}) =>
   runLibraryCatalogOperation((metadataStore) => ({
     deleted: metadataStore.deleteSavedView(payload?.id),

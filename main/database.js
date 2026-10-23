@@ -2212,6 +2212,19 @@ function createMetadataStore(db) {
     ORDER BY fi.id
     LIMIT @limit;
   `);
+  // One clip in the pool's shape, for the smart views it is part of.
+  const feedClipById = db.prepare(
+    feedPoolChunk.source
+      .replace('WHERE fi.id > @after_id', 'WHERE fi.id = @id')
+      .replace(/ORDER BY fi\.id\s+LIMIT @limit;/u, ';')
+  );
+  const feedTagNamesForContent = db.prepare(`
+    SELECT t.name AS name
+    FROM file_tags ft
+    INNER JOIN tags t ON t.id = ft.tag_id
+    WHERE ft.fingerprint = ?
+    ORDER BY t.name COLLATE NOCASE;
+  `);
   // Every present clip's tag names, by content, in one pass.
   const feedTagNames = db.prepare(`
     SELECT ft.fingerprint AS fingerprint, t.name AS name
@@ -4065,41 +4078,55 @@ function createMetadataStore(db) {
       after_id: Number.isSafeInteger(afterId) && afterId > 0 ? afterId : 0,
       limit: Math.max(1, Math.min(20_000, Number(limit) || 5_000)),
     });
-    const clips = rows.map((row) => {
-      const width = Number(row.content_width || 0);
-      const height = Number(row.content_height || 0);
-      const durationMs = normalizeDurationMs(row.content_duration_ms);
-      const frameRate = normalizeFrameRate(row.content_frame_rate);
-      return {
-        instanceId: Number(row.id),
-        fingerprint: row.fingerprint,
-        absolutePath: row.absolute_path,
-        relativePath: row.relative_path,
-        rootPath: row.owner_root_path,
-        lastSeenAt: Number(row.last_seen_at || 0),
-        rating:
-          row.rating_value !== null && Number.isFinite(Number(row.rating_value))
-            ? Number(row.rating_value)
-            : null,
-        reviewState: REVIEW_STATES.has(row.review_state) ? row.review_state : 'unreviewed',
-        dimensions:
-          width > 0 && height > 0
-            ? {
-                width,
-                height,
-                ...(durationMs ? { durationMs } : {}),
-                ...(frameRate ? { frameRate } : {}),
-              }
-            : null,
-        ...mapGenerationKeyFields(
-          row.content_generation_key,
-          row.content_generation_key_version,
-          row.content_prompt_key,
-          row.content_prompt_key_version
-        ),
-      };
-    });
+    const clips = rows.map(mapFeedPoolRow);
     return { lastId: rows.length ? Number(rows[rows.length - 1].id) : afterId, clips };
+  }
+
+  /**
+   * One present clip in the pool's shape, with its tag names, or null.
+   */
+  function getFeedClip(instanceId) {
+    if (!Number.isSafeInteger(instanceId) || instanceId < 1) return null;
+    const row = feedClipById.get({ id: instanceId });
+    if (!row) return null;
+    const clip = mapFeedPoolRow(row);
+    clip.tags = feedTagNamesForContent.all(clip.fingerprint).map((tag) => tag.name);
+    return clip;
+  }
+
+  function mapFeedPoolRow(row) {
+    const width = Number(row.content_width || 0);
+    const height = Number(row.content_height || 0);
+    const durationMs = normalizeDurationMs(row.content_duration_ms);
+    const frameRate = normalizeFrameRate(row.content_frame_rate);
+    return {
+      instanceId: Number(row.id),
+      fingerprint: row.fingerprint,
+      absolutePath: row.absolute_path,
+      relativePath: row.relative_path,
+      rootPath: row.owner_root_path,
+      lastSeenAt: Number(row.last_seen_at || 0),
+      rating:
+        row.rating_value !== null && Number.isFinite(Number(row.rating_value))
+          ? Number(row.rating_value)
+          : null,
+      reviewState: REVIEW_STATES.has(row.review_state) ? row.review_state : 'unreviewed',
+      dimensions:
+        width > 0 && height > 0
+          ? {
+              width,
+              height,
+              ...(durationMs ? { durationMs } : {}),
+              ...(frameRate ? { frameRate } : {}),
+            }
+          : null,
+      ...mapGenerationKeyFields(
+        row.content_generation_key,
+        row.content_generation_key_version,
+        row.content_prompt_key,
+        row.content_prompt_key_version
+      ),
+    };
   }
 
   /** Every present content's tag names: `Map<fingerprint, string[]>`. */
@@ -6696,6 +6723,7 @@ function createMetadataStore(db) {
     getSavedView,
     setSavedViewShared,
     listFeedPoolChunk,
+    getFeedClip,
     listFeedTagNames,
     createReviewPass,
     listReviewPasses,

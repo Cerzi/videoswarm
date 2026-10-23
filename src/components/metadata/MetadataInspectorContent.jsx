@@ -17,6 +17,7 @@ import {
   MetadataCompanionTagsSection,
 } from "./MetadataContentSections";
 import MetadataVersionsSection from "./MetadataVersionsSection";
+import MetadataSmartViewsSection from "./MetadataSmartViewsSection";
 import { EraserIcon } from "../UiIcons";
 
 const STAR_VALUES = [1, 2, 3, 4, 5];
@@ -244,6 +245,10 @@ const MetadataInspectorContent = forwardRef(function MetadataInspectorContent(
           active={active}
           generationVersions={generationVersions}
         />
+      ) : null}
+
+      {derivedSelectionCount === 1 ? (
+        <MetadataSmartViewsSection video={selectedVideos[0]} active={active} />
       ) : null}
 
       <MetadataFileFactsSection info={singleSelectionInfo} />

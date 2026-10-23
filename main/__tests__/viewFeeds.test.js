@@ -181,6 +181,39 @@ describe("view feeds", () => {
     expect(answer.clips.map((clip) => clip.contentId)).toEqual(["alone", "large"]);
   });
 
+  it("names the smart views one clip is part of, and the ones it cannot tell yet", async () => {
+    const clipRow = row(7, "fa", { rating: 4, reviewState: "pick", promptKey: pk("a") });
+    const promptService = {
+      searchPrompts: vi.fn(async ({ query }) =>
+        query === "unread" ? { matches: [], unread: 1 } : { matches: query === "lantern" ? [pk("a")] : [], unread: 0 }
+      ),
+    };
+    const store = {
+      ...fakeStore({
+        rows: [clipRow],
+        views: [
+          view(1, { minRating: 4 }),
+          view(2, { minRating: 5 }),
+          view(3, { promptQuery: "lantern", reviewFilter: "not-reject" }, { shared: false }),
+          view(4, { promptQuery: "fog" }),
+          view(5, { includeTags: ["dance"], mightBe: "dance" }, { definition: { filters: { includeTags: ["dance"], mightBe: "dance" }, searchScope: "library" } }),
+          view(6, { promptQuery: "unread", minRating: 3 }),
+          view(7, { promptQuery: "unread", minRating: 5 }),
+        ],
+        tagTree: [{ name: "dance", parent: null }, { name: "bellydance", parent: "dance" }],
+      }),
+      getFeedClip: (id) => (id === 7 ? { ...clipRow, tags: ["bellydance"] } : null),
+      getGenerationVersionSummaries: () => ({}),
+    };
+    const answer = await new ViewFeedService({ promptService }).viewsForClip({ store, instanceId: 7 });
+    // Shared or not; the tag tree counts; Might be is left out and named.
+    expect(answer.views.map((entry) => entry.id)).toEqual([1, 3, 5]);
+    expect(answer.views.find((entry) => entry.id === 5)).toMatchObject({ searchScope: "library", ignored: ["mightBe"] });
+    // Unread prompt: unknown only when everything else matches.
+    expect(answer.unknown.map((entry) => entry.id)).toEqual([6]);
+    expect(await new ViewFeedService().viewsForClip({ store, instanceId: 99 })).toEqual({ views: [], unknown: [] });
+  });
+
   it("splits off what only the window can apply", () => {
     expect(splitIgnored({ minRating: 3, companionHideSent: ["c1"], companionTags: {} }).ignored).toEqual([
       "companionHideSent",

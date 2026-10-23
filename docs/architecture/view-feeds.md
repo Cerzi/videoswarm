@@ -215,6 +215,26 @@ Not built here; written down so both sides agree.
   the caller analyses it again.
 - Tests use a fake server; never Video Swarm's database.
 
+## 6. A clip's smart views in Details
+
+Status: **Implemented** (2026-10-23)
+
+The same test, the other way round: for one selected clip, Details lists
+the saved views it is part of, by their filters alone.
+
+- `library:views-for-clip` `{ instanceId }` → `{ views, unknown }`
+  (`ViewFeedService.viewsForClip`, preload `library.viewsForClip`). Every
+  saved view of the profile is checked, shared with apps or not; a folder
+  view counts wherever it would be applied.
+- Each match carries `searchScope` (shown as *Library*) and `ignored`, the
+  parts only the window can apply, which were left out ("Also filters on
+  Might be, not checked here").
+- `unknown`: views the clip would pass except for a prompt or workflow not
+  read yet ("Can't tell yet").
+- Clicking a view applies it. The section re-checks when the clip's
+  rating, review state or tags change, or a view is saved, changed or
+  deleted (`MetadataSmartViewsSection`, fed by `SmartViewsContext`).
+
 ## Acceptance
 
 - With the switch off, `views` and `views/clips` answer 403

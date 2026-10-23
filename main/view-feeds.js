@@ -274,6 +274,87 @@ class ViewFeedService {
     return snapshot;
   }
 
+  /**
+   * The saved views one clip is part of, by their filters alone (a folder
+   * view counts wherever it is applied). Every view of the profile is
+   * checked, shared or not. Returns `{ views, unknown }`: `views` match,
+   * each with the parts only the window can apply (`ignored`), which were
+   * left out; `unknown` could not be told yet, because the clip's prompt or
+   * workflow has not been read.
+   */
+  async viewsForClip({ store, instanceId, assertActive }) {
+    const clip = store.getFeedClip(instanceId);
+    if (!clip) return { views: [], unknown: [] };
+    clip.id = clip.instanceId;
+    const hierarchy = buildTagHierarchy(store.listTags());
+    let versionEntry;
+    const versionOf = () => {
+      if (versionEntry === undefined) {
+        const summaries = clip.generationKey
+          ? store.getGenerationVersionSummaries([clip.generationKey])
+          : {};
+        versionEntry = buildGenerationVersionIndex([clip], summaries).get(clip.id) || null;
+      }
+      return versionEntry;
+    };
+    const promptAnswers = new Map();
+    const views = [];
+    const unknown = [];
+    for (const view of store.listSavedViews()) {
+      assertActive?.();
+      const { filters, ignored } = splitIgnored(view.definition?.filters || {});
+      let pending = false;
+
+      let promptMatches = null;
+      const promptQuery = normalizePromptQuery(filters.promptQuery).trim();
+      if (promptQuery) {
+        if (!promptAnswers.has(promptQuery)) {
+          let answer = { matches: new Set(), unread: 0 };
+          if (clip.promptKey && this.promptService) {
+            const found = await this.promptService.searchPrompts({
+              store,
+              promptKeys: [clip.promptKey],
+              query: promptQuery,
+              assertActive,
+              supersede: false,
+              deadline: this.now() + this.limits.promptBudgetMs,
+            });
+            answer = { matches: new Set(found?.matches || []), unread: Number(found?.unread || 0) };
+          }
+          promptAnswers.set(promptQuery, answer);
+        }
+        const answer = promptAnswers.get(promptQuery);
+        promptMatches = answer.matches;
+        if (answer.unread > 0) pending = true;
+      }
+
+      let workflowMatches = null;
+      const workflowQuery = workflowFilterQuery(filters);
+      if (workflowQuery) {
+        const found = store.matchWorkflowFacts([clip.fingerprint], { ...workflowQuery, assertActive });
+        workflowMatches = new Set(found.matches);
+        if (Number(found.unread || 0) > 0) pending = true;
+      }
+
+      const context = { tagHierarchy: hierarchy, versionOf, promptMatches, workflowMatches };
+      const matches = compileClipFilter(filters, context).test(clip);
+      // Unread only matters when every other part matches.
+      const couldMatch =
+        !matches &&
+        pending &&
+        compileClipFilter(filters, { ...context, promptMatches: null, workflowMatches: null }).test(clip);
+      const entry = {
+        id: view.id,
+        name: view.name,
+        searchScope: view.definition?.searchScope === "library" ? "library" : "folder",
+        ignored,
+      };
+      if (matches) views.push(entry);
+      else if (couldMatch) unknown.push(entry);
+    }
+    return { views, unknown };
+  }
+
   // Profile switches forget every snapshot.
   clear() {
     this.snapshots.clear();

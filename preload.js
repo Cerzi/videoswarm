@@ -677,6 +677,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("library:update-saved-view", { id, ...changes }),
     deleteSavedView: async (id) =>
       ipcRenderer.invoke("library:delete-saved-view", { id }),
+    // The smart views a clip is part of: `{ views, unknown }`.
+    viewsForClip: async (instanceId) =>
+      ipcRenderer.invoke("library:views-for-clip", { instanceId }),
   },
 
   review: {

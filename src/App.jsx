@@ -13,6 +13,7 @@ import VersionsBar from "./components/VersionsBar";
 import ReviewPassBar from "./components/ReviewPassBar";
 import ArenaBar from "./components/ArenaBar";
 import ArenaSummaryDialog from "./components/ArenaSummaryDialog";
+import SmartViewsContext from "./components/metadata/SmartViewsContext";
 import useRatingArena from "./app/arena/useRatingArena";
 import {
   addArenaOutcomes,
@@ -4846,6 +4847,11 @@ function App() {
       updateFilters,
     ]
   );
+  // The details pane's Smart views section reads the views and applies one.
+  const smartViewsContext = useMemo(
+    () => ({ savedViews, onApply: handleApplySavedView }),
+    [handleApplySavedView, savedViews]
+  );
 
   useEffect(() => {
     if (isPreferencesOpen) return undefined;
@@ -6734,6 +6740,7 @@ function App() {
   );
 
   return (
+    <SmartViewsContext.Provider value={smartViewsContext}>
     <div
       className={`app ${reviewModeEnabled ? "review-mode-active" : "review-mode-off"}`}
       onContextMenu={handleBackgroundContextMenu}
@@ -7784,6 +7791,7 @@ function App() {
         </>
       )}
     </div>
+    </SmartViewsContext.Provider>
   );
 }
 

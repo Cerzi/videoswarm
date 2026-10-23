@@ -110,5 +110,19 @@ if (!database || databaseLoadError) {
       const third = await feeds.clips({ store, scope: 'p', viewId: created.id, unless: second.etag });
       expect(third.unchanged).toBe(true);
     });
+
+    it('names the smart views one clip is part of', async () => {
+      const a = await clip('a.mp4');
+      store.setRating([a.fingerprint], 4);
+      store.assignTags([a.fingerprint], ['dance/bellydance']);
+      const best = store.createSavedView('4+', { version: 1, filters: { minRating: 4, reviewFilter: 'not-reject' } });
+      store.createSavedView('5 only', { version: 1, filters: { exactRating: 5 } });
+      const dance = store.createSavedView('Dance', { version: 1, filters: { includeTags: ['dance'] } });
+      const instanceId = store.listFeedPoolChunk({ limit: 5 }).clips[0].instanceId;
+      expect(store.getFeedClip(instanceId)).toMatchObject({ fingerprint: a.fingerprint, rating: 4, tags: ['bellydance'] });
+      const answer = await new ViewFeedService().viewsForClip({ store, instanceId });
+      expect(answer.views.map((entry) => entry.id).sort()).toEqual([best.id, dance.id].sort());
+      expect(store.getFeedClip(999_999)).toBeNull();
+    });
   });
 }

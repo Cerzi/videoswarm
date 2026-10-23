@@ -916,3 +916,54 @@ body.metadata-panel-drag-active {
   background: rgba(255, 255, 255, 0.09);
   outline: none;
 }
+
+/* Smart views a clip is part of. */
+.metadata-panel__smart-views-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.metadata-panel__smart-view {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.3rem 0.45rem;
+  color: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.metadata-panel__smart-view:hover,
+.metadata-panel__smart-view:focus-visible {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.metadata-panel__smart-view--unknown {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.55);
+  border-style: dashed;
+}
+
+.metadata-panel__smart-view-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-panel__smart-view-note {
+  display: block;
+  margin: 0.1rem 0 0 0.45rem;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.5);
+}
