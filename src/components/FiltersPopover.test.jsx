@@ -333,6 +333,20 @@ describe("FiltersPopover tag hierarchy", () => {
 });
 
 
+describe("FiltersPopover review state", () => {
+  it("offers Not rejected", () => {
+    let current = { reviewFilter: "any" };
+    const onChange = vi.fn((updater) => {
+      current = updater(current);
+    });
+    render(<FiltersPopover filters={current} onChange={onChange} onReset={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Review state" })).getByRole("button", { name: "Not rejected" })
+    );
+    expect(current.reviewFilter).toBe("not-reject");
+  });
+});
+
 describe("FiltersPopover prompt search", () => {
   it("searches prompt words and says while it is searching", () => {
     let current = { reviewFilter: "any" };

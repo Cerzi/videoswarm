@@ -26,6 +26,11 @@ describe("saved view search scope", () => {
     ).toBe("library");
   });
 
+  it("keeps a Not rejected review filter, as in 4★+ not rejected", () => {
+    const definition = saved(view({ filters: { minRating: 4, reviewFilter: "not-reject" } }));
+    expect(definition.filters).toMatchObject({ minRating: 4, reviewFilter: "not-reject" });
+  });
+
   it("keeps prompt words and a tag clips might be", () => {
     expect(saved(view({ filters: { promptQuery: " lighthouse " } })).filters.promptQuery).toBe("lighthouse");
     expect(saved(view({ filters: { mightBe: " dance " } })).filters.mightBe).toBe("dance");

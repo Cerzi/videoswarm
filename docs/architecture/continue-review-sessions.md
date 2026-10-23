@@ -105,7 +105,7 @@ The full renderer-facing value is:
       excludeTags: string[],
       minRating: null | 1 | 2 | 3 | 4 | 5,
       exactRating: null | 0 | 1 | 2 | 3 | 4 | 5,
-      reviewFilter: "any" | "unreviewed" | "reviewed" | "pick" | "reject"
+      reviewFilter: "any" | "unreviewed" | "reviewed" | "pick" | "reject" | "not-reject"
     },
     sort: {
       key: "name" | "created" | "random",

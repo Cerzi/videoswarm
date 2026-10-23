@@ -137,6 +137,7 @@ function FilterRow({ label, hint = null, status = null, children }) {
 
 const REVIEW_OPTIONS = [
   { value: REVIEW_FILTERS.ANY, label: "Any" },
+  { value: REVIEW_FILTERS.NOT_REJECTED, label: "Not rejected" },
   { value: REVIEW_FILTERS.UNREVIEWED, label: "Unreviewed" },
   { value: REVIEW_FILTERS.REVIEWED, label: "Reviewed" },
   { value: REVIEW_FILTERS.PICK, label: "Accept" },

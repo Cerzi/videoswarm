@@ -30,6 +30,14 @@ describe("reviewState", () => {
     expect(matchesReviewFilter(REVIEW_STATES.UNREVIEWED, REVIEW_FILTERS.ANY)).toBe(true);
   });
 
+  it("keeps every state but rejected for Not rejected", () => {
+    expect(normalizeReviewFilter("not-reject")).toBe(REVIEW_FILTERS.NOT_REJECTED);
+    for (const state of [REVIEW_STATES.UNREVIEWED, REVIEW_STATES.REVIEWED, REVIEW_STATES.PICK]) {
+      expect(matchesReviewFilter(state, REVIEW_FILTERS.NOT_REJECTED)).toBe(true);
+    }
+    expect(matchesReviewFilter(REVIEW_STATES.REJECT, REVIEW_FILTERS.NOT_REJECTED)).toBe(false);
+  });
+
   it("provides compact user-facing labels", () => {
     expect(reviewStateLabel(REVIEW_STATES.PICK)).toBe("Accept");
     expect(reviewStateLabel(REVIEW_STATES.REVIEWED)).toBe("Reviewed");

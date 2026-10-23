@@ -1148,6 +1148,7 @@ function App() {
       [REVIEW_FILTERS.REVIEWED]: "Reviewed",
       [REVIEW_FILTERS.PICK]: "Accept",
       [REVIEW_FILTERS.REJECT]: "Reject",
+      [REVIEW_FILTERS.NOT_REJECTED]: "Not rejected",
     };
     return labels[value] || null;
   }, [filters.reviewFilter]);

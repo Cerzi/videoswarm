@@ -8,6 +8,8 @@ export const REVIEW_STATES = Object.freeze({
 export const REVIEW_FILTERS = Object.freeze({
   ANY: "any",
   ...REVIEW_STATES,
+  // Every state but rejected: "4★+, not rejected" and the like.
+  NOT_REJECTED: "not-reject",
 });
 
 const REVIEW_STATE_SET = new Set(Object.values(REVIEW_STATES));
@@ -35,6 +37,9 @@ export const matchesReviewFilter = (state, filter) => {
   if (normalizedFilter === REVIEW_FILTERS.ANY) return true;
 
   const normalizedState = normalizeReviewState(state);
+  if (normalizedFilter === REVIEW_FILTERS.NOT_REJECTED) {
+    return normalizedState !== REVIEW_STATES.REJECT;
+  }
   if (normalizedFilter === REVIEW_STATES.REVIEWED) {
     return isReviewedState(normalizedState);
   }
