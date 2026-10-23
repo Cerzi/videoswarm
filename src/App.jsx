@@ -1561,6 +1561,15 @@ function App() {
     });
     return map;
   }, [versionGuests, videos]);
+  // The open folder's own clips, by catalog row: borrowed clips (the arena's,
+  // a versions view's) are shown here but belong to other folders.
+  const ownInstanceIds = useMemo(() => {
+    const ids = new Set();
+    videos.forEach((video) => {
+      if (video?.instanceId) ids.add(video.instanceId);
+    });
+    return ids;
+  }, [videos]);
   const resolveVersionTarget = useCallback(
     (instanceId) => {
       const id = videoIdByInstanceId.get(instanceId);
@@ -2132,7 +2141,7 @@ function App() {
       // A folder's place is one of its own clips. A clip shown from another
       // folder (the arena, a versions view) is never saved as it; the place
       // already saved is kept instead.
-      if (!isOwnReviewAnchor(selectedAnchor, videoIdByInstanceId)) return null;
+      if (!isOwnReviewAnchor(selectedAnchor, ownInstanceIds)) return null;
       return buildReviewCheckpointDraft({
         rootPath,
         directory,
@@ -2167,7 +2176,7 @@ function App() {
       randomSeed,
       sortDir,
       sortKey,
-      videoIdByInstanceId,
+      ownInstanceIds,
     ]
   );
 
@@ -7364,7 +7373,8 @@ function App() {
           />
 
           {/* Home state: pinned library roots and recent locations */}
-          {!activeRootPath && !tagCollection && videos.length === 0 && !isLoadingFolder ? (
+          {/* The arena is library-wide, so it opens over an empty home too. */}
+          {!activeRootPath && !tagCollection && !arena && videos.length === 0 && !isLoadingFolder ? (
             <div className="library-home-workspace">
               {isLibrarySidebarOpen &&
                 (pinnedRoots.length > 0 ||
@@ -7424,7 +7434,7 @@ function App() {
               <div className="content-region__workspace">
                 {/* A library search closes the folder but keeps the panel, so
                     a library-wide smart view can be saved from it. */}
-                {(activeRootPath || librarySearchScope === "library") && (
+                {(activeRootPath || librarySearchScope === "library" || arena) && (
                   <WorkspaceSidebar
                     open={isLibrarySidebarOpen}
                     activePanel={workspaceSidebarTab}

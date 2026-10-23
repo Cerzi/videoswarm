@@ -71,7 +71,8 @@ Status: **Implemented**
   opens; ratings and review states are read again for every round, so
   changes made anywhere count.
   Archived folders (`library-archive.md`) are left out of both, unless the
-  grid's clips are all archived.
+  grid's clips are all archived. *Library* needs no open folder: the arena
+  opens from the home screen too.
 - **Similar prompts** (the default; *Any* is the other choice). A round's
   companions are picked to resemble its first clip: the same prompt key
   first, then the most alike prompts among a bounded sample of the tier

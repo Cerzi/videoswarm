@@ -3548,6 +3548,47 @@ describe("App hook composition", () => {
     await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", expect.any(Object)));
   });
 
+  test("opens the arena library-wide with no folder open", async () => {
+    const none = [];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos: none,
+      activeRootPath: null,
+      tagCollection: null,
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: none }));
+    useMasonryLayoutMock.mockImplementation((args) => ({
+      ...masonryReturn,
+      orderedVideos: args.filteredVideos,
+      orderForRange: args.filteredVideos.map((video) => video.id),
+      virtualItems: args.filteredVideos.map((video) => ({ id: video.id, item: video, style: {} })),
+    }));
+    const record = { id: "/a1/old.mp4", name: "old.mp4", dirname: "", instanceId: 9, fingerprint: "fp-old", rootPath: "/a1", relativePath: "old.mp4", isElectronFile: true };
+    const arenaApi = {
+      start: vi.fn(async () => ({ success: true, session: "s1", counts: null })),
+      round: vi.fn(async () => ({
+        success: true,
+        round: { id: 1, kind: "place", clips: [{ instanceId: 9, role: "new", rating: null }] },
+        records: [record],
+        counts: { unrated: 1 },
+      })),
+      finish: vi.fn(async () => ({ success: true, outcomes: {} })),
+      end: vi.fn(async () => ({ success: true })),
+    };
+    window.electronAPI = { saveSettingsPartial: vi.fn(), arena: arenaApi };
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    await act(async () => topBarSpy.mock.calls.at(-1)[0].onArenaToggle());
+    expect(arenaApi.start).toHaveBeenCalledWith({ scope: "library" });
+    const bar = await screen.findByRole("toolbar", { name: "Rating arena" });
+    await waitFor(() => expect(bar).toHaveTextContent("Where does New go?"));
+    await waitFor(() =>
+      expect(videoCardSpy.mock.calls.some(([props]) => props.video.id === record.id)).toBe(true)
+    );
+  });
+
   test("heads a stack with its most typical clip and shows the most different as stills", async () => {
     const PK_A = `pk2-${"a".repeat(32)}`;
     const bits = (count) => (count === 0 ? 0n : (1n << BigInt(count)) - 1n).toString(16).padStart(16, "0");

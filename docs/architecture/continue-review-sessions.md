@@ -211,6 +211,12 @@ A checkpoint is created in either of these ways:
    then resolves and focuses the next candidate. For an inactive pinned root,
    first open the navigation row, then use the review toolbar action.
 
+A checkpoint's anchor is always one of the open folder's own clips. Clips
+shown from other folders (the arena's, a versions view's, a review pass's)
+are never saved as the place, even when one is selected or rated; the place
+already saved stays (fixed 2026-10-23: arena ratings kept failing to save
+with "anchor does not belong to the requested root").
+
 One root has one checkpoint. Starting in another folder/view for a root that
 already has a checkpoint uses the visible label **Save position here…** and the
 expanded accessible name **Save current position instead…**. It requires
