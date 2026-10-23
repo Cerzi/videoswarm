@@ -972,11 +972,12 @@ describe("App hook composition", () => {
     }
   });
 
-  test("Shift+1 accepts the selection and sends it to the first quick action", async () => {
+  test("Shift+1 accepts the selection and sends it to the first quick action, without advancing", async () => {
     const clip = { id: "/library/a.mp4", name: "a.mp4", dirname: "", instanceId: 7, fingerprint: "fp-a", isElectronFile: true };
+    const after = { id: "/library/b.mp4", name: "b.mp4", dirname: "", instanceId: 8, fingerprint: "fp-b", isElectronFile: true };
     useElectronLifecycleMock.mockImplementation(() => ({
       ...electronLifecycleReturn,
-      videos: [clip],
+      videos: [clip, after],
       activeRootPath: "/library",
       libraryRoot: { rootPath: "/library", name: "library", pinned: true },
       directorySummaries: [{ relativePath: "", name: "library" }],
@@ -999,17 +1000,36 @@ describe("App hook composition", () => {
         send,
       },
     };
-    const previousOrdered = masonryReturn.orderedVideos;
+    const previousMasonry = { ...masonryReturn };
     const previousSelected = selectionMock.selected;
     const previousSize = selectionMock.size;
-    masonryReturn.orderedVideos = [clip];
+    const previousAnchor = selectionMock.anchorId;
+    Object.assign(masonryReturn, {
+      orderedVideos: [clip, after],
+      displayVideos: [clip, after],
+      orderedIds: [clip.id, after.id],
+      orderForRange: [clip.id, after.id],
+    });
+    useFilterStateMock.mockImplementation(() => ({
+      ...filterStateReturn,
+      filteredVideos: [clip, after],
+      filteredVideoIds: new Set([clip.id, after.id]),
+    }));
     selectionMock.selected = new Set([clip.id]);
     selectionMock.size = 1;
+    selectionMock.anchorId = clip.id;
+    metadataActionsReturn.handleSetReviewState.mockResolvedValue({
+      success: true,
+      updates: { "fp-a": { reviewState: "pick" } },
+    });
     const hotkeys = () => useHotkeysMock.mock.calls.at(-1)?.[2];
     try {
       vi.resetModules();
       const { default: App } = await import("./App.jsx");
       render(<App />);
+      // Advance after marking is for review keys and buttons, not for these.
+      act(() => useElectronLifecycleMock.mock.calls.at(-1)?.[0].setReviewAutoAdvance(true));
+      selectionMock.selectExactly.mockClear();
       await waitFor(() => expect(window.electronAPI.companion.describe).toHaveBeenCalled());
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1020,18 +1040,23 @@ describe("App hook composition", () => {
       await waitFor(() =>
         expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith("pick", ["fp-a"])
       );
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(selectionMock.selectExactly).not.toHaveBeenCalled();
       // No second quick action: it says so and sends nothing.
       await act(async () => hotkeys().onQuickReview(1));
       expect(await screen.findByText(/No connected app offers a second quick action/)).toBeInTheDocument();
       expect(send).toHaveBeenCalledTimes(2);
     } finally {
-      masonryReturn.orderedVideos = previousOrdered;
+      Object.assign(masonryReturn, previousMasonry);
       selectionMock.selected = previousSelected;
       selectionMock.size = previousSize;
+      selectionMock.anchorId = previousAnchor;
     }
   });
 
-  test("in fullscreen, shows the clip's companion chip and buttons, and Shift+1 sends and accepts it", async () => {
+  test("in fullscreen, shows the clip's companion chip and buttons, and Shift+1 sends and accepts it without advancing", async () => {
     const clip = {
       id: "/library/a.mp4",
       name: "a.mp4",
@@ -1073,7 +1098,7 @@ describe("App hook composition", () => {
     };
     const previousOrdered = masonryReturn.orderedVideos;
     masonryReturn.orderedVideos = [clip];
-    useFullScreenModalMock.mockReturnValue({
+    const controller = {
       isOpen: true,
       currentVideo: clip,
       fullScreenVideo: clip,
@@ -1093,7 +1118,9 @@ describe("App hook composition", () => {
       navigateFullScreen: vi.fn(),
       peekNavigation: vi.fn(),
       sourceRemoved: vi.fn(),
-    });
+      goToFullScreen: vi.fn(),
+    };
+    useFullScreenModalMock.mockReturnValue(controller);
     metadataActionsReturn.handleSetReviewState.mockResolvedValue({
       success: true,
       updates: { "fp-a": { reviewState: "pick" } },
@@ -1103,6 +1130,7 @@ describe("App hook composition", () => {
       vi.resetModules();
       const { default: App } = await import("./App.jsx");
       render(<App />);
+      act(() => useElectronLifecycleMock.mock.calls.at(-1)?.[0].setReviewAutoAdvance(true));
       await waitFor(() =>
         expect(modal()?.reviewRail.props.quickActions).toEqual([
           expect.objectContaining({ key: "c1/finish", label: "Finish", shortcut: "Shift+1" }),
@@ -1126,6 +1154,12 @@ describe("App hook composition", () => {
           completionGuard: expect.any(Function),
         })
       );
+      // Accepted, but the clip on screen stays: advancing is for review keys.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(controller.goToFullScreen).not.toHaveBeenCalled();
+      expect(controller.peekNavigation).not.toHaveBeenCalled();
 
       // A button sends only, as on a card.
       metadataActionsReturn.handleSetReviewState.mockClear();

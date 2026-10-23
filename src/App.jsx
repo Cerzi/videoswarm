@@ -4722,7 +4722,8 @@ function App() {
   );
 
   // Shift+1 / Shift+2: accept the selection and send it to the first or
-  // second quick action the connected apps offer, in their order.
+  // second quick action the connected apps offer, in their order. They never
+  // advance: "Advance after marking" is for the review keys and buttons.
   const handleQuickReview = useCallback(
     (index) => {
       if (!reviewModeEnabled) return;
@@ -4735,7 +4736,7 @@ function App() {
         action,
         videos: targets,
       });
-      void reviewWorkflow.applyReviewState(REVIEW_STATES.PICK);
+      void reviewWorkflow.applyReviewState(REVIEW_STATES.PICK, { allowAdvance: false });
     },
     [
       allVideosById,
@@ -5016,7 +5017,7 @@ function App() {
   );
 
   const handleFullscreenReviewState = useCallback(
-    async (reviewState) => {
+    async (reviewState, { advance = true } = {}) => {
       const target = captureFullscreenTarget();
       if (!target?.fingerprint) {
         notify("This clip cannot be reviewed until it has a fingerprint", "warning");
@@ -5037,6 +5038,7 @@ function App() {
       fullScreenUndoTargetRef.current = target;
       setFullscreenCanUndo(true);
       if (
+        advance &&
         reviewAutoAdvance &&
         normalizeReviewState(reviewState) !== REVIEW_STATES.UNREVIEWED
       ) {
@@ -5194,7 +5196,7 @@ function App() {
   );
 
   // Shift+1 / Shift+2 in fullscreen: the clip on screen is sent and
-  // accepted, advancing as marking it does.
+  // accepted, and stays on screen whatever "Advance after marking" says.
   const handleFullscreenQuickReview = useCallback(
     (index) => {
       const action = quickActionAt(index);
@@ -5205,7 +5207,7 @@ function App() {
         action,
         videos: [target.video],
       });
-      void handleFullscreenReviewState(REVIEW_STATES.PICK);
+      void handleFullscreenReviewState(REVIEW_STATES.PICK, { advance: false });
     },
     [captureFullscreenTarget, handleCompanionSend, handleFullscreenReviewState, quickActionAt]
   );

@@ -79,13 +79,15 @@ selected, saved 0.8 s after the selection moves).
 `Shift+1` / `Shift+2`, by physical key: the selected clips are sent to the
 first or second action marked `quick` across the connected companion apps,
 in their order (a one-click send: dry run, then send, a dialog only for
-skips and refusals), and accepted. With *Advance after marking* on, the next
-clip is selected. With no such action, a toast says so and nothing changes.
+skips and refusals), and accepted. They never advance, even with *Advance
+after marking* on (2026-10-23): that switch is for the review keys and
+buttons, not for sending to an app. With no such action, a toast says so
+and nothing changes.
 
 In fullscreen (2026-10-19) the same keys act on the clip on screen: it is
-sent, then accepted as the rail's *Accept* does, advancing when *Advance
-after marking* is on. A single clip's skip or refusal is a toast, so no
-dialog opens behind the viewer. Fullscreen's shortcut guide lists them;
+sent, then accepted as the rail's *Accept* does, and stays on screen. A
+single clip's skip or refusal is a toast, so no dialog opens behind the
+viewer. Fullscreen's shortcut guide lists them;
 `Shift+R` stays a grid key.
 
 ## Verification

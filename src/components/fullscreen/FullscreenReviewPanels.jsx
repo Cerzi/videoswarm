@@ -251,8 +251,8 @@ export function FullscreenReviewRail({
           <span>
             Advance after marking
             <small>
-              Skip duplicate instances of the marked content. Ratings never
-              advance.
+              Skip duplicate instances of the marked content. Ratings and
+              sends to connected apps never advance.
             </small>
           </span>
         </label>
