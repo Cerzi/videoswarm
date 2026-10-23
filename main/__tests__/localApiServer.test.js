@@ -168,9 +168,18 @@ describe("local read API setting", () => {
   });
 
   it("is off on the default port until switched on with a token", () => {
-    expect(normalizeLocalApiConfig(null)).toEqual({ version: 1, enabled: false, port: DEFAULT_LOCAL_API_PORT, token: null });
+    expect(normalizeLocalApiConfig(null)).toEqual({
+      version: 1,
+      enabled: false,
+      port: DEFAULT_LOCAL_API_PORT,
+      token: null,
+      feeds: false,
+    });
     expect(normalizeLocalApiConfig({ enabled: true, port: 80 })).toMatchObject({ enabled: false, port: DEFAULT_LOCAL_API_PORT });
     expect(() => validateLocalApiChange({ enabled: true, port: 99 })).toThrow(/1024 to 65535/u);
+    // Following saved views is its own switch, kept as it was unless given.
+    expect(validateLocalApiChange({ enabled: true, port: 50000 })).toEqual({ enabled: true, port: 50000 });
+    expect(validateLocalApiChange({ enabled: true, port: 50000, feeds: true })).toMatchObject({ feeds: true });
   });
 
   it("writes one file readable by the user only, and keeps the token", async () => {
@@ -178,7 +187,13 @@ describe("local read API setting", () => {
     await writeLocalApiConfig(dir, { enabled: true, port: 50000, token: TOKEN });
     const file = path.join(dir, "local-api.json");
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ version: 1, enabled: true, port: 50000, token: TOKEN });
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+      version: 1,
+      enabled: true,
+      port: 50000,
+      token: TOKEN,
+      feeds: false,
+    });
     expect(await readLocalApiConfig(dir)).toMatchObject({ enabled: true, port: 50000, token: TOKEN });
   });
 
@@ -195,7 +210,12 @@ describe("local read API setting", () => {
     const freePort = await new Promise((resolve) => probe.listen(0, "127.0.0.1", () => resolve(probe.address().port)));
     await new Promise((resolve) => probe.close(resolve));
     const on = await service.update({ enabled: true, port: freePort });
-    expect(on).toMatchObject({ enabled: true, running: true, port: freePort, error: null });
+    expect(on).toMatchObject({ enabled: true, running: true, port: freePort, error: null, feeds: false });
+    expect(service.feedsEnabled()).toBe(false);
+    expect((await service.update({ enabled: true, port: freePort, feeds: true })).feeds).toBe(true);
+    expect(service.feedsEnabled()).toBe(true);
+    // Saving the port again leaves the feeds switch as it was.
+    expect((await service.update({ enabled: true, port: freePort })).feeds).toBe(true);
     const file = JSON.parse(fs.readFileSync(on.filePath, "utf8"));
     expect(file.token).toBe(on.token);
     const answer = await request(freePort, { headers: { ...good, authorization: `Bearer ${file.token}` } });

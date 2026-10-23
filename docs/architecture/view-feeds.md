@@ -1,6 +1,6 @@
 # View Feeds
 
-Status: **Proposed** (2026-10-23).
+Status: **Implemented** (2026-10-23), except Section 5, which is the caller's to build.
 
 ## Summary
 
@@ -36,7 +36,7 @@ Decided with the user on 2026-10-23:
 
 ## 1. The switch
 
-Status: **Proposed**
+Status: **Implemented**
 
 - Preferences › Local API gains **Let apps follow saved views**, off by
   default and only available while the API is on. Its note says what it
@@ -44,13 +44,14 @@ Status: **Proposed**
   files each one matches."
 - With it off, the feed endpoints answer 403 `LOCAL_API_FEEDS_OFF`, and `describe`
   says `feeds: false`, so a caller can tell the user where to turn it on.
-- A saved view can be left out: each view gets **Share with apps** (on by
-  default once the switch is on) in its menu. A view not shared is neither
-  listed nor answered.
+- A saved view can be left out: while the switch is on, each saved view in
+  the sidebar shows a **⇄ Share with apps** toggle (on by default; stored as
+  `saved_views.feed_shared`). A view not shared is neither listed nor
+  answered. The toggle is hidden while the switch is off.
 
 ## 2. Endpoints (protocol 1, additions)
 
-Status: **Proposed**
+Status: **Implemented**
 
 ### `POST /api/v1/views`
 
@@ -88,14 +89,16 @@ or name changes.
   "total": 8231,
   "next": "c-…",
   "ignored": [],
+  "pending": { "prompts": 0, "workflows": 0 },
   "profile": "p-…",
   "revision": 1234
 }
 ```
 
 - **The whole set, in pages.** No cap on the set: every matching clip is
-  returned, each content once (the copy seen most recently), in the
-  view's sort order, `limit` per page (default and most 5,000). `next` is
+  returned, each content once (a copy that can be opened, else the one
+  seen most recently), ordered by `path` (not the view's sort: a feed is a
+  set, and a stable order keeps pages and etags steady), `limit` per page (default and most 5,000). `next` is
   a cursor for the following page, null on the last. `total` is the size of
   the whole set. All pages of one answer belong to one snapshot named by
   `etag`; if the set changes between pages, the next page answers 409
@@ -124,6 +127,10 @@ or name changes.
   `"mightBe"`; it never holds clips. The answer is the view as if those
   parts were off, and the caller can say "this view also filters on X,
   which apps can't see".
+- `pending` counts clips a prompt or workflow part could not judge yet
+  (prompts or workflows not read so far, or the prompt search ran out of
+  its 15 s budget). They are left out for now and arrive in a later answer
+  once read, so a nonzero `pending` means "ask again soon".
 
 ### Errors
 
@@ -136,26 +143,31 @@ or name changes.
 | No such view in this profile (deleted) | 404 `LOCAL_API_VIEW_NOT_FOUND` |
 | Profile switched since `profile` | 409 `LOCAL_API_PROFILE_CHANGED` |
 | Set changed between pages | 409 `LOCAL_API_FEED_CHANGED` |
+| Bad `view`, `limit` or `after` | 400 `LOCAL_API_BAD_REQUEST` |
 
 Polling: a follower asks `views/clips` with its `etag` every 30 s, or when
 `/changes` reports a change or `/views` a new view revision.
 
 ## 3. Applying a view in main
 
-Status: **Proposed**
+Status: **Implemented**
 
 Today most filters run in the window. A feed needs the same answer the
 grid would give, from the main process, without a window:
 
-- **One filter module, two places.** The pure predicates in
-  `src/app/filters/filtersUtils.js` (rating, review state, tags with
-  All/Any and Exclude, tag hierarchy, size, frame rate, steps, version
-  filter) move to a shared CommonJS-compatible module used by both the
-  renderer and `main/`, so the two cannot drift. Tests run each predicate
-  through both.
+- **One filter module, two places.** `main/shared/clipFilter.mjs`
+  (`compileClipFilter`) is the grid's filter test (rating, review state,
+  tags with All/Any and Exclude, tag hierarchy, size, frame rate, version
+  filter, prompt and workflow parts). The grid's `useFilterState` and
+  `main/view-feeds.js` both use it, so the two cannot drift. Its helpers
+  (`filterValues.mjs`, `reviewState.mjs`, `tagHierarchy.mjs`,
+  `generationVersions.mjs`) live beside it as ES modules; main loads them
+  with `require()`, and the old renderer paths re-export them.
 - **Prompt search and workflow filters** already run in main
   (`prompts:search`, `workflow:match`); the feed calls them directly.
-  Prompt text still never leaves main: matches come back as clips.
+  Prompt text still never leaves main: matches come back as clips. A
+  feed's prompt search never cancels the grid's own (`supersede: false`)
+  and stops after 15 s; what it did not reach counts in `pending`.
 - **Scope.** A feed always applies the view to the whole library (every
   indexed root that can be opened), whatever folder the view was saved
   in: a project wants every matching clip, not one folder's.
@@ -163,13 +175,15 @@ grid would give, from the main process, without a window:
   tags (they depend on companion apps answering the window), *Might be*
   (asks the tag suggester per clip; could follow later), and sort keys
   that only exist in the window (random order falls back to newest).
-- **Cost.** Bounded like a library tag view: one SQL pass for the indexed
-  facts, then the predicates; prompt and workflow parts are cached by query
-  and invalidated by the change log, so an unchanged poll costs a hash.
+- **Cost.** The catalog is read in chunks of 5,000 rows, yielding between
+  chunks, then the test runs over it. Pages of one answer come from a
+  snapshot kept up to 5 minutes (at most 4 kept; all dropped on a profile
+  switch); a first page recomputes, and `unless` saves sending the clips,
+  not the computing.
 
 ## 4. Privacy
 
-Status: **Proposed**
+Status: **Implemented**
 
 - Listing is new: with the switch on, a token holder learns the paths of
   every clip a shared view matches. The token already reads every rating
@@ -216,6 +230,21 @@ Not built here; written down so both sides agree.
 - A view using a companion filter answers with it listed in `ignored`.
 - The shared filter module gives identical results in renderer and main
   tests.
+
+## Where it lives
+
+- `main/view-feeds.js`: `ViewFeedService` (catalog, prompt and workflow
+  parts, snapshots, cursors) and `splitIgnored`.
+- `main/shared/clipFilter.mjs` and its helpers: the shared filter test.
+- `main/database.js`: `saved_views.feed_shared`, `listFeedPoolChunk`,
+  `listFeedTagNames`, `getSavedView`, `setSavedViewShared`.
+- `main/local-api/handlers.js`: the `views` and `views/clips` routes and
+  their error codes; `config.js` and `service.js`: the `feeds` switch.
+- Preferences › Local API › *Let apps follow saved views*; the sidebar's
+  ⇄ toggle (`LibrarySidebar.jsx`).
+- Tests: `main/__tests__/viewFeeds.test.js`,
+  `main/__tests__/viewFeedsDatabase.test.js` (Electron ABI),
+  `tests/electron/view-feeds.smoke.spec.cjs`.
 
 ## Implementation order
 

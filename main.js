@@ -150,6 +150,7 @@ const crypto = require("crypto");
 const { createLocalApiHandlers } = require("./main/local-api/handlers");
 const { createLocalApiService } = require("./main/local-api/service");
 const { LocalApiError } = require("./main/local-api/server");
+const { ViewFeedService } = require("./main/view-feeds");
 const { COMPANION_LIMITS } = require("./main/companion-client");
 const {
   DEFAULT_COMFY_CONNECTION,
@@ -2063,6 +2064,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
   promptSimilarityService.clear();
   tagSuggestionService.clear();
   ratingArenaService.clear();
+  viewFeedService.clear();
   lastFrameCaptureService.cancelAll("Profile changed during frame capture");
   mediaProtocolService.cancelActiveStreams();
   await Promise.all([
@@ -4884,7 +4886,12 @@ ipcMain.handle("library:create-saved-view", async (_event, payload = {}) =>
 
 ipcMain.handle("library:update-saved-view", async (_event, payload = {}) =>
   runLibraryCatalogOperation((metadataStore) => ({
-    view: metadataStore.updateSavedView(payload?.id, {
+    // Shared with apps that follow saved views, or not (view-feeds.md).
+    view: typeof payload?.shared === "boolean" &&
+      !Object.prototype.hasOwnProperty.call(payload, "name") &&
+      !Object.prototype.hasOwnProperty.call(payload, "definition")
+      ? metadataStore.setSavedViewShared(payload?.id, payload.shared)
+      : metadataStore.updateSavedView(payload?.id, {
       ...(Object.prototype.hasOwnProperty.call(payload, "name")
         ? { name: payload.name }
         : {}),
@@ -5794,10 +5801,18 @@ ipcMain.handle("companion:withdraw", async (event, payload = {}) => {
 // profile; answers come from the active profile.
 const localApiProfileId = (profileId) =>
   `p-${crypto.createHash("sha256").update(String(profileId)).digest("hex").slice(0, 16)}`;
-const localApiService = createLocalApiService({
+// View feeds (docs/architecture/view-feeds.md): apps follow a saved view.
+const viewFeedService = new ViewFeedService({ promptService: promptSimilarityService });
+let localApiService = null;
+localApiService = createLocalApiService({
   getDataDir: () => app.getPath("userData"),
   handlers: createLocalApiHandlers({
     appVersion: app.getVersion(),
+    feeds: {
+      enabled: () => localApiService?.feedsEnabled() === true,
+      service: viewFeedService,
+      unavailableRootPaths: () => unavailableLibraryRoots(),
+    },
     withStore: async (work) => {
       let context;
       try {
@@ -5805,7 +5820,10 @@ const localApiService = createLocalApiService({
       } catch {
         throw new LocalApiError(503, "LOCAL_API_BUSY", "Video Swarm is switching profiles; ask again");
       }
-      const result = await work(context.metadataStore);
+      const result = await work(context.metadataStore, {
+        profile: localApiProfileId(context.profileId),
+        assertActive: () => assertMetadataContextActive(context),
+      });
       try {
         assertMetadataContextActive(context);
       } catch {
@@ -5824,7 +5842,11 @@ ipcMain.handle("local-api:get", async () => localApiService.describe());
 
 ipcMain.handle("local-api:set", async (_event, payload = {}) => {
   assertPlainObject(payload, "local API setting");
-  return localApiService.update({ enabled: payload.enabled === true, port: payload.port });
+  return localApiService.update({
+    enabled: payload.enabled === true,
+    port: payload.port,
+    ...(typeof payload.feeds === "boolean" ? { feeds: payload.feeds } : {}),
+  });
 });
 
 ipcMain.handle("local-api:new-token", async () => localApiService.renewToken());

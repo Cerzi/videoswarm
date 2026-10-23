@@ -720,8 +720,12 @@ function App() {
   const {
     savedViews,
     createSavedView,
+    updateSavedView,
     deleteSavedView,
   } = useSavedViews();
+  // Whether apps may follow saved views (view-feeds.md), for the sidebar's
+  // share switch; read again whenever Preferences closes.
+  const [savedViewFeedsOn, setSavedViewFeedsOn] = useState(false);
 
   const currentDirectory =
     folderLocation.rootPath === activeRootPath
@@ -4801,6 +4805,39 @@ function App() {
     ]
   );
 
+  useEffect(() => {
+    if (isPreferencesOpen) return undefined;
+    const api = window.electronAPI?.localApi;
+    if (typeof api?.get !== "function") return undefined;
+    let alive = true;
+    Promise.resolve(api.get())
+      .then((state) => {
+        if (alive) setSavedViewFeedsOn(state?.enabled === true && state?.feeds === true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isPreferencesOpen]);
+  const handleToggleSavedViewShared = useCallback(
+    async (view) => {
+      try {
+        const updated = await updateSavedView(view.id, { shared: view.shared === false });
+        if (updated) {
+          notify(
+            updated.shared
+              ? `Apps can follow “${updated.name}”`
+              : `Apps can no longer follow “${updated.name}”`,
+            "success"
+          );
+        }
+      } catch (error) {
+        notify(error?.message || "Could not change sharing", "error");
+      }
+    },
+    [notify, updateSavedView]
+  );
+
   const handleDeleteSavedView = useCallback(
     async (id, view) => {
       try {
@@ -7235,6 +7272,8 @@ function App() {
                   onApplySavedView={handleApplySavedView}
                   onSaveCurrentView={handleSaveCurrentView}
                   onDeleteSavedView={handleDeleteSavedView}
+                  savedViewFeedsOn={savedViewFeedsOn}
+                  onToggleSavedViewShared={handleToggleSavedViewShared}
                   reviewPasses={reviewPassList}
                   activeReviewPassId={reviewPass?.id ?? null}
                   onOpenReviewPass={handleOpenReviewPass}
@@ -7294,6 +7333,8 @@ function App() {
                         onApplySavedView: handleApplySavedView,
                         onSaveCurrentView: handleSaveCurrentView,
                         onDeleteSavedView: handleDeleteSavedView,
+                        savedViewFeedsOn,
+                        onToggleSavedViewShared: handleToggleSavedViewShared,
                         reviewPasses: reviewPassList,
                         activeReviewPassId: reviewPass?.id ?? null,
                         onOpenReviewPass: handleOpenReviewPass,

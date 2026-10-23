@@ -652,6 +652,7 @@ function LocalApiSection({ active }) {
   const api = window.electronAPI?.localApi;
   const [state, setState] = useState(null);
   const [enabled, setEnabled] = useState(false);
+  const [feeds, setFeeds] = useState(false);
   const [port, setPort] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -660,6 +661,7 @@ function LocalApiSection({ active }) {
   const apply = useCallback((next) => {
     setState(next);
     setEnabled(next?.enabled === true);
+    setFeeds(next?.feeds === true);
     setPort(next?.port ? String(next.port) : "");
   }, []);
 
@@ -683,7 +685,9 @@ function LocalApiSection({ active }) {
     return <p className="preferences__intro">The local API is not available in this build.</p>;
   }
 
-  const dirty = state !== null && (enabled !== state.enabled || port !== String(state.port ?? ""));
+  const dirty =
+    state !== null &&
+    (enabled !== state.enabled || feeds !== (state.feeds === true) || port !== String(state.port ?? ""));
   const perform = async (action) => {
     setBusy(true);
     setStatus(null);
@@ -709,7 +713,7 @@ function LocalApiSection({ active }) {
       onSubmit={(event) => {
         event.preventDefault();
         void perform(async () => {
-          const next = await api.set({ enabled, port: Number(port) });
+          const next = await api.set({ enabled, port: Number(port), feeds });
           apply(next);
           setStatus(
             next.error
@@ -732,6 +736,22 @@ function LocalApiSection({ active }) {
         <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
         <span>
           <span className="preferences__choice-label">Let other apps on this computer read clips</span>
+        </span>
+      </label>
+      <label className="preferences__choice">
+        <input
+          type="checkbox"
+          checked={feeds}
+          disabled={!enabled}
+          onChange={(event) => setFeeds(event.target.checked)}
+        />
+        <span>
+          <span className="preferences__choice-label">Let apps follow saved views</span>
+          <span className="preferences__hint">
+            Apps with the token can list your smart views and the files each one matches across the
+            library, so a project can use what a view shows. A view's ⇄ in the sidebar turns this
+            off for that view.
+          </span>
         </span>
       </label>
       <label className="preferences__field">

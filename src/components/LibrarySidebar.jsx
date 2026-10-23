@@ -225,6 +225,10 @@ function LibrarySidebarContentView({
   onApplySavedView,
   onSaveCurrentView,
   onDeleteSavedView,
+  // Whether apps following saved views may follow this one (view-feeds.md);
+  // shown only while following is switched on.
+  savedViewFeedsOn = false,
+  onToggleSavedViewShared,
   smartViewsEnabled = true,
   // Unfinished review passes to resume (docs/architecture/review-passes.md):
   // `{ id, name, clipCount, decided, finishedAt }`.
@@ -425,6 +429,23 @@ function LibrarySidebarContentView({
                     <span className="library-saved-view-list__scope">Library</span>
                   ) : null}
                 </button>
+                {savedViewFeedsOn && onToggleSavedViewShared ? (
+                  <button
+                    type="button"
+                    className={`library-saved-view-list__share${view.shared === false ? "" : " is-shared"}`}
+                    onClick={() => onToggleSavedViewShared(view)}
+                    aria-pressed={view.shared !== false}
+                    aria-label={`Share ${view.name} with apps`}
+                    title={
+                      view.shared === false
+                        ? "Not shared: apps that follow saved views can't see this one. Click to share."
+                        : "Shared: apps that follow saved views can use this one. Click to stop."
+                    }
+                    disabled={disabled}
+                  >
+                    ⇄
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="library-saved-view-list__delete"

@@ -72,9 +72,10 @@ const installApi = () => {
       error: null,
       lastRead: null,
     }),
-    set: vi.fn(async ({ enabled, port }) => ({
+    set: vi.fn(async ({ enabled, port, feeds }) => ({
       enabled,
       port,
+      feeds: feeds === true,
       token: "T".repeat(43),
       filePath: "/data/video-swarm/local-api.json",
       running: enabled,
@@ -327,8 +328,15 @@ describe("PreferencesDialog", () => {
     expect(screen.getByRole("spinbutton", { name: "Port" })).toHaveValue(47821);
     fireEvent.click(screen.getByRole("checkbox", { name: /Let other apps on this computer read clips/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.localApi.set).toHaveBeenCalledWith({ enabled: true, port: 47821 }));
+    await waitFor(() => expect(api.localApi.set).toHaveBeenCalledWith({ enabled: true, port: 47821, feeds: false }));
     expect(await screen.findByText("Saved. Answering on port 47821.")).toBeInTheDocument();
+    // Following saved views is a separate switch, off until asked for.
+    const follow = screen.getByRole("checkbox", { name: /Let apps follow saved views/ });
+    expect(follow).not.toBeChecked();
+    expect(follow).toBeEnabled();
+    fireEvent.click(follow);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.localApi.set).toHaveBeenLastCalledWith({ enabled: true, port: 47821, feeds: true }));
     // The token is hidden until asked for.
     expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password");
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));

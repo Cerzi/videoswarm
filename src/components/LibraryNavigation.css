@@ -395,6 +395,24 @@
   cursor: pointer;
 }
 
+.library-saved-view-list__share {
+  flex: 0 0 auto;
+  width: 24px;
+  align-self: stretch;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+}
+
+.library-saved-view-list__share.is-shared {
+  color: #8ce99a;
+}
+
+.library-saved-view-list__share:hover:not(:disabled) {
+  color: #d3f9d8;
+}
+
 .library-saved-view-list__delete:hover:not(:disabled) {
   color: #ffa8a8;
 }

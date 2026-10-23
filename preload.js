@@ -607,10 +607,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ratings and review states. Preferences reads and changes its setting.
   localApi: {
     get: async () => ipcRenderer.invoke("local-api:get"),
-    set: async ({ enabled, port } = {}) =>
+    // `feeds`: whether apps may follow saved views (view-feeds.md); left
+    // as it was when not given.
+    set: async ({ enabled, port, feeds } = {}) =>
       ipcRenderer.invoke("local-api:set", {
         enabled: enabled === true,
         port: Number(port),
+        ...(typeof feeds === "boolean" ? { feeds } : {}),
       }),
     newToken: async () => ipcRenderer.invoke("local-api:new-token"),
   },

@@ -47,6 +47,7 @@ function createLocalApiService({ getDataDir, handlers, logger = console }) {
       enabled: config?.enabled === true,
       port: config?.port ?? null,
       token: config?.token ?? null,
+      feeds: config?.feeds === true,
       filePath: localApiConfigPath(getDataDir()),
       running: state.running,
       error: state.error,
@@ -62,11 +63,12 @@ function createLocalApiService({ getDataDir, handlers, logger = console }) {
       return describe();
     },
     async update(change) {
-      const { enabled, port } = validateLocalApiChange(change);
+      const { enabled, port, feeds } = validateLocalApiChange(change);
       config = await writeLocalApiConfig(getDataDir(), {
         ...(config || {}),
         enabled,
         port,
+        feeds: feeds === undefined ? config?.feeds === true : feeds,
         token: config?.token || newLocalApiToken(),
       });
       await apply();
@@ -81,6 +83,8 @@ function createLocalApiService({ getDataDir, handlers, logger = console }) {
       return describe();
     },
     describe,
+    /** Whether apps may follow saved views now (view-feeds.md). */
+    feedsEnabled: () => config?.enabled === true && config?.feeds === true,
     stop: () => server.stop(),
   };
 }

@@ -345,6 +345,32 @@ describe("LibrarySidebar", () => {
     });
   });
 
+  it("offers Share with apps on each smart view only while apps may follow views", () => {
+    const onToggleSavedViewShared = vi.fn();
+    const views = [
+      { id: 1, name: "Picks", shared: true },
+      { id: 2, name: "Private", shared: false },
+    ];
+    const { rerender } = render(
+      <LibrarySidebar tree={tree} savedViews={views} onToggleSavedViewShared={onToggleSavedViewShared} />
+    );
+    expect(screen.queryByRole("button", { name: "Share Picks with apps" })).toBeNull();
+
+    rerender(
+      <LibrarySidebar
+        tree={tree}
+        savedViews={views}
+        savedViewFeedsOn
+        onToggleSavedViewShared={onToggleSavedViewShared}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Share Picks with apps" })).toHaveAttribute("aria-pressed", "true");
+    const off = screen.getByRole("button", { name: "Share Private with apps" });
+    expect(off).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(off);
+    expect(onToggleSavedViewShared).toHaveBeenCalledWith(views[1]);
+  });
+
   it("clearly disables smart views without an open collection", () => {
     render(
       <LibrarySidebar

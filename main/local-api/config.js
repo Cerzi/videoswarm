@@ -34,17 +34,25 @@ function normalizeLocalApiConfig(raw) {
     enabled: source.enabled === true && Boolean(token),
     port: isPort(source.port) ? source.port : DEFAULT_LOCAL_API_PORT,
     token,
+    // Apps may follow saved views (view-feeds.md): its own switch, off by
+    // default, since it lists paths.
+    feeds: source.feeds === true,
   };
 }
 
-/** A change from Preferences: on or off, and a port from 1024 to 65535. */
+/**
+ * A change from Preferences: on or off, a port from 1024 to 65535, and
+ * whether apps may follow saved views (kept as it was when not given).
+ */
 function validateLocalApiChange(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new LocalApiConfigError("Expected a local API setting");
   }
   const port = Number(input.port);
   if (!isPort(port)) throw new LocalApiConfigError("The port must be a whole number from 1024 to 65535");
-  return { enabled: input.enabled === true, port };
+  const change = { enabled: input.enabled === true, port };
+  if (input.feeds !== undefined) change.feeds = input.feeds === true;
+  return change;
 }
 
 function localApiConfigPath(dataDir) {

@@ -1039,6 +1039,18 @@ function initDatabase(app, profilePath) {
         ON arena_checks(fingerprint, checked_at);
     `);
 
+    // View feeds (view-feeds.md): a saved view other apps may follow, on
+    // unless the owner turns it off for that view.
+    const savedViewColumns = new Set(
+      db
+        .prepare('PRAGMA table_info(saved_views);')
+        .all()
+        .map((row) => row.name)
+    );
+    if (!savedViewColumns.has('feed_shared')) {
+      db.exec('ALTER TABLE saved_views ADD COLUMN feed_shared INTEGER NOT NULL DEFAULT 1;');
+    }
+
     // Tag hierarchy: each tag may have one parent ("bellydance" under
     // "dance"). Ancestors are derived when matching and counting, never
     // written onto clips. See docs/architecture/tag-hierarchy.md.
@@ -2166,6 +2178,51 @@ function createMetadataStore(db) {
     INSERT INTO saved_views (name, definition_json, created_at, updated_at)
     VALUES (?, ?, ?, ?);
   `);
+  const savedViewSetShared = db.prepare(`
+    UPDATE saved_views SET feed_shared = ?, updated_at = ? WHERE id = ?;
+  `);
+  // A view feed's catalog (view-feeds.md): every present clip of every root,
+  // in id order and chunks, with the facts a view's filters read. Roots that
+  // cannot be opened are kept; the feed marks their clips unavailable.
+  const feedPoolChunk = db.prepare(`
+    SELECT fi.id, fi.absolute_path, fi.relative_path, fi.fingerprint, fi.last_seen_at,
+      lr.root_path AS owner_root_path,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE fi.id > @after_id
+      AND fi.is_present != 0
+      AND d.is_present != 0
+      AND fi.fingerprint IS NOT NULL
+    ORDER BY fi.id
+    LIMIT @limit;
+  `);
+  // Every present clip's tag names, by content, in one pass.
+  const feedTagNames = db.prepare(`
+    SELECT ft.fingerprint AS fingerprint, t.name AS name
+    FROM file_tags ft
+    INNER JOIN tags t ON t.id = ft.tag_id
+    WHERE EXISTS (
+      SELECT 1 FROM file_instances fi
+      WHERE fi.fingerprint = ft.fingerprint AND fi.is_present = 1
+    )
+    ORDER BY ft.fingerprint, t.name COLLATE NOCASE;
+  `);
   const savedViewUpdate = db.prepare(`
     UPDATE saved_views
     SET name = ?, definition_json = ?, updated_at = ?
@@ -2672,6 +2729,8 @@ function createMetadataStore(db) {
         definition: normalizeSavedViewDefinition(JSON.parse(row.definition_json)),
         createdAt: Number(row.created_at || 0),
         updatedAt: Number(row.updated_at || 0),
+        // Followed by other apps unless turned off (view-feeds.md).
+        shared: row.feed_shared === undefined ? true : Number(row.feed_shared) !== 0,
       };
     } catch {
       return null;
@@ -3982,6 +4041,76 @@ function createMetadataStore(db) {
     const serialized = JSON.stringify(safeDefinition);
     savedViewUpdate.run(safeName, serialized, Date.now(), id);
     return mapSavedViewRow(savedViewById.get(id));
+  }
+
+  function getSavedView(savedViewId) {
+    return mapSavedViewRow(savedViewById.get(normalizeSavedViewId(savedViewId)));
+  }
+
+  function setSavedViewShared(savedViewId, shared) {
+    const id = normalizeSavedViewId(savedViewId);
+    if (!savedViewById.get(id)) throw new RangeError('Saved view not found');
+    savedViewSetShared.run(shared ? 1 : 0, Date.now(), id);
+    return mapSavedViewRow(savedViewById.get(id));
+  }
+
+  /**
+   * One chunk of a view feed's catalog (view-feeds.md): present clips after
+   * `afterId` in id order, as `{ lastId, rows }`; rows have the facts a view
+   * filters on, without tags (see `listFeedTagNames`).
+   */
+  function listFeedPoolChunk({ afterId = 0, limit = 5_000, assertActive } = {}) {
+    assertOperationActive(assertActive);
+    const rows = feedPoolChunk.all({
+      after_id: Number.isSafeInteger(afterId) && afterId > 0 ? afterId : 0,
+      limit: Math.max(1, Math.min(20_000, Number(limit) || 5_000)),
+    });
+    const clips = rows.map((row) => {
+      const width = Number(row.content_width || 0);
+      const height = Number(row.content_height || 0);
+      const durationMs = normalizeDurationMs(row.content_duration_ms);
+      const frameRate = normalizeFrameRate(row.content_frame_rate);
+      return {
+        instanceId: Number(row.id),
+        fingerprint: row.fingerprint,
+        absolutePath: row.absolute_path,
+        relativePath: row.relative_path,
+        rootPath: row.owner_root_path,
+        lastSeenAt: Number(row.last_seen_at || 0),
+        rating:
+          row.rating_value !== null && Number.isFinite(Number(row.rating_value))
+            ? Number(row.rating_value)
+            : null,
+        reviewState: REVIEW_STATES.has(row.review_state) ? row.review_state : 'unreviewed',
+        dimensions:
+          width > 0 && height > 0
+            ? {
+                width,
+                height,
+                ...(durationMs ? { durationMs } : {}),
+                ...(frameRate ? { frameRate } : {}),
+              }
+            : null,
+        ...mapGenerationKeyFields(
+          row.content_generation_key,
+          row.content_generation_key_version,
+          row.content_prompt_key,
+          row.content_prompt_key_version
+        ),
+      };
+    });
+    return { lastId: rows.length ? Number(rows[rows.length - 1].id) : afterId, clips };
+  }
+
+  /** Every present content's tag names: `Map<fingerprint, string[]>`. */
+  function listFeedTagNames() {
+    const byFingerprint = new Map();
+    for (const row of feedTagNames.iterate()) {
+      let list = byFingerprint.get(row.fingerprint);
+      if (!list) byFingerprint.set(row.fingerprint, (list = []));
+      list.push(row.name);
+    }
+    return byFingerprint;
   }
 
   function deleteSavedView(savedViewId) {
@@ -6564,6 +6693,10 @@ function createMetadataStore(db) {
     getGenerationVersionSiblings,
     getGenerationVersionRecords,
     matchWorkflowFacts,
+    getSavedView,
+    setSavedViewShared,
+    listFeedPoolChunk,
+    listFeedTagNames,
     createReviewPass,
     listReviewPasses,
     getReviewPassRecords,

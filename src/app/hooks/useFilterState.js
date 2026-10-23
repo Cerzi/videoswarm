@@ -5,7 +5,6 @@ import {
   sanitizeMinRating,
   sanitizeExactRating,
   sanitizeMegapixels,
-  videoMegapixels,
   normalizeIncludeTagsMode,
   formatRatingLabel,
   useFiltersActiveCount,
@@ -14,17 +13,14 @@ import {
   sanitizeFrameRate,
   sanitizeSteps,
   normalizeWorkflowWords,
-  matchesFrameRate,
   workflowFilterQuery,
 } from "../filters/filtersUtils";
 import {
   REVIEW_FILTERS,
-  matchesReviewFilter,
   normalizeReviewFilter,
 } from "../../review/reviewState";
 import {
   VERSION_FILTERS,
-  matchesVersionFilter,
   normalizeVersionFilter,
 } from "../filters/generationVersions";
 import {
@@ -42,7 +38,8 @@ import {
   useMightBe,
   useTurnedDownVersion,
 } from "../tags/likelyTags";
-import { EMPTY_TAG_HIERARCHY, tagsMatch } from "../filters/tagHierarchy";
+import { EMPTY_TAG_HIERARCHY } from "../filters/tagHierarchy";
+import { compileClipFilter } from "../../../main/shared/clipFilter.mjs";
 
 // Companion id -> clips waiting on its answer under a phase filter.
 const NO_UNCHECKED = new Map();
@@ -154,15 +151,6 @@ export function useFilterState({
   // The filtered list, and per companion the clips hidden only because it
   // has not answered for them yet (counted for the status line).
   const { list: filteredVideos, unchecked: companionUnchecked } = useMemo(() => {
-    const includeTags = filters.includeTags ?? [];
-    const excludeTags = filters.excludeTags ?? [];
-    const minRating = sanitizeMinRating(filters.minRating);
-    const exactRating = sanitizeExactRating(filters.exactRating);
-    const reviewFilter = normalizeReviewFilter(filters.reviewFilter);
-    const includeTagsMode = normalizeIncludeTagsMode(filters.includeTagsMode);
-    const minMegapixels = sanitizeMegapixels(filters.minMegapixels);
-    const maxMegapixels = sanitizeMegapixels(filters.maxMegapixels);
-    const versionFilter = normalizeVersionFilter(filters.versionFilter);
     const companionFilters = normalizeCompanionFilters(filters.companionFilters);
     const companionHideSent = normalizeCompanionHideSent(filters.companionHideSent);
     const companionTags = normalizeCompanionTagFilters(filters.companionTags);
@@ -173,12 +161,12 @@ export function useFilterState({
         Object.keys(companionFilters).length > 0 ||
         Object.keys(companionTags).length > 0);
     const companionById = new Map(companionList.map((companion) => [companion.id, companion]));
-    const promptActive =
-      normalizePromptQuery(filters.promptQuery).trim() !== "" && promptMatches instanceof Set;
     // Companion tags searched alongside prompts, when any app has tags.
     const taggingCompanions = companionList.filter((companion) => companion.tags);
     const promptTagTerms =
-      promptActive && taggingCompanions.length ? parseTagQuery(filters.promptQuery) : null;
+      normalizePromptQuery(filters.promptQuery).trim() !== "" && taggingCompanions.length
+        ? parseTagQuery(filters.promptQuery)
+        : null;
     const companionTagSearchFor = (video) => {
       const tags = [];
       for (const companion of taggingCompanions) {
@@ -187,131 +175,24 @@ export function useFilterState({
       }
       return companionTagsSearch(tags, promptTagTerms);
     };
-    const workflowActive = workflowFilterQuery(filters) !== null && workflowMatches instanceof Set;
-    const frameRateActive =
-      sanitizeFrameRate(filters.minFrameRate) !== null ||
-      sanitizeFrameRate(filters.maxFrameRate) !== null;
-    // Until the first answer arrives nothing is known to match, so nothing
-    // shows: the whole collection would read as "might be" the tag.
-    const mightBeTag = normalizeMightBe(filters.mightBe);
+    // Everything but the companion apps: the test main applies too
+    // (docs/architecture/view-feeds.md).
+    const clipFilter = compileClipFilter(filters, {
+      tagHierarchy,
+      versionOf: (video) => generationVersionIndex?.get(video.id),
+      promptMatches,
+      promptExtra: promptTagTerms ? companionTagSearchFor : null,
+      workflowMatches,
+      mightBe: { matches: mightBeMatches, turnedDown: isLikelyTagTurnedDown },
+    });
 
-    const includeSet = includeTags.length
-      ? new Set(includeTags.map((tag) => tag.toLowerCase()))
-      : null;
-    const excludeSet = excludeTags.length
-      ? new Set(excludeTags.map((tag) => tag.toLowerCase()))
-      : null;
-
-    if (
-      !includeSet &&
-      !excludeSet &&
-      minRating === null &&
-      exactRating === null &&
-      minMegapixels === null &&
-      maxMegapixels === null &&
-      reviewFilter === REVIEW_FILTERS.ANY &&
-      versionFilter === VERSION_FILTERS.ANY &&
-      !companionActive &&
-      !promptActive &&
-      !mightBeTag &&
-      !workflowActive &&
-      !frameRateActive
-    ) {
+    if (!clipFilter.active && !companionActive) {
       return { list: videos, unchecked: NO_UNCHECKED };
     }
 
     const unchecked = new Map();
     const list = videos.filter((video) => {
-      const tagList = Array.isArray(video.tags)
-        ? video.tags.map((tag) => (tag ?? "").toString().trim().toLowerCase()).filter(Boolean)
-        : [];
-
-      if (includeSet) {
-        if (includeTagsMode === "any") {
-          let matched = false;
-          for (const tag of includeSet) {
-            if (tagsMatch(tagList, tag, tagHierarchy)) {
-              matched = true;
-              break;
-            }
-          }
-          if (!matched) return false;
-        } else {
-          for (const tag of includeSet) {
-            if (!tagsMatch(tagList, tag, tagHierarchy)) {
-              return false;
-            }
-          }
-        }
-      }
-
-      if (excludeSet) {
-        for (const tag of excludeSet) {
-          if (tagsMatch(tagList, tag, tagHierarchy)) {
-            return false;
-          }
-        }
-      }
-
-      if (!matchesReviewFilter(video.reviewState, reviewFilter)) {
-        return false;
-      }
-
-      if (minMegapixels !== null || maxMegapixels !== null) {
-        // A clip that has never been measured cannot be shown to satisfy a
-        // resolution bound, so it is excluded rather than assumed to pass.
-        const megapixels = videoMegapixels(video);
-        if (megapixels === null) return false;
-        if (minMegapixels !== null && megapixels < minMegapixels) return false;
-        if (maxMegapixels !== null && megapixels > maxMegapixels) return false;
-      }
-
-      if (
-        versionFilter !== VERSION_FILTERS.ANY &&
-        !matchesVersionFilter(generationVersionIndex?.get(video.id), versionFilter)
-      ) {
-        return false;
-      }
-
-      // Prompt words also find a companion's tags for the clip; a word to
-      // rule out that a tag holds rules the clip out.
-      if (promptActive) {
-        const inPrompt = Boolean(video.promptKey && promptMatches.has(video.promptKey));
-        const tagSearch = promptTagTerms ? companionTagSearchFor(video) : null;
-        if (tagSearch?.ruledOut || (!inPrompt && !tagSearch?.found)) return false;
-      }
-
-      // A clip whose timing or workflow has not been read cannot be shown to
-      // match, so it is hidden rather than assumed to.
-      if (
-        frameRateActive &&
-        !matchesFrameRate(video, filters.minFrameRate, filters.maxFrameRate)
-      ) {
-        return false;
-      }
-      if (workflowActive && !(video.fingerprint && workflowMatches.has(video.fingerprint))) {
-        return false;
-      }
-
-      // Tagged or turned down since main answered: done with, so gone.
-      if (
-        mightBeTag &&
-        (!(mightBeMatches instanceof Set) ||
-          !mightBeMatches.has(Number(video.instanceId)) ||
-          tagsMatch(tagList, mightBeTag, tagHierarchy) ||
-          isLikelyTagTurnedDown(video.fingerprint, mightBeTag))
-      ) {
-        return false;
-      }
-
-      const ratingValue = Number.isFinite(video.rating) ? Math.round(video.rating) : null;
-
-      if (exactRating !== null) {
-        if ((ratingValue ?? null) !== exactRating) return false;
-      } else if (minRating !== null && (ratingValue ?? 0) < minRating) {
-        return false;
-      }
-
+      if (!clipFilter.test(video)) return false;
       // Last, so a clip counted as waiting on a companion matches the rest.
       if (companionActive) {
         const verdict = companionFilterVerdict(
@@ -328,7 +209,6 @@ export function useFilterState({
           return false;
         }
       }
-
       return true;
     });
     return { list, unchecked: unchecked.size ? unchecked : NO_UNCHECKED };

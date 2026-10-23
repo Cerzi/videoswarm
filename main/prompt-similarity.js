@@ -489,24 +489,33 @@ class PromptSimilarityService {
    * The prompt keys among `promptKeys` whose positive prompts contain every
    * word of `query` (by word start) and none of its `-words`. Returns
    * `{ matches, unread }`, or null when a newer request superseded this one.
+   *
+   * The grid's searches supersede each other. A view feed passes
+   * `supersede: false`, so it neither cancels nor is cancelled by them, and
+   * a `deadline` (epoch ms) after which unread prompts count as unread.
    */
-  async searchPrompts({ store, promptKeys, query, assertActive }) {
+  async searchPrompts({ store, promptKeys, query, assertActive, supersede = true, deadline = null }) {
     if (this.dictionary.size > this.limits.maxDictionaryWords) this.clear();
     const terms = parsePromptQuery(query);
-    const ticket = ++this.searchTicket;
+    const ticket = supersede ? ++this.searchTicket : null;
+    const superseded = () => ticket !== null && ticket !== this.searchTicket;
     const list = (Array.isArray(promptKeys) ? promptKeys : []).slice(0, this.limits.maxKeys);
     const read = [];
     let unread = 0;
     for (let index = 0; index < list.length; index += 1) {
+      if (deadline !== null && Date.now() > deadline) {
+        unread += list.length - index;
+        break;
+      }
       const prompt = await this._promptFor(list[index], store, assertActive);
       assertActive?.();
-      if (ticket !== this.searchTicket) return null;
+      if (superseded()) return null;
       if (prompt?.searchWords) read.push([list[index], prompt]);
       else unread += 1;
       if ((index + 1) % this.limits.yieldEvery === 0) {
         await this.yieldToEventLoop();
         assertActive?.();
-        if (ticket !== this.searchTicket) return null;
+        if (superseded()) return null;
       }
     }
     if (!terms.include.length && !terms.exclude.length) return { matches: [], unread };

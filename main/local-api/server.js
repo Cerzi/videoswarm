@@ -12,7 +12,8 @@ const LOCAL_API_LIMITS = Object.freeze({
   requestTimeoutMs: 30_000,
 });
 const LOCAL_HOSTS = ["127.0.0.1", "localhost", "[::1]"];
-const ROUTE = /^\/api\/v1\/([a-z][a-z-]{0,31})$/u;
+// One name, or two ("views/clips").
+const ROUTE = /^\/api\/v1\/([a-z][a-z-]{0,31}(?:\/[a-z][a-z-]{0,31})?)$/u;
 
 class LocalApiError extends Error {
   constructor(status, code, message) {
