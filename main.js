@@ -4872,6 +4872,76 @@ ipcMain.handle("library:set-pinned", async (_event, payload = {}) =>
   })
 );
 
+// Archived folders (docs/architecture/library-archive.md). With a root, also
+// its archived folders as tree paths ("" for the root itself), and whether a
+// folder above the root is archived.
+function archivedFoldersResponse(metadataStore, rootPath = null) {
+  const folders = metadataStore.listArchivedFolders();
+  if (!rootPath) return { folders };
+  const inside = (relative) => relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+  const inRoot = [];
+  let rootCovered = false;
+  for (const { folderPath } of folders) {
+    const fromRoot = path.relative(rootPath, folderPath);
+    if (fromRoot === "") inRoot.push("");
+    else if (inside(fromRoot)) inRoot.push(fromRoot.split(path.sep).join("/"));
+    else if (inside(path.relative(folderPath, rootPath))) rootCovered = true;
+  }
+  return { folders, inRoot, rootCovered };
+}
+
+ipcMain.handle("library:list-archived", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => {
+    assertPlainObject(payload, "archived folders request");
+    const rootPath = payload?.rootPath ? normalizeLibraryIpcRootPath(payload) : null;
+    return archivedFoldersResponse(metadataStore, rootPath);
+  })
+);
+
+// Archives a folder of an indexed root (`rootPath` plus its tree path), or
+// brings back an archived folder by its own path.
+ipcMain.handle("library:set-archived", async (_event, payload = {}) =>
+  runLibraryCatalogOperation((metadataStore) => {
+    assertPlainObject(payload, "archive request");
+    if (typeof payload.archived !== "boolean") {
+      throw new TypeError("Archive state must be a boolean");
+    }
+    let folderPath;
+    let rootPath = null;
+    if (payload.folderPath !== undefined) {
+      folderPath = path.resolve(
+        assertString(payload.folderPath, {
+          name: "archived folder",
+          minChars: 1,
+          maxChars: IPC_LIMITS.maxPathChars,
+          trim: true,
+        })
+      );
+      if (payload.archived || !metadataStore.listArchivedFolders().some((entry) => entry.folderPath === folderPath)) {
+        throw new Error("Only an archived folder can be named by its path");
+      }
+    } else {
+      rootPath = normalizeLibraryIpcRootPath(payload);
+      const root = metadataStore.getLibraryRoot(rootPath);
+      if (!root) throw new Error(`Library root has not been indexed: ${rootPath}`);
+      const relativePath = assertString(payload.relativePath ?? "", {
+        name: "archived folder path",
+        minChars: 0,
+        maxChars: IPC_LIMITS.maxPathChars,
+        trim: false,
+      });
+      const parts = relativePath.split("/").filter(Boolean);
+      if (parts.some((part) => part === "." || part === ".." || part.includes("\0") || (process.platform === "win32" && part.includes("\\")))) {
+        throw new TypeError("An archived folder must be inside its root");
+      }
+      folderPath = path.join(root.rootPath, ...parts);
+      rootPath = root.rootPath;
+    }
+    metadataStore.setFolderArchived(folderPath, payload.archived);
+    return archivedFoldersResponse(metadataStore, rootPath);
+  })
+);
+
 ipcMain.handle("library:list-saved-views", async () =>
   runLibraryCatalogOperation((metadataStore) => ({
     views: metadataStore.listSavedViews(),

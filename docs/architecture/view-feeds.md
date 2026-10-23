@@ -152,6 +152,9 @@ Polling: a follower asks `views/clips` with its `etag` every 30 s, or when
 
 Status: **Implemented**
 
+Archived folders (`library-archive.md`) are not in the pool, so no view
+feed returns an archived clip and an archived clip is in no smart view.
+
 Today most filters run in the window. A feed needs the same answer the
 grid would give, from the main process, without a window:
 

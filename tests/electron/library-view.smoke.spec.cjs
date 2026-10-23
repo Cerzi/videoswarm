@@ -48,3 +48,41 @@ test("library view: save a smart view while searching the entire library", async
     context.cleanupFiles();
   }
 });
+
+/**
+ * Archived folders (library-archive.md): archiving the open folder leaves its
+ * clips out of an entire-library search; unarchiving brings them back.
+ */
+test("library view: an archived folder is left out of the library search", async () => {
+  test.setTimeout(90_000);
+  const context = await launchProductionApp();
+  const { electronApp, page, tempRoot } = context;
+  const folderPath = createVideoFolder(tempRoot, 2, "old-clips");
+  const rendererErrors = [];
+  page.on("pageerror", (error) => rendererErrors.push(error.message));
+
+  try {
+    await chooseFolderThroughNativeDialog(electronApp, page, folderPath);
+    await expect(page.locator(".video-item")).toHaveCount(2);
+    const tree = page.getByRole("tree", { name: "Collection folders" });
+    await tree.locator(".library-folder-tree__row").first().hover();
+    await tree.getByRole("button", { name: "Archive old-clips" }).click();
+    await expect(tree.getByText("archived")).toBeVisible();
+    const archived = await page.evaluate(() => window.electronAPI.library.listArchived());
+    expect(archived.folders).toHaveLength(1);
+
+    await page.getByRole("button", { name: /^(Open filters|Filters)/ }).first().click();
+    await page.getByRole("group", { name: "Search scope" }).getByRole("button", { name: "Entire library" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".video-item")).toHaveCount(0);
+
+    const list = page.getByRole("list", { name: "Archived folders" });
+    await page.locator(".library-sidebar__archived > summary").click();
+    await list.getByRole("button", { name: "Unarchive old-clips" }).click();
+    await expect(page.locator(".video-item")).toHaveCount(2);
+    expect(rendererErrors).toEqual([]);
+  } finally {
+    await electronApp.close().catch(() => {});
+    context.cleanupFiles();
+  }
+});

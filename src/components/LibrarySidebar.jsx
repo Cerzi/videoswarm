@@ -3,6 +3,7 @@ import { normalizeRelativePath } from "../library/folderModel";
 import { SortAscendingIcon, SortDescendingIcon } from "./UiIcons";
 import "./LibraryNavigation.css";
 import { trashName } from "../platform/fileManagerTerms";
+import { archivedTreeState } from "../app/hooks/useArchivedFolders";
 
 const normalizeExpandedPaths = (paths) =>
   paths instanceof Set ? paths : new Set(paths || []);
@@ -101,8 +102,14 @@ const FolderTreeRow = memo(function FolderTreeRow({
   onSelectFolder,
   disabled,
   reviewModeEnabled = true,
+  // Archived folders (library-archive.md): the root's archived tree paths.
+  archivedTreePaths = null,
+  archivedRootCovered = false,
+  onSetArchived = null,
 }) {
   const path = normalizeRelativePath(node?.path ?? node?.relativePath);
+  const archivedState = archivedTreeState(path, archivedTreePaths, archivedRootCovered);
+  const folderName = node?.name || (path ? path.split("/").at(-1) : "Root");
   const children = Array.isArray(node?.children) ? node.children : [];
   const hasChildren = children.length > 0;
   const expanded = hasChildren && expandedPaths.has(path);
@@ -121,7 +128,9 @@ const FolderTreeRow = memo(function FolderTreeRow({
       aria-selected={selected}
     >
       <div
-        className={`library-folder-tree__row ${selected ? "is-current" : ""}`}
+        className={`library-folder-tree__row ${selected ? "is-current" : ""}${
+          archivedState ? " is-archived" : ""
+        }`}
         style={{ "--folder-depth": depth }}
       >
         {hasChildren ? (
@@ -148,9 +157,21 @@ const FolderTreeRow = memo(function FolderTreeRow({
         >
           <span className="library-folder-tree__name">
             <span aria-hidden="true">{hasChildren ? "▰" : "▱"}</span>
-            <span>{node?.name || (path ? path.split("/").at(-1) : "Root")}</span>
+            <span>{folderName}</span>
           </span>
           <span className="library-folder-tree__badges">
+            {archivedState ? (
+              <span
+                className="library-folder-tree__archived"
+                title={
+                  archivedState === "own"
+                    ? "Archived: left out of the arena, library search and smart views"
+                    : "Archived with a folder above it"
+                }
+              >
+                archived
+              </span>
+            ) : null}
             <span
               className="library-folder-tree__match-count"
               title={`${matchingCount} videos match the active filters`}
@@ -187,6 +208,23 @@ const FolderTreeRow = memo(function FolderTreeRow({
             ) : null}
           </span>
         </button>
+        {onSetArchived && archivedState !== "covered" ? (
+          <button
+            type="button"
+            className={`library-folder-tree__archive${archivedState === "own" ? " is-active" : ""}`}
+            onClick={() => onSetArchived(path, archivedState !== "own", folderName)}
+            aria-pressed={archivedState === "own"}
+            aria-label={`${archivedState === "own" ? "Unarchive" : "Archive"} ${folderName}`}
+            title={
+              archivedState === "own"
+                ? "Bring this folder back into the arena, library search and smart views"
+                : "Archive: leave this folder's clips out of the arena, library search and smart views"
+            }
+            disabled={disabled}
+          >
+            {archivedState === "own" ? "Unarchive" : "Archive"}
+          </button>
+        ) : null}
       </div>
 
       {expanded ? (
@@ -202,6 +240,9 @@ const FolderTreeRow = memo(function FolderTreeRow({
               onSelectFolder={onSelectFolder}
               disabled={disabled}
               reviewModeEnabled={reviewModeEnabled}
+              archivedTreePaths={archivedTreePaths}
+              archivedRootCovered={archivedRootCovered}
+              onSetArchived={onSetArchived}
             />
           ))}
         </ul>
@@ -238,6 +279,12 @@ function LibrarySidebarContentView({
   onDeleteReviewPass,
   disabled = false,
   reviewModeEnabled = true,
+  // Archived folders (docs/architecture/library-archive.md).
+  archivedFolders = [],
+  archivedTreePaths = null,
+  archivedRootCovered = false,
+  onSetArchived = null,
+  onUnarchiveFolder = null,
 }) {
   const roots = useMemo(
     () => (Array.isArray(tree) ? tree : tree ? [tree] : []),
@@ -556,6 +603,9 @@ function LibrarySidebarContentView({
                 onSelectFolder={onSelectFolder}
                 disabled={disabled}
                 reviewModeEnabled={reviewModeEnabled}
+                archivedTreePaths={archivedTreePaths}
+                archivedRootCovered={archivedRootCovered}
+                onSetArchived={onSetArchived}
               />
             ))}
           </ul>
@@ -563,6 +613,40 @@ function LibrarySidebarContentView({
           <p className="library-sidebar__empty">Open a folder to browse its tree.</p>
         )}
       </section>
+
+      {archivedFolders.length ? (
+        <details className="library-sidebar__section library-sidebar__archived">
+          <summary>
+            <span className="library-sidebar__eyebrow">Left out of the arena and library views</span>
+            <span className="library-sidebar__archived-title">
+              Archived folders <span>{archivedFolders.length.toLocaleString()}</span>
+            </span>
+          </summary>
+          <ul className="library-saved-view-list" aria-label="Archived folders">
+            {archivedFolders.map((folder) => {
+              const name = folder.folderPath.split(/[\\/]/).filter(Boolean).at(-1) || folder.folderPath;
+              return (
+                <li key={folder.folderPath}>
+                  <span className="library-archived-list__name" title={folder.folderPath}>
+                    <span>{name}</span>
+                    <span className="library-archived-list__path">{folder.folderPath}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="library-archived-list__restore"
+                    onClick={() => onUnarchiveFolder?.(folder.folderPath, name)}
+                    aria-label={`Unarchive ${name}`}
+                    title="Bring this folder back into the arena, library search and smart views"
+                    disabled={disabled || !onUnarchiveFolder}
+                  >
+                    Unarchive
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

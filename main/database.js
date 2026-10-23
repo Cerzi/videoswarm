@@ -113,6 +113,10 @@ const WORKFLOW_FACT_LIMITS = Object.freeze({
   maxMatchFingerprints: 100_000,
 });
 const SAVED_VIEW_NAME_LIMIT = 80;
+// Not under an archived folder (docs/architecture/library-archive.md), as SQL
+// on an alias of file_instances.
+const notArchived = (alias) =>
+  `NOT EXISTS (SELECT 1 FROM archived_folders af WHERE substr(${alias}.absolute_path, 1, length(af.prefix)) = af.prefix)`;
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;
@@ -1038,6 +1042,14 @@ function initDatabase(app, profilePath) {
       );
       CREATE INDEX IF NOT EXISTS idx_arena_checks_fingerprint
         ON arena_checks(fingerprint, checked_at);
+
+      -- Archived folders (docs/architecture/library-archive.md): absolute
+      -- folder paths, each ending in the path separator. Library-wide
+      -- surfaces leave out the clips under them.
+      CREATE TABLE IF NOT EXISTS archived_folders (
+        prefix TEXT PRIMARY KEY,
+        archived_at INTEGER NOT NULL
+      );
     `);
 
     // View feeds (view-feeds.md): a saved view other apps may follow, on
@@ -1781,6 +1793,7 @@ function createMetadataStore(db) {
       AND d.is_present != 0
       AND fi.fingerprint IS NOT NULL
       AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
+      AND ${notArchived('fi')}
       -- tags.name is declared COLLATE NOCASE, so matching and DISTINCT are
       -- already case-insensitive without restating it here. Counting the
       -- distinct matches and requiring the full tag count is what makes a
@@ -2218,6 +2231,7 @@ function createMetadataStore(db) {
       AND fi.is_present != 0
       AND d.is_present != 0
       AND fi.fingerprint IS NOT NULL
+      AND ${notArchived('fi')}
     ORDER BY fi.id
     LIMIT @limit;
   `);
@@ -5213,6 +5227,7 @@ function createMetadataStore(db) {
         AND d.is_present != 0
         AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
         AND (@instance_ids IS NULL OR fi.id IN (SELECT value FROM json_each(@instance_ids)))
+        AND (@include_archived = 1 OR ${notArchived('fi')})
     )
     WHERE content_rank = 1
     LIMIT @limit;
@@ -5304,7 +5319,8 @@ function createMetadataStore(db) {
       AND mc.prompt_key_version = @prompt_version
       AND fi.is_present != 0
       AND d.is_present != 0
-      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths));
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
+      AND ${notArchived('fi')};
   `);
 
   const frameRowsForInstances = db.prepare(`
@@ -6188,6 +6204,62 @@ function createMetadataStore(db) {
     return reviewPassDelete.run(normalizeReviewPassId(passId)).changes > 0;
   }
 
+  // ----- Archived folders (docs/architecture/library-archive.md) ----------
+
+  const archivedFolderRows = db.prepare(
+    'SELECT prefix, archived_at FROM archived_folders ORDER BY prefix;'
+  );
+  const archivedFolderInsert = db.prepare(`
+    INSERT INTO archived_folders (prefix, archived_at) VALUES (@prefix, @now)
+    ON CONFLICT(prefix) DO NOTHING;
+  `);
+  const archivedFolderDelete = db.prepare('DELETE FROM archived_folders WHERE prefix = ?;');
+  // Folders under one being archived: it covers them now.
+  const archivedFolderDeleteUnder = db.prepare(`
+    DELETE FROM archived_folders
+    WHERE prefix != @prefix AND substr(prefix, 1, length(@prefix)) = @prefix;
+  `);
+
+  const archivePrefixOf = (folderPath) => {
+    if (typeof folderPath !== 'string' || !folderPath || !path.isAbsolute(folderPath)) {
+      throw new TypeError('An archived folder must be an absolute path');
+    }
+    const resolved = path.resolve(folderPath);
+    return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
+  };
+  const folderPathOfPrefix = (prefix) =>
+    prefix.length > 1 && prefix.endsWith(path.sep) ? prefix.slice(0, -1) : prefix;
+
+  /** The archived folders: `[{ folderPath, archivedAt }]`, by path. */
+  function listArchivedFolders() {
+    return archivedFolderRows.all().map((row) => ({
+      folderPath: folderPathOfPrefix(row.prefix),
+      archivedAt: Number(row.archived_at),
+    }));
+  }
+
+  /**
+   * Archives a folder or brings it back. Archiving one takes in the folders
+   * archived under it; a folder under an archived one cannot be brought back
+   * on its own. Returns the archived folders.
+   */
+  function setFolderArchived(folderPath, archived) {
+    const prefix = archivePrefixOf(folderPath);
+    db.transaction(() => {
+      if (archived) {
+        const covered = archivedFolderRows
+          .all()
+          .some((row) => row.prefix !== prefix && prefix.startsWith(row.prefix));
+        if (covered) return;
+        archivedFolderInsert.run({ prefix, now: Date.now() });
+        archivedFolderDeleteUnder.run({ prefix });
+      } else {
+        archivedFolderDelete.run(prefix);
+      }
+    })();
+    return listArchivedFolders();
+  }
+
   // ----- Rating arena (docs/architecture/rating-arena.md) -----------------
 
   const cleanRootPaths = (value) =>
@@ -6205,11 +6277,17 @@ function createMetadataStore(db) {
       ? options.instanceIds.filter((id) => Number.isSafeInteger(id) && id > 0)
       : null;
     const limit = Number.isSafeInteger(options.limit) && options.limit > 0 ? options.limit : 1_000_000;
-    const rows = arenaPoolRows.all({
-      unavailable_root_paths: JSON.stringify(cleanRootPaths(options.unavailableRootPaths)),
-      instance_ids: instanceIds ? JSON.stringify(instanceIds) : null,
-      limit,
-    });
+    const poolRows = (includeArchived) =>
+      arenaPoolRows.all({
+        unavailable_root_paths: JSON.stringify(cleanRootPaths(options.unavailableRootPaths)),
+        instance_ids: instanceIds ? JSON.stringify(instanceIds) : null,
+        include_archived: includeArchived ? 1 : 0,
+        limit,
+      });
+    // Archived clips stay out (library-archive.md), unless the grid's clips
+    // are all archived: then that archived folder was opened to be rated.
+    let rows = poolRows(false);
+    if (instanceIds && rows.length === 0) rows = poolRows(true);
     assertOperationActive(options.assertActive);
     // Only the best version of a generation, in the order the details panel
     // lists versions (ratings overrule size): the others are re-renders of
@@ -6780,6 +6858,8 @@ function createMetadataStore(db) {
     finishReviewPass,
     deleteReviewPass,
     getArenaPool,
+    listArchivedFolders,
+    setFolderArchived,
     getArenaJudgements,
     listArenaChecks,
     recordArenaChecks,

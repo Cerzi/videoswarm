@@ -536,3 +536,108 @@
     width: 230px;
   }
 }
+
+/* Archived folders (docs/architecture/library-archive.md): dimmed in the
+   tree, with the toggle shown on hover so rows keep their width. */
+.library-folder-tree__row.is-archived .library-folder-tree__name {
+  opacity: 0.5;
+}
+
+.library-folder-tree__archived {
+  border-radius: 999px;
+  padding: 0.1rem 0.32rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.library-folder-tree__archive {
+  display: none;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 0.2rem;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.library-folder-tree__row:hover .library-folder-tree__archive,
+.library-folder-tree__row:focus-within .library-folder-tree__archive,
+.library-folder-tree__archive.is-active {
+  display: inline-block;
+}
+
+.library-folder-tree__archive:hover,
+.library-folder-tree__archive:focus-visible {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+
+.library-sidebar__archived > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.library-sidebar__archived > summary::-webkit-details-marker {
+  display: none;
+}
+
+.library-sidebar__archived-title {
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.library-sidebar__archived-title span {
+  margin-left: 0.3rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 400;
+}
+
+.library-sidebar__archived[open] > summary {
+  margin-bottom: 0.4rem;
+}
+
+.library-archived-list__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.7rem;
+}
+
+.library-archived-list__name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-archived-list__path {
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.library-archived-list__restore {
+  flex: 0 0 auto;
+  margin-right: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+
+.library-archived-list__restore:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}

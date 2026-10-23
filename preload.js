@@ -680,6 +680,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // The smart views a clip is part of: `{ views, unknown }`.
     viewsForClip: async (instanceId) =>
       ipcRenderer.invoke("library:views-for-clip", { instanceId }),
+    // Archived folders (library-archive.md): `{ folders, inRoot? }`, where
+    // `inRoot` is the root's archived tree paths when a root is named.
+    listArchived: async (rootPath = null) =>
+      ipcRenderer.invoke("library:list-archived", rootPath ? { rootPath } : {}),
+    setArchived: async ({ rootPath, relativePath, folderPath, archived } = {}) =>
+      ipcRenderer.invoke(
+        "library:set-archived",
+        folderPath !== undefined
+          ? { folderPath, archived }
+          : { rootPath, relativePath: relativePath ?? "", archived }
+      ),
   },
 
   review: {

@@ -70,6 +70,8 @@ Status: **Implemented**
   50,000, as a review pass takes them. The pool is fixed when the arena
   opens; ratings and review states are read again for every round, so
   changes made anywhere count.
+  Archived folders (`library-archive.md`) are left out of both, unless the
+  grid's clips are all archived.
 - **Similar prompts** (the default; *Any* is the other choice). A round's
   companions are picked to resemble its first clip: the same prompt key
   first, then the most alike prompts among a bounded sample of the tier

@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { buildFolderTree } from "../library/folderModel";
 import LibrarySidebar from "./LibrarySidebar";
@@ -416,5 +416,32 @@ describe("LibrarySidebar", () => {
     expect(screen.getByText("Pin frequently used roots here.")).toBeVisible();
     expect(screen.getByText("Save filters for repeat browsing setups.")).toBeVisible();
     expect(screen.getByText("Open a folder to browse its tree.")).toBeVisible();
+  });
+
+  it("archives a folder, marks folders under it, and lists archived folders", () => {
+    const onSetArchived = vi.fn();
+    const onUnarchiveFolder = vi.fn();
+    render(
+      <LibrarySidebar
+        tree={tree}
+        expandedPaths={new Set(["", "run-a"])}
+        archivedTreePaths={["run-a"]}
+        archivedFolders={[{ folderPath: "/library/A1/run-a", archivedAt: 1 }]}
+        onSetArchived={onSetArchived}
+        onUnarchiveFolder={onUnarchiveFolder}
+      />
+    );
+    // run-a is archived itself; seed-1 sits under it and has no toggle.
+    expect(screen.getAllByText("archived")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Archive seed-1|Unarchive seed-1/u })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Archive run-b" }));
+    expect(onSetArchived).toHaveBeenCalledWith("run-b", true, "run-b");
+    fireEvent.click(screen.getAllByRole("button", { name: "Unarchive run-a" })[0]);
+    expect(onSetArchived).toHaveBeenCalledWith("run-a", false, "run-a");
+
+    const list = screen.getByRole("list", { name: "Archived folders" });
+    expect(list).toHaveTextContent("/library/A1/run-a");
+    fireEvent.click(within(list).getByRole("button", { name: "Unarchive run-a" }));
+    expect(onUnarchiveFolder).toHaveBeenCalledWith("/library/A1/run-a", "run-a");
   });
 });

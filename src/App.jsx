@@ -104,6 +104,7 @@ import { useMetadataActions } from "./app/hooks/useMetadataActions";
 import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
+import { useArchivedFolders } from "./app/hooks/useArchivedFolders";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import {
@@ -4727,6 +4728,50 @@ function App() {
   );
   goToFolderRef.current = handleGoToFolder;
 
+  // Archived folders (docs/architecture/library-archive.md).
+  const {
+    archivedFolders,
+    archivedTreePaths,
+    archivedRootCovered,
+    setArchived: setFolderArchived,
+    unarchiveFolder,
+  } = useArchivedFolders({ activeRootPath });
+  const archiveChanged = useCallback(
+    (name, archived) => {
+      notify(
+        archived
+          ? `Archived ${name}: left out of the arena, library search and smart views`
+          : `Unarchived ${name}`,
+        "success"
+      );
+      // A library search over the archive reads it again.
+      setTagRefreshToken((token) => token + 1);
+    },
+    [notify]
+  );
+  const handleSetFolderArchived = useCallback(
+    async (relativePath, archived, name) => {
+      try {
+        if (await setFolderArchived(relativePath, archived)) archiveChanged(name, archived);
+      } catch (error) {
+        console.error("Failed to archive folder:", error);
+        notify("Failed to change the archive", "error");
+      }
+    },
+    [archiveChanged, notify, setFolderArchived]
+  );
+  const handleUnarchiveFolder = useCallback(
+    async (folderPath, name) => {
+      try {
+        if (await unarchiveFolder(folderPath)) archiveChanged(name, false);
+      } catch (error) {
+        console.error("Failed to unarchive folder:", error);
+        notify("Failed to change the archive", "error");
+      }
+    },
+    [archiveChanged, notify, unarchiveFolder]
+  );
+
   const handleToggleLibraryPin = useCallback(
     async (rootPath, pinned) => {
       try {
@@ -7322,7 +7367,10 @@ function App() {
           {!activeRootPath && !tagCollection && videos.length === 0 && !isLoadingFolder ? (
             <div className="library-home-workspace">
               {isLibrarySidebarOpen &&
-                (pinnedRoots.length > 0 || savedViews.length > 0 || reviewPassList.length > 0) && (
+                (pinnedRoots.length > 0 ||
+                  savedViews.length > 0 ||
+                  reviewPassList.length > 0 ||
+                  archivedFolders.length > 0) && (
                 <LibrarySidebar
                   tree={null}
                   pinnedRoots={pinnedRoots}
@@ -7343,6 +7391,8 @@ function App() {
                   onDeleteReviewPass={handleDeleteReviewPass}
                   smartViewsEnabled={false}
                   reviewModeEnabled={reviewModeEnabled}
+                  archivedFolders={archivedFolders}
+                  onUnarchiveFolder={handleUnarchiveFolder}
                 />
               )}
               <div className="library-home-content">
@@ -7406,6 +7456,11 @@ function App() {
                         onDeleteReviewPass: handleDeleteReviewPass,
                         disabled: isLoadingFolder,
                         reviewModeEnabled,
+                        archivedFolders,
+                        archivedTreePaths,
+                        archivedRootCovered,
+                        onSetArchived: activeRootPath ? handleSetFolderArchived : null,
+                        onUnarchiveFolder: handleUnarchiveFolder,
                       },
                       detailsContent: selection.size > 0 ? (
                         <DockedMetadataInspector
