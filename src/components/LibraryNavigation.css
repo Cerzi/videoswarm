@@ -550,31 +550,55 @@
   color: rgba(255, 255, 255, 0.55);
 }
 
-.library-folder-tree__archive {
-  display: none;
-  flex: 0 0 auto;
+/* An icon over the row's right end, on hover: it takes no width, and sticky
+   keeps it in view when the tree scrolls sideways. */
+.library-sidebar__content .library-folder-tree__archive {
+  position: sticky;
+  right: 2px;
+  z-index: 1;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 22px;
+  margin-left: -24px;
   align-self: center;
-  margin-left: 0.2rem;
-  padding: 0.1rem 0.35rem;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  font: inherit;
-  font-size: 0.68rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: #2b2b2b;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.85rem;
   cursor: pointer;
+  visibility: hidden;
 }
 
 .library-folder-tree__row:hover .library-folder-tree__archive,
-.library-folder-tree__row:focus-within .library-folder-tree__archive,
-.library-folder-tree__archive.is-active {
-  display: inline-block;
+.library-folder-tree__row:focus-within .library-folder-tree__archive {
+  visibility: visible;
 }
 
 .library-folder-tree__archive:hover,
 .library-folder-tree__archive:focus-visible {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.45);
+  background: #363636;
   color: #fff;
+}
+
+.library-folder-tree__archive.is-active {
+  color: #ffd43b;
+}
+
+/* Always in view under the tree, however long the tree is. */
+.library-sidebar__archived {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.library-sidebar__archived > .library-saved-view-list {
+  max-height: 30vh;
+  overflow-y: auto;
 }
 
 .library-sidebar__archived > summary {
@@ -624,8 +648,11 @@
   color: rgba(255, 255, 255, 0.42);
 }
 
-.library-archived-list__restore {
+.library-sidebar__content .library-archived-list__restore {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   margin-right: 0.25rem;
   padding: 0.1rem 0.4rem;
   border: 1px solid rgba(255, 255, 255, 0.18);

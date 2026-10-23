@@ -54,12 +54,14 @@ follows its parent.
 
 ## 3. Interface
 
-- **Folders tree:** each row offers *Archive* on hover; an archived folder is
-  dimmed, badged *archived*, and keeps an *Unarchive* button. Folders under
-  it are badged too and have no button.
+- **Folders tree:** hovering a row shows an archive icon over its right end
+  (it takes no width, and stays in view when the tree scrolls sideways); on
+  an archived folder, which is dimmed and badged *archived*, the icon brings
+  it back. Folders under it are badged too and have no icon.
 - **Archived folders:** a collapsed list at the end of the library panel,
   also on the home screen, names every archived folder with *Unarchive*, so
-  a folder can come back without being opened.
+  a folder can come back without being opened. It never shrinks: however
+  long the folder tree is, the list stays in view below it.
 - A toast says what an archive does; an open library search reads again.
 
 IPC: `library:list-archived` (`{ folders, inRoot, rootCovered }` when a

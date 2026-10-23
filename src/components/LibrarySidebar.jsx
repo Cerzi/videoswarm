@@ -1,6 +1,6 @@
 import React, { memo, useMemo, useState } from "react";
 import { normalizeRelativePath } from "../library/folderModel";
-import { SortAscendingIcon, SortDescendingIcon } from "./UiIcons";
+import { ArchiveIcon, SortAscendingIcon, SortDescendingIcon, UnarchiveIcon } from "./UiIcons";
 import "./LibraryNavigation.css";
 import { trashName } from "../platform/fileManagerTerms";
 import { archivedTreeState } from "../app/hooks/useArchivedFolders";
@@ -222,7 +222,7 @@ const FolderTreeRow = memo(function FolderTreeRow({
             }
             disabled={disabled}
           >
-            {archivedState === "own" ? "Unarchive" : "Archive"}
+            {archivedState === "own" ? <UnarchiveIcon /> : <ArchiveIcon />}
           </button>
         ) : null}
       </div>
@@ -639,7 +639,8 @@ function LibrarySidebarContentView({
                     title="Bring this folder back into the arena, library search and smart views"
                     disabled={disabled || !onUnarchiveFolder}
                   >
-                    Unarchive
+                    <UnarchiveIcon />
+                    <span>Unarchive</span>
                   </button>
                 </li>
               );
