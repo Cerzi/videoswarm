@@ -116,6 +116,10 @@ menus.
   `src/layout/masonryLayout.js`). When *New* is held by the width, the row
   gets the spare height. A window too low for two tiers falls back to one
   row. Other round kinds keep one row, where the clips are equals.
+- **Hover under a still pointer:** a new round's cards appear under a
+  pointer that has not moved, which fires no mouseenter. The card under the
+  pointer's last position counts as hovered when the round changes, so its
+  hover audio plays at once (`src/app/hooks/useHoverUnderPointer.js`).
 - **Selection:** a round opens with its first clip selected; ← and → move
   between its clips; a click selects as in the grid.
 - **Guests:** clips from folders that are not open are guests, as in the

@@ -105,6 +105,7 @@ import { useZoomControls } from "./app/hooks/useZoomControls";
 import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecycle";
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
 import { useArchivedFolders } from "./app/hooks/useArchivedFolders";
+import { useHoverUnderPointer } from "./app/hooks/useHoverUnderPointer";
 import { useSavedViews } from "./app/hooks/useSavedViews";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import {
@@ -4126,6 +4127,18 @@ function App() {
   const handleHoverAudioEnd = useCallback((videoId) => {
     collectionCallbacksRef.current?.onCardHoverAudioEnd?.(videoId);
   }, []);
+  // A new arena round lays its cards under a pointer that has not moved: the
+  // card under it counts as hovered, so its audio plays without a wiggle.
+  useHoverUnderPointer(
+    arena?.round?.id ?? null,
+    useCallback(
+      (videoId) => {
+        handleVideoHover(videoId);
+        if (hoverAudioEnabled) handleHoverAudioStart(videoId);
+      },
+      [handleHoverAudioStart, handleVideoHover, hoverAudioEnabled]
+    )
+  );
   // Hotkeys operate on current selection
   const runForHotkeys = useCallback(
     (actionId, currentSelection) =>
