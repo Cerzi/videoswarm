@@ -335,6 +335,13 @@ body.metadata-panel-drag-active {
   color: #ffc4c4;
 }
 
+/* "This clip" in Versions: green so the open clip stands out at a glance. */
+.metadata-panel__badge--self {
+  border-color: rgba(81, 207, 102, 0.5);
+  background: rgba(81, 207, 102, 0.26);
+  color: #c3fad0;
+}
+
 .metadata-panel__rating-row {
   display: flex;
   align-items: center;
@@ -853,7 +860,9 @@ body.metadata-panel-drag-active {
 }
 
 .metadata-panel__versions-item.is-self {
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(81, 207, 102, 0.45);
+  background: rgba(81, 207, 102, 0.08);
+  box-shadow: inset 3px 0 0 rgba(81, 207, 102, 0.85);
 }
 
 .metadata-panel__versions-item--button {

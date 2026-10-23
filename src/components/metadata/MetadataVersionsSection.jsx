@@ -133,7 +133,7 @@ export default function MetadataVersionsSection({ video, active = true, generati
                     <span className="metadata-panel__badge metadata-panel__badge--accent">Best</span>
                   ) : null}
                   {version.isSelf ? (
-                    <span className="metadata-panel__badge">This clip</span>
+                    <span className="metadata-panel__badge metadata-panel__badge--self">This clip</span>
                   ) : null}
                 </span>
                 <span className="metadata-panel__versions-location" title={location}>

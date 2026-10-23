@@ -71,6 +71,8 @@ describe("MetadataVersionsSection", () => {
     expect(items[0].textContent).toMatch(/1280×720 · 10\.0 s/);
     expect(items[0].textContent).toMatch(/Best/);
     expect(items[3].textContent).toMatch(/This clip/);
+    expect(screen.getByText("This clip").className).toMatch(/metadata-panel__badge--self/);
+    expect(items[3].firstElementChild.className).toMatch(/is-self/);
     expect(screen.getByText("In a folder that is not open")).toBeTruthy();
     expect(screen.getByText("Hidden by the current filters or folder scope")).toBeTruthy();
 
