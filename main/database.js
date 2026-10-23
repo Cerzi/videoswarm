@@ -1656,6 +1656,14 @@ function createMetadataStore(db) {
   const fileInstanceById = db.prepare(`
     SELECT * FROM file_instances WHERE id = ?;
   `);
+  // The same file as indexed under another root: a folder indexed inside
+  // another lists its files under both.
+  const fileInstanceInRootByPath = db.prepare(`
+    SELECT * FROM file_instances
+    WHERE root_id = ? AND absolute_path = ? AND is_present != 0
+    ORDER BY id
+    LIMIT 1;
+  `);
   const fileInstanceLocationById = db.prepare(`
     SELECT id, absolute_path, is_present, fingerprint FROM file_instances WHERE id = ?;
   `);
@@ -4208,14 +4216,21 @@ function createMetadataStore(db) {
       );
     }
     const { serialized: viewJson } = normalizeCheckpointView(draft.view);
-    const anchorInstanceId = normalizeCheckpointAnchorId(
+    let anchorInstanceId = normalizeCheckpointAnchorId(
       draft.anchorInstanceId
     );
     let anchorFingerprint = normalizeCheckpointFingerprint(
       draft.anchorFingerprint
     );
     if (anchorInstanceId !== null) {
-      const instance = fileInstanceById.get(anchorInstanceId);
+      let instance = fileInstanceById.get(anchorInstanceId);
+      // A clip of a folder indexed inside another may arrive as the other
+      // root's copy of the same file; the requested root's own copy stands
+      // in for it.
+      if (instance && Number(instance.root_id) !== Number(root.id)) {
+        instance = fileInstanceInRootByPath.get(root.id, instance.absolute_path) || null;
+        if (instance) anchorInstanceId = Number(instance.id);
+      }
       if (!instance || Number(instance.root_id) !== Number(root.id)) {
         throw new ReviewCheckpointError(
           'Review checkpoint anchor does not belong to the requested root',

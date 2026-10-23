@@ -295,6 +295,22 @@ maybeDescribe('profile-local review checkpoints', () => {
     });
   });
 
+  it('takes a nested root\'s copy of a file as the requested root\'s own copy', async () => {
+    // A folder indexed inside the root lists the same file under both.
+    const file = createFile('inner/clip.mp4', 'nested');
+    const inner = path.join(rootPath, 'inner');
+    store.registerLibraryRoot(inner);
+    const fromInner = await store.indexFile({ rootPath: inner, ...file });
+    const fromOuter = await store.indexFile({ rootPath, ...file });
+    expect(fromInner.instance.id).not.toBe(fromOuter.instance.id);
+
+    const saved = store.saveReviewCheckpoint(draft({ anchorInstanceId: fromInner.instance.id }));
+    expect(saved).toMatchObject({
+      anchorInstanceId: fromOuter.instance.id,
+      anchorFingerprint: fromOuter.fingerprint,
+    });
+  });
+
   it('evicts the deterministic oldest checkpoint in the same 129th upsert transaction', () => {
     vi.spyOn(Date, 'now').mockReturnValue(10_000);
     const roots = [];
