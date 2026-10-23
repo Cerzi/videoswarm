@@ -186,7 +186,27 @@ export function arenaStreak(finished) {
   return streak;
 }
 
-/** The toast on leaving: what the session did, or null if nothing. */
+/**
+ * The end-of-session dialog's counts: rounds always, then each count that
+ * is not zero.
+ */
+export function arenaSummaryRows(stats, tagged = 0) {
+  const counts = stats || emptyArenaStats();
+  const rows = [{ key: "rounds", label: "Rounds", value: counts.rounds }];
+  for (const [key, label, value] of [
+    ["placed", "Placed", counts.placed],
+    ["moved", "Moved", counts.moved],
+    ["held", "Held", counts.held],
+    ["rejected", "Rejected", counts.rejected],
+    ["skipped", "Skipped", counts.skipped],
+    ["tagged", "Tagged", tagged],
+  ]) {
+    if (value) rows.push({ key, label, value });
+  }
+  return rows;
+}
+
+/** What the session did in one line, or null if nothing. */
 export function arenaSummary(stats, tagged = 0) {
   if (!stats || (stats.rounds === 0 && !tagged)) return null;
   const parts = [];

@@ -4,6 +4,7 @@ import {
   arenaCardLabel,
   arenaStreak,
   arenaSummary,
+  arenaSummaryRows,
   buildArenaClips,
   emptyArenaStats,
   isTypingTarget,
@@ -97,6 +98,14 @@ describe("arena view", () => {
     expect(stats).toMatchObject({ rounds: 2, placed: 1, held: 2, moved: 2 });
     expect(arenaSummary(stats, 1)).toBe("Arena: 2 rounds · 1 placed · 2 moved · 2 held · 1 tagged");
     expect(arenaSummary(emptyArenaStats(), 0)).toBeNull();
+    // The end-of-session dialog: rounds always, then each count that moved.
+    expect(arenaSummaryRows(stats, 1).map((row) => [row.key, row.value])).toEqual([
+      ["rounds", 2],
+      ["placed", 1],
+      ["moved", 2],
+      ["held", 2],
+      ["tagged", 1],
+    ]);
     const finished = [{ outcomes: { placed: 1 } }, { outcomes: { skipped: 1 } }, { outcomes: { held: 3 } }, { outcomes: { placed: 1 } }];
     expect(arenaStreak(finished)).toBe(2);
     expect(arenaStreak([])).toBe(0);

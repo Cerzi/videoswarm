@@ -12,6 +12,7 @@ import StackBar from "./components/StackBar";
 import VersionsBar from "./components/VersionsBar";
 import ReviewPassBar from "./components/ReviewPassBar";
 import ArenaBar from "./components/ArenaBar";
+import ArenaSummaryDialog from "./components/ArenaSummaryDialog";
 import useRatingArena from "./app/arena/useRatingArena";
 import {
   addArenaOutcomes,
@@ -342,6 +343,9 @@ function App() {
     notify: (...args) => arenaNotifyRef.current?.(...args),
   });
   const arena = ratingArena.arena;
+  // The session just left: its counts and settings, for the dialog that
+  // offers more rounds. Null when none is shown.
+  const [arenaEnded, setArenaEnded] = useState(null);
   // Opens it from anywhere: the card pill and the details panel.
   const handleOpenVersionsRef = useRef(null);
   const [randomSeed, setRandomSeed] = useState(null);
@@ -2217,7 +2221,8 @@ function App() {
     setReviewState: handleSetReviewState,
     setRating: handleSetRating,
     restoreReviewMetadata: handleRestoreReviewMetadata,
-    autoAdvance: reviewAutoAdvance,
+    // The arena deals its own next round; advancing would move off it.
+    autoAdvance: reviewAutoAdvance && !arena,
     notify,
     onMutationCommitted: handleReviewMutationCommitted,
     selectionUnitsRef,
@@ -2612,10 +2617,31 @@ function App() {
     setArenaTagBoxOpen(false);
     selection.clear();
     // A round changed and left, or brought back by Undo, still counts.
+    const settings = { scope: arena.scope, kind: arena.kind, border: arena.border, match: arena.match };
     const stats = await ratingArena.close({ finishCurrent: arena.restored || arenaChanged });
-    const summary = arenaSummary(stats, tagged);
-    if (summary) notify(summary, "success");
-  }, [arena, arenaChanged, notify, ratingArena.close, ratingArena.tagged, selection.clear]);
+    if (arenaSummary(stats, tagged)) setArenaEnded({ stats, tagged, settings });
+  }, [arena, arenaChanged, ratingArena.close, ratingArena.tagged, selection.clear]);
+
+  // More rounds from the end-of-session dialog: the same kind, pair and
+  // matching, over the same clips when the grid still shows them.
+  const handleArenaMore = useCallback(() => {
+    const settings = arenaEnded?.settings || {};
+    setArenaEnded(null);
+    if (arena) return;
+    versionRequestRef.current += 1;
+    setVersionView(null);
+    selectionUnitsRef.current = null;
+    arenaSelectedRoundRef.current = null;
+    arenaAutoEndedRef.current = null;
+    const clips = settings.scope === "clips" && arenaScopeInstanceIds.length > 0;
+    void ratingArena.open({
+      scope: clips ? "clips" : "library",
+      instanceIds: clips ? arenaScopeInstanceIds : null,
+      kind: settings.kind,
+      border: settings.border ?? null,
+      match: settings.match,
+    });
+  }, [arena, arenaEnded, arenaScopeInstanceIds, ratingArena.open]);
 
   const handleArenaOptions = useCallback(
     (options) => {
@@ -3384,12 +3410,16 @@ function App() {
   const tagViewRefreshRef = useRef(refreshTagCollection);
   tagViewRefreshRef.current = refreshTagCollection;
   const seenTagRefreshRef = useRef(tagRefreshToken);
+  const tagRefreshHeld = Boolean(arena);
   useEffect(() => {
     // Only an actual edit re-reads the view; mounting must not re-query.
     if (seenTagRefreshRef.current === tagRefreshToken) return;
+    // Re-reading replaces the collection, which would close the arena over
+    // it and drop its selection: tags given there re-read it on leaving.
+    if (tagRefreshHeld) return;
     seenTagRefreshRef.current = tagRefreshToken;
     tagViewRefreshRef.current?.();
-  }, [tagRefreshToken]);
+  }, [tagRefreshHeld, tagRefreshToken]);
 
   const handleSearchScopeChange = useCallback(
     async (nextScope) => {
@@ -4355,6 +4385,7 @@ function App() {
     !contextMenu.visible &&
     !isFiltersOpen &&
     !isProcessResultsOpen &&
+    !arenaEnded &&
     !companionPick;
 
   useHotkeys(runForHotkeys, () => selection.selected, {
@@ -6868,6 +6899,11 @@ function App() {
             open={isHotkeyHelpOpen}
             onClose={() => setHotkeyHelpOpen(false)}
             reviewModeEnabled={reviewModeEnabled}
+          />
+          <ArenaSummaryDialog
+            ended={arenaEnded}
+            onMore={handleArenaMore}
+            onDone={() => setArenaEnded(null)}
           />
           <ProcessReviewResultsDialog
             open={isProcessResultsOpen}

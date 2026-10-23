@@ -1,0 +1,91 @@
+.arena-summary-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(5, 7, 8, 0.72);
+}
+
+.arena-summary {
+  width: min(440px, 100%);
+  padding: 1.25rem 1.4rem 1.1rem;
+  color: var(--color-text, #f5f5f5);
+  background: #232323;
+  border: 1px solid rgba(255, 212, 59, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.arena-summary h2 {
+  margin: 0 0 0.9rem;
+  font-size: 1.2rem;
+  color: #ffd43b;
+}
+
+.arena-summary__counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 0.5rem;
+  margin: 0 0 1.1rem;
+}
+
+.arena-summary__count {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.arena-summary__count dt {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.arena-summary__count dd {
+  margin: 0.15rem 0 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.arena-summary__count--rounds dd {
+  color: #ffd43b;
+}
+
+.arena-summary__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.arena-summary__actions button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--color-border, #3d3d3d);
+  border-radius: 6px;
+  background: #1f1f1f;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.arena-summary__actions .arena-summary__more {
+  border-color: #5c7cfa;
+  background: #2b3a7a;
+  font-weight: 600;
+}
+
+.arena-summary__actions button:focus-visible {
+  outline: 2px solid #ffd43b;
+  outline-offset: 2px;
+}
+
+.arena-summary kbd {
+  margin-left: 0.3rem;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.8);
+}

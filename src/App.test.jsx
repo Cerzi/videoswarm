@@ -634,6 +634,7 @@ afterEach(() => {
     setPinned: setLibraryRootPinnedMock,
   }));
   useSavedViewsMock.mockImplementation(() => savedViewsReturn);
+  useMetadataActionsMock.mockImplementation(() => metadataActionsReturn);
   Object.assign(masonryReturn, {
     orderedVideos: [],
     displayVideos: [],
@@ -3472,11 +3473,75 @@ describe("App hook composition", () => {
       fireEvent.keyDown(document.body, { key: "Escape" });
       await waitFor(() => expect(arenaApi.end).toHaveBeenCalledWith("s1"));
       expect(screen.queryByRole("toolbar", { name: "Rating arena" })).toBeNull();
-      await waitFor(() => expect(document.body).toHaveTextContent("Arena: 2 rounds · 1 placed · 2 held"));
+      // Leaving shows what the session did, with a way straight back in.
+      const summary = await screen.findByRole("dialog", { name: "Arena session done" });
+      expect(summary).toHaveTextContent("Rounds2");
+      expect(summary).toHaveTextContent("Placed1");
+      expect(summary).toHaveTextContent("Held2");
+      expect(within(summary).getByRole("button", { name: /More rounds/ })).toHaveFocus();
       expect(gridIds()).toEqual(videos.map((video) => video.id));
+      rounds.push({ success: true, round: null, reason: "mixed", counts: rounds[0]?.counts || null });
+      await act(async () => {
+        fireEvent.click(within(summary).getByRole("button", { name: /More rounds/ }));
+      });
+      expect(screen.queryByRole("dialog", { name: "Arena session done" })).toBeNull();
+      expect(arenaApi.start).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(screen.getByRole("toolbar", { name: "Rating arena" })).toBeInTheDocument());
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Rating arena" })).toBeNull());
+      // A session that did nothing ends without the dialog.
+      expect(screen.queryByRole("dialog", { name: "Arena session done" })).toBeNull();
     } finally {
       useMasonryLayoutMock.mockImplementation(() => masonryReturn);
     }
+  });
+
+  test("tags given in the arena over a library view re-read it only on leaving", async () => {
+    const own = { id: "/a1/new.mp4", name: "new.mp4", dirname: "", instanceId: 7, fingerprint: "fp-new" };
+    const videos = [own];
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      videos,
+      activeRootPath: null,
+      tagCollection: { tags: ["keeper"], matchMode: "all", loadedAt: 1, truncated: false },
+    }));
+    useFilterStateMock.mockImplementation(() => ({ ...filterStateReturn, filteredVideos: videos }));
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    const arenaApi = {
+      start: vi.fn(async () => ({ success: true, session: "s1", counts: null })),
+      round: vi.fn(async () => ({
+        success: true,
+        round: { id: 1, kind: "place", clips: [{ instanceId: 7, role: "new", rating: null }] },
+        records: [{ ...own, rootPath: "/a1", relativePath: "new.mp4", isElectronFile: true }],
+        counts: { unrated: 1 },
+      })),
+      finish: vi.fn(async () => ({ success: true, outcomes: {} })),
+      end: vi.fn(async () => ({ success: true })),
+    };
+    window.electronAPI = { saveSettingsPartial: vi.fn(), arena: arenaApi, library: { taggedSnapshot } };
+    const addTags = vi.fn(async () => ({ success: true }));
+    useMetadataActionsMock.mockImplementation(() => ({ ...metadataActionsReturn, handleAddTags: addTags }));
+
+    vi.resetModules();
+    const { default: App } = await import("./App.jsx");
+    render(<App />);
+    await act(async () => topBarSpy.mock.calls.at(-1)[0].onArenaToggle());
+    const bar = await screen.findByRole("toolbar", { name: "Rating arena" });
+    await waitFor(() => expect(bar).toHaveTextContent("Where does New go?"));
+
+    fireEvent.click(within(bar).getByRole("button", { name: /Tag…/ }));
+    const input = await screen.findByLabelText("Tag for the selected clip");
+    fireEvent.change(input, { target: { value: "dance" } });
+    await act(async () => {
+      fireEvent.submit(input.closest("form"));
+    });
+    await waitFor(() => expect(addTags).toHaveBeenCalled());
+    // Re-reading now would replace the collection and close the arena.
+    expect(taggedSnapshot).not.toHaveBeenCalled();
+    expect(screen.getByRole("toolbar", { name: "Rating arena" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(taggedSnapshot).toHaveBeenCalledWith(["keeper"], "all", expect.any(Object)));
   });
 
   test("heads a stack with its most typical clip and shows the most different as stills", async () => {

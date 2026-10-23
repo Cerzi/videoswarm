@@ -111,11 +111,22 @@ menus.
   *Border*), the pool (*Library*, *These N clips*), matching (*Similar
   prompts*, *Any*), "Round 7 · 213 unrated left", the session's counts
   (placed, moved, held, tagged) and a streak of rounds finished without
-  skipping, *Play together from the start*, and *Back*.
-- **Leaving:** `Esc` or *Back* returns to the grid, and a toast sums up the
-  session. Another folder, scope or collection closes the arena too. A
-  round changed and left, or brought back by Undo, is recorded on leaving;
-  an untouched one is not.
+  skipping, *Play together from the start*, and *Back*. Under it, the
+  round's kind and question, large and centred, coloured by kind (Place
+  and First ratings yellow, Tier check blue, Border violet), with the tag
+  suggestions at the end of that row; it is part of the bar, so it never
+  covers a clip.
+- **Auto-advance is off** while the arena is open: the arena deals its own
+  next round, and advancing would move the selection off it.
+- **Tags given in the arena** do not re-read a tag view or library search
+  behind it until the arena closes; re-reading replaces the collection,
+  which would close the arena and drop its selection.
+- **Leaving:** `Esc` or *Back* returns to the grid. A session that did
+  anything ends with *Arena session done*: its rounds and counts, *More
+  rounds* (focused, so `Enter` keeps going with the same kind, pair,
+  matching and pool) and *Done* (`Esc`). Another folder, scope or
+  collection closes the arena too. A round changed and left, or brought
+  back by Undo, is recorded on leaving; an untouched one is not.
 - **Entry:** the *Arena* button in the top bar, beside *Review*. Inside the
   arena the versions pill, stacks (`G`), folder keys (`[` `]`) and review
   passes (`Shift+R`, *Review these*) are off.

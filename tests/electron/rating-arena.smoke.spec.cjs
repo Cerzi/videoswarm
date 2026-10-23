@@ -60,7 +60,11 @@ test("rating arena: first round, place, undo and leave", async () => {
     await page.keyboard.press("Escape");
     await expect(bar()).toHaveCount(0);
     await expect(page.locator(".video-item")).toHaveCount(5);
-    await expect(page.getByText("Arena: 2 rounds · 4 placed")).toBeVisible();
+    const summary = page.getByRole("dialog", { name: "Arena session done" });
+    await expect(summary).toContainText("Rounds2");
+    await expect(summary).toContainText("Placed4");
+    await page.keyboard.press("Escape");
+    await expect(summary).toHaveCount(0);
     expect(rendererErrors).toEqual([]);
   } finally {
     await electronApp.close().catch(() => {});

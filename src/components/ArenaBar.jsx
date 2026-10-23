@@ -163,10 +163,14 @@ export default function ArenaBar({
         </button>
       </div>
       {round ? (
-        <div className="stack-bar arena-bar__row arena-bar__row--question">
-          <span className="arena-bar__kind">{ARENA_KIND_LABELS[roundKind] || ""}</span>
-          <span className="arena-bar__question">{ARENA_QUESTIONS[roundKind] || ""}</span>
-          <span className="stack-bar__spacer" />
+        <div className="arena-bar__round" data-kind={roundKind || undefined}>
+          {/* The round's kind and question, large and centred in the bar,
+              so it is clear what this round asks without covering a clip. */}
+          <div className="arena-bar__round-centre" aria-live="polite">
+            <span className="arena-bar__kind">{ARENA_KIND_LABELS[roundKind] || ""}</span>
+            <span className="arena-bar__question">{ARENA_QUESTIONS[roundKind] || ""}</span>
+          </div>
+          <div className="stack-bar arena-bar__round-tools">
           {suggestions.length ? (
             <span className="arena-bar__suggestions" aria-label="Suggested tags for New">
               {suggestions.map((suggestion, index) => (
@@ -221,6 +225,7 @@ export default function ArenaBar({
               <kbd>T</kbd> Tag…
             </button>
           )}
+          </div>
         </div>
       ) : null}
     </div>
