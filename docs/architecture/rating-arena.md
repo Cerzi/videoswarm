@@ -60,7 +60,10 @@ A round is two to four clips shown together with one question.
 Status: **Unimplemented**
 
 - **Pool.** *Library*: every present clip in roots that can be opened,
-  each content once (the copy seen most recently), except rejected ones.
+  each content once (the copy seen most recently), except rejected ones,
+  and of a generation's versions only the best (the order the Versions
+  list uses: largest, then longest, then newest; decided with the user on
+  2026-10-23), since the others are re-renders of the same clip.
   *These clips*: the clips the grid shows when the arena opens, at most
   50,000, as a review pass takes them. The pool is fixed when the arena
   opens; ratings and review states are read again for every round, so
@@ -178,7 +181,17 @@ Status: **Unimplemented**
 - `arena:end` `{ session }` lets the pool go.
 - Preload: `window.electronAPI.arena`.
 
-## 8. Later: ranking duels
+## 8. Later: a Versions round
+
+Status: **Deferred**; proposed to the user on 2026-10-23.
+
+The same view for one generation's versions, two to four side by side
+(the largest first), asking whether the best really is the best: rate
+each, and the best rated becomes *Best*. Today *Best* means the largest,
+so this needs the user's word on whether a rating may overrule size, and
+where a chosen best is kept.
+
+## 9. Later: ranking duels
 
 Status: **Deferred** until the arena has been used.
 

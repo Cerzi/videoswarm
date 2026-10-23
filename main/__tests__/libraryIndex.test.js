@@ -897,6 +897,7 @@ if (!database || databaseLoadError) {
               'ratings',
               'file_tags',
               'tag_suggestion_dismissals',
+              'arena_checks',
             ]) {
               raw
                 .prepare(`UPDATE ${table} SET fingerprint = ? WHERE fingerprint = ?;`)
@@ -965,6 +966,10 @@ if (!database || databaseLoadError) {
         store.assignTags([indexed.fingerprint], ['legacy-tag']);
         // A turned-down tag suggestion is the user's word as much as a tag.
         expect(store.dismissTagSuggestion([indexed.fingerprint], 'legacy-tag')).toBe(1);
+        // So is the rating arena's history of the clip.
+        store.recordArenaChecks([
+          { fingerprint: indexed.fingerprint, kind: 'tier', outcome: 'held', ratingBefore: 5, ratingAfter: 5 },
+        ]);
 
         const { fingerprint, legacyFingerprint } = await computeFingerprint(
           entry.filePath
@@ -984,6 +989,9 @@ if (!database || databaseLoadError) {
         expect(remigrated.tags).toContain('legacy-tag');
         const [target] = store.getTagSuggestionTargets([remigrated.instance.id]);
         expect(target.dismissedTagIds).toHaveLength(1);
+        expect(store.listArenaChecks()).toEqual([
+          expect.objectContaining({ fingerprint, outcome: 'held' }),
+        ]);
 
         const raw = openProfileDatabase();
         try {

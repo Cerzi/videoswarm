@@ -570,6 +570,45 @@ class PromptSimilarityService {
     return { epoch, features };
   }
 
+  /**
+   * How alike each of `candidateKeys` is to `promptKey`, for the rating
+   * arena (rating-arena.md, Section 2): the share of words their positive
+   * prompts have in common (Jaccard over the words search reads). Returns a
+   * Map of candidate key -> score in (0, 1], leaving out keys without a
+   * readable clip and those sharing no word. Prompt keys in, scores out; at
+   * most `limit` candidates are read.
+   */
+  async alikeScores({ store, promptKey, candidateKeys, limit = 200, assertActive } = {}) {
+    if (this.dictionary.size > this.limits.maxDictionaryWords) this.clear();
+    const epoch = this.epoch;
+    const scores = new Map();
+    if (!promptKey) return scores;
+    const self = await this._promptFor(promptKey, store, assertActive);
+    assertActive?.();
+    const mine = self?.searchWords;
+    if (!mine?.size || epoch !== this.epoch) return scores;
+    const list = (Array.isArray(candidateKeys) ? candidateKeys : [])
+      .filter((key) => key && key !== promptKey)
+      .slice(0, Math.max(0, limit));
+    for (let index = 0; index < list.length; index += 1) {
+      const other = (await this._promptFor(list[index], store, assertActive))?.searchWords;
+      assertActive?.();
+      if (epoch !== this.epoch) return scores;
+      if (other?.size) {
+        let shared = 0;
+        const [small, large] = other.size < mine.size ? [other, mine] : [mine, other];
+        for (const id of small) if (large.has(id)) shared += 1;
+        if (shared > 0) scores.set(list[index], shared / (mine.size + other.size - shared));
+      }
+      if ((index + 1) % this.limits.yieldEvery === 0) {
+        await this.yieldToEventLoop();
+        assertActive?.();
+        if (epoch !== this.epoch) return scores;
+      }
+    }
+    return scores;
+  }
+
   // Profile switches clear the cache: whether a key has a readable clip
   // depends on the profile's library.
   clear() {

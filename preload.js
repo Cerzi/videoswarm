@@ -454,6 +454,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
     remove: async (id) => ipcRenderer.invoke("review-passes:delete", { id }),
   },
 
+  // The rating arena (docs/architecture/rating-arena.md): catalog rows in,
+  // rounds of playable records with each clip's part out. Prompts never
+  // cross.
+  arena: {
+    start: async ({ scope, instanceIds } = {}) =>
+      ipcRenderer.invoke("arena:start", {
+        scope: scope === "clips" ? "clips" : "library",
+        ...(scope === "clips" ? { instanceIds: Array.isArray(instanceIds) ? instanceIds : [] } : {}),
+      }),
+    round: async ({ session, kind, border, match } = {}) =>
+      ipcRenderer.invoke("arena:round", {
+        session,
+        kind: typeof kind === "string" ? kind : "mixed",
+        border: Number.isInteger(border) ? border : null,
+        match: match === "any" ? "any" : "similar",
+      }),
+    finish: async ({ session, round } = {}) => ipcRenderer.invoke("arena:finish", { session, round }),
+    end: async (session) => ipcRenderer.invoke("arena:end", { session }),
+  },
+
   // Workflow filters: fingerprints, words and steps bounds in, matching
   // fingerprints out. Node types and file names never cross.
   workflow: {

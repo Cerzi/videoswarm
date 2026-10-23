@@ -1019,6 +1019,24 @@ function initDatabase(app, profilePath) {
         PRIMARY KEY (pass_id, position),
         FOREIGN KEY (pass_id) REFERENCES review_passes(id) ON DELETE CASCADE
       );
+
+      -- The rating arena (docs/architecture/rating-arena.md, Section 6): one
+      -- row per clip per round finished. Holds and last-checked times are
+      -- derived from it; it only steers which clips the arena picks.
+      CREATE TABLE IF NOT EXISTS arena_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fingerprint TEXT NOT NULL,
+        checked_at INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('place', 'first', 'tier', 'border')),
+        outcome TEXT NOT NULL CHECK (
+          outcome IN ('placed', 'held', 'raised', 'lowered', 'skipped', 'rejected')
+        ),
+        rating_before INTEGER,
+        rating_after INTEGER,
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_arena_checks_fingerprint
+        ON arena_checks(fingerprint, checked_at);
     `);
 
     // Tag hierarchy: each tag may have one parent ("bellydance" under
@@ -2093,6 +2111,10 @@ function createMetadataStore(db) {
   const rekeyInstanceFingerprints = db.prepare(`
     UPDATE file_instances SET fingerprint = @to WHERE fingerprint = @from;
   `);
+  // The arena's history follows the content too.
+  const rekeyArenaChecks = db.prepare(`
+    UPDATE arena_checks SET fingerprint = @to WHERE fingerprint = @from;
+  `);
   const rekeyCheckpointAnchors = db.prepare(`
     UPDATE review_checkpoints
     SET anchor_fingerprint = @to
@@ -2863,6 +2885,7 @@ function createMetadataStore(db) {
     rekeyRating.run(parameters);
     rekeyTagLinks.run(parameters);
     rekeyTagSuggestionDismissals.run(parameters);
+    rekeyArenaChecks.run(parameters);
     // The metadata moved: one content lost it, another gained it.
     noteMetadataChange(fromFingerprint);
     noteMetadataChange(toFingerprint);
@@ -4974,6 +4997,83 @@ function createMetadataStore(db) {
     LIMIT @limit;
   `);
 
+  // The rating arena's pool (rating-arena.md, Section 2): each present
+  // content once, as the copy seen most recently, in roots that can be
+  // opened; the whole library or the rows the renderer showed.
+  const arenaPoolRows = db.prepare(`
+    SELECT fingerprint, id, prompt_key, prompt_key_version, generation_key,
+      generation_key_version, width, height, duration_ms, mtime_ms FROM (
+      SELECT fi.fingerprint, fi.id, mc.prompt_key, mc.prompt_key_version,
+        mc.generation_key, mc.generation_key_version, mc.width, mc.height,
+        mc.duration_ms, fi.mtime_ms,
+        ROW_NUMBER() OVER (
+          PARTITION BY fi.fingerprint
+          ORDER BY fi.last_seen_at DESC, fi.id
+        ) AS content_rank
+      FROM file_instances fi
+      INNER JOIN library_roots lr ON lr.id = fi.root_id
+      INNER JOIN directories d ON d.id = fi.directory_id
+      INNER JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+      WHERE fi.is_present != 0
+        AND d.is_present != 0
+        AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths))
+        AND (@instance_ids IS NULL OR fi.id IN (SELECT value FROM json_each(@instance_ids)))
+    )
+    WHERE content_rank = 1
+    LIMIT @limit;
+  `);
+  const arenaRatingRows = db.prepare(
+    'SELECT fingerprint, value FROM ratings WHERE value BETWEEN 1 AND 5;'
+  );
+  const arenaRejectRows = db.prepare(
+    "SELECT fingerprint FROM content_review WHERE state = 'reject';"
+  );
+  const arenaCheckRows = db.prepare(`
+    SELECT id, fingerprint, checked_at, kind, outcome FROM arena_checks
+    ORDER BY checked_at, id;
+  `);
+  const arenaCheckInsert = db.prepare(`
+    INSERT INTO arena_checks (fingerprint, checked_at, kind, outcome, rating_before, rating_after)
+    SELECT @fingerprint, @checked_at, @kind, @outcome, @rating_before, @rating_after
+    WHERE EXISTS (SELECT 1 FROM media_content WHERE fingerprint = @fingerprint);
+  `);
+  const arenaCheckDelete = db.prepare('DELETE FROM arena_checks WHERE id = ?;');
+  const arenaCheckPrune = db.prepare(`
+    DELETE FROM arena_checks WHERE id IN (
+      SELECT id FROM arena_checks ORDER BY checked_at DESC, id DESC
+      LIMIT -1 OFFSET @keep
+    );
+  `);
+  // A round's clips as playable records, by the rows the pool chose.
+  const arenaRecordInstances = db.prepare(`
+    SELECT fi.*,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
+      mc.prompt_key AS content_prompt_key,
+      mc.prompt_key_version AS content_prompt_key_version,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM file_instances fi
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE fi.id IN (SELECT value FROM json_each(@instance_ids))
+      AND fi.is_present != 0
+      AND d.is_present != 0
+      AND lr.root_path NOT IN (SELECT value FROM json_each(@unavailable_root_paths));
+  `);
+
   // Contents asked about whose workflow has not been read yet.
   const workflowFactsUnread = db.prepare(`
     SELECT COUNT(*) AS unread FROM media_content
@@ -5889,6 +5989,145 @@ function createMetadataStore(db) {
     return reviewPassDelete.run(normalizeReviewPassId(passId)).changes > 0;
   }
 
+  // ----- Rating arena (docs/architecture/rating-arena.md) -----------------
+
+  const cleanRootPaths = (value) =>
+    (Array.isArray(value) ? value : []).filter((rootPath) => typeof rootPath === 'string' && rootPath);
+
+  /**
+   * The arena's pool: `{ fingerprint, instanceId, promptKey }` for each
+   * present content, once, in roots that can be opened. `instanceIds`
+   * limits it to those rows (the clips the grid showed); without them it is
+   * the whole library. At most `limit` contents.
+   */
+  function getArenaPool(options = {}) {
+    assertOperationActive(options.assertActive);
+    const instanceIds = Array.isArray(options.instanceIds)
+      ? options.instanceIds.filter((id) => Number.isSafeInteger(id) && id > 0)
+      : null;
+    const limit = Number.isSafeInteger(options.limit) && options.limit > 0 ? options.limit : 1_000_000;
+    const rows = arenaPoolRows.all({
+      unavailable_root_paths: JSON.stringify(cleanRootPaths(options.unavailableRootPaths)),
+      instance_ids: instanceIds ? JSON.stringify(instanceIds) : null,
+      limit,
+    });
+    assertOperationActive(options.assertActive);
+    // Only the best version of a generation, in the order the details panel
+    // lists versions: the others are re-renders of the same clip.
+    const pixels = (row) => Number(row.width || 0) * Number(row.height || 0);
+    const better = (a, b) =>
+      pixels(a) - pixels(b) ||
+      (normalizeDurationMs(a.duration_ms) || 0) - (normalizeDurationMs(b.duration_ms) || 0) ||
+      Number(a.mtime_ms || 0) - Number(b.mtime_ms || 0) ||
+      (a.fingerprint > b.fingerprint ? -1 : 1);
+    const bestOf = new Map();
+    const pool = [];
+    for (const row of rows) {
+      const keys = mapGenerationKeyFields(
+        row.generation_key,
+        row.generation_key_version,
+        row.prompt_key,
+        row.prompt_key_version
+      );
+      const clip = {
+        fingerprint: row.fingerprint,
+        instanceId: Number(row.id),
+        promptKey: keys.promptKey || null,
+      };
+      if (!keys.generationKey) {
+        pool.push(clip);
+        continue;
+      }
+      const held = bestOf.get(keys.generationKey);
+      if (!held || better(row, held.row) > 0) bestOf.set(keys.generationKey, { row, clip });
+    }
+    for (const { clip } of bestOf.values()) pool.push(clip);
+    return pool;
+  }
+
+  /** Every rating (1-5) and every rejected content, as they are now. */
+  function getArenaJudgements() {
+    const ratings = new Map();
+    for (const row of arenaRatingRows.all()) ratings.set(row.fingerprint, Number(row.value));
+    const rejects = new Set(arenaRejectRows.all().map((row) => row.fingerprint));
+    return { ratings, rejects };
+  }
+
+  /** The arena's history, oldest first: `{ id, fingerprint, checkedAt, kind, outcome }`. */
+  function listArenaChecks() {
+    return arenaCheckRows.all().map((row) => ({
+      id: Number(row.id),
+      fingerprint: row.fingerprint,
+      checkedAt: Number(row.checked_at),
+      kind: row.kind,
+      outcome: row.outcome,
+    }));
+  }
+
+  /**
+   * Records one round's rows and lets go of `replaceIds` (the rows the same
+   * round wrote before, when it comes back after Undo). Returns the new
+   * rows' ids, for a content still in the library. Keeps the newest rows.
+   */
+  const writeArenaChecks = db.transaction((rows, replaceIds, keep) => {
+    for (const id of replaceIds) arenaCheckDelete.run(id);
+    const ids = [];
+    for (const row of rows) {
+      const result = arenaCheckInsert.run(row);
+      if (result.changes > 0) ids.push(Number(result.lastInsertRowid));
+    }
+    arenaCheckPrune.run({ keep });
+    return ids;
+  });
+  const ARENA_OUTCOMES = new Set(['placed', 'held', 'raised', 'lowered', 'skipped', 'rejected']);
+  const ARENA_KINDS = new Set(['place', 'first', 'tier', 'border']);
+  const arenaRating = (value) =>
+    Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
+  function recordArenaChecks(rows = [], options = {}) {
+    const now = Number.isFinite(options.now) ? options.now : Date.now();
+    const clean = (Array.isArray(rows) ? rows : [])
+      .filter(
+        (row) =>
+          typeof row?.fingerprint === 'string' &&
+          row.fingerprint &&
+          ARENA_KINDS.has(row.kind) &&
+          ARENA_OUTCOMES.has(row.outcome)
+      )
+      .map((row) => ({
+        fingerprint: row.fingerprint,
+        checked_at: now,
+        kind: row.kind,
+        outcome: row.outcome,
+        rating_before: arenaRating(row.ratingBefore),
+        rating_after: arenaRating(row.ratingAfter),
+      }));
+    const replaceIds = (Array.isArray(options.replaceIds) ? options.replaceIds : []).filter(
+      (id) => Number.isSafeInteger(id) && id > 0
+    );
+    const keep = Number.isSafeInteger(options.keep) && options.keep > 0 ? options.keep : 200_000;
+    return writeArenaChecks(clean, replaceIds, keep);
+  }
+
+  /** A round's clips as playable records, for the rows given, in that order. */
+  function getArenaRecords(instanceIds = [], options = {}) {
+    assertOperationActive(options.assertActive);
+    const ids = (Array.isArray(instanceIds) ? instanceIds : []).filter(
+      (id) => Number.isSafeInteger(id) && id > 0
+    );
+    if (!ids.length) return { records: [], rootPaths: [] };
+    const rows = arenaRecordInstances.all({
+      instance_ids: JSON.stringify(ids),
+      unavailable_root_paths: JSON.stringify(cleanRootPaths(options.unavailableRootPaths)),
+    });
+    const byId = new Map(rows.map((row) => [Number(row.id), row]));
+    const tagsByFingerprint = new Map();
+    const records = ids
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((row) => mapLibraryInstanceRow(row, tagsByFingerprint));
+    return { records, rootPaths: [...new Set(records.map((record) => record.rootPath))] };
+  }
+
   // A clip tagged "bellydance" counts toward "dance" too, once however many
   // of its tags sit under "dance". directCount is the tag's own clips.
   function listTags() {
@@ -6331,6 +6570,11 @@ function createMetadataStore(db) {
     setReviewPassCursor,
     finishReviewPass,
     deleteReviewPass,
+    getArenaPool,
+    getArenaJudgements,
+    listArenaChecks,
+    recordArenaChecks,
+    getArenaRecords,
     listPresentInstancesForPromptKey,
     listLibraryPromptKeys,
     getFrameRows,

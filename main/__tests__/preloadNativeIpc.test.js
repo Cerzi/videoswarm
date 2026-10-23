@@ -314,6 +314,26 @@ describe("preload native-work bridge", () => {
     ]);
   });
 
+  it("runs the rating arena with catalog rows, kinds and session ids only", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    await api.arena.start();
+    await api.arena.start({ scope: "clips", instanceIds: [3, 4] });
+    await api.arena.start({ scope: "clips", instanceIds: "3" });
+    await api.arena.round({ session: "s1", kind: "border", border: 4, match: "any" });
+    await api.arena.round({ session: "s1", border: "4" });
+    await api.arena.finish({ session: "s1", round: 2 });
+    await api.arena.end("s1");
+    expect(ipcRenderer.invoke.mock.calls).toEqual([
+      ["arena:start", { scope: "library" }],
+      ["arena:start", { scope: "clips", instanceIds: [3, 4] }],
+      ["arena:start", { scope: "clips", instanceIds: [] }],
+      ["arena:round", { session: "s1", kind: "border", border: 4, match: "any" }],
+      ["arena:round", { session: "s1", kind: "mixed", border: null, match: "similar" }],
+      ["arena:finish", { session: "s1", round: 2 }],
+      ["arena:end", { session: "s1" }],
+    ]);
+  });
+
   it("matches workflows with fingerprints, words and whole steps only", async () => {
     const { api, ipcRenderer } = loadPreload();
     await api.workflow.match({ fingerprints: ["fa"], include: ["upscale"], minSteps: 12, maxSteps: 2.5 });

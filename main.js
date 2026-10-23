@@ -118,6 +118,9 @@ const tagSuggestionService = createTagSuggestionService({
   promptService: promptSimilarityService,
   activity: backgroundActivity,
 });
+const { ROUND_KINDS: ARENA_ROUND_KINDS, createRatingArenaService } = require("./main/rating-arena");
+// The rating arena's sessions (docs/architecture/rating-arena.md).
+const ratingArenaService = createRatingArenaService({ promptService: promptSimilarityService });
 const {
   FRAME_FINGERPRINT_VERSION,
   createStackFrameService,
@@ -2059,6 +2062,7 @@ async function performProfileReconfiguration(requestedProfileId, broadcast) {
   stackFrameService.cancelAll("Profile changed while reading stack frames");
   promptSimilarityService.clear();
   tagSuggestionService.clear();
+  ratingArenaService.clear();
   lastFrameCaptureService.cancelAll("Profile changed during frame capture");
   mediaProtocolService.cancelActiveStreams();
   await Promise.all([
@@ -6089,6 +6093,118 @@ ipcMain.handle("generation-versions:open", async (event, payload = {}) => {
   if (result?.success === false) return result;
   await grantKnownRendererRoots(event.sender, result.rootPaths);
   return result;
+});
+
+// The rating arena (docs/architecture/rating-arena.md, Section 7): a pool
+// fixed when it opens, rounds dealt from it as playable records with each
+// clip's part, and how each round ended. Prompts never cross: similar
+// prompts are matched in main.
+const arenaFailure = (error) => ({
+  success: false,
+  code: error?.code || "ARENA_ERROR",
+  error: error?.message || String(error),
+});
+const arenaSessionId = (value) =>
+  assertString(value, { name: "arena session", minChars: 1, maxChars: 64, trim: true });
+
+async function unavailableLibraryRoots() {
+  const roots = runLibraryCatalogOperation((metadataStore) => ({
+    rootPaths: metadataStore.getLibraryRoots().map((root) => root.rootPath),
+  }));
+  if (roots?.success === false) throw Object.assign(new Error(roots.error), { code: roots.code });
+  return findUnavailableRootPaths(roots.rootPaths);
+}
+
+ipcMain.handle("arena:start", async (_event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "arena request");
+    const instanceIds =
+      payload.scope === "clips"
+        ? assertInstanceIdArray(payload.instanceIds, {
+            name: "arena clips",
+            minEntries: 1,
+            maxEntries: REVIEW_PASS_MAX_CLIPS,
+          })
+        : null;
+    const unavailableRootPaths = await unavailableLibraryRoots();
+    const context = captureMetadataContext();
+    const started = ratingArenaService.start({
+      store: context.metadataStore,
+      instanceIds,
+      unavailableRootPaths,
+      assertActive: () => assertMetadataContextActive(context),
+    });
+    return { success: true, ...started };
+  } catch (error) {
+    return arenaFailure(error);
+  }
+});
+
+ipcMain.handle("arena:round", async (event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "arena round request");
+    const session = arenaSessionId(payload.session);
+    const kind = ARENA_ROUND_KINDS.includes(payload.kind) ? payload.kind : "mixed";
+    const border =
+      Number.isInteger(payload.border) && payload.border >= 1 && payload.border <= 4 ? payload.border : null;
+    const match = payload.match === "any" ? "any" : "similar";
+    const context = captureMetadataContext();
+    const assertActive = () => assertMetadataContextActive(context);
+    const dealt = await ratingArenaService.round({
+      store: context.metadataStore,
+      session,
+      options: { kind, border, match },
+      assertActive,
+    });
+    if (!dealt.round) return { success: true, round: null, counts: dealt.counts, reason: dealt.reason };
+    const unavailableRootPaths = await unavailableLibraryRoots();
+    assertActive();
+    const found = context.metadataStore.getArenaRecords(
+      dealt.round.clips.map((clip) => clip.instanceId),
+      { unavailableRootPaths, assertActive }
+    );
+    const records = createTaggedLibraryFiles(found.records, { generation: context.generation });
+    await grantKnownRendererRoots(event.sender, found.rootPaths);
+    return {
+      success: true,
+      round: {
+        id: dealt.round.id,
+        kind: dealt.round.kind,
+        // Parts by catalog row: fingerprints and prompt keys stay in main.
+        clips: dealt.round.clips.map((clip) => ({
+          instanceId: clip.instanceId,
+          role: clip.role,
+          rating: clip.rating ?? null,
+        })),
+      },
+      records,
+      counts: dealt.counts,
+    };
+  } catch (error) {
+    return arenaFailure(error);
+  }
+});
+
+ipcMain.handle("arena:finish", async (_event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "arena round");
+    const session = arenaSessionId(payload.session);
+    const round = assertInteger(payload.round, { name: "arena round", min: 1, max: Number.MAX_SAFE_INTEGER });
+    const context = captureMetadataContext();
+    const outcomes = ratingArenaService.finish({ store: context.metadataStore, session, round });
+    return { success: true, outcomes };
+  } catch (error) {
+    return arenaFailure(error);
+  }
+});
+
+ipcMain.handle("arena:end", async (_event, payload = {}) => {
+  try {
+    assertPlainObject(payload, "arena session");
+    return { success: true, ended: ratingArenaService.end({ session: arenaSessionId(payload.session) }) };
+  } catch (error) {
+    return arenaFailure(error);
+  }
 });
 
 ipcMain.handle("metadata:get", async (_event, fingerprints = []) => {

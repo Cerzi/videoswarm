@@ -195,6 +195,24 @@ describe("PromptSimilarityService", () => {
     expect(library.readIsoPayload).toHaveBeenCalledTimes(3);
   });
 
+  it("scores how alike candidates are to one prompt, keys only", async () => {
+    const library = createLibrary([close, closer, far]);
+    const similarity = service(library);
+    const [keyA, keyB, keyC] = library.keys;
+    const scores = await similarity.alikeScores({
+      store: library.store,
+      promptKey: keyA,
+      candidateKeys: [keyB, keyC, keyA, "pk-unreadable"],
+    });
+    expect([...scores.keys()].sort()).toEqual([keyB, keyC].sort());
+    expect(scores.get(keyB)).toBeGreaterThan(0.8);
+    expect(scores.get(keyC)).toBeLessThan(scores.get(keyB));
+    expect(JSON.stringify([...scores])).not.toContain("harbour");
+    // Bounded, and nothing at all for a prompt that cannot be read.
+    expect((await similarity.alikeScores({ store: library.store, promptKey: keyA, candidateKeys: [keyB, keyC], limit: 1 })).size).toBe(1);
+    expect((await similarity.alikeScores({ store: library.store, promptKey: "pk-unreadable", candidateKeys: [keyB] })).size).toBe(0);
+  });
+
   it("skips a file outside its root and a file whose prompt changed", async () => {
     const library = createLibrary([close, closer]);
     const [keyA, keyB] = library.keys;
