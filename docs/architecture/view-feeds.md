@@ -90,6 +90,11 @@ Status: **Proposed**
 }
 ```
 
+- `path` is absolute and native to this computer, as the catalog holds it,
+  so a caller can play the file in place without copying it.
+- `tags` carry each tag's name and its place in the tag tree (`path`), so a
+  caller can use them as words of its own (a follower uses them to steer
+  which clips it picks).
 - The whole matching set, each content once (the copy seen most
   recently), in the view's sort order. `etag` is a hash of the answer; a
   caller that sends it back as `unless` gets `{ "unchanged": true }` and
@@ -158,6 +163,10 @@ Not built here; written down so both sides agree.
   background), removed ones leave it.
 - If Video Swarm is closed, the switch is off or the view is gone, the
   project keeps its last set and says why.
+- A clip that leaves the view while in use is not cut mid-play; it is
+  simply not chosen again (a live set re-plans without it).
+- A changed `contentId` at a known path means the file's content changed:
+  the caller analyses it again.
 - Tests use a fake server; never Video Swarm's database.
 
 ## Acceptance
