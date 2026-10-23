@@ -110,6 +110,12 @@ menus.
   has a blue ring with an inner glow and a larger pill, so the round's task
   is clear at a glance. The ring sits inside the card, just inside the
   selection ring, so both show.
+- **Place layout:** *New* is large and centred at the top, about two thirds
+  of the window's height, with its reference clips side by side in a
+  smaller row under it (`computeFeatureLayout` in
+  `src/layout/masonryLayout.js`). When *New* is held by the width, the row
+  gets the spare height. A window too low for two tiers falls back to one
+  row. Other round kinds keep one row, where the clips are equals.
 - **Selection:** a round opens with its first clip selected; ← and → move
   between its clips; a click selects as in the grid.
 - **Guests:** clips from folders that are not open are guests, as in the

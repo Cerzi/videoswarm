@@ -382,6 +382,113 @@ export function fitComparisonRowHeight(
   return Number.isFinite(height) && height >= minHeight ? height : null;
 }
 
+/**
+ * The arena's Place round: the first clip (the one to rate) large and centred
+ * at the top, the rest side by side in a smaller row under it, all fitted to
+ * the window. The feature takes about `featureShare` of the height; when it
+ * is held by the width instead, the row below gets the room. Returns the
+ * same shape as computeRowLayout, or null when the window is too low for two
+ * rows (`minHeight` for the feature), in which case one row applies.
+ */
+export function computeFeatureLayout(items = [], options = {}) {
+  const safeItems = Array.isArray(items) ? items : [];
+  if (safeItems.length < 2) return null;
+  const containerWidth = positiveNumber(options.containerWidth, 1);
+  const viewportHeight = positiveNumber(options.viewportHeight, 0);
+  const padding = Math.min(nonNegativeNumber(options.padding, DEFAULT_PADDING), Math.max(0, (containerWidth - 1) / 2));
+  const gap = nonNegativeNumber(options.gap, DEFAULT_GAP);
+  // Between the feature and the row: wide enough to read as two tiers.
+  const tierGap = Math.max(gap, nonNegativeNumber(options.tierGap, 14));
+  const featureShare = Math.min(0.85, Math.max(0.4, Number(options.featureShare) || 0.66));
+  const minHeight = positiveNumber(options.minHeight, 200);
+  const getId = typeof options.getId === 'function' ? options.getId : defaultGetId;
+  const getAspectRatio = typeof options.getAspectRatio === 'function'
+    ? options.getAspectRatio
+    : defaultGetAspectRatio;
+
+  const availableWidth = Math.max(1, containerWidth - padding * 2);
+  const down = viewportHeight - padding * 2 - tierGap;
+  const seen = new Set();
+  const entries = safeItems.map((item, index) => {
+    const resolvedId = getId(item, index);
+    const id = resolvedId == null ? index : resolvedId;
+    if (seen.has(id)) throw new Error(`Duplicate masonry item id: ${String(id)}`);
+    seen.add(id);
+    const aspectRatio = normalizeAspectRatio(
+      getAspectRatio(item, index),
+      DEFAULT_ASPECT_RATIO,
+      DEFAULT_MIN_ASPECT,
+      DEFAULT_MAX_ASPECT
+    );
+    return { id, item, index, aspectRatio };
+  });
+  const [feature, ...rest] = entries;
+  const restAspects = rest.reduce((sum, entry) => sum + entry.aspectRatio, 0);
+  // The row's height if it filled the width (a pixel short per card, so
+  // rounding never breaks it).
+  const rowFit = (availableWidth - gap * (rest.length - 1) - rest.length) / restAspects;
+  let featureHeight = Math.min(down * featureShare, availableWidth / feature.aspectRatio);
+  let rowHeight = Math.min(rowFit, down - featureHeight);
+  // A row held by its width gives its unused height back to the feature.
+  featureHeight = Math.min(down - rowHeight, availableWidth / feature.aspectRatio);
+  featureHeight = Math.floor(featureHeight);
+  rowHeight = Math.floor(rowHeight);
+  if (!(featureHeight >= minHeight) || !(rowHeight >= minHeight / 3)) return null;
+
+  const positions = [];
+  const positionsById = new Map();
+  const put = (entry, x, y, width, height) => {
+    const position = {
+      id: entry.id,
+      item: entry.item,
+      index: entry.index,
+      column: 0,
+      x,
+      y,
+      width,
+      height,
+      bottom: y + height,
+      style: {
+        position: 'absolute',
+        left: '0px',
+        top: '0px',
+        width: `${width}px`,
+        height: `${height}px`,
+        transform: `translate(${x}px, ${y}px)`,
+      },
+    };
+    positions.push(position);
+    positionsById.set(entry.id, position);
+  };
+
+  const featureWidth = Math.max(1, Math.round(featureHeight * feature.aspectRatio));
+  put(feature, padding + Math.max(0, Math.floor((availableWidth - featureWidth) / 2)), padding, featureWidth, featureHeight);
+  const rowTop = padding + featureHeight + tierGap;
+  const widths = rest.map((entry) => Math.max(1, Math.round(rowHeight * entry.aspectRatio)));
+  const rowWidth = widths.reduce((sum, width) => sum + width, 0) + gap * (rest.length - 1);
+  let x = padding + Math.max(0, Math.floor((availableWidth - rowWidth) / 2));
+  rest.forEach((entry, at) => {
+    put(entry, x, rowTop, widths[at], rowHeight);
+    x += widths[at] + gap;
+  });
+
+  const contentBottom = rowTop + rowHeight;
+  const typicalAspect = typicalAspectRatio(entries.map((entry) => entry.aspectRatio), DEFAULT_ASPECT_RATIO);
+  return {
+    positions,
+    positionsById,
+    columns: [positions],
+    visualOrderIds: positions.map((position) => position.id),
+    columnCount: 1,
+    columnWidth: Math.round(rowHeight * typicalAspect),
+    rowHeight,
+    typicalAspect,
+    totalHeight: contentBottom + padding,
+    padding,
+    gap,
+  };
+}
+
 function findFirstIntersectingPosition(column, top) {
   let low = 0;
   let high = column.length;

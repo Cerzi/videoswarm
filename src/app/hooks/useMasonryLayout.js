@@ -11,6 +11,7 @@ import {
   computeMasonryLayout,
   computeRowLayout,
   fitComparisonRowHeight,
+  computeFeatureLayout,
   getScrollTopForItem,
   getVirtualMasonryWindow,
 } from "../../layout/masonryLayout";
@@ -163,6 +164,9 @@ export function useMasonryLayout({
   comparison = false,
   // A review pass: clips stay in the order given, laid out as usual.
   keepOrder = false,
+  // With comparison: the first clip large on top, the rest smaller under it
+  // (the arena's Place round), when the window has room for both.
+  feature = false,
 }) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -403,6 +407,13 @@ export function useMasonryLayout({
       gap: LAYOUT_GAP,
       getAspectRatio,
     };
+    if (comparison && feature) {
+      const featured = computeFeatureLayout(layoutVideos, {
+        ...options,
+        viewportHeight: comparisonViewportHeight,
+      });
+      if (featured) return featured;
+    }
     if (comparison) {
       const rowHeight = fitComparisonRowHeight(layoutVideos.map(getAspectRatio), {
         containerWidth,
@@ -425,6 +436,7 @@ export function useMasonryLayout({
     comparison,
     comparisonViewportHeight,
     containerWidth,
+    feature,
     gridLayout,
     layoutRevision,
     layoutVideos,

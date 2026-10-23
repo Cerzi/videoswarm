@@ -1404,6 +1404,8 @@ function App() {
     comparison: Boolean(versionView || arena),
     // A pass keeps the order it was frozen in; the arena, its round's.
     keepOrder: Boolean(reviewPass || arena),
+    // Place: New large on top, the clips to place it against under it.
+    feature: arena?.round?.kind === "place",
   });
   fullOrderedVideosRef.current = orderedVideos;
   revealScrollRef.current = scrollToId;

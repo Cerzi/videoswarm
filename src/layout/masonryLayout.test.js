@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeFeatureLayout,
   computeMasonryLayout,
   computeRowLayout,
   fitComparisonRowHeight,
@@ -409,5 +410,40 @@ describe('computeRowLayout', () => {
     expect(getScrollTopForItem(layout, 'clip-150', { viewportHeight: 300, align: 'start' })).toBe(
       layout.positionsById.get('clip-150').y
     );
+  });
+});
+
+describe('computeFeatureLayout', () => {
+  const clips = (aspects) => aspects.map((aspectRatio, index) => ({ id: `c${index}`, aspectRatio }));
+  const options = { containerWidth: 1600, viewportHeight: 900, padding: 16, gap: 4 };
+
+  it('puts the first clip large and centred on top, the rest smaller in a row under it', () => {
+    const layout = computeFeatureLayout(clips([16 / 9, 16 / 9, 16 / 9, 16 / 9]), options);
+    const [feature, ...rest] = layout.positions;
+    expect(feature.id).toBe('c0');
+    expect(feature.y).toBe(16);
+    // About two thirds of the height, centred.
+    expect(feature.height).toBeGreaterThan(500);
+    expect(Math.abs(feature.x + feature.width / 2 - 800)).toBeLessThanOrEqual(1);
+    for (const position of rest) {
+      expect(position.y).toBeGreaterThanOrEqual(feature.bottom + 14);
+      expect(position.height).toBeLessThan(feature.height / 1.5);
+    }
+    // Everything fits the window and the width, without overlaps.
+    expect(layout.totalHeight).toBeLessThanOrEqual(900);
+    expect(Math.max(...layout.positions.map((p) => p.x + p.width))).toBeLessThanOrEqual(1600 - 16);
+    rest.slice(1).forEach((position, at) => expect(position.x).toBeGreaterThanOrEqual(rest[at].x + rest[at].width));
+  });
+
+  it('gives a width-held row its unused height back to the feature', () => {
+    const narrow = computeFeatureLayout(clips([9 / 16, 16 / 9, 16 / 9, 16 / 9, 16 / 9]), { ...options, containerWidth: 900 });
+    const [feature, row] = narrow.positions;
+    expect(feature.bottom + 14 + row.height).toBeLessThanOrEqual(900 - 16);
+    expect(feature.height).toBeGreaterThan(900 * 0.66 - 32);
+  });
+
+  it('falls back (null) for one clip or a window too low for two tiers', () => {
+    expect(computeFeatureLayout(clips([1]), options)).toBeNull();
+    expect(computeFeatureLayout(clips([1, 1, 1]), { ...options, viewportHeight: 240 })).toBeNull();
   });
 });
