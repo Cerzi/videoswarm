@@ -24,6 +24,9 @@ another app asks Video Swarm.
 - **Changes**: which clips' tags, rating or review state changed since a
   revision, removals included, so a caller can poll cheaply.
 
+Following a saved view (the clips one matches, paths included) is designed
+separately behind its own switch: `view-feeds.md` (Proposed).
+
 Nothing is written through it. An app that wants to show something *in*
 Video Swarm (a "used in a video" chip) does so as a companion.
 
