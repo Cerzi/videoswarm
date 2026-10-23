@@ -175,7 +175,7 @@ describe("VideoCard one-click companion buttons", () => {
     expect(screen.queryByRole("button", { name: "Polish" })).toBeNull();
     fireEvent.mouseEnter(card);
     const button = screen.getByRole("button", { name: "Polish" });
-    expect(button).toHaveAttribute("title", "Send to polish");
+    expect(button).toHaveAttribute("title", "Send to polish, and accept it");
     fireEvent.click(button);
     expect(onQuickAction).toHaveBeenCalledWith("clip", "c1", "polish");
     expect(onSelect).not.toHaveBeenCalled();

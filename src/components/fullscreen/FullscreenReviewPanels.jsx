@@ -81,9 +81,10 @@ const NO_COMPANION_ITEMS = Object.freeze([]);
 
 // Connected companion apps on the clip on screen: each app's chip, and the
 // same one-click buttons a card shows (an action the app says this clip has
-// not been sent for). A button sends only; its key, Shift+1 or Shift+2, also
-// accepts the clip. Keyed by clip, so a pressed button resets on the next.
-function CompanionSection({ chips, buttons, onQuickAction }) {
+// not been sent for). A button and its key, Shift+1 or Shift+2, do the same:
+// send the clip and, in review mode, accept it. Keyed by clip, so a pressed
+// button resets on the next.
+function CompanionSection({ chips, buttons, accepts = false, onQuickAction }) {
   const [sentKey, setSentKey] = useState(null);
   if (!chips.length && !buttons.length) return null;
   return (
@@ -112,11 +113,9 @@ function CompanionSection({ chips, buttons, onQuickAction }) {
                 key={button.key}
                 type="button"
                 className="fullscreen-review-panel__companion-button"
-                title={
-                  button.shortcut
-                    ? `${button.title}. ${button.shortcut} also accepts it.`
-                    : button.title
-                }
+                title={`${button.title}${accepts ? ", and accept it" : ""}${
+                  button.shortcut ? ` (${button.shortcut})` : ""
+                }`}
                 disabled={sentKey === button.key}
                 onClick={() => {
                   setSentKey(button.key);
@@ -197,6 +196,7 @@ export function FullscreenReviewRail({
         key={video?.id ?? "none"}
         chips={companionChips}
         buttons={quickActions}
+        accepts={reviewModeEnabled}
         onQuickAction={onQuickAction}
       />
 

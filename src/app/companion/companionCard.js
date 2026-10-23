@@ -106,10 +106,11 @@ export function createCompanionQuickActionCache() {
 }
 
 /**
- * Buttons with the key that also reaches them: Shift+1 and Shift+2 accept a
- * clip and send it to the first and second quick action across the connected
- * apps, in their order (`actions` as App lists them), whichever buttons this
- * clip offers. The fullscreen viewer shows the key on its buttons.
+ * Buttons with the key that also reaches them: Shift+1 and Shift+2 send to
+ * the first and second quick action across the connected apps, in their
+ * order (`actions` as App lists them), whichever buttons this clip offers.
+ * A key and its button do the same, accepting the clip in review mode. The
+ * fullscreen viewer shows the key on its buttons.
  */
 export function withQuickShortcuts(buttons, actions) {
   if (!buttons?.length) return buttons || NO_QUICK_ACTIONS;

@@ -108,11 +108,15 @@ test("companion apps: a chip from each, send through the dry run, hide what was 
     await expect(card(page, "clip-0001.mp4").locator(".video-item-companion")).toHaveText("polish waiting");
     fake.state.plan = null;
 
-    // One click on a card: the app's quick action, sent at once, no dialog.
+    // One click on a card: the app's quick action, sent at once, no dialog,
+    // and accepted as its key would.
     await card(page, "clip-0002.mp4").hover();
     await card(page, "clip-0002.mp4").getByRole("button", { name: "Polish" }).click();
     await expect(page.getByText("Polish: sent 1 clip (≈ 1 min)")).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Send to polish" })).toHaveCount(0);
+    await expect(
+      card(page, "clip-0002.mp4").locator('.video-item-review[title="Review state: Accept"]')
+    ).toBeVisible();
     await expect(card(page, "clip-0002.mp4").locator(".video-item-companion")).toHaveText("polish waiting");
     // Sent: no button any more.
     await page.mouse.move(0, 0);

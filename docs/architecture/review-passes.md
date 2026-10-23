@@ -87,7 +87,8 @@ and nothing changes.
 In fullscreen (2026-10-19) the same keys act on the clip on screen: it is
 sent, then accepted as the rail's *Accept* does, and stays on screen. A
 single clip's skip or refusal is a toast, so no dialog opens behind the
-viewer. Fullscreen's shortcut guide lists them;
+viewer. An app's one-click button, on a card or in the rail, does what its
+key does for that one clip (2026-10-23). Fullscreen's shortcut guide lists them;
 `Shift+R` stays a grid key.
 
 ## Verification

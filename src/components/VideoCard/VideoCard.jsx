@@ -1713,7 +1713,7 @@ const VideoCard = memo(function VideoCard({
               key={button.key}
               type="button"
               className="video-item-quick__button"
-              title={button.title}
+              title={reviewModeEnabled ? `${button.title}, and accept it` : button.title}
               disabled={quickSent === button.key}
               onClick={(e) => {
                 e.stopPropagation();

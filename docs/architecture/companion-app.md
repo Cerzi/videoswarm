@@ -297,14 +297,17 @@ companion authors must be told before it ships.
   `quick: true` shows as a small button, labelled by the app, on the card
   under the pointer, when the app's lookup says that clip has not been sent
   for it. Clicking sends that clip in one click as above, without selecting
-  it; once it is sent the lookup no longer says `not-sent` and the button
-  goes. Only a card with buttons tracks the pointer, so hovering across
-  the grid re-renders nothing else.
+  it, and in review mode accepts it, as its key does (2026-10-23; before,
+  a button only sent, so the same action accepted or not depending on
+  whether it was clicked or keyed). It never advances. Once it is sent the
+  lookup no longer says `not-sent` and the button goes. Only a card with
+  buttons tracks the pointer, so hovering across the grid re-renders
+  nothing else.
 - **In fullscreen** (2026-10-19). The review rail shows each app's chip for
-  the clip on screen and the same one-click buttons. A button sends only;
-  the first two quick actions across the apps carry their keys, `⇧1` and
-  `⇧2`, which accept the clip as well (`review-passes.md`, Quick review
-  keys).
+  the clip on screen and the same one-click buttons. The first two quick
+  actions across the apps carry their keys, `⇧1` and `⇧2`; a button and its
+  key do the same: send the clip on screen and, in review mode, accept it
+  (`review-passes.md`, Quick review keys).
 - **Targets** (2026-10-20). For an action with `targets`, the context menu
   asks `/api/targets` as it opens and, if the app names a current target
   within 300 ms, offers *<send> <target>* (say *Add to Demo*) in one click;

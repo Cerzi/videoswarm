@@ -72,7 +72,7 @@ describe("FullscreenReviewPanels", () => {
 
     expect(screen.getByText("Waiting #2")).toHaveAttribute("title", "Finish: second in line");
     const finish = screen.getByRole("button", { name: "Finish" });
-    expect(finish).toHaveAttribute("title", "Finish it. Shift+1 also accepts it.");
+    expect(finish).toHaveAttribute("title", "Finish it, and accept it (Shift+1)");
     expect(finish.querySelector("kbd")?.textContent).toBe("⇧1");
     expect(screen.getByRole("button", { name: "Enlarge" }).querySelector("kbd")).toBeNull();
 

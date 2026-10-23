@@ -982,7 +982,10 @@ describe("App hook composition", () => {
       libraryRoot: { rootPath: "/library", name: "library", pinned: true },
       directorySummaries: [{ relativePath: "", name: "library" }],
     }));
-    const send = vi.fn(async () => ({ success: true, results: { 7: { result: "sent", why: "" } } }));
+    const send = vi.fn(async ({ instanceIds }) => ({
+      success: true,
+      results: Object.fromEntries(instanceIds.map((id) => [id, { result: "sent", why: "" }])),
+    }));
     window.electronAPI = {
       saveSettingsPartial: vi.fn(),
       companion: {
@@ -1009,6 +1012,7 @@ describe("App hook composition", () => {
       displayVideos: [clip, after],
       orderedIds: [clip.id, after.id],
       orderForRange: [clip.id, after.id],
+      virtualItems: [clip, after].map((item) => ({ id: item.id, item, style: {} })),
     });
     useFilterStateMock.mockImplementation(() => ({
       ...filterStateReturn,
@@ -1048,6 +1052,20 @@ describe("App hook composition", () => {
       await act(async () => hotkeys().onQuickReview(1));
       expect(await screen.findByText(/No connected app offers a second quick action/)).toBeInTheDocument();
       expect(send).toHaveBeenCalledTimes(2);
+
+      // A card's button does what its key does, for that card's clip only.
+      metadataActionsReturn.handleSetReviewState.mockClear();
+      const cardProps = videoCardSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.video.id === after.id)
+        .at(-1);
+      await act(async () => cardProps.onQuickAction(after.id, "c1", "finish"));
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+      expect(send.mock.calls[3][0]).toMatchObject({ action: "finish", instanceIds: [8], dryRun: false });
+      await waitFor(() =>
+        expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith("pick", ["fp-b"])
+      );
+      expect(selectionMock.selectExactly).not.toHaveBeenCalled();
     } finally {
       Object.assign(masonryReturn, previousMasonry);
       selectionMock.selected = previousSelected;
@@ -1161,11 +1179,17 @@ describe("App hook composition", () => {
       expect(controller.goToFullScreen).not.toHaveBeenCalled();
       expect(controller.peekNavigation).not.toHaveBeenCalled();
 
-      // A button sends only, as on a card.
+      // A button does what its key does: sent and accepted, staying put.
       metadataActionsReturn.handleSetReviewState.mockClear();
       await act(async () => modal().reviewRail.props.onQuickAction("c1", "finish"));
       await waitFor(() => expect(send).toHaveBeenCalledTimes(4));
-      expect(metadataActionsReturn.handleSetReviewState).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(metadataActionsReturn.handleSetReviewState).toHaveBeenCalledWith("pick", ["fp-a"], {
+          completionGuard: expect.any(Function),
+        })
+      );
+      expect(controller.goToFullScreen).not.toHaveBeenCalled();
+      expect(controller.peekNavigation).not.toHaveBeenCalled();
 
       // Shift+2 with no second quick action says so and sends nothing.
       act(() => {
