@@ -7319,7 +7319,9 @@ function App() {
           ) : (
             <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
-                {activeRootPath && (
+                {/* A library search closes the folder but keeps the panel, so
+                    a library-wide smart view can be saved from it. */}
+                {(activeRootPath || librarySearchScope === "library") && (
                   <WorkspaceSidebar
                     open={isLibrarySidebarOpen}
                     activePanel={workspaceSidebarTab}

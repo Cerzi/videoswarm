@@ -4682,6 +4682,25 @@ describe("library search scope", () => {
     );
   });
 
+  // A library search closes the folder; the panel with the + stays, or a
+  // library view could never be saved.
+  test("keeps the smart views panel while searching the library with no folder open", async () => {
+    const taggedSnapshot = vi.fn(async () => ({ success: true, records: [], truncated: false }));
+    window.electronAPI = { library: { taggedSnapshot } };
+    useElectronLifecycleMock.mockImplementation(() => ({
+      ...electronLifecycleReturn,
+      activeRootPath: null,
+      tagCollection: { tags: [], matchMode: "all", loadedAt: 1, truncated: false },
+    }));
+
+    const { props } = await renderWithTags([]);
+    expect(screen.queryByRole("button", { name: "Save current smart view" })).toBeNull();
+    await act(async () => {
+      await props()?.onSearchScopeChange?.("library");
+    });
+    expect(screen.getByRole("button", { name: "Save current smart view" })).toBeInTheDocument();
+  });
+
   test("saves the frame rate, steps and workflow filters with a view", async () => {
     const createSavedView = vi.fn(async (name) => ({ id: 6, name }));
     useSavedViewsMock.mockImplementation(() => ({ ...savedViewsReturn, createSavedView }));
