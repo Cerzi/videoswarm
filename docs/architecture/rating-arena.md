@@ -103,6 +103,10 @@ menus.
 - **Order and labels:** Place shows *New* first, then its reference clips
   from low to high; the others go by rating. Each card's pill names its
   part: *New*, *3★*, and *4★ → 5★* once changed in the round.
+- **The clip to rate:** while *New* is unrated and not rejected, its card
+  has a blue ring with an inner glow and a larger pill, so the round's task
+  is clear at a glance. The ring sits inside the card, just inside the
+  selection ring, so both show.
 - **Selection:** a round opens with its first clip selected; ← and → move
   between its clips; a click selects as in the grid.
 - **Guests:** clips from folders that are not open are guests, as in the

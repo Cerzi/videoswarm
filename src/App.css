@@ -1078,6 +1078,32 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The arena's clip to rate: a blue ring and glow (selection is orange), and
+   a larger pill. */
+/* The arena's clip to rate: a blue ring with an inner glow, drawn inside the
+   card (the grid clips anything outside it) and just inside the selection
+   ring, so both show. */
+.video-item--emphasis::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border: 3px solid #4dabf7;
+  border-radius: var(--card-inner-radius);
+  box-shadow: inset 0 0 24px 4px rgba(77, 171, 247, 0.5);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.video-item--emphasis .video-item-versions--label {
+  padding: 3px 12px;
+  border-color: #4dabf7;
+  background: #1864ab;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 /* A companion app's chip (docs/architecture/companion-app.md), under the
    review and version pills. The label is the companion's; only the tone is
    ours. Its top offset is set inline from the pills above it. */

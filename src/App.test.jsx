@@ -3439,6 +3439,9 @@ describe("App hook composition", () => {
       const layout = useMasonryLayoutMock.mock.calls.at(-1)[0];
       expect(layout).toMatchObject({ comparison: true, keepOrder: true });
       expect(cardProps(own.id).versionLabel).toBe("New");
+      // The clip to rate is ringed; the references are not.
+      expect(cardProps(own.id).emphasis).toBe(true);
+      expect(cardProps("/a1/fp-five.mp4").emphasis).toBe(false);
       expect(cardProps("/a1/fp-five.mp4").versionLabel).toBe("5★");
       expect(selectionMock.selectExactly).toHaveBeenLastCalledWith(own.id);
       const bar = screen.getByRole("toolbar", { name: "Rating arena" });
@@ -3458,6 +3461,7 @@ describe("App hook composition", () => {
         )
       );
       expect(cardProps(own.id).versionLabel).toBe("New → 3★");
+      expect(cardProps(own.id).emphasis).toBe(false);
       await waitFor(() => expect(arenaApi.finish).toHaveBeenCalledWith({ session: "s1", round: 1 }));
       await waitFor(() => expect(gridIds()).toEqual(["/a1/fp-one.mp4", "/a1/fp-one-b.mp4"]));
       expect(screen.getByRole("toolbar", { name: "Rating arena" })).toHaveTextContent("Tier check");

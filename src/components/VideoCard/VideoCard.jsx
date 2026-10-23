@@ -151,6 +151,8 @@ const VideoCard = memo(function VideoCard({
   // In the versions view: the version's pill ("Best · 1920×1080") and where
   // it lives, in place of the count.
   versionLabel = null,
+  // The arena's clip to rate: ringed so it is clear at a glance.
+  emphasis = false,
   versionLocation = null,
   // Opens this clip's versions side by side from the count pill.
   onOpenVersions = null,
@@ -1636,7 +1638,7 @@ const VideoCard = memo(function VideoCard({
       ref={cardRef}
       className={`video-item ${selected ? "selected" : ""} ${loading ? "loading" : ""}${
         isStack ? " video-item--stack" : ""
-      }`}
+      }${emphasis ? " video-item--emphasis" : ""}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}

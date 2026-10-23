@@ -1063,6 +1063,15 @@ function App() {
     });
     return labels;
   }, [arenaClips, versionViewClips]);
+  // The arena's clips still to rate (New, undecided), ringed in the grid.
+  const arenaEmphasis = useMemo(() => {
+    const ids = new Set();
+    arenaClips?.members.forEach((video) => {
+      const decided = video.reviewState === "reject" || (Number.isInteger(video.rating) && video.rating > 0);
+      if (arenaClips.parts.get(video.id)?.role === "new" && !decided) ids.add(video.id);
+    });
+    return ids;
+  }, [arenaClips]);
   const gridVideos = useMemo(() => {
     // The arena shows its round over everything else.
     if (arenaClips) return arenaClips.members;
@@ -7595,6 +7604,7 @@ function App() {
                                 generationVersionIndex.get(video.id)?.best === false
                               }
                               versionLabel={versionLabelById.get(video.id) || null}
+                              emphasis={arenaEmphasis.has(video.id)}
                               versionLocation={
                                 versionView || arena ? versionLocation(video) : null
                               }
