@@ -116,6 +116,17 @@ export function normalizeReviewAnchor(input = {}) {
   };
 }
 
+/**
+ * Whether a clip may be saved as a folder's review place: one of the
+ * folder's own clips (`ownInstanceIds` holds their catalog instance ids), or
+ * no clip at all. A clip shown from another folder (the arena, a versions
+ * view) never is; main would refuse it.
+ */
+export function isOwnReviewAnchor(anchor, ownInstanceIds) {
+  const instanceId = normalizeInstanceId(anchor?.instanceId);
+  return instanceId === null || Boolean(ownInstanceIds?.has(instanceId));
+}
+
 export function normalizeReviewCheckpoint(input = {}) {
   const scope = normalizeFolderScope(input?.scope);
   const directory = scope === FolderScope.ALL_DESCENDANTS

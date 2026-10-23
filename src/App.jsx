@@ -212,6 +212,7 @@ import {
   buildReviewCheckpointDraft,
   checkpointLocationMatches,
   createReviewCheckpointSignature,
+  isOwnReviewAnchor,
   normalizeReviewCheckpoint,
   requiresRecursiveReviewCoverage,
   resolveContinueReviewCandidate,
@@ -2112,6 +2113,10 @@ function App() {
             ? null
             : allVideosById.get(metadataAnchorId)
           : anchor;
+      // A folder's place is one of its own clips. A clip shown from another
+      // folder (the arena, a versions view) is never saved as it; the place
+      // already saved is kept instead.
+      if (!isOwnReviewAnchor(selectedAnchor, videoIdByInstanceId)) return null;
       return buildReviewCheckpointDraft({
         rootPath,
         directory,
@@ -2146,6 +2151,7 @@ function App() {
       randomSeed,
       sortDir,
       sortKey,
+      videoIdByInstanceId,
     ]
   );
 
@@ -2161,7 +2167,11 @@ function App() {
       }
       const anchor = event.anchor || null;
       const draft = buildActiveReviewCheckpoint({ anchor });
-      if (!draft) return;
+      if (!draft) {
+        refreshLibraryRoots();
+        if (activeRootPath) refreshLibraryTree(activeRootPath);
+        return;
+      }
       try {
         await reviewSessions.saveNow(draft, {
           allowCreate: event.allowCreateSession === true,

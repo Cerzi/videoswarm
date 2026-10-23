@@ -5,6 +5,7 @@ import {
   checkpointLocationMatches,
   createReviewCheckpointSignature,
   findNearestPresentDirectory,
+  isOwnReviewAnchor,
   normalizeReviewAnchor,
   normalizeReviewCheckpoint,
   normalizeReviewSessionView,
@@ -310,5 +311,17 @@ describe("Continue Review scan guards", () => {
       { directory: "run", scope: "current-subtree" },
       true
     )).toBe(false);
+  });
+});
+
+describe("isOwnReviewAnchor", () => {
+  // The arena and versions view show clips from other folders; saving one as
+  // the open folder's place made main refuse it, a toast per save.
+  test("accepts the folder's own clips or no clip, and refuses another folder's", () => {
+    const own = new Map([[11, "v11"], [12, "v12"]]);
+    expect(isOwnReviewAnchor({ instanceId: 11, fingerprint: "a" }, own)).toBe(true);
+    expect(isOwnReviewAnchor(null, own)).toBe(true);
+    expect(isOwnReviewAnchor({ fingerprint: "a" }, own)).toBe(true);
+    expect(isOwnReviewAnchor({ instanceId: 99, fingerprint: "b" }, own)).toBe(false);
   });
 });
