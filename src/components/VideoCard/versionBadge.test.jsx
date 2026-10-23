@@ -32,15 +32,15 @@ describe("VideoCard generation versions badge", () => {
     expect(screen.queryByText(/versions/)).toBeNull();
   });
 
-  it("shows the version count and says whether a higher-resolution version exists", () => {
+  it("shows the version count and says whether this is the best version", () => {
     const { rerender } = render(<VideoCard {...baseProps()} versionCount={3} />);
     const badge = screen.getByText("3 versions");
-    expect(badge.getAttribute("title")).toMatch(/no higher-resolution version exists/);
+    expect(badge.getAttribute("title")).toMatch(/this is the best version/);
     expect(badge.className).not.toMatch(/superseded/);
 
-    rerender(<VideoCard {...baseProps()} versionCount={3} versionSuperseded />);
+    rerender(<VideoCard {...baseProps()} versionCount={3} versionNotBest />);
     const superseded = screen.getByText("3 versions");
-    expect(superseded.getAttribute("title")).toMatch(/a higher-resolution version exists/);
+    expect(superseded.getAttribute("title")).toMatch(/another version is the best/);
     expect(superseded.className).toMatch(/video-item-versions--superseded/);
   });
 

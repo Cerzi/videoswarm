@@ -236,8 +236,8 @@ if (!database || databaseLoadError) {
       ]);
 
       expect(store.getGenerationVersionSummaries([KEY_A, KEY_B, "junk"])).toEqual({
-        [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, minPixels: 640 * 360 },
-        [KEY_B]: { versionCount: 1, maxPixels: 320 * 240, minPixels: 320 * 240 },
+        [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, minPixels: 640 * 360, maxRating: null, bestPixels: 1280 * 720, unratedMaxPixels: 1280 * 720 },
+        [KEY_B]: { versionCount: 1, maxPixels: 320 * 240, minPixels: 320 * 240, maxRating: null, bestPixels: 320 * 240, unratedMaxPixels: 320 * 240 },
       });
 
       const siblings = store.getGenerationVersionSiblings(draft.instance.id);
@@ -259,6 +259,24 @@ if (!database || databaseLoadError) {
         relativePath: "draft.mp4",
         isSelf: true,
       });
+
+      // Ratings overrule size: the draft rated above the final is best.
+      store.setRating([draft.fingerprint], 5);
+      store.setRating([final.fingerprint], 3);
+      expect(store.getGenerationVersionSummaries([KEY_A])[KEY_A]).toMatchObject({
+        maxRating: 5,
+        bestPixels: 640 * 360,
+        unratedMaxPixels: 0,
+      });
+      const rated = store.getGenerationVersionSiblings(draft.instance.id).versions;
+      expect(rated.map((version) => [version.fingerprint, version.rating])).toEqual([
+        [draft.fingerprint, 5],
+        [final.fingerprint, 3],
+      ]);
+      expect(
+        store.getGenerationVersionRecords(draft.instance.id).records.map((record) => record.fingerprint)
+      ).toEqual([draft.fingerprint, final.fingerprint]);
+      store.setRating([draft.fingerprint, final.fingerprint], null);
 
       const fromCopy = store.getGenerationVersionSiblings(finalCopy.instance.id);
       expect(fromCopy.versions[0]).toMatchObject({
@@ -387,7 +405,7 @@ if (!database || databaseLoadError) {
         { fingerprint: unmeasured.fingerprint, generationKey: KEY_A, promptKey: PROMPT_A },
       ]);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
-        [KEY_A]: { versionCount: 3, maxPixels: 1280 * 720, minPixels: 640 * 360 },
+        [KEY_A]: { versionCount: 3, maxPixels: 1280 * 720, minPixels: 640 * 360, maxRating: null, bestPixels: 1280 * 720, unratedMaxPixels: 1280 * 720 },
       });
     });
 
@@ -400,7 +418,7 @@ if (!database || databaseLoadError) {
       ]);
       store.markFilesMissing([path.join(otherRootPath, "final.mp4")]);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
-        [KEY_A]: { versionCount: 1, maxPixels: 640 * 360, minPixels: 640 * 360 },
+        [KEY_A]: { versionCount: 1, maxPixels: 640 * 360, minPixels: 640 * 360, maxRating: null, bestPixels: 640 * 360, unratedMaxPixels: 640 * 360 },
       });
       expect(
         store.getGenerationVersionSiblings(draft.instance.id).versions
@@ -508,7 +526,7 @@ if (!database || databaseLoadError) {
       ).toEqual([keyed.fingerprint, pending.fingerprint].sort());
       expect(store.countGenerationKeyCandidates({})).toBe(2);
       expect(store.getGenerationVersionSummaries([KEY_A])).toEqual({
-        [KEY_A]: { versionCount: 1, maxPixels: 0, minPixels: 0 },
+        [KEY_A]: { versionCount: 1, maxPixels: 0, minPixels: 0, maxRating: null, bestPixels: 0, unratedMaxPixels: 0 },
       });
 
       store.setGenerationKeys([

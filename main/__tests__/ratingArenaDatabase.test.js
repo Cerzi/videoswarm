@@ -91,6 +91,12 @@ if (!database || databaseLoadError) {
       const pool = store.getArenaPool();
       expect(pool.map((clip) => clip.fingerprint).sort()).toEqual([large.fingerprint, alone.fingerprint].sort());
       expect(pool.find((clip) => clip.fingerprint === large.fingerprint).promptKey).toBe(PROMPT);
+      // Ratings overrule size: the small one rated higher is the best.
+      store.setRating([small.fingerprint], 5);
+      store.setRating([large.fingerprint], 2);
+      expect(store.getArenaPool().map((clip) => clip.fingerprint).sort()).toEqual(
+        [small.fingerprint, alone.fingerprint].sort()
+      );
     });
 
     it("reads ratings and rejections as they stand", async () => {

@@ -6,6 +6,7 @@ import {
   distinctGenerationKeys,
   matchesVersionFilter,
   normalizeVersionFilter,
+  orderVersions,
 } from "./generationVersions";
 import { useFilterState } from "../hooks/useFilterState";
 
@@ -41,12 +42,14 @@ describe("generation version index", () => {
       versionCount: 3,
       superseded: true,
       supersedes: false,
+      best: false,
     });
     expect(index.get("final")).toEqual({
       generationKey: KEY_A,
       versionCount: 3,
       superseded: false,
       supersedes: true,
+      best: true,
     });
     expect(index.get("final-copy").superseded).toBe(false);
     expect(index.get("sweep-1")).toEqual({
@@ -54,6 +57,7 @@ describe("generation version index", () => {
       versionCount: 2,
       superseded: false,
       supersedes: false,
+      best: true,
     });
     // Unknown dimensions sort as zero pixels.
     expect(index.get("unmeasured").superseded).toBe(true);
@@ -69,12 +73,49 @@ describe("generation version index", () => {
       versionCount: 4,
       superseded: true,
       supersedes: false,
+      best: false,
     });
     // And a smaller version elsewhere makes this one a re-render of it.
     const upscaled = buildGenerationVersionIndex([clip("final", "ff", KEY_A, 1280, 720)], {
       [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, minPixels: 640 * 360 },
     });
     expect(upscaled.get("final")).toMatchObject({ superseded: false, supersedes: true });
+  });
+
+  it("lets ratings overrule size for the best version", () => {
+    const rated = (id, fp, w, h, rating) => ({ ...clip(id, fp, KEY_A, w, h), rating });
+    // The smaller version rated higher is best, though a larger one exists.
+    let index = buildGenerationVersionIndex([rated("draft", "fd", 640, 360, 5), rated("up", "fu", 1280, 720, 3)]);
+    expect(index.get("draft")).toMatchObject({ best: true, superseded: true });
+    expect(index.get("up").best).toBe(false);
+    expect(matchesVersionFilter(index.get("draft"), VERSION_FILTERS.BEST)).toBe(true);
+    expect(matchesVersionFilter(index.get("draft"), VERSION_FILTERS.SUPERSEDED)).toBe(true);
+    // An unrated version competes on size: a new upscale of a rated draft.
+    index = buildGenerationVersionIndex([rated("draft", "fd", 640, 360, 5), rated("up", "fu", 1280, 720, null)]);
+    expect(index.get("up").best).toBe(true);
+    expect(index.get("draft").best).toBe(false);
+    // Equal ratings: the larger wins.
+    index = buildGenerationVersionIndex([rated("draft", "fd", 640, 360, 4), rated("up", "fu", 1280, 720, 4)]);
+    expect(index.get("up").best).toBe(true);
+    // The library summary's top rating counts too.
+    index = buildGenerationVersionIndex([rated("up", "fu", 1280, 720, 3)], {
+      [KEY_A]: { versionCount: 2, maxPixels: 1280 * 720, maxRating: 5, bestPixels: 640 * 360, unratedMaxPixels: 0 },
+    });
+    expect(index.get("up").best).toBe(false);
+  });
+
+  it("orders versions best first: top rated or unrated by size, then the rest by rating", () => {
+    const facts = (v) => ({ rating: v.r, pixels: v.p, durationMs: 0, mtimeMs: 0, key: v.k });
+    const ordered = orderVersions(
+      [
+        { k: "a", r: 3, p: 4 },
+        { k: "b", r: 5, p: 1 },
+        { k: "c", r: null, p: 2 },
+        { k: "d", r: 4, p: 9 },
+      ],
+      facts
+    );
+    expect(ordered.map((v) => v.k)).toEqual(["c", "b", "d", "a"]);
   });
 
   it("finds re-renders and upscales: versions with a smaller version", () => {

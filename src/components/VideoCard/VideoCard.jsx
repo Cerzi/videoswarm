@@ -145,7 +145,9 @@ const VideoCard = memo(function VideoCard({
   // Generation versions: primitives only, so the memoized card re-renders
   // only when its own group changes.
   versionCount = 0,
-  versionSuperseded = false,
+  // Another version of this generation is the best one (ratings overrule
+  // size; generationVersions.mjs).
+  versionNotBest = false,
   // In the versions view: the version's pill ("Best · 1920×1080") and where
   // it lives, in place of the count.
   versionLabel = null,
@@ -1675,10 +1677,10 @@ const VideoCard = memo(function VideoCard({
         <button
           type="button"
           className={`video-item-versions video-item-versions--button${
-            versionSuperseded ? " video-item-versions--superseded" : ""
+            versionNotBest ? " video-item-versions--superseded" : ""
           }${hasReviewBadge ? " with-review" : ""}`}
           title={`${versionCount} versions of this generation${
-            versionSuperseded ? " · a higher-resolution version exists" : ""
+            versionNotBest ? " · another version is the best" : " · this is the best version"
           } · show them side by side`}
           aria-label={`Show the ${versionCount} versions of this generation side by side`}
           onClick={handleOpenVersionsClick}
@@ -1689,12 +1691,12 @@ const VideoCard = memo(function VideoCard({
       ) : versionCount >= 2 ? (
         <div
           className={`video-item-versions${
-            versionSuperseded ? " video-item-versions--superseded" : ""
+            versionNotBest ? " video-item-versions--superseded" : ""
           }${hasReviewBadge ? " with-review" : ""}`}
           title={
-            versionSuperseded
-              ? `${versionCount} versions of this generation · a higher-resolution version exists`
-              : `${versionCount} versions of this generation · no higher-resolution version exists`
+            versionNotBest
+              ? `${versionCount} versions of this generation · another version is the best`
+              : `${versionCount} versions of this generation · this is the best version`
           }
         >
           {versionCount} versions

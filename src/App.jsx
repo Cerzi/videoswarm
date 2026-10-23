@@ -7591,8 +7591,8 @@ function App() {
                               versionCount={
                                 generationVersionIndex.get(video.id)?.versionCount || 0
                               }
-                              versionSuperseded={
-                                generationVersionIndex.get(video.id)?.superseded === true
+                              versionNotBest={
+                                generationVersionIndex.get(video.id)?.best === false
                               }
                               versionLabel={versionLabelById.get(video.id) || null}
                               versionLocation={

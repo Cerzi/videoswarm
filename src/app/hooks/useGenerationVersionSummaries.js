@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { distinctGenerationKeys } from "../filters/generationVersions";
 
 // Library-wide version counts for the keys present in the collection. Read
-// in bounded chunks, debounced, and refreshed when the key set changes or
-// when indexing publishes new keys.
+// in bounded chunks, debounced, and refreshed when the key set changes, when
+// a keyed clip's rating changes (ratings decide the best version), or when
+// indexing publishes new keys.
 
 export const GENERATION_SUMMARY_CHUNK = 4096;
 export const GENERATION_SUMMARY_DEBOUNCE_MS = 300;
@@ -17,9 +18,15 @@ export default function useGenerationVersionSummaries(videos) {
   const requestRef = useRef(0);
 
   const keys = useMemo(() => distinctGenerationKeys(videos), [videos]);
-  // A stable identity for the key set, so unrelated record changes (tags,
-  // ratings) do not re-query.
-  const keySignature = useMemo(() => keys.join(","), [keys]);
+  // A stable identity for the key set and the keyed clips' ratings, so
+  // unrelated record changes (tags, review states) do not re-query.
+  const keySignature = useMemo(() => {
+    const ratings = [];
+    for (const video of videos || []) {
+      if (video?.generationKey) ratings.push(`${video.fingerprint || video.id}:${video.rating ?? ""}`);
+    }
+    return `${keys.join(",")}|${ratings.join(",")}`;
+  }, [keys, videos]);
 
   useEffect(() => {
     const api = getApi();

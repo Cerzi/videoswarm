@@ -358,9 +358,14 @@ at most 4,096 keys per request — computed in SQLite over present instances.
 A version is a content, not an instance: two copies of one file are one
 version.
 
-**Ordering.** Within a group: pixel count, then duration, then modification
-time, each descending. Unknown dimensions or duration sort as zero. No
-producer is special-cased.
+**Ordering.** Ratings overrule size (decided with the user on 2026-10-23;
+`orderVersions` in `main/shared/generationVersions.mjs`). The versions rated
+highest, together with the versions not rated at all, come first, by pixel
+count, then duration, then modification time, each descending; the rest
+follow by rating, then size. So a smaller version rated above a larger one
+is best, and a new upscale of a rated draft is best until it is rated
+itself. Unknown dimensions or duration sort as zero. No producer is
+special-cased. The details panel shows each version's rating.
 
 **Known limitation: post-processing inflates pixel counts.** Pixel count is
 the *output* resolution, not the resolution the generation ran at. A draft
@@ -408,10 +413,17 @@ A new `versionFilter` joins the filter state: `any` (default), `superseded`
   version has strictly fewer pixels, so this one is a re-render or upscale
   of it. Unmeasured versions do not count. See
   [`workflow-filters.md`](workflow-filters.md).
-- *Best version* is its exact inverse, so the two partition every collection.
+- *Best version* is the first in the order above: rated highest (or not
+  rated) and, among those, the largest. Without ratings it is the exact
+  inverse of *Has a higher-resolution version*; with them, a smaller version
+  rated higher is best while it still has a higher-resolution version.
   Ties at the top all count as best — a same-resolution sweep has no
   higher-resolution version, so none of it has been re-rendered. Clips without
-  a key are their own only version and count as best.
+  a key are their own only version and count as best. The library summary
+  carries the top rating, the largest version at it (or unrated) and the
+  largest unrated version per key, and is re-read when a keyed clip's rating
+  changes. The card's *N versions* pill is muted when another version is
+  best.
 - **The worklist.** *Best version* plus a maximum resolution (`maxMegapixels`
   in `src/app/filters/filtersUtils.js`) lists the drafts that have not been
   re-rendered. Selecting them and transferring as links hands them to an

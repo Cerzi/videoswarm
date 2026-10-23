@@ -63,8 +63,9 @@ Status: **Implemented**
 - **Pool.** *Library*: every present clip in roots that can be opened,
   each content once (the copy seen most recently), except rejected ones,
   and of a generation's versions only the best (the order the Versions
-  list uses: largest, then longest, then newest; decided with the user on
-  2026-10-23), since the others are re-renders of the same clip.
+  list uses: rated highest or not rated, then largest, longest, newest;
+  decided with the user on 2026-10-23), since the others are re-renders of
+  the same clip.
   *These clips*: the clips the grid shows when the arena opens, at most
   50,000, as a review pass takes them. The pool is fixed when the arena
   opens; ratings and review states are read again for every round, so
@@ -210,10 +211,11 @@ Status: **Implemented**
 Status: **Deferred**; proposed to the user on 2026-10-23.
 
 The same view for one generation's versions, two to four side by side
-(the largest first), asking whether the best really is the best: rate
-each, and the best rated becomes *Best*. Today *Best* means the largest,
-so this needs the user's word on whether a rating may overrule size, and
-where a chosen best is kept.
+(the best first), asking whether the best really is the best: rate each,
+and the best rated becomes *Best*. Decided with the user on 2026-10-23: a
+rating overrules size, and the choice is kept as the ratings themselves,
+with nothing stored apart (`generation-versions.md`, Section 5). The rule
+is built; the round is not.
 
 ## 9. Later: ranking duels
 

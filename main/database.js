@@ -8,6 +8,7 @@ const {
   matchLegacyFingerprints,
 } = require('./fingerprint');
 const { createPeriodicEventLoopYielder } = require('./directory-scan-progress');
+const { orderVersions } = require('./shared/generationVersions.mjs');
 const {
   ACCEPTED_COPY_MAX_MEDIA,
   ACCEPTED_COPY_MAX_PATH_BYTES,
@@ -5004,23 +5005,42 @@ function createMetadataStore(db) {
   `);
   // A version is a content, not an instance, and it counts only while some
   // instance of it is present in a present directory.
+  // Per key: how many versions, the largest and smallest, and what the
+  // best-version rule needs (generationVersions.mjs): the top rating, the
+  // largest version that is unrated or rated that high, and the largest
+  // unrated one.
   const generationVersionSummaries = db.prepare(`
-    SELECT mc.generation_key,
+    WITH present AS (
+      SELECT mc.generation_key AS generation_key,
+        COALESCE(mc.width, 0) * COALESCE(mc.height, 0) AS pixels,
+        CASE WHEN mc.width > 0 AND mc.height > 0 THEN mc.width * mc.height END AS measured,
+        CASE WHEN r.value BETWEEN 1 AND 5 THEN r.value END AS rating
+      FROM media_content mc
+      LEFT JOIN ratings r ON r.fingerprint = mc.fingerprint
+      WHERE mc.generation_key IN (SELECT value FROM json_each(@keys))
+        AND mc.generation_key_version = @version
+        AND EXISTS (
+          SELECT 1
+          FROM file_instances fi
+          INNER JOIN directories d ON d.id = fi.directory_id
+          WHERE fi.fingerprint = mc.fingerprint
+            AND fi.is_present != 0
+            AND d.is_present != 0
+        )
+    ),
+    tops AS (
+      SELECT generation_key, MAX(rating) AS max_rating FROM present GROUP BY generation_key
+    )
+    SELECT p.generation_key,
       COUNT(*) AS version_count,
-      MAX(COALESCE(mc.width, 0) * COALESCE(mc.height, 0)) AS max_pixels,
-      MIN(CASE WHEN mc.width > 0 AND mc.height > 0 THEN mc.width * mc.height END) AS min_pixels
-    FROM media_content mc
-    WHERE mc.generation_key IN (SELECT value FROM json_each(@keys))
-      AND mc.generation_key_version = @version
-      AND EXISTS (
-        SELECT 1
-        FROM file_instances fi
-        INNER JOIN directories d ON d.id = fi.directory_id
-        WHERE fi.fingerprint = mc.fingerprint
-          AND fi.is_present != 0
-          AND d.is_present != 0
-      )
-    GROUP BY mc.generation_key;
+      MAX(p.pixels) AS max_pixels,
+      MIN(p.measured) AS min_pixels,
+      t.max_rating,
+      MAX(CASE WHEN p.rating IS NULL OR p.rating = t.max_rating THEN p.pixels END) AS best_pixels,
+      MAX(CASE WHEN p.rating IS NULL THEN p.pixels END) AS unrated_max_pixels
+    FROM present p
+    INNER JOIN tops t ON t.generation_key = p.generation_key
+    GROUP BY p.generation_key;
   `);
   const generationKeyForInstance = db.prepare(`
     SELECT fi.fingerprint, mc.generation_key, mc.generation_key_version,
@@ -5032,11 +5052,13 @@ function createMetadataStore(db) {
   const generationVersionSiblingRows = db.prepare(`
     SELECT mc.fingerprint, mc.width, mc.height, mc.duration_ms,
       fi.id AS instance_id, fi.relative_path, fi.mtime_ms,
-      lr.root_path
+      lr.root_path,
+      CASE WHEN r.value BETWEEN 1 AND 5 THEN r.value END AS rating
     FROM media_content mc
     INNER JOIN file_instances fi ON fi.fingerprint = mc.fingerprint
     INNER JOIN directories d ON d.id = fi.directory_id
     INNER JOIN library_roots lr ON lr.id = fi.root_id
+    LEFT JOIN ratings r ON r.fingerprint = mc.fingerprint
     WHERE mc.generation_key = @generation_key
       AND mc.generation_key_version = @version
       AND fi.is_present != 0
@@ -5173,10 +5195,12 @@ function createMetadataStore(db) {
   // opened; the whole library or the rows the renderer showed.
   const arenaPoolRows = db.prepare(`
     SELECT fingerprint, id, prompt_key, prompt_key_version, generation_key,
-      generation_key_version, width, height, duration_ms, mtime_ms FROM (
+      generation_key_version, width, height, duration_ms, mtime_ms, rating FROM (
       SELECT fi.fingerprint, fi.id, mc.prompt_key, mc.prompt_key_version,
         mc.generation_key, mc.generation_key_version, mc.width, mc.height,
         mc.duration_ms, fi.mtime_ms,
+        (SELECT CASE WHEN r.value BETWEEN 1 AND 5 THEN r.value END
+          FROM ratings r WHERE r.fingerprint = fi.fingerprint) AS rating,
         ROW_NUMBER() OVER (
           PARTITION BY fi.fingerprint
           ORDER BY fi.last_seen_at DESC, fi.id
@@ -5557,6 +5581,10 @@ function createMetadataStore(db) {
           // The smallest measured version, for "has a lower-resolution
           // version"; 0 when none is measured.
           minPixels: Number(row.min_pixels || 0),
+          // For the best version: ratings overrule size.
+          maxRating: row.max_rating === null ? null : Number(row.max_rating),
+          bestPixels: Number(row.best_pixels || 0),
+          unratedMaxPixels: Number(row.unrated_max_pixels || 0),
         };
       });
     return summaries;
@@ -5933,18 +5961,19 @@ function createMetadataStore(db) {
         height: width > 0 && height > 0 ? height : null,
         durationMs: normalizeDurationMs(row.duration_ms),
         mtimeMs: Number(row.mtime_ms || 0),
+        rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
         instanceCount: 1,
         isSelf: row.fingerprint === self.fingerprint,
       });
     });
-    const pixels = (version) => (version.width || 0) * (version.height || 0);
-    const ordered = [...byFingerprint.values()].sort(
-      (a, b) =>
-        pixels(b) - pixels(a) ||
-        (b.durationMs || 0) - (a.durationMs || 0) ||
-        b.mtimeMs - a.mtimeMs ||
-        (a.fingerprint < b.fingerprint ? -1 : 1)
-    );
+    // Best first: ratings overrule size (generationVersions.mjs).
+    const ordered = orderVersions([...byFingerprint.values()], (version) => ({
+      rating: version.rating,
+      pixels: (version.width || 0) * (version.height || 0),
+      durationMs: version.durationMs || 0,
+      mtimeMs: version.mtimeMs,
+      key: version.fingerprint,
+    }));
     let versions = ordered.slice(0, GENERATION_VERSION_LIMITS.maxSiblingVersions);
     if (!versions.some((version) => version.isSelf)) {
       const selfVersion = ordered.find((version) => version.isSelf);
@@ -6001,15 +6030,14 @@ function createMetadataStore(db) {
       }
     }
     // Version order, as the details panel lists siblings.
-    const pixels = (row) => Number(row.content_width || 0) * Number(row.content_height || 0);
-    const duration = (row) => normalizeDurationMs(row.content_duration_ms) || 0;
-    const ordered = [...byFingerprint.values()].sort(
-      (a, b) =>
-        pixels(b) - pixels(a) ||
-        duration(b) - duration(a) ||
-        Number(b.mtime_ms || 0) - Number(a.mtime_ms || 0) ||
-        (a.fingerprint < b.fingerprint ? -1 : 1)
-    );
+    const ordered = orderVersions([...byFingerprint.values()], (row) => ({
+      rating:
+        Number(row.rating_value) >= 1 && Number(row.rating_value) <= 5 ? Number(row.rating_value) : null,
+      pixels: Number(row.content_width || 0) * Number(row.content_height || 0),
+      durationMs: normalizeDurationMs(row.content_duration_ms) || 0,
+      mtimeMs: Number(row.mtime_ms || 0),
+      key: row.fingerprint,
+    }));
     let kept = ordered.slice(0, GENERATION_VERSION_LIMITS.maxSiblingVersions);
     if (!kept.some((row) => Number(row.id) === instanceId)) {
       const selfRow = ordered.find((row) => Number(row.id) === instanceId);
@@ -6184,14 +6212,9 @@ function createMetadataStore(db) {
     });
     assertOperationActive(options.assertActive);
     // Only the best version of a generation, in the order the details panel
-    // lists versions: the others are re-renders of the same clip.
-    const pixels = (row) => Number(row.width || 0) * Number(row.height || 0);
-    const better = (a, b) =>
-      pixels(a) - pixels(b) ||
-      (normalizeDurationMs(a.duration_ms) || 0) - (normalizeDurationMs(b.duration_ms) || 0) ||
-      Number(a.mtime_ms || 0) - Number(b.mtime_ms || 0) ||
-      (a.fingerprint > b.fingerprint ? -1 : 1);
-    const bestOf = new Map();
+    // lists versions (ratings overrule size): the others are re-renders of
+    // the same clip.
+    const groups = new Map();
     const pool = [];
     for (const row of rows) {
       const keys = mapGenerationKeyFields(
@@ -6209,10 +6232,20 @@ function createMetadataStore(db) {
         pool.push(clip);
         continue;
       }
-      const held = bestOf.get(keys.generationKey);
-      if (!held || better(row, held.row) > 0) bestOf.set(keys.generationKey, { row, clip });
+      let group = groups.get(keys.generationKey);
+      if (!group) groups.set(keys.generationKey, (group = []));
+      group.push({ row, clip });
     }
-    for (const { clip } of bestOf.values()) pool.push(clip);
+    for (const group of groups.values()) {
+      const [best] = orderVersions(group, ({ row }) => ({
+        rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
+        pixels: Number(row.width || 0) * Number(row.height || 0),
+        durationMs: normalizeDurationMs(row.duration_ms) || 0,
+        mtimeMs: Number(row.mtime_ms || 0),
+        key: row.fingerprint,
+      }));
+      pool.push(best.clip);
+    }
     return pool;
   }
 

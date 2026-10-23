@@ -11,6 +11,9 @@ const getApi = () =>
 
 export function formatVersionFacts(version) {
   const parts = [];
+  // Ratings decide the best version, so each version shows its own.
+  const rating = Number(version.rating);
+  if (Number.isInteger(rating) && rating >= 1 && rating <= 5) parts.push(`${rating}★`);
   if (version.width && version.height) {
     parts.push(`${version.width}×${version.height}`);
   } else {
@@ -130,7 +133,12 @@ export default function MetadataVersionsSection({ video, active = true, generati
                 <span className="metadata-panel__versions-facts">
                   {formatVersionFacts(version)}
                   {version === best ? (
-                    <span className="metadata-panel__badge metadata-panel__badge--accent">Best</span>
+                    <span
+                      className="metadata-panel__badge metadata-panel__badge--accent"
+                      title="The highest rated; among equals, or versions not rated, the largest"
+                    >
+                      Best
+                    </span>
                   ) : null}
                   {version.isSelf ? (
                     <span className="metadata-panel__badge metadata-panel__badge--self">This clip</span>
