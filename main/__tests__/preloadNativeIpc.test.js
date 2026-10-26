@@ -657,3 +657,52 @@ describe("preload sequences bridge", () => {
     });
   });
 });
+
+describe("preload projects bridge", () => {
+  it("invokes each project channel with a normalized payload", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.projects.list();
+    await api.projects.create("Pitch");
+    await api.projects.rename(3, "Pitch v2");
+    await api.projects.setArchived(3, true);
+    await api.projects.setArchived(3, "yes");
+    await api.projects.remove(3);
+    await api.projects.addClips(3, ["fp-a", "fp-b"]);
+    await api.projects.addClips(3, "fp-c");
+    await api.projects.removeClips(3, "fp-a");
+    await api.projects.snapshot(3);
+
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:list");
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:create", {
+      name: "Pitch",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:rename", {
+      id: 3,
+      name: "Pitch v2",
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:set-archived", {
+      id: 3,
+      archived: true,
+    });
+    // Only a literal true archives.
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:set-archived", {
+      id: 3,
+      archived: false,
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:delete", { id: 3 });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:add", {
+      id: 3,
+      fingerprints: ["fp-a", "fp-b"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:add", {
+      id: 3,
+      fingerprints: ["fp-c"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:remove", {
+      id: 3,
+      fingerprints: ["fp-a"],
+    });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith("projects:snapshot", { id: 3 });
+  });
+});

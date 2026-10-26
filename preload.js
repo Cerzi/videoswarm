@@ -488,6 +488,31 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("library:delete-saved-view", { id }),
   },
 
+  // Projects: named, unordered groups of clips (docs/architecture/projects.md).
+  projects: {
+    list: async () => ipcRenderer.invoke("projects:list"),
+    create: async (name) => ipcRenderer.invoke("projects:create", { name }),
+    rename: async (id, name) =>
+      ipcRenderer.invoke("projects:rename", { id, name }),
+    setArchived: async (id, archived) =>
+      ipcRenderer.invoke("projects:set-archived", {
+        id,
+        archived: archived === true,
+      }),
+    remove: async (id) => ipcRenderer.invoke("projects:delete", { id }),
+    addClips: async (id, fingerprints = []) =>
+      ipcRenderer.invoke("projects:add", {
+        id,
+        fingerprints: Array.isArray(fingerprints) ? fingerprints : [fingerprints],
+      }),
+    removeClips: async (id, fingerprints = []) =>
+      ipcRenderer.invoke("projects:remove", {
+        id,
+        fingerprints: Array.isArray(fingerprints) ? fingerprints : [fingerprints],
+      }),
+    snapshot: async (id) => ipcRenderer.invoke("projects:snapshot", { id }),
+  },
+
   sequences: {
     list: async () => ipcRenderer.invoke("sequences:list"),
     snapshot: async (id, options = {}) =>

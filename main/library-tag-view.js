@@ -29,4 +29,30 @@ function buildTaggedSnapshotResponse(metadataStore, options = {}) {
   };
 }
 
-module.exports = { buildTaggedSnapshotResponse };
+/**
+ * The renderer's answer to opening a project (docs/architecture/projects.md).
+ *
+ * Same wire shape as a tag view, so the renderer adopts it through the same
+ * rootless-collection path. A missing project is reported rather than shown as
+ * an empty one: a deleted project and a project with no clips are different
+ * answers.
+ */
+function buildProjectSnapshotResponse(metadataStore, options = {}) {
+  const { projectId, generation, assertActive } = options;
+  const snapshot = metadataStore.getProjectSnapshot(projectId, { assertActive });
+  if (!snapshot) {
+    const error = new Error("This project no longer exists");
+    error.code = "PROJECT_NOT_FOUND";
+    throw error;
+  }
+  return {
+    project: snapshot.project,
+    records: createTaggedLibraryFiles(snapshot.records, { generation }),
+    missingCount: Number(snapshot.missingCount || 0),
+    truncated: Boolean(snapshot.truncated),
+    recordLimit: snapshot.recordLimit,
+    rootPaths: snapshot.rootPaths,
+  };
+}
+
+module.exports = { buildTaggedSnapshotResponse, buildProjectSnapshotResponse };

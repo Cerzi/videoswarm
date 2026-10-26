@@ -88,7 +88,10 @@ const {
 const {
   createCachedLibraryResponse,
 } = require("./main/cached-library-snapshot");
-const { buildTaggedSnapshotResponse } = require("./main/library-tag-view");
+const {
+  buildTaggedSnapshotResponse,
+  buildProjectSnapshotResponse,
+} = require("./main/library-tag-view");
 const { buildSequenceSnapshotResponse } = require("./main/sequence-view");
 const { buildSequenceCopyRecords } = require("./main/sequence-export");
 const {
@@ -4871,6 +4874,112 @@ ipcMain.handle("sequences:move-entry", async (_event, payload = {}) =>
     ),
   }))
 );
+
+// Projects: named, unordered, hand-picked groups of content
+// (docs/architecture/projects.md). The store is the authority on limits; these
+// bounds only stop an oversized payload from being parsed at all.
+const PROJECT_IPC_LIMITS = Object.freeze({
+  maxNameChars: 80,
+  // Mirrors PROJECT_LIMITS.maxMembers in main/database.js.
+  maxFingerprints: 20_000,
+});
+
+function normalizeProjectIpcId(payload) {
+  return assertInteger(payload?.id, { name: "project id", min: 1 });
+}
+
+function normalizeProjectIpcName(payload) {
+  return assertString(payload?.name, {
+    name: "project name",
+    minChars: 1,
+    maxChars: PROJECT_IPC_LIMITS.maxNameChars,
+    trim: true,
+  });
+}
+
+function normalizeProjectIpcFingerprints(payload) {
+  return assertStringArray(payload?.fingerprints, {
+    name: "fingerprints",
+    maxEntries: PROJECT_IPC_LIMITS.maxFingerprints,
+    item: { minChars: 1, maxChars: 512 },
+    dedupe: true,
+  });
+}
+
+ipcMain.handle("projects:list", async () =>
+  runLibraryCatalogOperation((metadataStore) => ({
+    projects: metadataStore.listProjects(),
+  }))
+);
+
+ipcMain.handle("projects:create", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) => ({
+    project: metadataStore.createProject(normalizeProjectIpcName(payload)),
+  }));
+});
+
+ipcMain.handle("projects:rename", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) => ({
+    project: metadataStore.renameProject(
+      normalizeProjectIpcId(payload),
+      normalizeProjectIpcName(payload)
+    ),
+  }));
+});
+
+ipcMain.handle("projects:set-archived", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) => ({
+    project: metadataStore.setProjectArchived(
+      normalizeProjectIpcId(payload),
+      payload?.archived === true
+    ),
+  }));
+});
+
+ipcMain.handle("projects:delete", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) => ({
+    deleted: metadataStore.deleteProject(normalizeProjectIpcId(payload)),
+  }));
+});
+
+ipcMain.handle("projects:add", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) =>
+    metadataStore.addToProject(
+      normalizeProjectIpcId(payload),
+      normalizeProjectIpcFingerprints(payload)
+    )
+  );
+});
+
+ipcMain.handle("projects:remove", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  return runLibraryCatalogOperation((metadataStore) =>
+    metadataStore.removeFromProject(
+      normalizeProjectIpcId(payload),
+      normalizeProjectIpcFingerprints(payload)
+    )
+  );
+});
+
+// Like a tag view, a project spans roots. Each record names its owning root,
+// and playback is authorized per root through the existing on-demand regrant
+// rather than implied by appearing in a project.
+ipcMain.handle("projects:snapshot", async (_event, payload = {}) => {
+  assertPlainObject(payload, "project request");
+  const projectId = normalizeProjectIpcId(payload);
+  return runLibraryCatalogOperation((metadataStore, context) =>
+    buildProjectSnapshotResponse(metadataStore, {
+      projectId,
+      generation: context.generation,
+      assertActive: () => assertMetadataContextActive(context),
+    })
+  );
+});
 
 function normalizeSequencePreferredRoot(payload) {
   return typeof payload?.preferredRootPath === "string" &&

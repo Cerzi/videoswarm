@@ -151,3 +151,45 @@ describe("library tag view response", () => {
     expect(response.truncated).toBe(false);
   });
 });
+
+describe("project view response", () => {
+  const { buildProjectSnapshotResponse } = require("../library-tag-view");
+
+  it("hands over renderer records plus the project and its missing count", () => {
+    const catalog = catalogSnapshot();
+    const store = {
+      getProjectSnapshot: vi.fn(() => ({
+        project: { id: 4, name: "Pitch", memberCount: 3, archived: false },
+        records: catalog.records,
+        missingCount: 1,
+        truncated: false,
+        recordLimit: 20_000,
+        rootPaths: catalog.rootPaths,
+      })),
+    };
+
+    const response = buildProjectSnapshotResponse(store, {
+      projectId: 4,
+      generation: 7,
+    });
+
+    expect(store.getProjectSnapshot).toHaveBeenCalledWith(4, {
+      assertActive: undefined,
+    });
+    expect(response.project).toMatchObject({ id: 4, name: "Pitch" });
+    expect(response.missingCount).toBe(1);
+    expect(response.records).toHaveLength(2);
+    for (const record of response.records) {
+      expect(record.id).toBeTruthy();
+      expect(record.sourceUrl).toMatch(/^videoswarm-media:\/\//);
+      expect(record.name).toBe("clip.mp4");
+    }
+  });
+
+  it("reports a deleted project instead of showing it as empty", () => {
+    const store = { getProjectSnapshot: vi.fn(() => null) };
+    expect(() =>
+      buildProjectSnapshotResponse(store, { projectId: 9, generation: 1 })
+    ).toThrow(/no longer exists/);
+  });
+});

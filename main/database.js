@@ -80,6 +80,15 @@ const SEQUENCE_ENTRY_LIMIT = 500;
 // live range before landing them; UNIQUE(sequence_id, position) would otherwise
 // collide mid-permutation. Nothing may hold a real position this high.
 const SEQUENCE_POSITION_STAGING_OFFSET = 1_000_000;
+// Projects are hand-picked groups that accumulate over time (finished ones
+// are archived rather than deleted), so the project cap is generous. The
+// member cap matches the library view's record bound: a project can never
+// hold more clips than its own view could show.
+const PROJECT_LIMITS = Object.freeze({
+  maxProjects: 1000,
+  maxNameChars: 80,
+  maxMembers: 20_000,
+});
 const FINGERPRINT_CACHE_MAX_ENTRIES = 4096;
 const FINGERPRINT_CACHE_MAX_IN_FLIGHT = 64;
 const DEFAULT_INDEX_CONCURRENCY = 1;
@@ -950,6 +959,32 @@ function initDatabase(app, profilePath) {
         ON sequence_entries(sequence_id, position);
       CREATE INDEX IF NOT EXISTS idx_sequence_entries_fingerprint
         ON sequence_entries(fingerprint);
+
+      -- A project is an unordered, hand-picked group of content. It is kept
+      -- apart from tags on purpose (docs/architecture/projects.md): tag names
+      -- are unique across the profile and are read into every record, so a
+      -- project stored as a tag would collide with tag names and leak into
+      -- every tag list.
+      CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        archived_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, fingerprint),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (fingerprint) REFERENCES media_content(fingerprint)
+          ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_project_members_fingerprint
+        ON project_members(fingerprint);
     `);
 
     const mediaContentColumns = new Set(
@@ -1818,6 +1853,13 @@ function createMetadataStore(db) {
   const rekeySequenceEntries = db.prepare(`
     UPDATE sequence_entries SET fingerprint = @to WHERE fingerprint = @from;
   `);
+  // Membership is a set, so a project already holding the target content keeps
+  // its row and the source row is left for the media_content cascade.
+  const rekeyProjectMembers = db.prepare(`
+    INSERT OR IGNORE INTO project_members (project_id, fingerprint, added_at)
+    SELECT project_id, @to, added_at FROM project_members
+    WHERE fingerprint = @from;
+  `);
   const deleteContentReviewStmt = db.prepare(
     'DELETE FROM content_review WHERE fingerprint = ?;'
   );
@@ -1860,6 +1902,98 @@ function createMetadataStore(db) {
     WHERE id = ?;
   `);
   const savedViewDelete = db.prepare(`DELETE FROM saved_views WHERE id = ?;`);
+
+  // Projects (docs/architecture/projects.md). The project view reuses the
+  // tag view's cross-root projection with the tag predicate swapped for a
+  // membership join, so a clip looks the same however it was reached.
+  const projectSelect = `
+    SELECT
+      p.*,
+      (
+        SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id
+      ) AS member_count
+    FROM projects p
+  `;
+  const projectById = db.prepare(`${projectSelect} WHERE p.id = ?;`);
+  const projectsList = db.prepare(
+    `${projectSelect} ORDER BY p.name COLLATE NOCASE, p.id;`
+  );
+  const projectCount = db.prepare(`SELECT COUNT(*) AS count FROM projects;`);
+  const projectInsert = db.prepare(`
+    INSERT INTO projects (name, archived_at, created_at, updated_at)
+    VALUES (?, NULL, ?, ?);
+  `);
+  const projectRename = db.prepare(`
+    UPDATE projects SET name = ?, updated_at = ? WHERE id = ?;
+  `);
+  const projectSetArchived = db.prepare(`
+    UPDATE projects SET archived_at = ?, updated_at = ? WHERE id = ?;
+  `);
+  const projectTouch = db.prepare(`
+    UPDATE projects SET updated_at = ? WHERE id = ?;
+  `);
+  const projectDelete = db.prepare(`DELETE FROM projects WHERE id = ?;`);
+  const projectMemberCount = db.prepare(`
+    SELECT COUNT(*) AS count FROM project_members WHERE project_id = ?;
+  `);
+  const projectMemberExists = db.prepare(`
+    SELECT 1 AS present FROM project_members
+    WHERE project_id = ? AND fingerprint = ?;
+  `);
+  const projectMemberInsert = db.prepare(`
+    INSERT OR IGNORE INTO project_members (project_id, fingerprint, added_at)
+    VALUES (?, ?, ?);
+  `);
+  const projectMemberDelete = db.prepare(`
+    DELETE FROM project_members WHERE project_id = ? AND fingerprint = ?;
+  `);
+  const projectContentExists = db.prepare(`
+    SELECT fingerprint FROM media_content WHERE fingerprint = ?;
+  `);
+  const projectInstancesAcrossRoots = db.prepare(`
+    SELECT fi.*,
+      lr.root_path AS owner_root_path,
+      mc.created_ms AS content_created_ms,
+      mc.width AS content_width,
+      mc.height AS content_height,
+      mc.has_audio AS content_has_audio,
+      mc.duration_ms AS content_duration_ms,
+      mc.frame_rate AS content_frame_rate,
+      mc.generation_key AS content_generation_key,
+      mc.generation_key_version AS content_generation_key_version,
+      r.value AS rating_value,
+      COALESCE(cr.state,
+        CASE WHEN r.fingerprint IS NULL THEN 'unreviewed' ELSE 'reviewed' END
+      ) AS review_state
+    FROM project_members pm
+    INNER JOIN file_instances fi ON fi.fingerprint = pm.fingerprint
+    INNER JOIN library_roots lr ON lr.id = fi.root_id
+    INNER JOIN directories d ON d.id = fi.directory_id
+    LEFT JOIN media_content mc ON mc.fingerprint = fi.fingerprint
+    LEFT JOIN ratings r ON r.fingerprint = fi.fingerprint
+    LEFT JOIN content_review cr ON cr.fingerprint = fi.fingerprint
+    WHERE pm.project_id = @project_id
+      AND fi.is_present != 0
+      AND d.is_present != 0
+    ORDER BY lr.root_path COLLATE NOCASE, fi.relative_path COLLATE NOCASE
+    LIMIT @limit;
+  `);
+  // Members with no present instance anywhere: deleted, or only on a root
+  // that is no longer indexed. Reported so the grid's count never silently
+  // disagrees with the project's.
+  const projectMissingMemberCount = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM project_members pm
+    WHERE pm.project_id = ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM file_instances fi
+        INNER JOIN directories d ON d.id = fi.directory_id
+        WHERE fi.fingerprint = pm.fingerprint
+          AND fi.is_present != 0
+          AND d.is_present != 0
+      );
+  `);
 
   const sequenceCount = db.prepare(`SELECT COUNT(*) AS count FROM sequences;`);
   const sequenceSelect = `
@@ -2676,6 +2810,9 @@ function createMetadataStore(db) {
     // before the source row is dropped is what stops a v1 -> v2 migration from
     // silently shortening a sequence.
     rekeySequenceEntries.run(parameters);
+    // Project members cascade from media_content too; without this a
+    // migration would quietly empty projects.
+    rekeyProjectMembers.run(parameters);
     // Children no longer reference the source, so dropping it cannot cascade
     // into the metadata that was just carried over.
     deleteContentReviewStmt.run(fromFingerprint);
@@ -3122,6 +3259,67 @@ function createMetadataStore(db) {
   }
 
   /**
+   * The renderer record for a row from a cross-root library query (tag view,
+   * project view). Shared so both views hand over the same contract.
+   */
+  function mapCrossRootInstances(rows, { maxPathBytes, assertActive, budgetMessage }) {
+    const tagsByFingerprint = new Map();
+    let pathBytes = 0;
+    return rows.map((instance, index) => {
+      if ((index & 255) === 255) assertOperationActive(assertActive);
+      pathBytes += Buffer.byteLength(String(instance.absolute_path || ''), 'utf8');
+      if (pathBytes > maxPathBytes) {
+        throw new RangeError(budgetMessage);
+      }
+      const width = Number(instance.content_width || 0);
+      const height = Number(instance.content_height || 0);
+      const durationMs = normalizeDurationMs(instance.content_duration_ms);
+      const frameRate = normalizeFrameRate(instance.content_frame_rate);
+      if (!tagsByFingerprint.has(instance.fingerprint)) {
+        tagsByFingerprint.set(
+          instance.fingerprint,
+          tagsForFingerprint.all(instance.fingerprint).map((row) => row.name)
+        );
+      }
+      return {
+        instanceId: Number(instance.id),
+        rootPath: instance.owner_root_path,
+        relativePath: instance.relative_path,
+        absolutePath: instance.absolute_path,
+        size: Number(instance.size || 0),
+        mtimeMs: Number(instance.mtime_ms || 0),
+        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
+        fingerprint: instance.fingerprint || null,
+        tags: tagsByFingerprint.get(instance.fingerprint) || [],
+        rating:
+          instance.rating_value !== null &&
+          instance.rating_value !== undefined &&
+          Number.isFinite(Number(instance.rating_value))
+            ? Number(instance.rating_value)
+            : null,
+        reviewState: REVIEW_STATES.has(instance.review_state)
+          ? instance.review_state
+          : 'unreviewed',
+        dimensions:
+          width > 0 && height > 0
+            ? {
+                width,
+                height,
+                aspectRatio: width / height,
+                ...(durationMs ? { durationMs } : {}),
+                ...(frameRate ? { frameRate } : {}),
+              }
+            : null,
+        hasAudio: mapHasAudio(instance.content_has_audio),
+        ...mapGenerationKeyFields(
+          instance.content_generation_key,
+          instance.content_generation_key_version
+        ),
+      };
+    });
+  }
+
+  /**
    * Every present instance carrying all of the named tags, across every indexed
    * root in the profile.
    *
@@ -3172,59 +3370,10 @@ function createMetadataStore(db) {
     const truncated = rows.length > maxRecords;
     const kept = truncated ? rows.slice(0, maxRecords) : rows;
 
-    const tagsByFingerprint = new Map();
-    let pathBytes = 0;
-    const records = kept.map((instance, index) => {
-      if ((index & 255) === 255) assertOperationActive(options.assertActive);
-      pathBytes += Buffer.byteLength(String(instance.absolute_path || ''), 'utf8');
-      if (pathBytes > maxPathBytes) {
-        throw new RangeError('Tag view paths exceed the bounded query budget');
-      }
-      const width = Number(instance.content_width || 0);
-      const height = Number(instance.content_height || 0);
-      const durationMs = normalizeDurationMs(instance.content_duration_ms);
-      const frameRate = normalizeFrameRate(instance.content_frame_rate);
-      if (!tagsByFingerprint.has(instance.fingerprint)) {
-        tagsByFingerprint.set(
-          instance.fingerprint,
-          tagsForFingerprint.all(instance.fingerprint).map((row) => row.name)
-        );
-      }
-      return {
-        instanceId: Number(instance.id),
-        rootPath: instance.owner_root_path,
-        relativePath: instance.relative_path,
-        absolutePath: instance.absolute_path,
-        size: Number(instance.size || 0),
-        mtimeMs: Number(instance.mtime_ms || 0),
-        createdMs: Number(instance.content_created_ms || instance.mtime_ms || 0),
-        fingerprint: instance.fingerprint || null,
-        tags: tagsByFingerprint.get(instance.fingerprint) || [],
-        rating:
-          instance.rating_value !== null &&
-          instance.rating_value !== undefined &&
-          Number.isFinite(Number(instance.rating_value))
-            ? Number(instance.rating_value)
-            : null,
-        reviewState: REVIEW_STATES.has(instance.review_state)
-          ? instance.review_state
-          : 'unreviewed',
-        dimensions:
-          width > 0 && height > 0
-            ? {
-                width,
-                height,
-                aspectRatio: width / height,
-                ...(durationMs ? { durationMs } : {}),
-                ...(frameRate ? { frameRate } : {}),
-              }
-            : null,
-        hasAudio: mapHasAudio(instance.content_has_audio),
-        ...mapGenerationKeyFields(
-          instance.content_generation_key,
-          instance.content_generation_key_version
-        ),
-      };
+    const records = mapCrossRootInstances(kept, {
+      maxPathBytes,
+      assertActive: options.assertActive,
+      budgetMessage: 'Tag view paths exceed the bounded query budget',
     });
     assertOperationActive(options.assertActive);
 
@@ -3913,6 +4062,228 @@ function createMetadataStore(db) {
       ...sequence,
       entries,
       missingCount: entries.filter((entry) => !entry.instance).length,
+    };
+  }
+
+  function normalizeProjectId(value) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new TypeError('A positive project id is required');
+    }
+    return id;
+  }
+
+  function normalizeProjectName(value) {
+    const name = typeof value === 'string' ? value.trim() : '';
+    if (!name) throw new TypeError('Project name is required');
+    if (name.length > PROJECT_LIMITS.maxNameChars) {
+      throw new RangeError(
+        `Project name exceeds ${PROJECT_LIMITS.maxNameChars} characters`
+      );
+    }
+    return name;
+  }
+
+  function normalizeProjectFingerprints(values) {
+    const list = Array.isArray(values) ? values : [values];
+    return [
+      ...new Set(
+        list.map((value) => {
+          const fingerprint = typeof value === 'string' ? value.trim() : '';
+          if (!fingerprint) {
+            throw new TypeError('A project member requires a content fingerprint');
+          }
+          return fingerprint;
+        })
+      ),
+    ];
+  }
+
+  function mapProjectRow(row) {
+    if (!row) return null;
+    const archivedAt = row.archived_at === null || row.archived_at === undefined
+      ? null
+      : Number(row.archived_at);
+    return {
+      id: Number(row.id),
+      name: row.name,
+      memberCount: Number(row.member_count || 0),
+      archived: archivedAt !== null,
+      archivedAt,
+      createdAt: Number(row.created_at || 0),
+      updatedAt: Number(row.updated_at || 0),
+    };
+  }
+
+  function requireProject(id) {
+    const row = projectById.get(id);
+    if (!row) throw new Error(`Project does not exist: ${id}`);
+    return row;
+  }
+
+  // A name collision is an ordinary outcome of naming something, so it gets a
+  // stable code rather than raw SQLite constraint text.
+  function asProjectNameError(error, name) {
+    if (String(error?.code || '').startsWith('SQLITE_CONSTRAINT')) {
+      const conflict = new Error(`A project named "${name}" already exists`);
+      conflict.code = 'PROJECT_NAME_TAKEN';
+      return conflict;
+    }
+    return error;
+  }
+
+  function listProjects() {
+    return projectsList.all().map(mapProjectRow).filter(Boolean);
+  }
+
+  function getProject(projectId) {
+    return mapProjectRow(projectById.get(normalizeProjectId(projectId)));
+  }
+
+  function createProject(name) {
+    const safeName = normalizeProjectName(name);
+    const count = Number(projectCount.get()?.count || 0);
+    if (count >= PROJECT_LIMITS.maxProjects) {
+      throw new RangeError(
+        `Project limit of ${PROJECT_LIMITS.maxProjects} reached`
+      );
+    }
+    const now = Date.now();
+    let result;
+    try {
+      result = projectInsert.run(safeName, now, now);
+    } catch (error) {
+      throw asProjectNameError(error, safeName);
+    }
+    return mapProjectRow(projectById.get(result.lastInsertRowid));
+  }
+
+  function renameProject(projectId, name) {
+    const id = normalizeProjectId(projectId);
+    requireProject(id);
+    const safeName = normalizeProjectName(name);
+    try {
+      projectRename.run(safeName, Date.now(), id);
+    } catch (error) {
+      throw asProjectNameError(error, safeName);
+    }
+    return mapProjectRow(projectById.get(id));
+  }
+
+  // Archiving puts finished work out of the way without losing it: members
+  // are kept, and restoring brings the project back exactly as it was.
+  function setProjectArchived(projectId, archived) {
+    const id = normalizeProjectId(projectId);
+    const row = requireProject(id);
+    const wantArchived = Boolean(archived);
+    const isArchived = row.archived_at !== null && row.archived_at !== undefined;
+    if (wantArchived !== isArchived) {
+      const now = Date.now();
+      projectSetArchived.run(wantArchived ? now : null, now, id);
+    }
+    return mapProjectRow(projectById.get(id));
+  }
+
+  // Removes the grouping only. The clips, and their tags, ratings and review
+  // state, are untouched.
+  function deleteProject(projectId) {
+    const id = normalizeProjectId(projectId);
+    return projectDelete.run(id).changes > 0;
+  }
+
+  function addToProject(projectId, fingerprints) {
+    const id = normalizeProjectId(projectId);
+    const requested = normalizeProjectFingerprints(fingerprints);
+    let added = 0;
+    db.transaction(() => {
+      requireProject(id);
+      if (!requested.length) return;
+      // Validate the whole batch before writing any of it, so a selection
+      // holding one unindexed clip cannot half-apply.
+      let newMembers = 0;
+      for (const fingerprint of requested) {
+        if (!projectContentExists.get(fingerprint)) {
+          throw new Error(`Unknown content fingerprint: ${fingerprint}`);
+        }
+        if (!projectMemberExists.get(id, fingerprint)) newMembers += 1;
+      }
+      const existing = Number(projectMemberCount.get(id)?.count || 0);
+      if (existing + newMembers > PROJECT_LIMITS.maxMembers) {
+        throw new RangeError(
+          `A project is limited to ${PROJECT_LIMITS.maxMembers.toLocaleString('en-US')} clips`
+        );
+      }
+      const now = Date.now();
+      for (const fingerprint of requested) {
+        added += projectMemberInsert.run(id, fingerprint, now).changes;
+      }
+      if (added) projectTouch.run(now, id);
+    })();
+    return { project: mapProjectRow(projectById.get(id)), added };
+  }
+
+  function removeFromProject(projectId, fingerprints) {
+    const id = normalizeProjectId(projectId);
+    const requested = normalizeProjectFingerprints(fingerprints);
+    let removed = 0;
+    db.transaction(() => {
+      requireProject(id);
+      for (const fingerprint of requested) {
+        removed += projectMemberDelete.run(id, fingerprint).changes;
+      }
+      if (removed) projectTouch.run(Date.now(), id);
+    })();
+    return { project: mapProjectRow(projectById.get(id)), removed };
+  }
+
+  /**
+   * Every present instance of a project's members, across every indexed root.
+   *
+   * A snapshot like the tag view, with the same bounds, and for the same
+   * reason: watching every root a project can span is the cost the bounded
+   * watcher design avoids.
+   */
+  function getProjectSnapshot(projectId, options = {}) {
+    assertOperationActive(options.assertActive);
+    const id = normalizeProjectId(projectId);
+    const project = mapProjectRow(projectById.get(id));
+    if (!project) return null;
+
+    const maxRecords = normalizeAcceptedExportReadLimit(
+      options.maxRecords,
+      LIBRARY_TAG_VIEW_LIMITS.maxRecords,
+      'Project view record limit'
+    );
+    const maxPathBytes = normalizeAcceptedExportReadLimit(
+      options.maxPathBytes,
+      LIBRARY_TAG_VIEW_LIMITS.maxPathBytes,
+      'Project view path-byte limit'
+    );
+
+    const rows = projectInstancesAcrossRoots.all({
+      project_id: id,
+      limit: maxRecords + 1,
+    });
+    assertOperationActive(options.assertActive);
+    const truncated = rows.length > maxRecords;
+    const kept = truncated ? rows.slice(0, maxRecords) : rows;
+    const records = mapCrossRootInstances(kept, {
+      maxPathBytes,
+      assertActive: options.assertActive,
+      budgetMessage: 'Project view paths exceed the bounded query budget',
+    });
+    const missingCount = Number(
+      projectMissingMemberCount.get(id)?.count || 0
+    );
+    assertOperationActive(options.assertActive);
+
+    return {
+      project,
+      records,
+      missingCount,
+      truncated,
+      recordLimit: maxRecords,
+      rootPaths: [...new Set(records.map((record) => record.rootPath))],
     };
   }
 
@@ -5230,6 +5601,15 @@ function createMetadataStore(db) {
     removeSequenceEntries,
     reorderSequenceEntries,
     moveSequenceEntry,
+    listProjects,
+    getProject,
+    createProject,
+    renameProject,
+    setProjectArchived,
+    deleteProject,
+    addToProject,
+    removeFromProject,
+    getProjectSnapshot,
     listReviewCheckpoints,
     getReviewCheckpoint,
     saveReviewCheckpoint,
@@ -5297,6 +5677,7 @@ module.exports = {
   FINGERPRINT_CACHE_MAX_IN_FLIGHT,
   GENERATION_METADATA_LIMITS,
   GENERATION_VERSION_LIMITS,
+  PROJECT_LIMITS,
   initMetadataStore,
   getMetadataStore,
   resetDatabase,
