@@ -1041,7 +1041,7 @@ export function useElectronFolderLifecycle({
   }, [handleElectronFolderSelection]);
 
   /**
-   * Adopt a tag-scoped collection that belongs to no single root.
+   * Adopt a tag- or project-scoped collection that belongs to no single root.
    *
    * This mirrors the web-file path deliberately: both are collections the
    * catalog did not scan into existence, so both clear the active root, its
@@ -1049,7 +1049,13 @@ export function useElectronFolderLifecycle({
    * pointing at somewhere the visible clips may not live.
    */
   const openTagCollection = useCallback(
-    ({ tags = [], matchMode = "all", records = [], truncated = false } = {}) => {
+    ({
+      tags = [],
+      matchMode = "all",
+      records = [],
+      truncated = false,
+      project = null,
+    } = {}) => {
       cancelActiveFolderScan(false);
       retainedFolderScanRef.current = null;
       collectionOwnerScanIdRef.current = null;
@@ -1071,6 +1077,17 @@ export function useElectronFolderLifecycle({
         tags: [...tags],
         matchMode: matchMode === "any" ? "any" : "all",
         truncated: Boolean(truncated),
+        // A project view arrives through this same path: it is a rootless,
+        // cross-root snapshot exactly like a tag view, defined by membership
+        // instead of tags (docs/architecture/projects.md).
+        project:
+          project && Number.isSafeInteger(Number(project.id))
+            ? {
+                id: Number(project.id),
+                name: String(project.name || ""),
+                missingCount: Math.max(0, Number(project.missingCount) || 0),
+              }
+            : null,
         // Distinguishes one snapshot from the next so collection ownership
         // changes on refresh and stale per-clip work is discarded.
         loadedAt: Date.now(),
@@ -1078,6 +1095,16 @@ export function useElectronFolderLifecycle({
     },
     [cancelActiveFolderScan, resetDerivedVideoState]
   );
+
+  // When the open project is deleted its clips stay on screen, but the view
+  // must stop claiming a project that can be added to or removed from.
+  const detachCollectionProject = useCallback((projectId) => {
+    setTagCollection((previous) =>
+      previous?.project && previous.project.id === projectId
+        ? { ...previous, project: null }
+        : previous
+    );
+  }, []);
 
   const handleWebFileSelection = useCallback(
     (event) => {
@@ -1447,5 +1474,6 @@ export function useElectronFolderLifecycle({
     handleWebFileSelection,
     tagCollection,
     openTagCollection,
+    detachCollectionProject,
   };
 }

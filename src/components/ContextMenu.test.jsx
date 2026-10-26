@@ -335,3 +335,61 @@ describe('ContextMenu', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 });
+
+describe('ContextMenu projects', () => {
+  const renderMenu = (props = {}) => {
+    const onAction = vi.fn();
+    render(
+      <ContextMenu
+        visible
+        position={{ x: 100, y: 100 }}
+        contextId="a"
+        selectionCount={2}
+        getById={getById}
+        electronAPI={electronAPI}
+        onClose={() => {}}
+        onAction={onAction}
+        {...props}
+      />
+    );
+    return onAction;
+  };
+
+  test('has no Project submenu unless projects are supplied', () => {
+    renderMenu();
+    expect(
+      screen.queryByRole('menuitem', { name: /Project/ })
+    ).not.toBeInTheDocument();
+  });
+
+  test('offers active projects, most recently used first, plus a new one', () => {
+    const onAction = renderMenu({
+      projects: [
+        { id: 1, name: 'Older', updatedAt: 10 },
+        { id: 2, name: 'Newer', updatedAt: 20 },
+        { id: 3, name: 'Shelved', updatedAt: 30, archived: true },
+      ],
+    });
+    const submenu = openSubmenu('▤ Project (2 selected)');
+    const labels = Array.from(
+      submenu.querySelectorAll('[role="menuitem"]')
+    ).map((item) => item.textContent);
+    expect(labels).toEqual([
+      '＋ Add to Newer',
+      '＋ Add to Older',
+      '＋ New project with these clips',
+    ]);
+    fireEvent.click(screen.getByRole('menuitem', { name: '＋ Add to Older' }));
+    expect(onAction).toHaveBeenCalledWith('project:add:1');
+  });
+
+  test('offers removal from the open project', () => {
+    const onAction = renderMenu({
+      projects: [{ id: 1, name: 'Pitch', updatedAt: 1 }],
+      activeProject: { id: 1, name: 'Pitch' },
+    });
+    openSubmenu('▤ Project (2 selected)');
+    fireEvent.click(screen.getByRole('menuitem', { name: '− Remove from Pitch' }));
+    expect(onAction).toHaveBeenCalledWith('project:remove');
+  });
+});

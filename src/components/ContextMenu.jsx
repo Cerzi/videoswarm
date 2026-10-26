@@ -17,6 +17,15 @@ const SUBMENU_WIDTH = 270;
 const HEADER_HEIGHT = 40;
 const ITEM_HEIGHT = 36;
 const SEPARATOR_HEIGHT = 8;
+// The Project submenu lists the most recently used projects; the rest stay
+// reachable from the Library panel.
+export const CONTEXT_MENU_PROJECT_LIMIT = 12;
+
+const recentProjects = (projects) =>
+  (Array.isArray(projects) ? projects : [])
+    .filter((project) => project && !project.archived && project.id != null)
+    .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
+    .slice(0, CONTEXT_MENU_PROJECT_LIMIT);
 
 const getViewport = () => ({
   width: typeof window === 'undefined' ? 1024 : window.innerWidth,
@@ -98,6 +107,10 @@ const ContextMenu = ({
   onAction,
   onPlacementChange,
   reviewModeEnabled = true,
+  // Projects offered in the Project submenu; omitted means no submenu.
+  projects = null,
+  // The project open in the grid, if any, so its clips can be removed.
+  activeProject = null,
 }) => {
   const requestedPosition = position || { x: 0, y: 0 };
   const layerRef = useRef(null);
@@ -264,6 +277,29 @@ const ContextMenu = ({
         }`,
         action: 'sequence:add',
       },
+      Array.isArray(projects) ? {
+        id: 'project',
+        label: `▤ Project${
+          selectionCount > 1 ? ` (${selectionCount} selected)` : ''
+        }`,
+        children: [
+          ...recentProjects(projects).map((project) => ({
+            id: `project-add-${project.id}`,
+            label: `＋ Add to ${project.name}`,
+            action: `project:add:${project.id}`,
+          })),
+          {
+            id: 'project-new',
+            label: '＋ New project with these clips',
+            action: 'project:new',
+          },
+          activeProject?.id != null ? {
+            id: 'project-remove',
+            label: `− Remove from ${activeProject.name}`,
+            action: 'project:remove',
+          } : null,
+        ].filter(Boolean),
+      } : null,
       {
         id: 'transfer-files',
         label: `📁 ${menuLabel('transfer-files')}`,
@@ -289,6 +325,8 @@ const ContextMenu = ({
     electronAPI,
     reviewModeEnabled,
     selectionCount,
+    projects,
+    activeProject,
   ]);
 
   const activeSubmenuItem = useMemo(

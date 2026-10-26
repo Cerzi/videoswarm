@@ -3,6 +3,7 @@ import { normalizeRelativePath } from "../library/folderModel";
 import { SortAscendingIcon, SortDescendingIcon } from "./UiIcons";
 import "./LibraryNavigation.css";
 import { trashName } from "../platform/fileManagerTerms";
+import ProjectsSection from "./ProjectsSection";
 
 const normalizeExpandedPaths = (paths) =>
   paths instanceof Set ? paths : new Set(paths || []);
@@ -226,6 +227,8 @@ export function LibrarySidebarContent({
   onSaveCurrentView,
   onDeleteSavedView,
   smartViewsEnabled = true,
+  // Props for the Projects section; it is shown only when supplied.
+  projectsProps = null,
   disabled = false,
   reviewModeEnabled = true,
 }) {
@@ -346,6 +349,13 @@ export function LibrarySidebarContent({
           <p className="library-sidebar__empty">Pin frequently used roots here.</p>
         )}
       </section>
+
+      {projectsProps ? (
+        <ProjectsSection
+          {...projectsProps}
+          disabled={disabled || Boolean(projectsProps.disabled)}
+        />
+      ) : null}
 
       <section className="library-sidebar__section library-sidebar__section--views">
         <header className="library-sidebar__section-header">

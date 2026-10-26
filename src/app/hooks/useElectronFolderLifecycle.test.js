@@ -2422,6 +2422,27 @@ describe("useElectronFolderLifecycle", () => {
         comparator: buildComparator({ sortKey: SortKey.NAME, sortDir: "asc" }),
       })
     ).not.toThrow();
+
+    // A project arrives through the same path, defined by membership.
+    act(() => {
+      result.current.openTagCollection({
+        records,
+        project: { id: 7, name: "Pitch", missingCount: 2 },
+      });
+    });
+    expect(result.current.tagCollection).toMatchObject({
+      tags: [],
+      project: { id: 7, name: "Pitch", missingCount: 2 },
+    });
+    expect(result.current.tagCollection.project).not.toHaveProperty("records");
+
+    // Deleting a different project leaves the view alone; deleting this one
+    // keeps the clips but stops the view claiming the project.
+    act(() => result.current.detachCollectionProject(8));
+    expect(result.current.tagCollection.project?.id).toBe(7);
+    act(() => result.current.detachCollectionProject(7));
+    expect(result.current.tagCollection.project).toBeNull();
+    expect(result.current.videos).toHaveLength(2);
   });
 
   it("passes the recursive flag when starting folder watch", async () => {

@@ -79,6 +79,7 @@ import { useElectronFolderLifecycle } from "./app/hooks/useElectronFolderLifecyc
 import { useLibraryCatalog } from "./app/hooks/useLibraryCatalog";
 import { useSequences } from "./app/hooks/useSequences";
 import { useSavedViews } from "./app/hooks/useSavedViews";
+import { nextProjectName, useProjects } from "./app/hooks/useProjects";
 import { emptyTagSearchMessage } from "./app/tagSearchMessage";
 import { useGenerationMetadata } from "./app/hooks/useGenerationMetadata";
 import useWindowWorkSuspension from "./app/hooks/useWindowWorkSuspension";
@@ -181,6 +182,15 @@ const expandFolderAncestors = (previous, relativePath) => {
   }
   return next;
 };
+
+
+// Identifies a rootless collection (a library tag view or an open project) for
+// per-collection ownership keys. The load stamp makes a refresh a new
+// collection so per-clip work owned by the previous snapshot is discarded.
+const rootlessCollectionKey = (collection) =>
+  collection.project
+    ? `project:${collection.project.id}:${collection.loadedAt}`
+    : `tags:${collection.tags.join("\u0000")}:${collection.loadedAt}`;
 
 function App() {
   // Selection state (SOLID)
@@ -478,6 +488,7 @@ function App() {
     libraryRoot,
     tagCollection,
     openTagCollection,
+    detachCollectionProject,
     directorySummaries,
     isLoadingFolder,
     isRefreshingFolder,
@@ -546,6 +557,10 @@ function App() {
     createSavedView,
     deleteSavedView,
   } = useSavedViews();
+  const projectStore = useProjects();
+  // The project whose name field is open in the sidebar, set when a project
+  // is created straight from a selection so it is named right away.
+  const [renamingProjectId, setRenamingProjectId] = useState(null);
 
   // The Sequences panel opens by itself the first time clips are added in a
   // session, so the result of that first add is visible; after that an add
@@ -613,7 +628,7 @@ function App() {
   const generationCollectionKey = activeRootPath
     ? `${reviewProfileEpoch}:root:${activeRootPath}`
     : tagCollection
-      ? `${reviewProfileEpoch}:tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
+      ? `${reviewProfileEpoch}:${rootlessCollectionKey(tagCollection)}`
       : null;
   const {
     summaries: generationVersionSummaries,
@@ -1398,7 +1413,7 @@ function App() {
         : tagCollection
           // Includes the load stamp so a refresh is a new collection and any
           // per-clip work owned by the previous snapshot is discarded.
-          ? `tags:${tagCollection.tags.join("\u0000")}:${tagCollection.loadedAt}`
+          ? rootlessCollectionKey(tagCollection)
           : `web:${webCollectionEpoch}`,
       currentDirectory,
       folderScope,
@@ -2126,18 +2141,76 @@ function App() {
     [notify, openTagCollection]
   );
 
+  /**
+   * Open a project (docs/architecture/projects.md): every present instance of
+   * its members across every indexed root, adopted as a rootless collection
+   * through the same path as a tag view.
+   */
+  const loadProjectCollection = useCallback(
+    async (projectId) => {
+      const snapshot = window.electronAPI?.projects?.snapshot;
+      if (typeof snapshot !== "function") {
+        notify("Projects are unavailable", "error");
+        return false;
+      }
+      try {
+        const result = await snapshot(projectId);
+        if (result?.success === false) {
+          throw new Error(result.error || "The project could not be opened");
+        }
+        const records = Array.isArray(result?.records) ? result.records : [];
+        // A project narrows nothing at the library level, so the tag search
+        // must not stay armed: changing a tag filter would otherwise re-run
+        // a library search and replace the project with it.
+        setLibrarySearchScope("folder");
+        openTagCollection({
+          tags: [],
+          records,
+          truncated: Boolean(result?.truncated),
+          project: {
+            id: result?.project?.id ?? projectId,
+            name: result?.project?.name || "",
+            missingCount: result?.missingCount,
+          },
+        });
+        if (result?.truncated) {
+          notify(
+            `Showing the first ${Number(
+              result.recordLimit || records.length
+            ).toLocaleString()} clips in this project`,
+            "info"
+          );
+        }
+        return true;
+      } catch (error) {
+        console.error("Failed to open project:", error);
+        notify(error?.message || "Could not open this project", "error");
+        return false;
+      }
+    },
+    [notify, openTagCollection]
+  );
+
   const refreshTagCollection = useCallback(() => {
     if (!tagCollection) return false;
+    if (tagCollection.project) {
+      return loadProjectCollection(tagCollection.project.id);
+    }
     return loadTagCollection(tagCollection.tags, tagCollection.matchMode);
-  }, [loadTagCollection, tagCollection]);
+  }, [loadProjectCollection, loadTagCollection, tagCollection]);
 
   const tagViewRefreshRef = useRef(refreshTagCollection);
   tagViewRefreshRef.current = refreshTagCollection;
+  const tagCollectionRef = useRef(tagCollection);
+  tagCollectionRef.current = tagCollection;
   const seenTagRefreshRef = useRef(tagRefreshToken);
   useEffect(() => {
     // Only an actual edit re-reads the view; mounting must not re-query.
     if (seenTagRefreshRef.current === tagRefreshToken) return;
     seenTagRefreshRef.current = tagRefreshToken;
+    // A project is defined by membership, not tags, so a tag edit cannot
+    // change what it holds and re-reading it would only reset the grid.
+    if (tagCollectionRef.current?.project) return;
     tagViewRefreshRef.current?.();
   }, [tagRefreshToken]);
 
@@ -2534,6 +2607,223 @@ function App() {
     if (typeof cancel === "function") await cancel(planId);
   }, []);
 
+  // Projects (docs/architecture/projects.md).
+  const activeProjectId = tagCollection?.project?.id ?? null;
+  const activeProjectListing = projectStore.projects.find(
+    (project) => project.id === activeProjectId
+  );
+  const activeProjectName =
+    activeProjectListing?.name || tagCollection?.project?.name || "";
+  const activeProject = useMemo(
+    () =>
+      activeProjectId != null
+        ? { id: activeProjectId, name: activeProjectName }
+        : null,
+    [activeProjectId, activeProjectName]
+  );
+
+  const handleOpenProject = useCallback(
+    async (project) => {
+      const projectId = project?.id;
+      if (projectId == null) return;
+      closeFullScreenRef.current?.();
+      // Supersedes any folder open still in flight, the same as opening
+      // another folder would.
+      const requestId = ++libraryOpenRequestRef.current;
+      await reviewSessions.flush();
+      if (requestId !== libraryOpenRequestRef.current) return;
+      cancelReviewResume();
+      captureFolderViewState();
+      folderScopeReturnRef.current = null;
+      selection.clear();
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+      await loadProjectCollection(projectId);
+    },
+    [
+      cancelReviewResume,
+      captureFolderViewState,
+      loadProjectCollection,
+      reviewSessions,
+      selection.clear,
+    ]
+  );
+
+  const handleCreateProject = useCallback(
+    async (name) => {
+      const created = await projectStore.createProject(name);
+      if (created) notify(`Created project “${created.name}”`, "success");
+      return created;
+    },
+    [notify, projectStore]
+  );
+
+  const handleRenameProject = useCallback(
+    async (projectId, name) => {
+      // The open project's bar reads its name from the list, so a rename
+      // needs no re-read of the clips.
+      return projectStore.renameProject(projectId, name);
+    },
+    [projectStore]
+  );
+
+  const handleSetProjectArchived = useCallback(
+    async (projectId, archived) => {
+      try {
+        const project = await projectStore.setProjectArchived(projectId, archived);
+        if (project) {
+          notify(
+            archived
+              ? `Archived “${project.name}”. Its clips stay in it.`
+              : `Restored “${project.name}”`,
+            "success"
+          );
+        }
+      } catch (error) {
+        notify(error?.message || "Could not update this project", "error");
+      }
+    },
+    [notify, projectStore]
+  );
+
+  const handleDeleteProject = useCallback(
+    async (projectId, project) => {
+      try {
+        const deleted = await projectStore.deleteProject(projectId);
+        if (!deleted) return;
+        notify(`Deleted project “${project?.name || "project"}”`, "success");
+        detachCollectionProject(projectId);
+      } catch (error) {
+        notify(error?.message || "Could not delete this project", "error");
+      }
+    },
+    [detachCollectionProject, notify, projectStore]
+  );
+
+  const describeClipCount = (count) =>
+    count === 1 ? "1 clip" : `${count.toLocaleString()} clips`;
+
+  const handleAddToProject = useCallback(
+    async (projectId, fingerprints) => {
+      const list = (Array.isArray(fingerprints) ? fingerprints : [fingerprints])
+        .filter(Boolean);
+      if (!list.length) {
+        notify("These clips are not indexed yet", "warning");
+        return null;
+      }
+      try {
+        const result = await projectStore.addClips(projectId, list);
+        if (!result) return null;
+        const name = result.project?.name ? `“${result.project.name}”` : "the project";
+        const added = Number(result.added) || 0;
+        notify(
+          added === 0
+            ? `Already in ${name}`
+            : added === list.length
+              ? `Added ${describeClipCount(added)} to ${name}`
+              : `Added ${describeClipCount(added)} to ${name}; ${describeClipCount(
+                  list.length - added
+                )} already in it`,
+          "success"
+        );
+        if (added && activeProjectId === projectId) refreshTagCollection();
+        return result;
+      } catch (error) {
+        notify(error?.message || "Could not add these clips", "error");
+        return null;
+      }
+    },
+    [activeProjectId, notify, projectStore, refreshTagCollection]
+  );
+
+  const handleNewProjectFromClips = useCallback(
+    async (fingerprints) => {
+      const list = (Array.isArray(fingerprints) ? fingerprints : [fingerprints])
+        .filter(Boolean);
+      if (!list.length) {
+        notify("These clips are not indexed yet", "warning");
+        return;
+      }
+      try {
+        const created = await projectStore.createProject(
+          nextProjectName(projectStore.projects)
+        );
+        if (!created) return;
+        await projectStore.addClips(created.id, list);
+        // Naming is what makes a project findable later, so ask for it now.
+        setLibrarySidebarOpen(true);
+        handleWorkspaceSidebarTabChange("library");
+        setRenamingProjectId(created.id);
+        notify(
+          `Added ${describeClipCount(list.length)} to a new project. Name it in the Library panel.`,
+          "success"
+        );
+      } catch (error) {
+        notify(error?.message || "Could not create the project", "error");
+      }
+    },
+    [handleWorkspaceSidebarTabChange, notify, projectStore]
+  );
+
+  const handleRemoveFromActiveProject = useCallback(
+    async (fingerprints) => {
+      if (activeProjectId == null) return;
+      const list = (Array.isArray(fingerprints) ? fingerprints : [fingerprints])
+        .filter(Boolean);
+      if (!list.length) return;
+      try {
+        const result = await projectStore.removeClips(activeProjectId, list);
+        if (!result) return;
+        const removed = Number(result.removed) || 0;
+        notify(
+          `Removed ${describeClipCount(removed)} from “${
+            result.project?.name || activeProject?.name || "the project"
+          }”`,
+          "success"
+        );
+        selection.clear();
+        refreshTagCollection();
+      } catch (error) {
+        notify(error?.message || "Could not remove these clips", "error");
+      }
+    },
+    [
+      activeProject?.name,
+      activeProjectId,
+      notify,
+      projectStore,
+      refreshTagCollection,
+      selection.clear,
+    ]
+  );
+
+  const projectsSidebarProps = useMemo(
+    () =>
+      projectStore.available
+        ? {
+            projects: projectStore.projects,
+            activeProjectId,
+            renamingProjectId,
+            onOpenProject: handleOpenProject,
+            onCreateProject: handleCreateProject,
+            onRenameProject: handleRenameProject,
+            onSetProjectArchived: handleSetProjectArchived,
+            onDeleteProject: handleDeleteProject,
+            onRenamingProjectChange: setRenamingProjectId,
+          }
+        : null,
+    [
+      activeProjectId,
+      handleCreateProject,
+      handleDeleteProject,
+      handleOpenProject,
+      handleRenameProject,
+      handleSetProjectArchived,
+      projectStore.available,
+      projectStore.projects,
+      renamingProjectId,
+    ]
+  );
+
   // The selection goes in the grid's sort order (clip-sequences.md,
   // Section 2), whichever way the add is asked for.
   const handleAddSelectionToSequence = useCallback(
@@ -2552,6 +2842,23 @@ function App() {
             ? selectedFingerprintsInSortOrder
             : contextMetadataFingerprints
         );
+        return;
+      }
+      if (actionId.startsWith("project:")) {
+        const fingerprints =
+          selection.size > 1
+            ? selectedFingerprintsInSortOrder
+            : contextMetadataFingerprints;
+        if (actionId === "project:new") {
+          handleNewProjectFromClips(fingerprints);
+        } else if (actionId === "project:remove") {
+          handleRemoveFromActiveProject(fingerprints);
+        } else if (actionId.startsWith("project:add:")) {
+          const projectId = Number(actionId.slice("project:add:".length));
+          if (Number.isSafeInteger(projectId)) {
+            handleAddToProject(projectId, fingerprints);
+          }
+        }
         return;
       }
       if (actionId === "metadata:open") {
@@ -2627,6 +2934,9 @@ function App() {
       metadataAnchorId,
       contextMetadataFingerprints,
       handleAddToSequence,
+      handleAddToProject,
+      handleNewProjectFromClips,
+      handleRemoveFromActiveProject,
       selectedFingerprintsInSortOrder,
       reviewWorkflow.applyRating,
       reviewWorkflow.applyReviewState,
@@ -5394,7 +5704,9 @@ function App() {
           {!activeRootPath && !tagCollection && videos.length === 0 && !isLoadingFolder ? (
             <div className="library-home-workspace">
               {isLibrarySidebarOpen &&
-                (pinnedRoots.length > 0 || savedViews.length > 0) && (
+                (pinnedRoots.length > 0 ||
+                  savedViews.length > 0 ||
+                  projectStore.projects.length > 0) && (
                 <LibrarySidebar
                   tree={null}
                   pinnedRoots={pinnedRoots}
@@ -5408,6 +5720,7 @@ function App() {
                   onSaveCurrentView={handleSaveCurrentView}
                   onDeleteSavedView={handleDeleteSavedView}
                   smartViewsEnabled={false}
+                  projectsProps={projectsSidebarProps}
                   reviewModeEnabled={reviewModeEnabled}
                 />
               )}
@@ -5438,7 +5751,9 @@ function App() {
           ) : (
             <div className="content-region" ref={contentRegionRef}>
               <div className="content-region__workspace">
-                {activeRootPath && (
+                {/* A project view has no root, but its sidebar is how the
+                    user moves between projects and adds to them. */}
+                {(activeRootPath || activeProjectId != null) && (
                   <WorkspaceSidebar
                     open={isLibrarySidebarOpen}
                     activePanel={workspaceSidebarTab}
@@ -5462,6 +5777,7 @@ function App() {
                         onApplySavedView: handleApplySavedView,
                         onSaveCurrentView: handleSaveCurrentView,
                         onDeleteSavedView: handleDeleteSavedView,
+                        projectsProps: projectsSidebarProps,
                         disabled: isLoadingFolder,
                         reviewModeEnabled,
                       },
@@ -5525,6 +5841,37 @@ function App() {
                 )}
 
                 <div className="content-region__gallery" ref={galleryRef}>
+                  {activeProject ? (
+                    <div className="project-view-bar" role="status">
+                      <span className="project-view-bar__label">Project</span>
+                      <span
+                        className="project-view-bar__name"
+                        title={activeProject.name}
+                      >
+                        {activeProject.name}
+                      </span>
+                      <span>
+                        {videos.length.toLocaleString()}{" "}
+                        {videos.length === 1 ? "clip" : "clips"} across the library
+                      </span>
+                      {tagCollection?.project?.missingCount > 0 ? (
+                        <span
+                          className="project-view-bar__missing"
+                          title="Members with no file in any indexed folder: deleted, or in a folder that is no longer indexed"
+                        >
+                          {tagCollection.project.missingCount.toLocaleString()} not found
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="project-view-bar__refresh"
+                        onClick={() => refreshTagCollection()}
+                        title="Re-read this project's clips from the library"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  ) : null}
                   {activeRootPath &&
                     !isLibrarySidebarOpen &&
                     showFolderHeaders &&
@@ -5767,6 +6114,8 @@ function App() {
               onAction={handleContextAction}
               onPlacementChange={handleContextMenuPlacementChange}
               reviewModeEnabled={reviewModeEnabled}
+              projects={projectStore.available ? projectStore.projects : null}
+              activeProject={activeProject}
             />
           )}
         </>
