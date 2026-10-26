@@ -520,7 +520,9 @@
 }
 
 /* Projects (docs/architecture/projects.md) */
-.library-project-list__item {
+/* Stacks the row above its action strip; `.library-saved-view-list li` would
+   otherwise lay them side by side. */
+.library-saved-view-list .library-project-list__item {
   display: block;
 }
 
@@ -647,4 +649,17 @@
   padding: 0.12rem 0.5rem;
   font-size: 0.66rem;
   cursor: pointer;
+}
+
+/* `.library-sidebar__content button { font: inherit }` outranks a single
+   class, so project controls state their size with the container prefix. */
+.library-sidebar__content .library-project-list__open {
+  font-size: 0.72rem;
+}
+
+.library-sidebar__content .library-project-list__actions button,
+.library-sidebar__content .library-project-list__confirm button,
+.library-sidebar__content .library-project-list__archive-toggle,
+.library-sidebar__content .library-project-form button {
+  font-size: 0.64rem;
 }

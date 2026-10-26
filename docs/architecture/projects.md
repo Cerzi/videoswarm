@@ -163,6 +163,9 @@ Smart views:
 - Archived projects are hidden behind a "Show archived (n)" toggle, so
   finished work leaves the list without being lost.
 - The open project is marked as current.
+- The sidebar is shown in a project view even though no folder is open
+  (folder views were the only ones that had it), because it is how the user
+  moves between projects and finds the one they just named.
 
 ## 4. Opening a project
 
@@ -192,7 +195,8 @@ Status: **Implemented**
 The clip right-click menu gains a **Project** submenu, acting on the
 selection (or the right-clicked clip when nothing else is selected):
 
-- One entry per active project: "Add to *name*".
+- One entry per active project, the 12 most recently changed: "Add to
+  *name*". The rest stay reachable from the Library panel.
 - "New project with these clips" creates `Project N`, adds the clips and
   opens the Library panel with the new row in rename mode, since naming is
   the step that makes a project findable later.
@@ -213,3 +217,5 @@ project; the app says so instead of failing silently.
   same generation runs; "add every version of this clip" would make filling
   a project nearly free.
 - **Drag onto a project row** in the sidebar.
+- **Library tag views have no sidebar.** Project views now show one; tag
+  views still do not. Giving them the same sidebar is a separate change.
