@@ -386,6 +386,8 @@ const defaultSettings = {
   fullscreenDetailsOpen: true,
   fullscreenAudioEnabled: false,
   fullscreenAutoContinue: false,
+  fullscreenAdvanceAfterRating: false,
+  fullscreenAdvanceAfterSending: false,
   recentTransferDestinations: [],
   transferLayout: "structured",
   metadataInspectorMode: METADATA_INSPECTOR_MODES.DOCKED,
@@ -1771,6 +1773,8 @@ function normaliseLoadedSettings(rawSettings) {
         ? defaultSettings.fullscreenAudioEnabled
         : source.fullscreenAudioEnabled === true,
     fullscreenAutoContinue: source.fullscreenAutoContinue === true,
+    fullscreenAdvanceAfterRating: source.fullscreenAdvanceAfterRating === true,
+    fullscreenAdvanceAfterSending: source.fullscreenAdvanceAfterSending === true,
     recentTransferDestinations: normalizeRecentTransferDestinations(
       source.recentTransferDestinations
     ),

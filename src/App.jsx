@@ -309,6 +309,10 @@ function App() {
   const [fullscreenDetailsOpen, setFullscreenDetailsOpen] = useState(true);
   const [fullscreenAudioEnabled, setFullscreenAudioEnabled] = useState(false);
   const [fullscreenAutoContinue, setFullscreenAutoContinue] = useState(false);
+  const [fullscreenAdvanceAfterRating, setFullscreenAdvanceAfterRating] =
+    useState(false);
+  const [fullscreenAdvanceAfterSending, setFullscreenAdvanceAfterSending] =
+    useState(false);
   const [metadataInspectorMode, setMetadataInspectorMode] = useState("floating");
   const [workspaceSidebarTab, setWorkspaceSidebarTab] = useState("library");
   const [metadataGenerationExpanded, setMetadataGenerationExpanded] =
@@ -696,6 +700,8 @@ function App() {
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
     setFullscreenAutoContinue,
+    setFullscreenAdvanceAfterRating,
+    setFullscreenAdvanceAfterSending,
     setTransferLayout,
     setMetadataInspectorMode: applyMetadataInspectorModeFromSettings,
     setZoomLevelFromSettings: (value) =>
@@ -1924,6 +1930,7 @@ function App() {
       } else {
         notify(`${companion.name || "The companion app"}: ${outcome.error}`, "error");
       }
+      return outcome;
     },
     [companionUndo, notify]
   );
@@ -5383,6 +5390,22 @@ function App() {
     });
   }, []);
 
+  const handleFullscreenAdvanceAfterRatingChange = useCallback((value) => {
+    const next = value === true;
+    setFullscreenAdvanceAfterRating(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      fullscreenAdvanceAfterRating: next,
+    });
+  }, []);
+
+  const handleFullscreenAdvanceAfterSendingChange = useCallback((value) => {
+    const next = value === true;
+    setFullscreenAdvanceAfterSending(next);
+    window.electronAPI?.saveSettingsPartial?.({
+      fullscreenAdvanceAfterSending: next,
+    });
+  }, []);
+
   const handleCloseFullScreen = useCallback(() => {
     cancelFullScreenFocus();
     const controller = fullScreenControllerRef.current;
@@ -5577,15 +5600,15 @@ function App() {
       }
       fullScreenUndoTargetRef.current = target;
       setFullscreenCanUndo(true);
-      // A rating marks an unreviewed clip as reviewed as a side effect, but it
-      // is not the act of marking that "advance after marking" describes:
-      // advancing here would carry the clip away before it could also be
-      // accepted or rejected, making rate-then-decide impossible. Only an
-      // explicit review state advances.
+      if (rating != null && fullscreenAdvanceAfterRating) {
+        advanceFullscreenAfterMutation(target);
+      }
       return true;
     },
     [
+      advanceFullscreenAfterMutation,
       captureFullscreenTarget,
+      fullscreenAdvanceAfterRating,
       isFullscreenTargetCurrent,
       notify,
       reviewWorkflow.applyRating,
@@ -5694,23 +5717,42 @@ function App() {
     [captureFullscreenTarget, notify, runActionForVideos]
   );
 
-  // In fullscreen, Shift+1 / Shift+2 and the rail's app buttons: the clip on
-  // screen is sent and, in review mode, accepted, and stays on screen
-  // whatever "Advance after marking" says.
+  // In fullscreen, Shift+1 / Shift+2 and the rail's app buttons send the clip
+  // on screen and, in review mode, accept it. Sending has its own advance
+  // preference, independent of the review side effect.
   const sendAndAcceptFullscreen = useCallback(
-    (action) => {
+    async (action) => {
       const target = captureFullscreenTarget();
       if (!action || !target?.video) return;
-      void handleCompanionSend({
-        companion: { id: action.companionId, name: action.companionName },
-        action,
-        videos: [target.video],
-      });
-      if (reviewModeEnabled) {
-        void handleFullscreenReviewState(REVIEW_STATES.PICK, { advance: false });
+      const [outcome] = await Promise.all([
+        handleCompanionSend({
+          companion: { id: action.companionId, name: action.companionName },
+          action,
+          videos: [target.video],
+        }),
+        reviewModeEnabled
+          ? handleFullscreenReviewState(REVIEW_STATES.PICK, { advance: false })
+          : Promise.resolve(false),
+      ]);
+      if (
+        outcome?.status === "sent" &&
+        outcome.rows?.includes(target.instanceId) &&
+        fullscreenAdvanceAfterSending &&
+        isFullscreenTargetCurrent(target)
+      ) {
+        advanceFullscreenAfterMutation(target);
       }
+      return outcome;
     },
-    [captureFullscreenTarget, handleCompanionSend, handleFullscreenReviewState, reviewModeEnabled]
+    [
+      advanceFullscreenAfterMutation,
+      captureFullscreenTarget,
+      fullscreenAdvanceAfterSending,
+      handleCompanionSend,
+      handleFullscreenReviewState,
+      isFullscreenTargetCurrent,
+      reviewModeEnabled,
+    ]
   );
   const handleFullscreenQuickReview = useCallback(
     (index) => sendAndAcceptFullscreen(quickActionAt(index)),
@@ -7813,12 +7855,21 @@ function App() {
                   video={fullScreenVideo}
                   busy={reviewWorkflow.isBusy}
                   canUndo={fullscreenCanUndo && reviewWorkflow.canUndo}
-                  autoAdvance={reviewAutoAdvance}
+                  advanceAfterReviewing={reviewAutoAdvance}
+                  advanceAfterRating={fullscreenAdvanceAfterRating}
+                  advanceAfterSending={fullscreenAdvanceAfterSending}
+                  canSend={companionActions.some((action) => action.quick === true)}
                   reviewModeEnabled={reviewModeEnabled}
                   onSetReviewState={handleFullscreenReviewState}
                   onSetRating={handleFullscreenRating}
                   onUndo={handleFullscreenUndo}
-                  onAutoAdvanceChange={handleReviewAutoAdvanceChange}
+                  onAdvanceAfterReviewingChange={handleReviewAutoAdvanceChange}
+                  onAdvanceAfterRatingChange={
+                    handleFullscreenAdvanceAfterRatingChange
+                  }
+                  onAdvanceAfterSendingChange={
+                    handleFullscreenAdvanceAfterSendingChange
+                  }
                   companionChips={companionChipsFor(companions, fullScreenVideo.instanceId)}
                   quickActions={withQuickShortcuts(
                     companionQuickActionsFor(companions, fullScreenVideo.instanceId),

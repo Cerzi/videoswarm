@@ -158,6 +158,8 @@ export function useElectronFolderLifecycle({
   setFullscreenDetailsOpen,
   setFullscreenAudioEnabled,
   setFullscreenAutoContinue,
+  setFullscreenAdvanceAfterRating,
+  setFullscreenAdvanceAfterSending,
   setTransferLayout,
   setMetadataInspectorMode,
   setZoomLevelFromSettings,
@@ -217,6 +219,8 @@ export function useElectronFolderLifecycle({
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
     setFullscreenAutoContinue,
+    setFullscreenAdvanceAfterRating,
+    setFullscreenAdvanceAfterSending,
     setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
@@ -243,6 +247,8 @@ export function useElectronFolderLifecycle({
       setFullscreenDetailsOpen,
       setFullscreenAudioEnabled,
       setFullscreenAutoContinue,
+      setFullscreenAdvanceAfterRating,
+      setFullscreenAdvanceAfterSending,
       setTransferLayout,
       setMetadataInspectorMode,
       setZoomLevelFromSettings,
@@ -267,6 +273,8 @@ export function useElectronFolderLifecycle({
     setFullscreenDetailsOpen,
     setFullscreenAudioEnabled,
     setFullscreenAutoContinue,
+    setFullscreenAdvanceAfterRating,
+    setFullscreenAdvanceAfterSending,
     setTransferLayout,
     setMetadataInspectorMode,
     setZoomLevelFromSettings,
@@ -1175,6 +1183,8 @@ export function useElectronFolderLifecycle({
       setFullscreenDetailsOpen: applyFullscreenDetailsOpen,
       setFullscreenAudioEnabled: applyFullscreenAudioEnabled,
       setFullscreenAutoContinue: applyFullscreenAutoContinue,
+      setFullscreenAdvanceAfterRating: applyFullscreenAdvanceAfterRating,
+      setFullscreenAdvanceAfterSending: applyFullscreenAdvanceAfterSending,
       setTransferLayout: applyTransferLayout,
       setMetadataInspectorMode: applyMetadataInspectorMode,
       setZoomLevelFromSettings: applyZoomLevelFromSettings,
@@ -1225,6 +1235,16 @@ export function useElectronFolderLifecycle({
     }
     if (settings.fullscreenAutoContinue !== undefined) {
       applyFullscreenAutoContinue?.(settings.fullscreenAutoContinue === true);
+    }
+    if (settings.fullscreenAdvanceAfterRating !== undefined) {
+      applyFullscreenAdvanceAfterRating?.(
+        settings.fullscreenAdvanceAfterRating === true
+      );
+    }
+    if (settings.fullscreenAdvanceAfterSending !== undefined) {
+      applyFullscreenAdvanceAfterSending?.(
+        settings.fullscreenAdvanceAfterSending === true
+      );
     }
     if (settings.transferLayout !== undefined) {
       applyTransferLayout?.(settings.transferLayout === "flat" ? "flat" : "structured");

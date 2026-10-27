@@ -1075,7 +1075,7 @@ describe("App hook composition", () => {
     }
   });
 
-  test("in fullscreen, shows the clip's companion chip and buttons, and Shift+1 sends and accepts it without advancing", async () => {
+  test("in fullscreen, companion sends use their own advance preference", async () => {
     const clip = {
       id: "/library/a.mp4",
       name: "a.mp4",
@@ -1085,9 +1085,18 @@ describe("App hook composition", () => {
       isElectronFile: true,
       reviewState: "unreviewed",
     };
+    const after = {
+      id: "/library/b.mp4",
+      name: "b.mp4",
+      dirname: "",
+      instanceId: 8,
+      fingerprint: "fp-b",
+      isElectronFile: true,
+      reviewState: "unreviewed",
+    };
     useElectronLifecycleMock.mockImplementation(() => ({
       ...electronLifecycleReturn,
-      videos: [clip],
+      videos: [clip, after],
       activeRootPath: "/library",
       libraryRoot: { rootPath: "/library", name: "library", pinned: true },
     }));
@@ -1116,7 +1125,7 @@ describe("App hook composition", () => {
       },
     };
     const previousOrdered = masonryReturn.orderedVideos;
-    masonryReturn.orderedVideos = [clip];
+    masonryReturn.orderedVideos = [clip, after];
     const controller = {
       isOpen: true,
       currentVideo: clip,
@@ -1124,7 +1133,7 @@ describe("App hook composition", () => {
       currentIndex: 0,
       fullScreenIndex: 0,
       currentViewIndex: 0,
-      fullScreenCount: 1,
+      fullScreenCount: 2,
       isInCurrentView: true,
       isCurrentInView: true,
       hasPrevious: false,
@@ -1137,7 +1146,14 @@ describe("App hook composition", () => {
       navigateFullScreen: vi.fn(),
       peekNavigation: vi.fn(),
       sourceRemoved: vi.fn(),
-      goToFullScreen: vi.fn(),
+      goToFullScreen: vi.fn((id) => {
+        const next = [clip, after].find((video) => video.id === id) || null;
+        if (next) {
+          controller.currentVideo = next;
+          controller.fullScreenVideo = next;
+        }
+        return next;
+      }),
     };
     useFullScreenModalMock.mockReturnValue(controller);
     metadataActionsReturn.handleSetReviewState.mockResolvedValue({
@@ -1180,8 +1196,14 @@ describe("App hook composition", () => {
       expect(controller.goToFullScreen).not.toHaveBeenCalled();
       expect(controller.peekNavigation).not.toHaveBeenCalled();
 
-      // A button does what its key does: sent and accepted, staying put.
+      // A button does what its key does. With the send preference enabled it
+      // advances only after the companion confirms the send.
       metadataActionsReturn.handleSetReviewState.mockClear();
+      act(() =>
+        useElectronLifecycleMock.mock.calls
+          .at(-1)?.[0]
+          .setFullscreenAdvanceAfterSending(true)
+      );
       await act(async () => modal().reviewRail.props.onQuickAction("c1", "finish"));
       await waitFor(() => expect(send).toHaveBeenCalledTimes(4));
       await waitFor(() =>
@@ -1189,7 +1211,7 @@ describe("App hook composition", () => {
           completionGuard: expect.any(Function),
         })
       );
-      expect(controller.goToFullScreen).not.toHaveBeenCalled();
+      expect(controller.goToFullScreen).toHaveBeenCalledWith(after.id);
       expect(controller.peekNavigation).not.toHaveBeenCalled();
 
       // Shift+2 with no second quick action says so and sends nothing.
@@ -4276,6 +4298,28 @@ describe("App hook composition", () => {
     });
     expect(fullScreenModalSpy.mock.calls.at(-1)?.[0].autoContinue).toBe(false);
 
+    const reviewRail = fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail;
+    act(() => reviewRail.props.onAdvanceAfterRatingChange(true));
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      fullscreenAdvanceAfterRating: true,
+    });
+    expect(
+      fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props
+        .advanceAfterRating
+    ).toBe(true);
+    act(() =>
+      fullScreenModalSpy.mock.calls
+        .at(-1)?.[0]
+        .reviewRail.props.onAdvanceAfterSendingChange(true)
+    );
+    expect(window.electronAPI.saveSettingsPartial).toHaveBeenCalledWith({
+      fullscreenAdvanceAfterSending: true,
+    });
+    expect(
+      fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props
+        .advanceAfterSending
+    ).toBe(true);
+
     await act(async () => {
       await lifecycleArgs.beforeExternalFolderSelection("/next");
     });
@@ -4500,7 +4544,7 @@ describe("App hook composition", () => {
     expect(selectionMock.selectExactly).toHaveBeenCalledWith("clip-original");
   });
 
-  test("rates without advancing so a clip can be rated and marked together", async () => {
+  test("fullscreen rating uses its own advance preference", async () => {
     const videos = [
       {
         id: "clip-rated",
@@ -4576,17 +4620,14 @@ describe("App hook composition", () => {
     await act(async () => {
       await fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props.onSetRating(4);
     });
-    // The rating marks the clip reviewed on its own, but marking it is not what
-    // "advance after marking" means: the clip has to stay put long enough to
-    // also be accepted or rejected.
+    // Enabling review advancement alone does not make ratings advance.
     expect(metadataActionsReturn.handleSetRating).toHaveBeenCalled();
     expect(controller.goToFullScreen).not.toHaveBeenCalled();
     expect(controller.navigateFullScreen).not.toHaveBeenCalled();
 
+    act(() => lifecycleArgs.setFullscreenAdvanceAfterRating(true));
     await act(async () => {
-      await fullScreenModalSpy.mock.calls
-        .at(-1)?.[0]
-        .reviewRail.props.onSetReviewState("pick");
+      await fullScreenModalSpy.mock.calls.at(-1)?.[0].reviewRail.props.onSetRating(5);
     });
     expect(controller.goToFullScreen).toHaveBeenCalledWith("clip-after");
   });

@@ -59,6 +59,8 @@ describe("useElectronFolderLifecycle", () => {
         setReviewAutoAdvance: vi.fn(),
         setReviewModeEnabled: vi.fn(),
         setFullscreenDetailsOpen: vi.fn(),
+        setFullscreenAdvanceAfterRating: vi.fn(),
+        setFullscreenAdvanceAfterSending: vi.fn(),
         setZoomLevelFromSettings: vi.fn(),
         setVisibleVideos: setVisibleVideosMock.setter,
         setLoadedVideos: setLoadedVideosMock.setter,
@@ -113,6 +115,8 @@ describe("useElectronFolderLifecycle", () => {
         reviewModeEnabled: false,
         fullscreenDetailsOpen: false,
         fullscreenAudioEnabled: true,
+        fullscreenAdvanceAfterRating: true,
+        fullscreenAdvanceAfterSending: true,
         metadataInspectorMode: "docked",
       }),
       onFolderSelected: vi.fn().mockReturnValue(() => {}),
@@ -254,6 +258,8 @@ describe("useElectronFolderLifecycle", () => {
     const setReviewModeEnabled = vi.fn();
     const setFullscreenDetailsOpen = vi.fn();
     const setFullscreenAudioEnabled = vi.fn();
+    const setFullscreenAdvanceAfterRating = vi.fn();
+    const setFullscreenAdvanceAfterSending = vi.fn();
     const setMetadataInspectorMode = vi.fn();
     const setZoomLevelFromSettings = vi.fn();
 
@@ -275,6 +281,8 @@ describe("useElectronFolderLifecycle", () => {
         setReviewModeEnabled,
         setFullscreenDetailsOpen,
         setFullscreenAudioEnabled,
+        setFullscreenAdvanceAfterRating,
+        setFullscreenAdvanceAfterSending,
         setMetadataInspectorMode,
         setZoomLevelFromSettings,
         setVisibleVideos: setVisibleVideosMock.setter,
@@ -300,6 +308,8 @@ describe("useElectronFolderLifecycle", () => {
     expect(setReviewModeEnabled).toHaveBeenCalledWith(false);
     expect(setFullscreenDetailsOpen).toHaveBeenCalledWith(false);
     expect(setFullscreenAudioEnabled).toHaveBeenCalledWith(true);
+    expect(setFullscreenAdvanceAfterRating).toHaveBeenCalledWith(true);
+    expect(setFullscreenAdvanceAfterSending).toHaveBeenCalledWith(true);
     expect(setMetadataInspectorMode).toHaveBeenCalledWith("docked");
     expect(setZoomLevelFromSettings).toHaveBeenCalledWith(3);
   });
@@ -368,6 +378,24 @@ describe("useElectronFolderLifecycle", () => {
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
     expect(setFullscreenAutoContinue).toHaveBeenCalledWith(false);
+  });
+
+  it("treats only literal true fullscreen action advance settings as enabled", async () => {
+    window.electronAPI.getSettings.mockResolvedValueOnce({
+      fullscreenAdvanceAfterRating: "true",
+      fullscreenAdvanceAfterSending: 1,
+    });
+    const setFullscreenAdvanceAfterRating = vi.fn();
+    const setFullscreenAdvanceAfterSending = vi.fn();
+
+    const { result } = renderDefaultLifecycle({
+      setFullscreenAdvanceAfterRating,
+      setFullscreenAdvanceAfterSending,
+    });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(setFullscreenAdvanceAfterRating).toHaveBeenCalledWith(false);
+    expect(setFullscreenAdvanceAfterSending).toHaveBeenCalledWith(false);
   });
 
   it("allows only the docked metadata inspector mode", async () => {

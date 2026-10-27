@@ -142,12 +142,17 @@ export function FullscreenReviewRail({
   video,
   busy = false,
   canUndo = false,
-  autoAdvance = false,
+  advanceAfterReviewing = false,
+  advanceAfterRating = false,
+  advanceAfterSending = false,
+  canSend = false,
   reviewModeEnabled = true,
   onSetReviewState,
   onSetRating,
   onUndo,
-  onAutoAdvanceChange,
+  onAdvanceAfterReviewingChange,
+  onAdvanceAfterRatingChange,
+  onAdvanceAfterSendingChange,
   companionChips = NO_COMPANION_ITEMS,
   quickActions = NO_COMPANION_ITEMS,
   onQuickAction,
@@ -242,22 +247,53 @@ export function FullscreenReviewRail({
         </button>
       ) : null}
 
-      {reviewModeEnabled ? (
+      <div className="fullscreen-review-panel__advance-options">
+        {reviewModeEnabled ? (
+          <label className="fullscreen-review-panel__advance">
+            <input
+              type="checkbox"
+              checked={advanceAfterReviewing}
+              onChange={(event) =>
+                onAdvanceAfterReviewingChange?.(event.target.checked)
+              }
+            />
+            <span>
+              Advance after reviewing
+              <small>After accepting, reviewing, or rejecting the clip.</small>
+            </span>
+          </label>
+        ) : null}
         <label className="fullscreen-review-panel__advance">
           <input
             type="checkbox"
-            checked={autoAdvance}
-            onChange={(event) => onAutoAdvanceChange?.(event.target.checked)}
+            checked={advanceAfterRating}
+            onChange={(event) =>
+              onAdvanceAfterRatingChange?.(event.target.checked)
+            }
           />
           <span>
-            Advance after marking
+            Advance after rating
             <small>
-              Skip duplicate instances of the marked content. Ratings and
-              sends to connected apps never advance.
+              After assigning a star rating. Clearing a rating stays on the clip.
             </small>
           </span>
         </label>
-      ) : null}
+        {canSend ? (
+          <label className="fullscreen-review-panel__advance">
+            <input
+              type="checkbox"
+              checked={advanceAfterSending}
+              onChange={(event) =>
+                onAdvanceAfterSendingChange?.(event.target.checked)
+              }
+            />
+            <span>
+              Advance after sending
+              <small>After a connected app confirms the send.</small>
+            </span>
+          </label>
+        ) : null}
+      </div>
     </div>
   );
 }

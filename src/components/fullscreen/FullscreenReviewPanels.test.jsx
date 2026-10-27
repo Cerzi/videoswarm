@@ -21,19 +21,24 @@ const video = {
 };
 
 describe("FullscreenReviewPanels", () => {
-  it("targets review, rating, undo, and auto-advance controls", () => {
+  it("targets review, rating, undo, and contextual advance controls", () => {
     const onSetReviewState = vi.fn();
     const onSetRating = vi.fn();
     const onUndo = vi.fn();
-    const onAutoAdvanceChange = vi.fn();
+    const onAdvanceAfterReviewingChange = vi.fn();
+    const onAdvanceAfterRatingChange = vi.fn();
+    const onAdvanceAfterSendingChange = vi.fn();
     render(
       <FullscreenReviewRail
         video={video}
         canUndo
+        canSend
         onSetReviewState={onSetReviewState}
         onSetRating={onSetRating}
         onUndo={onUndo}
-        onAutoAdvanceChange={onAutoAdvanceChange}
+        onAdvanceAfterReviewingChange={onAdvanceAfterReviewingChange}
+        onAdvanceAfterRatingChange={onAdvanceAfterRatingChange}
+        onAdvanceAfterSendingChange={onAdvanceAfterSendingChange}
       />
     );
 
@@ -45,12 +50,16 @@ describe("FullscreenReviewPanels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Accept (A)" }));
     fireEvent.click(screen.getByRole("button", { name: "Rate 4 stars" }));
     fireEvent.click(screen.getByRole("button", { name: /undo/i }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /advance after marking/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /advance after reviewing/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /advance after rating/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /advance after sending/i }));
 
     expect(onSetReviewState).toHaveBeenCalledWith("pick");
     expect(onSetRating).toHaveBeenCalledWith(4);
     expect(onUndo).toHaveBeenCalledOnce();
-    expect(onAutoAdvanceChange).toHaveBeenCalledWith(true);
+    expect(onAdvanceAfterReviewingChange).toHaveBeenCalledWith(true);
+    expect(onAdvanceAfterRatingChange).toHaveBeenCalledWith(true);
+    expect(onAdvanceAfterSendingChange).toHaveBeenCalledWith(true);
   });
 
   it("shows companion chips and one-click buttons for the clip on screen", () => {
@@ -107,6 +116,9 @@ describe("FullscreenReviewPanels", () => {
     expect(screen.queryByText("Unreviewed")).toBeNull();
     expect(screen.queryByRole("button", { name: "Accept (A)" })).toBeNull();
     expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /advance after reviewing/i })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /advance after rating/i })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /advance after sending/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Rate 4 stars" }));
     expect(onSetRating).toHaveBeenCalledWith(4);
   });
@@ -225,4 +237,3 @@ describe("FullscreenReviewPanels", () => {
     expect(onAddTags).toHaveBeenCalledWith(["favorite"]);
   });
 });
-
